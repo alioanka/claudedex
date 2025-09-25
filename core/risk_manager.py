@@ -131,6 +131,41 @@ class RiskScore:
         else:
             return RiskLevel.UNTRADEABLE
 
+# Add these class definitions at the beginning of risk_manager.py after the existing imports and dataclasses
+
+@dataclass
+class TradingOpportunity:
+    """Trading opportunity for evaluation"""
+    token_address: str
+    chain: str
+    price: float
+    volume: float
+    liquidity: float
+    risk_score: 'RiskScore'
+    ml_confidence: float
+    pump_probability: float
+    rug_probability: float
+    expected_return: float
+    signals: Dict[str, Any]
+    timestamp: datetime = field(default_factory=datetime.now)
+    metadata: Dict = field(default_factory=dict)
+
+@dataclass
+class Position:
+    """Active trading position"""
+    position_id: str
+    token_address: str
+    chain: str
+    entry_price: float
+    current_price: float
+    amount: float
+    value: float
+    stop_loss: Optional[float] = None
+    take_profit: Optional[List[float]] = None
+    unrealized_pnl: float = 0.0
+    opened_at: datetime = field(default_factory=datetime.now)
+    metadata: Dict = field(default_factory=dict)
+
 class RiskManager:
     """Advanced risk management system"""
     
@@ -627,77 +662,84 @@ class RiskManager:
         except Exception as e:
             return {'score': 0.3, 'details': {}}
             
-    def calculate_position_size(
-        self,
-        risk_score: RiskScore,
-        available_balance: float,
-        ml_confidence: float = 0.5,
-        expected_return: float = 0.1
-    ) -> float:
+    # Replace the existing calculate_position_size method with this corrected version
+    # The API expects: async def calculate_position_size(opportunity: TradingOpportunity) -> Decimal
+
+    async def calculate_position_size(self, opportunity: 'TradingOpportunity') -> Decimal:
         """
         Calculate optimal position size using multiple methods
         
         Args:
-            risk_score: Token risk assessment
-            available_balance: Available trading balance
-            ml_confidence: ML model confidence (0-1)
-            expected_return: Expected return percentage
+            opportunity: Trading opportunity to evaluate
             
         Returns:
-            Recommended position size in base currency
+            Recommended position size in base currency as Decimal
         """
-        # Base position size (percentage of portfolio)
-        base_position_percent = self.max_position_size_percent
-        
-        # Adjust based on risk level
-        risk_level = risk_score.risk_level
-        if risk_level == RiskLevel.UNTRADEABLE:
-            return 0.0
+        try:
+            # Extract necessary data from opportunity
+            risk_score = opportunity.risk_score
+            ml_confidence = opportunity.ml_confidence
+            expected_return = opportunity.expected_return
             
-        risk_multiplier = self.thresholds[risk_level.value]['position_multiplier']
-        
-        # Apply ML confidence adjustment
-        confidence_multiplier = 0.5 + (ml_confidence * 0.5)  # Range: 0.5-1.0
-        
-        # Kelly Criterion calculation
-        if expected_return > 0:
-            # Simplified Kelly: f = (p*b - q) / b
-            # where p = probability of win, b = odds, q = probability of loss
-            win_probability = ml_confidence
-            loss_probability = 1 - win_probability
-            odds = expected_return / 0.1  # Assuming 10% stop loss
+            # Get available balance
+            available_balance = await self.wallet_manager.get_available_balance()
             
-            kelly_fraction = (win_probability * odds - loss_probability) / odds
-            kelly_fraction = max(0, min(kelly_fraction, 1))  # Bound between 0 and 1
+            # Base position size (percentage of portfolio)
+            base_position_percent = self.max_position_size_percent
             
-            # Apply conservative Kelly fraction
-            kelly_position = kelly_fraction * self.kelly_fraction * available_balance
-        else:
-            kelly_position = 0
+            # Adjust based on risk level
+            risk_level = risk_score.risk_level
+            if risk_level == RiskLevel.UNTRADEABLE:
+                return Decimal("0")
+                
+            risk_multiplier = self.thresholds[risk_level.value]['position_multiplier']
             
-        # Calculate final position size
-        position_size = min(
-            base_position_percent * risk_multiplier * confidence_multiplier * available_balance / 100,
-            kelly_position if kelly_position > 0 else float('inf'),
-            available_balance * self.max_position_size_percent / 100
-        )
-        
-        # Additional safety checks
-        if risk_score.honeypot_risk > 0.3:
-            position_size *= 0.5
+            # Apply ML confidence adjustment
+            confidence_multiplier = 0.5 + (ml_confidence * 0.5)  # Range: 0.5-1.0
             
-        if not risk_score.liquidity_locked:
-            position_size *= 0.7
+            # Kelly Criterion calculation
+            if expected_return > 0:
+                # Simplified Kelly: f = (p*b - q) / b
+                # where p = probability of win, b = odds, q = probability of loss
+                win_probability = ml_confidence
+                loss_probability = 1 - win_probability
+                odds = expected_return / 0.1  # Assuming 10% stop loss
+                
+                kelly_fraction = (win_probability * odds - loss_probability) / odds
+                kelly_fraction = max(0, min(kelly_fraction, 1))  # Bound between 0 and 1
+                
+                # Apply conservative Kelly fraction
+                kelly_position = kelly_fraction * self.kelly_fraction * available_balance
+            else:
+                kelly_position = 0
+                
+            # Calculate final position size
+            position_size = min(
+                base_position_percent * risk_multiplier * confidence_multiplier * available_balance / 100,
+                kelly_position if kelly_position > 0 else float('inf'),
+                available_balance * self.max_position_size_percent / 100
+            )
             
-        if risk_score.dev_rug_history:
-            position_size *= 0.3
+            # Additional safety checks
+            if risk_score.honeypot_risk > 0.3:
+                position_size *= 0.5
+                
+            if not risk_score.liquidity_locked:
+                position_size *= 0.7
+                
+            if risk_score.dev_rug_history:
+                position_size *= 0.3
+                
+            # Ensure minimum viable position
+            min_position = available_balance * 0.001  # 0.1% minimum
+            if position_size < min_position:
+                return Decimal("0")
+                
+            return Decimal(str(round(position_size, 2)))
             
-        # Ensure minimum viable position
-        min_position = available_balance * 0.001  # 0.1% minimum
-        if position_size < min_position:
-            return 0.0
-            
-        return round(position_size, 2)
+        except Exception as e:
+            print(f"Position size calculation error: {e}")
+            return Decimal("0")
         
     def calculate_stop_loss(self, risk_score: RiskScore) -> float:
         """

@@ -2520,17 +2520,639 @@
         "decorators": null
       }
     ],
-    "found_methods": [],
-    "found_classes": [],
-    "class_bases": {},
-    "missing": [
-      "def make_decision()",
-      "def evaluate_opportunity()",
-      "def calculate_confidence_score()",
-      "def determine_action()",
-      "def validate_decision()",
-      "[ParseError] AST parse error in C:\\Users\\HP\\Desktop\\ClaudeDex\\core\\decision_maker.py: expected an indented block after 'except' statement on line 823 (<unknown>, line 827)"
+    "found_methods": [
+      {
+        "name": "__post_init__",
+        "qualified_name": "RiskScore.__post_init__",
+        "is_async": false,
+        "lineno": 40,
+        "scope": "class:RiskScore",
+        "params": [
+          "self"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "__init__",
+        "qualified_name": "DecisionMaker.__init__",
+        "is_async": false,
+        "lineno": 75,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "config"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "get",
+          "get"
+        ]
+      },
+      {
+        "name": "make_decision",
+        "qualified_name": "DecisionMaker.make_decision",
+        "is_async": true,
+        "lineno": 112,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "analysis"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "TradingDecision",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "_classify_market_conditions",
+          "_evaluate_strategies",
+          "_select_best_strategy",
+          "_calculate_confidence",
+          "_should_trade",
+          "TradingDecision",
+          "_calculate_position_parameters",
+          "_generate_reasoning",
+          "TradingDecision",
+          "append",
+          "print",
+          "TradingDecision"
+        ]
+      },
+      {
+        "name": "_evaluate_strategies",
+        "qualified_name": "DecisionMaker._evaluate_strategies",
+        "is_async": true,
+        "lineno": 215,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "analysis_data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict[StrategyType, float]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "_evaluate_scalping",
+          "_evaluate_momentum",
+          "_evaluate_mean_reversion",
+          "_evaluate_breakout",
+          "_evaluate_swing",
+          "_evaluate_ai_hybrid",
+          "gather",
+          "zip",
+          "isinstance"
+        ]
+      },
+      {
+        "name": "_evaluate_scalping",
+        "qualified_name": "DecisionMaker._evaluate_scalping",
+        "is_async": true,
+        "lineno": 248,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "min",
+          "get",
+          "min",
+          "print"
+        ]
+      },
+      {
+        "name": "_evaluate_momentum",
+        "qualified_name": "DecisionMaker._evaluate_momentum",
+        "is_async": true,
+        "lineno": 290,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "lower",
+          "get",
+          "get",
+          "min",
+          "print"
+        ]
+      },
+      {
+        "name": "_evaluate_mean_reversion",
+        "qualified_name": "DecisionMaker._evaluate_mean_reversion",
+        "is_async": true,
+        "lineno": 331,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "abs",
+          "min",
+          "print"
+        ]
+      },
+      {
+        "name": "_evaluate_breakout",
+        "qualified_name": "DecisionMaker._evaluate_breakout",
+        "is_async": true,
+        "lineno": 377,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "lower",
+          "max",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "lower",
+          "min",
+          "print"
+        ]
+      },
+      {
+        "name": "_evaluate_swing",
+        "qualified_name": "DecisionMaker._evaluate_swing",
+        "is_async": true,
+        "lineno": 424,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "get",
+          "get",
+          "len",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "abs",
+          "get",
+          "min",
+          "print"
+        ]
+      },
+      {
+        "name": "_evaluate_ai_hybrid",
+        "qualified_name": "DecisionMaker._evaluate_ai_hybrid",
+        "is_async": true,
+        "lineno": 471,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "len",
+          "min",
+          "print"
+        ]
+      },
+      {
+        "name": "_select_best_strategy",
+        "qualified_name": "DecisionMaker._select_best_strategy",
+        "is_async": false,
+        "lineno": 523,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "scores"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "StrategyType",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "items",
+          "get",
+          "uniform",
+          "max",
+          "items"
+        ]
+      },
+      {
+        "name": "_calculate_confidence",
+        "qualified_name": "DecisionMaker._calculate_confidence",
+        "is_async": true,
+        "lineno": 536,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "risk_score",
+          "ml_predictions",
+          "patterns",
+          "sentiment"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "mean",
+          "get",
+          "min",
+          "max",
+          "print"
+        ]
+      },
+      {
+        "name": "_should_trade",
+        "qualified_name": "DecisionMaker._should_trade",
+        "is_async": true,
+        "lineno": 580,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "confidence",
+          "risk_score",
+          "ml_predictions",
+          "liquidity"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "get",
+          "print"
+        ]
+      },
+      {
+        "name": "_calculate_position_parameters",
+        "qualified_name": "DecisionMaker._calculate_position_parameters",
+        "is_async": true,
+        "lineno": 609,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "data",
+          "strategy",
+          "confidence"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "get",
+          "get",
+          "_kelly_criterion",
+          "get",
+          "get",
+          "abs",
+          "get",
+          "lower",
+          "get",
+          "get",
+          "mean",
+          "range",
+          "print"
+        ]
+      },
+      {
+        "name": "_kelly_criterion",
+        "qualified_name": "DecisionMaker._kelly_criterion",
+        "is_async": false,
+        "lineno": 695,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "confidence",
+          "risk_score",
+          "balance"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "min",
+          "get",
+          "max",
+          "print"
+        ]
+      },
+      {
+        "name": "_generate_reasoning",
+        "qualified_name": "DecisionMaker._generate_reasoning",
+        "is_async": false,
+        "lineno": 730,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "data",
+          "strategy",
+          "confidence"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "List[str]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "append",
+          "append",
+          "get",
+          "get",
+          "get",
+          "append",
+          "get",
+          "append",
+          "append",
+          "append",
+          "get",
+          "append",
+          "join",
+          "get",
+          "append",
+          "get",
+          "get",
+          "get",
+          "append",
+          "append",
+          "append",
+          "append",
+          "print"
+        ]
+      },
+      {
+        "name": "_classify_market_conditions",
+        "qualified_name": "DecisionMaker._classify_market_conditions",
+        "is_async": true,
+        "lineno": 789,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "market_data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "print"
+        ]
+      },
+      {
+        "name": "update_performance",
+        "qualified_name": "DecisionMaker.update_performance",
+        "is_async": true,
+        "lineno": 815,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "decision_id",
+          "outcome"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "update",
+          "now",
+          "get",
+          "get",
+          "_adjust_strategy_weights",
+          "print"
+        ]
+      },
+      {
+        "name": "_adjust_strategy_weights",
+        "qualified_name": "DecisionMaker._adjust_strategy_weights",
+        "is_async": true,
+        "lineno": 834,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "upper",
+          "print"
+        ]
+      },
+      {
+        "name": "evaluate_opportunity",
+        "qualified_name": "DecisionMaker.evaluate_opportunity",
+        "is_async": true,
+        "lineno": 857,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "opportunity"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "print"
+        ]
+      },
+      {
+        "name": "calculate_confidence_score",
+        "qualified_name": "DecisionMaker.calculate_confidence_score",
+        "is_async": false,
+        "lineno": 887,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "signals"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "items",
+          "get",
+          "min",
+          "print"
+        ]
+      },
+      {
+        "name": "determine_action",
+        "qualified_name": "DecisionMaker.determine_action",
+        "is_async": false,
+        "lineno": 910,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "scores"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "str",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "get",
+          "get",
+          "get",
+          "print"
+        ]
+      },
+      {
+        "name": "validate_decision",
+        "qualified_name": "DecisionMaker.validate_decision",
+        "is_async": true,
+        "lineno": 936,
+        "scope": "class:DecisionMaker",
+        "params": [
+          "self",
+          "decision"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "len",
+          "print"
+        ]
+      }
     ],
+    "found_classes": [
+      "TradingDecision",
+      "RiskScore",
+      "TradingOpportunity",
+      "StrategyType",
+      "DecisionMaker"
+    ],
+    "class_bases": {
+      "TradingDecision": [],
+      "RiskScore": [],
+      "TradingOpportunity": [],
+      "StrategyType": [
+        "Enum"
+      ],
+      "DecisionMaker": []
+    },
+    "missing": [],
     "async_mismatches": [],
     "signature_mismatches": [],
     "visibility_mismatches": [],

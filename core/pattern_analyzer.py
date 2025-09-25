@@ -97,17 +97,27 @@ class PatternAnalyzer:
         self._cache = {}
         self._cache_ttl = 60  # seconds
         
-    async def analyze_patterns(self, data: Dict) -> Dict[str, Any]:
+    # Replace the existing analyze_patterns method with this corrected version
+    # The API expects: async def analyze_patterns(price_data: List[Dict]) -> Dict
+
+    async def analyze_patterns(self, price_data: List[Dict]) -> Dict[str, Any]:
         """
         Comprehensive pattern analysis
         
         Args:
-            data: Market data including prices, volumes, etc.
+            price_data: List of price dictionaries with OHLCV data
+                    Each dict should have: {'open', 'high', 'low', 'close', 'volume', 'timestamp'}
             
         Returns:
             Dictionary with all detected patterns and analysis
         """
         try:
+            # Convert price_data list to the internal data format
+            data = {
+                'prices': price_data,
+                'ohlcv': price_data  # For compatibility
+            }
+            
             # Convert data to DataFrame for analysis
             df = self._prepare_dataframe(data)
             
@@ -519,3 +529,552 @@ class PatternAnalyzer:
         except Exception as e:
             print(f"Trend identification error: {e}")
             return 'sideways'
+
+    # Add these missing helper methods to the PatternAnalyzer class
+
+    def _prepare_dataframe(self, data: Dict) -> Optional[pd.DataFrame]:
+        """Convert input data to DataFrame for analysis"""
+        try:
+            if 'prices' in data and isinstance(data['prices'], list):
+                # Handle list of price dictionaries
+                df = pd.DataFrame(data['prices'])
+                
+                # Ensure required columns exist
+                required_cols = ['close']
+                if not all(col in df.columns for col in required_cols):
+                    # If only prices as numbers, create DataFrame
+                    if all(isinstance(p, (int, float)) for p in data['prices']):
+                        df = pd.DataFrame({
+                            'close': data['prices'],
+                            'high': data['prices'],
+                            'low': data['prices'],
+                            'open': data['prices'],
+                            'volume': [1000] * len(data['prices'])
+                        })
+                    else:
+                        return None
+            else:
+                # Handle other data formats
+                df = pd.DataFrame(data)
+                
+            # Ensure numeric types
+            numeric_cols = ['open', 'high', 'low', 'close', 'volume']
+            for col in numeric_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                    
+            # Remove NaN values
+            df = df.dropna()
+            
+            return df
+            
+        except Exception as e:
+            print(f"DataFrame preparation error: {e}")
+            return None
+
+    def _calculate_trend_duration(self, closes: np.ndarray, direction: str) -> int:
+        """Calculate how long the current trend has been active"""
+        try:
+            duration = 0
+            
+            if direction == 'uptrend':
+                for i in range(len(closes) - 1, 0, -1):
+                    if closes[i] > closes[i-1]:
+                        duration += 1
+                    else:
+                        break
+            elif direction == 'downtrend':
+                for i in range(len(closes) - 1, 0, -1):
+                    if closes[i] < closes[i-1]:
+                        duration += 1
+                    else:
+                        break
+            else:  # sideways
+                # Count periods within a range
+                recent_mean = np.mean(closes[-20:])
+                recent_std = np.std(closes[-20:])
+                for i in range(len(closes) - 1, 0, -1):
+                    if abs(closes[i] - recent_mean) < recent_std:
+                        duration += 1
+                    else:
+                        break
+                        
+            return duration
+            
+        except Exception as e:
+            print(f"Trend duration calculation error: {e}")
+            return 0
+
+    def _cluster_levels(self, levels: List[float], tolerance: float = 0.02) -> List[float]:
+        """Cluster nearby price levels"""
+        try:
+            if not levels:
+                return []
+                
+            levels = sorted(levels)
+            clusters = []
+            current_cluster = [levels[0]]
+            
+            for level in levels[1:]:
+                if abs(level - current_cluster[-1]) / current_cluster[-1] < tolerance:
+                    current_cluster.append(level)
+                else:
+                    # Save cluster average
+                    clusters.append(np.mean(current_cluster))
+                    current_cluster = [level]
+                    
+            # Add last cluster
+            if current_cluster:
+                clusters.append(np.mean(current_cluster))
+                
+            return clusters
+            
+        except Exception as e:
+            print(f"Level clustering error: {e}")
+            return []
+
+    async def _detect_head_shoulders(self, closes: np.ndarray, highs: np.ndarray,
+                                    lows: np.ndarray) -> List[Pattern]:
+        """Detect head and shoulders patterns"""
+        patterns = []
+        
+        try:
+            # Find peaks
+            peaks = signal.find_peaks(highs, distance=5, prominence=closes.std()*0.3)[0]
+            
+            if len(peaks) >= 3:
+                # Check for head and shoulders pattern
+                for i in range(len(peaks) - 2):
+                    left_shoulder = highs[peaks[i]]
+                    head = highs[peaks[i + 1]]
+                    right_shoulder = highs[peaks[i + 2]]
+                    
+                    # Head should be higher than shoulders
+                    if head > left_shoulder and head > right_shoulder:
+                        # Shoulders should be roughly equal
+                        if abs(left_shoulder - right_shoulder) / left_shoulder < 0.05:
+                            patterns.append(Pattern(
+                                pattern_type=PatternType.HEAD_SHOULDERS,
+                                confidence=0.8,
+                                start_time=datetime.now() - timedelta(days=peaks[i + 2] - peaks[i]),
+                                end_time=datetime.now(),
+                                price_target=closes[-1] * 0.93,
+                                stop_loss=head * 1.02,
+                                strength=0.75
+                            ))
+                            
+            # Check for inverse head and shoulders
+            troughs = signal.find_peaks(-lows, distance=5, prominence=closes.std()*0.3)[0]
+            
+            if len(troughs) >= 3:
+                for i in range(len(troughs) - 2):
+                    left_shoulder = lows[troughs[i]]
+                    head = lows[troughs[i + 1]]
+                    right_shoulder = lows[troughs[i + 2]]
+                    
+                    # Head should be lower than shoulders
+                    if head < left_shoulder and head < right_shoulder:
+                        # Shoulders should be roughly equal
+                        if abs(left_shoulder - right_shoulder) / left_shoulder < 0.05:
+                            patterns.append(Pattern(
+                                pattern_type=PatternType.INVERSE_HEAD_SHOULDERS,
+                                confidence=0.8,
+                                start_time=datetime.now() - timedelta(days=troughs[i + 2] - troughs[i]),
+                                end_time=datetime.now(),
+                                price_target=closes[-1] * 1.07,
+                                stop_loss=head * 0.98,
+                                strength=0.75
+                            ))
+                            
+        except Exception as e:
+            print(f"Head and shoulders detection error: {e}")
+            
+        return patterns
+
+    async def _detect_flags(self, closes: np.ndarray, volumes: np.ndarray) -> List[Pattern]:
+        """Detect flag patterns"""
+        patterns = []
+        
+        try:
+            # Look for strong move followed by consolidation
+            for i in range(20, len(closes) - 10):
+                # Check for strong move (pole)
+                pole_start = i - 20
+                pole_end = i
+                pole_change = (closes[pole_end] - closes[pole_start]) / closes[pole_start]
+                
+                # Check for consolidation (flag)
+                flag_prices = closes[i:i + 10]
+                flag_std = np.std(flag_prices) / np.mean(flag_prices)
+                
+                # Bull flag: strong up move + tight consolidation
+                if pole_change > 0.15 and flag_std < 0.03:
+                    patterns.append(Pattern(
+                        pattern_type=PatternType.BULL_FLAG,
+                        confidence=0.75,
+                        start_time=datetime.now() - timedelta(days=30),
+                        end_time=datetime.now(),
+                        price_target=closes[-1] * (1 + pole_change * 0.7),
+                        stop_loss=min(flag_prices) * 0.98,
+                        strength=0.7
+                    ))
+                    
+                # Bear flag: strong down move + tight consolidation
+                elif pole_change < -0.15 and flag_std < 0.03:
+                    patterns.append(Pattern(
+                        pattern_type=PatternType.BEAR_FLAG,
+                        confidence=0.75,
+                        start_time=datetime.now() - timedelta(days=30),
+                        end_time=datetime.now(),
+                        price_target=closes[-1] * (1 + pole_change * 0.7),
+                        stop_loss=max(flag_prices) * 1.02,
+                        strength=0.7
+                    ))
+                    
+        except Exception as e:
+            print(f"Flag pattern detection error: {e}")
+            
+        return patterns
+
+    async def _detect_cup_handle(self, closes: np.ndarray, volumes: np.ndarray) -> List[Pattern]:
+        """Detect cup and handle patterns"""
+        patterns = []
+        
+        try:
+            # Simplified cup and handle detection
+            if len(closes) >= 50:
+                # Find potential cup bottom
+                min_idx = np.argmin(closes[:40])
+                
+                # Check if we have a U-shape
+                left_rim = closes[0]
+                bottom = closes[min_idx]
+                right_rim = closes[40]
+                
+                # Cup should be U-shaped
+                if left_rim > bottom and right_rim > bottom:
+                    # Rims should be similar height
+                    if abs(left_rim - right_rim) / left_rim < 0.1:
+                        # Check for handle (small pullback after right rim)
+                        handle_prices = closes[40:50]
+                        handle_low = min(handle_prices)
+                        
+                        if handle_low > bottom and handle_low < right_rim:
+                            patterns.append(Pattern(
+                                pattern_type=PatternType.CUP_AND_HANDLE,
+                                confidence=0.7,
+                                start_time=datetime.now() - timedelta(days=50),
+                                end_time=datetime.now(),
+                                price_target=right_rim * 1.15,
+                                stop_loss=handle_low * 0.98,
+                                strength=0.65
+                            ))
+                            
+        except Exception as e:
+            print(f"Cup and handle detection error: {e}")
+            
+        return patterns
+
+    async def _analyze_volume_profile(self, df: pd.DataFrame) -> Dict:
+        """Analyze volume profile"""
+        try:
+            closes = df['close'].values
+            volumes = df['volume'].values
+            
+            # Calculate volume-weighted average price (VWAP)
+            vwap = np.sum(closes * volumes) / np.sum(volumes) if np.sum(volumes) > 0 else closes[-1]
+            
+            # Find high volume nodes
+            price_bins = np.linspace(min(closes), max(closes), 20)
+            volume_profile = {}
+            
+            for i in range(len(price_bins) - 1):
+                mask = (closes >= price_bins[i]) & (closes < price_bins[i + 1])
+                volume_profile[price_bins[i]] = np.sum(volumes[mask])
+                
+            # Find point of control (highest volume price)
+            poc = max(volume_profile, key=volume_profile.get) if volume_profile else closes[-1]
+            
+            return {
+                'vwap': vwap,
+                'poc': poc,
+                'volume_profile': volume_profile,
+                'current_volume': volumes[-1] if len(volumes) > 0 else 0,
+                'avg_volume': np.mean(volumes) if len(volumes) > 0 else 0
+            }
+            
+        except Exception as e:
+            print(f"Volume profile analysis error: {e}")
+            return {}
+
+    async def _detect_candlestick_patterns(self, df: pd.DataFrame) -> List[Pattern]:
+        """Detect candlestick patterns using TA-Lib"""
+        patterns = []
+        
+        try:
+            opens = df['open'].values if 'open' in df.columns else df['close'].values
+            highs = df['high'].values if 'high' in df.columns else df['close'].values
+            lows = df['low'].values if 'low' in df.columns else df['close'].values
+            closes = df['close'].values
+            
+            # Detect various candlestick patterns
+            # Note: These would need proper mapping to PatternType enum
+            
+            # Bullish patterns
+            hammer = talib.CDLHAMMER(opens, highs, lows, closes)
+            if hammer[-1] > 0:
+                patterns.append(Pattern(
+                    pattern_type=PatternType.MOMENTUM_SURGE,  # Using available enum
+                    confidence=0.7,
+                    start_time=datetime.now(),
+                    end_time=datetime.now(),
+                    strength=0.65
+                ))
+                
+            # Bearish patterns
+            shooting_star = talib.CDLSHOOTINGSTAR(opens, highs, lows, closes)
+            if shooting_star[-1] < 0:
+                patterns.append(Pattern(
+                    pattern_type=PatternType.MOMENTUM_CRASH,  # Using available enum
+                    confidence=0.7,
+                    start_time=datetime.now(),
+                    end_time=datetime.now(),
+                    strength=0.65
+                ))
+                
+        except Exception as e:
+            print(f"Candlestick pattern detection error: {e}")
+            
+        return patterns
+
+    async def _analyze_momentum(self, df: pd.DataFrame) -> Dict:
+        """Analyze momentum indicators"""
+        try:
+            closes = df['close'].values
+            volumes = df['volume'].values if 'volume' in df.columns else np.ones(len(closes))
+            
+            # Calculate momentum
+            momentum_periods = 10
+            if len(closes) > momentum_periods:
+                momentum = (closes[-1] - closes[-momentum_periods]) / closes[-momentum_periods]
+            else:
+                momentum = 0
+                
+            # Calculate rate of change
+            roc_periods = 20
+            if len(closes) > roc_periods:
+                roc = (closes[-1] - closes[-roc_periods]) / closes[-roc_periods]
+            else:
+                roc = 0
+                
+            # Volume momentum
+            if len(volumes) > 20:
+                recent_vol = np.mean(volumes[-5:])
+                older_vol = np.mean(volumes[-20:-15])
+                volume_momentum = recent_vol / older_vol if older_vol > 0 else 1
+            else:
+                volume_momentum = 1
+                
+            # Determine momentum direction
+            if momentum > 0.05:
+                direction = 'bullish'
+            elif momentum < -0.05:
+                direction = 'bearish'
+            else:
+                direction = 'neutral'
+                
+            return {
+                'momentum': momentum,
+                'momentum_score': abs(momentum),
+                'roc': roc,
+                'volume_momentum': volume_momentum,
+                'direction': direction
+            }
+            
+        except Exception as e:
+            print(f"Momentum analysis error: {e}")
+            return {'momentum': 0, 'momentum_score': 0, 'direction': 'neutral'}
+
+    async def _detect_breakouts(self, df: pd.DataFrame) -> List[Pattern]:
+        """Detect breakout patterns"""
+        patterns = []
+        
+        try:
+            closes = df['close'].values
+            highs = df['high'].values if 'high' in df.columns else closes
+            lows = df['low'].values if 'low' in df.columns else closes
+            volumes = df['volume'].values if 'volume' in df.columns else np.ones(len(closes))
+            
+            # Find recent resistance
+            if len(highs) >= 20:
+                recent_resistance = max(highs[-20:-1])
+                
+                # Check if current price broke resistance
+                if closes[-1] > recent_resistance * 1.02:  # 2% above resistance
+                    # Check volume confirmation
+                    avg_volume = np.mean(volumes[-20:])
+                    if volumes[-1] > avg_volume * 1.5:
+                        patterns.append(Pattern(
+                            pattern_type=PatternType.BREAKOUT,
+                            confidence=0.8,
+                            start_time=datetime.now(),
+                            end_time=datetime.now(),
+                            price_target=closes[-1] * 1.1,
+                            stop_loss=recent_resistance * 0.98,
+                            strength=0.75
+                        ))
+                        
+            # Find recent support
+            if len(lows) >= 20:
+                recent_support = min(lows[-20:-1])
+                
+                # Check if current price broke support
+                if closes[-1] < recent_support * 0.98:  # 2% below support
+                    # Check volume confirmation
+                    avg_volume = np.mean(volumes[-20:])
+                    if volumes[-1] > avg_volume * 1.5:
+                        patterns.append(Pattern(
+                            pattern_type=PatternType.BREAKDOWN,
+                            confidence=0.8,
+                            start_time=datetime.now(),
+                            end_time=datetime.now(),
+                            price_target=closes[-1] * 0.9,
+                            stop_loss=recent_support * 1.02,
+                            strength=0.75
+                        ))
+                        
+        except Exception as e:
+            print(f"Breakout detection error: {e}")
+            
+        return patterns
+
+    def _calculate_pattern_score(self, patterns: List[Pattern], trend: Optional[TrendInfo],
+                                indicators: Dict, momentum: Dict) -> float:
+        """Calculate overall pattern score"""
+        try:
+            score = 0.0
+            
+            # Pattern contribution
+            if patterns:
+                pattern_scores = [p.confidence * p.strength for p in patterns]
+                score += np.mean(pattern_scores) * 0.3
+                
+            # Trend contribution
+            if trend:
+                score += trend.strength * trend.r_squared * 0.2
+                
+            # Indicator contribution
+            if indicators:
+                # RSI score
+                rsi = indicators.get('rsi', 50)
+                if 30 < rsi < 70:
+                    score += 0.1
+                    
+                # MACD score
+                if indicators.get('macd_histogram', 0) > 0:
+                    score += 0.1
+                    
+                # ADX score (trend strength)
+                adx = indicators.get('adx', 0)
+                if adx > 25:
+                    score += 0.1
+                    
+            # Momentum contribution
+            if momentum:
+                score += momentum.get('momentum_score', 0) * 0.2
+                
+            return min(score, 1.0)
+            
+        except Exception as e:
+            print(f"Pattern score calculation error: {e}")
+            return 0.0
+
+    def _generate_signal(self, patterns: List[Pattern], trend: Optional[TrendInfo],
+                        indicators: Dict) -> str:
+        """Generate trading signal based on analysis"""
+        try:
+            bullish_signals = 0
+            bearish_signals = 0
+            
+            # Check patterns
+            for pattern in patterns:
+                if 'bull' in pattern.pattern_type.value.lower() or 'ascending' in pattern.pattern_type.value.lower():
+                    bullish_signals += 1
+                elif 'bear' in pattern.pattern_type.value.lower() or 'descending' in pattern.pattern_type.value.lower():
+                    bearish_signals += 1
+                    
+            # Check trend
+            if trend:
+                if trend.direction == 'uptrend':
+                    bullish_signals += 1
+                elif trend.direction == 'downtrend':
+                    bearish_signals += 1
+                    
+            # Check indicators
+            if indicators:
+                if indicators.get('rsi', 50) < 30:
+                    bullish_signals += 1
+                elif indicators.get('rsi', 50) > 70:
+                    bearish_signals += 1
+                    
+                if indicators.get('macd_histogram', 0) > 0:
+                    bullish_signals += 1
+                elif indicators.get('macd_histogram', 0) < 0:
+                    bearish_signals += 1
+                    
+            # Generate signal
+            if bullish_signals > bearish_signals + 1:
+                return 'strong_buy'
+            elif bullish_signals > bearish_signals:
+                return 'buy'
+            elif bearish_signals > bullish_signals + 1:
+                return 'strong_sell'
+            elif bearish_signals > bullish_signals:
+                return 'sell'
+            else:
+                return 'neutral'
+                
+        except Exception as e:
+            print(f"Signal generation error: {e}")
+            return 'neutral'
+
+    def _calculate_risk_reward(self, df: pd.DataFrame, sr_levels: Optional[SupportResistance]) -> Dict:
+        """Calculate risk/reward ratio"""
+        try:
+            current_price = df['close'].values[-1]
+            risk_reward = {}
+            
+            if sr_levels:
+                # Find nearest support (risk)
+                supports = [s for s in sr_levels.supports if s < current_price]
+                if supports:
+                    stop_loss = supports[0]
+                    risk = (current_price - stop_loss) / current_price
+                else:
+                    risk = 0.05  # Default 5% risk
+                    
+                # Find nearest resistance (reward)
+                resistances = [r for r in sr_levels.resistances if r > current_price]
+                if resistances:
+                    take_profit = resistances[0]
+                    reward = (take_profit - current_price) / current_price
+                else:
+                    reward = 0.10  # Default 10% reward
+                    
+                risk_reward = {
+                    'ratio': reward / risk if risk > 0 else 0,
+                    'risk_percent': risk * 100,
+                    'reward_percent': reward * 100
+                }
+            else:
+                risk_reward = {
+                    'ratio': 2.0,  # Default 2:1
+                    'risk_percent': 5.0,
+                    'reward_percent': 10.0
+                }
+                
+            return risk_reward
+            
+        except Exception as e:
+            print(f"Risk/reward calculation error: {e}")
+            return {'ratio': 0, 'risk_percent': 0, 'reward_percent': 0}

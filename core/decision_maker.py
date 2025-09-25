@@ -26,6 +26,36 @@ class TradingDecision:
     reasoning: List[str]
     metadata: Dict = field(default_factory=dict)
     timestamp: datetime = field(default_factory=datetime.now)
+
+@dataclass
+class RiskScore:
+    """Risk score components"""
+    overall_risk: float
+    liquidity_risk: float
+    contract_risk: float
+    developer_risk: float
+    holder_risk: float
+    total_risk: float = field(init=False)
+    
+    def __post_init__(self):
+        self.total_risk = self.overall_risk
+
+@dataclass
+class TradingOpportunity:
+    """Represents a trading opportunity for evaluation"""
+    token_address: str
+    chain: str
+    price: float
+    volume: float
+    liquidity: float
+    risk_score: RiskScore
+    ml_confidence: float
+    pump_probability: float
+    rug_probability: float
+    expected_return: float
+    signals: Dict[str, Any]
+    timestamp: datetime = field(default_factory=datetime.now)
+    metadata: Dict = field(default_factory=dict)
     
 class StrategyType(Enum):
     """Available trading strategies"""
@@ -79,30 +109,30 @@ class DecisionMaker:
         self.decision_history = []
         self.performance_tracker = {}
         
-    async def make_decision(self, analysis_data: Dict) -> TradingDecision:
+    async def make_decision(self, analysis: Dict) -> TradingDecision:
         """
         Make a comprehensive trading decision
         
         Args:
-            analysis_data: All analysis data including risk, ML predictions, patterns, etc.
+            analysis: All analysis data including risk, ML predictions, patterns, etc.
             
         Returns:
             TradingDecision object
         """
         try:
             # Extract components
-            risk_score = analysis_data.get('risk_score')
-            ml_predictions = analysis_data.get('ml_predictions', {})
-            patterns = analysis_data.get('patterns', [])
-            sentiment = analysis_data.get('sentiment', {})
-            market_conditions = analysis_data.get('market_conditions', {})
-            liquidity = analysis_data.get('liquidity', {})
+            risk_score = analysis.get('risk_score')
+            ml_predictions = analysis.get('ml_predictions', {})
+            patterns = analysis.get('patterns', [])
+            sentiment = analysis.get('sentiment', {})
+            market_conditions = analysis.get('market_conditions', {})
+            liquidity = analysis.get('liquidity', {})
             
             # Update market conditions
             await self._classify_market_conditions(market_conditions)
             
             # Parallel strategy evaluation
-            strategy_scores = await self._evaluate_strategies(analysis_data)
+            strategy_scores = await self._evaluate_strategies(analysis)
             
             # Select best strategy
             best_strategy = self._select_best_strategy(strategy_scores)
@@ -134,12 +164,12 @@ class DecisionMaker:
             
             # Calculate position parameters
             position_params = await self._calculate_position_parameters(
-                analysis_data, best_strategy, confidence
+                analysis, best_strategy, confidence
             )
             
             # Generate reasoning
             reasoning = self._generate_reasoning(
-                analysis_data, best_strategy, confidence
+                analysis, best_strategy, confidence
             )
             
             decision = TradingDecision(
@@ -165,6 +195,93 @@ class DecisionMaker:
             self.decision_history.append(decision)
             
             return decision
+            
+        except Exception as e:
+            print(f"Decision making error: {e}")
+            return TradingDecision(
+                should_trade=False,
+                action='hold',
+                confidence=0,
+                strategy='error',
+                position_size=0,
+                entry_price=0,
+                stop_loss=0,
+                take_profits=[],
+                expected_return=0,
+                risk_reward_ratio=0,
+                reasoning=[f'Error in decision making: {e}']
+            )
+            
+    async def _evaluate_strategies(self, analysis_data: Dict) -> Dict[StrategyType, float]:
+        """Evaluate all strategies and return scores"""
+        scores = {}
+        
+        # Parallel evaluation
+        tasks = [
+            self._evaluate_scalping(analysis_data),
+            self._evaluate_momentum(analysis_data),
+            self._evaluate_mean_reversion(analysis_data),
+            self._evaluate_breakout(analysis_data),
+            self._evaluate_swing(analysis_data),
+            self._evaluate_ai_hybrid(analysis_data)
+        ]
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        strategies = [
+            StrategyType.SCALPING,
+            StrategyType.MOMENTUM,
+            StrategyType.MEAN_REVERSION,
+            StrategyType.BREAKOUT,
+            StrategyType.SWING,
+            StrategyType.AI_HYBRID
+        ]
+        
+        for strategy, result in zip(strategies, results):
+            if isinstance(result, Exception):
+                scores[strategy] = 0
+            else:
+                scores[strategy] = result
+                
+        return scores
+        
+    async def _evaluate_scalping(self, data: Dict) -> float:
+        """Evaluate scalping strategy suitability"""
+        score = 0.0
+        
+        try:
+            # High liquidity required
+            liquidity = data.get('liquidity', {})
+            if liquidity.get('value', 0) > 1000000:  # $1M+
+                score += 0.3
+                
+            # Low spread
+            if data.get('spread', 1) < 0.005:  # <0.5%
+                score += 0.2
+                
+            # High volume
+            volume_ratio = data.get('volume_ratio', 0)
+            if volume_ratio > 2:
+                score += 0.2
+                
+            # Technical indicators
+            indicators = data.get('indicators', {})
+            rsi = indicators.get('rsi', 50)
+            
+            # Look for quick reversals
+            if 30 < rsi < 70:
+                score += 0.15
+                
+            # Volatility check
+            if indicators.get('atr', 0) > 0:
+                volatility_score = min(indicators['atr'] / data.get('price', 1), 0.15)
+                score += volatility_score
+                
+            # Market conditions
+            if self.market_conditions['volatile']:
+                score *= 1.2
+                
+            return min(score, 1.0)
             
         except Exception as e:
             print(f"Scalping evaluation error: {e}")
@@ -734,95 +851,8 @@ class DecisionMaker:
             
         except Exception as e:
             print(f"Weight adjustment error: {e}")
-            print(f"Decision making error: {e}")
-            return TradingDecision(
-                should_trade=False,
-                action='hold',
-                confidence=0,
-                strategy='error',
-                position_size=0,
-                entry_price=0,
-                stop_loss=0,
-                take_profits=[],
-                expected_return=0,
-                risk_reward_ratio=0,
-                reasoning=[f'Error in decision making: {e}']
-            )
-            
-    async def _evaluate_strategies(self, analysis_data: Dict) -> Dict[StrategyType, float]:
-        """Evaluate all strategies and return scores"""
-        scores = {}
-        
-        # Parallel evaluation
-        tasks = [
-            self._evaluate_scalping(analysis_data),
-            self._evaluate_momentum(analysis_data),
-            self._evaluate_mean_reversion(analysis_data),
-            self._evaluate_breakout(analysis_data),
-            self._evaluate_swing(analysis_data),
-            self._evaluate_ai_hybrid(analysis_data)
-        ]
-        
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        strategies = [
-            StrategyType.SCALPING,
-            StrategyType.MOMENTUM,
-            StrategyType.MEAN_REVERSION,
-            StrategyType.BREAKOUT,
-            StrategyType.SWING,
-            StrategyType.AI_HYBRID
-        ]
-        
-        for strategy, result in zip(strategies, results):
-            if isinstance(result, Exception):
-                scores[strategy] = 0
-            else:
-                scores[strategy] = result
-                
-        return scores
-        
-    async def _evaluate_scalping(self, data: Dict) -> float:
-        """Evaluate scalping strategy suitability"""
-        score = 0.0
-        
-        try:
-            # High liquidity required
-            liquidity = data.get('liquidity', {})
-            if liquidity.get('value', 0) > 1000000:  # $1M+
-                score += 0.3
-                
-            # Low spread
-            if data.get('spread', 1) < 0.005:  # <0.5%
-                score += 0.2
-                
-            # High volume
-            volume_ratio = data.get('volume_ratio', 0)
-            if volume_ratio > 2:
-                score += 0.2
-                
-            # Technical indicators
-            indicators = data.get('indicators', {})
-            rsi = indicators.get('rsi', 50)
-            
-            # Look for quick reversals
-            if 30 < rsi < 70:
-                score += 0.15
-                
-            # Volatility check
-            if indicators.get('atr', 0) > 0:
-                volatility_score = min(indicators['atr'] / data.get('price', 1), 0.15)
-                score += volatility_score
-                
-            # Market conditions
-            if self.market_conditions['volatile']:
-                score *= 1.2
-                
-            return min(score, 1.0)
-            
-        except Exception as e:
-
-    # Add these methods to existing DecisionMaker class
+    
+    # API-required methods
     
     async def evaluate_opportunity(self, opportunity: TradingOpportunity) -> bool:
         """Evaluate if opportunity should be taken"""

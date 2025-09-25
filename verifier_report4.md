@@ -29,7 +29,7 @@
 - Duplicates: []
 
 ### core/decision_maker.py
-- Missing: []
+- Missing: ['def make_decision()', 'def evaluate_opportunity()', 'def calculate_confidence_score()', 'def determine_action()', 'def validate_decision()', "[ParseError] AST parse error in C:\\Users\\HP\\Desktop\\ClaudeDex\\core\\decision_maker.py: expected an indented block after 'except' statement on line 823 (<unknown>, line 827)"]
 - Sig mismatches: []
 - Duplicates: []
 
