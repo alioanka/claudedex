@@ -1,0 +1,860 @@
+"""
+DexScreener API Integration
+Real-time DEX data collection and monitoring
+"""
+
+import asyncio
+import aiohttp
+from typing import Dict, List, Optional, Any
+from datetime import datetime, timedelta
+import json
+from dataclasses import dataclass, field
+import time
+from collections import deque
+import numpy as np
+
+@dataclass
+class TokenPair:
+    """Token pair data structure"""
+    chain_id: str
+    dex_id: str
+    pair_address: str
+    base_token: Dict
+    quote_token: Dict
+    price_native: float
+    price_usd: float
+    liquidity_usd: float
+    liquidity_base: float
+    liquidity_quote: float
+    volume_24h: float
+    volume_change_24h: float
+    price_change_24h: float
+    price_change_1h: float
+    price_change_5m: float
+    trades_24h: int
+    buyers_24h: int
+    sellers_24h: int
+    created_at: int
+    pair_created_at: datetime
+    info: Dict = field(default_factory=dict)
+    
+    @property
+    def age_hours(self) -> float:
+        """Get pair age in hours"""
+        return (datetime.now() - self.pair_created_at).total_seconds() / 3600
+        
+    @property
+    def buy_sell_ratio(self) -> float:
+        """Calculate buy/sell ratio"""
+        total = self.buyers_24h + self.sellers_24h
+        if total == 0:
+            return 0.5
+        return self.buyers_24h / total
+
+class DexScreenerCollector:
+    """DexScreener data collector"""
+    
+    def __init__(self, config: Dict):
+        """
+        Initialize DexScreener collector
+        
+        Args:
+            config: Configuration dictionary
+        """
+        self.config = config
+        self.api_key = config.get('api_key', '')
+        self.base_url = "https://api.dexscreener.com/latest/dex"
+        
+        # Rate limiting
+        self.rate_limit = config.get('rate_limit', 100)
+        self.request_times = deque(maxlen=self.rate_limit)
+        
+        # Caching
+        self.cache = {}
+        self.cache_duration = config.get('cache_duration', 60)  # seconds
+        
+        # Monitoring
+        self.monitored_pairs = set()
+        self.new_pairs_queue = asyncio.Queue()
+        
+        # Filters
+        self.min_liquidity = config.get('min_liquidity', 10000)
+        self.min_volume = config.get('min_volume', 5000)
+        self.max_age_hours = config.get('max_age_hours', 24)
+        self.chains = config.get('chains', ['ethereum', 'bsc', 'polygon', 'arbitrum', 'base'])
+        
+        # Session
+        self.session: Optional[aiohttp.ClientSession] = None
+        
+        # Statistics
+        self.stats = {
+            'total_requests': 0,
+            'successful_requests': 0,
+            'failed_requests': 0,
+            'pairs_found': 0,
+            'pairs_filtered': 0
+        }
+        
+    async def initialize(self):
+        """Initialize the collector"""
+        if not self.session:
+            timeout = aiohttp.ClientTimeout(total=30)
+            self.session = aiohttp.ClientSession(timeout=timeout)
+            
+    async def close(self):
+        """Close the collector"""
+        if self.session:
+            await self.session.close()
+            
+    async def _rate_limit(self):
+        """Implement rate limiting"""
+        now = time.time()
+        
+        # Remove old requests outside the window
+        while self.request_times and self.request_times[0] < now - 60:
+            self.request_times.popleft()
+            
+        # Check if we need to wait
+        if len(self.request_times) >= self.rate_limit:
+            sleep_time = 60 - (now - self.request_times[0])
+            if sleep_time > 0:
+                await asyncio.sleep(sleep_time)
+                
+        self.request_times.append(now)
+        
+    async def _make_request(self, endpoint: str, params: Dict = None) -> Optional[Dict]:
+        """
+        Make API request with error handling
+        
+        Args:
+            endpoint: API endpoint
+            params: Query parameters
+            
+        Returns:
+            Response data or None
+        """
+        await self._rate_limit()
+        
+        url = f"{self.base_url}/{endpoint}"
+        headers = {}
+        
+        if self.api_key:
+            headers['X-API-KEY'] = self.api_key
+            
+        try:
+            self.stats['total_requests'] += 1
+            
+            async with self.session.get(url, params=params, headers=headers) as response:
+                if response.status == 200:
+                    self.stats['successful_requests'] += 1
+                    return await response.json()
+                else:
+                    self.stats['failed_requests'] += 1
+                    print(f"API request failed: {response.status}")
+                    return None
+                    
+        except asyncio.TimeoutError:
+            self.stats['failed_requests'] += 1
+            print("Request timeout")
+            return None
+        except Exception as e:
+            self.stats['failed_requests'] += 1
+            print(f"Request error: {e}")
+            return None
+            
+    async def get_new_pairs(self, limit: int = 100) -> List[Dict]:
+        """
+        Get newly created pairs
+        
+        Args:
+            limit: Maximum number of pairs to return
+            
+        Returns:
+            List of new pair data
+        """
+        new_pairs = []
+        
+        for chain in self.chains:
+            # Check cache
+            cache_key = f"new_pairs_{chain}"
+            if cache_key in self.cache:
+                cached_data, cached_time = self.cache[cache_key]
+                if time.time() - cached_time < self.cache_duration:
+                    new_pairs.extend(cached_data)
+                    continue
+                    
+            # Fetch new pairs
+            endpoint = f"pairs/{chain}"
+            data = await self._make_request(endpoint)
+            
+            if data and 'pairs' in data:
+                chain_pairs = []
+                
+                for pair_data in data['pairs']:
+                    # Parse pair
+                    pair = self._parse_pair(pair_data)
+                    
+                    if pair and self._filter_pair(pair):
+                        chain_pairs.append(self._pair_to_dict(pair))
+                        self.stats['pairs_found'] += 1
+                    else:
+                        self.stats['pairs_filtered'] += 1
+                        
+                # Cache results
+                self.cache[cache_key] = (chain_pairs, time.time())
+                new_pairs.extend(chain_pairs)
+                
+        # Sort by creation time
+        new_pairs.sort(key=lambda x: x['created_at'], reverse=True)
+        
+        # Add to monitoring
+        for pair in new_pairs[:limit]:
+            self.monitored_pairs.add(pair['pair_address'])
+            await self.new_pairs_queue.put(pair)
+            
+        return new_pairs[:limit]
+        
+    async def get_token_price(self, token_address: str) -> Optional[float]:
+        """
+        Get current token price
+        
+        Args:
+            token_address: Token contract address
+            
+        Returns:
+            Current price in USD or None
+        """
+        # Check cache
+        cache_key = f"price_{token_address}"
+        if cache_key in self.cache:
+            cached_data, cached_time = self.cache[cache_key]
+            if time.time() - cached_time < 10:  # 10 second cache for prices
+                return cached_data
+                
+        # Search for token
+        endpoint = f"tokens/{token_address}"
+        data = await self._make_request(endpoint)
+        
+        if data and 'pairs' in data and len(data['pairs']) > 0:
+            # Get price from most liquid pair
+            pairs = sorted(data['pairs'], key=lambda x: x.get('liquidity', {}).get('usd', 0), reverse=True)
+            price = pairs[0].get('priceUsd')
+            
+            if price:
+                price = float(price)
+                self.cache[cache_key] = (price, time.time())
+                return price
+                
+        return None
+        
+    async def get_pair_data(self, pair_address: str) -> Optional[Dict]:
+        """
+        Get detailed pair data
+        
+        Args:
+            pair_address: Pair contract address
+            
+        Returns:
+            Pair data dictionary or None
+        """
+        # Check cache
+        cache_key = f"pair_{pair_address}"
+        if cache_key in self.cache:
+            cached_data, cached_time = self.cache[cache_key]
+            if time.time() - cached_time < self.cache_duration:
+                return cached_data
+                
+        # Fetch pair data
+        endpoint = f"pairs/{pair_address}"
+        data = await self._make_request(endpoint)
+        
+        if data and 'pair' in data:
+            pair = self._parse_pair(data['pair'])
+            if pair:
+                pair_dict = self._pair_to_dict(pair)
+                self.cache[cache_key] = (pair_dict, time.time())
+                return pair_dict
+                
+        return None
+        
+    async def get_token_pairs(self, token_address: str) -> List[Dict]:
+        """
+        Get all pairs for a token
+        
+        Args:
+            token_address: Token contract address
+            
+        Returns:
+            List of pair data
+        """
+        endpoint = f"tokens/{token_address}"
+        data = await self._make_request(endpoint)
+        
+        pairs = []
+        if data and 'pairs' in data:
+            for pair_data in data['pairs']:
+                pair = self._parse_pair(pair_data)
+                if pair:
+                    pairs.append(self._pair_to_dict(pair))
+                    
+        return pairs
+        
+    async def search_pairs(self, query: str) -> List[Dict]:
+        """
+        Search for pairs by token name or symbol
+        
+        Args:
+            query: Search query
+            
+        Returns:
+            List of matching pairs
+        """
+        endpoint = "search"
+        params = {'q': query}
+        data = await self._make_request(endpoint, params)
+        
+        pairs = []
+        if data and 'pairs' in data:
+            for pair_data in data['pairs']:
+                pair = self._parse_pair(pair_data)
+                if pair and self._filter_pair(pair):
+                    pairs.append(self._pair_to_dict(pair))
+                    
+        return pairs
+        
+    async def get_trending_pairs(self) -> List[Dict]:
+        """
+        Get trending pairs across all chains
+        
+        Returns:
+            List of trending pairs
+        """
+        trending = []
+        
+        for chain in self.chains:
+            endpoint = f"gainers/{chain}"
+            data = await self._make_request(endpoint)
+            
+            if data and 'pairs' in data:
+                for pair_data in data['pairs']:
+                    pair = self._parse_pair(pair_data)
+                    if pair and self._filter_pair(pair):
+                        trending.append(self._pair_to_dict(pair))
+                        
+        # Sort by volume
+        trending.sort(key=lambda x: x['volume_24h'], reverse=True)
+        
+        return trending[:100]  # Top 100
+        
+    async def get_boosts(self) -> List[Dict]:
+        """
+        Get boosted pairs (paid promotions)
+        
+        Returns:
+            List of boosted pairs
+        """
+        endpoint = "boosts/active"
+        data = await self._make_request(endpoint)
+        
+        boosted = []
+        if data:
+            for boost_data in data:
+                if 'pair' in boost_data:
+                    pair = self._parse_pair(boost_data['pair'])
+                    if pair:
+                        pair_dict = self._pair_to_dict(pair)
+                        pair_dict['boost_amount'] = boost_data.get('amount', 0)
+                        boosted.append(pair_dict)
+                        
+        return boosted
+        
+    async def monitor_pair(self, pair_address: str, callback: callable = None):
+        """
+        Monitor a pair for changes
+        
+        Args:
+            pair_address: Pair to monitor
+            callback: Function to call on updates
+        """
+        self.monitored_pairs.add(pair_address)
+        
+        previous_data = None
+        
+        while pair_address in self.monitored_pairs:
+            try:
+                current_data = await self.get_pair_data(pair_address)
+                
+                if current_data and previous_data:
+                    # Check for significant changes
+                    changes = self._detect_changes(previous_data, current_data)
+                    
+                    if changes and callback:
+                        await callback(pair_address, changes)
+                        
+                previous_data = current_data
+                await asyncio.sleep(5)  # Check every 5 seconds
+                
+            except Exception as e:
+                print(f"Error monitoring pair {pair_address}: {e}")
+                await asyncio.sleep(10)
+                
+    def stop_monitoring(self, pair_address: str):
+        """Stop monitoring a pair"""
+        self.monitored_pairs.discard(pair_address)
+        
+    def _parse_pair(self, data: Dict) -> Optional[TokenPair]:
+        """
+        Parse raw pair data into TokenPair object
+        
+        Args:
+            data: Raw pair data from API
+            
+        Returns:
+            TokenPair object or None
+        """
+        try:
+            # Extract base and quote tokens
+            base_token = data.get('baseToken', {})
+            quote_token = data.get('quoteToken', {})
+            
+            # Extract liquidity
+            liquidity = data.get('liquidity', {})
+            liquidity_usd = float(liquidity.get('usd', 0))
+            liquidity_base = float(liquidity.get('base', 0))
+            liquidity_quote = float(liquidity.get('quote', 0))
+            
+            # Extract volume
+            volume = data.get('volume', {})
+            volume_24h = float(volume.get('h24', 0))
+            
+            # Extract price changes
+            price_change = data.get('priceChange', {})
+            
+            # Extract transaction counts
+            txns = data.get('txns', {})
+            h24_txns = txns.get('h24', {})
+            
+            # Create TokenPair object
+            pair = TokenPair(
+                chain_id=data.get('chainId', ''),
+                dex_id=data.get('dexId', ''),
+                pair_address=data.get('pairAddress', ''),
+                base_token={
+                    'address': base_token.get('address', ''),
+                    'name': base_token.get('name', ''),
+                    'symbol': base_token.get('symbol', '')
+                },
+                quote_token={
+                    'address': quote_token.get('address', ''),
+                    'name': quote_token.get('name', ''),
+                    'symbol': quote_token.get('symbol', '')
+                },
+                price_native=float(data.get('priceNative', 0)),
+                price_usd=float(data.get('priceUsd', 0)),
+                liquidity_usd=liquidity_usd,
+                liquidity_base=liquidity_base,
+                liquidity_quote=liquidity_quote,
+                volume_24h=volume_24h,
+                volume_change_24h=float(volume.get('h24Change', 0)),
+                price_change_24h=float(price_change.get('h24', 0)),
+                price_change_1h=float(price_change.get('h1', 0)),
+                price_change_5m=float(price_change.get('m5', 0)),
+                trades_24h=h24_txns.get('buys', 0) + h24_txns.get('sells', 0),
+                buyers_24h=h24_txns.get('buys', 0),
+                sellers_24h=h24_txns.get('sells', 0),
+                created_at=data.get('pairCreatedAt', 0),
+                pair_created_at=datetime.fromtimestamp(data.get('pairCreatedAt', 0) / 1000) if data.get('pairCreatedAt') else datetime.now(),
+                info=data.get('info', {})
+            )
+            
+            return pair
+            
+        except Exception as e:
+            print(f"Error parsing pair data: {e}")
+            return None
+            
+    def _pair_to_dict(self, pair: TokenPair) -> Dict:
+        """Convert TokenPair to dictionary"""
+        return {
+            'chain': pair.chain_id,
+            'dex': pair.dex_id,
+            'pair_address': pair.pair_address,
+            'token_address': pair.base_token['address'],
+            'token_name': pair.base_token['name'],
+            'token_symbol': pair.base_token['symbol'],
+            'price': pair.price_usd,
+            'price_native': pair.price_native,
+            'liquidity': pair.liquidity_usd,
+            'volume_24h': pair.volume_24h,
+            'volume_change_24h': pair.volume_change_24h,
+            'price_change_24h': pair.price_change_24h,
+            'price_change_1h': pair.price_change_1h,
+            'price_change_5m': pair.price_change_5m,
+            'trades_24h': pair.trades_24h,
+            'buyers_24h': pair.buyers_24h,
+            'sellers_24h': pair.sellers_24h,
+            'buy_sell_ratio': pair.buy_sell_ratio,
+            'age_hours': pair.age_hours,
+            'created_at': pair.created_at,
+            'creator_address': pair.info.get('creator', ''),
+            'metadata': pair.info
+        }
+        
+    def _filter_pair(self, pair: TokenPair) -> bool:
+        """
+        Filter pairs based on criteria
+        
+        Args:
+            pair: TokenPair to filter
+            
+        Returns:
+            True if pair passes filters
+        """
+        # Check liquidity
+        if pair.liquidity_usd < self.min_liquidity:
+            return False
+            
+        # Check volume
+        if pair.volume_24h < self.min_volume:
+            return False
+            
+        # Check age
+        if pair.age_hours > self.max_age_hours:
+            return False
+            
+        # Check for honeypot indicators
+        if pair.buyers_24h == 0 and pair.sellers_24h > 0:
+            return False  # Only sells, likely honeypot
+            
+        # Check price
+        if pair.price_usd <= 0:
+            return False
+            
+        return True
+        
+    def _detect_changes(self, previous: Dict, current: Dict) -> Optional[Dict]:
+        """
+        Detect significant changes in pair data
+        
+        Args:
+            previous: Previous pair data
+            current: Current pair data
+            
+        Returns:
+            Dictionary of changes or None
+        """
+        changes = {}
+        
+        # Price changes
+        prev_price = previous.get('price', 0)
+        curr_price = current.get('price', 0)
+        
+        if prev_price > 0:
+            price_change = (curr_price - prev_price) / prev_price
+            
+            if abs(price_change) > 0.05:  # 5% change
+                changes['price_change'] = price_change
+                changes['new_price'] = curr_price
+                
+        # Volume changes
+        prev_volume = previous.get('volume_24h', 0)
+        curr_volume = current.get('volume_24h', 0)
+        
+        if prev_volume > 0:
+            volume_change = (curr_volume - prev_volume) / prev_volume
+            
+            if abs(volume_change) > 0.5:  # 50% change
+                changes['volume_change'] = volume_change
+                changes['new_volume'] = curr_volume
+                
+        # Liquidity changes
+        prev_liquidity = previous.get('liquidity', 0)
+        curr_liquidity = current.get('liquidity', 0)
+        
+        if prev_liquidity > 0:
+            liquidity_change = (curr_liquidity - prev_liquidity) / prev_liquidity
+            
+            if abs(liquidity_change) > 0.2:  # 20% change
+                changes['liquidity_change'] = liquidity_change
+                changes['new_liquidity'] = curr_liquidity
+                
+                # Alert on significant liquidity removal
+                if liquidity_change < -0.5:  # 50% liquidity removed
+                    changes['alert'] = 'LIQUIDITY_REMOVAL'
+                    
+        # Buy/Sell ratio changes
+        prev_ratio = previous.get('buy_sell_ratio', 0.5)
+        curr_ratio = current.get('buy_sell_ratio', 0.5)
+        
+        if abs(curr_ratio - prev_ratio) > 0.2:
+            changes['buy_sell_ratio_change'] = curr_ratio - prev_ratio
+            changes['new_buy_sell_ratio'] = curr_ratio
+            
+        return changes if changes else None
+        
+    async def get_price_history(self, pair_address: str, interval: str = '5m', limit: int = 100) -> List[Dict]:
+        """
+        Get price history for a pair
+        
+        Args:
+            pair_address: Pair contract address
+            interval: Time interval (5m, 15m, 30m, 1h, 4h, 1d)
+            limit: Number of candles
+            
+        Returns:
+            List of OHLCV data
+        """
+        # This would need a different endpoint or data source
+        # DexScreener doesn't provide historical data directly
+        # You might need to use another service or track it yourself
+        
+        # For now, return empty list
+        return []
+        
+    async def calculate_metrics(self, pair_address: str) -> Dict:
+        """
+        Calculate advanced metrics for a pair
+        
+        Args:
+            pair_address: Pair contract address
+            
+        Returns:
+            Dictionary of calculated metrics
+        """
+        pair_data = await self.get_pair_data(pair_address)
+        
+        if not pair_data:
+            return {}
+            
+        metrics = {
+            'liquidity_to_mcap_ratio': 0,
+            'volume_to_liquidity_ratio': 0,
+            'price_impact_1_eth': 0,
+            'holder_balance_score': 0,
+            'momentum_score': 0,
+            'risk_score': 0
+        }
+        
+        # Liquidity to market cap ratio
+        liquidity = pair_data.get('liquidity', 0)
+        price = pair_data.get('price', 0)
+        
+        if liquidity > 0 and price > 0:
+            # Estimate market cap (this is simplified)
+            estimated_mcap = price * 1000000000  # Assume 1B supply
+            metrics['liquidity_to_mcap_ratio'] = liquidity / estimated_mcap
+            
+        # Volume to liquidity ratio
+        volume = pair_data.get('volume_24h', 0)
+        if liquidity > 0:
+            metrics['volume_to_liquidity_ratio'] = volume / liquidity
+            
+        # Price momentum score
+        price_change_1h = pair_data.get('price_change_1h', 0)
+        price_change_24h = pair_data.get('price_change_24h', 0)
+        
+        metrics['momentum_score'] = (price_change_1h * 0.7 + price_change_24h * 0.3) / 100
+        
+        # Risk score (simplified)
+        age_hours = pair_data.get('age_hours', 0)
+        buy_sell_ratio = pair_data.get('buy_sell_ratio', 0.5)
+        
+        risk_factors = []
+        
+        if liquidity < 50000:
+            risk_factors.append(0.3)
+        if age_hours < 24:
+            risk_factors.append(0.2)
+        if buy_sell_ratio < 0.3 or buy_sell_ratio > 0.7:
+            risk_factors.append(0.2)
+        if volume < 10000:
+            risk_factors.append(0.3)
+            
+        metrics['risk_score'] = min(sum(risk_factors), 1.0)
+        
+        return metrics
+        
+    def get_stats(self) -> Dict:
+        """Get collector statistics"""
+        return self.stats.copy()
+
+    # ============================================================================
+    # PATCH FOR: dexscreener.py
+    # Add these methods to the DexScreenerCollector class
+    # ============================================================================
+
+    async def get_token_info(self, address: str, chain: str = 'ethereum') -> Dict:
+        """
+        Get token information
+        
+        Args:
+            address: Token contract address
+            chain: Blockchain network
+            
+        Returns:
+            Token information dictionary
+        """
+        # Use existing get_token_price and extend it
+        price = await self.get_token_price(address)
+        pairs = await self.get_token_pairs(address)
+        
+        if pairs and len(pairs) > 0:
+            # Get most liquid pair info
+            main_pair = pairs[0]
+            
+            return {
+                'address': address,
+                'chain': chain,
+                'name': main_pair.get('token_name', 'Unknown'),
+                'symbol': main_pair.get('token_symbol', '???'),
+                'price': price or 0,
+                'liquidity': main_pair.get('liquidity', 0),
+                'volume_24h': main_pair.get('volume_24h', 0),
+                'price_change_24h': main_pair.get('price_change_24h', 0),
+                'market_cap': 0,  # Would need total supply
+                'pairs_count': len(pairs),
+                'main_pair': main_pair.get('pair_address', ''),
+                'created_at': main_pair.get('created_at', 0)
+            }
+        
+        return {
+            'address': address,
+            'chain': chain,
+            'name': 'Unknown',
+            'symbol': '???',
+            'price': price or 0,
+            'liquidity': 0,
+            'volume_24h': 0,
+            'price_change_24h': 0,
+            'market_cap': 0,
+            'pairs_count': 0,
+            'main_pair': '',
+            'created_at': 0
+        }
+
+    async def get_trending_tokens(self, chain: str = 'ethereum') -> List[Dict]:
+        """
+        Get trending tokens for a chain
+        
+        Args:
+            chain: Blockchain network
+            
+        Returns:
+            List of trending token data
+        """
+        # Use get_trending_pairs and extract unique tokens
+        trending_pairs = await self.get_trending_pairs()
+        
+        # Extract unique tokens from pairs
+        seen_tokens = set()
+        trending_tokens = []
+        
+        for pair in trending_pairs:
+            token_address = pair.get('token_address', '')
+            
+            if token_address and token_address not in seen_tokens:
+                seen_tokens.add(token_address)
+                
+                trending_tokens.append({
+                    'address': token_address,
+                    'chain': pair.get('chain', chain),
+                    'name': pair.get('token_name', 'Unknown'),
+                    'symbol': pair.get('token_symbol', '???'),
+                    'price': pair.get('price', 0),
+                    'price_change_24h': pair.get('price_change_24h', 0),
+                    'volume_24h': pair.get('volume_24h', 0),
+                    'liquidity': pair.get('liquidity', 0),
+                    'trending_score': pair.get('volume_24h', 0) * (1 + pair.get('price_change_24h', 0) / 100)
+                })
+        
+        # Filter for requested chain
+        if chain:
+            trending_tokens = [t for t in trending_tokens if t.get('chain') == chain]
+        
+        # Sort by trending score
+        trending_tokens.sort(key=lambda x: x.get('trending_score', 0), reverse=True)
+        
+        return trending_tokens
+
+    async def get_gainers_losers(self, chain: str = 'ethereum', period: str = '24h') -> Dict:
+        """
+        Get top gainers and losers
+        
+        Args:
+            chain: Blockchain network
+            period: Time period (1h, 24h, 7d)
+            
+        Returns:
+            Dictionary with gainers and losers
+        """
+        # Fetch gainers
+        gainers_endpoint = f"gainers/{chain}"
+        gainers_data = await self._make_request(gainers_endpoint)
+        
+        gainers = []
+        losers = []
+        
+        if gainers_data and 'pairs' in gainers_data:
+            for pair_data in gainers_data['pairs']:
+                pair = self._parse_pair(pair_data)
+                if pair:
+                    pair_dict = self._pair_to_dict(pair)
+                    
+                    # Determine price change based on period
+                    price_change = 0
+                    if period == '1h':
+                        price_change = pair_dict.get('price_change_1h', 0)
+                    elif period == '24h':
+                        price_change = pair_dict.get('price_change_24h', 0)
+                    else:
+                        price_change = pair_dict.get('price_change_24h', 0)
+                    
+                    token_info = {
+                        'address': pair_dict.get('token_address', ''),
+                        'name': pair_dict.get('token_name', ''),
+                        'symbol': pair_dict.get('token_symbol', ''),
+                        'price': pair_dict.get('price', 0),
+                        'price_change': price_change,
+                        'volume': pair_dict.get('volume_24h', 0),
+                        'liquidity': pair_dict.get('liquidity', 0)
+                    }
+                    
+                    if price_change > 0:
+                        gainers.append(token_info)
+                    else:
+                        losers.append(token_info)
+        
+        # Sort by price change
+        gainers.sort(key=lambda x: x['price_change'], reverse=True)
+        losers.sort(key=lambda x: x['price_change'])
+        
+        return {
+            'period': period,
+            'chain': chain,
+            'gainers': gainers[:20],  # Top 20 gainers
+            'losers': losers[:20],    # Top 20 losers
+            'timestamp': time.time()
+        }
+
+        
+async def test_api_connection():
+    """Test DexScreener API connectivity"""
+    collector = DexScreenerCollector({'api_key': '', 'chains': ['ethereum']})
+    await collector.initialize()
+    
+    try:
+        # Try to fetch some data
+        pairs = await collector.get_new_pairs(limit=1)
+        if pairs:
+            print("DexScreener API connection successful")
+            return True
+        else:
+            print("DexScreener API returned no data")
+            return False
+            
+    except Exception as e:
+        print(f"DexScreener API connection failed: {e}")
+        return False
+        
+    finally:
+        await collector.close()

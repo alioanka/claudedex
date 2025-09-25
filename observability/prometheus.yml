@@ -1,0 +1,35 @@
+# monitoring/prometheus.yml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+rule_files:
+  - "alerts.yml"
+
+scrape_configs:
+  # Trading Bot Metrics
+  - job_name: 'trading-bot'
+    static_configs:
+      - targets: ['trading-bot:8080']
+    metrics_path: /metrics
+  
+  # PostgreSQL Metrics
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+  
+  # Redis Metrics
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+  
+  # Node Metrics
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']

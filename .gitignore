@@ -1,0 +1,225 @@
+# ClaudeDex Trading Bot .gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+ENV/
+env/
+.venv
+.ENV
+.env
+virtualenv/
+pipenv/
+.python-version
+
+# Private Keys & Sensitive Data
+*.pem
+*.key
+*.pfx
+*.p12
+private_key.txt
+secret_key.txt
+wallet_keys.json
+mnemonic.txt
+seed_phrase.txt
+
+# Environment Files
+.env
+.env.local
+.env.production
+.env.development
+.env.test
+.env.*
+!.env.example
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+*.sql
+data/*.db
+postgres-data/
+mysql-data/
+redis-data/
+
+# Logs
+logs/
+*.log
+*.log.*
+log-*
+debug.log
+error.log
+trading_logs/
+audit_logs/
+performance_logs/
+
+# Cache
+.cache/
+*.cache
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+.project
+.pydevproject
+.settings/
+.classpath
+*.sublime-project
+*.sublime-workspace
+
+# Testing
+.tox/
+.nox/
+.coverage
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+test-results/
+test-reports/
+junit/
+
+# Documentation
+docs/_build/
+docs/.doctrees/
+site/
+.mkdocs/
+
+# ML Models
+models/*.pkl
+models/*.h5
+models/*.pt
+models/*.pth
+models/*.onnx
+models/*.pb
+*.checkpoint
+model_checkpoints/
+trained_models/
+ml_artifacts/
+
+# Trading Data
+positions.json
+trades.json
+orders.json
+backtest_results/
+historical_data/
+market_data/*.csv
+price_data/
+
+# Docker
+docker-compose.override.yml
+.dockerignore
+docker-volumes/
+
+# Kubernetes
+kubeconfig
+*.kubeconfig
+secrets.yaml
+secret.yaml
+*-secrets.yaml
+
+# Monitoring
+prometheus-data/
+grafana-data/
+grafana/data/
+grafana/logs/
+metrics/
+
+# Node (for any JS tools)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Temporary Files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+
+# OS Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+!examples/*.ipynb
+
+# Custom
+trading_sessions/
+wallet_backups/
+config/production/
+config/mainnet/
+audit_reports/
+security_scans/
+deployment_keys/
+ssl_certificates/
+
+# Don't ignore
+!.gitignore
+!.github/
+!requirements.txt
+!test-requirements.txt
+!README.md
+!LICENSE
+!docker-compose.yml
+!Dockerfile
+!.env.example
+!pytest.ini

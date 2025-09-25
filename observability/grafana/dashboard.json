@@ -1,0 +1,87 @@
+{
+    "dashboard": {
+      "title": "Trading Bot Dashboard",
+      "panels": [
+        {
+          "title": "Portfolio Value",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "trading_portfolio_value",
+              "legendFormat": "Portfolio Value"
+            }
+          ]
+        },
+        {
+          "title": "P&L",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "trading_pnl_total",
+              "legendFormat": "Total P&L"
+            },
+            {
+              "expr": "rate(trading_pnl_total[1h])",
+              "legendFormat": "Hourly P&L"
+            }
+          ]
+        },
+        {
+          "title": "Active Positions",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "trading_positions_active",
+              "legendFormat": "Active Positions"
+            }
+          ]
+        },
+        {
+          "title": "Win Rate",
+          "type": "gauge",
+          "targets": [
+            {
+              "expr": "trading_win_rate * 100",
+              "legendFormat": "Win Rate %"
+            }
+          ]
+        },
+        {
+          "title": "Order Execution Latency",
+          "type": "heatmap",
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, trading_order_duration_seconds_bucket)",
+              "legendFormat": "95th percentile"
+            }
+          ]
+        },
+        {
+          "title": "System Metrics",
+          "type": "row",
+          "panels": [
+            {
+              "title": "CPU Usage",
+              "type": "graph",
+              "targets": [
+                {
+                  "expr": "rate(process_cpu_seconds_total[5m]) * 100",
+                  "legendFormat": "CPU %"
+                }
+              ]
+            },
+            {
+              "title": "Memory Usage",
+              "type": "graph",
+              "targets": [
+                {
+                  "expr": "process_resident_memory_bytes / 1024 / 1024",
+                  "legendFormat": "Memory (MB)"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }

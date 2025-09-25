@@ -1,0 +1,20 @@
+# kubernetes/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trading-config
+  namespace: trading
+data:
+  trading.json: |
+    {
+      "max_position_size": 1000,
+      "max_slippage": 0.05,
+      "min_liquidity": 50000
+    }
+  security.json: |
+    {
+      "require_2fa": true,
+      "api_rate_limits": {
+        "default": {"requests": 100, "window": 60}
+      }
+    }

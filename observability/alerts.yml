@@ -1,0 +1,74 @@
+# monitoring/alerts.yml
+groups:
+  - name: trading_alerts
+    interval: 30s
+    rules:
+      # High Error Rate
+      - alert: HighErrorRate
+        expr: rate(trading_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }} errors per second"
+      
+      # Low Portfolio Balance
+      - alert: LowPortfolioBalance
+        expr: trading_portfolio_balance < 1000
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Portfolio balance critically low"
+          description: "Current balance: {{ $value }}"
+      
+      # Database Connection Issues
+      - alert: DatabaseDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "Database connection lost"
+      
+      # Redis Connection Issues
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is down"
+          description: "Cache connection lost"
+      
+      # High Memory Usage
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is above 90%"
+      
+      # Trading Performance
+      - alert: LowWinRate
+        expr: trading_win_rate < 0.4
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Win rate below threshold"
+          description: "Current win rate: {{ $value }}"
+      
+      # API Rate Limiting
+      - alert: APIRateLimited
+        expr: rate(api_rate_limit_hits[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API rate limiting triggered"
+          description: "Rate limit hits: {{ $value }} per second"

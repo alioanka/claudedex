@@ -1,0 +1,577 @@
+"""
+Honeypot Checker - Multi-API Token Verification
+Comprehensive honeypot detection using multiple security APIs and contract analysis
+"""
+
+import asyncio
+import logging
+from typing import Dict, List, Optional, Tuple, Any
+from decimal import Decimal
+import aiohttp
+from web3 import Web3
+from web3.exceptions import ContractLogicError
+import json
+
+from utils.helpers import retry_async, rate_limit, is_valid_address, format_token_amount
+from utils.constants import (
+    HONEYPOT_CHECKS, HONEYPOT_THRESHOLDS, Chain, CHAIN_RPC_URLS,
+    BLACKLISTED_TOKENS, BLACKLISTED_CONTRACTS, BLACKLISTED_WALLETS
+)
+
+logger = logging.getLogger(__name__)
+
+class HoneypotChecker:
+    """Advanced multi-API honeypot detection system"""
+    
+    def __init__(self, config: Dict = None):
+        """Initialize honeypot checker with configuration"""
+        self.config = config or {}
+        self.session = None
+        self.web3_connections = {}
+        self.api_keys = {
+            "honeypot_is": self.config.get("honeypot_is_api_key", ""),
+            "tokensniffer": self.config.get("tokensniffer_api_key", ""),
+            "goplus": self.config.get("goplus_api_key", "")
+        }
+        self.cache = {}  # Simple cache for results
+        self.cache_ttl = 300  # 5 minutes
+        
+    async def initialize(self):
+        """Initialize connections and resources"""
+        self.session = aiohttp.ClientSession()
+        await self._setup_web3_connections()
+        logger.info("HoneypotChecker initialized successfully")
+        
+    async def _setup_web3_connections(self):
+        """Setup Web3 connections for each chain"""
+        for chain in Chain:
+            if chain in CHAIN_RPC_URLS:
+                rpc_urls = CHAIN_RPC_URLS[chain]
+                if rpc_urls:
+                    self.web3_connections[chain] = Web3(Web3.HTTPProvider(rpc_urls[0]))
+                    
+    async def close(self):
+        """Clean up resources"""
+        if self.session:
+            await self.session.close()
+            
+    async def check_token(self, address: str, chain: str) -> Dict:
+        """
+        Main method to check if token is a honeypot
+        Returns comprehensive analysis from multiple sources
+        """
+        if not is_valid_address(address):
+            return {
+                "is_honeypot": True,
+                "confidence": 1.0,
+                "reason": "Invalid token address",
+                "checks": {}
+            }
+            
+        # Check blacklists first
+        if self._is_blacklisted(address):
+            return {
+                "is_honeypot": True,
+                "confidence": 1.0,
+                "reason": "Token is blacklisted",
+                "checks": {"blacklist": True}
+            }
+            
+        # Check cache
+        cache_key = f"{chain}:{address}"
+        if cache_key in self.cache:
+            cached_result, timestamp = self.cache[cache_key]
+            if asyncio.get_event_loop().time() - timestamp < self.cache_ttl:
+                return cached_result
+                
+        # Run all checks in parallel
+        checks = await self.check_multiple_apis(address, chain)
+        
+        # Analyze contract code
+        contract_analysis = await self.analyze_contract_code(address, chain)
+        checks["contract_analysis"] = contract_analysis
+        
+        # Check liquidity locks
+        liquidity_check = await self.check_liquidity_locks(address, chain)
+        checks["liquidity"] = liquidity_check
+        
+        # Calculate final verdict
+        result = self._calculate_verdict(checks)
+        
+        # Cache result
+        self.cache[cache_key] = (result, asyncio.get_event_loop().time())
+        
+        return result
+        
+    async def check_multiple_apis(self, address: str, chain: str) -> Dict:
+        """Check token across multiple security APIs"""
+        results = {}
+        
+        # Run API checks concurrently
+        tasks = []
+        
+        if self.api_keys.get("honeypot_is"):
+            tasks.append(self._check_honeypot_is(address, chain))
+        if self.api_keys.get("tokensniffer"):
+            tasks.append(self._check_tokensniffer(address, chain))
+        if self.api_keys.get("goplus"):
+            tasks.append(self._check_goplus(address, chain))
+            
+        # Always run free checks
+        tasks.append(self._check_dextools(address, chain))
+        tasks.append(self._check_contract_verification(address, chain))
+        
+        api_results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Process results
+        api_names = ["honeypot_is", "tokensniffer", "goplus", "dextools", "contract_verification"]
+        for i, result in enumerate(api_results):
+            if i < len(api_names):
+                if isinstance(result, Exception):
+                    logger.error(f"API check failed for {api_names[i]}: {result}")
+                    results[api_names[i]] = {"error": str(result)}
+                else:
+                    results[api_names[i]] = result
+                    
+        return results
+        
+    @retry_async(max_retries=3, delay=1.0)
+    @rate_limit(calls=5, period=1.0)
+    async def _check_honeypot_is(self, address: str, chain: str) -> Dict:
+        """Check token using Honeypot.is API"""
+        try:
+            chain_id = self._get_chain_id(chain)
+            url = f"https://api.honeypot.is/v2/IsHoneypot"
+            params = {
+                "address": address,
+                "chainID": chain_id
+            }
+            
+            async with self.session.get(url, params=params) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return {
+                        "is_honeypot": data.get("honeypotResult", {}).get("isHoneypot", False),
+                        "buy_tax": float(data.get("simulationResult", {}).get("buyTax", 0)),
+                        "sell_tax": float(data.get("simulationResult", {}).get("sellTax", 0)),
+                        "transfer_tax": float(data.get("simulationResult", {}).get("transferTax", 0)),
+                        "liquidity": float(data.get("pair", {}).get("liquidity", 0)),
+                        "holders": data.get("token", {}).get("totalHolders", 0)
+                    }
+                    
+        except Exception as e:
+            logger.error(f"Honeypot.is check failed: {e}")
+            
+        return {"error": "API check failed"}
+        
+    @retry_async(max_retries=3, delay=1.0)
+    @rate_limit(calls=5, period=1.0)
+    async def _check_tokensniffer(self, address: str, chain: str) -> Dict:
+        """Check token using TokenSniffer API"""
+        try:
+            chain_id = self._get_chain_id(chain)
+            url = f"https://tokensniffer.com/api/v2/tokens/{chain_id}/{address}"
+            headers = {"Authorization": f"Bearer {self.api_keys['tokensniffer']}"}
+            
+            async with self.session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return {
+                        "score": data.get("score", 0),
+                        "is_flagged": data.get("is_flagged", False),
+                        "buy_tax": data.get("buy_tax", 0),
+                        "sell_tax": data.get("sell_tax", 0),
+                        "is_honeypot": data.get("is_honeypot", False),
+                        "is_mintable": data.get("is_mintable", False),
+                        "owner_percentage": data.get("owner_percentage", 0),
+                        "creator_percentage": data.get("creator_percentage", 0)
+                    }
+                    
+        except Exception as e:
+            logger.error(f"TokenSniffer check failed: {e}")
+            
+        return {"error": "API check failed"}
+        
+    @retry_async(max_retries=3, delay=1.0)
+    @rate_limit(calls=5, period=1.0)
+    async def _check_goplus(self, address: str, chain: str) -> Dict:
+        """Check token using GoPlus Security API"""
+        try:
+            chain_id = self._get_chain_id(chain)
+            url = f"https://api.gopluslabs.io/api/v1/token_security/{chain_id}"
+            params = {"contract_addresses": address}
+            
+            async with self.session.get(url, params=params) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    token_data = data.get("result", {}).get(address.lower(), {})
+                    
+                    return {
+                        "is_honeypot": token_data.get("is_honeypot", "0") == "1",
+                        "is_mintable": token_data.get("is_mintable", "0") == "1",
+                        "is_proxy": token_data.get("is_proxy", "0") == "1",
+                        "can_take_back_ownership": token_data.get("can_take_back_ownership", "0") == "1",
+                        "owner_change_balance": token_data.get("owner_change_balance", "0") == "1",
+                        "hidden_owner": token_data.get("hidden_owner", "0") == "1",
+                        "selfdestruct": token_data.get("selfdestruct", "0") == "1",
+                        "buy_tax": float(token_data.get("buy_tax", "0")),
+                        "sell_tax": float(token_data.get("sell_tax", "0")),
+                        "holder_count": int(token_data.get("holder_count", "0")),
+                        "total_supply": token_data.get("total_supply", "0")
+                    }
+                    
+        except Exception as e:
+            logger.error(f"GoPlus check failed: {e}")
+            
+        return {"error": "API check failed"}
+        
+    async def _check_dextools(self, address: str, chain: str) -> Dict:
+        """Check token information from DexTools (free tier)"""
+        try:
+            # This would integrate with DexTools API if available
+            # For now, returning placeholder
+            return {
+                "score": 50,
+                "liquidity_locked": False,
+                "verified": False
+            }
+        except Exception as e:
+            logger.error(f"DexTools check failed: {e}")
+            return {"error": "API check failed"}
+            
+    async def _check_contract_verification(self, address: str, chain: str) -> Dict:
+        """Check if contract is verified on block explorer"""
+        try:
+            # Check contract verification status
+            # This would integrate with Etherscan/BSCscan APIs
+            return {
+                "is_verified": False,
+                "has_source": False
+            }
+        except Exception as e:
+            logger.error(f"Contract verification check failed: {e}")
+            return {"error": "Check failed"}
+            
+    async def analyze_contract_code(self, address: str, chain: str) -> Dict:
+        """Analyze smart contract code for honeypot patterns"""
+        try:
+            chain_id = self._get_chain_id(chain)
+            if chain_id not in self.web3_connections:
+                return {"error": "Chain not supported"}
+                
+            w3 = self.web3_connections[chain_id]
+            
+            # Get contract code
+            code = w3.eth.get_code(address)
+            if not code:
+                return {"is_contract": False}
+                
+            # Check for common honeypot patterns in bytecode
+            code_hex = code.hex()
+            honeypot_patterns = [
+                "6c6f636b",  # "lock" in hex
+                "626c61636b6c697374",  # "blacklist" in hex
+                "77686974656c697374",  # "whitelist" in hex
+                "6f6e6c794f776e6572",  # "onlyOwner" pattern
+                "70617573",  # "paus" (pause) pattern
+            ]
+            
+            suspicious_patterns_found = []
+            for pattern in honeypot_patterns:
+                if pattern in code_hex.lower():
+                    suspicious_patterns_found.append(pattern)
+                    
+            # Try to detect standard interfaces
+            is_standard_erc20 = self._check_erc20_interface(w3, address)
+            
+            return {
+                "is_contract": True,
+                "code_size": len(code),
+                "suspicious_patterns": suspicious_patterns_found,
+                "pattern_count": len(suspicious_patterns_found),
+                "is_standard_erc20": is_standard_erc20,
+                "risk_score": min(len(suspicious_patterns_found) * 20, 100)
+            }
+            
+        except Exception as e:
+            logger.error(f"Contract analysis failed: {e}")
+            return {"error": str(e)}
+            
+    def _check_erc20_interface(self, w3: Web3, address: str) -> bool:
+        """Check if contract implements standard ERC20 interface"""
+        try:
+            # Minimal ERC20 ABI for checking
+            erc20_abi = [
+                {"inputs": [], "name": "totalSupply", "outputs": [{"type": "uint256"}], "type": "function"},
+                {"inputs": [{"type": "address"}], "name": "balanceOf", "outputs": [{"type": "uint256"}], "type": "function"},
+                {"inputs": [{"type": "address"}, {"type": "uint256"}], "name": "transfer", "outputs": [{"type": "bool"}], "type": "function"},
+            ]
+            
+            contract = w3.eth.contract(address=address, abi=erc20_abi)
+            
+            # Try to call basic functions
+            _ = contract.functions.totalSupply().call()
+            return True
+            
+        except (ContractLogicError, Exception):
+            return False
+            
+    async def check_liquidity_locks(self, address: str, chain: str) -> Dict:
+        """Check if liquidity is locked"""
+        try:
+            # Check major liquidity lockers
+            # This would integrate with services like Unicrypt, Team.Finance, etc.
+            
+            return {
+                "is_locked": False,
+                "lock_period": 0,
+                "locked_amount": 0,
+                "locked_percentage": 0,
+                "locker_address": None,
+                "unlock_date": None
+            }
+            
+        except Exception as e:
+            logger.error(f"Liquidity lock check failed: {e}")
+            return {"error": str(e)}
+            
+    def _is_blacklisted(self, address: str) -> bool:
+        """Check if token/contract is blacklisted"""
+        address_lower = address.lower()
+        return (
+            address_lower in BLACKLISTED_TOKENS or
+            address_lower in BLACKLISTED_CONTRACTS
+        )
+        
+    def _get_chain_id(self, chain: str) -> int:
+        """Convert chain string to chain ID"""
+        chain_map = {
+            "ethereum": Chain.ETHEREUM,
+            "eth": Chain.ETHEREUM,
+            "bsc": Chain.BSC,
+            "binance": Chain.BSC,
+            "polygon": Chain.POLYGON,
+            "matic": Chain.POLYGON,
+            "arbitrum": Chain.ARBITRUM,
+            "base": Chain.BASE
+        }
+        
+        return chain_map.get(chain.lower(), Chain.ETHEREUM)
+        
+    def _calculate_verdict(self, checks: Dict) -> Dict:
+        """Calculate final honeypot verdict based on all checks"""
+        honeypot_indicators = []
+        confidence_scores = []
+        reasons = []
+        
+        # Process API results
+        for api_name, result in checks.items():
+            if isinstance(result, dict) and "error" not in result:
+                # Check for honeypot flags
+                if result.get("is_honeypot"):
+                    honeypot_indicators.append(f"{api_name}_honeypot")
+                    confidence_scores.append(0.9)
+                    reasons.append(f"{api_name} detected honeypot")
+                    
+                # Check buy/sell taxes
+                buy_tax = result.get("buy_tax", 0)
+                sell_tax = result.get("sell_tax", 0)
+                
+                if buy_tax > float(HONEYPOT_THRESHOLDS["max_buy_tax"]):
+                    honeypot_indicators.append(f"{api_name}_high_buy_tax")
+                    confidence_scores.append(0.8)
+                    reasons.append(f"High buy tax: {buy_tax:.2%}")
+                    
+                if sell_tax > float(HONEYPOT_THRESHOLDS["max_sell_tax"]):
+                    honeypot_indicators.append(f"{api_name}_high_sell_tax")
+                    confidence_scores.append(0.9)
+                    reasons.append(f"High sell tax: {sell_tax:.2%}")
+                    
+                # Check ownership concentration
+                owner_percentage = result.get("owner_percentage", 0)
+                if owner_percentage > float(HONEYPOT_THRESHOLDS["max_ownership"]) * 100:
+                    honeypot_indicators.append(f"{api_name}_high_ownership")
+                    confidence_scores.append(0.7)
+                    reasons.append(f"High ownership concentration: {owner_percentage:.1f}%")
+                    
+                # Check holder count
+                holders = result.get("holders", result.get("holder_count", 0))
+                if holders and holders < HONEYPOT_THRESHOLDS["min_holders"]:
+                    honeypot_indicators.append(f"{api_name}_low_holders")
+                    confidence_scores.append(0.6)
+                    reasons.append(f"Low holder count: {holders}")
+                    
+                # Check mintable flag
+                if result.get("is_mintable"):
+                    honeypot_indicators.append(f"{api_name}_mintable")
+                    confidence_scores.append(0.8)
+                    reasons.append("Token is mintable")
+                    
+                # Check other risk flags
+                if result.get("can_take_back_ownership"):
+                    honeypot_indicators.append(f"{api_name}_ownership_risk")
+                    confidence_scores.append(0.85)
+                    reasons.append("Ownership can be taken back")
+                    
+                if result.get("hidden_owner"):
+                    honeypot_indicators.append(f"{api_name}_hidden_owner")
+                    confidence_scores.append(0.75)
+                    reasons.append("Hidden owner detected")
+                    
+                if result.get("selfdestruct"):
+                    honeypot_indicators.append(f"{api_name}_selfdestruct")
+                    confidence_scores.append(0.95)
+                    reasons.append("Self-destruct function present")
+                    
+        # Process contract analysis
+        if "contract_analysis" in checks:
+            analysis = checks["contract_analysis"]
+            if not analysis.get("error"):
+                if analysis.get("suspicious_patterns"):
+                    honeypot_indicators.append("suspicious_code_patterns")
+                    confidence_scores.append(0.7)
+                    reasons.append(f"Suspicious code patterns: {analysis['pattern_count']}")
+                    
+                if not analysis.get("is_standard_erc20"):
+                    honeypot_indicators.append("non_standard_token")
+                    confidence_scores.append(0.5)
+                    reasons.append("Non-standard token implementation")
+                    
+                risk_score = analysis.get("risk_score", 0)
+                if risk_score > 60:
+                    honeypot_indicators.append("high_risk_score")
+                    confidence_scores.append(risk_score / 100)
+                    reasons.append(f"High risk score: {risk_score}")
+                    
+        # Process liquidity checks
+        if "liquidity" in checks:
+            liquidity = checks["liquidity"]
+            if not liquidity.get("error"):
+                if not liquidity.get("is_locked"):
+                    honeypot_indicators.append("unlocked_liquidity")
+                    confidence_scores.append(0.6)
+                    reasons.append("Liquidity not locked")
+                    
+                # Check liquidity amount
+                liquidity_usd = liquidity.get("liquidity", 0)
+                if liquidity_usd < HONEYPOT_THRESHOLDS["min_liquidity"]:
+                    honeypot_indicators.append("low_liquidity")
+                    confidence_scores.append(0.7)
+                    reasons.append(f"Low liquidity: ${liquidity_usd:,.0f}")
+                    
+        # Calculate final verdict
+        if not honeypot_indicators:
+            return {
+                "is_honeypot": False,
+                "confidence": 0.9,
+                "risk_level": "low",
+                "reason": "No honeypot indicators detected",
+                "checks": checks,
+                "indicators": []
+            }
+            
+        # Calculate weighted confidence
+        avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0
+        
+        # Determine risk level
+        if avg_confidence >= 0.8 or len(honeypot_indicators) >= 3:
+            risk_level = "high"
+            is_honeypot = True
+        elif avg_confidence >= 0.6 or len(honeypot_indicators) >= 2:
+            risk_level = "medium"
+            is_honeypot = True
+        elif avg_confidence >= 0.4 or len(honeypot_indicators) >= 1:
+            risk_level = "low"
+            is_honeypot = False
+        else:
+            risk_level = "minimal"
+            is_honeypot = False
+            
+        return {
+            "is_honeypot": is_honeypot,
+            "confidence": avg_confidence,
+            "risk_level": risk_level,
+            "reason": "; ".join(reasons[:3]) if reasons else "Multiple risk factors detected",
+            "checks": checks,
+            "indicators": honeypot_indicators,
+            "detailed_reasons": reasons
+        }
+        
+    async def batch_check(self, tokens: List[Dict[str, str]]) -> List[Dict]:
+        """Check multiple tokens in batch"""
+        tasks = []
+        for token in tokens:
+            tasks.append(self.check_token(token["address"], token["chain"]))
+            
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        processed_results = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(f"Batch check failed for token {i}: {result}")
+                processed_results.append({
+                    "is_honeypot": True,
+                    "confidence": 1.0,
+                    "reason": "Check failed",
+                    "error": str(result)
+                })
+            else:
+                processed_results.append(result)
+                
+        return processed_results
+        
+    def get_risk_score(self, check_result: Dict) -> float:
+        """Calculate risk score from check result (0-100)"""
+        if check_result.get("is_honeypot"):
+            base_score = 80
+        else:
+            base_score = 20
+            
+        # Adjust based on confidence
+        confidence = check_result.get("confidence", 0.5)
+        risk_score = base_score * confidence
+        
+        # Adjust based on indicators count
+        indicators = check_result.get("indicators", [])
+        risk_score += len(indicators) * 5
+        
+        return min(risk_score, 100)
+        
+    async def monitor_token(self, address: str, chain: str, interval: int = 60):
+        """Monitor token continuously for changes"""
+        while True:
+            try:
+                result = await self.check_token(address, chain)
+                
+                # Check for significant changes
+                if result.get("is_honeypot"):
+                    logger.warning(f"Honeypot alert for {address}: {result['reason']}")
+                    yield result
+                    
+                await asyncio.sleep(interval)
+                
+            except Exception as e:
+                logger.error(f"Monitoring error for {address}: {e}")
+                await asyncio.sleep(interval)
+                
+    def update_blacklist(self, address: str, reason: str):
+        """Add token to blacklist"""
+        address_lower = address.lower()
+        BLACKLISTED_TOKENS.add(address_lower)
+        logger.info(f"Added {address} to blacklist: {reason}")
+        
+    def remove_from_blacklist(self, address: str):
+        """Remove token from blacklist"""
+        address_lower = address.lower()
+        BLACKLISTED_TOKENS.discard(address_lower)
+        logger.info(f"Removed {address} from blacklist")
+        
+    def get_statistics(self) -> Dict:
+        """Get checker statistics"""
+        return {
+            "total_checks": len(self.cache),
+            "blacklisted_tokens": len(BLACKLISTED_TOKENS),
+            "blacklisted_contracts": len(BLACKLISTED_CONTRACTS),
+            "cache_size": len(self.cache),
+            "active_apis": sum(1 for v in self.api_keys.values() if v)
+        }
