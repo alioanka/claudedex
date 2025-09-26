@@ -511,12 +511,7 @@ class DirectDEXExecutor(BaseExecutor):
         self.route_cache.clear()
         self.gas_estimates.clear()
         logger.info("Direct DEX Executor cleaned up")
-                
 
-            
-        except Exception as e:
-            logger.error(f"Error getting quotes: {e}")
-            return None
             
     async def _get_dex_quote(
         self,
