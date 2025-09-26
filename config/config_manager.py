@@ -522,7 +522,162 @@ class ConfigManager:
             except Exception as e:
                 logger.error(f"Error notifying config watcher: {e}")
 
-    def get_config(self, config_type: ConfigType) -> Optional[BaseModel]:
+    # Add these methods to ConfigManager class:
+
+    def load_config(self, env: str) -> Dict:
+        """
+        Load configuration for specific environment
+        Matches API specification signature
+        
+        Args:
+            env: Environment name (development, staging, production)
+            
+        Returns:
+            Configuration dictionary
+        """
+        # Map environment string to internal config loading
+        asyncio.run(self._load_all_configs())
+        
+        # Return combined config dict
+        result = {}
+        for config_type, config in self.configs.items():
+            result[config_type.value] = config.dict() if hasattr(config, 'dict') else config
+        
+        return result
+
+    async def reload_config(self) -> None:
+        """
+        Reload all configurations
+        Matches API specification signature
+        """
+        # Clear existing configs
+        self.configs.clear()
+        
+        # Reload all
+        await self._load_all_configs()
+        
+        # Notify watchers
+        for config_type, config in self.configs.items():
+            await self._notify_config_watchers(config_type, config)
+
+    def validate_config(self, config: Dict) -> bool:
+        """
+        Validate configuration dictionary
+        Matches API specification signature
+        
+        Args:
+            config: Configuration dictionary to validate
+            
+        Returns:
+            True if valid, False otherwise
+        """
+        try:
+            # Validate each config type
+            for config_type_str, config_data in config.items():
+                # Find matching ConfigType enum
+                config_type = None
+                for ct in ConfigType:
+                    if ct.value == config_type_str:
+                        config_type = ct
+                        break
+                
+                if not config_type:
+                    return False
+                
+                # Get schema and validate
+                schema_class = self.config_schemas.get(config_type)
+                if schema_class:
+                    schema_class(**config_data)  # Will raise ValidationError if invalid
+                
+            return True
+            
+        except ValidationError:
+            return False
+        except Exception:
+            return False
+
+    def update_config(self, key: str, value: Any) -> None:
+        """
+        Update configuration value by key
+        Matches API specification signature
+        
+        Args:
+            key: Configuration key in format "type.field"
+            value: New value
+        """
+        # Parse key
+        parts = key.split('.')
+        if len(parts) < 2:
+            raise ValueError(f"Invalid key format: {key}")
+        
+        config_type_str = parts[0]
+        field_name = '.'.join(parts[1:])
+        
+        # Find config type
+        config_type = None
+        for ct in ConfigType:
+            if ct.value == config_type_str:
+                config_type = ct
+                break
+        
+        if not config_type:
+            raise ValueError(f"Unknown config type: {config_type_str}")
+        
+        # Update using existing method
+        asyncio.run(self.update_config_internal(
+            config_type=config_type,
+            updates={field_name: value}
+        ))
+
+    def get_config(self, key: str) -> Any:
+        """
+        Get configuration value by key
+        Matches API specification signature
+        
+        Args:
+            key: Configuration key in format "type.field"
+            
+        Returns:
+            Configuration value
+        """
+        # Parse key
+        parts = key.split('.')
+        if len(parts) < 1:
+            raise ValueError(f"Invalid key format: {key}")
+        
+        # If just config type requested
+        if len(parts) == 1:
+            config_type_str = parts[0]
+            for ct in ConfigType:
+                if ct.value == config_type_str:
+                    config = self.configs.get(ct)
+                    return config.dict() if config else None
+            return None
+        
+        # Get specific field
+        config_type_str = parts[0]
+        field_path = parts[1:]
+        
+        for ct in ConfigType:
+            if ct.value == config_type_str:
+                config = self.configs.get(ct)
+                if config:
+                    result = config.dict() if hasattr(config, 'dict') else config
+                    # Navigate nested path
+                    for field in field_path:
+                        if isinstance(result, dict):
+                            result = result.get(field)
+                        else:
+                            return None
+                    return result
+        
+        return None
+
+    # Rename the existing update_config to update_config_internal to avoid conflict
+
+
+
+    def get_config_internal(self, config_type: ConfigType) -> Optional[BaseModel]:
         """Get configuration for specified type"""
         return self.configs.get(config_type)
 
@@ -554,7 +709,7 @@ class ConfigManager:
         """Get risk management configuration"""
         return self.configs.get(ConfigType.RISK_MANAGEMENT, RiskManagementConfig())
 
-    async def update_config(self, 
+    async def update_config_internal(self, 
                           config_type: ConfigType, 
                           updates: Dict[str, Any],
                           user: Optional[str] = None,
@@ -754,7 +909,7 @@ class ConfigManager:
             logger.error(f"Failed to restore configurations: {e}")
             return False
 
-    def validate_config(self, config_type: ConfigType, config_data: Dict) -> Tuple[bool, Optional[str]]:
+    def validate_config_internal(self, config_type: ConfigType, config_data: Dict) -> Tuple[bool, Optional[str]]:
         """Validate configuration data against schema"""
         try:
             schema_class = self.config_schemas.get(config_type)

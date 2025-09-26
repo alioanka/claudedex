@@ -26,7 +26,7 @@ def retry_async(max_retries: int = 3, delay: float = 1.0, exponential_backoff: b
     """Async retry decorator with exponential backoff"""
     def decorator(func):
         @wraps(func)
-        async def wrapper(*args, **kwargs):
+        async def async_wrapper(*args, **kwargs):  # Renamed from 'wrapper'
             last_exception = None
             for attempt in range(max_retries):
                 try:

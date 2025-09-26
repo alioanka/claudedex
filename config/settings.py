@@ -416,10 +416,35 @@ class Settings:
         return features.get(feature, False)
     
     @classmethod
-    def get_chain_config(cls, chain_name: str) -> Optional[ChainConfig]:
+    def get_chain_config_exMethod(cls, chain_name: str) -> Optional[ChainConfig]:
         """Get configuration for specific blockchain"""
         return cls.SUPPORTED_CHAINS.get(chain_name)
-    
+
+    # Add this method to Settings class:
+
+    @classmethod
+    def get_chain_config(cls, chain: str) -> Optional[ChainConfig]:
+        """
+        Get configuration for specific blockchain
+        Matches API specification signature
+        
+        Args:
+            chain: Chain name
+            
+        Returns:
+            Chain configuration
+        """
+        # This is just a wrapper to match the API spec
+        return cls.get_chain_config(chain_name=chain)
+
+    # Or simply rename the existing parameter:
+    # Change line 419 from:
+    # def get_chain_config(cls, chain_name: str) -> Optional[ChainConfig]:
+    # To:
+    # def get_chain_config(cls, chain: str) -> Optional[ChainConfig]:
+    #     """Get configuration for specific blockchain"""
+    #     return cls.SUPPORTED_CHAINS.get(chain)
+
     @classmethod
     def get_dex_config(cls, dex_name: str) -> Optional[Dict[str, Any]]:
         """Get configuration for specific DEX"""

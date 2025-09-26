@@ -14318,7 +14318,8 @@
         "params": [
           "key",
           "value",
-          "ttl"
+          "ttl",
+          "cache_type"
         ],
         "has_varargs": false,
         "has_varkw": false,
@@ -15114,9 +15115,7 @@
     },
     "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [
-      "data\\storage\\cache.py:176 CacheManager.set params mismatch expected=['key', 'value', 'ttl'] found=['key', 'value', 'ttl', 'cache_type']"
-    ],
+    "signature_mismatches": [],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
     "duplicates_in_file": [],
@@ -16963,8 +16962,40 @@
       {
         "name": "calculate_slippage",
         "qualified_name": "LiquidityMonitor.calculate_slippage",
+        "is_async": false,
+        "lineno": 229,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "amount",
+          "liquidity_data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Decimal",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "Decimal",
+          "str",
+          "get",
+          "Decimal",
+          "str",
+          "get",
+          "Decimal",
+          "Decimal",
+          "Decimal",
+          "abs",
+          "Decimal",
+          "error",
+          "Decimal"
+        ]
+      },
+      {
+        "name": "calculate_slippage_async",
+        "qualified_name": "LiquidityMonitor.calculate_slippage_async",
         "is_async": true,
-        "lineno": 228,
+        "lineno": 266,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -16997,7 +17028,7 @@
         "name": "analyze_liquidity_locks",
         "qualified_name": "LiquidityMonitor.analyze_liquidity_locks",
         "is_async": true,
-        "lineno": 291,
+        "lineno": 342,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17023,7 +17054,7 @@
         "name": "get_liquidity_providers",
         "qualified_name": "LiquidityMonitor.get_liquidity_providers",
         "is_async": true,
-        "lineno": 337,
+        "lineno": 388,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17051,7 +17082,7 @@
         "name": "_monitor_token_liquidity",
         "qualified_name": "LiquidityMonitor._monitor_token_liquidity",
         "is_async": true,
-        "lineno": 380,
+        "lineno": 431,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17084,7 +17115,7 @@
         "name": "_calculate_amm_slippage",
         "qualified_name": "LiquidityMonitor._calculate_amm_slippage",
         "is_async": true,
-        "lineno": 406,
+        "lineno": 457,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17119,7 +17150,7 @@
         "name": "_determine_slippage_risk",
         "qualified_name": "LiquidityMonitor._determine_slippage_risk",
         "is_async": false,
-        "lineno": 450,
+        "lineno": 501,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17136,7 +17167,7 @@
         "name": "_get_slippage_recommendation",
         "qualified_name": "LiquidityMonitor._get_slippage_recommendation",
         "is_async": false,
-        "lineno": 461,
+        "lineno": 512,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17155,7 +17186,7 @@
         "name": "_send_liquidity_alert",
         "qualified_name": "LiquidityMonitor._send_liquidity_alert",
         "is_async": true,
-        "lineno": 477,
+        "lineno": 528,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17184,7 +17215,7 @@
         "name": "monitor_liquidity",
         "qualified_name": "LiquidityMonitor.monitor_liquidity",
         "is_async": true,
-        "lineno": 504,
+        "lineno": 555,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17204,7 +17235,37 @@
         "name": "get_liquidity_depth",
         "qualified_name": "LiquidityMonitor.get_liquidity_depth",
         "is_async": true,
-        "lineno": 518,
+        "lineno": 574,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "pair_address"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "_get_pool_data",
+          "Decimal",
+          "get",
+          "get",
+          "get",
+          "get",
+          "Decimal",
+          "str",
+          "get",
+          "error",
+          "Decimal",
+          "str"
+        ]
+      },
+      {
+        "name": "get_liquidity_depth_extended",
+        "qualified_name": "LiquidityMonitor.get_liquidity_depth_extended",
+        "is_async": true,
+        "lineno": 628,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17235,7 +17296,39 @@
         "name": "track_liquidity_changes",
         "qualified_name": "LiquidityMonitor.track_liquidity_changes",
         "is_async": true,
-        "lineno": 568,
+        "lineno": 675,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "utcnow",
+          "monitor_liquidity_changes",
+          "get",
+          "get",
+          "get",
+          "utcnow",
+          "detect_liquidity_removal",
+          "get",
+          "get",
+          "utcnow",
+          "sleep",
+          "pop",
+          "error",
+          "pop"
+        ]
+      },
+      {
+        "name": "track_liquidity_changes_extended",
+        "qualified_name": "LiquidityMonitor.track_liquidity_changes_extended",
+        "is_async": true,
+        "lineno": 730,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17268,7 +17361,7 @@
         "name": "calculate_slippage_sync",
         "qualified_name": "LiquidityMonitor.calculate_slippage_sync",
         "is_async": false,
-        "lineno": 620,
+        "lineno": 778,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17292,7 +17385,7 @@
         "name": "_get_current_liquidity",
         "qualified_name": "LiquidityMonitor._get_current_liquidity",
         "is_async": true,
-        "lineno": 653,
+        "lineno": 811,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17312,7 +17405,7 @@
         "name": "_calculate_liquidity_changes",
         "qualified_name": "LiquidityMonitor._calculate_liquidity_changes",
         "is_async": true,
-        "lineno": 663,
+        "lineno": 821,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17333,7 +17426,7 @@
         "name": "_detect_liquidity_anomalies",
         "qualified_name": "LiquidityMonitor._detect_liquidity_anomalies",
         "is_async": true,
-        "lineno": 681,
+        "lineno": 839,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17355,7 +17448,7 @@
         "name": "_calculate_liquidity_health",
         "qualified_name": "LiquidityMonitor._calculate_liquidity_health",
         "is_async": true,
-        "lineno": 690,
+        "lineno": 848,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17375,7 +17468,7 @@
         "name": "_emit_liquidity_event",
         "qualified_name": "LiquidityMonitor._emit_liquidity_event",
         "is_async": true,
-        "lineno": 704,
+        "lineno": 862,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17397,7 +17490,7 @@
         "name": "_get_liquidity_transactions",
         "qualified_name": "LiquidityMonitor._get_liquidity_transactions",
         "is_async": true,
-        "lineno": 713,
+        "lineno": 871,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17415,7 +17508,7 @@
         "name": "_is_suspicious_wallet",
         "qualified_name": "LiquidityMonitor._is_suspicious_wallet",
         "is_async": true,
-        "lineno": 718,
+        "lineno": 876,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17432,7 +17525,7 @@
         "name": "_calculate_removal_risk_score",
         "qualified_name": "LiquidityMonitor._calculate_removal_risk_score",
         "is_async": true,
-        "lineno": 723,
+        "lineno": 881,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17452,7 +17545,7 @@
         "name": "_detect_rug_patterns",
         "qualified_name": "LiquidityMonitor._detect_rug_patterns",
         "is_async": true,
-        "lineno": 738,
+        "lineno": 896,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17471,7 +17564,7 @@
         "name": "_get_removal_recommendation",
         "qualified_name": "LiquidityMonitor._get_removal_recommendation",
         "is_async": false,
-        "lineno": 746,
+        "lineno": 904,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17488,7 +17581,7 @@
         "name": "_get_liquidity_depth",
         "qualified_name": "LiquidityMonitor._get_liquidity_depth",
         "is_async": true,
-        "lineno": 755,
+        "lineno": 913,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17508,7 +17601,7 @@
         "name": "_get_pool_data",
         "qualified_name": "LiquidityMonitor._get_pool_data",
         "is_async": true,
-        "lineno": 759,
+        "lineno": 917,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17526,7 +17619,7 @@
         "name": "_calculate_orderbook_slippage",
         "qualified_name": "LiquidityMonitor._calculate_orderbook_slippage",
         "is_async": true,
-        "lineno": 771,
+        "lineno": 929,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17548,7 +17641,7 @@
         "name": "_calculate_price_impact",
         "qualified_name": "LiquidityMonitor._calculate_price_impact",
         "is_async": true,
-        "lineno": 781,
+        "lineno": 939,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17572,7 +17665,7 @@
         "name": "_check_lock_platform",
         "qualified_name": "LiquidityMonitor._check_lock_platform",
         "is_async": true,
-        "lineno": 790,
+        "lineno": 948,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17591,7 +17684,7 @@
         "name": "_get_lp_token_holders",
         "qualified_name": "LiquidityMonitor._get_lp_token_holders",
         "is_async": true,
-        "lineno": 800,
+        "lineno": 958,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17609,7 +17702,7 @@
         "name": "_is_lp_locked",
         "qualified_name": "LiquidityMonitor._is_lp_locked",
         "is_async": true,
-        "lineno": 805,
+        "lineno": 963,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17626,7 +17719,7 @@
         "name": "_get_recent_price_volume",
         "qualified_name": "LiquidityMonitor._get_recent_price_volume",
         "is_async": true,
-        "lineno": 809,
+        "lineno": 967,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17645,7 +17738,7 @@
         "name": "_get_realtime_data",
         "qualified_name": "LiquidityMonitor._get_realtime_data",
         "is_async": true,
-        "lineno": 814,
+        "lineno": 972,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17663,7 +17756,7 @@
         "name": "_calculate_momentum_indicators",
         "qualified_name": "LiquidityMonitor._calculate_momentum_indicators",
         "is_async": true,
-        "lineno": 818,
+        "lineno": 976,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17680,7 +17773,7 @@
         "name": "_calculate_pump_metrics",
         "qualified_name": "LiquidityMonitor._calculate_pump_metrics",
         "is_async": true,
-        "lineno": 822,
+        "lineno": 980,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17699,7 +17792,7 @@
         "name": "_estimate_remaining_potential",
         "qualified_name": "LiquidityMonitor._estimate_remaining_potential",
         "is_async": true,
-        "lineno": 830,
+        "lineno": 988,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17717,7 +17810,7 @@
         "name": "_get_exit_recommendation",
         "qualified_name": "LiquidityMonitor._get_exit_recommendation",
         "is_async": false,
-        "lineno": 834,
+        "lineno": 992,
         "scope": "class:LiquidityMonitor",
         "params": [
           "self",
@@ -17744,11 +17837,7 @@
     },
     "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [
-      "analysis\\liquidity_monitor.py:518 LiquidityMonitor.get_liquidity_depth params mismatch expected=['pair_address'] found=['pair_address', 'chain']",
-      "analysis\\liquidity_monitor.py:228 LiquidityMonitor.calculate_slippage params mismatch expected=['amount', 'liquidity_data'] found=['token', 'chain', 'amount', 'is_buy']",
-      "analysis\\liquidity_monitor.py:568 LiquidityMonitor.track_liquidity_changes params mismatch expected=['token'] found=['token', 'chain']"
-    ],
+    "signature_mismatches": [],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
     "duplicates_in_file": [],
@@ -21626,7 +21715,31 @@
         "name": "predict",
         "qualified_name": "EnsemblePredictor.predict",
         "is_async": true,
-        "lineno": 503,
+        "lineno": 511,
+        "scope": "class:EnsemblePredictor",
+        "params": [
+          "self",
+          "token",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "DexScreenerCollector",
+          "get_token_info",
+          "extract_features",
+          "_predict_from_features",
+          "isoformat"
+        ]
+      },
+      {
+        "name": "_predict_from_features",
+        "qualified_name": "EnsemblePredictor._predict_from_features",
+        "is_async": true,
+        "lineno": 549,
         "scope": "class:EnsemblePredictor",
         "params": [
           "self",
@@ -21635,7 +21748,7 @@
         "has_varargs": false,
         "has_varkw": false,
         "returns": "PredictionResult",
-        "visibility": "public",
+        "visibility": "private",
         "decorators": [],
         "calls": [
           "isinstance",
@@ -21686,7 +21799,7 @@
         "name": "_calculate_weighted_average",
         "qualified_name": "EnsemblePredictor._calculate_weighted_average",
         "is_async": false,
-        "lineno": 662,
+        "lineno": 704,
         "scope": "class:EnsemblePredictor",
         "params": [
           "self",
@@ -21711,7 +21824,7 @@
         "name": "_get_feature_importance",
         "qualified_name": "EnsemblePredictor._get_feature_importance",
         "is_async": false,
-        "lineno": 676,
+        "lineno": 718,
         "scope": "class:EnsemblePredictor",
         "params": [
           "self",
@@ -21733,7 +21846,7 @@
         "name": "retrain",
         "qualified_name": "EnsemblePredictor.retrain",
         "is_async": true,
-        "lineno": 693,
+        "lineno": 735,
         "scope": "class:EnsemblePredictor",
         "params": [
           "self",
@@ -21784,7 +21897,7 @@
         "name": "_train_lstm",
         "qualified_name": "EnsemblePredictor._train_lstm",
         "is_async": true,
-        "lineno": 762,
+        "lineno": 804,
         "scope": "class:EnsemblePredictor",
         "params": [
           "self",
@@ -21820,7 +21933,7 @@
         "name": "_train_transformer",
         "qualified_name": "EnsemblePredictor._train_transformer",
         "is_async": true,
-        "lineno": 786,
+        "lineno": 828,
         "scope": "class:EnsemblePredictor",
         "params": [
           "self",
@@ -21856,7 +21969,7 @@
         "name": "update_models",
         "qualified_name": "EnsemblePredictor.update_models",
         "is_async": true,
-        "lineno": 810,
+        "lineno": 852,
         "scope": "class:EnsemblePredictor",
         "params": [
           "self",
@@ -21876,7 +21989,7 @@
         "name": "save_models",
         "qualified_name": "EnsemblePredictor.save_models",
         "is_async": true,
-        "lineno": 819,
+        "lineno": 861,
         "scope": "class:EnsemblePredictor",
         "params": [
           "self"
@@ -21902,7 +22015,7 @@
         "name": "predict_from_token",
         "qualified_name": "EnsemblePredictor.predict_from_token",
         "is_async": true,
-        "lineno": 847,
+        "lineno": 889,
         "scope": "class:EnsemblePredictor",
         "params": [
           "self",
@@ -21925,7 +22038,7 @@
         "name": "combine_predictions",
         "qualified_name": "EnsemblePredictor.combine_predictions",
         "is_async": true,
-        "lineno": 879,
+        "lineno": 921,
         "scope": "class:EnsemblePredictor",
         "params": [
           "self",
@@ -21962,7 +22075,7 @@
         "name": "calculate_weighted_score",
         "qualified_name": "EnsemblePredictor.calculate_weighted_score",
         "is_async": false,
-        "lineno": 913,
+        "lineno": 955,
         "scope": "class:EnsemblePredictor",
         "params": [
           "self",
@@ -21983,7 +22096,7 @@
         "name": "get_confidence_level",
         "qualified_name": "EnsemblePredictor.get_confidence_level",
         "is_async": true,
-        "lineno": 937,
+        "lineno": 979,
         "scope": "class:EnsemblePredictor",
         "params": [
           "self",
@@ -22010,7 +22123,7 @@
         "name": "update_weights",
         "qualified_name": "EnsemblePredictor.update_weights",
         "is_async": false,
-        "lineno": 967,
+        "lineno": 1009,
         "scope": "class:EnsemblePredictor",
         "params": [
           "self",
@@ -22051,9 +22164,7 @@
     },
     "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [
-      "ml\\models\\ensemble_model.py:503 EnsemblePredictor.predict params mismatch expected=['token', 'chain'] found=['features']"
-    ],
+    "signature_mismatches": [],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
     "duplicates_in_file": [],
@@ -22319,13 +22430,12 @@
         "name": "train",
         "qualified_name": "RugClassifier.train",
         "is_async": false,
-        "lineno": 245,
+        "lineno": 253,
         "scope": "class:RugClassifier",
         "params": [
           "self",
           "historical_data",
-          "labels",
-          "validation_split"
+          "labels"
         ],
         "has_varargs": false,
         "has_varkw": false,
@@ -22371,7 +22481,7 @@
         "name": "predict",
         "qualified_name": "RugClassifier.predict",
         "is_async": false,
-        "lineno": 327,
+        "lineno": 346,
         "scope": "class:RugClassifier",
         "params": [
           "self",
@@ -22393,7 +22503,7 @@
         "name": "_ensemble_predict_proba",
         "qualified_name": "RugClassifier._ensemble_predict_proba",
         "is_async": false,
-        "lineno": 355,
+        "lineno": 374,
         "scope": "class:RugClassifier",
         "params": [
           "self",
@@ -22416,7 +22526,7 @@
         "name": "_calculate_ensemble_importance",
         "qualified_name": "RugClassifier._calculate_ensemble_importance",
         "is_async": false,
-        "lineno": 371,
+        "lineno": 390,
         "scope": "class:RugClassifier",
         "params": [
           "self"
@@ -22441,7 +22551,7 @@
         "name": "analyze_token",
         "qualified_name": "RugClassifier.analyze_token",
         "is_async": false,
-        "lineno": 388,
+        "lineno": 407,
         "scope": "class:RugClassifier",
         "params": [
           "self",
@@ -22466,7 +22576,7 @@
         "name": "_identify_red_flags",
         "qualified_name": "RugClassifier._identify_red_flags",
         "is_async": false,
-        "lineno": 423,
+        "lineno": 442,
         "scope": "class:RugClassifier",
         "params": [
           "self",
@@ -22511,7 +22621,7 @@
         "name": "_generate_warnings",
         "qualified_name": "RugClassifier._generate_warnings",
         "is_async": false,
-        "lineno": 470,
+        "lineno": 489,
         "scope": "class:RugClassifier",
         "params": [
           "self",
@@ -22539,7 +22649,7 @@
         "name": "_get_recommendation",
         "qualified_name": "RugClassifier._get_recommendation",
         "is_async": false,
-        "lineno": 491,
+        "lineno": 510,
         "scope": "class:RugClassifier",
         "params": [
           "self",
@@ -22556,7 +22666,7 @@
         "name": "_calculate_confidence",
         "qualified_name": "RugClassifier._calculate_confidence",
         "is_async": false,
-        "lineno": 502,
+        "lineno": 521,
         "scope": "class:RugClassifier",
         "params": [
           "self",
@@ -22578,7 +22688,7 @@
         "name": "save_model",
         "qualified_name": "RugClassifier.save_model",
         "is_async": false,
-        "lineno": 514,
+        "lineno": 533,
         "scope": "class:RugClassifier",
         "params": [
           "self",
@@ -22608,7 +22718,7 @@
         "name": "load_model",
         "qualified_name": "RugClassifier.load_model",
         "is_async": false,
-        "lineno": 542,
+        "lineno": 561,
         "scope": "class:RugClassifier",
         "params": [
           "self",
@@ -22636,7 +22746,7 @@
         "name": "update_model",
         "qualified_name": "RugClassifier.update_model",
         "is_async": false,
-        "lineno": 567,
+        "lineno": 586,
         "scope": "class:RugClassifier",
         "params": [
           "self",
@@ -22668,9 +22778,7 @@
     },
     "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [
-      "ml\\models\\rug_classifier.py:245 RugClassifier.train params mismatch expected=['historical_data', 'labels'] found=['historical_data', 'labels', 'validation_split']"
-    ],
+    "signature_mismatches": [],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
     "duplicates_in_file": [],
@@ -23060,7 +23168,36 @@
         "name": "predict_pump_probability",
         "qualified_name": "PumpPredictor.predict_pump_probability",
         "is_async": false,
-        "lineno": 415,
+        "lineno": 423,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "features"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "len",
+          "predict",
+          "len",
+          "reshape",
+          "len",
+          "reshape",
+          "transform",
+          "predict",
+          "sum",
+          "get",
+          "items"
+        ]
+      },
+      {
+        "name": "predict_pump_probability_detailed",
+        "qualified_name": "PumpPredictor.predict_pump_probability_detailed",
+        "is_async": false,
+        "lineno": 465,
         "scope": "class:PumpPredictor",
         "params": [
           "self",
@@ -23090,7 +23227,7 @@
         "name": "_generate_pump_signals",
         "qualified_name": "PumpPredictor._generate_pump_signals",
         "is_async": false,
-        "lineno": 453,
+        "lineno": 508,
         "scope": "class:PumpPredictor",
         "params": [
           "self",
@@ -23114,7 +23251,7 @@
         "name": "_calculate_rsi",
         "qualified_name": "PumpPredictor._calculate_rsi",
         "is_async": false,
-        "lineno": 489,
+        "lineno": 544,
         "scope": "class:PumpPredictor",
         "params": [
           "self",
@@ -23139,7 +23276,7 @@
         "name": "_calculate_macd",
         "qualified_name": "PumpPredictor._calculate_macd",
         "is_async": false,
-        "lineno": 516,
+        "lineno": 571,
         "scope": "class:PumpPredictor",
         "params": [
           "self",
@@ -23163,7 +23300,7 @@
         "name": "_calculate_ema",
         "qualified_name": "PumpPredictor._calculate_ema",
         "is_async": false,
-        "lineno": 531,
+        "lineno": 586,
         "scope": "class:PumpPredictor",
         "params": [
           "self",
@@ -23185,7 +23322,7 @@
         "name": "_calculate_bollinger_bands",
         "qualified_name": "PumpPredictor._calculate_bollinger_bands",
         "is_async": false,
-        "lineno": 542,
+        "lineno": 597,
         "scope": "class:PumpPredictor",
         "params": [
           "self",
@@ -23208,7 +23345,7 @@
         "name": "_calculate_vwap",
         "qualified_name": "PumpPredictor._calculate_vwap",
         "is_async": false,
-        "lineno": 560,
+        "lineno": 615,
         "scope": "class:PumpPredictor",
         "params": [
           "self",
@@ -23228,7 +23365,7 @@
         "name": "_calculate_obv",
         "qualified_name": "PumpPredictor._calculate_obv",
         "is_async": false,
-        "lineno": 569,
+        "lineno": 624,
         "scope": "class:PumpPredictor",
         "params": [
           "self",
@@ -23248,7 +23385,7 @@
         "name": "_calculate_adx",
         "qualified_name": "PumpPredictor._calculate_adx",
         "is_async": false,
-        "lineno": 580,
+        "lineno": 635,
         "scope": "class:PumpPredictor",
         "params": [
           "self",
@@ -23287,7 +23424,7 @@
         "name": "_calculate_stochastic",
         "qualified_name": "PumpPredictor._calculate_stochastic",
         "is_async": false,
-        "lineno": 624,
+        "lineno": 679,
         "scope": "class:PumpPredictor",
         "params": [
           "self",
@@ -23310,7 +23447,7 @@
         "name": "save_model",
         "qualified_name": "PumpPredictor.save_model",
         "is_async": false,
-        "lineno": 653,
+        "lineno": 708,
         "scope": "class:PumpPredictor",
         "params": [
           "self",
@@ -23341,7 +23478,7 @@
         "name": "load_model",
         "qualified_name": "PumpPredictor.load_model",
         "is_async": false,
-        "lineno": 689,
+        "lineno": 744,
         "scope": "class:PumpPredictor",
         "params": [
           "self",
@@ -23370,7 +23507,7 @@
         "name": "prepare_features",
         "qualified_name": "PumpPredictor.prepare_features",
         "is_async": false,
-        "lineno": 724,
+        "lineno": 779,
         "scope": "class:PumpPredictor",
         "params": [
           "self",
@@ -23391,7 +23528,7 @@
         "name": "train_lstm",
         "qualified_name": "PumpPredictor.train_lstm",
         "is_async": false,
-        "lineno": 737,
+        "lineno": 792,
         "scope": "class:PumpPredictor",
         "params": [
           "self",
@@ -23416,7 +23553,7 @@
         "name": "backtest",
         "qualified_name": "PumpPredictor.backtest",
         "is_async": false,
-        "lineno": 767,
+        "lineno": 822,
         "scope": "class:PumpPredictor",
         "params": [
           "self",
@@ -23453,9 +23590,7 @@
     },
     "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [
-      "ml\\models\\pump_predictor.py:415 PumpPredictor.predict_pump_probability params mismatch expected=['features'] found=['current_data']"
-    ],
+    "signature_mismatches": [],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
     "duplicates_in_file": [],
@@ -25011,7 +25146,7 @@
         "name": "initialize",
         "qualified_name": "ToxiSolAPIExecutor.initialize",
         "is_async": true,
-        "lineno": 105,
+        "lineno": 107,
         "scope": "class:ToxiSolAPIExecutor",
         "params": [
           "self"
@@ -25036,7 +25171,7 @@
         "name": "_test_connection",
         "qualified_name": "ToxiSolAPIExecutor._test_connection",
         "is_async": true,
-        "lineno": 134,
+        "lineno": 136,
         "scope": "class:ToxiSolAPIExecutor",
         "params": [
           "self"
@@ -25059,7 +25194,7 @@
         "name": "_generate_signature",
         "qualified_name": "ToxiSolAPIExecutor._generate_signature",
         "is_async": false,
-        "lineno": 149,
+        "lineno": 151,
         "scope": "class:ToxiSolAPIExecutor",
         "params": [
           "self",
@@ -25082,7 +25217,7 @@
         "name": "_rate_limit",
         "qualified_name": "ToxiSolAPIExecutor._rate_limit",
         "is_async": true,
-        "lineno": 159,
+        "lineno": 161,
         "scope": "class:ToxiSolAPIExecutor",
         "params": [
           "self"
@@ -25102,7 +25237,7 @@
         "name": "get_quote",
         "qualified_name": "ToxiSolAPIExecutor.get_quote",
         "is_async": true,
-        "lineno": 171,
+        "lineno": 173,
         "scope": "class:ToxiSolAPIExecutor",
         "params": [
           "self",
@@ -25140,7 +25275,7 @@
         "name": "execute_trade",
         "qualified_name": "ToxiSolAPIExecutor.execute_trade",
         "is_async": true,
-        "lineno": 235,
+        "lineno": 237,
         "scope": "class:ToxiSolAPIExecutor",
         "params": [
           "self",
@@ -25157,7 +25292,7 @@
           "get_quote",
           "now",
           "warning",
-          "_build_transaction",
+          "_build_toxisol_transaction",
           "_sign_transaction",
           "_execute_flashbots",
           "_execute_standard",
@@ -25171,10 +25306,10 @@
         ]
       },
       {
-        "name": "_build_transaction",
-        "qualified_name": "ToxiSolAPIExecutor._build_transaction",
+        "name": "_build_toxisol_transaction",
+        "qualified_name": "ToxiSolAPIExecutor._build_toxisol_transaction",
         "is_async": true,
-        "lineno": 318,
+        "lineno": 322,
         "scope": "class:ToxiSolAPIExecutor",
         "params": [
           "self",
@@ -25211,7 +25346,7 @@
         "name": "_execute_flashbots",
         "qualified_name": "ToxiSolAPIExecutor._execute_flashbots",
         "is_async": true,
-        "lineno": 375,
+        "lineno": 379,
         "scope": "class:ToxiSolAPIExecutor",
         "params": [
           "self",
@@ -25243,7 +25378,7 @@
         "name": "_execute_standard",
         "qualified_name": "ToxiSolAPIExecutor._execute_standard",
         "is_async": true,
-        "lineno": 416,
+        "lineno": 420,
         "scope": "class:ToxiSolAPIExecutor",
         "params": [
           "self",
@@ -25265,7 +25400,7 @@
         "name": "get_execution_stats",
         "qualified_name": "ToxiSolAPIExecutor.get_execution_stats",
         "is_async": true,
-        "lineno": 444,
+        "lineno": 448,
         "scope": "class:ToxiSolAPIExecutor",
         "params": [
           "self"
@@ -25281,7 +25416,7 @@
         "name": "estimate_gas",
         "qualified_name": "ToxiSolAPIExecutor.estimate_gas",
         "is_async": true,
-        "lineno": 458,
+        "lineno": 462,
         "scope": "class:ToxiSolAPIExecutor",
         "params": [
           "self",
@@ -25303,7 +25438,7 @@
         "name": "cleanup",
         "qualified_name": "ToxiSolAPIExecutor.cleanup",
         "is_async": true,
-        "lineno": 469,
+        "lineno": 473,
         "scope": "class:ToxiSolAPIExecutor",
         "params": [
           "self"
@@ -25316,6 +25451,195 @@
         "calls": [
           "close",
           "info"
+        ]
+      },
+      {
+        "name": "validate_order",
+        "qualified_name": "ToxiSolAPIExecutor.validate_order",
+        "is_async": true,
+        "lineno": 487,
+        "scope": "class:ToxiSolAPIExecutor",
+        "params": [
+          "self",
+          "order"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "error",
+          "error",
+          "error",
+          "isAddress",
+          "isAddress",
+          "error",
+          "error",
+          "error",
+          "error"
+        ]
+      },
+      {
+        "name": "get_order_status",
+        "qualified_name": "ToxiSolAPIExecutor.get_order_status",
+        "is_async": true,
+        "lineno": 533,
+        "scope": "class:ToxiSolAPIExecutor",
+        "params": [
+          "self",
+          "order_id"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "OrderStatus",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "_get_transaction_receipt",
+          "warning",
+          "error"
+        ]
+      },
+      {
+        "name": "cancel_order",
+        "qualified_name": "ToxiSolAPIExecutor.cancel_order",
+        "is_async": true,
+        "lineno": 570,
+        "scope": "class:ToxiSolAPIExecutor",
+        "params": [
+          "self",
+          "order_id"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "error",
+          "info",
+          "warning",
+          "warning",
+          "error"
+        ]
+      },
+      {
+        "name": "modify_order",
+        "qualified_name": "ToxiSolAPIExecutor.modify_order",
+        "is_async": true,
+        "lineno": 611,
+        "scope": "class:ToxiSolAPIExecutor",
+        "params": [
+          "self",
+          "order_id",
+          "modifications"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "error",
+          "error",
+          "items",
+          "setattr",
+          "info",
+          "warning",
+          "validate_order",
+          "error",
+          "error"
+        ]
+      },
+      {
+        "name": "_get_transaction_receipt",
+        "qualified_name": "ToxiSolAPIExecutor._get_transaction_receipt",
+        "is_async": true,
+        "lineno": 663,
+        "scope": "class:ToxiSolAPIExecutor",
+        "params": [
+          "self",
+          "tx_hash"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Optional[Dict]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "hasattr",
+          "items",
+          "get_transaction_receipt",
+          "dict",
+          "hasattr",
+          "get_transaction_receipt",
+          "dict",
+          "debug"
+        ]
+      },
+      {
+        "name": "_check_bundle_status",
+        "qualified_name": "ToxiSolAPIExecutor._check_bundle_status",
+        "is_async": true,
+        "lineno": 695,
+        "scope": "class:ToxiSolAPIExecutor",
+        "params": [
+          "self",
+          "bundle_id"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "str",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "json",
+          "get",
+          "get",
+          "error"
+        ]
+      },
+      {
+        "name": "_build_base_transaction",
+        "qualified_name": "ToxiSolAPIExecutor._build_base_transaction",
+        "is_async": true,
+        "lineno": 729,
+        "scope": "class:ToxiSolAPIExecutor",
+        "params": [
+          "self",
+          "order"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict[str, Any]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "hasattr",
+          "hasattr",
+          "get_transaction_count"
+        ]
+      },
+      {
+        "name": "format_token_amount",
+        "qualified_name": "ToxiSolAPIExecutor.format_token_amount",
+        "is_async": false,
+        "lineno": 751,
+        "scope": "class:ToxiSolAPIExecutor",
+        "params": [
+          "amount",
+          "decimals"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "str",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "rstrip",
+          "rstrip"
         ]
       }
     ],
@@ -25333,12 +25657,7 @@
         "BaseExecutor"
       ]
     },
-    "missing": [
-      "def cancel_order()",
-      "def get_order_status()",
-      "def modify_order()",
-      "def validate_order()"
-    ],
+    "missing": [],
     "async_mismatches": [],
     "signature_mismatches": [],
     "visibility_mismatches": [],
@@ -25428,7 +25747,7 @@
         "name": "initialize",
         "qualified_name": "DirectDEXExecutor.initialize",
         "is_async": true,
-        "lineno": 94,
+        "lineno": 95,
         "scope": "class:DirectDEXExecutor",
         "params": [
           "self"
@@ -25454,7 +25773,7 @@
         "name": "_initialize_dex_contracts",
         "qualified_name": "DirectDEXExecutor._initialize_dex_contracts",
         "is_async": true,
-        "lineno": 118,
+        "lineno": 119,
         "scope": "class:DirectDEXExecutor",
         "params": [
           "self",
@@ -25478,7 +25797,7 @@
         "name": "get_best_quote",
         "qualified_name": "DirectDEXExecutor.get_best_quote",
         "is_async": true,
-        "lineno": 143,
+        "lineno": 144,
         "scope": "class:DirectDEXExecutor",
         "params": [
           "self",
@@ -25514,7 +25833,7 @@
         "name": "execute_trade",
         "qualified_name": "DirectDEXExecutor.execute_trade",
         "is_async": true,
-        "lineno": 201,
+        "lineno": 202,
         "scope": "class:DirectDEXExecutor",
         "params": [
           "self",
@@ -25543,7 +25862,7 @@
         "name": "_build_swap_transaction",
         "qualified_name": "DirectDEXExecutor._build_swap_transaction",
         "is_async": true,
-        "lineno": 264,
+        "lineno": 265,
         "scope": "class:DirectDEXExecutor",
         "params": [
           "self",
@@ -25578,7 +25897,7 @@
         "name": "_estimate_price_impact",
         "qualified_name": "DirectDEXExecutor._estimate_price_impact",
         "is_async": true,
-        "lineno": 328,
+        "lineno": 329,
         "scope": "class:DirectDEXExecutor",
         "params": [
           "self",
@@ -25603,7 +25922,7 @@
         "name": "_estimate_gas",
         "qualified_name": "DirectDEXExecutor._estimate_gas",
         "is_async": true,
-        "lineno": 357,
+        "lineno": 358,
         "scope": "class:DirectDEXExecutor",
         "params": [
           "self",
@@ -25627,7 +25946,7 @@
         "name": "_get_liquidity",
         "qualified_name": "DirectDEXExecutor._get_liquidity",
         "is_async": true,
-        "lineno": 381,
+        "lineno": 382,
         "scope": "class:DirectDEXExecutor",
         "params": [
           "self",
@@ -25648,7 +25967,7 @@
         "name": "_calculate_fee",
         "qualified_name": "DirectDEXExecutor._calculate_fee",
         "is_async": false,
-        "lineno": 392,
+        "lineno": 393,
         "scope": "class:DirectDEXExecutor",
         "params": [
           "self",
@@ -25674,7 +25993,7 @@
         "name": "_encode_v3_path",
         "qualified_name": "DirectDEXExecutor._encode_v3_path",
         "is_async": false,
-        "lineno": 404,
+        "lineno": 405,
         "scope": "class:DirectDEXExecutor",
         "params": [
           "self",
@@ -25696,7 +26015,7 @@
         "name": "_randomize_gas_price",
         "qualified_name": "DirectDEXExecutor._randomize_gas_price",
         "is_async": false,
-        "lineno": 415,
+        "lineno": 416,
         "scope": "class:DirectDEXExecutor",
         "params": [
           "self",
@@ -25716,7 +26035,7 @@
         "name": "_apply_commit_reveal",
         "qualified_name": "DirectDEXExecutor._apply_commit_reveal",
         "is_async": true,
-        "lineno": 425,
+        "lineno": 426,
         "scope": "class:DirectDEXExecutor",
         "params": [
           "self",
@@ -25733,7 +26052,7 @@
         "name": "_send_transaction_with_retry",
         "qualified_name": "DirectDEXExecutor._send_transaction_with_retry",
         "is_async": true,
-        "lineno": 431,
+        "lineno": 432,
         "scope": "class:DirectDEXExecutor",
         "params": [
           "self",
@@ -25762,7 +26081,7 @@
         "name": "_wait_for_confirmation",
         "qualified_name": "DirectDEXExecutor._wait_for_confirmation",
         "is_async": true,
-        "lineno": 458,
+        "lineno": 459,
         "scope": "class:DirectDEXExecutor",
         "params": [
           "self",
@@ -25787,7 +26106,7 @@
         "name": "_get_optimal_gas_price",
         "qualified_name": "DirectDEXExecutor._get_optimal_gas_price",
         "is_async": true,
-        "lineno": 481,
+        "lineno": 482,
         "scope": "class:DirectDEXExecutor",
         "params": [
           "self",
@@ -25807,7 +26126,7 @@
         "name": "_quote_v3",
         "qualified_name": "DirectDEXExecutor._quote_v3",
         "is_async": true,
-        "lineno": 497,
+        "lineno": 498,
         "scope": "class:DirectDEXExecutor",
         "params": [
           "self",
@@ -25828,7 +26147,7 @@
         "name": "cleanup",
         "qualified_name": "DirectDEXExecutor.cleanup",
         "is_async": true,
-        "lineno": 508,
+        "lineno": 509,
         "scope": "class:DirectDEXExecutor",
         "params": [
           "self"
@@ -25957,6 +26276,195 @@
           "call",
           "getAmountsOut"
         ]
+      },
+      {
+        "name": "validate_order",
+        "qualified_name": "DirectDEXExecutor.validate_order",
+        "is_async": true,
+        "lineno": 692,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "order"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "error",
+          "error",
+          "error",
+          "isAddress",
+          "isAddress",
+          "error",
+          "error",
+          "error",
+          "error"
+        ]
+      },
+      {
+        "name": "get_order_status",
+        "qualified_name": "DirectDEXExecutor.get_order_status",
+        "is_async": true,
+        "lineno": 738,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "order_id"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "OrderStatus",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "_get_transaction_receipt",
+          "warning",
+          "error"
+        ]
+      },
+      {
+        "name": "cancel_order",
+        "qualified_name": "DirectDEXExecutor.cancel_order",
+        "is_async": true,
+        "lineno": 775,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "order_id"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "error",
+          "info",
+          "warning",
+          "warning",
+          "error"
+        ]
+      },
+      {
+        "name": "modify_order",
+        "qualified_name": "DirectDEXExecutor.modify_order",
+        "is_async": true,
+        "lineno": 816,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "order_id",
+          "modifications"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "error",
+          "error",
+          "items",
+          "setattr",
+          "info",
+          "warning",
+          "validate_order",
+          "error",
+          "error"
+        ]
+      },
+      {
+        "name": "_get_transaction_receipt",
+        "qualified_name": "DirectDEXExecutor._get_transaction_receipt",
+        "is_async": true,
+        "lineno": 869,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "tx_hash"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Optional[Dict]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "hasattr",
+          "items",
+          "get_transaction_receipt",
+          "dict",
+          "hasattr",
+          "get_transaction_receipt",
+          "dict",
+          "debug"
+        ]
+      },
+      {
+        "name": "_check_bundle_status",
+        "qualified_name": "DirectDEXExecutor._check_bundle_status",
+        "is_async": true,
+        "lineno": 901,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "bundle_id"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "str",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "json",
+          "get",
+          "get",
+          "error"
+        ]
+      },
+      {
+        "name": "_build_transaction",
+        "qualified_name": "DirectDEXExecutor._build_transaction",
+        "is_async": true,
+        "lineno": 935,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "order"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict[str, Any]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "hasattr",
+          "hasattr",
+          "get_transaction_count"
+        ]
+      },
+      {
+        "name": "format_token_amount",
+        "qualified_name": "DirectDEXExecutor.format_token_amount",
+        "is_async": false,
+        "lineno": 957,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "amount",
+          "decimals"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "str",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "rstrip",
+          "rstrip"
+        ]
       }
     ],
     "found_classes": [
@@ -25969,12 +26477,7 @@
         "BaseExecutor"
       ]
     },
-    "missing": [
-      "def cancel_order()",
-      "def get_order_status()",
-      "def modify_order()",
-      "def validate_order()"
-    ],
+    "missing": [],
     "async_mismatches": [],
     "signature_mismatches": [],
     "visibility_mismatches": [],
@@ -26068,7 +26571,7 @@
         "name": "initialize",
         "qualified_name": "MEVProtectionLayer.initialize",
         "is_async": true,
-        "lineno": 131,
+        "lineno": 134,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self"
@@ -26098,7 +26601,7 @@
         "name": "protect_transaction",
         "qualified_name": "MEVProtectionLayer.protect_transaction",
         "is_async": true,
-        "lineno": 161,
+        "lineno": 164,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26142,7 +26645,7 @@
         "name": "_analyze_mev_risk",
         "qualified_name": "MEVProtectionLayer._analyze_mev_risk",
         "is_async": true,
-        "lineno": 238,
+        "lineno": 241,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26174,7 +26677,7 @@
         "name": "_apply_gas_randomization",
         "qualified_name": "MEVProtectionLayer._apply_gas_randomization",
         "is_async": false,
-        "lineno": 275,
+        "lineno": 278,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26199,7 +26702,7 @@
         "name": "_apply_time_delays",
         "qualified_name": "MEVProtectionLayer._apply_time_delays",
         "is_async": true,
-        "lineno": 303,
+        "lineno": 306,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26221,7 +26724,7 @@
         "name": "_create_flashbots_bundle",
         "qualified_name": "MEVProtectionLayer._create_flashbots_bundle",
         "is_async": true,
-        "lineno": 322,
+        "lineno": 325,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26252,7 +26755,7 @@
         "name": "_sign_flashbots_bundle",
         "qualified_name": "MEVProtectionLayer._sign_flashbots_bundle",
         "is_async": false,
-        "lineno": 374,
+        "lineno": 377,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26276,7 +26779,7 @@
         "name": "_route_private_mempool",
         "qualified_name": "MEVProtectionLayer._route_private_mempool",
         "is_async": true,
-        "lineno": 381,
+        "lineno": 384,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26297,7 +26800,7 @@
         "name": "_send_decoy_transactions",
         "qualified_name": "MEVProtectionLayer._send_decoy_transactions",
         "is_async": true,
-        "lineno": 398,
+        "lineno": 401,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26320,7 +26823,7 @@
         "name": "_apply_commit_reveal",
         "qualified_name": "MEVProtectionLayer._apply_commit_reveal",
         "is_async": true,
-        "lineno": 421,
+        "lineno": 424,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26343,7 +26846,7 @@
         "name": "_apply_dynamic_routing",
         "qualified_name": "MEVProtectionLayer._apply_dynamic_routing",
         "is_async": true,
-        "lineno": 439,
+        "lineno": 442,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26362,7 +26865,7 @@
         "name": "_check_mempool_congestion",
         "qualified_name": "MEVProtectionLayer._check_mempool_congestion",
         "is_async": true,
-        "lineno": 453,
+        "lineno": 456,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self"
@@ -26381,7 +26884,7 @@
         "name": "_check_attacker_activity",
         "qualified_name": "MEVProtectionLayer._check_attacker_activity",
         "is_async": true,
-        "lineno": 464,
+        "lineno": 467,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self"
@@ -26400,7 +26903,7 @@
         "name": "_estimate_mev_savings",
         "qualified_name": "MEVProtectionLayer._estimate_mev_savings",
         "is_async": true,
-        "lineno": 475,
+        "lineno": 478,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26430,7 +26933,7 @@
         "name": "_calculate_tx_hash",
         "qualified_name": "MEVProtectionLayer._calculate_tx_hash",
         "is_async": false,
-        "lineno": 515,
+        "lineno": 518,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26452,7 +26955,7 @@
         "name": "_monitor_mempool",
         "qualified_name": "MEVProtectionLayer._monitor_mempool",
         "is_async": true,
-        "lineno": 521,
+        "lineno": 524,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self"
@@ -26477,7 +26980,7 @@
         "name": "_detect_mev_threat",
         "qualified_name": "MEVProtectionLayer._detect_mev_threat",
         "is_async": true,
-        "lineno": 548,
+        "lineno": 551,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26506,7 +27009,7 @@
         "name": "_is_sandwich_attack",
         "qualified_name": "MEVProtectionLayer._is_sandwich_attack",
         "is_async": true,
-        "lineno": 579,
+        "lineno": 582,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26523,7 +27026,7 @@
         "name": "_is_frontrun_attempt",
         "qualified_name": "MEVProtectionLayer._is_frontrun_attempt",
         "is_async": true,
-        "lineno": 585,
+        "lineno": 588,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26540,7 +27043,7 @@
         "name": "_respond_to_threat",
         "qualified_name": "MEVProtectionLayer._respond_to_threat",
         "is_async": true,
-        "lineno": 591,
+        "lineno": 594,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26560,7 +27063,7 @@
         "name": "_analyze_attack_patterns",
         "qualified_name": "MEVProtectionLayer._analyze_attack_patterns",
         "is_async": true,
-        "lineno": 604,
+        "lineno": 607,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self"
@@ -26585,7 +27088,7 @@
         "name": "get_protection_stats",
         "qualified_name": "MEVProtectionLayer.get_protection_stats",
         "is_async": true,
-        "lineno": 632,
+        "lineno": 635,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self"
@@ -26604,7 +27107,7 @@
         "name": "execute_protected_trade",
         "qualified_name": "MEVProtectionLayer.execute_protected_trade",
         "is_async": true,
-        "lineno": 644,
+        "lineno": 647,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26630,7 +27133,7 @@
         "name": "_execute_flashbots_bundle",
         "qualified_name": "MEVProtectionLayer._execute_flashbots_bundle",
         "is_async": true,
-        "lineno": 678,
+        "lineno": 681,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26660,7 +27163,7 @@
         "name": "_execute_private_mempool",
         "qualified_name": "MEVProtectionLayer._execute_private_mempool",
         "is_async": true,
-        "lineno": 719,
+        "lineno": 722,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26682,7 +27185,7 @@
         "name": "_execute_standard",
         "qualified_name": "MEVProtectionLayer._execute_standard",
         "is_async": true,
-        "lineno": 740,
+        "lineno": 743,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self",
@@ -26707,7 +27210,7 @@
         "name": "cleanup",
         "qualified_name": "MEVProtectionLayer.cleanup",
         "is_async": true,
-        "lineno": 768,
+        "lineno": 771,
         "scope": "class:MEVProtectionLayer",
         "params": [
           "self"
@@ -26722,6 +27225,198 @@
           "clear",
           "clear",
           "info"
+        ]
+      },
+      {
+        "name": "execute_trade",
+        "qualified_name": "MEVProtectionLayer.execute_trade",
+        "is_async": true,
+        "lineno": 785,
+        "scope": "class:MEVProtectionLayer",
+        "params": [
+          "self",
+          "order"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict[str, Any]",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "execute_protected_trade"
+        ]
+      },
+      {
+        "name": "validate_order",
+        "qualified_name": "MEVProtectionLayer.validate_order",
+        "is_async": true,
+        "lineno": 799,
+        "scope": "class:MEVProtectionLayer",
+        "params": [
+          "self",
+          "order"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "Decimal",
+          "warning",
+          "isConnected",
+          "error",
+          "error"
+        ]
+      },
+      {
+        "name": "get_order_status",
+        "qualified_name": "MEVProtectionLayer.get_order_status",
+        "is_async": true,
+        "lineno": 832,
+        "scope": "class:MEVProtectionLayer",
+        "params": [
+          "self",
+          "order_id"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "OrderStatus",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "items",
+          "hasattr",
+          "_check_bundle_status"
+        ]
+      },
+      {
+        "name": "cancel_order",
+        "qualified_name": "MEVProtectionLayer.cancel_order",
+        "is_async": true,
+        "lineno": 857,
+        "scope": "class:MEVProtectionLayer",
+        "params": [
+          "self",
+          "order_id"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "warning"
+        ]
+      },
+      {
+        "name": "modify_order",
+        "qualified_name": "MEVProtectionLayer.modify_order",
+        "is_async": true,
+        "lineno": 871,
+        "scope": "class:MEVProtectionLayer",
+        "params": [
+          "self",
+          "order_id",
+          "modifications"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "warning"
+        ]
+      },
+      {
+        "name": "_get_transaction_receipt",
+        "qualified_name": "MEVProtectionLayer._get_transaction_receipt",
+        "is_async": true,
+        "lineno": 891,
+        "scope": "class:MEVProtectionLayer",
+        "params": [
+          "self",
+          "tx_hash"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Optional[Dict]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "hasattr",
+          "items",
+          "get_transaction_receipt",
+          "dict",
+          "hasattr",
+          "get_transaction_receipt",
+          "dict",
+          "debug"
+        ]
+      },
+      {
+        "name": "_check_bundle_status",
+        "qualified_name": "MEVProtectionLayer._check_bundle_status",
+        "is_async": true,
+        "lineno": 923,
+        "scope": "class:MEVProtectionLayer",
+        "params": [
+          "self",
+          "bundle_id"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "str",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "json",
+          "get",
+          "get",
+          "error"
+        ]
+      },
+      {
+        "name": "_build_transaction",
+        "qualified_name": "MEVProtectionLayer._build_transaction",
+        "is_async": true,
+        "lineno": 957,
+        "scope": "class:MEVProtectionLayer",
+        "params": [
+          "self",
+          "order"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict[str, Any]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "hasattr",
+          "hasattr",
+          "get_transaction_count"
+        ]
+      },
+      {
+        "name": "format_token_amount",
+        "qualified_name": "MEVProtectionLayer.format_token_amount",
+        "is_async": false,
+        "lineno": 979,
+        "scope": "class:MEVProtectionLayer",
+        "params": [
+          "amount",
+          "decimals"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "str",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "rstrip",
+          "rstrip"
         ]
       }
     ],
@@ -26745,13 +27440,7 @@
         "BaseExecutor"
       ]
     },
-    "missing": [
-      "def cancel_order()",
-      "def execute_trade()",
-      "def get_order_status()",
-      "def modify_order()",
-      "def validate_order()"
-    ],
+    "missing": [],
     "async_mismatches": [],
     "signature_mismatches": [],
     "visibility_mismatches": [],
@@ -30862,10 +31551,50 @@
     ],
     "found_methods": [
       {
+        "name": "build_order",
+        "qualified_name": "Order.build_order",
+        "is_async": false,
+        "lineno": 96,
+        "scope": "class:Order",
+        "params": [
+          "token_address",
+          "side",
+          "amount",
+          "order_type"
+        ],
+        "has_varargs": false,
+        "has_varkw": true,
+        "returns": "Order",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "Order",
+          "str",
+          "uuid4",
+          "get",
+          "get",
+          "utcnow",
+          "utcnow",
+          "get",
+          "get",
+          "get",
+          "Decimal",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get"
+        ]
+      },
+      {
         "name": "__init__",
         "qualified_name": "OrderManager.__init__",
         "is_async": false,
-        "lineno": 124,
+        "lineno": 173,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -30888,7 +31617,7 @@
         "name": "_default_config",
         "qualified_name": "OrderManager._default_config",
         "is_async": false,
-        "lineno": 146,
+        "lineno": 195,
         "scope": "class:OrderManager",
         "params": [
           "self"
@@ -30904,7 +31633,7 @@
         "name": "_initialize_components",
         "qualified_name": "OrderManager._initialize_components",
         "is_async": false,
-        "lineno": 185,
+        "lineno": 234,
         "scope": "class:OrderManager",
         "params": [
           "self"
@@ -30928,7 +31657,48 @@
         "name": "create_order",
         "qualified_name": "OrderManager.create_order",
         "is_async": true,
-        "lineno": 195,
+        "lineno": 255,
+        "scope": "class:OrderManager",
+        "params": [
+          "self",
+          "order"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "str",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "add",
+          "info"
+        ]
+      },
+      {
+        "name": "execute_order",
+        "qualified_name": "OrderManager.execute_order",
+        "is_async": true,
+        "lineno": 280,
+        "scope": "class:OrderManager",
+        "params": [
+          "self",
+          "order_id"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "submit_order",
+          "get",
+          "error"
+        ]
+      },
+      {
+        "name": "create_order_from_params",
+        "qualified_name": "OrderManager.create_order_from_params",
+        "is_async": true,
+        "lineno": 297,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -30976,7 +31746,7 @@
         "name": "submit_order",
         "qualified_name": "OrderManager.submit_order",
         "is_async": true,
-        "lineno": 272,
+        "lineno": 374,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31011,7 +31781,7 @@
         "name": "cancel_order",
         "qualified_name": "OrderManager.cancel_order",
         "is_async": true,
-        "lineno": 326,
+        "lineno": 428,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31038,7 +31808,7 @@
         "name": "modify_order",
         "qualified_name": "OrderManager.modify_order",
         "is_async": true,
-        "lineno": 372,
+        "lineno": 474,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31064,7 +31834,7 @@
         "name": "get_order_status",
         "qualified_name": "OrderManager.get_order_status",
         "is_async": true,
-        "lineno": 415,
+        "lineno": 517,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31093,7 +31863,7 @@
         "name": "_validate_order_params",
         "qualified_name": "OrderManager._validate_order_params",
         "is_async": true,
-        "lineno": 451,
+        "lineno": 553,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31126,7 +31896,7 @@
         "name": "_execute_immediate",
         "qualified_name": "OrderManager._execute_immediate",
         "is_async": true,
-        "lineno": 490,
+        "lineno": 592,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31150,7 +31920,7 @@
         "name": "_execute_twap",
         "qualified_name": "OrderManager._execute_twap",
         "is_async": true,
-        "lineno": 511,
+        "lineno": 613,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31179,7 +31949,7 @@
         "name": "_execute_twap_intervals",
         "qualified_name": "OrderManager._execute_twap_intervals",
         "is_async": true,
-        "lineno": 548,
+        "lineno": 650,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31201,7 +31971,7 @@
         "name": "_execute_vwap",
         "qualified_name": "OrderManager._execute_vwap",
         "is_async": true,
-        "lineno": 561,
+        "lineno": 663,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31232,7 +32002,7 @@
         "name": "_execute_iceberg",
         "qualified_name": "OrderManager._execute_iceberg",
         "is_async": true,
-        "lineno": 603,
+        "lineno": 705,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31259,7 +32029,7 @@
         "name": "_execute_sniper",
         "qualified_name": "OrderManager._execute_sniper",
         "is_async": true,
-        "lineno": 638,
+        "lineno": 740,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31284,7 +32054,7 @@
         "name": "_prepare_transaction",
         "qualified_name": "OrderManager._prepare_transaction",
         "is_async": true,
-        "lineno": 667,
+        "lineno": 769,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31308,7 +32078,7 @@
         "name": "_monitor_order_confirmation",
         "qualified_name": "OrderManager._monitor_order_confirmation",
         "is_async": true,
-        "lineno": 695,
+        "lineno": 797,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31337,7 +32107,7 @@
         "name": "_process_order_fill",
         "qualified_name": "OrderManager._process_order_fill",
         "is_async": true,
-        "lineno": 735,
+        "lineno": 837,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31381,7 +32151,7 @@
         "name": "_trigger_follow_up_orders",
         "qualified_name": "OrderManager._trigger_follow_up_orders",
         "is_async": true,
-        "lineno": 798,
+        "lineno": 900,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31410,7 +32180,7 @@
         "name": "_monitor_stop_order",
         "qualified_name": "OrderManager._monitor_stop_order",
         "is_async": true,
-        "lineno": 841,
+        "lineno": 943,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31434,7 +32204,7 @@
         "name": "_monitor_trailing_stop",
         "qualified_name": "OrderManager._monitor_trailing_stop",
         "is_async": true,
-        "lineno": 867,
+        "lineno": 969,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31464,7 +32234,7 @@
         "name": "_execute_stop_loss",
         "qualified_name": "OrderManager._execute_stop_loss",
         "is_async": true,
-        "lineno": 912,
+        "lineno": 1014,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31485,7 +32255,7 @@
         "name": "_update_order_book",
         "qualified_name": "OrderManager._update_order_book",
         "is_async": true,
-        "lineno": 930,
+        "lineno": 1032,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31517,7 +32287,7 @@
         "name": "_get_market_data",
         "qualified_name": "OrderManager._get_market_data",
         "is_async": true,
-        "lineno": 950,
+        "lineno": 1052,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31540,7 +32310,7 @@
         "name": "_get_volume_profile",
         "qualified_name": "OrderManager._get_volume_profile",
         "is_async": true,
-        "lineno": 966,
+        "lineno": 1068,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31560,7 +32330,7 @@
         "name": "_monitor_iceberg_refill",
         "qualified_name": "OrderManager._monitor_iceberg_refill",
         "is_async": true,
-        "lineno": 979,
+        "lineno": 1081,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31589,7 +32359,7 @@
         "name": "_update_slippage_metric",
         "qualified_name": "OrderManager._update_slippage_metric",
         "is_async": false,
-        "lineno": 1022,
+        "lineno": 1124,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31606,7 +32376,7 @@
         "name": "_monitor_orders",
         "qualified_name": "OrderManager._monitor_orders",
         "is_async": true,
-        "lineno": 1032,
+        "lineno": 1134,
         "scope": "class:OrderManager",
         "params": [
           "self"
@@ -31633,7 +32403,7 @@
         "name": "_cleanup_expired_orders",
         "qualified_name": "OrderManager._cleanup_expired_orders",
         "is_async": true,
-        "lineno": 1061,
+        "lineno": 1163,
         "scope": "class:OrderManager",
         "params": [
           "self"
@@ -31659,7 +32429,7 @@
         "name": "get_metrics",
         "qualified_name": "OrderManager.get_metrics",
         "is_async": false,
-        "lineno": 1088,
+        "lineno": 1190,
         "scope": "class:OrderManager",
         "params": [
           "self"
@@ -31679,7 +32449,7 @@
         "name": "get_active_orders",
         "qualified_name": "OrderManager.get_active_orders",
         "is_async": false,
-        "lineno": 1097,
+        "lineno": 1199,
         "scope": "class:OrderManager",
         "params": [
           "self"
@@ -31700,7 +32470,7 @@
         "name": "execute_immediate",
         "qualified_name": "OrderManager.execute_immediate",
         "is_async": true,
-        "lineno": 1116,
+        "lineno": 1218,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31719,7 +32489,7 @@
         "name": "execute_twap",
         "qualified_name": "OrderManager.execute_twap",
         "is_async": true,
-        "lineno": 1128,
+        "lineno": 1230,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31741,7 +32511,7 @@
         "name": "execute_sniper",
         "qualified_name": "OrderManager.execute_sniper",
         "is_async": true,
-        "lineno": 1155,
+        "lineno": 1257,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31764,7 +32534,7 @@
         "name": "_monitor_sniper_trigger",
         "qualified_name": "OrderManager._monitor_sniper_trigger",
         "is_async": true,
-        "lineno": 1178,
+        "lineno": 1280,
         "scope": "class:OrderManager",
         "params": [
           "self",
@@ -31790,7 +32560,7 @@
         "name": "get_open_orders",
         "qualified_name": "OrderManager.get_open_orders",
         "is_async": true,
-        "lineno": 1204,
+        "lineno": 1306,
         "scope": "class:OrderManager",
         "params": [
           "self"
@@ -31809,7 +32579,7 @@
         "name": "__init__",
         "qualified_name": "ExecutionEngine.__init__",
         "is_async": false,
-        "lineno": 1224,
+        "lineno": 1326,
         "scope": "class:ExecutionEngine",
         "params": [
           "self",
@@ -31826,7 +32596,7 @@
         "name": "submit_transaction",
         "qualified_name": "ExecutionEngine.submit_transaction",
         "is_async": true,
-        "lineno": 1227,
+        "lineno": 1329,
         "scope": "class:ExecutionEngine",
         "params": [
           "self",
@@ -31843,7 +32613,7 @@
         "name": "submit_flashbots_bundle",
         "qualified_name": "ExecutionEngine.submit_flashbots_bundle",
         "is_async": true,
-        "lineno": 1232,
+        "lineno": 1334,
         "scope": "class:ExecutionEngine",
         "params": [
           "self",
@@ -31861,7 +32631,7 @@
         "name": "submit_private_transaction",
         "qualified_name": "ExecutionEngine.submit_private_transaction",
         "is_async": true,
-        "lineno": 1237,
+        "lineno": 1339,
         "scope": "class:ExecutionEngine",
         "params": [
           "self",
@@ -31879,7 +32649,7 @@
         "name": "cancel_transaction",
         "qualified_name": "ExecutionEngine.cancel_transaction",
         "is_async": true,
-        "lineno": 1242,
+        "lineno": 1344,
         "scope": "class:ExecutionEngine",
         "params": [
           "self",
@@ -31897,7 +32667,7 @@
         "name": "get_transaction_status",
         "qualified_name": "ExecutionEngine.get_transaction_status",
         "is_async": true,
-        "lineno": 1247,
+        "lineno": 1349,
         "scope": "class:ExecutionEngine",
         "params": [
           "self",
@@ -31914,7 +32684,7 @@
         "name": "get_order_book",
         "qualified_name": "ExecutionEngine.get_order_book",
         "is_async": true,
-        "lineno": 1252,
+        "lineno": 1354,
         "scope": "class:ExecutionEngine",
         "params": [
           "self",
@@ -31931,7 +32701,7 @@
         "name": "__init__",
         "qualified_name": "OrderRiskMonitor.__init__",
         "is_async": false,
-        "lineno": 1261,
+        "lineno": 1363,
         "scope": "class:OrderRiskMonitor",
         "params": [
           "self",
@@ -31948,7 +32718,7 @@
         "name": "check_order_risk",
         "qualified_name": "OrderRiskMonitor.check_order_risk",
         "is_async": true,
-        "lineno": 1264,
+        "lineno": 1366,
         "scope": "class:OrderRiskMonitor",
         "params": [
           "self",
@@ -31968,7 +32738,7 @@
         "name": "__init__",
         "qualified_name": "SettlementProcessor.__init__",
         "is_async": false,
-        "lineno": 1279,
+        "lineno": 1381,
         "scope": "class:SettlementProcessor",
         "params": [
           "self",
@@ -31985,7 +32755,7 @@
         "name": "process_settlement",
         "qualified_name": "SettlementProcessor.process_settlement",
         "is_async": true,
-        "lineno": 1282,
+        "lineno": 1384,
         "scope": "class:SettlementProcessor",
         "params": [
           "self",
@@ -32034,13 +32804,9 @@
       "OrderRiskMonitor": [],
       "SettlementProcessor": []
     },
-    "missing": [
-      "def execute_order() (closest: execute_sniper, create_order, _execute_sniper)"
-    ],
+    "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [
-      "trading\\orders\\order_manager.py:195 OrderManager.create_order params mismatch expected=['order'] found=['token_address', 'side', 'amount', 'order_type', 'price', 'execution_strategy']"
-    ],
+    "signature_mismatches": [],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
     "duplicates_in_file": [],
@@ -32136,10 +32902,44 @@
     ],
     "found_methods": [
       {
+        "name": "build_position",
+        "qualified_name": "Position.build_position",
+        "is_async": false,
+        "lineno": 103,
+        "scope": "class:Position",
+        "params": [
+          "token_address",
+          "token_symbol",
+          "position_type",
+          "entry_price",
+          "entry_amount"
+        ],
+        "has_varargs": false,
+        "has_varkw": true,
+        "returns": "Position",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "Position",
+          "strftime",
+          "utcnow",
+          "utcnow",
+          "get",
+          "Decimal",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get"
+        ]
+      },
+      {
         "name": "__init__",
         "qualified_name": "PositionTracker.__init__",
         "is_async": false,
-        "lineno": 146,
+        "lineno": 197,
         "scope": "class:PositionTracker",
         "params": [
           "self",
@@ -32169,7 +32969,7 @@
         "name": "_default_config",
         "qualified_name": "PositionTracker._default_config",
         "is_async": false,
-        "lineno": 177,
+        "lineno": 228,
         "scope": "class:PositionTracker",
         "params": [
           "self"
@@ -32185,7 +32985,7 @@
         "name": "_initialize_performance_metrics",
         "qualified_name": "PositionTracker._initialize_performance_metrics",
         "is_async": false,
-        "lineno": 208,
+        "lineno": 259,
         "scope": "class:PositionTracker",
         "params": [
           "self"
@@ -32209,7 +33009,31 @@
         "name": "open_position",
         "qualified_name": "PositionTracker.open_position",
         "is_async": true,
-        "lineno": 233,
+        "lineno": 292,
+        "scope": "class:PositionTracker",
+        "params": [
+          "self",
+          "position"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "str",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "_check_position_limits",
+          "ValueError",
+          "_calculate_position_risk",
+          "_determine_risk_level",
+          "_update_portfolio_value",
+          "info"
+        ]
+      },
+      {
+        "name": "open_position_from_params",
+        "qualified_name": "PositionTracker.open_position_from_params",
+        "is_async": true,
+        "lineno": 325,
         "scope": "class:PositionTracker",
         "params": [
           "self",
@@ -32259,7 +33083,35 @@
         "name": "update_position",
         "qualified_name": "PositionTracker.update_position",
         "is_async": true,
-        "lineno": 333,
+        "lineno": 432,
+        "scope": "class:PositionTracker",
+        "params": [
+          "self",
+          "position_id",
+          "updates"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "get",
+          "pop",
+          "update_position_with_price",
+          "Decimal",
+          "str",
+          "items",
+          "hasattr",
+          "setattr",
+          "error"
+        ]
+      },
+      {
+        "name": "update_position_with_price",
+        "qualified_name": "PositionTracker.update_position_with_price",
+        "is_async": true,
+        "lineno": 472,
         "scope": "class:PositionTracker",
         "params": [
           "self",
@@ -32290,7 +33142,29 @@
         "name": "close_position",
         "qualified_name": "PositionTracker.close_position",
         "is_async": true,
-        "lineno": 404,
+        "lineno": 549,
+        "scope": "class:PositionTracker",
+        "params": [
+          "self",
+          "position_id"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "get",
+          "close_position_with_details",
+          "str",
+          "str"
+        ]
+      },
+      {
+        "name": "close_position_with_details",
+        "qualified_name": "PositionTracker.close_position_with_details",
+        "is_async": true,
+        "lineno": 587,
         "scope": "class:PositionTracker",
         "params": [
           "self",
@@ -32324,7 +33198,7 @@
         "name": "_check_position_limits",
         "qualified_name": "PositionTracker._check_position_limits",
         "is_async": true,
-        "lineno": 507,
+        "lineno": 690,
         "scope": "class:PositionTracker",
         "params": [
           "self",
@@ -32353,7 +33227,7 @@
         "name": "_check_position_rules",
         "qualified_name": "PositionTracker._check_position_rules",
         "is_async": true,
-        "lineno": 554,
+        "lineno": 737,
         "scope": "class:PositionTracker",
         "params": [
           "self",
@@ -32381,7 +33255,7 @@
         "name": "_calculate_position_risk",
         "qualified_name": "PositionTracker._calculate_position_risk",
         "is_async": true,
-        "lineno": 635,
+        "lineno": 818,
         "scope": "class:PositionTracker",
         "params": [
           "self",
@@ -32407,7 +33281,7 @@
         "name": "_determine_risk_level",
         "qualified_name": "PositionTracker._determine_risk_level",
         "is_async": false,
-        "lineno": 668,
+        "lineno": 851,
         "scope": "class:PositionTracker",
         "params": [
           "self",
@@ -32424,7 +33298,7 @@
         "name": "_calculate_correlation",
         "qualified_name": "PositionTracker._calculate_correlation",
         "is_async": true,
-        "lineno": 679,
+        "lineno": 862,
         "scope": "class:PositionTracker",
         "params": [
           "self",
@@ -32442,7 +33316,7 @@
         "name": "_calculate_portfolio_risk",
         "qualified_name": "PositionTracker._calculate_portfolio_risk",
         "is_async": true,
-        "lineno": 692,
+        "lineno": 875,
         "scope": "class:PositionTracker",
         "params": [
           "self"
@@ -32469,7 +33343,7 @@
         "name": "_update_portfolio_value",
         "qualified_name": "PositionTracker._update_portfolio_value",
         "is_async": true,
-        "lineno": 724,
+        "lineno": 907,
         "scope": "class:PositionTracker",
         "params": [
           "self"
@@ -32499,7 +33373,7 @@
         "name": "_update_performance_metrics",
         "qualified_name": "PositionTracker._update_performance_metrics",
         "is_async": true,
-        "lineno": 762,
+        "lineno": 945,
         "scope": "class:PositionTracker",
         "params": [
           "self",
@@ -32546,7 +33420,7 @@
         "name": "_monitor_positions",
         "qualified_name": "PositionTracker._monitor_positions",
         "is_async": true,
-        "lineno": 883,
+        "lineno": 1066,
         "scope": "class:PositionTracker",
         "params": [
           "self"
@@ -32572,7 +33446,7 @@
         "name": "_calculate_portfolio_metrics",
         "qualified_name": "PositionTracker._calculate_portfolio_metrics",
         "is_async": true,
-        "lineno": 914,
+        "lineno": 1097,
         "scope": "class:PositionTracker",
         "params": [
           "self"
@@ -32596,7 +33470,7 @@
         "name": "_get_current_price",
         "qualified_name": "PositionTracker._get_current_price",
         "is_async": true,
-        "lineno": 941,
+        "lineno": 1124,
         "scope": "class:PositionTracker",
         "params": [
           "self",
@@ -32617,7 +33491,7 @@
         "name": "_execute_position_actions",
         "qualified_name": "PositionTracker._execute_position_actions",
         "is_async": true,
-        "lineno": 958,
+        "lineno": 1141,
         "scope": "class:PositionTracker",
         "params": [
           "self",
@@ -32645,7 +33519,7 @@
         "name": "_calculate_value_at_risk",
         "qualified_name": "PositionTracker._calculate_value_at_risk",
         "is_async": true,
-        "lineno": 1002,
+        "lineno": 1185,
         "scope": "class:PositionTracker",
         "params": [
           "self"
@@ -32677,7 +33551,7 @@
         "name": "_calculate_portfolio_beta",
         "qualified_name": "PositionTracker._calculate_portfolio_beta",
         "is_async": true,
-        "lineno": 1033,
+        "lineno": 1216,
         "scope": "class:PositionTracker",
         "params": [
           "self"
@@ -32693,7 +33567,7 @@
         "name": "_calculate_portfolio_volatility",
         "qualified_name": "PositionTracker._calculate_portfolio_volatility",
         "is_async": true,
-        "lineno": 1042,
+        "lineno": 1225,
         "scope": "class:PositionTracker",
         "params": [
           "self"
@@ -32720,7 +33594,7 @@
         "name": "_update_correlation_matrix",
         "qualified_name": "PositionTracker._update_correlation_matrix",
         "is_async": true,
-        "lineno": 1065,
+        "lineno": 1248,
         "scope": "class:PositionTracker",
         "params": [
           "self"
@@ -32745,7 +33619,7 @@
         "name": "_check_portfolio_alerts",
         "qualified_name": "PositionTracker._check_portfolio_alerts",
         "is_async": true,
-        "lineno": 1089,
+        "lineno": 1272,
         "scope": "class:PositionTracker",
         "params": [
           "self"
@@ -32769,7 +33643,7 @@
         "name": "get_open_positions",
         "qualified_name": "PositionTracker.get_open_positions",
         "is_async": false,
-        "lineno": 1113,
+        "lineno": 1296,
         "scope": "class:PositionTracker",
         "params": [
           "self"
@@ -32792,7 +33666,7 @@
         "name": "get_portfolio_summary",
         "qualified_name": "PositionTracker.get_portfolio_summary",
         "is_async": false,
-        "lineno": 1130,
+        "lineno": 1313,
         "scope": "class:PositionTracker",
         "params": [
           "self"
@@ -32815,7 +33689,7 @@
         "name": "get_performance_report",
         "qualified_name": "PositionTracker.get_performance_report",
         "is_async": false,
-        "lineno": 1147,
+        "lineno": 1330,
         "scope": "class:PositionTracker",
         "params": [
           "self"
@@ -32840,7 +33714,7 @@
         "name": "get_active_positions",
         "qualified_name": "PositionTracker.get_active_positions",
         "is_async": true,
-        "lineno": 1182,
+        "lineno": 1365,
         "scope": "class:PositionTracker",
         "params": [
           "self"
@@ -32858,7 +33732,7 @@
         "name": "calculate_pnl",
         "qualified_name": "PositionTracker.calculate_pnl",
         "is_async": true,
-        "lineno": 1192,
+        "lineno": 1375,
         "scope": "class:PositionTracker",
         "params": [
           "self",
@@ -32881,7 +33755,7 @@
         "name": "check_stop_loss",
         "qualified_name": "PositionTracker.check_stop_loss",
         "is_async": true,
-        "lineno": 1217,
+        "lineno": 1400,
         "scope": "class:PositionTracker",
         "params": [
           "self",
@@ -32923,11 +33797,7 @@
     },
     "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [
-      "trading\\orders\\position_tracker.py:233 PositionTracker.open_position params mismatch expected=['position'] found=['token_address', 'token_symbol', 'position_type', 'entry_price', 'entry_amount', 'order_ids']",
-      "trading\\orders\\position_tracker.py:404 PositionTracker.close_position params mismatch expected=['position_id'] found=['position_id', 'exit_price', 'exit_amount', 'order_ids', 'reason']",
-      "trading\\orders\\position_tracker.py:333 PositionTracker.update_position params mismatch expected=['position_id', 'updates'] found=['position_id', 'current_price']"
-    ],
+    "signature_mismatches": [],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
     "duplicates_in_file": [],
@@ -33094,7 +33964,33 @@
         "name": "send_alert",
         "qualified_name": "AlertsSystem.send_alert",
         "is_async": true,
-        "lineno": 269,
+        "lineno": 274,
+        "scope": "class:AlertsSystem",
+        "params": [
+          "self",
+          "alert_type",
+          "message",
+          "data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "upper",
+          "lower",
+          "lower",
+          "lower",
+          "len",
+          "send_alert_internal"
+        ]
+      },
+      {
+        "name": "send_alert_internal",
+        "qualified_name": "AlertsSystem.send_alert_internal",
+        "is_async": true,
+        "lineno": 308,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33126,7 +34022,7 @@
         "name": "send_trading_alert",
         "qualified_name": "AlertsSystem.send_trading_alert",
         "is_async": true,
-        "lineno": 327,
+        "lineno": 366,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33157,7 +34053,7 @@
         "name": "send_opportunity_alert",
         "qualified_name": "AlertsSystem.send_opportunity_alert",
         "is_async": true,
-        "lineno": 381,
+        "lineno": 420,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33184,7 +34080,7 @@
         "name": "send_risk_alert",
         "qualified_name": "AlertsSystem.send_risk_alert",
         "is_async": true,
-        "lineno": 431,
+        "lineno": 470,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33212,7 +34108,7 @@
         "name": "send_performance_summary",
         "qualified_name": "AlertsSystem.send_performance_summary",
         "is_async": true,
-        "lineno": 483,
+        "lineno": 522,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33237,7 +34133,7 @@
         "name": "_process_alerts",
         "qualified_name": "AlertsSystem._process_alerts",
         "is_async": true,
-        "lineno": 518,
+        "lineno": 557,
         "scope": "class:AlertsSystem",
         "params": [
           "self"
@@ -33260,7 +34156,7 @@
         "name": "_aggregate_alerts",
         "qualified_name": "AlertsSystem._aggregate_alerts",
         "is_async": true,
-        "lineno": 541,
+        "lineno": 580,
         "scope": "class:AlertsSystem",
         "params": [
           "self"
@@ -33288,7 +34184,7 @@
         "name": "_send_alert_to_channels",
         "qualified_name": "AlertsSystem._send_alert_to_channels",
         "is_async": true,
-        "lineno": 583,
+        "lineno": 622,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33314,7 +34210,7 @@
         "name": "_send_to_channel",
         "qualified_name": "AlertsSystem._send_to_channel",
         "is_async": true,
-        "lineno": 630,
+        "lineno": 669,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33338,10 +34234,114 @@
         ]
       },
       {
+        "name": "send_telegram",
+        "qualified_name": "AlertsSystem.send_telegram",
+        "is_async": true,
+        "lineno": 700,
+        "scope": "class:AlertsSystem",
+        "params": [
+          "self",
+          "message"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "Alert",
+          "_generate_alert_id",
+          "utcnow",
+          "_send_telegram"
+        ]
+      },
+      {
+        "name": "send_discord",
+        "qualified_name": "AlertsSystem.send_discord",
+        "is_async": true,
+        "lineno": 721,
+        "scope": "class:AlertsSystem",
+        "params": [
+          "self",
+          "message"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "Alert",
+          "_generate_alert_id",
+          "utcnow",
+          "_send_discord"
+        ]
+      },
+      {
+        "name": "send_email",
+        "qualified_name": "AlertsSystem.send_email",
+        "is_async": true,
+        "lineno": 742,
+        "scope": "class:AlertsSystem",
+        "params": [
+          "self",
+          "subject",
+          "body"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "Alert",
+          "_generate_alert_id",
+          "utcnow",
+          "_send_email"
+        ]
+      },
+      {
+        "name": "format_alert",
+        "qualified_name": "AlertsSystem.format_alert",
+        "is_async": false,
+        "lineno": 764,
+        "scope": "class:AlertsSystem",
+        "params": [
+          "self",
+          "alert_type",
+          "data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "str",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "_format_position_opened",
+          "_format_position_closed",
+          "get",
+          "_format_stop_loss",
+          "get",
+          "_format_take_profit",
+          "get",
+          "_format_arbitrage_opportunity",
+          "_format_whale_movement",
+          "_format_volume_surge",
+          "_format_signal",
+          "get",
+          "_format_drawdown_alert",
+          "_format_risk_warning",
+          "_format_daily_summary",
+          "items",
+          "append",
+          "join"
+        ]
+      },
+      {
         "name": "_send_telegram",
         "qualified_name": "AlertsSystem._send_telegram",
         "is_async": true,
-        "lineno": 658,
+        "lineno": 806,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33365,7 +34365,7 @@
         "name": "_send_discord",
         "qualified_name": "AlertsSystem._send_discord",
         "is_async": true,
-        "lineno": 691,
+        "lineno": 839,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33395,7 +34395,7 @@
         "name": "_send_email",
         "qualified_name": "AlertsSystem._send_email",
         "is_async": true,
-        "lineno": 730,
+        "lineno": 878,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33412,7 +34412,7 @@
         "name": "_send_webhook",
         "qualified_name": "AlertsSystem._send_webhook",
         "is_async": true,
-        "lineno": 735,
+        "lineno": 883,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33441,7 +34441,7 @@
         "name": "_send_sms",
         "qualified_name": "AlertsSystem._send_sms",
         "is_async": true,
-        "lineno": 774,
+        "lineno": 922,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33458,7 +34458,7 @@
         "name": "_send_slack",
         "qualified_name": "AlertsSystem._send_slack",
         "is_async": true,
-        "lineno": 779,
+        "lineno": 927,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33475,7 +34475,7 @@
         "name": "_send_pushover",
         "qualified_name": "AlertsSystem._send_pushover",
         "is_async": true,
-        "lineno": 784,
+        "lineno": 932,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33492,7 +34492,7 @@
         "name": "_get_emoji",
         "qualified_name": "AlertsSystem._get_emoji",
         "is_async": false,
-        "lineno": 789,
+        "lineno": 937,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33511,7 +34511,7 @@
         "name": "_get_color_for_priority",
         "qualified_name": "AlertsSystem._get_color_for_priority",
         "is_async": false,
-        "lineno": 814,
+        "lineno": 962,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33530,7 +34530,7 @@
         "name": "_get_channels_for_priority",
         "qualified_name": "AlertsSystem._get_channels_for_priority",
         "is_async": false,
-        "lineno": 824,
+        "lineno": 972,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33549,7 +34549,7 @@
         "name": "_should_send_alert",
         "qualified_name": "AlertsSystem._should_send_alert",
         "is_async": false,
-        "lineno": 831,
+        "lineno": 979,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33570,7 +34570,7 @@
         "name": "_check_rate_limit",
         "qualified_name": "AlertsSystem._check_rate_limit",
         "is_async": false,
-        "lineno": 847,
+        "lineno": 995,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33594,7 +34594,7 @@
         "name": "_generate_alert_id",
         "qualified_name": "AlertsSystem._generate_alert_id",
         "is_async": false,
-        "lineno": 870,
+        "lineno": 1018,
         "scope": "class:AlertsSystem",
         "params": [
           "self"
@@ -33613,7 +34613,7 @@
         "name": "_format_position_opened",
         "qualified_name": "AlertsSystem._format_position_opened",
         "is_async": false,
-        "lineno": 875,
+        "lineno": 1023,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33639,7 +34639,7 @@
         "name": "_format_position_closed",
         "qualified_name": "AlertsSystem._format_position_closed",
         "is_async": false,
-        "lineno": 888,
+        "lineno": 1036,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33663,7 +34663,7 @@
         "name": "_format_stop_loss",
         "qualified_name": "AlertsSystem._format_stop_loss",
         "is_async": false,
-        "lineno": 902,
+        "lineno": 1050,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33686,7 +34686,7 @@
         "name": "_format_take_profit",
         "qualified_name": "AlertsSystem._format_take_profit",
         "is_async": false,
-        "lineno": 913,
+        "lineno": 1061,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33709,7 +34709,7 @@
         "name": "_format_arbitrage_opportunity",
         "qualified_name": "AlertsSystem._format_arbitrage_opportunity",
         "is_async": false,
-        "lineno": 924,
+        "lineno": 1072,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33736,7 +34736,7 @@
         "name": "_format_whale_movement",
         "qualified_name": "AlertsSystem._format_whale_movement",
         "is_async": false,
-        "lineno": 937,
+        "lineno": 1085,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33761,7 +34761,7 @@
         "name": "_format_volume_surge",
         "qualified_name": "AlertsSystem._format_volume_surge",
         "is_async": false,
-        "lineno": 950,
+        "lineno": 1098,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33785,7 +34785,7 @@
         "name": "_format_signal",
         "qualified_name": "AlertsSystem._format_signal",
         "is_async": false,
-        "lineno": 962,
+        "lineno": 1110,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33811,7 +34811,7 @@
         "name": "_format_drawdown_alert",
         "qualified_name": "AlertsSystem._format_drawdown_alert",
         "is_async": false,
-        "lineno": 976,
+        "lineno": 1124,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33835,7 +34835,7 @@
         "name": "_format_correlation_warning",
         "qualified_name": "AlertsSystem._format_correlation_warning",
         "is_async": false,
-        "lineno": 988,
+        "lineno": 1136,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33858,7 +34858,7 @@
         "name": "_format_risk_warning",
         "qualified_name": "AlertsSystem._format_risk_warning",
         "is_async": false,
-        "lineno": 999,
+        "lineno": 1147,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33882,7 +34882,7 @@
         "name": "_format_margin_call",
         "qualified_name": "AlertsSystem._format_margin_call",
         "is_async": false,
-        "lineno": 1011,
+        "lineno": 1159,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33906,7 +34906,7 @@
         "name": "_format_daily_summary",
         "qualified_name": "AlertsSystem._format_daily_summary",
         "is_async": false,
-        "lineno": 1025,
+        "lineno": 1173,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33936,7 +34936,7 @@
         "name": "_format_weekly_report",
         "qualified_name": "AlertsSystem._format_weekly_report",
         "is_async": false,
-        "lineno": 1044,
+        "lineno": 1192,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33970,7 +34970,7 @@
         "name": "_format_performance_metrics",
         "qualified_name": "AlertsSystem._format_performance_metrics",
         "is_async": false,
-        "lineno": 1068,
+        "lineno": 1216,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -33997,7 +34997,7 @@
         "name": "_format_aggregated_alerts",
         "qualified_name": "AlertsSystem._format_aggregated_alerts",
         "is_async": false,
-        "lineno": 1084,
+        "lineno": 1232,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -34023,7 +35023,7 @@
         "name": "_notify_subscribers",
         "qualified_name": "AlertsSystem._notify_subscribers",
         "is_async": true,
-        "lineno": 1103,
+        "lineno": 1251,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -34044,7 +35044,7 @@
         "name": "subscribe_to_alerts",
         "qualified_name": "AlertsSystem.subscribe_to_alerts",
         "is_async": false,
-        "lineno": 1112,
+        "lineno": 1260,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -34064,7 +35064,7 @@
         "name": "add_rule",
         "qualified_name": "AlertsSystem.add_rule",
         "is_async": false,
-        "lineno": 1120,
+        "lineno": 1268,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -34091,7 +35091,7 @@
         "name": "check_rules",
         "qualified_name": "AlertsSystem.check_rules",
         "is_async": true,
-        "lineno": 1143,
+        "lineno": 1291,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -34116,7 +35116,7 @@
         "name": "get_alert_stats",
         "qualified_name": "AlertsSystem.get_alert_stats",
         "is_async": false,
-        "lineno": 1175,
+        "lineno": 1323,
         "scope": "class:AlertsSystem",
         "params": [
           "self"
@@ -34139,7 +35139,7 @@
         "name": "set_channel_enabled",
         "qualified_name": "AlertsSystem.set_channel_enabled",
         "is_async": false,
-        "lineno": 1210,
+        "lineno": 1358,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -34157,7 +35157,7 @@
         "name": "update_channel_config",
         "qualified_name": "AlertsSystem.update_channel_config",
         "is_async": false,
-        "lineno": 1219,
+        "lineno": 1367,
         "scope": "class:AlertsSystem",
         "params": [
           "self",
@@ -34200,16 +35200,9 @@
       "ChannelConfig": [],
       "AlertsSystem": []
     },
-    "missing": [
-      "def send_telegram() (closest: _send_telegram, send_alert)",
-      "def send_discord() (closest: _send_discord, _send_pushover, _send_slack)",
-      "def send_email() (closest: _send_email, send_alert, _send_sms)",
-      "def format_alert() (closest: _format_drawdown_alert, _format_signal, _format_aggregated_alerts)"
-    ],
+    "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [
-      "monitoring\\alerts.py:269 AlertsSystem.send_alert params mismatch expected=['alert_type', 'message', 'data'] found=['alert_type', 'title', 'message', 'priority', 'data', 'channels']"
-    ],
+    "signature_mismatches": [],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
     "duplicates_in_file": [],
@@ -34972,10 +35965,113 @@
         ]
       },
       {
+        "name": "start_dashboard",
+        "qualified_name": "Dashboard.start_dashboard",
+        "is_async": true,
+        "lineno": 470,
+        "scope": "class:Dashboard",
+        "params": [
+          "self",
+          "port"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "start"
+        ]
+      },
+      {
+        "name": "update_metrics",
+        "qualified_name": "Dashboard.update_metrics",
+        "is_async": true,
+        "lineno": 480,
+        "scope": "class:Dashboard",
+        "params": [
+          "self",
+          "metrics"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "update_dashboard_data",
+          "Decimal",
+          "get",
+          "Decimal",
+          "get",
+          "Decimal",
+          "get",
+          "Decimal",
+          "get",
+          "Decimal",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "update_performance",
+          "update_risk",
+          "update_positions",
+          "update_orders"
+        ]
+      },
+      {
+        "name": "get_dashboard_data",
+        "qualified_name": "Dashboard.get_dashboard_data",
+        "is_async": true,
+        "lineno": 519,
+        "scope": "class:Dashboard",
+        "params": [
+          "self"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "_serialize_dashboard_data",
+          "items"
+        ]
+      },
+      {
+        "name": "generate_charts",
+        "qualified_name": "Dashboard.generate_charts",
+        "is_async": false,
+        "lineno": 543,
+        "scope": "class:Dashboard",
+        "params": [
+          "self",
+          "data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "add_chart",
+          "append",
+          "get",
+          "get",
+          "add_chart",
+          "create_win_rate_chart",
+          "add_chart",
+          "create_risk_gauge"
+        ]
+      },
+      {
         "name": "add_chart",
         "qualified_name": "Dashboard.add_chart",
         "is_async": false,
-        "lineno": 468,
+        "lineno": 607,
         "scope": "class:Dashboard",
         "params": [
           "self",
@@ -34999,7 +36095,7 @@
         "name": "update_chart_data",
         "qualified_name": "Dashboard.update_chart_data",
         "is_async": false,
-        "lineno": 487,
+        "lineno": 626,
         "scope": "class:Dashboard",
         "params": [
           "self",
@@ -35017,7 +36113,7 @@
         "name": "_update_dashboard_data",
         "qualified_name": "Dashboard._update_dashboard_data",
         "is_async": true,
-        "lineno": 493,
+        "lineno": 632,
         "scope": "class:Dashboard",
         "params": [
           "self"
@@ -35038,7 +36134,7 @@
         "name": "_broadcast_updates",
         "qualified_name": "Dashboard._broadcast_updates",
         "is_async": true,
-        "lineno": 508,
+        "lineno": 647,
         "scope": "class:Dashboard",
         "params": [
           "self"
@@ -35063,7 +36159,7 @@
         "name": "_serialize_dashboard_data",
         "qualified_name": "Dashboard._serialize_dashboard_data",
         "is_async": false,
-        "lineno": 540,
+        "lineno": 679,
         "scope": "class:Dashboard",
         "params": [
           "self"
@@ -35086,7 +36182,7 @@
         "name": "_execute_action",
         "qualified_name": "Dashboard._execute_action",
         "is_async": true,
-        "lineno": 560,
+        "lineno": 699,
         "scope": "class:Dashboard",
         "params": [
           "self",
@@ -35104,7 +36200,7 @@
         "name": "_close_position",
         "qualified_name": "Dashboard._close_position",
         "is_async": true,
-        "lineno": 569,
+        "lineno": 708,
         "scope": "class:Dashboard",
         "params": [
           "self",
@@ -35121,7 +36217,7 @@
         "name": "_modify_position",
         "qualified_name": "Dashboard._modify_position",
         "is_async": true,
-        "lineno": 573,
+        "lineno": 712,
         "scope": "class:Dashboard",
         "params": [
           "self",
@@ -35139,7 +36235,7 @@
         "name": "_cancel_order",
         "qualified_name": "Dashboard._cancel_order",
         "is_async": true,
-        "lineno": 577,
+        "lineno": 716,
         "scope": "class:Dashboard",
         "params": [
           "self",
@@ -35156,7 +36252,7 @@
         "name": "_modify_order",
         "qualified_name": "Dashboard._modify_order",
         "is_async": true,
-        "lineno": 581,
+        "lineno": 720,
         "scope": "class:Dashboard",
         "params": [
           "self",
@@ -35174,7 +36270,7 @@
         "name": "_toggle_strategy",
         "qualified_name": "Dashboard._toggle_strategy",
         "is_async": true,
-        "lineno": 585,
+        "lineno": 724,
         "scope": "class:Dashboard",
         "params": [
           "self",
@@ -35192,7 +36288,7 @@
         "name": "start",
         "qualified_name": "Dashboard.start",
         "is_async": true,
-        "lineno": 590,
+        "lineno": 729,
         "scope": "class:Dashboard",
         "params": [
           "self"
@@ -35214,7 +36310,7 @@
         "name": "create_portfolio_chart",
         "qualified_name": "Dashboard.create_portfolio_chart",
         "is_async": false,
-        "lineno": 598,
+        "lineno": 737,
         "scope": "class:Dashboard",
         "params": [
           "self"
@@ -35237,7 +36333,7 @@
         "name": "create_positions_chart",
         "qualified_name": "Dashboard.create_positions_chart",
         "is_async": false,
-        "lineno": 628,
+        "lineno": 767,
         "scope": "class:Dashboard",
         "params": [
           "self"
@@ -35259,7 +36355,7 @@
         "name": "create_win_rate_chart",
         "qualified_name": "Dashboard.create_win_rate_chart",
         "is_async": false,
-        "lineno": 656,
+        "lineno": 795,
         "scope": "class:Dashboard",
         "params": [
           "self"
@@ -35278,7 +36374,7 @@
         "name": "create_volume_chart",
         "qualified_name": "Dashboard.create_volume_chart",
         "is_async": false,
-        "lineno": 680,
+        "lineno": 819,
         "scope": "class:Dashboard",
         "params": [
           "self"
@@ -35301,7 +36397,7 @@
         "name": "create_risk_gauge",
         "qualified_name": "Dashboard.create_risk_gauge",
         "is_async": false,
-        "lineno": 707,
+        "lineno": 846,
         "scope": "class:Dashboard",
         "params": [
           "self"
@@ -35320,7 +36416,7 @@
         "name": "__init__",
         "qualified_name": "DashboardManager.__init__",
         "is_async": false,
-        "lineno": 742,
+        "lineno": 881,
         "scope": "class:DashboardManager",
         "params": [
           "self",
@@ -35337,7 +36433,7 @@
         "name": "connect_to_trading_system",
         "qualified_name": "DashboardManager.connect_to_trading_system",
         "is_async": true,
-        "lineno": 747,
+        "lineno": 886,
         "scope": "class:DashboardManager",
         "params": [
           "self",
@@ -35370,7 +36466,7 @@
         "name": "_update_portfolio_data",
         "qualified_name": "DashboardManager._update_portfolio_data",
         "is_async": true,
-        "lineno": 770,
+        "lineno": 909,
         "scope": "class:DashboardManager",
         "params": [
           "self"
@@ -35411,7 +36507,7 @@
         "name": "_update_positions_data",
         "qualified_name": "DashboardManager._update_positions_data",
         "is_async": true,
-        "lineno": 797,
+        "lineno": 936,
         "scope": "class:DashboardManager",
         "params": [
           "self"
@@ -35433,7 +36529,7 @@
         "name": "_update_orders_data",
         "qualified_name": "DashboardManager._update_orders_data",
         "is_async": true,
-        "lineno": 811,
+        "lineno": 950,
         "scope": "class:DashboardManager",
         "params": [
           "self"
@@ -35455,7 +36551,7 @@
         "name": "_update_alerts_data",
         "qualified_name": "DashboardManager._update_alerts_data",
         "is_async": true,
-        "lineno": 825,
+        "lineno": 964,
         "scope": "class:DashboardManager",
         "params": [
           "self"
@@ -35479,7 +36575,7 @@
         "name": "alert_callback",
         "qualified_name": "DashboardManager.alert_callback",
         "is_async": true,
-        "lineno": 831,
+        "lineno": 970,
         "scope": "class:DashboardManager",
         "params": [
           "alert"
@@ -35497,7 +36593,7 @@
         "name": "_update_performance_data",
         "qualified_name": "DashboardManager._update_performance_data",
         "is_async": true,
-        "lineno": 851,
+        "lineno": 990,
         "scope": "class:DashboardManager",
         "params": [
           "self"
@@ -35519,7 +36615,7 @@
         "name": "_update_risk_data",
         "qualified_name": "DashboardManager._update_risk_data",
         "is_async": true,
-        "lineno": 865,
+        "lineno": 1004,
         "scope": "class:DashboardManager",
         "params": [
           "self"
@@ -35559,12 +36655,7 @@
       "Dashboard": [],
       "DashboardManager": []
     },
-    "missing": [
-      "def start_dashboard() (closest: update_dashboard_data, _update_dashboard_data, _serialize_dashboard_data)",
-      "def update_metrics() (closest: update_risk, update_orders, _update_risk_data)",
-      "def get_dashboard_data() (closest: update_dashboard_data, _update_dashboard_data, _serialize_dashboard_data)",
-      "def generate_charts() (closest: create_win_rate_chart)"
-    ],
+    "missing": [],
     "async_mismatches": [],
     "signature_mismatches": [],
     "visibility_mismatches": [],
@@ -36943,50 +38034,10 @@
         "calls": []
       },
       {
-        "name": "setup_logging",
-        "qualified_name": "StructuredLogger.setup_logging",
-        "is_async": false,
-        "lineno": 710,
-        "scope": "class:StructuredLogger",
-        "params": [
-          "self"
-        ],
-        "has_varargs": false,
-        "has_varkw": false,
-        "returns": null,
-        "visibility": "public",
-        "decorators": [],
-        "calls": [
-          "Path",
-          "mkdir",
-          "getLogger",
-          "setLevel",
-          "getattr",
-          "StreamHandler",
-          "setFormatter",
-          "_get_formatter",
-          "addHandler",
-          "RotatingFileHandler",
-          "setFormatter",
-          "_get_formatter",
-          "addHandler",
-          "RotatingFileHandler",
-          "setLevel",
-          "setFormatter",
-          "_get_formatter",
-          "addHandler",
-          "RotatingFileHandler",
-          "setLevel",
-          "setFormatter",
-          "_get_formatter",
-          "addHandler"
-        ]
-      },
-      {
         "name": "_get_formatter",
         "qualified_name": "StructuredLogger._get_formatter",
         "is_async": false,
-        "lineno": 762,
+        "lineno": 711,
         "scope": "class:StructuredLogger",
         "params": [
           "self",
@@ -37008,7 +38059,7 @@
         "name": "log_trade",
         "qualified_name": "StructuredLogger.log_trade",
         "is_async": false,
-        "lineno": 771,
+        "lineno": 720,
         "scope": "class:StructuredLogger",
         "params": [
           "self",
@@ -37051,7 +38102,7 @@
         "name": "log_error",
         "qualified_name": "StructuredLogger.log_error",
         "is_async": false,
-        "lineno": 822,
+        "lineno": 771,
         "scope": "class:StructuredLogger",
         "params": [
           "self",
@@ -37087,7 +38138,7 @@
         "name": "log_performance",
         "qualified_name": "StructuredLogger.log_performance",
         "is_async": false,
-        "lineno": 865,
+        "lineno": 814,
         "scope": "class:StructuredLogger",
         "params": [
           "self",
@@ -37120,7 +38171,7 @@
         "name": "setup_logging",
         "qualified_name": "StructuredLogger.setup_logging",
         "is_async": false,
-        "lineno": 905,
+        "lineno": 857,
         "scope": "class:StructuredLogger",
         "params": [
           "self",
@@ -37133,7 +38184,29 @@
         "decorators": [],
         "calls": [
           "update",
-          "setup_logging",
+          "Path",
+          "mkdir",
+          "getLogger",
+          "setLevel",
+          "getattr",
+          "StreamHandler",
+          "setFormatter",
+          "_get_formatter",
+          "addHandler",
+          "RotatingFileHandler",
+          "setFormatter",
+          "_get_formatter",
+          "addHandler",
+          "RotatingFileHandler",
+          "setLevel",
+          "setFormatter",
+          "_get_formatter",
+          "addHandler",
+          "RotatingFileHandler",
+          "setLevel",
+          "setFormatter",
+          "_get_formatter",
+          "addHandler",
           "info"
         ]
       },
@@ -37141,7 +38214,7 @@
         "name": "_save_error_to_file",
         "qualified_name": "StructuredLogger._save_error_to_file",
         "is_async": false,
-        "lineno": 920,
+        "lineno": 921,
         "scope": "class:StructuredLogger",
         "params": [
           "self",
@@ -37167,7 +38240,7 @@
         "name": "format",
         "qualified_name": "JsonFormatter.format",
         "is_async": false,
-        "lineno": 949,
+        "lineno": 950,
         "scope": "class:JsonFormatter",
         "params": [
           "self",
@@ -37191,7 +38264,7 @@
         "name": "format",
         "qualified_name": "ColoredFormatter.format",
         "is_async": false,
-        "lineno": 984,
+        "lineno": 985,
         "scope": "class:ColoredFormatter",
         "params": [
           "self",
@@ -37212,7 +38285,7 @@
         "name": "__init__",
         "qualified_name": "StandardFormatter.__init__",
         "is_async": false,
-        "lineno": 993,
+        "lineno": 994,
         "scope": "class:StandardFormatter",
         "params": [
           "self"
@@ -37231,7 +38304,7 @@
         "name": "format",
         "qualified_name": "TradeFormatter.format",
         "is_async": false,
-        "lineno": 1003,
+        "lineno": 1004,
         "scope": "class:TradeFormatter",
         "params": [
           "self",
@@ -37283,14 +38356,10 @@
     },
     "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [
-      "monitoring\\logger.py:710 StructuredLogger.setup_logging params mismatch expected=['config'] found=[]"
-    ],
+    "signature_mismatches": [],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
-    "duplicates_in_file": [
-      "class:StructuredLogger::setup_logging x2"
-    ],
+    "duplicates_in_file": [],
     "extras": []
   },
   "security/__init__.py": {
@@ -38340,7 +39409,8 @@
         "visibility": null,
         "params": [
           "wallet_type",
-          "security_level"
+          "security_level",
+          "derivation_path"
         ],
         "has_varargs": false,
         "has_varkw": false,
@@ -38619,10 +39689,30 @@
         ]
       },
       {
+        "name": "create_wallet_simple",
+        "qualified_name": "WalletSecurityManager.create_wallet_simple",
+        "is_async": true,
+        "lineno": 279,
+        "scope": "class:WalletSecurityManager",
+        "params": [
+          "self",
+          "wallet_type",
+          "security_level"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Tuple[str, str]",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "create_wallet"
+        ]
+      },
+      {
         "name": "_save_wallet_data",
         "qualified_name": "WalletSecurityManager._save_wallet_data",
         "is_async": true,
-        "lineno": 276,
+        "lineno": 298,
         "scope": "class:WalletSecurityManager",
         "params": [
           "self",
@@ -38642,7 +39732,7 @@
         "name": "_setup_hardware_wallet_address",
         "qualified_name": "WalletSecurityManager._setup_hardware_wallet_address",
         "is_async": true,
-        "lineno": 284,
+        "lineno": 306,
         "scope": "class:WalletSecurityManager",
         "params": [
           "self",
@@ -38662,7 +39752,7 @@
         "name": "sign_transaction",
         "qualified_name": "WalletSecurityManager.sign_transaction",
         "is_async": true,
-        "lineno": 290,
+        "lineno": 312,
         "scope": "class:WalletSecurityManager",
         "params": [
           "self",
@@ -38695,7 +39785,7 @@
         "name": "_perform_security_checks",
         "qualified_name": "WalletSecurityManager._perform_security_checks",
         "is_async": true,
-        "lineno": 342,
+        "lineno": 364,
         "scope": "class:WalletSecurityManager",
         "params": [
           "self",
@@ -38722,7 +39812,7 @@
         "name": "_check_transaction_limits",
         "qualified_name": "WalletSecurityManager._check_transaction_limits",
         "is_async": true,
-        "lineno": 377,
+        "lineno": 399,
         "scope": "class:WalletSecurityManager",
         "params": [
           "self",
@@ -38748,7 +39838,7 @@
         "name": "_check_rate_limits",
         "qualified_name": "WalletSecurityManager._check_rate_limits",
         "is_async": true,
-        "lineno": 394,
+        "lineno": 416,
         "scope": "class:WalletSecurityManager",
         "params": [
           "self",
@@ -38771,7 +39861,7 @@
         "name": "_sign_hot_wallet_transaction",
         "qualified_name": "WalletSecurityManager._sign_hot_wallet_transaction",
         "is_async": true,
-        "lineno": 416,
+        "lineno": 438,
         "scope": "class:WalletSecurityManager",
         "params": [
           "self",
@@ -38802,7 +39892,7 @@
         "name": "_sign_hardware_wallet_transaction",
         "qualified_name": "WalletSecurityManager._sign_hardware_wallet_transaction",
         "is_async": true,
-        "lineno": 445,
+        "lineno": 467,
         "scope": "class:WalletSecurityManager",
         "params": [
           "self",
@@ -38826,7 +39916,7 @@
         "name": "_sign_multisig_transaction",
         "qualified_name": "WalletSecurityManager._sign_multisig_transaction",
         "is_async": true,
-        "lineno": 461,
+        "lineno": 483,
         "scope": "class:WalletSecurityManager",
         "params": [
           "self",
@@ -38849,7 +39939,7 @@
         "name": "_get_wallet_data",
         "qualified_name": "WalletSecurityManager._get_wallet_data",
         "is_async": true,
-        "lineno": 475,
+        "lineno": 497,
         "scope": "class:WalletSecurityManager",
         "params": [
           "self",
@@ -38866,7 +39956,7 @@
         "name": "_log_transaction",
         "qualified_name": "WalletSecurityManager._log_transaction",
         "is_async": true,
-        "lineno": 484,
+        "lineno": 506,
         "scope": "class:WalletSecurityManager",
         "params": [
           "self",
@@ -38895,7 +39985,7 @@
         "name": "emergency_stop",
         "qualified_name": "WalletSecurityManager.emergency_stop",
         "is_async": true,
-        "lineno": 499,
+        "lineno": 521,
         "scope": "class:WalletSecurityManager",
         "params": [
           "self",
@@ -38922,7 +40012,7 @@
         "name": "_lock_wallet",
         "qualified_name": "WalletSecurityManager._lock_wallet",
         "is_async": true,
-        "lineno": 524,
+        "lineno": 546,
         "scope": "class:WalletSecurityManager",
         "params": [
           "self",
@@ -38942,7 +40032,7 @@
         "name": "_notify_emergency_contacts",
         "qualified_name": "WalletSecurityManager._notify_emergency_contacts",
         "is_async": true,
-        "lineno": 529,
+        "lineno": 551,
         "scope": "class:WalletSecurityManager",
         "params": [
           "self",
@@ -38961,7 +40051,7 @@
         "name": "rotate_keys",
         "qualified_name": "WalletSecurityManager.rotate_keys",
         "is_async": true,
-        "lineno": 535,
+        "lineno": 557,
         "scope": "class:WalletSecurityManager",
         "params": [
           "self",
@@ -38990,7 +40080,7 @@
         "name": "backup_wallet",
         "qualified_name": "WalletSecurityManager.backup_wallet",
         "is_async": true,
-        "lineno": 574,
+        "lineno": 596,
         "scope": "class:WalletSecurityManager",
         "params": [
           "self",
@@ -39017,7 +40107,7 @@
         "name": "get_wallet_status",
         "qualified_name": "WalletSecurityManager.get_wallet_status",
         "is_async": false,
-        "lineno": 606,
+        "lineno": 628,
         "scope": "class:WalletSecurityManager",
         "params": [
           "self",
@@ -39046,7 +40136,7 @@
         "name": "cleanup",
         "qualified_name": "WalletSecurityManager.cleanup",
         "is_async": true,
-        "lineno": 635,
+        "lineno": 657,
         "scope": "class:WalletSecurityManager",
         "params": [
           "self"
@@ -39069,7 +40159,7 @@
         "name": "encrypt_private_key",
         "qualified_name": "WalletSecurityManager.encrypt_private_key",
         "is_async": false,
-        "lineno": 649,
+        "lineno": 671,
         "scope": "class:WalletSecurityManager",
         "params": [
           "self",
@@ -39105,9 +40195,7 @@
     },
     "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [
-      "security\\wallet_security.py:210 WalletSecurityManager.create_wallet params mismatch expected=['wallet_type', 'security_level'] found=['wallet_type', 'security_level', 'derivation_path']"
-    ],
+    "signature_mismatches": [],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
     "duplicates_in_file": [],
@@ -40476,10 +41564,130 @@
         ]
       },
       {
+        "name": "load_config",
+        "qualified_name": "ConfigManager.load_config",
+        "is_async": false,
+        "lineno": 527,
+        "scope": "class:ConfigManager",
+        "params": [
+          "self",
+          "env"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "run",
+          "_load_all_configs",
+          "items",
+          "hasattr",
+          "dict"
+        ]
+      },
+      {
+        "name": "reload_config",
+        "qualified_name": "ConfigManager.reload_config",
+        "is_async": true,
+        "lineno": 548,
+        "scope": "class:ConfigManager",
+        "params": [
+          "self"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "clear",
+          "_load_all_configs",
+          "items",
+          "_notify_config_watchers"
+        ]
+      },
+      {
+        "name": "validate_config",
+        "qualified_name": "ConfigManager.validate_config",
+        "is_async": false,
+        "lineno": 563,
+        "scope": "class:ConfigManager",
+        "params": [
+          "self",
+          "config"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "items",
+          "get",
+          "schema_class"
+        ]
+      },
+      {
+        "name": "update_config",
+        "qualified_name": "ConfigManager.update_config",
+        "is_async": false,
+        "lineno": 599,
+        "scope": "class:ConfigManager",
+        "params": [
+          "self",
+          "key",
+          "value"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "split",
+          "len",
+          "ValueError",
+          "join",
+          "ValueError",
+          "run",
+          "update_config_internal"
+        ]
+      },
+      {
         "name": "get_config",
         "qualified_name": "ConfigManager.get_config",
         "is_async": false,
-        "lineno": 525,
+        "lineno": 632,
+        "scope": "class:ConfigManager",
+        "params": [
+          "self",
+          "key"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Any",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "split",
+          "len",
+          "ValueError",
+          "len",
+          "get",
+          "dict",
+          "get",
+          "hasattr",
+          "dict",
+          "isinstance",
+          "get"
+        ]
+      },
+      {
+        "name": "get_config_internal",
+        "qualified_name": "ConfigManager.get_config_internal",
+        "is_async": false,
+        "lineno": 680,
         "scope": "class:ConfigManager",
         "params": [
           "self",
@@ -40498,7 +41706,7 @@
         "name": "get_trading_config",
         "qualified_name": "ConfigManager.get_trading_config",
         "is_async": false,
-        "lineno": 529,
+        "lineno": 684,
         "scope": "class:ConfigManager",
         "params": [
           "self"
@@ -40517,7 +41725,7 @@
         "name": "get_security_config",
         "qualified_name": "ConfigManager.get_security_config",
         "is_async": false,
-        "lineno": 533,
+        "lineno": 688,
         "scope": "class:ConfigManager",
         "params": [
           "self"
@@ -40536,7 +41744,7 @@
         "name": "get_database_config",
         "qualified_name": "ConfigManager.get_database_config",
         "is_async": false,
-        "lineno": 537,
+        "lineno": 692,
         "scope": "class:ConfigManager",
         "params": [
           "self"
@@ -40555,7 +41763,7 @@
         "name": "get_api_config",
         "qualified_name": "ConfigManager.get_api_config",
         "is_async": false,
-        "lineno": 541,
+        "lineno": 696,
         "scope": "class:ConfigManager",
         "params": [
           "self"
@@ -40574,7 +41782,7 @@
         "name": "get_monitoring_config",
         "qualified_name": "ConfigManager.get_monitoring_config",
         "is_async": false,
-        "lineno": 545,
+        "lineno": 700,
         "scope": "class:ConfigManager",
         "params": [
           "self"
@@ -40593,7 +41801,7 @@
         "name": "get_ml_models_config",
         "qualified_name": "ConfigManager.get_ml_models_config",
         "is_async": false,
-        "lineno": 549,
+        "lineno": 704,
         "scope": "class:ConfigManager",
         "params": [
           "self"
@@ -40612,7 +41820,7 @@
         "name": "get_risk_management_config",
         "qualified_name": "ConfigManager.get_risk_management_config",
         "is_async": false,
-        "lineno": 553,
+        "lineno": 708,
         "scope": "class:ConfigManager",
         "params": [
           "self"
@@ -40628,10 +41836,10 @@
         ]
       },
       {
-        "name": "update_config",
-        "qualified_name": "ConfigManager.update_config",
+        "name": "update_config_internal",
+        "qualified_name": "ConfigManager.update_config_internal",
         "is_async": true,
-        "lineno": 557,
+        "lineno": 712,
         "scope": "class:ConfigManager",
         "params": [
           "self",
@@ -40672,7 +41880,7 @@
         "name": "_persist_config",
         "qualified_name": "ConfigManager._persist_config",
         "is_async": true,
-        "lineno": 624,
+        "lineno": 779,
         "scope": "class:ConfigManager",
         "params": [
           "self",
@@ -40700,7 +41908,7 @@
         "name": "_encrypt_sensitive_values",
         "qualified_name": "ConfigManager._encrypt_sensitive_values",
         "is_async": false,
-        "lineno": 646,
+        "lineno": 801,
         "scope": "class:ConfigManager",
         "params": [
           "self",
@@ -40731,7 +41939,7 @@
         "name": "encrypt_recursive",
         "qualified_name": "ConfigManager.encrypt_recursive",
         "is_async": false,
-        "lineno": 653,
+        "lineno": 808,
         "scope": "class:ConfigManager",
         "params": [
           "data"
@@ -40759,7 +41967,7 @@
         "name": "register_watcher",
         "qualified_name": "ConfigManager.register_watcher",
         "is_async": false,
-        "lineno": 670,
+        "lineno": 825,
         "scope": "class:ConfigManager",
         "params": [
           "self",
@@ -40780,7 +41988,7 @@
         "name": "unregister_watcher",
         "qualified_name": "ConfigManager.unregister_watcher",
         "is_async": false,
-        "lineno": 678,
+        "lineno": 833,
         "scope": "class:ConfigManager",
         "params": [
           "self",
@@ -40802,7 +42010,7 @@
         "name": "get_change_history",
         "qualified_name": "ConfigManager.get_change_history",
         "is_async": false,
-        "lineno": 685,
+        "lineno": 840,
         "scope": "class:ConfigManager",
         "params": [
           "self",
@@ -40822,7 +42030,7 @@
         "name": "backup_configs",
         "qualified_name": "ConfigManager.backup_configs",
         "is_async": true,
-        "lineno": 698,
+        "lineno": 853,
         "scope": "class:ConfigManager",
         "params": [
           "self",
@@ -40851,7 +42059,7 @@
         "name": "restore_configs",
         "qualified_name": "ConfigManager.restore_configs",
         "is_async": true,
-        "lineno": 719,
+        "lineno": 874,
         "scope": "class:ConfigManager",
         "params": [
           "self",
@@ -40881,10 +42089,10 @@
         ]
       },
       {
-        "name": "validate_config",
-        "qualified_name": "ConfigManager.validate_config",
+        "name": "validate_config_internal",
+        "qualified_name": "ConfigManager.validate_config_internal",
         "is_async": false,
-        "lineno": 757,
+        "lineno": 912,
         "scope": "class:ConfigManager",
         "params": [
           "self",
@@ -40906,7 +42114,7 @@
         "name": "get_config_status",
         "qualified_name": "ConfigManager.get_config_status",
         "is_async": false,
-        "lineno": 770,
+        "lineno": 925,
         "scope": "class:ConfigManager",
         "params": [
           "self"
@@ -40929,7 +42137,7 @@
         "name": "cleanup",
         "qualified_name": "ConfigManager.cleanup",
         "is_async": true,
-        "lineno": 783,
+        "lineno": 938,
         "scope": "class:ConfigManager",
         "params": [
           "self"
@@ -40993,16 +42201,9 @@
       ],
       "ConfigManager": []
     },
-    "missing": [
-      "def load_config() (closest: _load_config, _reload_config, _load_all_configs)",
-      "def reload_config() (closest: _reload_config, _load_config, _load_all_configs)"
-    ],
+    "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [
-      "config\\config_manager.py:757 ConfigManager.validate_config params mismatch expected=['config'] found=['config_type', 'config_data']",
-      "config\\config_manager.py:557 ConfigManager.update_config params mismatch expected=['key', 'value'] found=['config_type', 'updates', 'user', 'reason', 'persist']",
-      "config\\config_manager.py:525 ConfigManager.get_config params mismatch expected=['key'] found=['config_type']"
-    ],
+    "signature_mismatches": [],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
     "duplicates_in_file": [],
@@ -41125,8 +42326,8 @@
         ]
       },
       {
-        "name": "get_chain_config",
-        "qualified_name": "Settings.get_chain_config",
+        "name": "get_chain_config_exMethod",
+        "qualified_name": "Settings.get_chain_config_exMethod",
         "is_async": false,
         "lineno": 419,
         "scope": "class:Settings",
@@ -41144,10 +42345,29 @@
         ]
       },
       {
+        "name": "get_chain_config",
+        "qualified_name": "Settings.get_chain_config",
+        "is_async": false,
+        "lineno": 426,
+        "scope": "class:Settings",
+        "params": [
+          "cls",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Optional[ChainConfig]",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "get_chain_config"
+        ]
+      },
+      {
         "name": "get_dex_config",
         "qualified_name": "Settings.get_dex_config",
         "is_async": false,
-        "lineno": 424,
+        "lineno": 449,
         "scope": "class:Settings",
         "params": [
           "cls",
@@ -41166,7 +42386,7 @@
         "name": "get_gas_config",
         "qualified_name": "Settings.get_gas_config",
         "is_async": false,
-        "lineno": 429,
+        "lineno": 454,
         "scope": "class:Settings",
         "params": [
           "cls",
@@ -41188,7 +42408,7 @@
         "name": "is_token_blacklisted",
         "qualified_name": "Settings.is_token_blacklisted",
         "is_async": false,
-        "lineno": 435,
+        "lineno": 460,
         "scope": "class:Settings",
         "params": [
           "cls",
@@ -41208,7 +42428,7 @@
         "name": "get_stablecoin_address",
         "qualified_name": "Settings.get_stablecoin_address",
         "is_async": false,
-        "lineno": 440,
+        "lineno": 465,
         "scope": "class:Settings",
         "params": [
           "cls",
@@ -41229,7 +42449,7 @@
         "name": "validate_environment",
         "qualified_name": "Settings.validate_environment",
         "is_async": false,
-        "lineno": 445,
+        "lineno": 470,
         "scope": "class:Settings",
         "params": [
           "cls"
@@ -41248,7 +42468,7 @@
         "name": "get_environment_info",
         "qualified_name": "Settings.get_environment_info",
         "is_async": false,
-        "lineno": 467,
+        "lineno": 492,
         "scope": "class:Settings",
         "params": [
           "cls"
@@ -41276,7 +42496,7 @@
         "name": "get_database_url",
         "qualified_name": "Settings.get_database_url",
         "is_async": false,
-        "lineno": 488,
+        "lineno": 513,
         "scope": "class:Settings",
         "params": [
           "cls"
@@ -41292,7 +42512,7 @@
         "name": "get_redis_url",
         "qualified_name": "Settings.get_redis_url",
         "is_async": false,
-        "lineno": 493,
+        "lineno": 518,
         "scope": "class:Settings",
         "params": [
           "cls"
@@ -41319,9 +42539,7 @@
     },
     "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [
-      "config\\settings.py:419 Settings.get_chain_config params mismatch expected=['chain'] found=['chain_name']"
-    ],
+    "signature_mismatches": [],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
     "duplicates_in_file": [],
@@ -42209,6 +43427,48 @@
           "get",
           "append"
         ]
+      },
+      {
+        "name": "validate_trading_config",
+        "qualified_name": "validate_trading_config",
+        "is_async": false,
+        "lineno": 747,
+        "scope": "module",
+        "params": [
+          "config"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "ConfigValidator",
+          "_validate_trading_config",
+          "ValidationResult",
+          "hasattr"
+        ]
+      },
+      {
+        "name": "validate_security_config",
+        "qualified_name": "validate_security_config",
+        "is_async": false,
+        "lineno": 762,
+        "scope": "module",
+        "params": [
+          "config"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "ConfigValidator",
+          "_validate_security_config",
+          "ValidationResult",
+          "hasattr"
+        ]
       }
     ],
     "found_classes": [
@@ -42219,10 +43479,7 @@
       "ValidationResult": [],
       "ConfigValidator": []
     },
-    "missing": [
-      "def validate_trading_config() (closest: _validate_trading_config, _validate_monitoring_config, _validate_api_config)",
-      "def validate_security_config() (closest: _validate_security_config, _validate_cross_config, validate_yaml_config)"
-    ],
+    "missing": [],
     "async_mismatches": [],
     "signature_mismatches": [],
     "visibility_mismatches": [],
@@ -42603,8 +43860,8 @@
         ]
       },
       {
-        "name": "wrapper",
-        "qualified_name": "decorator.wrapper",
+        "name": "async_wrapper",
+        "qualified_name": "decorator.async_wrapper",
         "is_async": true,
         "lineno": 29,
         "scope": "func:decorator",
@@ -43540,9 +44797,7 @@
     "signature_mismatches": [],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
-    "duplicates_in_file": [
-      "func:decorator::wrapper x2"
-    ],
+    "duplicates_in_file": [],
     "extras": []
   },
   "utils/constants.py": {

@@ -281,7 +281,7 @@ class ToxiSolAPIExecutor(BaseExecutor):
                     }
                     
             # Build transaction
-            transaction = await self._build_transaction(order, quote)
+            transaction = await self._build_toxisol_transaction(order, quote)  # Changed from _build_transaction
             
             # Sign transaction
             signed_tx = await self._sign_transaction(transaction)
@@ -317,12 +317,14 @@ class ToxiSolAPIExecutor(BaseExecutor):
                 'error': str(e)
             }
             
-    async def _build_transaction(
+    # In ToxiSolAPIExecutor class, rename the first occurrence to be more specific:
+
+    async def _build_toxisol_transaction(
         self,
         order: Order,
         quote: ToxiSolQuote
     ) -> Dict[str, Any]:
-        """Build transaction from quote"""
+        """Build transaction from ToxiSol quote (renamed from _build_transaction)"""
         try:
             # Prepare transaction request
             payload = {
@@ -724,7 +726,7 @@ class ToxiSolAPIExecutor(BaseExecutor):
             return 'unknown'
 
     # Also add this helper method for building base transactions:
-    async def _build_transaction(self, order: Order) -> Dict[str, Any]:
+    async def _build_base_transaction(self, order: Order) -> Dict[str, Any]:
         """
         Build base transaction from order
         

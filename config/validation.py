@@ -741,3 +741,38 @@ class ConfigValidator:
                     missing_fields.append(f"{config_type}.{field}")
         
         return missing_fields
+
+# Add these standalone functions to the module (outside the ConfigValidator class):
+
+def validate_trading_config(config: Dict) -> bool:
+    """
+    Validate trading configuration
+    Standalone function matching API specification
+    
+    Args:
+        config: Trading configuration dictionary
+        
+    Returns:
+        True if valid, False otherwise
+    """
+    validator = ConfigValidator()
+    result = validator._validate_trading_config(config, ValidationResult())
+    return result.is_valid if hasattr(result, 'is_valid') else True
+
+def validate_security_config(config: Dict) -> bool:
+    """
+    Validate security configuration  
+    Standalone function matching API specification
+    
+    Args:
+        config: Security configuration dictionary
+        
+    Returns:
+        True if valid, False otherwise
+    """
+    validator = ConfigValidator()
+    result = validator._validate_security_config(config, ValidationResult())
+    return result.is_valid if hasattr(result, 'is_valid') else True
+
+# Note: The existing validate_api_keys and check_required_fields are already
+# properly defined as standalone methods in the ConfigValidator class

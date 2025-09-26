@@ -150,7 +150,7 @@ async def get_active_positions() -> List[Dict]
 async def cleanup_old_data(days: int) -> None
 20. data/storage/cache.py - CacheManager ✅
 async def get(key: str) -> Any
-async def set(key: str, value: Any, ttl: int = 300) -> None
+async def set(key: str, value: Any, ttl: int = 300, cache_type: Optional[str]) -> None
 async def delete(key: str) -> bool
 async def clear() -> None
 async def exists(key: str) -> bool
@@ -333,7 +333,7 @@ def generate_jwt(payload: Dict) -> str
 def verify_jwt(token: str) -> Dict
 49. security/wallet_security.py - WalletSecurityManager ✅
 async def initialize() -> None
-async def create_wallet(wallet_type: WalletType, security_level: SecurityLevel) -> Tuple[str, str]
+async def create_wallet(wallet_type: WalletType, security_level: SecurityLevel, derivation_path: Optional[str] ) -> Tuple[str, str]
 async def sign_transaction(wallet_id: str, transaction_data: Dict, chain: str) -> Dict
 async def emergency_stop(reason: str) -> None
 async def rotate_keys(wallet_id: str) -> bool

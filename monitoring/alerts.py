@@ -265,8 +265,47 @@ class AlertsSystem:
                 config=self.config["sms"],
                 rate_limit=self.config["rate_limits"][NotificationChannel.SMS]
             )
+
+    ## alerts.py fixes:
+
     
-    async def send_alert(
+    # Add to AlertsSystem class:
+
+    async def send_alert(self, alert_type: str, message: str, data: Dict) -> None:
+        """
+        Send alert matching API specification
+        
+        Args:
+            alert_type: Type of alert as string
+            message: Alert message
+            data: Additional alert data
+        """
+        # Map string alert_type to enum
+        try:
+            alert_type_enum = AlertType[alert_type.upper()]
+        except KeyError:
+            alert_type_enum = AlertType.SYSTEM_ERROR
+        
+        # Determine priority based on alert type
+        priority = AlertPriority.MEDIUM
+        if "error" in alert_type.lower() or "critical" in alert_type.lower():
+            priority = AlertPriority.HIGH
+        elif "warning" in alert_type.lower():
+            priority = AlertPriority.MEDIUM
+        
+        # Call the existing send_alert with title derived from message
+        title = message[:50] if len(message) > 50 else message
+        
+        await self.send_alert_internal(
+            alert_type=alert_type_enum,
+            title=title,
+            message=message,
+            priority=priority,
+            data=data,
+            channels=None  # Use default channels
+        )
+
+    async def send_alert_internal(
         self,
         alert_type: AlertType,
         title: str,
@@ -654,7 +693,116 @@ class AlertsSystem:
         except Exception as e:
             logger.error(f"Error sending to {channel.value}: {e}")
             return False
-    
+
+    # Rename existing send_alert to send_alert_internal
+    # Then add public methods for channels:
+
+    async def send_telegram(self, message: str) -> bool:
+        """
+        Send message to Telegram
+        
+        Args:
+            message: Message to send
+            
+        Returns:
+            Success status
+        """
+        alert = Alert(
+            alert_id=self._generate_alert_id(),
+            alert_type=AlertType.SYSTEM_ERROR,
+            priority=AlertPriority.MEDIUM,
+            title="Telegram Message",
+            message=message,
+            timestamp=datetime.utcnow(),
+            channels=[NotificationChannel.TELEGRAM]
+        )
+        return await self._send_telegram(alert)
+
+    async def send_discord(self, message: str) -> bool:
+        """
+        Send message to Discord
+        
+        Args:
+            message: Message to send
+            
+        Returns:
+            Success status
+        """
+        alert = Alert(
+            alert_id=self._generate_alert_id(),
+            alert_type=AlertType.SYSTEM_ERROR,
+            priority=AlertPriority.MEDIUM,
+            title="Discord Message",
+            message=message,
+            timestamp=datetime.utcnow(),
+            channels=[NotificationChannel.DISCORD]
+        )
+        return await self._send_discord(alert)
+
+    async def send_email(self, subject: str, body: str) -> bool:
+        """
+        Send email
+        
+        Args:
+            subject: Email subject
+            body: Email body
+            
+        Returns:
+            Success status
+        """
+        alert = Alert(
+            alert_id=self._generate_alert_id(),
+            alert_type=AlertType.SYSTEM_ERROR,
+            priority=AlertPriority.MEDIUM,
+            title=subject,
+            message=body,
+            timestamp=datetime.utcnow(),
+            channels=[NotificationChannel.EMAIL]
+        )
+        return await self._send_email(alert)
+
+    def format_alert(self, alert_type: str, data: Dict) -> str:
+        """
+        Format alert message
+        
+        Args:
+            alert_type: Type of alert
+            data: Alert data
+            
+        Returns:
+            Formatted message
+        """
+        # Use appropriate formatter based on alert type
+        if alert_type == "position_opened":
+            return self._format_position_opened(data)
+        elif alert_type == "position_closed":
+            return self._format_position_closed(data, data.get('pnl'))
+        elif alert_type == "stop_loss":
+            return self._format_stop_loss(data, data.get('loss'))
+        elif alert_type == "take_profit":
+            return self._format_take_profit(data, data.get('profit'))
+        elif alert_type == "arbitrage":
+            return self._format_arbitrage_opportunity(data)
+        elif alert_type == "whale":
+            return self._format_whale_movement(data)
+        elif alert_type == "volume":
+            return self._format_volume_surge(data)
+        elif alert_type == "signal":
+            return self._format_signal(data, data.get('confidence', 0.5))
+        elif alert_type == "drawdown":
+            return self._format_drawdown_alert(data)
+        elif alert_type == "risk":
+            return self._format_risk_warning(data)
+        elif alert_type == "daily_summary":
+            return self._format_daily_summary(data)
+        else:
+            # Generic formatting
+            lines = [f"Alert: {alert_type}"]
+            for key, value in data.items():
+                lines.append(f"{key}: {value}")
+            return "\n".join(lines)
+
+
     async def _send_telegram(self, alert: Alert) -> bool:
         """Send alert to Telegram"""
         try:

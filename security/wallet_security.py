@@ -273,6 +273,28 @@ class WalletSecurityManager:
             logger.error(f"Failed to create wallet: {e}")
             raise
 
+    # The existing signature is actually fine since derivation_path has a default value
+    # But if you want exact match, you can add this wrapper:
+
+    async def create_wallet_simple(self, 
+                                wallet_type: WalletType,
+                                security_level: SecurityLevel) -> Tuple[str, str]:
+        """
+        Create wallet with simplified signature matching API spec
+        
+        Args:
+            wallet_type: Type of wallet
+            security_level: Security level
+            
+        Returns:
+            Tuple of (wallet_id, address)
+        """
+        return await self.create_wallet(
+            wallet_type=wallet_type,
+            security_level=security_level,
+            derivation_path=None  # Use default
+        )
+
     async def _save_wallet_data(self, wallet_id: str, wallet_data: Dict) -> None:
         """Save wallet data to secure storage"""
         # This would integrate with your secure database

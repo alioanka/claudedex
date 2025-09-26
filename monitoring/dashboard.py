@@ -464,7 +464,146 @@ class Dashboard:
         # Limit alerts
         if len(self.alerts_data) > self.config["max_alerts_display"]:
             self.alerts_data = self.alerts_data[-self.config["max_alerts_display"]:]
-    
+
+    # Add to Dashboard class:
+
+    async def start_dashboard(self, port: int = 8080) -> None:
+        """
+        Start dashboard server (API compliant method)
+        
+        Args:
+            port: Port to run dashboard on
+        """
+        self.port = port
+        await self.start()
+
+    async def update_metrics(self, metrics: Dict) -> None:
+        """
+        Update all metrics at once
+        
+        Args:
+            metrics: Dictionary containing all metrics
+        """
+        # Update dashboard data
+        if 'portfolio_value' in metrics:
+            self.update_dashboard_data(
+                portfolio_value=Decimal(metrics.get('portfolio_value', 0)),
+                cash_balance=Decimal(metrics.get('cash_balance', 0)),
+                positions_value=Decimal(metrics.get('positions_value', 0)),
+                daily_pnl=Decimal(metrics.get('daily_pnl', 0)),
+                total_pnl=Decimal(metrics.get('total_pnl', 0)),
+                open_positions=metrics.get('open_positions', 0),
+                pending_orders=metrics.get('pending_orders', 0),
+                win_rate=metrics.get('win_rate', 0),
+                sharpe_ratio=metrics.get('sharpe_ratio', 0),
+                max_drawdown=metrics.get('max_drawdown', 0),
+                active_alerts=metrics.get('active_alerts', 0)
+            )
+        
+        # Update performance metrics
+        if 'performance' in metrics:
+            self.update_performance(metrics['performance'])
+        
+        # Update risk metrics
+        if 'risk' in metrics:
+            self.update_risk(metrics['risk'])
+        
+        # Update positions
+        if 'positions' in metrics:
+            self.update_positions(metrics['positions'])
+        
+        # Update orders
+        if 'orders' in metrics:
+            self.update_orders(metrics['orders'])
+
+    async def get_dashboard_data(self) -> Dict:
+        """
+        Get all dashboard data
+        
+        Returns:
+            Dictionary containing all dashboard data
+        """
+        return {
+            'dashboard': self._serialize_dashboard_data(),
+            'positions': self.positions_data,
+            'orders': self.orders_data,
+            'performance': self.performance_data,
+            'risk': self.risk_data,
+            'alerts': self.alerts_data[-10:],  # Last 10 alerts
+            'charts': {
+                chart_id: {
+                    'type': chart.chart_type,
+                    'title': chart.title,
+                    'data': chart.data
+                }
+                for chart_id, chart in self.charts_data.items()
+            }
+        }
+
+    def generate_charts(self, data: Dict) -> Dict:
+        """
+        Generate charts from data
+        
+        Args:
+            data: Data to generate charts from
+            
+        Returns:
+            Dictionary of chart IDs
+        """
+        chart_ids = {}
+        
+        # Portfolio value chart
+        if 'portfolio_history' in data:
+            chart_id = "portfolio_value"
+            self.add_chart(
+                chart_id=chart_id,
+                chart_type="line",
+                title="Portfolio Value",
+                data=data['portfolio_history']
+            )
+            chart_ids['portfolio'] = chart_id
+        
+        # Positions P&L chart
+        if 'positions' in data:
+            chart_id = "positions_pnl"
+            positions_data = []
+            for pos in data['positions']:
+                positions_data.append({
+                    'label': pos.get('symbol', 'Unknown'),
+                    'value': pos.get('unrealized_pnl', 0)
+                })
+            self.add_chart(
+                chart_id=chart_id,
+                chart_type="bar",
+                title="Positions P&L",
+                data=positions_data
+            )
+            chart_ids['positions'] = chart_id
+        
+        # Win rate chart
+        if 'win_rate' in data:
+            chart_id = self.create_win_rate_chart()
+            chart_ids['win_rate'] = chart_id
+        
+        # Volume chart
+        if 'volume_history' in data:
+            chart_id = "volume"
+            self.add_chart(
+                chart_id=chart_id,
+                chart_type="bar",
+                title="Trading Volume",
+                data=data['volume_history']
+            )
+            chart_ids['volume'] = chart_id
+        
+        # Risk gauge
+        if 'risk_score' in data:
+            chart_id = self.create_risk_gauge()
+            chart_ids['risk'] = chart_id
+        
+        return chart_ids
+
+
     def add_chart(
         self,
         chart_id: str,

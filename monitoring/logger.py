@@ -707,57 +707,6 @@ class StructuredLogger:
             "error_tracking": True
         }
     
-    def setup_logging(self):
-        """Setup logging configuration"""
-        log_dir = Path(self.config["log_dir"])
-        log_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Root logger
-        logger = logging.getLogger()
-        logger.setLevel(getattr(logging, self.config["log_level"]))
-        
-        # Remove existing handlers
-        logger.handlers = []
-        
-        # Console handler
-        if "console" in self.config["outputs"]:
-            console_handler = logging.StreamHandler(sys.stdout)
-            console_handler.setFormatter(self._get_formatter("console"))
-            logger.addHandler(console_handler)
-        
-        # File handler
-        if "file" in self.config["outputs"]:
-            from logging.handlers import RotatingFileHandler
-            
-            file_handler = RotatingFileHandler(
-                log_dir / f"{self.name}.log",
-                maxBytes=self.config["max_file_size"],
-                backupCount=self.config["backup_count"]
-            )
-            file_handler.setFormatter(self._get_formatter("file"))
-            logger.addHandler(file_handler)
-            
-            # Separate error log
-            if self.config["error_tracking"]:
-                error_handler = RotatingFileHandler(
-                    log_dir / f"{self.name}_errors.log",
-                    maxBytes=self.config["max_file_size"],
-                    backupCount=self.config["backup_count"]
-                )
-                error_handler.setLevel(logging.ERROR)
-                error_handler.setFormatter(self._get_formatter("file"))
-                logger.addHandler(error_handler)
-            
-            # Separate trade log
-            if self.config["performance_tracking"]:
-                trade_handler = RotatingFileHandler(
-                    log_dir / f"{self.name}_trades.log",
-                    maxBytes=self.config["max_file_size"],
-                    backupCount=self.config["backup_count"]
-                )
-                trade_handler.setLevel(TRADE_LOG)
-                trade_handler.setFormatter(self._get_formatter("trade"))
-                logger.addHandler(trade_handler)
     
     def _get_formatter(self, output_type: str):
         """Get appropriate formatter for output type"""
@@ -902,20 +851,72 @@ class StructuredLogger:
                 f"⚠️ Low win rate: {perf_data['win_rate']:.2%}"
             )
     
-    def setup_logging(self, config: Dict) -> None:
+    # In StructuredLogger class, remove the duplicate setup_logging method
+    # Keep only this version:
+
+    def setup_logging(self, config: Optional[Dict] = None) -> None:
         """
-        Setup or update logging configuration
+        Setup logging configuration
         
         Args:
-            config: Dictionary containing logging configuration
+            config: Optional configuration dictionary
         """
-        # Update config
-        self.config.update(config)
+        # Update config if provided
+        if config:
+            self.config.update(config)
         
-        # Re-setup logging with new config
-        self.setup_logging()  # This calls the existing setup_logging method
+        log_dir = Path(self.config["log_dir"])
+        log_dir.mkdir(parents=True, exist_ok=True)
         
-        logger.info(f"Logging reconfigured with: {config}")
+        # Root logger
+        logger = logging.getLogger()
+        logger.setLevel(getattr(logging, self.config["log_level"]))
+        
+        # Remove existing handlers
+        logger.handlers = []
+        
+        # Console handler
+        if "console" in self.config["outputs"]:
+            console_handler = logging.StreamHandler(sys.stdout)
+            console_handler.setFormatter(self._get_formatter("console"))
+            logger.addHandler(console_handler)
+        
+        # File handler
+        if "file" in self.config["outputs"]:
+            from logging.handlers import RotatingFileHandler
+            
+            file_handler = RotatingFileHandler(
+                log_dir / f"{self.name}.log",
+                maxBytes=self.config["max_file_size"],
+                backupCount=self.config["backup_count"]
+            )
+            file_handler.setFormatter(self._get_formatter("file"))
+            logger.addHandler(file_handler)
+            
+            # Separate error log
+            if self.config["error_tracking"]:
+                error_handler = RotatingFileHandler(
+                    log_dir / f"{self.name}_errors.log",
+                    maxBytes=self.config["max_file_size"],
+                    backupCount=self.config["backup_count"]
+                )
+                error_handler.setLevel(logging.ERROR)
+                error_handler.setFormatter(self._get_formatter("file"))
+                logger.addHandler(error_handler)
+            
+            # Separate trade log
+            if self.config["performance_tracking"]:
+                trade_handler = RotatingFileHandler(
+                    log_dir / f"{self.name}_trades.log",
+                    maxBytes=self.config["max_file_size"],
+                    backupCount=self.config["backup_count"]
+                )
+                trade_handler.setLevel(TRADE_LOG)
+                trade_handler.setFormatter(self._get_formatter("trade"))
+                logger.addHandler(trade_handler)
+        
+        if config:
+            logger.info(f"Logging reconfigured with: {config}")
     
     def _save_error_to_file(self, error_data: Dict) -> None:
         """Save error to dedicated error file"""
