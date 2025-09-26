@@ -22,6 +22,7 @@ import argparse, os, ast, json
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Set, Any
 from fnmatch import fnmatch
+from collections import Counter  # shared stats dict
 
 DEFAULT_EXCLUDE_DIR = {".venv","__pycache__","build","dist","logs","node_modules",".tox",".mypy_cache",".pytest_cache",".git"}
 DEFAULT_EXCLUDE_GLOB = {"* copy.py"}
@@ -83,7 +84,7 @@ def build_file_tree_md(root:str, files:List[str])->str:
         files_here = sorted(tree.get(d, []))
         for f in files_here:
             lines.append(f"{prefix}├── {f}\n")
-        for i, sub in enumerate(subs):
+        for sub in subs:
             lines.append(f"{prefix}└── {os.path.basename(sub)}/\n")
             walk(sub, prefix + "    ")
     walk("")
@@ -120,13 +121,13 @@ def build_symbol_db(root:str, files:List[str])->Dict[str,Any]:
             continue
         classes={}
         functions={}
-        dups={"functions":{}, "classes":{}, "methods":{}}  # name->[lines] / (cls,meth)->[lines]
+        dups={"functions":{}, "classes":{}, "methods":{}}  # name->[lines] / "Cls.meth"->[lines]
         function_first: Dict[str,int]={}
         class_first: Dict[str,int]={}
 
         # pass 1: collect top-level defs + duplicates in module
         for node in ast.iter_child_nodes(tree):
-            if isinstance(node, ast.FunctionDef) or isinstance(node, ast.AsyncFunctionDef):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 if node.name in function_first:
                     dups["functions"].setdefault(node.name, sorted({function_first[node.name]})).append(node.lineno)
                 else:
@@ -143,8 +144,8 @@ def build_symbol_db(root:str, files:List[str])->Dict[str,Any]:
                 for b in node.body:
                     if isinstance(b, (ast.FunctionDef, ast.AsyncFunctionDef)):
                         if b.name in method_first:
-                            key=(node.name, b.name)
-                            dups["methods"].setdefault(f"{key[0]}.{key[1]}", sorted({method_first[b.name]})).append(b.lineno)
+                            key=f"{node.name}.{b.name}"
+                            dups["methods"].setdefault(key, sorted({method_first[b.name]})).append(b.lineno)
                         else:
                             method_first[b.name]=b.lineno
                         methods[b.name]=extract_sig(b, is_method=True)
@@ -158,7 +159,7 @@ def build_symbol_db(root:str, files:List[str])->Dict[str,Any]:
         }
 
         # collect public for collisions
-        for cls, meta in classes.items():
+        for cls in classes:
             if not cls.startswith("_"):
                 class_to_defs.setdefault(cls, []).append((mod, fp, class_first.get(cls, 1)))
         for fn, sig in functions.items():
@@ -274,7 +275,7 @@ def check_sig(sig:Dict[str,Any], given_pos:int, given_kw:Set[str])->Optional[str
     if given_pos < min(required, allowed_pos):
         return f"Missing required positional args: required {required}, given {given_pos}"
     if not sig["kwarg"]:
-        known=set(params)  # (kwonly can be included if desired)
+        known=set(params)  # (kwonly could be included if you want)
         unknown = set(given_kw) - known
         if unknown:
             return f"Unknown keyword(s): {', '.join(sorted(unknown))}"
@@ -282,7 +283,7 @@ def check_sig(sig:Dict[str,Any], given_pos:int, given_kw:Set[str])->Optional[str
 
 def verify_with_db(root:str, files:List[str], db:Dict[str,Any])->Tuple[List[Problem], Dict[str,int]]:
     problems: List[Problem]=[]
-    skipped_external=0
+    stats = Counter()  # e.g., stats["skipped_external"]
 
     # report stored duplicates immediately (from DB)
     for module, entry in db.items():
@@ -425,7 +426,7 @@ def verify_with_db(root:str, files:List[str], db:Dict[str,Any])->Tuple[List[Prob
                         continue
                     tgt_mod=".".join(target.split(".")[:-1])
                     if not ensure_in_db(db, tgt_mod):
-                        skipped_external+=1
+                        stats["skipped_external"] += 1
                         continue
 
                     sig=get_sig(db, tgt_mod, target)
@@ -458,8 +459,7 @@ def verify_with_db(root:str, files:List[str], db:Dict[str,Any])->Tuple[List[Prob
                 class_attr_types={}
                 map_calls(node, local_types, class_attr_types)
 
-    stats={"skipped_external": skipped_external}
-    return problems, stats
+    return problems, dict(stats)
 
 # ---------- CLI ----------
 
@@ -507,7 +507,7 @@ def main():
         lines=["# XRef Verification Report (Mini-DB)\n",
                f"- Root: `{root}`\n",
                f"- Files scanned: `{len(files)}`\n",
-               f"- Skipped external: `{stats['skipped_external']}`\n\n"]
+               f"- Skipped external: `{stats.get('skipped_external', 0)}`\n\n"]
         sections = [
             ("Missing Definitions","missing_definition"),
             ("Missing Methods","missing_method"),

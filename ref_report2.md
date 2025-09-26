@@ -1,10 +1,10 @@
 # Cross-file Reference & Signature Verification Report
 
 - Root: `C:\Users\HP\Desktop\ClaudeDex`
-- Python modules indexed: `96`
-- Calls analyzed: `13403`
-- Skipped (external): `3586`
-- Skipped (unknown/duck-typed): `9613`
+- Python modules indexed: `97`
+- Calls analyzed: `13589`
+- Skipped (external): `3624`
+- Skipped (unknown/duck-typed): `9756`
 
 
 ## Missing Definitions (7)
@@ -148,13 +148,12 @@
   - args: `{'positional': 0, 'keywords': ['chain', 'confidence', 'entry_price', 'indicators', 'metadata', 'signal_type', 'strategy_name', 'strength', 'timeframe', 'token_address']}`
 
 
-## Import Failures (Parse) (1)
+## Import Failures (Parse) (0)
 
-- **AST parse error: invalid syntax (direct_dex.py, line 517)**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\trading\executors\direct_dex.py`:1
+- None
 
 
-## Import Object Missing (36)
+## Import Object Missing (39)
 
 - **from monitoring.logger import setup_logger -> setup_logger not found in project module**  
   File: `C:\Users\HP\Desktop\ClaudeDex\main.py`:1
@@ -237,6 +236,15 @@
 - **from ml.models.ensemble_model import EnsembleModel -> EnsembleModel not found in project module**  
   File: `C:\Users\HP\Desktop\ClaudeDex\tests\integration\test_ml_integration.py`:1
   - imported_as: `EnsembleModel`
+- **from trading.executors.base_executor import BaseExecutor -> BaseExecutor not found in project module**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\trading\executors\direct_dex.py`:1
+  - imported_as: `BaseExecutor`
+- **from utils.constants import DEX_ROUTERS -> DEX_ROUTERS not found in project module**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\trading\executors\direct_dex.py`:1
+  - imported_as: `DEX_ROUTERS`
+- **from utils.constants import CHAIN_RPC_URLS -> CHAIN_RPC_URLS not found in project module**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\trading\executors\direct_dex.py`:1
+  - imported_as: `CHAIN_RPC_URLS`
 - **from trading.executors.base_executor import BaseExecutor -> BaseExecutor not found in project module**  
   File: `C:\Users\HP\Desktop\ClaudeDex\trading\executors\mev_protection.py`:1
   - imported_as: `BaseExecutor`
@@ -401,7 +409,7 @@
 
 
 ---
-**Total findings:** 98
+**Total findings:** 100
 
 > Notes:
 > - External/stdlib/3rd-party calls are skipped.
