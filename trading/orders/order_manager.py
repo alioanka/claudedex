@@ -92,6 +92,55 @@ class Order:
     block_number: Optional[int] = None
     confirmations: int = 0
 
+    # If Order needs to be created from scratch:
+    def build_order(
+        token_address: str,
+        side: OrderSide,
+        amount: Decimal,
+        order_type: OrderType = OrderType.MARKET,
+        **kwargs
+    ) -> Order:
+        """
+        Helper to build Order object from parameters
+        
+        Args:
+            token_address: Token address
+            side: Buy/Sell
+            amount: Order amount
+            order_type: Order type
+            **kwargs: Additional parameters
+            
+        Returns:
+            Order object
+        """
+        import uuid
+        
+        return Order(
+            order_id=str(uuid.uuid4()),
+            token_address=token_address,
+            side=side,
+            order_type=order_type,
+            amount=amount,
+            price=kwargs.get('price'),
+            stop_price=kwargs.get('stop_price'),
+            status=OrderStatus.PENDING,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+            execution_strategy=kwargs.get('execution_strategy', ExecutionStrategy.IMMEDIATE),
+            slippage_tolerance=kwargs.get('slippage_tolerance', 0.005),
+            gas_price=kwargs.get('gas_price', Decimal('0')),
+            gas_limit=kwargs.get('gas_limit', 300000),
+            deadline=kwargs.get('deadline'),
+            take_profit=kwargs.get('take_profit'),
+            stop_loss=kwargs.get('stop_loss'),
+            trailing_stop_distance=kwargs.get('trailing_stop_distance'),
+            strategy_id=kwargs.get('strategy_id'),
+            signal_id=kwargs.get('signal_id'),
+            parent_order_id=kwargs.get('parent_order_id'),
+            metadata=kwargs.get('metadata', {})
+        )
+
+
 @dataclass
 class OrderBook:
     """Local order book representation"""
@@ -191,8 +240,61 @@ class OrderManager:
         # Start background tasks
         asyncio.create_task(self._monitor_orders())
         asyncio.create_task(self._cleanup_expired_orders())
-    
-    async def create_order(
+
+
+    # Fixes for trading/orders module signature mismatches
+
+    # ============================================
+    # FIX 1: OrderManager.create_order signature
+    # ============================================
+    # Expected: async def create_order(order: Order) -> str
+    # Current: async def create_order(token_address, side, amount, ...) -> Order
+
+    # Add this wrapper method to OrderManager class:
+
+    async def create_order(self, order: Order) -> str:
+        """
+        Create order from Order object (API-compliant signature)
+        
+        Args:
+            order: Pre-built Order object
+            
+        Returns:
+            Order ID string
+        """
+        # Store the order directly
+        self.orders[order.order_id] = order
+        self.active_orders.add(order.order_id)
+        self.metrics["total_orders"] += 1
+        
+        # Log order creation
+        logger.info(f"Created order {order.order_id}")
+        
+        return order.order_id
+
+    # ============================================
+    # FIX 2: OrderManager.execute_order (missing)
+    # ============================================
+    # Add this method to OrderManager:
+
+    async def execute_order(self, order_id: str) -> bool:
+        """
+        Execute an order (API-compliant signature)
+        
+        Args:
+            order_id: Order ID to execute
+            
+        Returns:
+            True if execution started successfully
+        """
+        try:
+            result = await self.submit_order(order_id)
+            return result.get("success", False)
+        except Exception as e:
+            logger.error(f"Error executing order {order_id}: {e}")
+            return False
+
+    async def create_order_from_params(
         self,
         token_address: str,
         side: OrderSide,

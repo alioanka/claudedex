@@ -242,16 +242,35 @@ class RugClassifier:
         
         return min(risk_score, 1.0)
     
+    # ============================================
+    # FIX 2: rug_classifier.py - RugClassifier.train
+    # ============================================
+    # Current signature: def train(self, historical_data: pd.DataFrame, labels: np.ndarray, validation_split: float = 0.2)
+    # Expected signature: def train(self, historical_data: pd.DataFrame, labels: np.ndarray) -> Dict
+
+    # Modify the train method to make validation_split internal:
+
     def train(
         self,
         historical_data: pd.DataFrame,
-        labels: np.ndarray,
-        validation_split: float = 0.2
+        labels: np.ndarray
     ) -> Dict[str, Any]:
-        """Train the rug classifier ensemble."""
+        """
+        Train the rug classifier ensemble (API-compliant signature)
+        
+        Args:
+            historical_data: DataFrame with features
+            labels: Target labels for training
+            
+        Returns:
+            Dictionary with training results
+        """
+        # Use internal default for validation_split
+        validation_split = 0.2  # Make this an internal parameter
+        
         logger.info("Starting rug classifier training...")
         
-        # Prepare data
+        # Rest of the existing implementation remains the same
         X = historical_data[self.feature_columns].values
         y = labels
         
@@ -259,7 +278,7 @@ class RugClassifier:
         X_train, X_val, y_train, y_val = train_test_split(
             X, y, test_size=validation_split, random_state=42, stratify=y
         )
-        
+            
         # Training results
         results = {
             'models': {},

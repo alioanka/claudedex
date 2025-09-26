@@ -20,12 +20,12 @@
 
 ### core/risk_manager.py
 - Missing: []
-- Sig mismatches: ["core\\risk_manager.py:630 RiskManager.calculate_position_size params mismatch expected=['opportunity'] found=['risk_score', 'available_balance', 'ml_confidence', 'expected_return']"]
+- Sig mismatches: []
 - Duplicates: []
 
 ### core/pattern_analyzer.py
 - Missing: []
-- Sig mismatches: ["core\\pattern_analyzer.py:100 PatternAnalyzer.analyze_patterns params mismatch expected=['price_data'] found=['data']"]
+- Sig mismatches: []
 - Duplicates: []
 
 ### core/decision_maker.py
@@ -40,12 +40,12 @@
 
 ### core/event_bus.py
 - Missing: []
-- Sig mismatches: ["core\\event_bus.py:195 EventBus.subscribe params mismatch expected=['event_type', 'handler'] found=['event_type', 'callback', 'subscriber_id', 'filters', 'priority']", "core\\event_bus.py:234 EventBus.unsubscribe params mismatch expected=['event_type', 'handler'] found=['subscriber_id', 'event_type']"]
-- Duplicates: ['class:EventBus::subscribe x2', 'class:EventBus::unsubscribe x2']
+- Sig mismatches: []
+- Duplicates: []
 
 ### data/collectors/dexscreener.py
 - Missing: []
-- Sig mismatches: ["data\\collectors\\dexscreener.py:165 DexScreenerCollector.get_new_pairs params mismatch expected=['chain'] found=['limit']", "data\\collectors\\dexscreener.py:595 DexScreenerCollector.get_price_history params mismatch expected=['address', 'chain', 'interval'] found=['pair_address', 'interval', 'limit']", "data\\collectors\\dexscreener.py:371 DexScreenerCollector.monitor_pair params mismatch expected=['address', 'chain'] found=['pair_address', 'callback']"]
+- Sig mismatches: []
 - Duplicates: []
 
 ### data/collectors/chain_data.py
@@ -65,7 +65,7 @@
 
 ### data/collectors/mempool_monitor.py
 - Missing: []
-- Sig mismatches: ["data\\collectors\\mempool_monitor.py:512 MempoolMonitor.get_mempool_stats params mismatch expected=['chain'] found=[]"]
+- Sig mismatches: []
 - Duplicates: []
 
 ### data/collectors/social_data.py
@@ -105,12 +105,12 @@
 
 ### data/storage/database.py
 - Missing: []
-- Sig mismatches: ["data\\storage\\database.py:433 DatabaseManager.get_historical_data params mismatch expected=['token', 'timeframe'] found=['token_address', 'timeframe', 'limit', 'chain']"]
+- Sig mismatches: []
 - Duplicates: []
 
 ### data/storage/cache.py
 - Missing: []
-- Sig mismatches: ["data\\storage\\cache.py:98 CacheManager.get params mismatch expected=['key'] found=['key', 'default', 'decode_json']", "data\\storage\\cache.py:129 CacheManager.set params mismatch expected=['key', 'value', 'ttl'] found=['key', 'value', 'ttl', 'cache_type']"]
+- Sig mismatches: ["data\\storage\\cache.py:176 CacheManager.set params mismatch expected=['key', 'value', 'ttl'] found=['key', 'value', 'ttl', 'cache_type']"]
 - Duplicates: []
 
 ### data/storage/models.py
@@ -119,18 +119,18 @@
 - Duplicates: []
 
 ### analysis/rug_detector.py
-- Missing: ['def check_liquidity_removal_risk() (closest: check_liquidity_lock)']
+- Missing: []
 - Sig mismatches: []
 - Duplicates: []
 
 ### analysis/pump_predictor.py
-- Missing: ['def detect_accumulation_phase() (closest: _detect_accumulation_phase, detect_accumulation_phase_sync)']
+- Missing: []
 - Sig mismatches: []
 - Duplicates: []
 
 ### analysis/liquidity_monitor.py
-- Missing: ['def monitor_liquidity()', 'def get_liquidity_depth()', 'def calculate_slippage()', 'def track_liquidity_changes()', '[ParseError] AST parse error in C:\\Users\\HP\\Desktop\\ClaudeDex\\analysis\\liquidity_monitor.py: unexpected indent (<unknown>, line 498)']
-- Sig mismatches: []
+- Missing: []
+- Sig mismatches: ["analysis\\liquidity_monitor.py:518 LiquidityMonitor.get_liquidity_depth params mismatch expected=['pair_address'] found=['pair_address', 'chain']", "analysis\\liquidity_monitor.py:228 LiquidityMonitor.calculate_slippage params mismatch expected=['amount', 'liquidity_data'] found=['token', 'chain', 'amount', 'is_buy']", "analysis\\liquidity_monitor.py:568 LiquidityMonitor.track_liquidity_changes params mismatch expected=['token'] found=['token', 'chain']"]
 - Duplicates: []
 
 ### analysis/market_analyzer.py
@@ -164,8 +164,8 @@
 - Duplicates: []
 
 ### ml/models/pump_predictor.py
-- Missing: ['def prepare_features()', 'def train_lstm()', 'def predict_pump_probability()', 'def backtest()', '[ParseError] AST parse error in C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\models\\pump_predictor.py: unexpected indent (<unknown>, line 432)']
-- Sig mismatches: []
+- Missing: []
+- Sig mismatches: ["ml\\models\\pump_predictor.py:415 PumpPredictor.predict_pump_probability params mismatch expected=['features'] found=['current_data']"]
 - Duplicates: []
 
 ### ml/models/volume_validator.py
@@ -184,7 +184,7 @@
 - Duplicates: []
 
 ### trading/executors/direct_dex.py
-- Missing: ['def initialize()', 'def get_best_quote()', 'def execute_trade()', '[ParseError] AST parse error in C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\executors\\direct_dex.py: unexpected indent (<unknown>, line 515)']
+- Missing: ['def cancel_order()', 'def get_order_status()', 'def modify_order()', 'def validate_order()']
 - Sig mismatches: []
 - Duplicates: []
 
@@ -284,7 +284,7 @@
 - Duplicates: []
 
 ### config/validation.py
-- Missing: ['def validate_trading_config()', 'def validate_security_config()', 'def validate_api_keys()', 'def check_required_fields()', '[ParseError] AST parse error in C:\\Users\\HP\\Desktop\\ClaudeDex\\config\\validation.py: unterminated string literal (detected at line 368) (<unknown>, line 368)']
+- Missing: ['def validate_trading_config() (closest: _validate_trading_config, _validate_monitoring_config, _validate_api_config)', 'def validate_security_config() (closest: _validate_security_config, _validate_cross_config, validate_yaml_config)']
 - Sig mismatches: []
 - Duplicates: []
 

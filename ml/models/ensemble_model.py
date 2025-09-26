@@ -499,17 +499,59 @@ class EnsemblePredictor:
         ])
         
         return np.array(features, dtype=np.float32)
-        
-    async def predict(self, features: np.ndarray) -> PredictionResult:
+
+    # ============================================
+    # FIX 1: ensemble_model.py - EnsemblePredictor.predict
+    # ============================================
+    # Current signature: async def predict(self, features: np.ndarray) -> PredictionResult
+    # Expected signature: async def predict(self, token: str, chain: str) -> Dict
+
+    # Add this wrapper method to EnsemblePredictor class in ensemble_model.py:
+
+    async def predict(self, token: str, chain: str) -> Dict:
         """
-        Make ensemble prediction
+        Predict pump/rug probability for a token (API-compliant signature)
         
         Args:
-            features: Feature array or dictionary
+            token: Token address
+            chain: Blockchain network
             
         Returns:
-            Prediction result with confidence scores
+            Dictionary with prediction results
         """
+        # Import necessary data collector
+        from ..data.collectors.dexscreener import DexScreenerCollector
+        
+        # Fetch token data
+        collector = DexScreenerCollector()
+        token_data = await collector.get_token_info(token, chain)
+        
+        # Extract features and get prediction
+        features = self.extract_features(token_data)
+        result = await self._predict_from_features(features)  # Renamed internal method
+        
+        # Return API-compliant format
+        return {
+            'token': token,
+            'chain': chain,
+            'pump_probability': result.pump_probability,
+            'rug_probability': result.rug_probability,
+            'expected_return': result.expected_return,
+            'confidence': result.confidence,
+            'time_to_pump': result.time_to_pump,
+            'risk_adjusted_score': result.risk_adjusted_score,
+            'model_agreements': result.model_agreements,
+            'feature_importance': result.feature_importance,
+            'timestamp': result.prediction_timestamp.isoformat()
+        }
+
+    # Rename existing predict method to _predict_from_features:
+    async def _predict_from_features(self, features: np.ndarray) -> PredictionResult:
+        """
+        Internal method for making predictions from feature array
+        (This is the current predict method, just renamed)
+        """
+        # ... existing implementation ...
         try:
             # Convert to numpy array if needed
             if isinstance(features, dict):

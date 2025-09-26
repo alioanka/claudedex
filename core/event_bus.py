@@ -192,11 +192,12 @@ class EventBus:
         except Exception as e:
             print(f"Error emitting event: {e}")
             
-    def subscribe(self, event_type: EventType, callback: Callable,
-                 subscriber_id: Optional[str] = None, filters: Optional[Dict] = None,
-                 priority: int = 5) -> str:
+    # Rename the original sync methods to have different names to avoid confusion
+    def subscribe_sync(self, event_type: EventType, callback: Callable,
+                      subscriber_id: Optional[str] = None, filters: Optional[Dict] = None,
+                      priority: int = 5) -> str:
         """
-        Subscribe to an event type
+        Synchronous subscribe with full parameters (internal use)
         
         Args:
             event_type: Type of event to subscribe to
@@ -230,10 +231,10 @@ class EventBus:
         except Exception as e:
             print(f"Subscription error: {e}")
             return ""
-            
-    def unsubscribe(self, subscriber_id: str, event_type: Optional[EventType] = None):
+    
+    def unsubscribe_sync(self, subscriber_id: str, event_type: Optional[EventType] = None):
         """
-        Unsubscribe from events
+        Synchronous unsubscribe (internal use)
         
         Args:
             subscriber_id: Subscriber to remove
@@ -411,6 +412,7 @@ class EventBus:
             'dead_letter_queue_size': len(self.dead_letter_queue)
         }
         
+# Update the wait_for method to use the sync version internally
     async def wait_for(self, event_type: EventType, timeout: Optional[float] = None,
                        filters: Optional[Dict] = None) -> Optional[Event]:
         """
@@ -431,8 +433,8 @@ class EventBus:
                 if not future.done():
                     future.set_result(event)
                     
-            # Subscribe temporarily
-            sub_id = self.subscribe(event_type, callback, filters=filters)
+            # Subscribe temporarily using sync method
+            sub_id = self.subscribe_sync(event_type, callback, filters=filters)
             
             try:
                 # Wait for event with timeout
@@ -447,8 +449,8 @@ class EventBus:
                 return None
                 
             finally:
-                # Unsubscribe
-                self.unsubscribe(sub_id, event_type)
+                # Unsubscribe using sync method
+                self.unsubscribe_sync(sub_id, event_type)
                 
         except Exception as e:
             print(f"Wait for event error: {e}")
@@ -522,9 +524,9 @@ class EventBus:
             async def stream_handler(event: Event):
                 await stream_queue.put(event)
                 
-            # Subscribe to all requested event types
+            # Subscribe to all requested event types using sync method
             for event_type in event_types:
-                self.subscribe(event_type, stream_handler)
+                self.subscribe_sync(event_type, stream_handler)
                 
             return stream_queue
             
@@ -534,20 +536,38 @@ class EventBus:
 
     # Add these wrapper methods to existing EventBus class
     
+# Replace the duplicate async wrapper methods in EventBus class with these corrected versions
+# Remove the existing async wrappers (lines ~440-490) and replace with:
+
     async def publish(self, event_type: str, data: Dict) -> None:
-        """Publish event (wrapper for emit)"""
+        """
+        Publish event (async wrapper matching API spec)
+        
+        Args:
+            event_type: Type of event as string
+            data: Event data dictionary
+        """
         try:
-            # Convert string to EventType
-            try:
-                event_type_enum = EventType(event_type)
-            except ValueError:
-                # If not a valid enum value, find by name
-                event_type_enum = EventType[event_type.upper()]
+            # Convert string to EventType enum
+            if hasattr(EventType, event_type.upper()):
+                event_type_enum = getattr(EventType, event_type.upper())
+            else:
+                # Try direct value match
+                for et in EventType:
+                    if et.value == event_type:
+                        event_type_enum = et
+                        break
+                else:
+                    # Create a generic event type if not found
+                    print(f"Unknown event type: {event_type}, using ERROR_OCCURRED")
+                    event_type_enum = EventType.ERROR_OCCURRED
+                    data['original_event_type'] = event_type
             
-            # Create event and emit
+            # Create and emit event
             event = Event(
                 event_type=event_type_enum,
-                data=data
+                data=data,
+                source='EventBus.publish'
             )
             await self.emit(event)
             
@@ -555,40 +575,93 @@ class EventBus:
             print(f"Publish error: {e}")
     
     async def subscribe(self, event_type: str, handler: Callable) -> None:
-        """Async subscribe wrapper"""
+        """
+        Subscribe to events (async wrapper matching API spec)
+        
+        Args:
+            event_type: Type of event as string
+            handler: Callback function to handle events
+        """
         try:
-            # Convert string to EventType
-            try:
-                event_type_enum = EventType(event_type)
-            except ValueError:
-                event_type_enum = EventType[event_type.upper()]
+            # Convert string to EventType enum
+            if hasattr(EventType, event_type.upper()):
+                event_type_enum = getattr(EventType, event_type.upper())
+            else:
+                # Try direct value match
+                for et in EventType:
+                    if et.value == event_type:
+                        event_type_enum = et
+                        break
+                else:
+                    print(f"Unknown event type: {event_type}")
+                    return
             
-            # Use sync subscribe (it returns subscription ID)
-            self.subscribe(event_type_enum, handler)
+            # Generate unique subscriber ID for this handler
+            subscriber_id = str(uuid.uuid4())
+            
+            # Create subscription
+            subscription = EventSubscription(
+                subscriber_id=subscriber_id,
+                event_type=event_type_enum,
+                callback=handler,
+                filters=None,
+                priority=5,
+                async_handler=asyncio.iscoroutinefunction(handler)
+            )
+            
+            # Add to subscribers list (sorted by priority)
+            self.subscribers[event_type_enum].append(subscription)
+            self.subscribers[event_type_enum].sort(key=lambda x: x.priority)
+            
+            # Store handler to subscriber ID mapping for unsubscribe
+            if not hasattr(self, '_handler_to_subscriber'):
+                self._handler_to_subscriber = {}
+            self._handler_to_subscriber[(event_type, handler)] = subscriber_id
             
         except Exception as e:
             print(f"Subscribe error: {e}")
     
     async def unsubscribe(self, event_type: str, handler: Callable) -> None:
-        """Async unsubscribe wrapper"""
+        """
+        Unsubscribe from events (async wrapper matching API spec)
+        
+        Args:
+            event_type: Type of event as string
+            handler: Handler function to unsubscribe
+        """
         try:
-            # Convert string to EventType
-            try:
-                event_type_enum = EventType(event_type)
-            except ValueError:
-                event_type_enum = EventType[event_type.upper()]
+            # Convert string to EventType enum
+            if hasattr(EventType, event_type.upper()):
+                event_type_enum = getattr(EventType, event_type.upper())
+            else:
+                # Try direct value match
+                for et in EventType:
+                    if et.value == event_type:
+                        event_type_enum = et
+                        break
+                else:
+                    print(f"Unknown event type: {event_type}")
+                    return
             
-            # Find subscription ID for handler
-            for subscription in self.subscribers.get(event_type_enum, []):
-                if subscription.callback == handler:
-                    self.unsubscribe(subscription.subscriber_id, event_type_enum)
-                    break
+            # Find and remove subscription with matching handler
+            self.subscribers[event_type_enum] = [
+                sub for sub in self.subscribers[event_type_enum]
+                if sub.callback != handler
+            ]
+            
+            # Clean up handler mapping if exists
+            if hasattr(self, '_handler_to_subscriber'):
+                key = (event_type, handler)
+                if key in self._handler_to_subscriber:
+                    del self._handler_to_subscriber[key]
                     
         except Exception as e:
             print(f"Unsubscribe error: {e}")
     
     async def process_events(self) -> None:
-        """Public wrapper for processing events"""
+        """
+        Process events from the queue (public wrapper matching API spec)
+        """
         await self._process_events()
             
 class EventLogger:

@@ -162,57 +162,56 @@ class DexScreenerCollector:
             print(f"Request error: {e}")
             return None
             
-    async def get_new_pairs(self, limit: int = 100) -> List[Dict]:
+    # 1. Fix get_new_pairs signature (line ~165)
+    # REPLACE the existing method signature and update the implementation:
+
+    async def get_new_pairs(self, chain: str = 'ethereum') -> List[Dict]:
         """
-        Get newly created pairs
+        Get newly created pairs for a specific chain
         
         Args:
-            limit: Maximum number of pairs to return
+            chain: Blockchain network (ethereum, bsc, polygon, etc.)
             
         Returns:
             List of new pair data
         """
         new_pairs = []
         
-        for chain in self.chains:
-            # Check cache
-            cache_key = f"new_pairs_{chain}"
-            if cache_key in self.cache:
-                cached_data, cached_time = self.cache[cache_key]
-                if time.time() - cached_time < self.cache_duration:
-                    new_pairs.extend(cached_data)
-                    continue
-                    
-            # Fetch new pairs
-            endpoint = f"pairs/{chain}"
-            data = await self._make_request(endpoint)
-            
-            if data and 'pairs' in data:
-                chain_pairs = []
+        # Check cache
+        cache_key = f"new_pairs_{chain}"
+        if cache_key in self.cache:
+            cached_data, cached_time = self.cache[cache_key]
+            if time.time() - cached_time < self.cache_duration:
+                return cached_data
                 
-                for pair_data in data['pairs']:
-                    # Parse pair
-                    pair = self._parse_pair(pair_data)
-                    
-                    if pair and self._filter_pair(pair):
-                        chain_pairs.append(self._pair_to_dict(pair))
-                        self.stats['pairs_found'] += 1
-                    else:
-                        self.stats['pairs_filtered'] += 1
-                        
-                # Cache results
-                self.cache[cache_key] = (chain_pairs, time.time())
-                new_pairs.extend(chain_pairs)
+        # Fetch new pairs for the specific chain
+        endpoint = f"pairs/{chain}"
+        data = await self._make_request(endpoint)
+        
+        if data and 'pairs' in data:
+            for pair_data in data['pairs']:
+                # Parse pair
+                pair = self._parse_pair(pair_data)
                 
-        # Sort by creation time
+                if pair and self._filter_pair(pair):
+                    new_pairs.append(self._pair_to_dict(pair))
+                    self.stats['pairs_found'] += 1
+                else:
+                    self.stats['pairs_filtered'] += 1
+                    
+        # Sort by creation time (newest first)
         new_pairs.sort(key=lambda x: x['created_at'], reverse=True)
         
-        # Add to monitoring
-        for pair in new_pairs[:limit]:
+        # Cache results
+        self.cache[cache_key] = (new_pairs, time.time())
+        
+        # Add to monitoring queue (limit to 100 most recent)
+        for pair in new_pairs[:100]:
             self.monitored_pairs.add(pair['pair_address'])
             await self.new_pairs_queue.put(pair)
             
-        return new_pairs[:limit]
+        return new_pairs
+
         
     async def get_token_price(self, token_address: str) -> Optional[float]:
         """
@@ -367,15 +366,92 @@ class DexScreenerCollector:
                         boosted.append(pair_dict)
                         
         return boosted
-        
-    async def monitor_pair(self, pair_address: str, callback: callable = None):
+
+    # 3. Fix monitor_pair to accept address and chain (line ~371)
+    # ADD this new method that matches the API signature:
+
+    async def monitor_pair(self, address: str, chain: str = 'ethereum') -> AsyncGenerator:
         """
-        Monitor a pair for changes
+        Monitor a token pair for changes (AsyncGenerator version)
+        
+        Args:
+            address: Token or pair address to monitor
+            chain: Blockchain network
+            
+        Yields:
+            Update events for the monitored pair
+        """
+        # First, find the pair address for this token
+        pairs = await self.get_token_pairs(address)
+        
+        if not pairs:
+            # If no pairs found, treat address as pair address
+            pair_address = address
+        else:
+            # Use the most liquid pair
+            pair_address = pairs[0].get('pair_address', address)
+        
+        self.monitored_pairs.add(pair_address)
+        previous_data = None
+        
+        try:
+            while pair_address in self.monitored_pairs:
+                try:
+                    current_data = await self.get_pair_data(pair_address)
+                    
+                    if current_data:
+                        if previous_data:
+                            # Check for significant changes
+                            changes = self._detect_changes(previous_data, current_data)
+                            
+                            if changes:
+                                yield {
+                                    'type': 'update',
+                                    'pair_address': pair_address,
+                                    'chain': chain,
+                                    'data': current_data,
+                                    'changes': changes,
+                                    'timestamp': time.time()
+                                }
+                        else:
+                            # First data point
+                            yield {
+                                'type': 'initial',
+                                'pair_address': pair_address,
+                                'chain': chain,
+                                'data': current_data,
+                                'timestamp': time.time()
+                            }
+                        
+                        previous_data = current_data
+                        
+                    await asyncio.sleep(5)  # Check every 5 seconds
+                    
+                except Exception as e:
+                    yield {
+                        'type': 'error',
+                        'pair_address': pair_address,
+                        'chain': chain,
+                        'error': str(e),
+                        'timestamp': time.time()
+                    }
+                    await asyncio.sleep(10)
+                    
+        finally:
+            self.monitored_pairs.discard(pair_address)
+
+
+    # Keep the original monitor_pair_with_callback for backward compatibility:
+    async def monitor_pair_with_callback(self, pair_address: str, callback: callable = None):
+        """
+        Monitor a pair for changes with callback (original implementation)
         
         Args:
             pair_address: Pair to monitor
             callback: Function to call on updates
         """
+        # Original implementation remains as is...
+        # (Keep the existing code from the original monitor_pair method)
         self.monitored_pairs.add(pair_address)
         
         previous_data = None
@@ -592,23 +668,40 @@ class DexScreenerCollector:
             
         return changes if changes else None
         
-    async def get_price_history(self, pair_address: str, interval: str = '5m', limit: int = 100) -> List[Dict]:
+    # 2. Fix get_price_history signature (line ~595)
+    # REPLACE the existing method:
+
+    async def get_price_history(self, address: str, chain: str = 'ethereum', interval: str = '5m') -> List[Dict]:
         """
-        Get price history for a pair
+        Get price history for a token
         
         Args:
-            pair_address: Pair contract address
+            address: Token contract address
+            chain: Blockchain network
             interval: Time interval (5m, 15m, 30m, 1h, 4h, 1d)
-            limit: Number of candles
             
         Returns:
             List of OHLCV data
         """
-        # This would need a different endpoint or data source
-        # DexScreener doesn't provide historical data directly
-        # You might need to use another service or track it yourself
+        # Note: DexScreener doesn't provide historical data directly
+        # This would need integration with another service or manual tracking
         
-        # For now, return empty list
+        # For now, we can get current price and build from recent data
+        current_price = await self.get_token_price(address)
+        
+        if current_price:
+            # Return simplified current data point
+            return [{
+                'timestamp': int(time.time() * 1000),
+                'open': current_price,
+                'high': current_price,
+                'low': current_price,
+                'close': current_price,
+                'volume': 0,
+                'chain': chain,
+                'interval': interval
+            }]
+        
         return []
         
     async def calculate_metrics(self, pair_address: str) -> Dict:

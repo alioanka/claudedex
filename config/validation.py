@@ -365,8 +365,7 @@ class ConfigValidator:
         
         # Log rotation validation
         log_rotation_size = config.get('log_rotation_size', '')
-        if log_rotation_size and not re.match(r'^\d+[KMGT]B
-            , log_rotation_size):
+        if log_rotation_size and not re.match(r'^\d+[KMGT]B$', log_rotation_size):
             result.add_error("log_rotation_size must be in format like '100MB', '1GB'")
         
         # Log retention validation
@@ -379,14 +378,12 @@ class ConfigValidator:
         # Telegram validation
         telegram_token = config.get('telegram_bot_token')
         if telegram_token:
-            if not re.match(r'^\d+:[A-Za-z0-9_-]{35}
-            , telegram_token):
+            if not re.match(r'^\d+:[A-Za-z0-9_-]{35}$', telegram_token):
                 result.add_error("Invalid Telegram bot token format")
         
         telegram_chat_id = config.get('telegram_chat_id')
         if telegram_chat_id:
-            if not re.match(r'^-?\d+
-            , str(telegram_chat_id)):
+            if not re.match(r'^-?\d+$', str(telegram_chat_id)):
                 result.add_error("Invalid Telegram chat ID format")
         
         # Discord validation
@@ -570,8 +567,7 @@ class ConfigValidator:
         for label in labels:
             if not label or len(label) > 63:
                 return False
-            if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?
-            , label):
+            if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$', label):
                 return False
         
         return True
@@ -594,7 +590,7 @@ class ConfigValidator:
     
     def _is_valid_email(self, email: str) -> bool:
         """Validate email format"""
-        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}
+        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
             
         return re.match(pattern, email) is not None
     
@@ -604,8 +600,7 @@ class ConfigValidator:
             return False
         
         # Check if it's a valid hex address
-        if not re.match(r'^0x[a-fA-F0-9]{40}
-            , address):
+        if not re.match(r'^0x[a-fA-F0-9]{40}$', address):
             return False
         
         # Check if it's a valid checksum address (optional)
@@ -624,8 +619,7 @@ class ConfigValidator:
             private_key = private_key[2:]
         
         # Check if it's a valid 64-character hex string
-        return re.match(r'^[a-fA-F0-9]{64}
-            , private_key) is not None
+        return re.match(r'^[a-fA-F0-9]{64}$', private_key) is not None
     
     def validate_percentage(self, value: Any, min_val: float = 0, max_val: float = 1) -> bool:
         """Validate percentage value"""

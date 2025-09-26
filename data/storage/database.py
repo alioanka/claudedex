@@ -430,16 +430,86 @@ class DatabaseManager:
             
             logger.debug(f"Saved {len(data_points)} market data points")
     
+    # Fix get_historical_data signature (line ~433)
+    # REPLACE the existing method with this simplified version:
+
     async def get_historical_data(
+        self,
+        token: str,
+        timeframe: str = '1h'
+    ) -> List[Dict[str, Any]]:
+        """
+        Get historical market data for a token.
+        
+        Args:
+            token: Token address
+            timeframe: Time interval (1m, 5m, 15m, 30m, 1h, 4h, 1d)
+            
+        Returns:
+            List of OHLCV data points
+        """
+        async with self.acquire() as conn:
+            # Determine time bucket based on timeframe
+            time_buckets = {
+                '1m': '1 minute',
+                '5m': '5 minutes',
+                '15m': '15 minutes',
+                '30m': '30 minutes',
+                '1h': '1 hour',
+                '4h': '4 hours',
+                '1d': '1 day'
+            }
+            bucket = time_buckets.get(timeframe, '1 hour')
+            
+            # Default to ethereum chain and 500 limit for API compatibility
+            chain = 'ethereum'
+            limit = 500
+            
+            rows = await conn.fetch("""
+                SELECT 
+                    time_bucket($1::interval, time) AS bucket,
+                    first(price, time) AS open,
+                    max(price) AS high,
+                    min(price) AS low,
+                    last(price, time) AS close,
+                    avg(volume_5m) AS volume,
+                    avg(liquidity_usd) AS liquidity,
+                    avg(holders) AS holders,
+                    last(price_change_5m, time) AS price_change_5m,
+                    last(price_change_1h, time) AS price_change_1h,
+                    last(price_change_24h, time) AS price_change_24h
+                FROM market_data
+                WHERE token_address = $2 AND chain = $3
+                    AND time > NOW() - INTERVAL '30 days'
+                GROUP BY bucket
+                ORDER BY bucket DESC
+                LIMIT $4
+            """, bucket, token, chain, limit)
+            
+            return [dict(row) for row in rows]
+
+    # For backward compatibility, keep the original method with a different name:
+    async def get_historical_data_extended(
         self,
         token_address: str,
         timeframe: str = '1h',
         limit: int = 500,
         chain: str = 'ethereum'
     ) -> List[Dict[str, Any]]:
-        """Get historical market data for a token."""
+        """
+        Get historical market data with extended parameters (internal use).
+        
+        Args:
+            token_address: Token contract address
+            timeframe: Time interval
+            limit: Maximum number of data points
+            chain: Blockchain network
+            
+        Returns:
+            List of OHLCV data points
+        """
+        # Original implementation remains the same
         async with self.acquire() as conn:
-            # Determine time bucket based on timeframe
             time_buckets = {
                 '1m': '1 minute',
                 '5m': '5 minutes',

@@ -97,6 +97,57 @@ class Position:
     beta: float = 0.0
     sharpe_ratio: float = 0.0
 
+
+
+    # Similarly for Position:
+    def build_position(
+        token_address: str,
+        token_symbol: str,
+        position_type: PositionType,
+        entry_price: Decimal,
+        entry_amount: Decimal,
+        **kwargs
+    ) -> Position:
+        """
+        Helper to build Position object from parameters
+        
+        Args:
+            token_address: Token address
+            token_symbol: Token symbol
+            position_type: Long/Short
+            entry_price: Entry price
+            entry_amount: Position size
+            **kwargs: Additional parameters
+            
+        Returns:
+            Position object
+        """
+        entry_value = entry_price * entry_amount
+        
+        return Position(
+            position_id=f"POS-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{token_symbol}",
+            token_address=token_address,
+            token_symbol=token_symbol,
+            position_type=position_type,
+            status=PositionStatus.OPENING,
+            entry_price=entry_price,
+            entry_amount=entry_amount,
+            entry_value=entry_value,
+            entry_time=datetime.utcnow(),
+            entry_order_ids=kwargs.get('order_ids', []),
+            current_price=entry_price,
+            current_value=entry_value,
+            unrealized_pnl=Decimal("0"),
+            unrealized_pnl_percent=0.0,
+            stop_loss=kwargs.get('stop_loss'),
+            take_profit=kwargs.get('take_profit', []),
+            trailing_stop_distance=kwargs.get('trailing_stop_distance'),
+            strategy_name=kwargs.get('strategy_name'),
+            signal_id=kwargs.get('signal_id'),
+            confidence_score=kwargs.get('confidence_score', 0.5),
+            metadata=kwargs.get('metadata', {})
+        )
+
 @dataclass
 class PortfolioSnapshot:
     """Portfolio state at a point in time"""
@@ -229,8 +280,49 @@ class PositionTracker:
             recovery_time=None,
             risk_adjusted_return=0.0
         )
-    
-    async def open_position(
+
+    # ============================================
+    # FIX 3: PositionTracker.open_position signature
+    # ============================================
+    # Expected: async def open_position(position: Position) -> str
+    # Current: async def open_position(token_address, token_symbol, ...) -> Position
+
+    # Add this wrapper method to PositionTracker:
+
+    async def open_position(self, position: Position) -> str:
+        """
+        Open position from Position object (API-compliant signature)
+        
+        Args:
+            position: Pre-built Position object
+            
+        Returns:
+            Position ID string
+        """
+        # Validate position
+        if not await self._check_position_limits(position.token_address, position.entry_amount):
+            raise ValueError("Position exceeds risk limits")
+        
+        # Calculate risk metrics
+        position.risk_score = await self._calculate_position_risk(position)
+        position.risk_level = self._determine_risk_level(position.risk_score)
+        
+        # Store position
+        self.positions[position.position_id] = position
+        
+        # Update portfolio
+        self.cash_balance -= position.entry_value
+        await self._update_portfolio_value()
+        
+        # Log
+        logger.info(f"Opened position {position.position_id}")
+        
+        # Update status
+        position.status = PositionStatus.OPEN
+        
+        return position.position_id
+
+    async def open_position_from_params(
         self,
         token_address: str,
         token_symbol: str,
@@ -329,8 +421,55 @@ class PositionTracker:
         except Exception as e:
             logger.error(f"Error opening position: {e}")
             raise
-    
-    async def update_position(
+ 
+    # ============================================
+    # FIX 5: PositionTracker.update_position signature
+    # ============================================
+    # Expected: async def update_position(position_id: str, updates: Dict) -> bool
+    # Current signature has current_price as separate param
+
+    # Add this wrapper method:
+    async def update_position(self, position_id: str, updates: Dict) -> bool:
+        """
+        Update position with dictionary (API-compliant signature)
+        
+        Args:
+            position_id: Position ID to update
+            updates: Dictionary of updates to apply
+            
+        Returns:
+            True if updated successfully
+        """
+        try:
+            position = self.positions.get(position_id)
+            if not position:
+                return False
+            
+            # Extract current_price if in updates
+            current_price = updates.pop('current_price', None)
+            
+            # If current_price provided, update with it
+            if current_price:
+                result = await self.update_position_with_price(
+                    position_id,
+                    Decimal(str(current_price)),
+                    **updates
+                )
+            else:
+                # Just apply the updates directly
+                for key, value in updates.items():
+                    if hasattr(position, key):
+                        setattr(position, key, value)
+                result = {"success": True}
+            
+            return result is not None
+            
+        except Exception as e:
+            logger.error(f"Error updating position {position_id}: {e}")
+            return False
+ 
+    # Rename existing update_position to update_position_with_price:
+    async def update_position_with_price(
         self,
         position_id: str,
         current_price: Decimal,
@@ -400,8 +539,52 @@ class PositionTracker:
         except Exception as e:
             logger.error(f"Error updating position {position_id}: {e}")
             return None
-    
-    async def close_position(
+
+    # ============================================
+    # FIX 4: PositionTracker.close_position signature
+    # ============================================
+    # Expected: async def close_position(position_id: str) -> Dict
+    # Current has extra parameters, so add a simpler version:
+
+    async def close_position(self, position_id: str) -> Dict:
+        """
+        Close position completely (API-compliant signature)
+        
+        Args:
+            position_id: Position ID to close
+            
+        Returns:
+            Dictionary with closure details
+        """
+        position = self.positions.get(position_id)
+        if not position:
+            return {"success": False, "error": "Position not found"}
+        
+        # Get current price from cache or market
+        current_price = position.current_price
+        
+        # Close at current market price
+        closed_position = await self.close_position_with_details(
+            position_id=position_id,
+            exit_price=current_price,
+            exit_amount=position.entry_amount,
+            reason="manual_close"
+        )
+        
+        if closed_position:
+            return {
+                "success": True,
+                "position_id": position_id,
+                "exit_price": str(closed_position.exit_price),
+                "realized_pnl": str(closed_position.realized_pnl),
+                "roi": closed_position.roi
+            }
+        else:
+            return {"success": False, "error": "Failed to close position"}
+
+
+    # Rename existing close_position to close_position_with_details:
+    async def close_position_with_details(
         self,
         position_id: str,
         exit_price: Decimal,

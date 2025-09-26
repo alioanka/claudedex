@@ -1350,7 +1350,7 @@
         "name": "__init__",
         "qualified_name": "RiskManager.__init__",
         "is_async": false,
-        "lineno": 137,
+        "lineno": 172,
         "scope": "class:RiskManager",
         "params": [
           "self",
@@ -1377,7 +1377,7 @@
         "name": "initialize",
         "qualified_name": "RiskManager.initialize",
         "is_async": true,
-        "lineno": 167,
+        "lineno": 202,
         "scope": "class:RiskManager",
         "params": [
           "self"
@@ -1396,7 +1396,7 @@
         "name": "analyze_token",
         "qualified_name": "RiskManager.analyze_token",
         "is_async": true,
-        "lineno": 172,
+        "lineno": 207,
         "scope": "class:RiskManager",
         "params": [
           "self",
@@ -1441,7 +1441,7 @@
         "name": "_analyze_liquidity_risk",
         "qualified_name": "RiskManager._analyze_liquidity_risk",
         "is_async": true,
-        "lineno": 247,
+        "lineno": 282,
         "scope": "class:RiskManager",
         "params": [
           "self",
@@ -1468,7 +1468,7 @@
         "name": "_analyze_developer_risk",
         "qualified_name": "RiskManager._analyze_developer_risk",
         "is_async": true,
-        "lineno": 308,
+        "lineno": 343,
         "scope": "class:RiskManager",
         "params": [
           "self",
@@ -1501,7 +1501,7 @@
         "name": "_analyze_contract_risk",
         "qualified_name": "RiskManager._analyze_contract_risk",
         "is_async": true,
-        "lineno": 364,
+        "lineno": 399,
         "scope": "class:RiskManager",
         "params": [
           "self",
@@ -1531,7 +1531,7 @@
         "name": "_analyze_volume_risk",
         "qualified_name": "RiskManager._analyze_volume_risk",
         "is_async": true,
-        "lineno": 430,
+        "lineno": 465,
         "scope": "class:RiskManager",
         "params": [
           "self",
@@ -1559,7 +1559,7 @@
         "name": "_analyze_holder_risk",
         "qualified_name": "RiskManager._analyze_holder_risk",
         "is_async": true,
-        "lineno": 485,
+        "lineno": 520,
         "scope": "class:RiskManager",
         "params": [
           "self",
@@ -1591,7 +1591,7 @@
         "name": "_analyze_social_risk",
         "qualified_name": "RiskManager._analyze_social_risk",
         "is_async": true,
-        "lineno": 550,
+        "lineno": 585,
         "scope": "class:RiskManager",
         "params": [
           "self",
@@ -1608,7 +1608,7 @@
         "name": "_analyze_technical_risk",
         "qualified_name": "RiskManager._analyze_technical_risk",
         "is_async": true,
-        "lineno": 560,
+        "lineno": 595,
         "scope": "class:RiskManager",
         "params": [
           "self",
@@ -1633,7 +1633,7 @@
         "name": "_analyze_market_risk",
         "qualified_name": "RiskManager._analyze_market_risk",
         "is_async": true,
-        "lineno": 596,
+        "lineno": 631,
         "scope": "class:RiskManager",
         "params": [
           "self",
@@ -1659,34 +1659,38 @@
       {
         "name": "calculate_position_size",
         "qualified_name": "RiskManager.calculate_position_size",
-        "is_async": false,
-        "lineno": 630,
+        "is_async": true,
+        "lineno": 668,
         "scope": "class:RiskManager",
         "params": [
           "self",
-          "risk_score",
-          "available_balance",
-          "ml_confidence",
-          "expected_return"
+          "opportunity"
         ],
         "has_varargs": false,
         "has_varkw": false,
-        "returns": "float",
+        "returns": "Decimal",
         "visibility": "public",
         "decorators": [],
         "calls": [
+          "get_available_balance",
+          "Decimal",
           "max",
           "min",
           "min",
           "float",
-          "round"
+          "Decimal",
+          "Decimal",
+          "str",
+          "round",
+          "print",
+          "Decimal"
         ]
       },
       {
         "name": "calculate_stop_loss",
         "qualified_name": "RiskManager.calculate_stop_loss",
         "is_async": false,
-        "lineno": 702,
+        "lineno": 744,
         "scope": "class:RiskManager",
         "params": [
           "self",
@@ -1703,7 +1707,7 @@
         "name": "calculate_take_profit",
         "qualified_name": "RiskManager.calculate_take_profit",
         "is_async": false,
-        "lineno": 735,
+        "lineno": 777,
         "scope": "class:RiskManager",
         "params": [
           "self",
@@ -1725,7 +1729,7 @@
         "name": "validate_trade",
         "qualified_name": "RiskManager.validate_trade",
         "is_async": true,
-        "lineno": 769,
+        "lineno": 811,
         "scope": "class:RiskManager",
         "params": [
           "self",
@@ -1747,7 +1751,7 @@
         "name": "check_position_limit",
         "qualified_name": "RiskManager.check_position_limit",
         "is_async": true,
-        "lineno": 814,
+        "lineno": 856,
         "scope": "class:RiskManager",
         "params": [
           "self",
@@ -1767,7 +1771,7 @@
         "name": "set_stop_loss",
         "qualified_name": "RiskManager.set_stop_loss",
         "is_async": true,
-        "lineno": 832,
+        "lineno": 874,
         "scope": "class:RiskManager",
         "params": [
           "self",
@@ -1793,7 +1797,7 @@
         "name": "check_portfolio_exposure",
         "qualified_name": "RiskManager.check_portfolio_exposure",
         "is_async": true,
-        "lineno": 851,
+        "lineno": 893,
         "scope": "class:RiskManager",
         "params": [
           "self"
@@ -1818,7 +1822,7 @@
         "name": "calculate_var",
         "qualified_name": "RiskManager.calculate_var",
         "is_async": true,
-        "lineno": 882,
+        "lineno": 924,
         "scope": "class:RiskManager",
         "params": [
           "self",
@@ -1853,7 +1857,7 @@
         "name": "check_correlation_limit",
         "qualified_name": "RiskManager.check_correlation_limit",
         "is_async": true,
-        "lineno": 916,
+        "lineno": 958,
         "scope": "class:RiskManager",
         "params": [
           "self",
@@ -1882,7 +1886,7 @@
         "name": "emergency_stop_check",
         "qualified_name": "RiskManager.emergency_stop_check",
         "is_async": true,
-        "lineno": 949,
+        "lineno": 991,
         "scope": "class:RiskManager",
         "params": [
           "self"
@@ -1904,7 +1908,7 @@
         "name": "calculate_sharpe_ratio",
         "qualified_name": "RiskManager.calculate_sharpe_ratio",
         "is_async": true,
-        "lineno": 979,
+        "lineno": 1021,
         "scope": "class:RiskManager",
         "params": [
           "self"
@@ -1932,7 +1936,7 @@
         "name": "calculate_sortino_ratio",
         "qualified_name": "RiskManager.calculate_sortino_ratio",
         "is_async": true,
-        "lineno": 1003,
+        "lineno": 1045,
         "scope": "class:RiskManager",
         "params": [
           "self"
@@ -1962,6 +1966,8 @@
     "found_classes": [
       "RiskLevel",
       "RiskScore",
+      "TradingOpportunity",
+      "Position",
       "RiskManager"
     ],
     "class_bases": {
@@ -1969,13 +1975,13 @@
         "Enum"
       ],
       "RiskScore": [],
+      "TradingOpportunity": [],
+      "Position": [],
       "RiskManager": []
     },
     "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [
-      "core\\risk_manager.py:630 RiskManager.calculate_position_size params mismatch expected=['opportunity'] found=['risk_score', 'available_balance', 'ml_confidence', 'expected_return']"
-    ],
+    "signature_mismatches": [],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
     "duplicates_in_file": [],
@@ -2081,11 +2087,11 @@
         "name": "analyze_patterns",
         "qualified_name": "PatternAnalyzer.analyze_patterns",
         "is_async": true,
-        "lineno": 100,
+        "lineno": 103,
         "scope": "class:PatternAnalyzer",
         "params": [
           "self",
-          "data"
+          "price_data"
         ],
         "has_varargs": false,
         "has_varkw": false,
@@ -2120,7 +2126,7 @@
         "name": "_detect_chart_patterns",
         "qualified_name": "PatternAnalyzer._detect_chart_patterns",
         "is_async": true,
-        "lineno": 180,
+        "lineno": 190,
         "scope": "class:PatternAnalyzer",
         "params": [
           "self",
@@ -2149,7 +2155,7 @@
         "name": "_detect_triangles",
         "qualified_name": "PatternAnalyzer._detect_triangles",
         "is_async": true,
-        "lineno": 207,
+        "lineno": 217,
         "scope": "class:PatternAnalyzer",
         "params": [
           "self",
@@ -2190,7 +2196,7 @@
         "name": "_detect_double_patterns",
         "qualified_name": "PatternAnalyzer._detect_double_patterns",
         "is_async": true,
-        "lineno": 250,
+        "lineno": 260,
         "scope": "class:PatternAnalyzer",
         "params": [
           "self",
@@ -2233,7 +2239,7 @@
         "name": "_analyze_trend",
         "qualified_name": "PatternAnalyzer._analyze_trend",
         "is_async": true,
-        "lineno": 297,
+        "lineno": 307,
         "scope": "class:PatternAnalyzer",
         "params": [
           "self",
@@ -2264,7 +2270,7 @@
         "name": "_find_support_resistance",
         "qualified_name": "PatternAnalyzer._find_support_resistance",
         "is_async": true,
-        "lineno": 341,
+        "lineno": 351,
         "scope": "class:PatternAnalyzer",
         "params": [
           "self",
@@ -2295,7 +2301,7 @@
         "name": "_calculate_indicators",
         "qualified_name": "PatternAnalyzer._calculate_indicators",
         "is_async": true,
-        "lineno": 390,
+        "lineno": 400,
         "scope": "class:PatternAnalyzer",
         "params": [
           "self",
@@ -2329,7 +2335,7 @@
         "name": "detect_chart_patterns",
         "qualified_name": "PatternAnalyzer.detect_chart_patterns",
         "is_async": false,
-        "lineno": 450,
+        "lineno": 460,
         "scope": "class:PatternAnalyzer",
         "params": [
           "self",
@@ -2353,7 +2359,7 @@
         "name": "detect_candlestick_patterns",
         "qualified_name": "PatternAnalyzer.detect_candlestick_patterns",
         "is_async": false,
-        "lineno": 467,
+        "lineno": 477,
         "scope": "class:PatternAnalyzer",
         "params": [
           "self",
@@ -2376,7 +2382,7 @@
         "name": "calculate_support_resistance",
         "qualified_name": "PatternAnalyzer.calculate_support_resistance",
         "is_async": false,
-        "lineno": 484,
+        "lineno": 494,
         "scope": "class:PatternAnalyzer",
         "params": [
           "self",
@@ -2399,7 +2405,7 @@
         "name": "identify_trend",
         "qualified_name": "PatternAnalyzer.identify_trend",
         "is_async": false,
-        "lineno": 507,
+        "lineno": 517,
         "scope": "class:PatternAnalyzer",
         "params": [
           "self",
@@ -2415,6 +2421,399 @@
           "get_event_loop",
           "run_until_complete",
           "_analyze_trend",
+          "print"
+        ]
+      },
+      {
+        "name": "_prepare_dataframe",
+        "qualified_name": "PatternAnalyzer._prepare_dataframe",
+        "is_async": false,
+        "lineno": 535,
+        "scope": "class:PatternAnalyzer",
+        "params": [
+          "self",
+          "data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Optional[pd.DataFrame]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "isinstance",
+          "DataFrame",
+          "all",
+          "all",
+          "isinstance",
+          "DataFrame",
+          "len",
+          "DataFrame",
+          "to_numeric",
+          "dropna",
+          "print"
+        ]
+      },
+      {
+        "name": "_calculate_trend_duration",
+        "qualified_name": "PatternAnalyzer._calculate_trend_duration",
+        "is_async": false,
+        "lineno": 575,
+        "scope": "class:PatternAnalyzer",
+        "params": [
+          "self",
+          "closes",
+          "direction"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "int",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "range",
+          "len",
+          "range",
+          "len",
+          "mean",
+          "std",
+          "range",
+          "len",
+          "abs",
+          "print"
+        ]
+      },
+      {
+        "name": "_cluster_levels",
+        "qualified_name": "PatternAnalyzer._cluster_levels",
+        "is_async": false,
+        "lineno": 608,
+        "scope": "class:PatternAnalyzer",
+        "params": [
+          "self",
+          "levels",
+          "tolerance"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "List[float]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "sorted",
+          "abs",
+          "append",
+          "append",
+          "mean",
+          "append",
+          "mean",
+          "print"
+        ]
+      },
+      {
+        "name": "_detect_head_shoulders",
+        "qualified_name": "PatternAnalyzer._detect_head_shoulders",
+        "is_async": true,
+        "lineno": 636,
+        "scope": "class:PatternAnalyzer",
+        "params": [
+          "self",
+          "closes",
+          "highs",
+          "lows"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "List[Pattern]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "find_peaks",
+          "std",
+          "len",
+          "range",
+          "len",
+          "abs",
+          "append",
+          "Pattern",
+          "now",
+          "timedelta",
+          "now",
+          "find_peaks",
+          "std",
+          "len",
+          "range",
+          "len",
+          "abs",
+          "append",
+          "Pattern",
+          "now",
+          "timedelta",
+          "now",
+          "print"
+        ]
+      },
+      {
+        "name": "_detect_flags",
+        "qualified_name": "PatternAnalyzer._detect_flags",
+        "is_async": true,
+        "lineno": 694,
+        "scope": "class:PatternAnalyzer",
+        "params": [
+          "self",
+          "closes",
+          "volumes"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "List[Pattern]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "range",
+          "len",
+          "std",
+          "mean",
+          "append",
+          "Pattern",
+          "now",
+          "timedelta",
+          "now",
+          "min",
+          "append",
+          "Pattern",
+          "now",
+          "timedelta",
+          "now",
+          "max",
+          "print"
+        ]
+      },
+      {
+        "name": "_detect_cup_handle",
+        "qualified_name": "PatternAnalyzer._detect_cup_handle",
+        "is_async": true,
+        "lineno": 739,
+        "scope": "class:PatternAnalyzer",
+        "params": [
+          "self",
+          "closes",
+          "volumes"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "List[Pattern]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "len",
+          "argmin",
+          "abs",
+          "min",
+          "append",
+          "Pattern",
+          "now",
+          "timedelta",
+          "now",
+          "print"
+        ]
+      },
+      {
+        "name": "_analyze_volume_profile",
+        "qualified_name": "PatternAnalyzer._analyze_volume_profile",
+        "is_async": true,
+        "lineno": 778,
+        "scope": "class:PatternAnalyzer",
+        "params": [
+          "self",
+          "df"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "sum",
+          "sum",
+          "sum",
+          "linspace",
+          "min",
+          "max",
+          "range",
+          "len",
+          "sum",
+          "max",
+          "len",
+          "len",
+          "mean",
+          "print"
+        ]
+      },
+      {
+        "name": "_detect_candlestick_patterns",
+        "qualified_name": "PatternAnalyzer._detect_candlestick_patterns",
+        "is_async": true,
+        "lineno": 810,
+        "scope": "class:PatternAnalyzer",
+        "params": [
+          "self",
+          "df"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "List[Pattern]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "CDLHAMMER",
+          "append",
+          "Pattern",
+          "now",
+          "now",
+          "CDLSHOOTINGSTAR",
+          "append",
+          "Pattern",
+          "now",
+          "now",
+          "print"
+        ]
+      },
+      {
+        "name": "_analyze_momentum",
+        "qualified_name": "PatternAnalyzer._analyze_momentum",
+        "is_async": true,
+        "lineno": 850,
+        "scope": "class:PatternAnalyzer",
+        "params": [
+          "self",
+          "df"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "ones",
+          "len",
+          "len",
+          "len",
+          "len",
+          "mean",
+          "mean",
+          "abs",
+          "print"
+        ]
+      },
+      {
+        "name": "_detect_breakouts",
+        "qualified_name": "PatternAnalyzer._detect_breakouts",
+        "is_async": true,
+        "lineno": 898,
+        "scope": "class:PatternAnalyzer",
+        "params": [
+          "self",
+          "df"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "List[Pattern]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "ones",
+          "len",
+          "len",
+          "max",
+          "mean",
+          "append",
+          "Pattern",
+          "now",
+          "now",
+          "len",
+          "min",
+          "mean",
+          "append",
+          "Pattern",
+          "now",
+          "now",
+          "print"
+        ]
+      },
+      {
+        "name": "_calculate_pattern_score",
+        "qualified_name": "PatternAnalyzer._calculate_pattern_score",
+        "is_async": false,
+        "lineno": 951,
+        "scope": "class:PatternAnalyzer",
+        "params": [
+          "self",
+          "patterns",
+          "trend",
+          "indicators",
+          "momentum"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "mean",
+          "get",
+          "get",
+          "get",
+          "get",
+          "min",
+          "print"
+        ]
+      },
+      {
+        "name": "_generate_signal",
+        "qualified_name": "PatternAnalyzer._generate_signal",
+        "is_async": false,
+        "lineno": 992,
+        "scope": "class:PatternAnalyzer",
+        "params": [
+          "self",
+          "patterns",
+          "trend",
+          "indicators"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "str",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "lower",
+          "lower",
+          "lower",
+          "lower",
+          "get",
+          "get",
+          "get",
+          "get",
+          "print"
+        ]
+      },
+      {
+        "name": "_calculate_risk_reward",
+        "qualified_name": "PatternAnalyzer._calculate_risk_reward",
+        "is_async": false,
+        "lineno": 1041,
+        "scope": "class:PatternAnalyzer",
+        "params": [
+          "self",
+          "df",
+          "sr_levels"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
           "print"
         ]
       }
@@ -2437,9 +2836,7 @@
     },
     "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [
-      "core\\pattern_analyzer.py:100 PatternAnalyzer.analyze_patterns params mismatch expected=['price_data'] found=['data']"
-    ],
+    "signature_mismatches": [],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
     "duplicates_in_file": [],
@@ -3837,10 +4234,10 @@
         ]
       },
       {
-        "name": "subscribe",
-        "qualified_name": "EventBus.subscribe",
+        "name": "subscribe_sync",
+        "qualified_name": "EventBus.subscribe_sync",
         "is_async": false,
-        "lineno": 195,
+        "lineno": 196,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -3866,10 +4263,10 @@
         ]
       },
       {
-        "name": "unsubscribe",
-        "qualified_name": "EventBus.unsubscribe",
+        "name": "unsubscribe_sync",
+        "qualified_name": "EventBus.unsubscribe_sync",
         "is_async": false,
-        "lineno": 234,
+        "lineno": 235,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -3889,7 +4286,7 @@
         "name": "_process_events",
         "qualified_name": "EventBus._process_events",
         "is_async": true,
-        "lineno": 260,
+        "lineno": 261,
         "scope": "class:EventBus",
         "params": [
           "self"
@@ -3911,7 +4308,7 @@
         "name": "_handle_event",
         "qualified_name": "EventBus._handle_event",
         "is_async": true,
-        "lineno": 285,
+        "lineno": 286,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -3940,7 +4337,7 @@
         "name": "_apply_filters",
         "qualified_name": "EventBus._apply_filters",
         "is_async": false,
-        "lineno": 330,
+        "lineno": 331,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -3966,7 +4363,7 @@
         "name": "_add_to_history",
         "qualified_name": "EventBus._add_to_history",
         "is_async": false,
-        "lineno": 365,
+        "lineno": 366,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -3987,7 +4384,7 @@
         "name": "get_history",
         "qualified_name": "EventBus.get_history",
         "is_async": false,
-        "lineno": 377,
+        "lineno": 378,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4007,7 +4404,7 @@
         "name": "get_statistics",
         "qualified_name": "EventBus.get_statistics",
         "is_async": false,
-        "lineno": 401,
+        "lineno": 402,
         "scope": "class:EventBus",
         "params": [
           "self"
@@ -4031,7 +4428,7 @@
         "name": "wait_for",
         "qualified_name": "EventBus.wait_for",
         "is_async": true,
-        "lineno": 414,
+        "lineno": 416,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4048,9 +4445,9 @@
           "Future",
           "done",
           "set_result",
-          "subscribe",
+          "subscribe_sync",
           "wait_for",
-          "unsubscribe",
+          "unsubscribe_sync",
           "print"
         ]
       },
@@ -4058,7 +4455,7 @@
         "name": "callback",
         "qualified_name": "EventBus.callback",
         "is_async": false,
-        "lineno": 430,
+        "lineno": 432,
         "scope": "class:EventBus",
         "params": [
           "event"
@@ -4077,7 +4474,7 @@
         "name": "clear_dead_letter_queue",
         "qualified_name": "EventBus.clear_dead_letter_queue",
         "is_async": false,
-        "lineno": 457,
+        "lineno": 459,
         "scope": "class:EventBus",
         "params": [
           "self"
@@ -4096,7 +4493,7 @@
         "name": "add_global_filter",
         "qualified_name": "EventBus.add_global_filter",
         "is_async": false,
-        "lineno": 468,
+        "lineno": 470,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4115,7 +4512,7 @@
         "name": "remove_global_filter",
         "qualified_name": "EventBus.remove_global_filter",
         "is_async": false,
-        "lineno": 477,
+        "lineno": 479,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4134,7 +4531,7 @@
         "name": "replay_events",
         "qualified_name": "EventBus.replay_events",
         "is_async": true,
-        "lineno": 487,
+        "lineno": 489,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4156,7 +4553,7 @@
         "name": "create_event_stream",
         "qualified_name": "EventBus.create_event_stream",
         "is_async": false,
-        "lineno": 509,
+        "lineno": 511,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4170,7 +4567,7 @@
         "calls": [
           "Queue",
           "put",
-          "subscribe",
+          "subscribe_sync",
           "print",
           "Queue"
         ]
@@ -4179,7 +4576,7 @@
         "name": "stream_handler",
         "qualified_name": "EventBus.stream_handler",
         "is_async": true,
-        "lineno": 522,
+        "lineno": 524,
         "scope": "class:EventBus",
         "params": [
           "event"
@@ -4197,7 +4594,7 @@
         "name": "publish",
         "qualified_name": "EventBus.publish",
         "is_async": true,
-        "lineno": 537,
+        "lineno": 542,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4210,8 +4607,11 @@
         "visibility": "public",
         "decorators": [],
         "calls": [
-          "EventType",
+          "hasattr",
           "upper",
+          "getattr",
+          "upper",
+          "print",
           "Event",
           "emit",
           "print"
@@ -4221,7 +4621,7 @@
         "name": "subscribe",
         "qualified_name": "EventBus.subscribe",
         "is_async": true,
-        "lineno": 557,
+        "lineno": 577,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4234,9 +4634,18 @@
         "visibility": "public",
         "decorators": [],
         "calls": [
-          "EventType",
+          "hasattr",
           "upper",
-          "subscribe",
+          "getattr",
+          "upper",
+          "print",
+          "str",
+          "uuid4",
+          "EventSubscription",
+          "iscoroutinefunction",
+          "append",
+          "sort",
+          "hasattr",
           "print"
         ]
       },
@@ -4244,7 +4653,7 @@
         "name": "unsubscribe",
         "qualified_name": "EventBus.unsubscribe",
         "is_async": true,
-        "lineno": 572,
+        "lineno": 624,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4257,10 +4666,12 @@
         "visibility": "public",
         "decorators": [],
         "calls": [
-          "EventType",
+          "hasattr",
           "upper",
-          "get",
-          "unsubscribe",
+          "getattr",
+          "upper",
+          "print",
+          "hasattr",
           "print"
         ]
       },
@@ -4268,7 +4679,7 @@
         "name": "process_events",
         "qualified_name": "EventBus.process_events",
         "is_async": true,
-        "lineno": 590,
+        "lineno": 661,
         "scope": "class:EventBus",
         "params": [
           "self"
@@ -4286,7 +4697,7 @@
         "name": "__init__",
         "qualified_name": "EventLogger.__init__",
         "is_async": false,
-        "lineno": 597,
+        "lineno": 670,
         "scope": "class:EventLogger",
         "params": [
           "self",
@@ -4303,7 +4714,7 @@
         "name": "log_event",
         "qualified_name": "EventLogger.log_event",
         "is_async": true,
-        "lineno": 606,
+        "lineno": 679,
         "scope": "class:EventLogger",
         "params": [
           "self",
@@ -4325,7 +4736,7 @@
         "name": "read_events",
         "qualified_name": "EventLogger.read_events",
         "is_async": false,
-        "lineno": 615,
+        "lineno": 688,
         "scope": "class:EventLogger",
         "params": [
           "self",
@@ -4356,7 +4767,7 @@
         "name": "__init__",
         "qualified_name": "EventAggregator.__init__",
         "is_async": false,
-        "lineno": 653,
+        "lineno": 726,
         "scope": "class:EventAggregator",
         "params": [
           "self",
@@ -4377,7 +4788,7 @@
         "name": "add_event",
         "qualified_name": "EventAggregator.add_event",
         "is_async": true,
-        "lineno": 667,
+        "lineno": 740,
         "scope": "class:EventAggregator",
         "params": [
           "self",
@@ -4401,7 +4812,7 @@
         "name": "flush",
         "qualified_name": "EventAggregator.flush",
         "is_async": true,
-        "lineno": 690,
+        "lineno": 763,
         "scope": "class:EventAggregator",
         "params": [
           "self"
@@ -4438,16 +4849,10 @@
     },
     "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [
-      "core\\event_bus.py:195 EventBus.subscribe params mismatch expected=['event_type', 'handler'] found=['event_type', 'callback', 'subscriber_id', 'filters', 'priority']",
-      "core\\event_bus.py:234 EventBus.unsubscribe params mismatch expected=['event_type', 'handler'] found=['subscriber_id', 'event_type']"
-    ],
+    "signature_mismatches": [],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
-    "duplicates_in_file": [
-      "class:EventBus::subscribe x2",
-      "class:EventBus::unsubscribe x2"
-    ],
+    "duplicates_in_file": [],
     "extras": []
   },
   "data/collectors/dexscreener.py": {
@@ -4696,11 +5101,11 @@
         "name": "get_new_pairs",
         "qualified_name": "DexScreenerCollector.get_new_pairs",
         "is_async": true,
-        "lineno": 165,
+        "lineno": 168,
         "scope": "class:DexScreenerCollector",
         "params": [
           "self",
-          "limit"
+          "chain"
         ],
         "has_varargs": false,
         "has_varkw": false,
@@ -4709,15 +5114,13 @@
         "decorators": [],
         "calls": [
           "time",
-          "extend",
           "_make_request",
           "_parse_pair",
           "_filter_pair",
           "append",
           "_pair_to_dict",
-          "time",
-          "extend",
           "sort",
+          "time",
           "add",
           "put"
         ]
@@ -4726,7 +5129,7 @@
         "name": "get_token_price",
         "qualified_name": "DexScreenerCollector.get_token_price",
         "is_async": true,
-        "lineno": 217,
+        "lineno": 216,
         "scope": "class:DexScreenerCollector",
         "params": [
           "self",
@@ -4753,7 +5156,7 @@
         "name": "get_pair_data",
         "qualified_name": "DexScreenerCollector.get_pair_data",
         "is_async": true,
-        "lineno": 250,
+        "lineno": 249,
         "scope": "class:DexScreenerCollector",
         "params": [
           "self",
@@ -4776,7 +5179,7 @@
         "name": "get_token_pairs",
         "qualified_name": "DexScreenerCollector.get_token_pairs",
         "is_async": true,
-        "lineno": 280,
+        "lineno": 279,
         "scope": "class:DexScreenerCollector",
         "params": [
           "self",
@@ -4798,7 +5201,7 @@
         "name": "search_pairs",
         "qualified_name": "DexScreenerCollector.search_pairs",
         "is_async": true,
-        "lineno": 302,
+        "lineno": 301,
         "scope": "class:DexScreenerCollector",
         "params": [
           "self",
@@ -4821,7 +5224,7 @@
         "name": "get_trending_pairs",
         "qualified_name": "DexScreenerCollector.get_trending_pairs",
         "is_async": true,
-        "lineno": 325,
+        "lineno": 324,
         "scope": "class:DexScreenerCollector",
         "params": [
           "self"
@@ -4844,7 +5247,7 @@
         "name": "get_boosts",
         "qualified_name": "DexScreenerCollector.get_boosts",
         "is_async": true,
-        "lineno": 349,
+        "lineno": 348,
         "scope": "class:DexScreenerCollector",
         "params": [
           "self"
@@ -4866,7 +5269,38 @@
         "name": "monitor_pair",
         "qualified_name": "DexScreenerCollector.monitor_pair",
         "is_async": true,
-        "lineno": 371,
+        "lineno": 373,
+        "scope": "class:DexScreenerCollector",
+        "params": [
+          "self",
+          "address",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "AsyncGenerator",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "get_token_pairs",
+          "get",
+          "add",
+          "get_pair_data",
+          "_detect_changes",
+          "time",
+          "time",
+          "sleep",
+          "str",
+          "time",
+          "sleep",
+          "discard"
+        ]
+      },
+      {
+        "name": "monitor_pair_with_callback",
+        "qualified_name": "DexScreenerCollector.monitor_pair_with_callback",
+        "is_async": true,
+        "lineno": 445,
         "scope": "class:DexScreenerCollector",
         "params": [
           "self",
@@ -4892,7 +5326,7 @@
         "name": "stop_monitoring",
         "qualified_name": "DexScreenerCollector.stop_monitoring",
         "is_async": false,
-        "lineno": 401,
+        "lineno": 477,
         "scope": "class:DexScreenerCollector",
         "params": [
           "self",
@@ -4911,7 +5345,7 @@
         "name": "_parse_pair",
         "qualified_name": "DexScreenerCollector._parse_pair",
         "is_async": false,
-        "lineno": 405,
+        "lineno": 481,
         "scope": "class:DexScreenerCollector",
         "params": [
           "self",
@@ -4977,7 +5411,7 @@
         "name": "_pair_to_dict",
         "qualified_name": "DexScreenerCollector._pair_to_dict",
         "is_async": false,
-        "lineno": 476,
+        "lineno": 552,
         "scope": "class:DexScreenerCollector",
         "params": [
           "self",
@@ -4996,7 +5430,7 @@
         "name": "_filter_pair",
         "qualified_name": "DexScreenerCollector._filter_pair",
         "is_async": false,
-        "lineno": 503,
+        "lineno": 579,
         "scope": "class:DexScreenerCollector",
         "params": [
           "self",
@@ -5013,7 +5447,7 @@
         "name": "_detect_changes",
         "qualified_name": "DexScreenerCollector._detect_changes",
         "is_async": false,
-        "lineno": 535,
+        "lineno": 611,
         "scope": "class:DexScreenerCollector",
         "params": [
           "self",
@@ -5044,26 +5478,30 @@
         "name": "get_price_history",
         "qualified_name": "DexScreenerCollector.get_price_history",
         "is_async": true,
-        "lineno": 595,
+        "lineno": 674,
         "scope": "class:DexScreenerCollector",
         "params": [
           "self",
-          "pair_address",
-          "interval",
-          "limit"
+          "address",
+          "chain",
+          "interval"
         ],
         "has_varargs": false,
         "has_varkw": false,
         "returns": "List[Dict]",
         "visibility": "public",
         "decorators": [],
-        "calls": []
+        "calls": [
+          "get_token_price",
+          "int",
+          "time"
+        ]
       },
       {
         "name": "calculate_metrics",
         "qualified_name": "DexScreenerCollector.calculate_metrics",
         "is_async": true,
-        "lineno": 614,
+        "lineno": 707,
         "scope": "class:DexScreenerCollector",
         "params": [
           "self",
@@ -5095,7 +5533,7 @@
         "name": "get_stats",
         "qualified_name": "DexScreenerCollector.get_stats",
         "is_async": false,
-        "lineno": 677,
+        "lineno": 770,
         "scope": "class:DexScreenerCollector",
         "params": [
           "self"
@@ -5113,7 +5551,7 @@
         "name": "get_token_info",
         "qualified_name": "DexScreenerCollector.get_token_info",
         "is_async": true,
-        "lineno": 686,
+        "lineno": 779,
         "scope": "class:DexScreenerCollector",
         "params": [
           "self",
@@ -5143,7 +5581,7 @@
         "name": "get_trending_tokens",
         "qualified_name": "DexScreenerCollector.get_trending_tokens",
         "is_async": true,
-        "lineno": 735,
+        "lineno": 828,
         "scope": "class:DexScreenerCollector",
         "params": [
           "self",
@@ -5178,7 +5616,7 @@
         "name": "get_gainers_losers",
         "qualified_name": "DexScreenerCollector.get_gainers_losers",
         "is_async": true,
-        "lineno": 779,
+        "lineno": 872,
         "scope": "class:DexScreenerCollector",
         "params": [
           "self",
@@ -5214,7 +5652,7 @@
         "name": "test_api_connection",
         "qualified_name": "test_api_connection",
         "is_async": true,
-        "lineno": 840,
+        "lineno": 933,
         "scope": "module",
         "params": [],
         "has_varargs": false,
@@ -5243,11 +5681,7 @@
     },
     "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [
-      "data\\collectors\\dexscreener.py:165 DexScreenerCollector.get_new_pairs params mismatch expected=['chain'] found=['limit']",
-      "data\\collectors\\dexscreener.py:595 DexScreenerCollector.get_price_history params mismatch expected=['address', 'chain', 'interval'] found=['pair_address', 'interval', 'limit']",
-      "data\\collectors\\dexscreener.py:371 DexScreenerCollector.monitor_pair params mismatch expected=['address', 'chain'] found=['pair_address', 'callback']"
-    ],
+    "signature_mismatches": [],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
     "duplicates_in_file": [],
@@ -7300,7 +7734,7 @@
         "name": "__init__",
         "qualified_name": "MempoolMonitor.__init__",
         "is_async": false,
-        "lineno": 55,
+        "lineno": 57,
         "scope": "class:MempoolMonitor",
         "params": [
           "self",
@@ -7323,7 +7757,7 @@
         "name": "_setup_connections",
         "qualified_name": "MempoolMonitor._setup_connections",
         "is_async": false,
-        "lineno": 101,
+        "lineno": 103,
         "scope": "class:MempoolMonitor",
         "params": [
           "self"
@@ -7347,7 +7781,7 @@
         "name": "_load_mev_bots",
         "qualified_name": "MempoolMonitor._load_mev_bots",
         "is_async": false,
-        "lineno": 119,
+        "lineno": 121,
         "scope": "class:MempoolMonitor",
         "params": [
           "self"
@@ -7363,7 +7797,7 @@
         "name": "start_monitoring",
         "qualified_name": "MempoolMonitor.start_monitoring",
         "is_async": true,
-        "lineno": 128,
+        "lineno": 130,
         "scope": "class:MempoolMonitor",
         "params": [
           "self",
@@ -7386,7 +7820,7 @@
         "name": "stop_monitoring",
         "qualified_name": "MempoolMonitor.stop_monitoring",
         "is_async": true,
-        "lineno": 147,
+        "lineno": 149,
         "scope": "class:MempoolMonitor",
         "params": [
           "self",
@@ -7406,7 +7840,7 @@
         "name": "_process_pending_tx",
         "qualified_name": "MempoolMonitor._process_pending_tx",
         "is_async": true,
-        "lineno": 157,
+        "lineno": 160,
         "scope": "class:MempoolMonitor",
         "params": [
           "self",
@@ -7441,7 +7875,7 @@
         "name": "check_sandwich_risk",
         "qualified_name": "MempoolMonitor.check_sandwich_risk",
         "is_async": true,
-        "lineno": 208,
+        "lineno": 212,
         "scope": "class:MempoolMonitor",
         "params": [
           "self",
@@ -7483,7 +7917,7 @@
         "name": "detect_mev_opportunities",
         "qualified_name": "MempoolMonitor.detect_mev_opportunities",
         "is_async": true,
-        "lineno": 310,
+        "lineno": 314,
         "scope": "class:MempoolMonitor",
         "params": [
           "self"
@@ -7506,7 +7940,7 @@
         "name": "_detect_arbitrage",
         "qualified_name": "MempoolMonitor._detect_arbitrage",
         "is_async": true,
-        "lineno": 332,
+        "lineno": 336,
         "scope": "class:MempoolMonitor",
         "params": [
           "self"
@@ -7536,7 +7970,7 @@
         "name": "_detect_liquidations",
         "qualified_name": "MempoolMonitor._detect_liquidations",
         "is_async": true,
-        "lineno": 377,
+        "lineno": 381,
         "scope": "class:MempoolMonitor",
         "params": [
           "self"
@@ -7552,7 +7986,7 @@
         "name": "_decode_swap",
         "qualified_name": "MempoolMonitor._decode_swap",
         "is_async": false,
-        "lineno": 383,
+        "lineno": 387,
         "scope": "class:MempoolMonitor",
         "params": [
           "self",
@@ -7576,7 +8010,7 @@
         "name": "_cleanup_old_txs",
         "qualified_name": "MempoolMonitor._cleanup_old_txs",
         "is_async": false,
-        "lineno": 416,
+        "lineno": 420,
         "scope": "class:MempoolMonitor",
         "params": [
           "self"
@@ -7597,7 +8031,7 @@
         "name": "get_gas_prices",
         "qualified_name": "MempoolMonitor.get_gas_prices",
         "is_async": true,
-        "lineno": 432,
+        "lineno": 436,
         "scope": "class:MempoolMonitor",
         "params": [
           "self",
@@ -7633,7 +8067,7 @@
         "name": "monitor_token_mempool",
         "qualified_name": "MempoolMonitor.monitor_token_mempool",
         "is_async": true,
-        "lineno": 470,
+        "lineno": 474,
         "scope": "class:MempoolMonitor",
         "params": [
           "self",
@@ -7671,7 +8105,7 @@
         "name": "add_mev_bot",
         "qualified_name": "MempoolMonitor.add_mev_bot",
         "is_async": false,
-        "lineno": 508,
+        "lineno": 512,
         "scope": "class:MempoolMonitor",
         "params": [
           "self",
@@ -7691,10 +8125,11 @@
         "name": "get_mempool_stats",
         "qualified_name": "MempoolMonitor.get_mempool_stats",
         "is_async": false,
-        "lineno": 512,
+        "lineno": 519,
         "scope": "class:MempoolMonitor",
         "params": [
-          "self"
+          "self",
+          "chain"
         ],
         "has_varargs": false,
         "has_varkw": false,
@@ -7710,14 +8145,15 @@
           "values",
           "max",
           "values",
-          "print"
+          "print",
+          "str"
         ]
       },
       {
         "name": "monitor_mempool",
         "qualified_name": "MempoolMonitor.monitor_mempool",
         "is_async": true,
-        "lineno": 532,
+        "lineno": 566,
         "scope": "class:MempoolMonitor",
         "params": [
           "self",
@@ -7742,7 +8178,7 @@
         "name": "detect_frontrun_risk",
         "qualified_name": "MempoolMonitor.detect_frontrun_risk",
         "is_async": true,
-        "lineno": 572,
+        "lineno": 606,
         "scope": "class:MempoolMonitor",
         "params": [
           "self",
@@ -7766,7 +8202,7 @@
         "name": "analyze_pending_tx",
         "qualified_name": "MempoolMonitor.analyze_pending_tx",
         "is_async": true,
-        "lineno": 606,
+        "lineno": 640,
         "scope": "class:MempoolMonitor",
         "params": [
           "self",
@@ -7801,9 +8237,7 @@
     },
     "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [
-      "data\\collectors\\mempool_monitor.py:512 MempoolMonitor.get_mempool_stats params mismatch expected=['chain'] found=[]"
-    ],
+    "signature_mismatches": [],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
     "duplicates_in_file": [],
@@ -13622,7 +14056,30 @@
         "name": "get_historical_data",
         "qualified_name": "DatabaseManager.get_historical_data",
         "is_async": true,
-        "lineno": 433,
+        "lineno": 436,
+        "scope": "class:DatabaseManager",
+        "params": [
+          "self",
+          "token",
+          "timeframe"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "List[Dict[str, Any]]",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "acquire",
+          "get",
+          "fetch",
+          "dict"
+        ]
+      },
+      {
+        "name": "get_historical_data_extended",
+        "qualified_name": "DatabaseManager.get_historical_data_extended",
+        "is_async": true,
+        "lineno": 492,
         "scope": "class:DatabaseManager",
         "params": [
           "self",
@@ -13647,7 +14104,7 @@
         "name": "get_active_positions",
         "qualified_name": "DatabaseManager.get_active_positions",
         "is_async": true,
-        "lineno": 477,
+        "lineno": 547,
         "scope": "class:DatabaseManager",
         "params": [
           "self"
@@ -13667,7 +14124,7 @@
         "name": "get_recent_trades",
         "qualified_name": "DatabaseManager.get_recent_trades",
         "is_async": true,
-        "lineno": 488,
+        "lineno": 558,
         "scope": "class:DatabaseManager",
         "params": [
           "self",
@@ -13690,7 +14147,7 @@
         "name": "save_token_analysis",
         "qualified_name": "DatabaseManager.save_token_analysis",
         "is_async": true,
-        "lineno": 511,
+        "lineno": 581,
         "scope": "class:DatabaseManager",
         "params": [
           "self",
@@ -13724,7 +14181,7 @@
         "name": "get_token_analysis",
         "qualified_name": "DatabaseManager.get_token_analysis",
         "is_async": true,
-        "lineno": 546,
+        "lineno": 616,
         "scope": "class:DatabaseManager",
         "params": [
           "self",
@@ -13747,7 +14204,7 @@
         "name": "save_performance_metrics",
         "qualified_name": "DatabaseManager.save_performance_metrics",
         "is_async": true,
-        "lineno": 563,
+        "lineno": 633,
         "scope": "class:DatabaseManager",
         "params": [
           "self",
@@ -13780,7 +14237,7 @@
         "name": "cleanup_old_data",
         "qualified_name": "DatabaseManager.cleanup_old_data",
         "is_async": true,
-        "lineno": 589,
+        "lineno": 659,
         "scope": "class:DatabaseManager",
         "params": [
           "self",
@@ -13802,7 +14259,7 @@
         "name": "get_statistics",
         "qualified_name": "DatabaseManager.get_statistics",
         "is_async": true,
-        "lineno": 612,
+        "lineno": 682,
         "scope": "class:DatabaseManager",
         "params": [
           "self"
@@ -13829,9 +14286,7 @@
     },
     "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [
-      "data\\storage\\database.py:433 DatabaseManager.get_historical_data params mismatch expected=['token', 'timeframe'] found=['token_address', 'timeframe', 'limit', 'chain']"
-    ],
+    "signature_mismatches": [],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
     "duplicates_in_file": [],
@@ -14011,7 +14466,31 @@
         "name": "get",
         "qualified_name": "CacheManager.get",
         "is_async": true,
-        "lineno": 98,
+        "lineno": 101,
+        "scope": "class:CacheManager",
+        "params": [
+          "self",
+          "key"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Optional[Any]",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "get",
+          "loads",
+          "loads",
+          "isinstance",
+          "decode",
+          "error"
+        ]
+      },
+      {
+        "name": "get_with_options",
+        "qualified_name": "CacheManager.get_with_options",
+        "is_async": true,
+        "lineno": 134,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14037,7 +14516,7 @@
         "name": "set",
         "qualified_name": "CacheManager.set",
         "is_async": true,
-        "lineno": 129,
+        "lineno": 176,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14068,7 +14547,7 @@
         "name": "delete",
         "qualified_name": "CacheManager.delete",
         "is_async": true,
-        "lineno": 172,
+        "lineno": 219,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14090,7 +14569,7 @@
         "name": "exists",
         "qualified_name": "CacheManager.exists",
         "is_async": true,
-        "lineno": 183,
+        "lineno": 230,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14111,7 +14590,7 @@
         "name": "invalidate",
         "qualified_name": "CacheManager.invalidate",
         "is_async": true,
-        "lineno": 191,
+        "lineno": 238,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14133,7 +14612,7 @@
         "name": "get_many",
         "qualified_name": "CacheManager.get_many",
         "is_async": true,
-        "lineno": 206,
+        "lineno": 253,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14157,7 +14636,7 @@
         "name": "set_many",
         "qualified_name": "CacheManager.set_many",
         "is_async": true,
-        "lineno": 225,
+        "lineno": 272,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14187,7 +14666,7 @@
         "name": "hget",
         "qualified_name": "CacheManager.hget",
         "is_async": true,
-        "lineno": 252,
+        "lineno": 299,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14211,7 +14690,7 @@
         "name": "hset",
         "qualified_name": "CacheManager.hset",
         "is_async": true,
-        "lineno": 266,
+        "lineno": 313,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14237,7 +14716,7 @@
         "name": "hgetall",
         "qualified_name": "CacheManager.hgetall",
         "is_async": true,
-        "lineno": 280,
+        "lineno": 327,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14263,7 +14742,7 @@
         "name": "lpush",
         "qualified_name": "CacheManager.lpush",
         "is_async": true,
-        "lineno": 299,
+        "lineno": 346,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14287,7 +14766,7 @@
         "name": "rpop",
         "qualified_name": "CacheManager.rpop",
         "is_async": true,
-        "lineno": 308,
+        "lineno": 355,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14310,7 +14789,7 @@
         "name": "lrange",
         "qualified_name": "CacheManager.lrange",
         "is_async": true,
-        "lineno": 322,
+        "lineno": 369,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14337,7 +14816,7 @@
         "name": "zadd",
         "qualified_name": "CacheManager.zadd",
         "is_async": true,
-        "lineno": 340,
+        "lineno": 387,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14358,7 +14837,7 @@
         "name": "zrange",
         "qualified_name": "CacheManager.zrange",
         "is_async": true,
-        "lineno": 348,
+        "lineno": 395,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14381,7 +14860,7 @@
         "name": "publish",
         "qualified_name": "CacheManager.publish",
         "is_async": true,
-        "lineno": 363,
+        "lineno": 410,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14406,7 +14885,7 @@
         "name": "subscribe",
         "qualified_name": "CacheManager.subscribe",
         "is_async": true,
-        "lineno": 373,
+        "lineno": 420,
         "scope": "class:CacheManager",
         "params": [
           "self"
@@ -14426,7 +14905,7 @@
         "name": "incr",
         "qualified_name": "CacheManager.incr",
         "is_async": true,
-        "lineno": 381,
+        "lineno": 428,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14447,7 +14926,7 @@
         "name": "decr",
         "qualified_name": "CacheManager.decr",
         "is_async": true,
-        "lineno": 389,
+        "lineno": 436,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14468,7 +14947,7 @@
         "name": "expire",
         "qualified_name": "CacheManager.expire",
         "is_async": true,
-        "lineno": 398,
+        "lineno": 445,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14489,7 +14968,7 @@
         "name": "ttl",
         "qualified_name": "CacheManager.ttl",
         "is_async": true,
-        "lineno": 406,
+        "lineno": 453,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14509,7 +14988,7 @@
         "name": "warm_cache",
         "qualified_name": "CacheManager.warm_cache",
         "is_async": true,
-        "lineno": 415,
+        "lineno": 462,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14533,7 +15012,7 @@
         "name": "get_stats",
         "qualified_name": "CacheManager.get_stats",
         "is_async": true,
-        "lineno": 439,
+        "lineno": 486,
         "scope": "class:CacheManager",
         "params": [
           "self"
@@ -14563,7 +15042,7 @@
         "name": "acquire_lock",
         "qualified_name": "CacheManager.acquire_lock",
         "is_async": true,
-        "lineno": 462,
+        "lineno": 509,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14586,7 +15065,7 @@
         "name": "release_lock",
         "qualified_name": "CacheManager.release_lock",
         "is_async": true,
-        "lineno": 482,
+        "lineno": 529,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14606,7 +15085,7 @@
         "name": "clear",
         "qualified_name": "CacheManager.clear",
         "is_async": true,
-        "lineno": 493,
+        "lineno": 540,
         "scope": "class:CacheManager",
         "params": [
           "self",
@@ -14636,8 +15115,7 @@
     "missing": [],
     "async_mismatches": [],
     "signature_mismatches": [
-      "data\\storage\\cache.py:98 CacheManager.get params mismatch expected=['key'] found=['key', 'default', 'decode_json']",
-      "data\\storage\\cache.py:129 CacheManager.set params mismatch expected=['key', 'value', 'ttl'] found=['key', 'value', 'ttl', 'cache_type']"
+      "data\\storage\\cache.py:176 CacheManager.set params mismatch expected=['key', 'value', 'ttl'] found=['key', 'value', 'ttl', 'cache_type']"
     ],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
@@ -15525,6 +16003,35 @@
           "get",
           "min"
         ]
+      },
+      {
+        "name": "check_liquidity_removal_risk",
+        "qualified_name": "RugDetector.check_liquidity_removal_risk",
+        "is_async": false,
+        "lineno": 807,
+        "scope": "class:RugDetector",
+        "params": [
+          "self",
+          "liquidity_data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "get",
+          "get",
+          "get",
+          "now",
+          "get",
+          "get",
+          "len",
+          "sum",
+          "get",
+          "get",
+          "min"
+        ]
       }
     ],
     "found_classes": [
@@ -15533,9 +16040,7 @@
     "class_bases": {
       "RugDetector": []
     },
-    "missing": [
-      "def check_liquidity_removal_risk() (closest: check_liquidity_lock)"
-    ],
+    "missing": [],
     "async_mismatches": [],
     "signature_mismatches": [],
     "visibility_mismatches": [],
@@ -16173,10 +16678,38 @@
         ]
       },
       {
+        "name": "detect_accumulation_phase",
+        "qualified_name": "PumpPredictorAnalysis.detect_accumulation_phase",
+        "is_async": false,
+        "lineno": 848,
+        "scope": "class:PumpPredictorAnalysis",
+        "params": [
+          "self",
+          "price_data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "len",
+          "isinstance",
+          "get",
+          "array",
+          "max",
+          "min",
+          "mean",
+          "diff",
+          "std",
+          "error"
+        ]
+      },
+      {
         "name": "calculate_pump_probability",
         "qualified_name": "PumpPredictorAnalysis.calculate_pump_probability",
         "is_async": false,
-        "lineno": 843,
+        "lineno": 899,
         "scope": "class:PumpPredictorAnalysis",
         "params": [
           "self",
@@ -16211,9 +16744,7 @@
       "PumpPattern": [],
       "PumpPredictorAnalysis": []
     },
-    "missing": [
-      "def detect_accumulation_phase() (closest: _detect_accumulation_phase, detect_accumulation_phase_sync)"
-    ],
+    "missing": [],
     "async_mismatches": [],
     "signature_mismatches": [],
     "visibility_mismatches": [],
@@ -16284,18 +16815,940 @@
         "decorators": null
       }
     ],
-    "found_methods": [],
-    "found_classes": [],
-    "class_bases": {},
-    "missing": [
-      "def monitor_liquidity()",
-      "def get_liquidity_depth()",
-      "def calculate_slippage()",
-      "def track_liquidity_changes()",
-      "[ParseError] AST parse error in C:\\Users\\HP\\Desktop\\ClaudeDex\\analysis\\liquidity_monitor.py: unexpected indent (<unknown>, line 498)"
+    "found_methods": [
+      {
+        "name": "__init__",
+        "qualified_name": "LiquidityMonitor.__init__",
+        "is_async": false,
+        "lineno": 52,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "db_manager",
+          "cache_manager",
+          "event_bus",
+          "alerts",
+          "config"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "Decimal",
+          "str",
+          "get",
+          "get",
+          "get",
+          "get"
+        ]
+      },
+      {
+        "name": "start_monitoring",
+        "qualified_name": "LiquidityMonitor.start_monitoring",
+        "is_async": true,
+        "lineno": 84,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "tokens"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "info",
+          "len",
+          "create_task",
+          "_monitor_token_liquidity",
+          "append",
+          "create_task",
+          "_periodic_health_check",
+          "error"
+        ]
+      },
+      {
+        "name": "stop_monitoring",
+        "qualified_name": "LiquidityMonitor.stop_monitoring",
+        "is_async": true,
+        "lineno": 100,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "pop",
+          "cancel",
+          "clear",
+          "clear"
+        ]
+      },
+      {
+        "name": "monitor_liquidity_changes",
+        "qualified_name": "LiquidityMonitor.monitor_liquidity_changes",
+        "is_async": true,
+        "lineno": 110,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict[str, Any]",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "_get_current_liquidity",
+          "get",
+          "get_liquidity_history",
+          "_calculate_liquidity_changes",
+          "_detect_liquidity_anomalies",
+          "set",
+          "_emit_liquidity_event",
+          "_calculate_liquidity_health",
+          "utcnow",
+          "error"
+        ]
+      },
+      {
+        "name": "detect_liquidity_removal",
+        "qualified_name": "LiquidityMonitor.detect_liquidity_removal",
+        "is_async": true,
+        "lineno": 159,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict[str, Any]",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "_get_liquidity_transactions",
+          "Decimal",
+          "utcnow",
+          "timedelta",
+          "Decimal",
+          "str",
+          "float",
+          "append",
+          "get",
+          "_is_suspicious_wallet",
+          "append",
+          "min",
+          "total_seconds",
+          "max",
+          "_calculate_removal_risk_score",
+          "_detect_rug_patterns",
+          "_send_liquidity_alert",
+          "_get_removal_recommendation",
+          "utcnow",
+          "error"
+        ]
+      },
+      {
+        "name": "calculate_slippage",
+        "qualified_name": "LiquidityMonitor.calculate_slippage",
+        "is_async": true,
+        "lineno": 228,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token",
+          "chain",
+          "amount",
+          "is_buy"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "SlippageEstimate",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "_get_liquidity_depth",
+          "get",
+          "_calculate_orderbook_slippage",
+          "_calculate_amm_slippage",
+          "_calculate_price_impact",
+          "_determine_slippage_risk",
+          "_get_slippage_recommendation",
+          "SlippageEstimate",
+          "error",
+          "SlippageEstimate",
+          "Decimal",
+          "Decimal"
+        ]
+      },
+      {
+        "name": "analyze_liquidity_locks",
+        "qualified_name": "LiquidityMonitor.analyze_liquidity_locks",
+        "is_async": true,
+        "lineno": 291,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict[str, Any]",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "_check_lock_platform",
+          "get",
+          "utcnow",
+          "max",
+          "min",
+          "min",
+          "error"
+        ]
+      },
+      {
+        "name": "get_liquidity_providers",
+        "qualified_name": "LiquidityMonitor.get_liquidity_providers",
+        "is_async": true,
+        "lineno": 337,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "List[Dict]",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "_get_pool_data",
+          "_get_lp_token_holders",
+          "sum",
+          "append",
+          "_is_lp_locked",
+          "get",
+          "get",
+          "sorted",
+          "error"
+        ]
+      },
+      {
+        "name": "_monitor_token_liquidity",
+        "qualified_name": "LiquidityMonitor._monitor_token_liquidity",
+        "is_async": true,
+        "lineno": 380,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "keys",
+          "monitor_liquidity_changes",
+          "get",
+          "get",
+          "detect_liquidity_removal",
+          "save_liquidity_snapshot",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "utcnow",
+          "sleep",
+          "error",
+          "sleep"
+        ]
+      },
+      {
+        "name": "_calculate_amm_slippage",
+        "qualified_name": "LiquidityMonitor._calculate_amm_slippage",
+        "is_async": true,
+        "lineno": 406,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "liquidity_data",
+          "amount",
+          "is_buy"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict[str, Any]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "Decimal",
+          "str",
+          "Decimal",
+          "str",
+          "Decimal",
+          "Decimal",
+          "float",
+          "abs",
+          "Decimal",
+          "Decimal",
+          "float",
+          "abs",
+          "error",
+          "Decimal",
+          "Decimal"
+        ]
+      },
+      {
+        "name": "_determine_slippage_risk",
+        "qualified_name": "LiquidityMonitor._determine_slippage_risk",
+        "is_async": false,
+        "lineno": 450,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "slippage"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "str",
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "_get_slippage_recommendation",
+        "qualified_name": "LiquidityMonitor._get_slippage_recommendation",
+        "is_async": false,
+        "lineno": 461,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "slippage",
+          "price_impact",
+          "liquidity_depth"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "str",
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "_send_liquidity_alert",
+        "qualified_name": "LiquidityMonitor._send_liquidity_alert",
+        "is_async": true,
+        "lineno": 477,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token",
+          "chain",
+          "analysis",
+          "severity"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "upper",
+          "get",
+          "get",
+          "len",
+          "get",
+          "get",
+          "get",
+          "send_alert"
+        ]
+      },
+      {
+        "name": "monitor_liquidity",
+        "qualified_name": "LiquidityMonitor.monitor_liquidity",
+        "is_async": true,
+        "lineno": 504,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "monitor_liquidity_changes"
+        ]
+      },
+      {
+        "name": "get_liquidity_depth",
+        "qualified_name": "LiquidityMonitor.get_liquidity_depth",
+        "is_async": true,
+        "lineno": 518,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "pair_address",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "_get_pool_data",
+          "Decimal",
+          "get",
+          "get",
+          "get",
+          "get",
+          "Decimal",
+          "str",
+          "get",
+          "error",
+          "Decimal",
+          "str"
+        ]
+      },
+      {
+        "name": "track_liquidity_changes",
+        "qualified_name": "LiquidityMonitor.track_liquidity_changes",
+        "is_async": true,
+        "lineno": 568,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "utcnow",
+          "monitor_liquidity_changes",
+          "get",
+          "get",
+          "get",
+          "utcnow",
+          "detect_liquidity_removal",
+          "get",
+          "get",
+          "utcnow",
+          "sleep",
+          "pop",
+          "error",
+          "pop"
+        ]
+      },
+      {
+        "name": "calculate_slippage_sync",
+        "qualified_name": "LiquidityMonitor.calculate_slippage_sync",
+        "is_async": false,
+        "lineno": 620,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "amount",
+          "liquidity_data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Decimal",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "get_event_loop",
+          "run_until_complete",
+          "calculate_slippage",
+          "Decimal",
+          "str"
+        ]
+      },
+      {
+        "name": "_get_current_liquidity",
+        "qualified_name": "LiquidityMonitor._get_current_liquidity",
+        "is_async": true,
+        "lineno": 653,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "utcnow"
+        ]
+      },
+      {
+        "name": "_calculate_liquidity_changes",
+        "qualified_name": "LiquidityMonitor._calculate_liquidity_changes",
+        "is_async": true,
+        "lineno": 663,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "current",
+          "history"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "get"
+        ]
+      },
+      {
+        "name": "_detect_liquidity_anomalies",
+        "qualified_name": "LiquidityMonitor._detect_liquidity_anomalies",
+        "is_async": true,
+        "lineno": 681,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "changes",
+          "history"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "List",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "abs",
+          "get",
+          "append"
+        ]
+      },
+      {
+        "name": "_calculate_liquidity_health",
+        "qualified_name": "LiquidityMonitor._calculate_liquidity_health",
+        "is_async": true,
+        "lineno": 690,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "liquidity"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "min"
+        ]
+      },
+      {
+        "name": "_emit_liquidity_event",
+        "qualified_name": "LiquidityMonitor._emit_liquidity_event",
+        "is_async": true,
+        "lineno": 704,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token",
+          "chain",
+          "changes"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "emit",
+          "utcnow"
+        ]
+      },
+      {
+        "name": "_get_liquidity_transactions",
+        "qualified_name": "LiquidityMonitor._get_liquidity_transactions",
+        "is_async": true,
+        "lineno": 713,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "List",
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "_is_suspicious_wallet",
+        "qualified_name": "LiquidityMonitor._is_suspicious_wallet",
+        "is_async": true,
+        "lineno": 718,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "wallet"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "_calculate_removal_risk_score",
+        "qualified_name": "LiquidityMonitor._calculate_removal_risk_score",
+        "is_async": true,
+        "lineno": 723,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "analysis"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "len",
+          "min"
+        ]
+      },
+      {
+        "name": "_detect_rug_patterns",
+        "qualified_name": "LiquidityMonitor._detect_rug_patterns",
+        "is_async": true,
+        "lineno": 738,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token",
+          "chain",
+          "analysis"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "_get_removal_recommendation",
+        "qualified_name": "LiquidityMonitor._get_removal_recommendation",
+        "is_async": false,
+        "lineno": 746,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "analysis"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "str",
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "_get_liquidity_depth",
+        "qualified_name": "LiquidityMonitor._get_liquidity_depth",
+        "is_async": true,
+        "lineno": 755,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get_liquidity_depth"
+        ]
+      },
+      {
+        "name": "_get_pool_data",
+        "qualified_name": "LiquidityMonitor._get_pool_data",
+        "is_async": true,
+        "lineno": 759,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "_calculate_orderbook_slippage",
+        "qualified_name": "LiquidityMonitor._calculate_orderbook_slippage",
+        "is_async": true,
+        "lineno": 771,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "liquidity_data",
+          "amount",
+          "is_buy"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "Decimal",
+          "Decimal"
+        ]
+      },
+      {
+        "name": "_calculate_price_impact",
+        "qualified_name": "LiquidityMonitor._calculate_price_impact",
+        "is_async": true,
+        "lineno": 781,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "liquidity_data",
+          "amount",
+          "is_buy"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "Decimal",
+          "float",
+          "min"
+        ]
+      },
+      {
+        "name": "_check_lock_platform",
+        "qualified_name": "LiquidityMonitor._check_lock_platform",
+        "is_async": true,
+        "lineno": 790,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token",
+          "chain",
+          "platform"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "_get_lp_token_holders",
+        "qualified_name": "LiquidityMonitor._get_lp_token_holders",
+        "is_async": true,
+        "lineno": 800,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "lp_token",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "List",
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "_is_lp_locked",
+        "qualified_name": "LiquidityMonitor._is_lp_locked",
+        "is_async": true,
+        "lineno": 805,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "address"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "_get_recent_price_volume",
+        "qualified_name": "LiquidityMonitor._get_recent_price_volume",
+        "is_async": true,
+        "lineno": 809,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token",
+          "chain",
+          "minutes"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "List",
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "_get_realtime_data",
+        "qualified_name": "LiquidityMonitor._get_realtime_data",
+        "is_async": true,
+        "lineno": 814,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "token",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "_calculate_momentum_indicators",
+        "qualified_name": "LiquidityMonitor._calculate_momentum_indicators",
+        "is_async": true,
+        "lineno": 818,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "_calculate_pump_metrics",
+        "qualified_name": "LiquidityMonitor._calculate_pump_metrics",
+        "is_async": true,
+        "lineno": 822,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "data",
+          "price_spike",
+          "volume_spike"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "_estimate_remaining_potential",
+        "qualified_name": "LiquidityMonitor._estimate_remaining_potential",
+        "is_async": true,
+        "lineno": 830,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "data",
+          "metrics"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "_get_exit_recommendation",
+        "qualified_name": "LiquidityMonitor._get_exit_recommendation",
+        "is_async": false,
+        "lineno": 834,
+        "scope": "class:LiquidityMonitor",
+        "params": [
+          "self",
+          "metrics",
+          "potential"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "str",
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      }
     ],
+    "found_classes": [
+      "LiquidityEvent",
+      "SlippageEstimate",
+      "LiquidityMonitor"
+    ],
+    "class_bases": {
+      "LiquidityEvent": [],
+      "SlippageEstimate": [],
+      "LiquidityMonitor": []
+    },
+    "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [],
+    "signature_mismatches": [
+      "analysis\\liquidity_monitor.py:518 LiquidityMonitor.get_liquidity_depth params mismatch expected=['pair_address'] found=['pair_address', 'chain']",
+      "analysis\\liquidity_monitor.py:228 LiquidityMonitor.calculate_slippage params mismatch expected=['amount', 'liquidity_data'] found=['token', 'chain', 'amount', 'is_buy']",
+      "analysis\\liquidity_monitor.py:568 LiquidityMonitor.track_liquidity_changes params mismatch expected=['token'] found=['token', 'chain']"
+    ],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
     "duplicates_in_file": [],
@@ -21285,18 +22738,724 @@
         "decorators": null
       }
     ],
-    "found_methods": [],
-    "found_classes": [],
-    "class_bases": {},
-    "missing": [
-      "def prepare_features()",
-      "def train_lstm()",
-      "def predict_pump_probability()",
-      "def backtest()",
-      "[ParseError] AST parse error in C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\models\\pump_predictor.py: unexpected indent (<unknown>, line 432)"
+    "found_methods": [
+      {
+        "name": "__init__",
+        "qualified_name": "PumpPredictor.__init__",
+        "is_async": false,
+        "lineno": 33,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "config"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "_initialize_models",
+          "Path",
+          "get",
+          "mkdir"
+        ]
+      },
+      {
+        "name": "_initialize_models",
+        "qualified_name": "PumpPredictor._initialize_models",
+        "is_async": false,
+        "lineno": 76,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "_build_lstm_model",
+          "XGBRegressor",
+          "LGBMRegressor",
+          "RandomForestRegressor",
+          "GradientBoostingRegressor",
+          "MinMaxScaler",
+          "StandardScaler"
+        ]
+      },
+      {
+        "name": "_build_lstm_model",
+        "qualified_name": "PumpPredictor._build_lstm_model",
+        "is_async": false,
+        "lineno": 133,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Sequential",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "Sequential",
+          "LSTM",
+          "len",
+          "Dropout",
+          "BatchNormalization",
+          "LSTM",
+          "Dropout",
+          "BatchNormalization",
+          "LSTM",
+          "Dropout",
+          "BatchNormalization",
+          "Dense",
+          "Dropout",
+          "Dense",
+          "compile",
+          "Adam"
+        ]
+      },
+      {
+        "name": "prepare_sequences",
+        "qualified_name": "PumpPredictor.prepare_sequences",
+        "is_async": false,
+        "lineno": 163,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "price_data",
+          "lookback"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Tuple[np.ndarray, np.ndarray]",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "fit_transform",
+          "range",
+          "len",
+          "append",
+          "append",
+          "array",
+          "array"
+        ]
+      },
+      {
+        "name": "extract_features",
+        "qualified_name": "PumpPredictor.extract_features",
+        "is_async": false,
+        "lineno": 192,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "market_data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "np.ndarray",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "extend",
+          "_calculate_technical_indicators",
+          "extend",
+          "_calculate_market_features",
+          "extend",
+          "_identify_pump_patterns",
+          "array"
+        ]
+      },
+      {
+        "name": "_calculate_technical_indicators",
+        "qualified_name": "PumpPredictor._calculate_technical_indicators",
+        "is_async": false,
+        "lineno": 207,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "List[float]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "_calculate_rsi",
+          "append",
+          "len",
+          "_calculate_macd",
+          "extend",
+          "len",
+          "len",
+          "len",
+          "_calculate_bollinger_bands",
+          "extend",
+          "_calculate_ema",
+          "append",
+          "len",
+          "_calculate_vwap",
+          "_calculate_obv",
+          "extend",
+          "_calculate_adx",
+          "append",
+          "_calculate_stochastic",
+          "extend"
+        ]
+      },
+      {
+        "name": "_calculate_market_features",
+        "qualified_name": "PumpPredictor._calculate_market_features",
+        "is_async": false,
+        "lineno": 247,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "List[float]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "max",
+          "max",
+          "extend",
+          "append",
+          "append",
+          "max",
+          "append",
+          "append",
+          "append",
+          "append"
+        ]
+      },
+      {
+        "name": "_identify_pump_patterns",
+        "qualified_name": "PumpPredictor._identify_pump_patterns",
+        "is_async": false,
+        "lineno": 275,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "List[float]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "mean",
+          "mean",
+          "max",
+          "append",
+          "min",
+          "append",
+          "_detect_accumulation",
+          "append",
+          "_detect_breakout",
+          "append"
+        ]
+      },
+      {
+        "name": "_detect_accumulation",
+        "qualified_name": "PumpPredictor._detect_accumulation",
+        "is_async": false,
+        "lineno": 299,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "len",
+          "std",
+          "mean",
+          "mean",
+          "mean",
+          "sum",
+          "sum",
+          "min",
+          "min"
+        ]
+      },
+      {
+        "name": "_detect_breakout",
+        "qualified_name": "PumpPredictor._detect_breakout",
+        "is_async": false,
+        "lineno": 317,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "len",
+          "max",
+          "mean",
+          "min"
+        ]
+      },
+      {
+        "name": "train",
+        "qualified_name": "PumpPredictor.train",
+        "is_async": false,
+        "lineno": 337,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "price_history",
+          "pump_labels"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict[str, Any]",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "info",
+          "prepare_sequences",
+          "range",
+          "len",
+          "extract_features",
+          "append",
+          "array",
+          "int",
+          "len",
+          "info",
+          "EarlyStopping",
+          "ReduceLROnPlateau",
+          "fit",
+          "predict",
+          "mean_squared_error",
+          "mean_absolute_error",
+          "fit_transform",
+          "transform",
+          "info",
+          "fit",
+          "predict",
+          "mean_squared_error",
+          "mean_absolute_error",
+          "r2_score",
+          "info"
+        ]
+      },
+      {
+        "name": "predict_pump_probability",
+        "qualified_name": "PumpPredictor.predict_pump_probability",
+        "is_async": false,
+        "lineno": 415,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "current_data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Tuple[float, Dict[str, float], Dict[str, Any]]",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "len",
+          "prepare_sequences",
+          "len",
+          "predict",
+          "extract_features",
+          "transform",
+          "reshape",
+          "predict",
+          "sum",
+          "get",
+          "items",
+          "_generate_pump_signals"
+        ]
+      },
+      {
+        "name": "_generate_pump_signals",
+        "qualified_name": "PumpPredictor._generate_pump_signals",
+        "is_async": false,
+        "lineno": 453,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "data",
+          "pump_probability"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict[str, Any]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "append",
+          "append",
+          "append",
+          "append",
+          "append"
+        ]
+      },
+      {
+        "name": "_calculate_rsi",
+        "qualified_name": "PumpPredictor._calculate_rsi",
+        "is_async": false,
+        "lineno": 489,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "prices",
+          "period"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "np.ndarray",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "diff",
+          "sum",
+          "sum",
+          "zeros_like",
+          "range",
+          "len"
+        ]
+      },
+      {
+        "name": "_calculate_macd",
+        "qualified_name": "PumpPredictor._calculate_macd",
+        "is_async": false,
+        "lineno": 516,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "prices",
+          "fast",
+          "slow",
+          "signal"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Tuple[np.ndarray, np.ndarray, np.ndarray]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "_calculate_ema",
+          "_calculate_ema",
+          "_calculate_ema"
+        ]
+      },
+      {
+        "name": "_calculate_ema",
+        "qualified_name": "PumpPredictor._calculate_ema",
+        "is_async": false,
+        "lineno": 531,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "data",
+          "period"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "np.ndarray",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "zeros_like",
+          "range",
+          "len"
+        ]
+      },
+      {
+        "name": "_calculate_bollinger_bands",
+        "qualified_name": "PumpPredictor._calculate_bollinger_bands",
+        "is_async": false,
+        "lineno": 542,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "prices",
+          "period",
+          "std_dev"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Tuple[float, float, float]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "len",
+          "mean",
+          "std"
+        ]
+      },
+      {
+        "name": "_calculate_vwap",
+        "qualified_name": "PumpPredictor._calculate_vwap",
+        "is_async": false,
+        "lineno": 560,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "sum",
+          "sum"
+        ]
+      },
+      {
+        "name": "_calculate_obv",
+        "qualified_name": "PumpPredictor._calculate_obv",
+        "is_async": false,
+        "lineno": 569,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "range",
+          "len"
+        ]
+      },
+      {
+        "name": "_calculate_adx",
+        "qualified_name": "PumpPredictor._calculate_adx",
+        "is_async": false,
+        "lineno": 580,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "data",
+          "period"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "len",
+          "zeros",
+          "len",
+          "zeros",
+          "len",
+          "range",
+          "len",
+          "zeros",
+          "len",
+          "range",
+          "len",
+          "max",
+          "abs",
+          "abs",
+          "_calculate_ema",
+          "_calculate_ema",
+          "_calculate_ema",
+          "abs",
+          "_calculate_ema",
+          "len"
+        ]
+      },
+      {
+        "name": "_calculate_stochastic",
+        "qualified_name": "PumpPredictor._calculate_stochastic",
+        "is_async": false,
+        "lineno": 624,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "data",
+          "period",
+          "smooth"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Tuple[float, float]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "len",
+          "min",
+          "max"
+        ]
+      },
+      {
+        "name": "save_model",
+        "qualified_name": "PumpPredictor.save_model",
+        "is_async": false,
+        "lineno": 653,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "version"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "str",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "strftime",
+          "now",
+          "mkdir",
+          "save",
+          "dump",
+          "items",
+          "dump",
+          "isoformat",
+          "now",
+          "open",
+          "dump",
+          "info",
+          "str"
+        ]
+      },
+      {
+        "name": "load_model",
+        "qualified_name": "PumpPredictor.load_model",
+        "is_async": false,
+        "lineno": 689,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "version"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "exists",
+          "FileNotFoundError",
+          "load_model",
+          "exists",
+          "load",
+          "keys",
+          "exists",
+          "load",
+          "open",
+          "load",
+          "info"
+        ]
+      },
+      {
+        "name": "prepare_features",
+        "qualified_name": "PumpPredictor.prepare_features",
+        "is_async": false,
+        "lineno": 724,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "market_data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "np.ndarray",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "isinstance",
+          "DataFrame",
+          "extract_features"
+        ]
+      },
+      {
+        "name": "train_lstm",
+        "qualified_name": "PumpPredictor.train_lstm",
+        "is_async": false,
+        "lineno": 737,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "sequences",
+          "targets"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "EarlyStopping",
+          "ReduceLROnPlateau",
+          "int",
+          "len",
+          "fit",
+          "info"
+        ]
+      },
+      {
+        "name": "backtest",
+        "qualified_name": "PumpPredictor.backtest",
+        "is_async": false,
+        "lineno": 767,
+        "scope": "class:PumpPredictor",
+        "params": [
+          "self",
+          "historical_data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "prepare_sequences",
+          "len",
+          "warning",
+          "range",
+          "len",
+          "predict_pump_probability",
+          "append",
+          "append",
+          "len",
+          "diff",
+          "std",
+          "mean",
+          "std",
+          "sqrt"
+        ]
+      }
     ],
+    "found_classes": [
+      "PumpPredictor"
+    ],
+    "class_bases": {
+      "PumpPredictor": []
+    },
+    "missing": [],
     "async_mismatches": [],
-    "signature_mismatches": [],
+    "signature_mismatches": [
+      "ml\\models\\pump_predictor.py:415 PumpPredictor.predict_pump_probability params mismatch expected=['features'] found=['current_data']"
+    ],
     "visibility_mismatches": [],
     "wrapper_mismatches": [],
     "duplicates_in_file": [],
@@ -23235,14 +25394,586 @@
         "decorators": null
       }
     ],
-    "found_methods": [],
-    "found_classes": [],
-    "class_bases": {},
+    "found_methods": [
+      {
+        "name": "__init__",
+        "qualified_name": "DirectDEXExecutor.__init__",
+        "is_async": false,
+        "lineno": 58,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "config"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "__init__",
+          "super",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "get",
+          "info"
+        ]
+      },
+      {
+        "name": "initialize",
+        "qualified_name": "DirectDEXExecutor.initialize",
+        "is_async": true,
+        "lineno": 94,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "items",
+          "Web3",
+          "HTTPProvider",
+          "inject",
+          "isConnected",
+          "info",
+          "_initialize_dex_contracts",
+          "warning",
+          "error"
+        ]
+      },
+      {
+        "name": "_initialize_dex_contracts",
+        "qualified_name": "DirectDEXExecutor._initialize_dex_contracts",
+        "is_async": true,
+        "lineno": 118,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "chain",
+          "w3"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "lower",
+          "contract",
+          "toChecksumAddress",
+          "info"
+        ]
+      },
+      {
+        "name": "get_best_quote",
+        "qualified_name": "DirectDEXExecutor.get_best_quote",
+        "is_async": true,
+        "lineno": 143,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "token_in",
+          "token_out",
+          "amount",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Optional[DEXQuote]",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "items",
+          "get",
+          "_get_dex_quote",
+          "append",
+          "warning",
+          "max",
+          "info",
+          "format_token_amount",
+          "format_token_amount",
+          "error",
+          "error",
+          "error",
+          "locals",
+          "debug",
+          "len"
+        ]
+      },
+      {
+        "name": "execute_trade",
+        "qualified_name": "DirectDEXExecutor.execute_trade",
+        "is_async": true,
+        "lineno": 201,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "order"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict[str, Any]",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "get_best_quote",
+          "float",
+          "_build_swap_transaction",
+          "_apply_commit_reveal",
+          "_randomize_gas_price",
+          "sign_transaction",
+          "_send_transaction_with_retry",
+          "_wait_for_confirmation",
+          "hex",
+          "error",
+          "str"
+        ]
+      },
+      {
+        "name": "_build_swap_transaction",
+        "qualified_name": "DirectDEXExecutor._build_swap_transaction",
+        "is_async": true,
+        "lineno": 264,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "order",
+          "quote"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict[str, Any]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "int",
+          "float",
+          "int",
+          "timestamp",
+          "now",
+          "timedelta",
+          "lower",
+          "encodeABI",
+          "_encode_v3_path",
+          "ether_to_wei",
+          "encodeABI",
+          "ether_to_wei",
+          "_get_optimal_gas_price",
+          "int",
+          "get_transaction_count",
+          "error"
+        ]
+      },
+      {
+        "name": "_estimate_price_impact",
+        "qualified_name": "DirectDEXExecutor._estimate_price_impact",
+        "is_async": true,
+        "lineno": 328,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "dex",
+          "path",
+          "amount",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "float",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "_simulate_swap",
+          "_simulate_swap",
+          "max",
+          "debug"
+        ]
+      },
+      {
+        "name": "_estimate_gas",
+        "qualified_name": "DirectDEXExecutor._estimate_gas",
+        "is_async": true,
+        "lineno": 357,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "dex",
+          "path",
+          "amount",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "int",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "upper",
+          "len"
+        ]
+      },
+      {
+        "name": "_get_liquidity",
+        "qualified_name": "DirectDEXExecutor._get_liquidity",
+        "is_async": true,
+        "lineno": 381,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "token_a",
+          "token_b",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Decimal",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "Decimal"
+        ]
+      },
+      {
+        "name": "_calculate_fee",
+        "qualified_name": "DirectDEXExecutor._calculate_fee",
+        "is_async": false,
+        "lineno": 392,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "dex",
+          "amount"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Decimal",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "Decimal",
+          "Decimal",
+          "Decimal",
+          "Decimal",
+          "get",
+          "upper",
+          "Decimal"
+        ]
+      },
+      {
+        "name": "_encode_v3_path",
+        "qualified_name": "DirectDEXExecutor._encode_v3_path",
+        "is_async": false,
+        "lineno": 404,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "tokens"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bytes",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "enumerate",
+          "fromhex",
+          "len",
+          "to_bytes"
+        ]
+      },
+      {
+        "name": "_randomize_gas_price",
+        "qualified_name": "DirectDEXExecutor._randomize_gas_price",
+        "is_async": false,
+        "lineno": 415,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "tx"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "uniform",
+          "int"
+        ]
+      },
+      {
+        "name": "_apply_commit_reveal",
+        "qualified_name": "DirectDEXExecutor._apply_commit_reveal",
+        "is_async": true,
+        "lineno": 425,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "tx"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "_send_transaction_with_retry",
+        "qualified_name": "DirectDEXExecutor._send_transaction_with_retry",
+        "is_async": true,
+        "lineno": 431,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "signed_tx",
+          "chain",
+          "max_retries"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "str",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "range",
+          "send_raw_transaction",
+          "info",
+          "hex",
+          "str",
+          "warning",
+          "sleep",
+          "sleep",
+          "Exception"
+        ]
+      },
+      {
+        "name": "_wait_for_confirmation",
+        "qualified_name": "DirectDEXExecutor._wait_for_confirmation",
+        "is_async": true,
+        "lineno": 458,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "tx_hash",
+          "chain",
+          "timeout"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "now",
+          "now",
+          "get_transaction_receipt",
+          "sleep",
+          "Exception"
+        ]
+      },
+      {
+        "name": "_get_optimal_gas_price",
+        "qualified_name": "DirectDEXExecutor._get_optimal_gas_price",
+        "is_async": true,
+        "lineno": 481,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "int",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "min",
+          "int"
+        ]
+      },
+      {
+        "name": "_quote_v3",
+        "qualified_name": "DirectDEXExecutor._quote_v3",
+        "is_async": true,
+        "lineno": 497,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "contract",
+          "path",
+          "amount"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "int",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "int"
+        ]
+      },
+      {
+        "name": "cleanup",
+        "qualified_name": "DirectDEXExecutor.cleanup",
+        "is_async": true,
+        "lineno": 508,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "clear",
+          "clear",
+          "info"
+        ]
+      },
+      {
+        "name": "_get_dex_quote",
+        "qualified_name": "DirectDEXExecutor._get_dex_quote",
+        "is_async": true,
+        "lineno": 516,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "dex_name",
+          "contract",
+          "token_in",
+          "token_out",
+          "amount",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Optional[DEXQuote]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "_find_path",
+          "ether_to_wei",
+          "lower",
+          "_quote_v3",
+          "call",
+          "getAmountsOut",
+          "wei_to_ether",
+          "_estimate_price_impact",
+          "_estimate_gas",
+          "DEXQuote",
+          "upper",
+          "_get_liquidity",
+          "_calculate_fee",
+          "debug"
+        ]
+      },
+      {
+        "name": "_find_path",
+        "qualified_name": "DirectDEXExecutor._find_path",
+        "is_async": true,
+        "lineno": 597,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "dex",
+          "token_in",
+          "token_out",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Optional[List[str]]",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "toChecksumAddress",
+          "toChecksumAddress",
+          "get",
+          "toChecksumAddress",
+          "append",
+          "get",
+          "toChecksumAddress",
+          "append",
+          "_path_has_liquidity",
+          "_simulate_swap",
+          "ether_to_wei",
+          "Decimal",
+          "error"
+        ]
+      },
+      {
+        "name": "_path_has_liquidity",
+        "qualified_name": "DirectDEXExecutor._path_has_liquidity",
+        "is_async": true,
+        "lineno": 658,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "path",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "_simulate_swap",
+        "qualified_name": "DirectDEXExecutor._simulate_swap",
+        "is_async": true,
+        "lineno": 664,
+        "scope": "class:DirectDEXExecutor",
+        "params": [
+          "self",
+          "dex",
+          "path",
+          "amount",
+          "chain"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "int",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "lower",
+          "_quote_v3",
+          "call",
+          "getAmountsOut"
+        ]
+      }
+    ],
+    "found_classes": [
+      "DEXQuote",
+      "DirectDEXExecutor"
+    ],
+    "class_bases": {
+      "DEXQuote": [],
+      "DirectDEXExecutor": [
+        "BaseExecutor"
+      ]
+    },
     "missing": [
-      "def initialize()",
-      "def get_best_quote()",
-      "def execute_trade()",
-      "[ParseError] AST parse error in C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\executors\\direct_dex.py: unexpected indent (<unknown>, line 515)"
+      "def cancel_order()",
+      "def get_order_status()",
+      "def modify_order()",
+      "def validate_order()"
     ],
     "async_mismatches": [],
     "signature_mismatches": [],
@@ -38657,15 +41388,840 @@
         "decorators": null
       }
     ],
-    "found_methods": [],
-    "found_classes": [],
-    "class_bases": {},
+    "found_methods": [
+      {
+        "name": "__init__",
+        "qualified_name": "ValidationResult.__init__",
+        "is_async": false,
+        "lineno": 23,
+        "scope": "class:ValidationResult",
+        "params": [
+          "self"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "add_error",
+        "qualified_name": "ValidationResult.add_error",
+        "is_async": false,
+        "lineno": 29,
+        "scope": "class:ValidationResult",
+        "params": [
+          "self",
+          "message"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "append"
+        ]
+      },
+      {
+        "name": "add_warning",
+        "qualified_name": "ValidationResult.add_warning",
+        "is_async": false,
+        "lineno": 34,
+        "scope": "class:ValidationResult",
+        "params": [
+          "self",
+          "message"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "append"
+        ]
+      },
+      {
+        "name": "add_recommendation",
+        "qualified_name": "ValidationResult.add_recommendation",
+        "is_async": false,
+        "lineno": 38,
+        "scope": "class:ValidationResult",
+        "params": [
+          "self",
+          "message"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "append"
+        ]
+      },
+      {
+        "name": "merge",
+        "qualified_name": "ValidationResult.merge",
+        "is_async": false,
+        "lineno": 42,
+        "scope": "class:ValidationResult",
+        "params": [
+          "self",
+          "other"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "extend",
+          "extend",
+          "extend"
+        ]
+      },
+      {
+        "name": "to_dict",
+        "qualified_name": "ValidationResult.to_dict",
+        "is_async": false,
+        "lineno": 50,
+        "scope": "class:ValidationResult",
+        "params": [
+          "self"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict[str, Any]",
+        "visibility": "public",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "__init__",
+        "qualified_name": "ConfigValidator.__init__",
+        "is_async": false,
+        "lineno": 70,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "validate_config",
+        "qualified_name": "ConfigValidator.validate_config",
+        "is_async": false,
+        "lineno": 81,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "config_type",
+          "config_data"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "ValidationResult",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "ValidationResult",
+          "get",
+          "add_error",
+          "validator_func",
+          "_validate_cross_config",
+          "add_error",
+          "str"
+        ]
+      },
+      {
+        "name": "_validate_trading_config",
+        "qualified_name": "ConfigValidator._validate_trading_config",
+        "is_async": false,
+        "lineno": 104,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "config",
+          "result"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "add_recommendation",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_error",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_error",
+          "get",
+          "add_error"
+        ]
+      },
+      {
+        "name": "_validate_security_config",
+        "qualified_name": "ConfigValidator._validate_security_config",
+        "is_async": false,
+        "lineno": 172,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "config",
+          "result"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_recommendation",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning"
+        ]
+      },
+      {
+        "name": "_validate_database_config",
+        "qualified_name": "ConfigValidator._validate_database_config",
+        "is_async": false,
+        "lineno": 231,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "config",
+          "result"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "add_error",
+          "_is_valid_hostname",
+          "add_error",
+          "get",
+          "isinstance",
+          "add_error",
+          "get",
+          "add_error",
+          "match",
+          "add_error",
+          "get",
+          "add_error",
+          "get",
+          "add_error",
+          "len",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning"
+        ]
+      },
+      {
+        "name": "_validate_api_config",
+        "qualified_name": "ConfigValidator._validate_api_config",
+        "is_async": false,
+        "lineno": 284,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "config",
+          "result"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "add_error",
+          "_is_valid_ip",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "len",
+          "add_warning",
+          "add_warning",
+          "get",
+          "add_error",
+          "len",
+          "add_error",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "get",
+          "isinstance",
+          "add_error"
+        ]
+      },
+      {
+        "name": "_validate_monitoring_config",
+        "qualified_name": "ConfigValidator._validate_monitoring_config",
+        "is_async": false,
+        "lineno": 342,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "config",
+          "result"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "isinstance",
+          "add_error",
+          "get",
+          "isinstance",
+          "add_error",
+          "get",
+          "add_error",
+          "get",
+          "add_error",
+          "get",
+          "match",
+          "add_error",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "match",
+          "add_error",
+          "get",
+          "match",
+          "str",
+          "add_error",
+          "get",
+          "_is_valid_url",
+          "add_error",
+          "add_warning",
+          "get",
+          "_is_valid_hostname",
+          "add_error",
+          "get",
+          "_is_valid_email",
+          "add_error"
+        ]
+      },
+      {
+        "name": "_validate_ml_models_config",
+        "qualified_name": "ConfigValidator._validate_ml_models_config",
+        "is_async": false,
+        "lineno": 408,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "config",
+          "result"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "get",
+          "isinstance",
+          "add_error",
+          "get",
+          "isinstance",
+          "add_error",
+          "get",
+          "isinstance",
+          "add_error",
+          "get",
+          "isinstance",
+          "add_error"
+        ]
+      },
+      {
+        "name": "_validate_risk_management_config",
+        "qualified_name": "ConfigValidator._validate_risk_management_config",
+        "is_async": false,
+        "lineno": 459,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "config",
+          "result"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "add_error",
+          "get",
+          "isinstance",
+          "add_error",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "add_warning",
+          "get",
+          "isinstance",
+          "add_error",
+          "add_warning",
+          "add_warning"
+        ]
+      },
+      {
+        "name": "_validate_cross_config",
+        "qualified_name": "ConfigValidator._validate_cross_config",
+        "is_async": false,
+        "lineno": 519,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "config_type",
+          "config",
+          "result"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "None",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "get",
+          "get",
+          "add_warning",
+          "get",
+          "get",
+          "add_warning",
+          "get",
+          "get",
+          "get",
+          "add_warning",
+          "sum",
+          "get",
+          "get",
+          "get",
+          "get",
+          "add_warning"
+        ]
+      },
+      {
+        "name": "_is_valid_hostname",
+        "qualified_name": "ConfigValidator._is_valid_hostname",
+        "is_async": false,
+        "lineno": 556,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "hostname"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "len",
+          "endswith",
+          "split",
+          "len",
+          "match"
+        ]
+      },
+      {
+        "name": "_is_valid_ip",
+        "qualified_name": "ConfigValidator._is_valid_ip",
+        "is_async": false,
+        "lineno": 575,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "ip"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "ip_address"
+        ]
+      },
+      {
+        "name": "_is_valid_url",
+        "qualified_name": "ConfigValidator._is_valid_url",
+        "is_async": false,
+        "lineno": 583,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "url"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "urlparse",
+          "all"
+        ]
+      },
+      {
+        "name": "_is_valid_email",
+        "qualified_name": "ConfigValidator._is_valid_email",
+        "is_async": false,
+        "lineno": 591,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "email"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "match"
+        ]
+      },
+      {
+        "name": "validate_ethereum_address",
+        "qualified_name": "ConfigValidator.validate_ethereum_address",
+        "is_async": false,
+        "lineno": 597,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "address"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "isinstance",
+          "match",
+          "is_address"
+        ]
+      },
+      {
+        "name": "validate_private_key",
+        "qualified_name": "ConfigValidator.validate_private_key",
+        "is_async": false,
+        "lineno": 612,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "private_key"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "isinstance",
+          "startswith",
+          "match"
+        ]
+      },
+      {
+        "name": "validate_percentage",
+        "qualified_name": "ConfigValidator.validate_percentage",
+        "is_async": false,
+        "lineno": 624,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "value",
+          "min_val",
+          "max_val"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "isinstance",
+          "endswith",
+          "float",
+          "float",
+          "isinstance",
+          "float"
+        ]
+      },
+      {
+        "name": "validate_decimal_string",
+        "qualified_name": "ConfigValidator.validate_decimal_string",
+        "is_async": false,
+        "lineno": 641,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "value"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "bool",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "Decimal"
+        ]
+      },
+      {
+        "name": "validate_json_config",
+        "qualified_name": "ConfigValidator.validate_json_config",
+        "is_async": false,
+        "lineno": 649,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "config_str"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Tuple[bool, Optional[Dict], Optional[str]]",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "loads",
+          "isinstance",
+          "str",
+          "str"
+        ]
+      },
+      {
+        "name": "validate_yaml_config",
+        "qualified_name": "ConfigValidator.validate_yaml_config",
+        "is_async": false,
+        "lineno": 662,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "config_str"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Tuple[bool, Optional[Dict], Optional[str]]",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "safe_load",
+          "isinstance",
+          "str",
+          "str"
+        ]
+      },
+      {
+        "name": "generate_validation_report",
+        "qualified_name": "ConfigValidator.generate_validation_report",
+        "is_async": false,
+        "lineno": 675,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "configs"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict[str, Any]",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "isoformat",
+          "utcnow",
+          "len",
+          "items",
+          "validate_config",
+          "to_dict",
+          "extend",
+          "extend",
+          "extend"
+        ]
+      },
+      {
+        "name": "validate_api_keys",
+        "qualified_name": "ConfigValidator.validate_api_keys",
+        "is_async": false,
+        "lineno": 710,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "keys"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "Dict",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "items",
+          "len"
+        ]
+      },
+      {
+        "name": "check_required_fields",
+        "qualified_name": "ConfigValidator.check_required_fields",
+        "is_async": false,
+        "lineno": 724,
+        "scope": "class:ConfigValidator",
+        "params": [
+          "self",
+          "config"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "List[str]",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "items",
+          "get",
+          "append"
+        ]
+      }
+    ],
+    "found_classes": [
+      "ValidationResult",
+      "ConfigValidator"
+    ],
+    "class_bases": {
+      "ValidationResult": [],
+      "ConfigValidator": []
+    },
     "missing": [
-      "def validate_trading_config()",
-      "def validate_security_config()",
-      "def validate_api_keys()",
-      "def check_required_fields()",
-      "[ParseError] AST parse error in C:\\Users\\HP\\Desktop\\ClaudeDex\\config\\validation.py: unterminated string literal (detected at line 368) (<unknown>, line 368)"
+      "def validate_trading_config() (closest: _validate_trading_config, _validate_monitoring_config, _validate_api_config)",
+      "def validate_security_config() (closest: _validate_security_config, _validate_cross_config, validate_yaml_config)"
     ],
     "async_mismatches": [],
     "signature_mismatches": [],

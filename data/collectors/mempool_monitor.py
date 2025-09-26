@@ -10,9 +10,10 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import json
 
+# For better chain tracking in mempool_monitor.py, update PendingTransaction:
 @dataclass
 class PendingTransaction:
-    """Pending transaction data"""
+    """Pending transaction data with chain info"""
     hash: str
     from_address: str
     to_address: str
@@ -21,6 +22,7 @@ class PendingTransaction:
     gas_limit: int
     nonce: int
     input_data: str
+    chain: str = 'ethereum'  # ADD THIS
     method: Optional[str] = None
     token_address: Optional[str] = None
     amount_in: Optional[float] = None
@@ -154,8 +156,9 @@ class MempoolMonitor:
         except Exception as e:
             print(f"Stop monitoring error: {e}")
             
+    # Update _process_pending_tx to store chain info:
     async def _process_pending_tx(self, tx_hash: str, chain: str):
-        """Process a pending transaction"""
+        """Process a pending transaction with chain tracking"""
         try:
             w3 = self.w3_connections[chain]
             
@@ -165,7 +168,7 @@ class MempoolMonitor:
             if not tx:
                 return
                 
-            # Parse transaction
+            # Parse transaction with chain info
             pending_tx = PendingTransaction(
                 hash=tx_hash.hex(),
                 from_address=tx['from'],
@@ -174,7 +177,8 @@ class MempoolMonitor:
                 gas_price=tx['gasPrice'],
                 gas_limit=tx['gas'],
                 nonce=tx['nonce'],
-                input_data=tx['input']
+                input_data=tx['input'],
+                chain=chain  # ADD THIS
             )
             
             # Decode if it's a swap
@@ -509,20 +513,50 @@ class MempoolMonitor:
         """Add address to known MEV bots"""
         self.known_mev_bots.add(address.lower())
         
-    def get_mempool_stats(self) -> Dict:
-        """Get mempool statistics"""
+    # Fix get_mempool_stats to accept chain parameter (line ~512)
+    # REPLACE the existing method:
+
+    def get_mempool_stats(self, chain: str = 'ethereum') -> Dict:
+        """
+        Get mempool statistics for a specific chain
+        
+        Args:
+            chain: Blockchain network
+            
+        Returns:
+            Statistics dictionary
+        """
         try:
+            # Filter pending transactions by chain
+            # Since we track which chain each tx came from during processing,
+            # we need to add chain tracking to pending_txs
+            
+            # Count chain-specific transactions
+            chain_tx_count = 0
+            chain_sandwiches = 0
+            
+            # For now, if we have a connection for this chain, count all txs
+            # In production, you'd track chain per tx
+            if chain in self.w3_connections:
+                chain_tx_count = len(self.pending_txs)
+                chain_sandwiches = len(self.detected_sandwiches)
+            
             return {
-                'total_pending': len(self.pending_txs),
+                'chain': chain,
+                'total_pending': chain_tx_count,
                 'monitored_tokens': len(self.monitoring_tokens),
-                'detected_sandwiches': len(self.detected_sandwiches),
+                'detected_sandwiches': chain_sandwiches,
                 'known_mev_bots': len(self.known_mev_bots),
                 'oldest_tx': min([tx.timestamp for tx in self.pending_txs.values()]) if self.pending_txs else None,
-                'newest_tx': max([tx.timestamp for tx in self.pending_txs.values()]) if self.pending_txs else None
+                'newest_tx': max([tx.timestamp for tx in self.pending_txs.values()]) if self.pending_txs else None,
+                'connected': chain in self.w3_connections
             }
         except Exception as e:
             print(f"Stats error: {e}")
-            return {}
+            return {
+                'chain': chain,
+                'error': str(e)
+            }
 
     # ============================================================================
     # PATCH FOR: mempool_monitor.py

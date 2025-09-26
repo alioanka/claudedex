@@ -95,29 +95,76 @@ class CacheManager:
         except Exception as e:
             logger.warning(f"Could not set keyspace notifications: {e}")
     
-    async def get(
+    # Fix get() method signature (line ~98)
+    # REPLACE the existing method:
+
+    async def get(self, key: str) -> Optional[Any]:
+        """
+        Get value from cache.
+        
+        Args:
+            key: Cache key
+            
+        Returns:
+            Cached value or None if not found
+        """
+        try:
+            value = await self.redis_client.get(key)
+            
+            if value is None:
+                return None
+            
+            # Try to decode as JSON first
+            try:
+                return orjson.loads(value)
+            except:
+                # Fallback to pickle for complex objects
+                try:
+                    return pickle.loads(value)
+                except:
+                    # Final fallback to string
+                    return value.decode('utf-8') if isinstance(value, bytes) else value
+                    
+        except Exception as e:
+            logger.error(f"Cache get error for key {key}: {e}")
+            return None
+
+
+    # For backward compatibility, add the extended version:
+    async def get_with_options(
         self,
         key: str,
         default: Any = None,
         decode_json: bool = True
     ) -> Optional[Any]:
-        """Get value from cache."""
+        """
+        Get value from cache with options (internal use).
+        
+        Args:
+            key: Cache key
+            default: Default value if not found
+            decode_json: Whether to attempt JSON decoding
+            
+        Returns:
+            Cached value or default
+        """
         try:
             value = await self.redis_client.get(key)
             
             if value is None:
                 return default
             
-            # Decode based on data type
             if decode_json:
                 try:
                     return orjson.loads(value)
                 except:
-                    # Fallback to pickle for complex objects
-                    return pickle.loads(value)
-            else:
-                return value.decode('utf-8') if isinstance(value, bytes) else value
-                
+                    try:
+                        return pickle.loads(value)
+                    except:
+                        pass
+            
+            return value.decode('utf-8') if isinstance(value, bytes) else value
+                    
         except Exception as e:
             logger.error(f"Cache get error for key {key}: {e}")
             return default

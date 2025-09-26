@@ -412,23 +412,77 @@ class PumpPredictor:
         logger.info("Training complete")
         return results
     
+    # ============================================
+    # FIX 3: pump_predictor.py - PumpPredictor.predict_pump_probability
+    # ============================================
+    # Current signature: def predict_pump_probability(self, current_data: pd.DataFrame)
+    # Expected signature: def predict_pump_probability(self, features: np.ndarray) -> float
+
+    # Add both methods to support both signatures:
+
     def predict_pump_probability(
         self,
+        features: np.ndarray
+    ) -> float:
+        """
+        Predict pump probability from features (API-compliant signature)
+        
+        Args:
+            features: Feature array
+            
+        Returns:
+            Pump probability (0-1)
+        """
+        predictions = {}
+        
+        # LSTM prediction if we have sequence data
+        if len(features.shape) == 3:  # Sequence data for LSTM
+            lstm_prob = self.models['lstm'].predict(features[-1:])[0, 0]
+            predictions['lstm'] = lstm_prob
+        
+        # Ensure 2D for tree models
+        if len(features.shape) == 1:
+            features = features.reshape(1, -1)
+        elif len(features.shape) == 3:
+            # Use last timestep features for tree models
+            features = features[-1].reshape(1, -1)
+        
+        # Feature-based predictions
+        features_scaled = self.scalers['features'].transform(features)
+        
+        for model_name in ['xgboost', 'lightgbm', 'random_forest', 'gradient_boost']:
+            prob = self.models[model_name].predict(features_scaled)[0]
+            predictions[model_name] = prob
+        
+        # Calculate ensemble probability
+        ensemble_prob = sum(
+            prob * self.model_weights.get(name, 0)
+            for name, prob in predictions.items()
+        )
+        
+        return ensemble_prob
+
+    def predict_pump_probability_detailed(
+        self,
         current_data: pd.DataFrame
-        ) -> Tuple[float, Dict[str, float], Dict[str, Any]]:
+    ) -> Tuple[float, Dict[str, float], Dict[str, Any]]:
         """
-        Predict pump probability for current market conditions.
-        Returns probability, individual predictions, and signals.
+        Detailed pump probability prediction with signals (original method)
+        
+        Args:
+            current_data: DataFrame with current market data
+            
+        Returns:
+            Tuple of (probability, individual_predictions, signals)
         """
+        # This is the existing implementation, renamed for clarity
         predictions = {}
         
         # LSTM prediction
         if len(current_data) >= self.sequence_length:
             X_lstm, _ = self.prepare_sequences(current_data)
             if len(X_lstm) > 0:
-                lstm_prob = self.models['lstm'].predict(X_lstm[-1:])
-
-[0, 0]
+                lstm_prob = self.models['lstm'].predict(X_lstm[-1:])[0, 0]
                 predictions['lstm'] = lstm_prob
         
         # Feature-based predictions
@@ -449,6 +503,7 @@ class PumpPredictor:
         signals = self._generate_pump_signals(current_data, ensemble_prob)
         
         return ensemble_prob, predictions, signals
+
     
     def _generate_pump_signals(
         self,

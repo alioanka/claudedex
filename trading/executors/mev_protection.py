@@ -79,6 +79,9 @@ class MEVProtectionLayer(BaseExecutor):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         
+        from ..orders.order_manager import OrderStatus  # Import at top of file
+        self.active_orders = {}  # Track active orders
+
         # Protection configuration
         self.protection_level = MEVProtectionLevel[
             config.get('protection_level', 'ADVANCED').upper()
@@ -774,3 +777,205 @@ class MEVProtectionLayer(BaseExecutor):
         self.protected_txs.clear()
         
         logger.info("MEV Protection Layer cleaned up")
+
+    # ============================================
+    # For MEVProtectionLayer specifically
+    # ============================================
+
+    async def execute_trade(self, order: Order) -> Dict[str, Any]:
+        """
+        Execute trade with MEV protection
+        This is an alias for execute_protected_trade
+        
+        Args:
+            order: Order to execute
+            
+        Returns:
+            Execution result
+        """
+        # Delegate to the main protection method
+        return await self.execute_protected_trade(order)
+
+    async def validate_order(self, order: Order) -> bool:
+        """
+        Validate order for MEV-protected execution
+        
+        Args:
+            order: Order to validate
+            
+        Returns:
+            True if order is valid
+        """
+        try:
+            # Basic validation
+            if not order.token_in or not order.token_out:
+                return False
+                
+            if order.amount <= 0:
+                return False
+                
+            # Check if protection level is appropriate for order size
+            if order.amount > Decimal('10000') and self.protection_level < MEVProtectionLevel.ADVANCED:
+                logger.warning("Large order should use ADVANCED or MAXIMUM protection")
+                
+            # Check Web3 connection
+            if not self.w3 or not self.w3.isConnected():
+                logger.error("Web3 not connected")
+                return False
+                
+            return True
+            
+        except Exception as e:
+            logger.error(f"Validation error: {e}")
+            return False
+
+    async def get_order_status(self, order_id: str) -> OrderStatus:
+        """
+        Get status of MEV-protected order
+        
+        Args:
+            order_id: Order ID
+            
+        Returns:
+            Order status
+        """
+        # Check in protected transactions
+        for tx_hash, protected_tx in self.protected_txs.items():
+            if hasattr(protected_tx, 'order_id') and protected_tx.order_id == order_id:
+                # Check bundle status if Flashbots
+                if protected_tx.bundle_id:
+                    status = await self._check_bundle_status(protected_tx.bundle_id)
+                    if status == 'included':
+                        return OrderStatus.COMPLETED
+                    elif status == 'failed':
+                        return OrderStatus.FAILED
+                    else:
+                        return OrderStatus.EXECUTING
+                        
+        return OrderStatus.UNKNOWN
+
+    async def cancel_order(self, order_id: str) -> bool:
+        """
+        Cancel MEV-protected order
+        Note: Difficult to cancel once submitted to Flashbots
+        
+        Args:
+            order_id: Order ID
+            
+        Returns:
+            True if cancelled
+        """
+        logger.warning("MEV-protected orders cannot be cancelled once submitted")
+        return False
+
+    async def modify_order(self, order_id: str, modifications: Dict[str, Any]) -> bool:
+        """
+        Modify MEV-protected order
+        Note: Not possible once protection is applied
+        
+        Args:
+            order_id: Order ID
+            modifications: Modifications to apply
+            
+        Returns:
+            True if modified
+        """
+        logger.warning("MEV-protected orders cannot be modified once protection is applied")
+        return False
+
+
+    # ============================================
+    # Helper methods that might be needed
+    # ============================================
+
+    async def _get_transaction_receipt(self, tx_hash: str) -> Optional[Dict]:
+        """
+        Get transaction receipt from blockchain
+        
+        Args:
+            tx_hash: Transaction hash
+            
+        Returns:
+            Receipt dictionary or None
+        """
+        try:
+            # For DirectDEX
+            if hasattr(self, 'w3_connections'):
+                for chain, w3 in self.w3_connections.items():
+                    try:
+                        receipt = w3.eth.get_transaction_receipt(tx_hash)
+                        if receipt:
+                            return dict(receipt)
+                    except:
+                        continue
+                        
+            # For MEVProtectionLayer and ToxiSol
+            elif hasattr(self, 'w3'):
+                receipt = self.w3.eth.get_transaction_receipt(tx_hash)
+                return dict(receipt) if receipt else None
+                
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Could not get receipt for {tx_hash}: {e}")
+            return None
+
+    async def _check_bundle_status(self, bundle_id: str) -> str:
+        """
+        Check Flashbots bundle status
+        
+        Args:
+            bundle_id: Bundle hash
+            
+        Returns:
+            Status string: 'pending', 'included', 'failed'
+        """
+        try:
+            if not self.session:
+                return 'unknown'
+                
+            async with self.session.get(
+                f"{self.flashbots_relay}/relay/v1/bundle",
+                params={'bundleHash': bundle_id}
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data.get('isIncluded'):
+                        return 'included'
+                    elif data.get('isFailed'):
+                        return 'failed'
+                    else:
+                        return 'pending'
+                        
+            return 'unknown'
+            
+        except Exception as e:
+            logger.error(f"Error checking bundle status: {e}")
+            return 'unknown'
+
+    # Also add this helper method for building base transactions:
+    async def _build_transaction(self, order: Order) -> Dict[str, Any]:
+        """
+        Build base transaction from order
+        
+        Args:
+            order: Order to build transaction from
+            
+        Returns:
+            Transaction dictionary
+        """
+        return {
+            'from': order.wallet_address,
+            'to': order.token_out,  # This would be router address in reality
+            'value': 0,
+            'data': '0x',  # Would be actual swap data
+            'gas': 300000,  # Estimate
+            'gasPrice': self.w3.eth.gas_price if hasattr(self, 'w3') else 50 * 10**9,
+            'nonce': self.w3.eth.get_transaction_count(order.wallet_address) if hasattr(self, 'w3') else 0,
+            'chainId': 1  # Would get from order.chain
+        }
+
+    # Format helper function (add to direct_dex.py):
+    def format_token_amount(amount: Decimal, decimals: int) -> str:
+        """Format token amount for display"""
+        return f"{amount:.{decimals}f}".rstrip('0').rstrip('.')

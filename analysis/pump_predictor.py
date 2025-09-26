@@ -840,6 +840,62 @@ class PumpPredictorAnalysis:
         
         return result.get('detected', False)
 
+    # ============================================================================
+    # FIXES FOR: pump_predictor.py
+    # ============================================================================
+
+    # Add missing synchronous method: detect_accumulation_phase
+    def detect_accumulation_phase(self, price_data: List) -> bool:
+        """
+        Detect if token is in accumulation phase (synchronous version)
+        
+        Args:
+            price_data: List of price data points
+            
+        Returns:
+            True if accumulation phase detected
+        """
+        if not price_data or len(price_data) < 20:
+            return False
+        
+        try:
+            import numpy as np
+            
+            # Extract prices from data
+            if isinstance(price_data[0], dict):
+                prices = [d.get('price', 0) for d in price_data]
+            else:
+                prices = price_data
+            
+            prices = np.array(prices)
+            
+            # Calculate metrics
+            price_range = prices.max() - prices.min()
+            avg_price = prices.mean()
+            range_percentage = (price_range / avg_price) * 100 if avg_price > 0 else 100
+            
+            # Calculate volatility
+            returns = np.diff(prices) / prices[:-1]
+            volatility = np.std(returns)
+            
+            # Check for accumulation characteristics:
+            # 1. Low volatility (< 2%)
+            # 2. Tight price range (< 5%)
+            # 3. Price holding support (not trending down)
+            price_trend = (prices[-1] - prices[0]) / prices[0] if prices[0] > 0 else 0
+            
+            is_accumulating = (
+                volatility < 0.02 and
+                range_percentage < 5 and
+                price_trend >= -0.05  # Not declining more than 5%
+            )
+            
+            return is_accumulating
+            
+        except Exception as e:
+            logger.error(f"Error in detect_accumulation_phase: {e}")
+            return False
+
     def calculate_pump_probability(self, indicators: Dict) -> float:
         """
         Calculate pump probability from indicators

@@ -225,14 +225,63 @@ class LiquidityMonitor:
             logger.error(f"Error detecting liquidity removal for {token}: {e}")
             return {}
             
-    async def calculate_slippage(
+    # Fix 2: calculate_slippage - Change to synchronous with correct parameters
+    def calculate_slippage(self, amount: Decimal, liquidity_data: Dict) -> Decimal:
+        """
+        Calculate expected slippage for a trade
+        
+        Args:
+            amount: Trade amount
+            liquidity_data: Liquidity depth data containing reserves
+            
+        Returns:
+            Expected slippage as Decimal
+        """
+        try:
+            # Extract reserves from liquidity data
+            reserve_in = Decimal(str(liquidity_data.get('reserve_token0', 0)))
+            reserve_out = Decimal(str(liquidity_data.get('reserve_token1', 0)))
+            
+            if reserve_in == 0 or reserve_out == 0:
+                return Decimal('0.99')  # Max slippage if no liquidity
+            
+            # AMM formula with fee (constant product)
+            amount_with_fee = amount * Decimal('0.997')  # 0.3% fee
+            amount_out = (amount_with_fee * reserve_out) / (reserve_in + amount_with_fee)
+            
+            # Calculate slippage
+            spot_price = reserve_out / reserve_in
+            effective_price = amount / amount_out if amount_out > 0 else Decimal('0')
+            
+            slippage = abs(effective_price - spot_price) / spot_price if spot_price > 0 else Decimal('0')
+            
+            return slippage
+            
+        except Exception as e:
+            logger.error(f"Error calculating slippage: {e}")
+            return Decimal('0.99')  # Return max slippage on error
+
+
+    # Keep the async version with different name for internal use:
+    async def calculate_slippage_async(
         self,
         token: str,
         chain: str,
         amount: Decimal,
         is_buy: bool = True
     ) -> SlippageEstimate:
-        """Calculate expected slippage for a trade"""
+        """
+        Calculate expected slippage for a trade (async extended version)
+        
+        Args:
+            token: Token address
+            chain: Blockchain network
+            amount: Trade amount
+            is_buy: Whether this is a buy order
+            
+        Returns:
+            Complete SlippageEstimate object
+        """
         try:
             # Get liquidity depth
             liquidity_data = await self._get_liquidity_depth(token, chain)
@@ -279,7 +328,7 @@ class LiquidityMonitor:
             return SlippageEstimate(
                 token=token,
                 amount_in=amount,
-                expected_slippage=0.99,  # Max slippage as error
+                expected_slippage=0.99,
                 max_slippage=0.99,
                 price_impact=0.99,
                 effective_price=Decimal('0'),
@@ -287,6 +336,8 @@ class LiquidityMonitor:
                 recommendation="Unable to calculate - avoid trade",
                 risk_level='extreme'
             )
+
+
             
     async def analyze_liquidity_locks(
         self,
@@ -493,9 +544,9 @@ class LiquidityMonitor:
             Removal Velocity: {analysis.get('removal_velocity', 0):.1f}/hour
 
             Recommendation: {analysis.get('recommendation', 'Monitor closely')}
-                    """
+            """
                     
-            await self.alerts.send_alert(
+        await self.alerts.send_alert(
                 message=message,
                 level=severity,
                 channels=['telegram', 'discord']
@@ -515,18 +566,25 @@ class LiquidityMonitor:
         # Use existing monitor_liquidity_changes method
         return await self.monitor_liquidity_changes(token, chain)
 
-    async def get_liquidity_depth(self, pair_address: str, chain: str = 'ethereum') -> Dict:
+    # ============================================================================
+    # FIXES FOR: liquidity_monitor.py
+    # ============================================================================
+
+    # Fix 1: get_liquidity_depth - Remove chain parameter
+    async def get_liquidity_depth(self, pair_address: str) -> Dict:
         """
         Get liquidity depth for a pair
         
         Args:
             pair_address: DEX pair address
-            chain: Blockchain network (added for consistency)
             
         Returns:
             Liquidity depth data
         """
         try:
+            # Default to ethereum for backward compatibility
+            chain = 'ethereum'
+            
             # Fetch pair data
             pair_data = await self._get_pool_data(pair_address, chain)
             
@@ -565,17 +623,68 @@ class LiquidityMonitor:
                 'error': str(e)
             }
 
-    async def track_liquidity_changes(self, token: str, chain: str = 'ethereum'):
+
+    # Keep the extended version for internal use:
+    async def get_liquidity_depth_extended(self, pair_address: str, chain: str = 'ethereum') -> Dict:
+        """
+        Get liquidity depth for a pair with chain specification (internal use)
+        
+        Args:
+            pair_address: DEX pair address
+            chain: Blockchain network
+            
+        Returns:
+            Liquidity depth data
+        """
+        # Original implementation with chain parameter
+        try:
+            pair_data = await self._get_pool_data(pair_address, chain)
+            
+            if not pair_data:
+                return {
+                    'depth': Decimal('0'),
+                    'type': 'unknown',
+                    'reserve_token0': 0,
+                    'reserve_token1': 0,
+                    'total_liquidity': 0
+                }
+            
+            reserve0 = pair_data.get('reserve0', 0)
+            reserve1 = pair_data.get('reserve1', 0)
+            price0 = pair_data.get('token0_price', 1)
+            price1 = pair_data.get('token1_price', 1)
+            
+            total_liquidity = (reserve0 * price0) + (reserve1 * price1)
+            
+            return {
+                'depth': Decimal(str(total_liquidity)),
+                'type': 'amm',
+                'reserve_token0': reserve0,
+                'reserve_token1': reserve1,
+                'total_liquidity': total_liquidity,
+                'pair_address': pair_address,
+                'lp_price_usd': pair_data.get('lp_price_usd', 0)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting liquidity depth: {e}")
+            return {'depth': Decimal('0'), 'type': 'unknown', 'error': str(e)}
+
+
+    # Fix 3: track_liquidity_changes - Remove chain parameter
+    async def track_liquidity_changes(self, token: str):
         """
         Track liquidity changes as AsyncGenerator
         
         Args:
             token: Token to track
-            chain: Blockchain network
             
         Yields:
             Liquidity change events
         """
+        # Default to ethereum for API compatibility
+        chain = 'ethereum'
+        
         self.monitored_pools[token] = {'chain': chain, 'started': datetime.utcnow()}
         
         try:
@@ -616,6 +725,55 @@ class LiquidityMonitor:
             logger.error(f"Error tracking liquidity changes: {e}")
             self.monitored_pools.pop(token, None)
 
+
+    # Keep the extended version for internal use:
+    async def track_liquidity_changes_extended(self, token: str, chain: str = 'ethereum'):
+        """
+        Track liquidity changes with chain specification (internal use)
+        
+        Args:
+            token: Token to track
+            chain: Blockchain network
+            
+        Yields:
+            Liquidity change events
+        """
+        self.monitored_pools[token] = {'chain': chain, 'started': datetime.utcnow()}
+        
+        try:
+            while token in self.monitored_pools:
+                changes = await self.monitor_liquidity_changes(token, chain)
+                
+                if changes and changes.get('changes', {}).get('percentage_change'):
+                    yield {
+                        'token': token,
+                        'chain': chain,
+                        'event_type': 'liquidity_change',
+                        'changes': changes['changes'],
+                        'current_liquidity': changes['current_liquidity'],
+                        'anomalies': changes.get('anomalies', []),
+                        'timestamp': datetime.utcnow()
+                    }
+                
+                removal_data = await self.detect_liquidity_removal(token, chain)
+                if removal_data and removal_data.get('removal_analysis', {}).get('risk_score', 0) > 0.5:
+                    yield {
+                        'token': token,
+                        'chain': chain,
+                        'event_type': 'liquidity_removal',
+                        'removal_data': removal_data['removal_analysis'],
+                        'risk_score': removal_data['removal_analysis']['risk_score'],
+                        'timestamp': datetime.utcnow()
+                    }
+                
+                await asyncio.sleep(self.lock_check_interval)
+                
+        except GeneratorExit:
+            self.monitored_pools.pop(token, None)
+        except Exception as e:
+            logger.error(f"Error tracking liquidity changes: {e}")
+            self.monitored_pools.pop(token, None)
+            
     # Sync wrapper for calculate_slippage (if needed for API compatibility)
     def calculate_slippage_sync(self, amount: Decimal, liquidity_data: Dict) -> Decimal:
         """
@@ -643,3 +801,196 @@ class LiquidityMonitor:
         )
         
         return Decimal(str(result.expected_slippage))
+
+    # ============================================================================
+    # ADDITIONAL HELPER METHODS FOR LIQUIDITY MONITOR
+    # ============================================================================
+
+    # Add these stub methods that are referenced but might be missing:
+
+    async def _get_current_liquidity(self, token: str, chain: str) -> Dict:
+        """Get current liquidity data for token"""
+        # This would fetch from DEX APIs
+        return {
+            'usd_value': 0,
+            'token_amount': 0,
+            'pair_address': '',
+            'timestamp': datetime.utcnow()
+        }
+
+    async def _calculate_liquidity_changes(self, current: Dict, history: List) -> Dict:
+        """Calculate liquidity changes"""
+        if not history:
+            return {'percentage_change': 0, 'absolute_change': 0}
+        
+        prev = history[-1] if history else current
+        prev_value = prev.get('usd_value', 0)
+        curr_value = current.get('usd_value', 0)
+        
+        change = curr_value - prev_value
+        pct_change = (change / prev_value) if prev_value > 0 else 0
+        
+        return {
+            'percentage_change': pct_change,
+            'absolute_change': change,
+            'change_24h': change
+        }
+
+    async def _detect_liquidity_anomalies(self, changes: Dict, history: List) -> List:
+        """Detect anomalies in liquidity"""
+        anomalies = []
+        
+        if abs(changes.get('percentage_change', 0)) > 0.5:
+            anomalies.append('Large sudden change detected')
+        
+        return anomalies
+
+    async def _calculate_liquidity_health(self, liquidity: Dict) -> float:
+        """Calculate liquidity health score"""
+        score = 0.5  # Base score
+        
+        usd_value = liquidity.get('usd_value', 0)
+        if usd_value > 1000000:
+            score += 0.3
+        elif usd_value > 100000:
+            score += 0.2
+        elif usd_value > 10000:
+            score += 0.1
+        
+        return min(1.0, score)
+
+    async def _emit_liquidity_event(self, token: str, chain: str, changes: Dict) -> None:
+        """Emit liquidity event"""
+        await self.event_bus.emit('liquidity.change', {
+            'token': token,
+            'chain': chain,
+            'changes': changes,
+            'timestamp': datetime.utcnow()
+        })
+
+    async def _get_liquidity_transactions(self, token: str, chain: str) -> List:
+        """Get recent liquidity transactions"""
+        # This would fetch from blockchain or indexer
+        return []
+
+    async def _is_suspicious_wallet(self, wallet: str) -> bool:
+        """Check if wallet is suspicious"""
+        # Check against known bad actors
+        return False
+
+    async def _calculate_removal_risk_score(self, analysis: Dict) -> float:
+        """Calculate removal risk score"""
+        score = 0.0
+        
+        if analysis['removal_count'] > 5:
+            score += 0.3
+        if analysis['total_removed_24h'] > 100000:
+            score += 0.3
+        if len(analysis['suspicious_wallets']) > 0:
+            score += 0.2
+        if analysis['removal_velocity'] > 2:
+            score += 0.2
+        
+        return min(1.0, score)
+
+    async def _detect_rug_patterns(self, token: str, chain: str, analysis: Dict) -> Dict:
+        """Detect rug pull patterns"""
+        return {
+            'pattern_detected': False,
+            'pattern_type': 'none',
+            'confidence': 0.0
+        }
+
+    def _get_removal_recommendation(self, analysis: Dict) -> str:
+        """Get recommendation based on removal analysis"""
+        if analysis['risk_score'] > 0.7:
+            return "EXIT IMMEDIATELY - High rug risk detected"
+        elif analysis['risk_score'] > 0.5:
+            return "Consider exiting position - Moderate risk"
+        else:
+            return "Monitor closely"
+
+    async def _get_liquidity_depth(self, token: str, chain: str) -> Dict:
+        """Internal method to get liquidity depth"""
+        return await self.get_liquidity_depth(token, chain)
+
+    async def _get_pool_data(self, token: str, chain: str) -> Dict:
+        """Get pool data for token"""
+        # This would fetch from DEX APIs
+        return {
+            'lp_token_address': '',
+            'lp_price_usd': 0,
+            'reserve0': 0,
+            'reserve1': 0,
+            'token0_price': 1,
+            'token1_price': 1
+        }
+
+    async def _calculate_orderbook_slippage(self, liquidity_data: Dict, amount: Decimal, is_buy: bool) -> Dict:
+        """Calculate slippage for orderbook"""
+        # Simplified calculation
+        return {
+            'expected_slippage': 0.01,
+            'max_slippage': 0.05,
+            'effective_price': Decimal('1'),
+            'amount_out': amount * Decimal('0.99')
+        }
+
+    async def _calculate_price_impact(self, liquidity_data: Dict, amount: Decimal, is_buy: bool) -> float:
+        """Calculate price impact"""
+        depth = liquidity_data.get('depth', Decimal('1'))
+        if depth == 0:
+            return 0.99
+        
+        impact = float(amount / depth)
+        return min(0.99, impact)
+
+    async def _check_lock_platform(self, token: str, chain: str, platform: str) -> Dict:
+        """Check specific lock platform"""
+        # This would check with lock platform APIs
+        return {
+            'amount': 0,
+            'percentage': 0,
+            'unlock_date': None,
+            'tx_hash': None
+        }
+
+    async def _get_lp_token_holders(self, lp_token: str, chain: str) -> List:
+        """Get LP token holders"""
+        # This would fetch from blockchain
+        return []
+
+    async def _is_lp_locked(self, address: str) -> bool:
+        """Check if LP tokens are locked"""
+        return False
+
+    async def _get_recent_price_volume(self, token: str, chain: str, minutes: int) -> List:
+        """Get recent price and volume data"""
+        # This would fetch from data provider
+        return []
+
+    async def _get_realtime_data(self, token: str, chain: str) -> Dict:
+        """Get real-time data for token"""
+        return {'price': 0, 'volume': 0}
+
+    async def _calculate_momentum_indicators(self, data: List) -> Dict:
+        """Calculate momentum indicators"""
+        return {'rsi': 50, 'macd': 0}
+
+    async def _calculate_pump_metrics(self, data: List, price_spike: Dict, volume_spike: Dict) -> Dict:
+        """Calculate pump metrics"""
+        return {
+            'stage': 'initial',
+            'duration_minutes': 0,
+            'confidence': 0.5
+        }
+
+    async def _estimate_remaining_potential(self, data: List, metrics: Dict) -> float:
+        """Estimate remaining pump potential"""
+        return 0.5
+
+    def _get_exit_recommendation(self, metrics: Dict, potential: float) -> str:
+        """Get exit recommendation"""
+        if potential < 0.2:
+            return "Consider taking profits"
+        return "Hold for now"

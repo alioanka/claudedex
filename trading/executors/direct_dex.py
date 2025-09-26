@@ -90,6 +90,7 @@ class DirectDEXExecutor(BaseExecutor):
         self.gas_estimates: Dict[str, int] = {}
         
         logger.info("Direct DEX Executor initialized")
+        self.active_orders = {}  # Track active orders
         
     async def initialize(self) -> None:
         """Initialize Web3 connections and contracts"""
@@ -511,11 +512,7 @@ class DirectDEXExecutor(BaseExecutor):
         self.gas_estimates.clear()
         logger.info("Direct DEX Executor cleaned up")
                 
-            # Return best quote (highest output)
-            best_quote = max(quotes, key=lambda q: q.amount_out)
-            logger.info(f"Best quote from {best_quote.dex.value}: {best_quote.amount_out}")
-            
-            return best_quote
+
             
         except Exception as e:
             logger.error(f"Error getting quotes: {e}")
@@ -689,3 +686,279 @@ class DirectDEXExecutor(BaseExecutor):
                 return amounts[-1]
         except:
             return 0
+
+    # Missing methods for trading/executors classes
+    # These methods should be added to the respective executor classes
+
+    # ============================================
+    # For DirectDEXExecutor and ToxiSolAPIExecutor
+    # ============================================
+
+    async def validate_order(self, order: Order) -> bool:
+        """
+        Validate order before execution
+        
+        Args:
+            order: Order to validate
+            
+        Returns:
+            True if order is valid
+        """
+        try:
+            # Check required fields
+            if not order.token_in or not order.token_out:
+                logger.error("Missing token addresses")
+                return False
+                
+            if order.amount <= 0:
+                logger.error("Invalid amount")
+                return False
+                
+            if not order.wallet_address:
+                logger.error("Missing wallet address")
+                return False
+                
+            # Check token addresses are valid
+            if not Web3.isAddress(order.token_in) or not Web3.isAddress(order.token_out):
+                logger.error("Invalid token addresses")
+                return False
+                
+            # Check chain is supported
+            if order.chain not in self.w3_connections:  # For DirectDEX
+            # if order.chain not in ['ethereum', 'bsc', 'polygon']:  # For ToxiSol
+                logger.error(f"Unsupported chain: {order.chain}")
+                return False
+                
+            # Validate slippage
+            if order.slippage and (order.slippage < 0 or order.slippage > 1):
+                logger.error(f"Invalid slippage: {order.slippage}")
+                return False
+                
+            return True
+            
+        except Exception as e:
+            logger.error(f"Order validation error: {e}")
+            return False
+
+    async def get_order_status(self, order_id: str) -> OrderStatus:
+        """
+        Get status of an order
+        
+        Args:
+            order_id: Order ID to check
+            
+        Returns:
+            Order status
+        """
+        try:
+            # Check if we have the order in tracking
+            if order_id in self.active_orders:
+                order = self.active_orders[order_id]
+                
+                # Check transaction status on-chain
+                if order.tx_hash:
+                    receipt = await self._get_transaction_receipt(order.tx_hash)
+                    
+                    if receipt:
+                        if receipt['status'] == 1:
+                            return OrderStatus.COMPLETED
+                        else:
+                            return OrderStatus.FAILED
+                    else:
+                        # Still pending
+                        return OrderStatus.EXECUTING
+                else:
+                    return order.status
+            else:
+                logger.warning(f"Order {order_id} not found")
+                return OrderStatus.UNKNOWN
+                
+        except Exception as e:
+            logger.error(f"Error getting order status: {e}")
+            return OrderStatus.ERROR
+
+    async def cancel_order(self, order_id: str) -> bool:
+        """
+        Cancel an order (if possible)
+        
+        Args:
+            order_id: Order ID to cancel
+            
+        Returns:
+            True if cancelled successfully
+        """
+        try:
+            if order_id not in self.active_orders:
+                logger.error(f"Order {order_id} not found")
+                return False
+                
+            order = self.active_orders[order_id]
+            
+            # Can only cancel if not yet executed
+            if order.status in [OrderStatus.PENDING, OrderStatus.QUEUED]:
+                order.status = OrderStatus.CANCELLED
+                
+                # Remove from active orders
+                del self.active_orders[order_id]
+                
+                logger.info(f"Order {order_id} cancelled")
+                return True
+                
+            elif order.status == OrderStatus.EXECUTING:
+                # Try to cancel on-chain (replace with higher gas price tx doing nothing)
+                # This is complex and chain-specific
+                logger.warning(f"Cannot cancel executing order {order_id}")
+                return False
+                
+            else:
+                logger.warning(f"Order {order_id} in state {order.status} cannot be cancelled")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error cancelling order: {e}")
+            return False
+
+    async def modify_order(
+        self, 
+        order_id: str,
+        modifications: Dict[str, Any]
+    ) -> bool:
+        """
+        Modify an existing order (if not yet executed)
+        
+        Args:
+            order_id: Order ID to modify
+            modifications: Dictionary of fields to modify
+            
+        Returns:
+            True if modified successfully
+        """
+        try:
+            if order_id not in self.active_orders:
+                logger.error(f"Order {order_id} not found")
+                return False
+                
+            order = self.active_orders[order_id]
+            
+            # Can only modify pending orders
+            if order.status != OrderStatus.PENDING:
+                logger.error(f"Cannot modify order in status {order.status}")
+                return False
+                
+            # Apply modifications
+            allowed_fields = ['amount', 'slippage', 'gas_price', 'max_priority_fee']
+            
+            for field, value in modifications.items():
+                if field in allowed_fields:
+                    setattr(order, field, value)
+                    logger.info(f"Modified {field} to {value} for order {order_id}")
+                else:
+                    logger.warning(f"Field {field} cannot be modified")
+                    
+            # Re-validate order
+            if not await self.validate_order(order):
+                logger.error("Modified order is invalid")
+                return False
+                
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error modifying order: {e}")
+            return False
+
+
+    # ============================================
+    # Helper methods that might be needed
+    # ============================================
+
+    async def _get_transaction_receipt(self, tx_hash: str) -> Optional[Dict]:
+        """
+        Get transaction receipt from blockchain
+        
+        Args:
+            tx_hash: Transaction hash
+            
+        Returns:
+            Receipt dictionary or None
+        """
+        try:
+            # For DirectDEX
+            if hasattr(self, 'w3_connections'):
+                for chain, w3 in self.w3_connections.items():
+                    try:
+                        receipt = w3.eth.get_transaction_receipt(tx_hash)
+                        if receipt:
+                            return dict(receipt)
+                    except:
+                        continue
+                        
+            # For MEVProtectionLayer and ToxiSol
+            elif hasattr(self, 'w3'):
+                receipt = self.w3.eth.get_transaction_receipt(tx_hash)
+                return dict(receipt) if receipt else None
+                
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Could not get receipt for {tx_hash}: {e}")
+            return None
+
+    async def _check_bundle_status(self, bundle_id: str) -> str:
+        """
+        Check Flashbots bundle status
+        
+        Args:
+            bundle_id: Bundle hash
+            
+        Returns:
+            Status string: 'pending', 'included', 'failed'
+        """
+        try:
+            if not self.session:
+                return 'unknown'
+                
+            async with self.session.get(
+                f"{self.flashbots_relay}/relay/v1/bundle",
+                params={'bundleHash': bundle_id}
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data.get('isIncluded'):
+                        return 'included'
+                    elif data.get('isFailed'):
+                        return 'failed'
+                    else:
+                        return 'pending'
+                        
+            return 'unknown'
+            
+        except Exception as e:
+            logger.error(f"Error checking bundle status: {e}")
+            return 'unknown'
+
+    # Also add this helper method for building base transactions:
+    async def _build_transaction(self, order: Order) -> Dict[str, Any]:
+        """
+        Build base transaction from order
+        
+        Args:
+            order: Order to build transaction from
+            
+        Returns:
+            Transaction dictionary
+        """
+        return {
+            'from': order.wallet_address,
+            'to': order.token_out,  # This would be router address in reality
+            'value': 0,
+            'data': '0x',  # Would be actual swap data
+            'gas': 300000,  # Estimate
+            'gasPrice': self.w3.eth.gas_price if hasattr(self, 'w3') else 50 * 10**9,
+            'nonce': self.w3.eth.get_transaction_count(order.wallet_address) if hasattr(self, 'w3') else 0,
+            'chainId': 1  # Would get from order.chain
+        }
+
+    # Format helper function (add to direct_dex.py):
+    def format_token_amount(amount: Decimal, decimals: int) -> str:
+        """Format token amount for display"""
+        return f"{amount:.{decimals}f}".rstrip('0').rstrip('.')

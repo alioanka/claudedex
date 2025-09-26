@@ -798,3 +798,73 @@ class RugDetector:
             score += 0.3
         
         return min(1.0, score)
+
+    # ============================================================================
+    # FIXES FOR: rug_detector.py
+    # ============================================================================
+
+    # Add missing method: check_liquidity_removal_risk
+    def check_liquidity_removal_risk(self, liquidity_data: Dict) -> float:
+        """
+        Check liquidity removal risk based on liquidity data
+        
+        Args:
+            liquidity_data: Dictionary containing liquidity information
+            
+        Returns:
+            Risk score (0-1, higher is riskier)
+        """
+        risk_score = 0.0
+        
+        # Check if liquidity is locked
+        if not liquidity_data.get('is_locked', False):
+            risk_score += 0.3
+        
+        # Check liquidity amount
+        liquidity_usd = liquidity_data.get('liquidity_usd', 0)
+        if liquidity_usd < self.thresholds['min_liquidity_usd']:
+            risk_score += 0.3
+        elif liquidity_usd < self.thresholds['min_liquidity_usd'] * 5:
+            risk_score += 0.15
+        
+        # Check lock duration
+        unlock_date = liquidity_data.get('unlock_date')
+        if unlock_date:
+            from datetime import datetime
+            days_until_unlock = (unlock_date - datetime.now()).days
+            
+            if days_until_unlock < 7:
+                risk_score += 0.3  # Unlocking very soon
+            elif days_until_unlock < 30:
+                risk_score += 0.2  # Unlocking soon
+            elif days_until_unlock < 90:
+                risk_score += 0.1  # Medium-term lock
+        else:
+            risk_score += 0.1  # No unlock date info
+        
+        # Check lock percentage
+        lock_percentage = liquidity_data.get('lock_percentage', 0)
+        if lock_percentage < 50:
+            risk_score += 0.2
+        elif lock_percentage < 80:
+            risk_score += 0.1
+        elif lock_percentage < 95:
+            risk_score += 0.05
+        
+        # Check for recent removals
+        recent_removals = liquidity_data.get('recent_removals', [])
+        if len(recent_removals) > 0:
+            total_removed = sum(r.get('amount_usd', 0) for r in recent_removals)
+            if total_removed > liquidity_usd * 0.2:  # More than 20% removed
+                risk_score += 0.25
+            elif total_removed > liquidity_usd * 0.1:  # More than 10% removed
+                risk_score += 0.15
+        
+        # Check removal velocity
+        removal_velocity = liquidity_data.get('removal_velocity', 0)
+        if removal_velocity > 2:  # More than 2 removals per hour
+            risk_score += 0.15
+        elif removal_velocity > 1:
+            risk_score += 0.05
+        
+        return min(1.0, risk_score)
