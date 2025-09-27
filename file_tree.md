@@ -1,0 +1,129 @@
+# File Tree
+```
+ClaudeDex/
+├── main.py
+├── scaffold.py
+├── setup.py
+├── verify_references.py
+├── xref_symbol_db.py
+└── analysis/
+    ├── __init__.py
+    ├── dev_analyzer.py
+    ├── liquidity_monitor.py
+    ├── market_analyzer.py
+    ├── pump_predictor.py
+    ├── rug_detector.py
+    ├── smart_contract_analyzer.py
+    ├── token_scorer.py
+└── config/
+    ├── __init__.py
+    ├── config_manager.py
+    ├── settings.py
+    ├── validation.py
+└── core/
+    ├── __init__.py
+    ├── decision_maker.py
+    ├── engine.py
+    ├── event_bus.py
+    ├── pattern_analyzer.py
+    ├── portfolio_manager.py
+    ├── risk_manager.py
+└── data/
+    ├── __init__.py
+    └── collectors/
+        ├── __init__.py
+        ├── chain_data.py
+        ├── dexscreener.py
+        ├── honeypot_checker.py
+        ├── mempool_monitor.py
+        ├── social_data.py
+        ├── token_sniffer.py
+        ├── volume_analyzer.py
+        ├── whale_tracker.py
+    └── processors/
+        ├── __init__.py
+        ├── aggregator.py
+        ├── feature_extractor.py
+        ├── normalizer.py
+        ├── validator.py
+    └── storage/
+        ├── __init__.py
+        ├── cache.py
+        ├── database.py
+        ├── models.py
+└── ml/
+    ├── __init__.py
+    └── models/
+        ├── __init__.py
+        ├── ensemble_model.py
+        ├── pump_predictor.py
+        ├── rug_classifier.py
+        ├── volume_validator.py
+    └── optimization/
+        ├── __init__.py
+    └── training/
+        ├── __init__.py
+└── monitoring/
+    ├── __init__.py
+    ├── alerts.py
+    ├── dashboard.py
+    ├── logger.py
+    ├── performance.py
+└── scripts/
+    ├── health_check.py
+    ├── init_config.py
+    ├── run_tests.py
+    ├── setup_database.py
+    ├── train_models.py
+    ├── verify_claudedex_plus.py
+    ├── verify_claudedex_plus2.py
+    ├── verify_claudedex_plus3.py
+└── security/
+    ├── __init__.py
+    ├── api_security.py
+    ├── audit_logger.py
+    ├── encryption.py
+    ├── wallet_security.py
+└── tests/
+    ├── __init__.py
+    ├── conftest.py
+    ├── test_all.py
+    └── fixtures/
+        ├── mock_data.py
+        ├── test_helpers.py
+    └── integration/
+        ├── test_data_integration.py
+        ├── test_ml_integration.py
+        ├── test_trading_integration.py
+    └── performance/
+        ├── test_performance.py
+    └── security/
+        ├── test_security.py
+    └── smoke/
+        ├── test_smoke.py
+    └── unit/
+        ├── test_engine.py
+        ├── test_risk_manager.py
+└── trading/
+    ├── __init__.py
+    └── executors/
+        ├── __init__.py
+        ├── base_executor.py
+        ├── direct_dex.py
+        ├── mev_protection.py
+        ├── toxisol_api.py
+    └── orders/
+        ├── __init__.py
+        ├── order_manager.py
+        ├── position_tracker.py
+    └── strategies/
+        ├── __init__.py
+        ├── ai_strategy.py
+        ├── base_strategy.py
+        ├── momentum.py
+        ├── scalping.py
+└── utils/
+    ├── __init__.py
+    ├── constants.py
+    ├── helpers.py
+```

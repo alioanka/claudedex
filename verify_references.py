@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-verify_references.py — Cross-file reference & signature verifier (Patched + Duplicates/Collisions)
+verify_references.py — Cross-file reference & signature verifier (Enhanced reporting)
 
 - Project-only checks by default (stdlib/3rd-party → skipped)
 - Resolves: imports/aliases (incl. relative), self.attr via __init__ param hints AND direct constructors
@@ -15,6 +15,7 @@ verify_references.py — Cross-file reference & signature verifier (Patched + Du
 - No "Did you mean" hints
 - Skips duck-typed/unknown receivers (logger/queue/etc.)
 - Optional strict config dotted-ref checks
+- Enhanced mismatch and missing-definition detail
 """
 
 import argparse, ast, json, os, re
@@ -144,6 +145,22 @@ def resolve_relative(module:str, level:int, imported:str|None)->Optional[str]:
     if imported: up = up + imported.split(".")
     return ".".join([p for p in up if p])
 
+def pretty_sig(sig: SigInfo) -> str:
+    # Build a readable signature string
+    parts = []
+    prms = list(sig.posonly) + list(sig.params)
+    if sig.is_method and prms and prms[0] in ("self","cls"):
+        prms = prms[1:]
+    parts.extend(prms)
+    if sig.kwonly:
+        parts.append(f"*; kwonly={','.join(sig.kwonly)}")
+    if sig.vararg:
+        parts.append("*args")
+    if sig.kwarg:
+        parts.append("**kwargs")
+    tail = f" [defaults={sig.defaults}]" if sig.defaults else ""
+    return f"{sig.name}({', '.join(parts)}){tail}"
+
 class PyIndexer(ast.NodeVisitor):
     def __init__(self, root:str, filepath:str, module:str):
         self.root=root; self.filepath=filepath; self.module=module
@@ -167,7 +184,7 @@ class PyIndexer(ast.NodeVisitor):
             self.info.imported_objects[asname] = f"{abs_mod}:{name}"
 
     def visit_ClassDef(self, node: ast.ClassDef):
-        # duplicate class in module?
+        # duplicate class?
         if node.name in self.info.class_def_linenos:
             self.info.dup_classes[node.name].extend([self.info.class_def_linenos[node.name], node.lineno])
         else:
@@ -178,7 +195,6 @@ class PyIndexer(ast.NodeVisitor):
 
         for body in node.body:
             if isinstance(body,(ast.FunctionDef, ast.AsyncFunctionDef)):
-                # duplicate method in class?
                 if body.name in ci.methods:
                     self.info.dup_methods[(node.name, body.name)].extend([ci.methods[body.name].lineno, body.lineno])
                 sig = extract_sig(body, is_method=True)
@@ -187,7 +203,7 @@ class PyIndexer(ast.NodeVisitor):
                             filepath=self.filepath, lineno=body.lineno, signature=sig)
                 ci.methods[body.name]=d
 
-        # __init__ param annotations + self.attr = param
+        # __init__ hints + direct constructors to map self.attr types
         for body in node.body:
             if isinstance(body,(ast.FunctionDef, ast.AsyncFunctionDef)) and body.name=="__init__":
                 ann: Dict[str,str]={}
@@ -217,12 +233,10 @@ class PyIndexer(ast.NodeVisitor):
         self.class_stack.pop()
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
-        # duplicate function in module?
         if node.name in self.info.function_def_linenos:
             self.info.dup_functions[node.name].extend([self.info.function_def_linenos[node.name], node.lineno])
         else:
             self.info.function_def_linenos[node.name] = node.lineno
-
         sig = extract_sig(node, is_method=False)
         self.info.functions[node.name]=DefInfo("function", self.module, f"{self.module}.{node.name}", self.filepath, node.lineno, sig)
 
@@ -326,8 +340,7 @@ class CallCollector(ast.NodeVisitor):
 
 @dataclass
 class CollMap:
-    # cross-module collisions (public names only)
-    class_to_defs: Dict[str, List[Tuple[str,str,int]]] = field(default_factory=lambda: defaultdict(list))  # name -> [(module, file, line)]
+    class_to_defs: Dict[str, List[Tuple[str,str,int]]] = field(default_factory=lambda: defaultdict(list))
     func_to_defs: Dict[str, List[Tuple[str,str,int]]] = field(default_factory=lambda: defaultdict(list))
 
 class Analyzer:
@@ -372,7 +385,7 @@ class Analyzer:
             idx = PyIndexer(self.root, fp, mod); idx.visit(tree)
             self.modules[mod]=idx.info
 
-            # collect for collisions (public names only)
+            # collisions (public)
             for cls, _ci in idx.info.classes.items():
                 if not cls.startswith("_"):
                     self.coll.class_to_defs[cls].append((mod, fp, idx.info.class_def_linenos.get(cls, 1)))
@@ -401,10 +414,10 @@ class Analyzer:
                     ))
             for alias, ref in mi.imported_objects.items():
                 src_mod, obj = ref.split(":",1)
-                if not src_mod:  # relative (e.g., from . import Y) — defer
+                if not src_mod:
                     continue
                 proj_fp = file_for_module(self.root, src_mod)
-                if not proj_fp:   # external → ignore
+                if not proj_fp:
                     continue
                 if src_mod not in self.modules:
                     s = read_file(proj_fp)
@@ -423,7 +436,7 @@ class Analyzer:
                         mi.filepath, mi.module, 1, {"imported_as": alias}
                     ))
 
-        # Record duplicates (intra-module)
+        # duplicates (intra-module)
         for mod, mi in self.modules.items():
             for name, lines in mi.dup_classes.items():
                 if lines:
@@ -447,7 +460,7 @@ class Analyzer:
                         mi.filepath, mod, lines[-1], {"lines": sorted(set(lines))}
                     ))
 
-        # Record collisions (cross-module, public only; informational)
+        # collisions (cross-module, public only; informational)
         for name, defs in self.coll.class_to_defs.items():
             mods = {m for (m,_,_) in defs}
             if len(mods) > 1:
@@ -499,23 +512,41 @@ class Analyzer:
                            SigInfo("__init__", ["self"], [], None, None, 0, [], True))
         return None
 
-    def check_sig(self, defsig: SigInfo, call: CallSite)->Optional[str]:
-        params=list(defsig.posonly)+list(defsig.params)
-        if defsig.is_method and params and params[0] in ("self","cls"):
-            params=params[1:]
-        required = len(params) - defsig.defaults
-        allowed_pos = len(params)
-        given_pos = call.arg_summary["positional"]
-        if defsig.vararg is None and given_pos>allowed_pos:
-            return f"Too many positional args: given {given_pos}, allowed {allowed_pos}"
-        if given_pos < min(required, allowed_pos):
-            return f"Missing required positional args: required {required}, given {given_pos}"
-        if defsig.kwarg is None:
-            known=set(params+list(defsig.kwonly))
-            unknown=call.keywords - known
-            if unknown:
-                return f"Unknown keyword(s): {', '.join(sorted(unknown))}"
-        return None
+    def _check_sig(self, defsig: SigInfo, given_pos:int, given_kw:Set[str]) -> Tuple[Optional[str], Dict[str,Any]]:
+        # Build ordered param list and compute missing/unknown with keyword support
+        ordered = list(defsig.posonly) + list(defsig.params)
+        if defsig.is_method and ordered and ordered[0] in ("self","cls"):
+            ordered = ordered[1:]
+        required_count = len(ordered) - defsig.defaults
+        required_names = ordered[:required_count]
+        provided_by_pos = set(ordered[:min(given_pos, len(ordered))])
+        known_kw = set(ordered) | set(defsig.kwonly)
+        provided_by_kw = set(given_kw) & known_kw
+        missing = [n for n in required_names if n not in provided_by_pos and n not in provided_by_kw]
+        unknown = set(given_kw) - known_kw
+        too_many_pos = (defsig.vararg is None) and (given_pos > len(ordered))
+
+        reasons=[]
+        if too_many_pos:
+            reasons.append(f"Too many positional args: {given_pos}>{len(ordered)}")
+        if missing:
+            reasons.append("Missing: " + ", ".join(missing))
+        if (defsig.kwarg is None) and unknown:
+            reasons.append("Unknown keywords: " + ", ".join(sorted(unknown)))
+
+        return (None if not reasons else "; ".join(reasons)), {
+            "missing_params": missing,
+            "unknown_keywords": sorted(list(unknown)),
+            "allowed_positionals": len(ordered)
+        }
+
+    def _target_kind_from_sig(self, sig: SigInfo, fq: str) -> str:
+        parts=fq.split(".")
+        if sig.is_method and len(parts)>=3:
+            return "method"
+        if sig.is_method and len(parts)==2:
+            return "constructor"
+        return "function"
 
     def resolve_self_chain(self, call: CallSite)->Optional[str]:
         mi=self.modules.get(call.module)
@@ -606,8 +637,17 @@ class Analyzer:
         di=self.locate_def(target)
         if not di:
             mi_tgt = self.modules.get(tgt_mod)
+            # enrich missing with file + kind guess
+            ctx = {"expr": c.expr, "target": target}
             if mi_tgt:
+                ctx["target_module_file"] = mi_tgt.filepath
                 parts = target.split(".")
+                if len(parts)>=3:
+                    ctx["target_kind"] = "method_or_attr"
+                else:
+                    leaf = parts[-1]
+                    ctx["target_kind"] = "class_or_constructor" if (leaf[:1].isupper()) else "function"
+                # if class exists but method missing, classify as missing_method
                 if len(parts) >= 3:
                     cls = parts[-2]; meth = parts[-1]
                     ci = mi_tgt.classes.get(cls)
@@ -615,23 +655,31 @@ class Analyzer:
                         self.problems.append(Problem("missing_method",
                                                      f"Method not found: {tgt_mod}.{cls}.{meth}",
                                                      c.filepath, c.module, c.lineno,
-                                                     {"expr": c.expr, "target": target}))
+                                                     {**ctx}))
                         return
             self.problems.append(Problem("missing_definition",
                                          f"Missing definition: {target}",
                                          c.filepath, c.module, c.lineno,
-                                         {"expr": c.expr, "target": target}))
+                                         ctx))
             return
 
-        err=self.check_sig(di.signature, c)
+        err, diag = self._check_sig(di.signature, c.arg_summary["positional"], c.keywords)
         if err:
+            target_kind = self._target_kind_from_sig(di.signature, di.qualname)
             self.problems.append(Problem("signature_mismatch",
                                          f"{di.qualname}: {err}",
                                          c.filepath, c.module, c.lineno,
-                                         {"called_expr":c.expr,
-                                          "declared":str(di.signature),
-                                          "args":{"positional":c.arg_summary["positional"],
-                                                  "keywords":sorted(list(c.keywords))}}))
+                                         {
+                                             "called_expr": c.expr,
+                                             "called_args": {"positional":c.arg_summary["positional"],
+                                                             "keywords":sorted(list(c.keywords))},
+                                             "declared_signature": pretty_sig(di.signature),
+                                             "declared_in": di.filepath,
+                                             "target_kind": target_kind,
+                                             "missing_params": diag["missing_params"],
+                                             "unknown_keywords": diag["unknown_keywords"],
+                                             "allowed_positionals": diag["allowed_positionals"]
+                                         }))
 
     def scan_configs(self, cfg_files: List[str], strict:bool):
         if not strict: return
@@ -713,7 +761,7 @@ class Analyzer:
                     lines.append(f"  - {k}: `{v}`")
             lines.append("")
         lines.append(f"\n---\n**Total findings:** {total}\n")
-        lines.append("> Notes:\n> - External/stdlib/3rd-party calls are skipped.\n> - Duck-typed/unknown receivers are skipped to avoid noise.\n> - Cross-module name collisions are informational.\n")
+        lines.append("> Notes:\n> - External/stdlib/3rd-party calls are skipped.\n> - Duck-typed/unknown receivers are skipped to avoid noise.\n> - Collisions are informational.\n")
         return "\n".join(lines)
 
 def parse_args():

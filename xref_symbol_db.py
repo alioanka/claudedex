@@ -2,20 +2,18 @@
 # -*- coding: utf-8 -*-
 """
 xref_symbol_db.py — Two-phase cross-reference checker with a persisted mini-DB.
+(Enhanced mismatch/missing-definition reporting)
 
 Phase A: --build
-  - Scans project, writes:
+  - Writes:
       file_tree.md
       symbol_db.json  (modules → classes/methods/functions with signatures + duplicates)
-      symbol_db.md    (human-readable index; public + private)
+      symbol_db.md    (human-readable index)
 
 Phase B: --verify
   - Loads symbol_db.json and verifies calls WITHOUT re-parsing referenced modules:
       missing_definition, missing_method, signature_mismatch, import_failure
   - Also reports duplicates (intra-module) and collisions (cross-module, informational)
-
-Notes:
-  - Cross-module collisions only consider PUBLIC names (no leading underscore) to avoid noise.
 """
 
 import argparse, os, ast, json
@@ -264,28 +262,58 @@ def get_sig(db, module, fq)->Optional[Dict[str,Any]]:
         return synth_init_sig()
     return None
 
-def check_sig(sig:Dict[str,Any], given_pos:int, given_kw:Set[str])->Optional[str]:
-    params=list(sig["posonly"])+list(sig["params"])
-    if sig["is_method"] and params and params[0] in ("self","cls"):
-        params=params[1:]
-    required = len(params) - sig["defaults"]
-    allowed_pos = len(params)
-    if not sig["vararg"] and given_pos>allowed_pos:
-        return f"Too many positional args: {given_pos}>{allowed_pos}"
-    if given_pos < min(required, allowed_pos):
-        return f"Missing required positional args: required {required}, given {given_pos}"
-    if not sig["kwarg"]:
-        known=set(params)  # (kwonly could be included if you want)
-        unknown = set(given_kw) - known
-        if unknown:
-            return f"Unknown keyword(s): {', '.join(sorted(unknown))}"
-    return None
+def pretty_sig(sig: Dict[str,Any]) -> str:
+    prms = list(sig["posonly"]) + list(sig["params"])
+    if sig["is_method"] and prms and prms[0] in ("self","cls"):
+        prms = prms[1:]
+    parts = prms[:]
+    if sig["kwonly"]:
+        parts.append(f"*; kwonly={','.join(sig['kwonly'])}")
+    if sig["vararg"]:
+        parts.append("*args")
+    if sig["kwarg"]:
+        parts.append("**kwargs")
+    tail = f" [defaults={sig['defaults']}]" if sig["defaults"] else ""
+    return f"{sig['name']}({', '.join(parts)}){tail}"
+
+def check_sig(sig:Dict[str,Any], given_pos:int, given_kw:Set[str])->Tuple[Optional[str], Dict[str,Any]]:
+    ordered = list(sig["posonly"]) + list(sig["params"])
+    if sig["is_method"] and ordered and ordered[0] in ("self","cls"):
+        ordered = ordered[1:]
+    required_count = len(ordered) - sig["defaults"]
+    required_names = ordered[:required_count]
+    provided_by_pos = set(ordered[:min(given_pos, len(ordered))])
+    known_kw = set(ordered) | set(sig["kwonly"])
+    provided_by_kw = set(given_kw) & known_kw
+    missing = [n for n in required_names if n not in provided_by_pos and n not in provided_by_kw]
+    unknown = set(given_kw) - known_kw
+    too_many_pos = (not sig["vararg"]) and (given_pos > len(ordered))
+
+    reasons=[]
+    if too_many_pos:
+        reasons.append(f"Too many positional args: {given_pos}>{len(ordered)}")
+    if missing:
+        reasons.append("Missing: " + ", ".join(missing))
+    if (not sig["kwarg"]) and unknown:
+        reasons.append("Unknown keywords: " + ", ".join(sorted(unknown)))
+
+    return (None if not reasons else "; ".join(reasons)), {
+        "missing_params": missing,
+        "unknown_keywords": sorted(list(unknown)),
+        "allowed_positionals": len(ordered)
+    }
+
+def target_kind_from_sig(sig: Dict[str,Any], fq:str)->str:
+    parts=fq.split(".")
+    if sig["is_method"] and len(parts)>=3: return "method"
+    if sig["is_method"] and len(parts)==2: return "constructor"
+    return "function"
 
 def verify_with_db(root:str, files:List[str], db:Dict[str,Any])->Tuple[List[Problem], Dict[str,int]]:
     problems: List[Problem]=[]
-    stats = Counter()  # e.g., stats["skipped_external"]
+    stats = Counter()
 
-    # report stored duplicates immediately (from DB)
+    # duplicates from DB
     for module, entry in db.items():
         if module == "_collisions": continue
         fpath = entry["filepath"]
@@ -432,16 +460,27 @@ def verify_with_db(root:str, files:List[str], db:Dict[str,Any])->Tuple[List[Prob
                     sig=get_sig(db, tgt_mod, target)
                     if not sig:
                         parts=target.split(".")
+                        ctx={"expr":expr, "target":target, "target_module_file": db[tgt_mod]["filepath"] if ensure_in_db(db,tgt_mod) else None}
                         if len(parts)>=3 and parts[-2] in db[tgt_mod]["classes"]:
-                            problems.append(Problem("missing_method", f"Method not found: {target}", fp, mod, getattr(node,"lineno",1), {"expr":expr, "target":target}))
+                            ctx["target_kind"]="method_or_attr"
+                            problems.append(Problem("missing_method", f"Method not found: {target}", fp, mod, getattr(node,"lineno",1), ctx))
                         else:
-                            problems.append(Problem("missing_definition", f"Missing definition: {target}", fp, mod, getattr(node,"lineno",1), {"expr":expr, "target":target}))
+                            leaf=parts[-1]
+                            ctx["target_kind"]="class_or_constructor" if (leaf[:1].isupper()) else "function"
+                            problems.append(Problem("missing_definition", f"Missing definition: {target}", fp, mod, getattr(node,"lineno",1), ctx))
                         continue
 
-                    err = check_sig(sig, argsum["positional"], set(kwnames))
+                    err, diag = check_sig(sig, argsum["positional"], set(kwnames))
                     if err:
                         problems.append(Problem("signature_mismatch", f"{target}: {err}", fp, mod, getattr(node,"lineno",1), {
-                            "called_expr": expr, "args": argsum, "keywords": sorted(list(kwnames))
+                            "called_expr": expr,
+                            "called_args": argsum,
+                            "declared_signature": pretty_sig(sig),
+                            "declared_in": db[tgt_mod]["filepath"],
+                            "target_kind": target_kind_from_sig(sig, target),
+                            "missing_params": diag["missing_params"],
+                            "unknown_keywords": diag["unknown_keywords"],
+                            "allowed_positionals": diag["allowed_positionals"]
                         }))
 
         # walk classes/methods
@@ -501,6 +540,9 @@ def main():
             by_kind.setdefault(p.kind, []).append(dict(
                 message=p.message, filepath=p.filepath, module=p.module, lineno=p.lineno, context=p.context
             ))
+        with open(args.json_out,"w",encoding="utf-8") as f:  # <- guard for accidental call
+            json.dump({"problems":by_kind, "stats":stats}, f, indent=2, ensure_ascii=False)
+        # Correct write:
         with open(args.json_out,"w",encoding="utf-8") as f:
             json.dump({"problems":by_kind, "stats":stats}, f, indent=2, ensure_ascii=False)
 
