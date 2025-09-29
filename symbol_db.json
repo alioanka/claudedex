@@ -2,6 +2,36 @@
   "main": {
     "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
     "classes": {
+      "HealthChecker": {
+        "methods": {
+          "__init__": {
+            "name": "__init__",
+            "params": [
+              "self",
+              "engine"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "monitor": {
+            "name": "monitor",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          }
+        },
+        "has_init": true
+      },
       "TradingBotApplication": {
         "methods": {
           "__init__": {
@@ -193,6 +223,89 @@
       }
     },
     "functions": {
+      "setup_logger": {
+        "name": "setup_logger",
+        "params": [
+          "name",
+          "mode"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "test_connection": {
+        "name": "test_connection",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "test_redis_connection": {
+        "name": "test_redis_connection",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "test_web3_connection": {
+        "name": "test_web3_connection",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "test_api_connection": {
+        "name": "test_api_connection",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "verify_models_loaded": {
+        "name": "verify_models_loaded",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "check_wallet_balance": {
+        "name": "check_wallet_balance",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "close_all_connections": {
+        "name": "close_all_connections",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
       "parse_arguments": {
         "name": "parse_arguments",
         "params": [],
@@ -5951,6 +6064,20 @@
       },
       "Event": {
         "methods": {
+          "__init__": {
+            "name": "__init__",
+            "params": [
+              "self",
+              "event_type",
+              "data"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": true,
+            "defaults": 2,
+            "posonly": [],
+            "is_method": true
+          },
           "to_dict": {
             "name": "to_dict",
             "params": [
@@ -5976,7 +6103,7 @@
             "is_method": true
           }
         },
-        "has_init": false
+        "has_init": true
       },
       "EventSubscription": {
         "methods": {},
@@ -14253,6 +14380,89 @@
               "self",
               "channel",
               "config"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          }
+        },
+        "has_init": true
+      },
+      "AlertManager": {
+        "methods": {
+          "__init__": {
+            "name": "__init__",
+            "params": [
+              "self",
+              "config"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "send_critical": {
+            "name": "send_critical",
+            "params": [
+              "self",
+              "message"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "send_error": {
+            "name": "send_error",
+            "params": [
+              "self",
+              "message"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "send_warning": {
+            "name": "send_warning",
+            "params": [
+              "self",
+              "message"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "send_info": {
+            "name": "send_info",
+            "params": [
+              "self",
+              "message"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "send_trade_alert": {
+            "name": "send_trade_alert",
+            "params": [
+              "self",
+              "message"
             ],
             "kwonly": [],
             "vararg": false,
@@ -24335,7 +24545,76 @@
   },
   "trading.strategies": {
     "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\strategies\\__init__.py",
-    "classes": {},
+    "classes": {
+      "StrategyManager": {
+        "methods": {
+          "__init__": {
+            "name": "__init__",
+            "params": [
+              "self",
+              "config"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "initialize": {
+            "name": "initialize",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "select_strategy": {
+            "name": "select_strategy",
+            "params": [
+              "self",
+              "opportunity"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_parameters": {
+            "name": "get_parameters",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "update_parameters": {
+            "name": "update_parameters",
+            "params": [
+              "self",
+              "new_params"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          }
+        },
+        "has_init": true
+      }
+    },
     "functions": {},
     "dups": {
       "functions": {},
@@ -25265,11 +25544,35 @@
       ]
     },
     "functions": {
+      "test_web3_connection": [
+        [
+          "main",
+          "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
+          52
+        ],
+        [
+          "trading.executors.base_executor",
+          "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\executors\\base_executor.py",
+          1118
+        ]
+      ],
+      "test_api_connection": [
+        [
+          "main",
+          "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
+          57
+        ],
+        [
+          "data.collectors.dexscreener",
+          "C:\\Users\\HP\\Desktop\\ClaudeDex\\data\\collectors\\dexscreener.py",
+          933
+        ]
+      ],
       "main": [
         [
           "main",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
-          314
+          372
         ],
         [
           "verify_references",

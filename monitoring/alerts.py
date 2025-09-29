@@ -1379,3 +1379,51 @@ class AlertsSystem:
                 config=config,
                 rate_limit=self.config["rate_limits"].get(channel, 30)
             )
+
+# Add this to monitoring/alerts.py if AlertManager class is missing:
+
+class AlertManager:
+    """Manages system alerts (simplified version)"""
+    
+    def __init__(self, config: Dict):
+        self.config = config
+        self.alerts_system = AlertsSystem(config)  # Use existing AlertsSystem
+        
+    async def send_critical(self, message: str):
+        """Send critical alert"""
+        await self.alerts_system.send_alert(
+            AlertType.RISK_WARNING,
+            message,
+            {"severity": "critical"}
+        )
+        
+    async def send_error(self, message: str):
+        """Send error alert"""
+        await self.alerts_system.send_alert(
+            AlertType.ERROR_OCCURRED,
+            message,
+            {"severity": "error"}
+        )
+        
+    async def send_warning(self, message: str):
+        """Send warning alert"""
+        await self.alerts_system.send_alert(
+            AlertType.WARNING_RAISED,
+            message,
+            {"severity": "warning"}
+        )
+        
+    async def send_info(self, message: str):
+        """Send info alert"""
+        await self.alerts_system.send_alert(
+            AlertType.NOTIFICATION_SENT,
+            message,
+            {"severity": "info"}
+        )
+        
+    async def send_trade_alert(self, message: str):
+        """Send trading alert"""
+        await self.alerts_system.send_trading_alert(
+            EventType.POSITION_OPENED,
+            {"message": message}
+        )

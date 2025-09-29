@@ -228,7 +228,7 @@ class TradingBotEngine:
                         
                         # Emit event
                         await self.event_bus.emit(Event(
-                            EventType.OPPORTUNITY_FOUND,
+                            event_type=EventType.OPPORTUNITY_FOUND,
                             data=opportunity
                         ))
                         
@@ -402,7 +402,7 @@ class TradingBotEngine:
                 
                 # Emit event
                 await self.event_bus.emit(Event(
-                    EventType.POSITION_OPENED,
+                    event_type=EventType.POSITION_OPENED,
                     data=position
                 ))
                 
@@ -541,7 +541,7 @@ class TradingBotEngine:
                     # Detect sandwich attacks
                     if await self.mempool_monitor.detect_sandwich_attack(tx):
                         await self.event_bus.emit(Event(
-                            EventType.SANDWICH_DETECTED,
+                            event_type=EventType.SANDWICH_DETECTED,
                             data=tx
                         ))
                         

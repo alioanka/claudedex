@@ -453,6 +453,7 @@
 
 ### Classes & Methods
 - **Event**
+  - `__init__(event_type, data)`
   - `to_dict()`
   - `to_json()`
 - **EventAggregator**
@@ -1072,10 +1073,21 @@
 - File: `main.py`
 
 ### Functions
+- `check_wallet_balance()`
+- `close_all_connections()`
 - `main()`
 - `parse_arguments()`
+- `setup_logger(name, mode)`
+- `test_api_connection()`
+- `test_connection()`
+- `test_redis_connection()`
+- `test_web3_connection()`
+- `verify_models_loaded()`
 
 ### Classes & Methods
+- **HealthChecker**
+  - `__init__(engine)`
+  - `monitor()`
 - **TradingBotApplication**
   - `__init__(config_path, mode)`
   - `_check_apis()`
@@ -1224,6 +1236,13 @@
 
 ### Classes & Methods
 - **Alert**
+- **AlertManager**
+  - `__init__(config)`
+  - `send_critical(message)`
+  - `send_error(message)`
+  - `send_info(message)`
+  - `send_trade_alert(message)`
+  - `send_warning(message)`
 - **AlertPriority**
 - **AlertRule**
 - **AlertType**
@@ -2136,6 +2155,14 @@
 ## trading.strategies
 - File: `trading\strategies\__init__.py`
 
+### Classes & Methods
+- **StrategyManager**
+  - `__init__(config)`
+  - `get_parameters()`
+  - `initialize()`
+  - `select_strategy(opportunity)`
+  - `update_parameters(new_params)`
+
 ## trading.strategies.ai_strategy
 - File: `trading\strategies\ai_strategy.py`
 
@@ -2459,4 +2486,4 @@
 ---
 ## Collisions (public names)
 - Class name collisions: 27
-- Function name collisions: 14
+- Function name collisions: 16

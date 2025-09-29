@@ -54,16 +54,44 @@ class EventType(Enum):
     ALERT_TRIGGERED = "alert_triggered"
     NOTIFICATION_SENT = "notification_sent"
 
+# In core/event_bus.py, update the Event dataclass __init__ method:
+
 @dataclass
 class Event:
     """Event data structure"""
-    event_type: EventType
-    data: Any
+    event_type: EventType = None
+    data: Any = None
     timestamp: datetime = field(default_factory=datetime.now)
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     source: Optional[str] = None
     priority: int = 5  # 1-10, 1 being highest priority
     metadata: Dict = field(default_factory=dict)
+    
+    def __init__(self, event_type=None, data=None, **kwargs):
+        """
+        Custom init to handle both positional and keyword arguments
+        """
+        # Handle first positional as event_type if it's a string or EventType
+        if isinstance(event_type, str):
+            # Try to convert string to EventType
+            for et in EventType:
+                if et.value == event_type:
+                    self.event_type = et
+                    break
+            else:
+                self.event_type = EventType.ERROR_OCCURRED
+                if data is None:
+                    data = {}
+                data['original_event_type'] = event_type
+        else:
+            self.event_type = event_type or kwargs.get('event_type')
+        
+        self.data = data if data is not None else kwargs.get('data', {})
+        self.timestamp = kwargs.get('timestamp', datetime.now())
+        self.event_id = kwargs.get('event_id', str(uuid.uuid4()))
+        self.source = kwargs.get('source')
+        self.priority = kwargs.get('priority', 5)
+        self.metadata = kwargs.get('metadata', {})
     
     def to_dict(self) -> Dict:
         """Convert event to dictionary"""

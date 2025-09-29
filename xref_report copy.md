@@ -1,10 +1,70 @@
 # XRef Verification Report (Mini-DB)
 - Root: `C:\Users\HP\Desktop\ClaudeDex`
 - Files scanned: `99`
-- Skipped external: `3484`
+- Skipped external: `3507`
 
 
-## Missing Definitions (2)
+## Missing Definitions (12)
+- **Missing definition: monitoring.logger.setup_logger**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\main.py`:49
+  - expr: `setup_logger`
+  - target: `monitoring.logger.setup_logger`
+  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\monitoring\logger.py`
+  - target_kind: `function`
+- **Missing definition: config.load_config**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\main.py`:71
+  - expr: `load_config`
+  - target: `config.load_config`
+  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\config\__init__.py`
+  - target_kind: `function`
+- **Missing definition: security.encryption.SecurityManager**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\main.py`:78
+  - expr: `SecurityManager`
+  - target: `security.encryption.SecurityManager`
+  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\security\encryption.py`
+  - target_kind: `class_or_constructor`
+- **Missing definition: data.storage.database.test_connection**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\main.py`:155
+  - expr: `test_connection`
+  - target: `data.storage.database.test_connection`
+  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\data\storage\database.py`
+  - target_kind: `function`
+- **Missing definition: data.storage.cache.test_redis_connection**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\main.py`:160
+  - expr: `test_redis_connection`
+  - target: `data.storage.cache.test_redis_connection`
+  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\data\storage\cache.py`
+  - target_kind: `function`
+- **Missing definition: trading.executors.direct_dex.test_web3_connection**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\main.py`:165
+  - expr: `test_web3_connection`
+  - target: `trading.executors.direct_dex.test_web3_connection`
+  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\trading\executors\direct_dex.py`
+  - target_kind: `function`
+- **Missing definition: ml.models.verify_models_loaded**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\main.py`:175
+  - expr: `verify_models_loaded`
+  - target: `ml.models.verify_models_loaded`
+  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\ml\models\__init__.py`
+  - target_kind: `function`
+- **Missing definition: data.storage.database.close_all_connections**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\main.py`:262
+  - expr: `close_all_connections`
+  - target: `data.storage.database.close_all_connections`
+  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\data\storage\database.py`
+  - target_kind: `function`
+- **Missing definition: trading.strategies.StrategyManager**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\core\engine.py`:113
+  - expr: `StrategyManager`
+  - target: `trading.strategies.StrategyManager`
+  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\trading\strategies\__init__.py`
+  - target_kind: `class_or_constructor`
+- **Missing definition: monitoring.alerts.AlertManager**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\core\engine.py`:119
+  - expr: `AlertManager`
+  - target: `monitoring.alerts.AlertManager`
+  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\monitoring\alerts.py`
+  - target_kind: `class_or_constructor`
 - **Missing definition: ml.models.ensemble_model.EnsembleModel**  
   File: `C:\Users\HP\Desktop\ClaudeDex\tests\integration\test_ml_integration.py`:120
   - expr: `EnsembleModel`
@@ -21,7 +81,37 @@
 ## Missing Methods (0)
 - None
 
-## Signature Mismatches (18)
+## Signature Mismatches (21)
+- **core.event_bus.Event: Too many positional args: 1>0; Unknown keywords: data**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\core\engine.py`:230
+  - called_expr: `Event`
+  - called_args: `{'positional': 1, 'keyword': 1}`
+  - declared_signature: `__init__()`
+  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\core\event_bus.py`
+  - target_kind: `method`
+  - missing_params: `[]`
+  - unknown_keywords: `['data']`
+  - allowed_positionals: `0`
+- **core.event_bus.Event: Too many positional args: 1>0; Unknown keywords: data**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\core\engine.py`:404
+  - called_expr: `Event`
+  - called_args: `{'positional': 1, 'keyword': 1}`
+  - declared_signature: `__init__()`
+  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\core\event_bus.py`
+  - target_kind: `method`
+  - missing_params: `[]`
+  - unknown_keywords: `['data']`
+  - allowed_positionals: `0`
+- **core.event_bus.Event: Too many positional args: 1>0; Unknown keywords: data**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\core\engine.py`:543
+  - called_expr: `Event`
+  - called_args: `{'positional': 1, 'keyword': 1}`
+  - declared_signature: `__init__()`
+  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\core\event_bus.py`
+  - target_kind: `method`
+  - missing_params: `[]`
+  - unknown_keywords: `['data']`
+  - allowed_positionals: `0`
 - **config.config_manager.ConfigManager: Unknown keywords: encryption_key**  
   File: `C:\Users\HP\Desktop\ClaudeDex\tests\conftest.py`:88
   - called_expr: `ConfigManager`
@@ -301,16 +391,10 @@
   File: ``:1
   - definitions: `[['trading.strategies.base_strategy', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\strategies\\base_strategy.py', 35], ['utils.constants', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\utils\\constants.py', 338]]`
 
-## Function Name Collisions (across modules) (16)
-- **Function name 'test_web3_connection' appears in multiple modules**  
-  File: ``:1
-  - definitions: `[['main', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py', 52], ['trading.executors.base_executor', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\executors\\base_executor.py', 1118]]`
-- **Function name 'test_api_connection' appears in multiple modules**  
-  File: ``:1
-  - definitions: `[['main', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py', 57], ['data.collectors.dexscreener', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\data\\collectors\\dexscreener.py', 933]]`
+## Function Name Collisions (across modules) (14)
 - **Function name 'main' appears in multiple modules**  
   File: ``:1
-  - definitions: `[['main', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py', 372], ['verify_references', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\verify_references.py', 778], ['xref_symbol_db', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\xref_symbol_db.py', 516], ['scripts.health_check', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\health_check.py', 58], ['scripts.run_tests', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\run_tests.py', 201], ['scripts.verify_claudedex_plus', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus.py', 579], ['scripts.verify_claudedex_plus2', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus2.py', 490], ['scripts.verify_claudedex_plus3', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus3.py', 461]]`
+  - definitions: `[['main', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py', 314], ['verify_references', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\verify_references.py', 778], ['xref_symbol_db', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\xref_symbol_db.py', 516], ['scripts.health_check', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\health_check.py', 58], ['scripts.run_tests', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\run_tests.py', 201], ['scripts.verify_claudedex_plus', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus.py', 579], ['scripts.verify_claudedex_plus2', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus2.py', 490], ['scripts.verify_claudedex_plus3', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus3.py', 461]]`
 - **Function name 'is_py' appears in multiple modules**  
   File: ``:1
   - definitions: `[['verify_references', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\verify_references.py', 89], ['xref_symbol_db', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\xref_symbol_db.py', 28]]`
@@ -352,4 +436,4 @@
   - definitions: `[['scripts.verify_claudedex_plus', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus.py', 490], ['scripts.verify_claudedex_plus2', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus2.py', 419]]`
 
 ---
-**Total findings:** 63
+**Total findings:** 74
