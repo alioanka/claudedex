@@ -405,31 +405,33 @@ class AIStrategy(BaseStrategy):
         model_agreement = self._calculate_model_agreement(predictions)
         confidence = risk_adjusted_score * model_agreement
         
-        # Create signal
-        signal = TradingSignal(
-            strategy_name=self.name,
-            signal_type=signal_type,
-            strength=strength,
-            token_address=market_data.get("token_address", ""),
-            chain=market_data.get("chain", ""),
-            entry_price=Decimal(str(market_data.get("price", 0))),
-            confidence=confidence,
-            timeframe=self.timeframe,
-            indicators={
-                "pump_probability": pump_prob,
-                "rug_probability": rug_probability,
-                "technical_score": technical_score,
-                "pattern_score": patterns.get("score", 0),
-                "weighted_score": weighted_score
-            },
-            metadata={
-                "ml_agreement": model_agreement,
-                "risk_adjusted_score": risk_adjusted_score,
-                "feature_quality": self._assess_feature_quality(market_data),
-                "patterns_detected": patterns.get("patterns", []),
-                "ensemble_prediction": ensemble
-            }
-        )
+# Fix for ai_strategy.py line 409
+# Replace the incorrect TradingSignal instantiation with this corrected version:
+
+        # Create signal (CORRECTED VERSION)
+        signal = TradingSignal()
+        signal.strategy_name = self.name
+        signal.signal_type = signal_type
+        signal.strength = strength
+        signal.token_address = market_data.get("token_address", "")
+        signal.chain = market_data.get("chain", "")
+        signal.entry_price = Decimal(str(market_data.get("price", 0)))
+        signal.confidence = confidence
+        signal.timeframe = self.timeframe
+        signal.indicators = {
+            "pump_probability": pump_prob,
+            "rug_probability": rug_probability,
+            "technical_score": technical_score,
+            "pattern_score": patterns.get("score", 0),
+            "weighted_score": weighted_score
+        }
+        signal.metadata = {
+            "ml_agreement": model_agreement,
+            "risk_adjusted_score": risk_adjusted_score,
+            "feature_quality": self._assess_feature_quality(market_data),
+            "patterns_detected": patterns.get("patterns", []),
+            "ensemble_prediction": ensemble
+        }
         
         # Set expiration
         signal.expires_at = datetime.now() + timedelta(minutes=15)

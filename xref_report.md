@@ -1,7 +1,7 @@
 # XRef Verification Report (Mini-DB)
 - Root: `C:\Users\HP\Desktop\ClaudeDex`
-- Files scanned: `99`
-- Skipped external: `3484`
+- Files scanned: `100`
+- Skipped external: `3485`
 
 
 ## Missing Definitions (2)
@@ -21,7 +21,7 @@
 ## Missing Methods (0)
 - None
 
-## Signature Mismatches (18)
+## Signature Mismatches (17)
 - **config.config_manager.ConfigManager: Unknown keywords: encryption_key**  
   File: `C:\Users\HP\Desktop\ClaudeDex\tests\conftest.py`:88
   - called_expr: `ConfigManager`
@@ -192,16 +192,6 @@
   - missing_params: `['config']`
   - unknown_keywords: `[]`
   - allowed_positionals: `2`
-- **trading.strategies.base_strategy.TradingSignal: Unknown keywords: chain, confidence, entry_price, indicators, metadata, signal_type, strategy_name, strength, timeframe, token_address**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\trading\strategies\ai_strategy.py`:409
-  - called_expr: `TradingSignal`
-  - called_args: `{'positional': 0, 'keyword': 10}`
-  - declared_signature: `__init__()`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\trading\strategies\base_strategy.py`
-  - target_kind: `method`
-  - missing_params: `[]`
-  - unknown_keywords: `['chain', 'confidence', 'entry_price', 'indicators', 'metadata', 'signal_type', 'strategy_name', 'strength', 'timeframe', 'token_address']`
-  - allowed_positionals: `0`
 
 ## Import Failures (Parse) (0)
 - None
@@ -352,4 +342,4 @@
   - definitions: `[['scripts.verify_claudedex_plus', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus.py', 490], ['scripts.verify_claudedex_plus2', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus2.py', 419]]`
 
 ---
-**Total findings:** 63
+**Total findings:** 62

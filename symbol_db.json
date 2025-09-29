@@ -1,4 +1,39 @@
 {
+  "count_loc": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\count_loc.py",
+    "classes": {},
+    "functions": {
+      "count_loc_in_file": {
+        "name": "count_loc_in_file",
+        "params": [
+          "file_path"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "count_project_loc": {
+        "name": "count_project_loc",
+        "params": [
+          "root_dir"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 1,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
   "main": {
     "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
     "classes": {

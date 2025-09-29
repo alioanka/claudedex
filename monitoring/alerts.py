@@ -1382,48 +1382,52 @@ class AlertsSystem:
 
 # Add this to monitoring/alerts.py if AlertManager class is missing:
 
+# Add this corrected AlertManager class to monitoring/alerts.py 
+# (Replace the existing incomplete AlertManager at the end of the file)
+
 class AlertManager:
-    """Manages system alerts (simplified version)"""
+    """Simplified alert manager wrapper around AlertsSystem"""
     
     def __init__(self, config: Dict):
+        """Initialize alert manager with config"""
         self.config = config
-        self.alerts_system = AlertsSystem(config)  # Use existing AlertsSystem
+        self.alerts_system = AlertsSystem(config)
         
     async def send_critical(self, message: str):
         """Send critical alert"""
         await self.alerts_system.send_alert(
-            AlertType.RISK_WARNING,
-            message,
-            {"severity": "critical"}
+            alert_type="system_error",  # Use string type for the wrapper method
+            message=message,
+            data={"severity": "critical"}
         )
         
     async def send_error(self, message: str):
         """Send error alert"""
         await self.alerts_system.send_alert(
-            AlertType.ERROR_OCCURRED,
-            message,
-            {"severity": "error"}
+            alert_type="system_error",
+            message=message,
+            data={"severity": "error"}
         )
         
     async def send_warning(self, message: str):
         """Send warning alert"""
         await self.alerts_system.send_alert(
-            AlertType.WARNING_RAISED,
-            message,
-            {"severity": "warning"}
+            alert_type="high_risk_warning",
+            message=message,
+            data={"severity": "warning"}
         )
         
     async def send_info(self, message: str):
         """Send info alert"""
         await self.alerts_system.send_alert(
-            AlertType.NOTIFICATION_SENT,
-            message,
-            {"severity": "info"}
+            alert_type="system_error",
+            message=message,
+            data={"severity": "info"}
         )
         
     async def send_trade_alert(self, message: str):
         """Send trading alert"""
         await self.alerts_system.send_trading_alert(
-            EventType.POSITION_OPENED,
-            {"message": message}
+            event_type="position_opened",
+            position={"message": message}
         )

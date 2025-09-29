@@ -1036,3 +1036,9 @@ class EnsemblePredictor:
         
         # Log weight updates
         print(f"Updated model weights: {self.model_weights}")
+
+# Add this at the END of ml/models/ensemble_model.py file:
+
+# Create alias for backward compatibility
+# Some tests/modules expect EnsembleModel instead of EnsemblePredictor
+EnsembleModel = EnsemblePredictor

@@ -1,6 +1,7 @@
 # File Tree
 ```
 ClaudeDex/
+├── count_loc.py
 ├── main.py
 ├── scaffold.py
 ├── setup.py

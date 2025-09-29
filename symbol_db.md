@@ -584,6 +584,13 @@
   - `risk_level()`
 - **TradingOpportunity**
 
+## count_loc
+- File: `count_loc.py`
+
+### Functions
+- `count_loc_in_file(file_path)`
+- `count_project_loc(root_dir)`
+
 ## data
 - File: `data\__init__.py`
 

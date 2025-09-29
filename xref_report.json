@@ -1302,36 +1302,6 @@
           "unknown_keywords": [],
           "allowed_positionals": 2
         }
-      },
-      {
-        "message": "trading.strategies.base_strategy.TradingSignal: Unknown keywords: chain, confidence, entry_price, indicators, metadata, signal_type, strategy_name, strength, timeframe, token_address",
-        "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\strategies\\ai_strategy.py",
-        "module": "trading.strategies.ai_strategy",
-        "lineno": 409,
-        "context": {
-          "called_expr": "TradingSignal",
-          "called_args": {
-            "positional": 0,
-            "keyword": 10
-          },
-          "declared_signature": "__init__()",
-          "declared_in": "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\strategies\\base_strategy.py",
-          "target_kind": "method",
-          "missing_params": [],
-          "unknown_keywords": [
-            "chain",
-            "confidence",
-            "entry_price",
-            "indicators",
-            "metadata",
-            "signal_type",
-            "strategy_name",
-            "strength",
-            "timeframe",
-            "token_address"
-          ],
-          "allowed_positionals": 0
-        }
       }
     ],
     "missing_definition": [
@@ -1362,6 +1332,6 @@
     ]
   },
   "stats": {
-    "skipped_external": 3484
+    "skipped_external": 3485
   }
 }
