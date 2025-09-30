@@ -626,6 +626,11 @@
               372
             ],
             [
+              "setup_env_keys",
+              "C:\\Users\\HP\\Desktop\\ClaudeDex\\setup_env_keys.py",
+              32
+            ],
+            [
               "verify_references",
               "C:\\Users\\HP\\Desktop\\ClaudeDex\\verify_references.py",
               778
@@ -1332,6 +1337,6 @@
     ]
   },
   "stats": {
-    "skipped_external": 3485
+    "skipped_external": 3689
   }
 }

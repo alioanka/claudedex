@@ -426,6 +426,60 @@
       "methods": {}
     }
   },
+  "setup_env_keys": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\setup_env_keys.py",
+    "classes": {},
+    "functions": {
+      "generate_encryption_key": {
+        "name": "generate_encryption_key",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "generate_jwt_secret": {
+        "name": "generate_jwt_secret",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "encrypt_private_key": {
+        "name": "encrypt_private_key",
+        "params": [
+          "private_key",
+          "encryption_key"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "main": {
+        "name": "main",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
   "verify_references": {
     "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\verify_references.py",
     "classes": {
@@ -15997,6 +16051,163 @@
       "methods": {}
     }
   },
+  "scripts.analyze_strategy": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\analyze_strategy.py",
+    "classes": {},
+    "functions": {
+      "analyze_strategy": {
+        "name": "analyze_strategy",
+        "params": [
+          "strategy"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 1,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.check_balance": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\check_balance.py",
+    "classes": {},
+    "functions": {
+      "check_balance": {
+        "name": "check_balance",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.close_all_positions": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\close_all_positions.py",
+    "classes": {},
+    "functions": {
+      "close_all_positions": {
+        "name": "close_all_positions",
+        "params": [
+          "confirm"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 1,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.daily_report": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\daily_report.py",
+    "classes": {},
+    "functions": {
+      "daily_report": {
+        "name": "daily_report",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.emergency_stop": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\emergency_stop.py",
+    "classes": {},
+    "functions": {
+      "emergency_stop": {
+        "name": "emergency_stop",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.export_trades": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\export_trades.py",
+    "classes": {},
+    "functions": {
+      "export_trades": {
+        "name": "export_trades",
+        "params": [
+          "format",
+          "output"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 2,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.generate_report": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\generate_report.py",
+    "classes": {},
+    "functions": {
+      "generate_report": {
+        "name": "generate_report",
+        "params": [
+          "days",
+          "format"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 2,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
   "scripts.health_check": {
     "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\health_check.py",
     "classes": {},
@@ -16039,6 +16250,155 @@
         "vararg": false,
         "kwarg": false,
         "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.migrate_database": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\migrate_database.py",
+    "classes": {},
+    "functions": {
+      "migrate_database": {
+        "name": "migrate_database",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.optimize_db": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\optimize_db.py",
+    "classes": {},
+    "functions": {
+      "optimize_db": {
+        "name": "optimize_db",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.overnight_summary": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\overnight_summary.py",
+    "classes": {},
+    "functions": {
+      "overnight_summary": {
+        "name": "overnight_summary",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.post_update_check": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\post_update_check.py",
+    "classes": {},
+    "functions": {
+      "post_update_check": {
+        "name": "post_update_check",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.reset_db_sequences": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\reset_db_sequences.py",
+    "classes": {},
+    "functions": {
+      "reset_sequences": {
+        "name": "reset_sequences",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.reset_nonce": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\reset_nonce.py",
+    "classes": {},
+    "functions": {
+      "reset_nonce": {
+        "name": "reset_nonce",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.retrain_models": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\retrain_models.py",
+    "classes": {},
+    "functions": {
+      "retrain_models": {
+        "name": "retrain_models",
+        "params": [
+          "days_back"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 1,
         "posonly": [],
         "is_method": false
       }
@@ -16202,6 +16562,27 @@
       "methods": {}
     }
   },
+  "scripts.security_audit": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\security_audit.py",
+    "classes": {},
+    "functions": {
+      "security_audit": {
+        "name": "security_audit",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
   "scripts.setup_database": {
     "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\setup_database.py",
     "classes": {},
@@ -16213,6 +16594,115 @@
         "vararg": false,
         "kwarg": false,
         "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.strategy_analysis": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\strategy_analysis.py",
+    "classes": {},
+    "functions": {
+      "strategy_analysis": {
+        "name": "strategy_analysis",
+        "params": [
+          "month"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 1,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.test_alerts": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\test_alerts.py",
+    "classes": {},
+    "functions": {
+      "test_alerts": {
+        "name": "test_alerts",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.test_apis": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\test_apis.py",
+    "classes": {},
+    "functions": {
+      "test_apis": {
+        "name": "test_apis",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.update_blacklists": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\update_blacklists.py",
+    "classes": {},
+    "functions": {
+      "update_blacklists": {
+        "name": "update_blacklists",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.update_models": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\update_models.py",
+    "classes": {},
+    "functions": {
+      "update_models": {
+        "name": "update_models",
+        "params": [
+          "weights_file"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 1,
         "posonly": [],
         "is_method": false
       }
@@ -17187,6 +17677,52 @@
         "vararg": false,
         "kwarg": false,
         "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.weekly_report": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\weekly_report.py",
+    "classes": {},
+    "functions": {
+      "weekly_report": {
+        "name": "weekly_report",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.withdraw_funds": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\withdraw_funds.py",
+    "classes": {},
+    "functions": {
+      "withdraw_funds": {
+        "name": "withdraw_funds",
+        "params": [
+          "to_address",
+          "amount",
+          "confirm"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 2,
         "posonly": [],
         "is_method": false
       }
@@ -25608,6 +26144,11 @@
           "main",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
           372
+        ],
+        [
+          "setup_env_keys",
+          "C:\\Users\\HP\\Desktop\\ClaudeDex\\setup_env_keys.py",
+          32
         ],
         [
           "verify_references",

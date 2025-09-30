@@ -15,11 +15,25 @@ from core.risk_manager import RiskManager
 @pytest.mark.unit
 class TestTradingBotEngine:
     """Test cases for TradingBotEngine"""
+
+    @pytest.fixture
+    def mock_config(self):
+        """Mock engine configuration"""
+        return {
+            "trading": {
+                "mode": "test",
+                "max_position_size": Decimal("1000"),
+                "chains": ["ethereum"]
+            },
+            "risk": {
+                "max_drawdown": Decimal("0.20")
+            }
+        }
     
     @pytest.fixture
-    def engine(self, risk_manager):
+    def engine(self, risk_manager, mock_config):
         """Create engine instance for testing"""
-        engine = TradingBotEngine()
+        engine = TradingBotEngine(mock_config, mode="test")
         engine.risk_manager = risk_manager
         engine.db_manager = AsyncMock()
         engine.cache_manager = AsyncMock()

@@ -79,17 +79,16 @@ async def cache_manager():
     yield manager
     await manager.disconnect()
 
+# Replace lines 88-92 with:
 @pytest.fixture
 async def config_manager(tmp_path):
     """Configuration manager fixture"""
     config_path = tmp_path / "configs"
     config_path.mkdir()
     
-    manager = ConfigManager(
-        config_dir=str(config_path),
-        encryption_key="test_key_32_bytes_long_for_test!"
-    )
-    await manager.initialize("test_key_32_bytes_long_for_test!")
+    manager = ConfigManager(config_dir=str(config_path))
+    # Initialize with encryption key as a separate call
+    await manager.initialize(encryption_key="test_key_32_bytes_long_for_test!")
     
     yield manager
 
@@ -98,26 +97,33 @@ def risk_manager():
     """Risk manager fixture"""
     return RiskManager(TEST_CONFIG["trading"])
 
+# Replace lines 99-103 with:
 @pytest.fixture
-async def wallet_security():
+async def wallet_security(config_manager):
     """Wallet security manager fixture"""
-    manager = WalletSecurityManager()
+    # Pass config object, not empty call
+    config = await config_manager.get_security_config()
+    manager = WalletSecurityManager(config)
     await manager.initialize()
     yield manager
+    await manager.cleanup()
 
+# Replace lines 105-114 with:
 @pytest.fixture
-async def audit_logger(tmp_path):
+async def audit_logger(tmp_path, config_manager):
     """Audit logger fixture"""
-    audit_path = tmp_path / "audit"
-    audit_path.mkdir()
+    # Create config dict with required parameters
+    config = {
+        "log_dir": str(tmp_path / "audit"),
+        "retention_days": 30,
+        "buffer_size": 100,
+        "compress_old_logs": False
+    }
     
-    logger = AuditLogger(
-        log_dir=str(audit_path),
-        retention_days=30
-    )
+    logger = AuditLogger(config)
     await logger.initialize()
     yield logger
-
+    await logger.cleanup()
 @pytest.fixture
 def mock_dex_api():
     """Mock DEX API responses"""

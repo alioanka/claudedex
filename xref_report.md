@@ -1,7 +1,7 @@
 # XRef Verification Report (Mini-DB)
 - Root: `C:\Users\HP\Desktop\ClaudeDex`
-- Files scanned: `100`
-- Skipped external: `3485`
+- Files scanned: `123`
+- Skipped external: `3689`
 
 
 ## Missing Definitions (2)
@@ -300,7 +300,7 @@
   - definitions: `[['main', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py', 57], ['data.collectors.dexscreener', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\data\\collectors\\dexscreener.py', 933]]`
 - **Function name 'main' appears in multiple modules**  
   File: ``:1
-  - definitions: `[['main', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py', 372], ['verify_references', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\verify_references.py', 778], ['xref_symbol_db', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\xref_symbol_db.py', 516], ['scripts.health_check', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\health_check.py', 58], ['scripts.run_tests', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\run_tests.py', 201], ['scripts.verify_claudedex_plus', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus.py', 579], ['scripts.verify_claudedex_plus2', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus2.py', 490], ['scripts.verify_claudedex_plus3', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus3.py', 461]]`
+  - definitions: `[['main', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py', 372], ['setup_env_keys', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\setup_env_keys.py', 32], ['verify_references', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\verify_references.py', 778], ['xref_symbol_db', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\xref_symbol_db.py', 516], ['scripts.health_check', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\health_check.py', 58], ['scripts.run_tests', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\run_tests.py', 201], ['scripts.verify_claudedex_plus', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus.py', 579], ['scripts.verify_claudedex_plus2', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus2.py', 490], ['scripts.verify_claudedex_plus3', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus3.py', 461]]`
 - **Function name 'is_py' appears in multiple modules**  
   File: ``:1
   - definitions: `[['verify_references', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\verify_references.py', 89], ['xref_symbol_db', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\xref_symbol_db.py', 28]]`

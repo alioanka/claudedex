@@ -17,6 +17,25 @@ from data.storage.database import DatabaseManager
 @pytest.mark.requires_db
 class TestMLIntegration:
     """Test ML model integration"""
+
+    # Add mock_config fixture at the top of TestMLIntegration class (after line 15):
+    @pytest.fixture
+    def mock_config(self):
+        """Mock ML configuration"""
+        return {
+            "ml": {
+                "model_dir": "models/",
+                "feature_dim": 100,
+                "ensemble_weights": {
+                    "xgboost": 0.3,
+                    "lightgbm": 0.25,
+                    "random_forest": 0.2
+                }
+            },
+            "data": {
+                "cache_ttl": 300
+            }
+        }
     
     @pytest.fixture
     async def training_data(self, db_manager):
@@ -47,9 +66,9 @@ class TestMLIntegration:
         return pd.DataFrame(tokens)
     
     @pytest.mark.asyncio
-    async def test_rug_classifier_training(self, training_data):
+    async def test_rug_classifier_training(self, training_data, mock_config):
         """Test rug classifier training with real data"""
-        classifier = RugClassifier()
+        classifier = RugClassifier(mock_config)
         
         # Prepare features and labels
         features = training_data.drop(["address", "is_rug"], axis=1)
@@ -76,9 +95,9 @@ class TestMLIntegration:
         assert "risk_factors" in analysis
     
     @pytest.mark.asyncio
-    async def test_pump_predictor_training(self, db_manager):
+    async def test_pump_predictor_training(self, db_manager, mock_config):
         """Test pump predictor with historical data"""
-        predictor = PumpPredictor()
+        predictor = PumpPredictor(mock_config)
         
         # Generate price history
         price_data = []
@@ -115,13 +134,15 @@ class TestMLIntegration:
         assert "time_to_pump" in confidence
     
     @pytest.mark.asyncio
-    async def test_ensemble_model(self, training_data, db_manager):
+    # Replace lines 120-125 with:
+    async def test_ensemble_model(self, training_data, db_manager, mock_config):
         """Test ensemble model integration"""
-        ensemble = EnsembleModel()
+        ensemble = EnsembleModel(model_dir="models/test/")
+        await ensemble.load_models()
         
         # Initialize component models
-        ensemble.rug_classifier = RugClassifier()
-        ensemble.pump_predictor = PumpPredictor()
+        ensemble.models['rug_classifier'] = RugClassifier(mock_config)
+        ensemble.models['pump_predictor'] = PumpPredictor(mock_config)
         
         # Mock some predictions
         token = "0x1234567890123456789012345678901234567890"

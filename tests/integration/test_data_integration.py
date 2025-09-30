@@ -19,11 +19,32 @@ from data.storage.cache import CacheManager
 @pytest.mark.requires_db
 class TestDataIntegration:
     """Integration tests for data flow"""
+
+    # Add this fixture at the top of the TestDataIntegration class:
+    @pytest.fixture
+    def mock_config(self):
+        """Mock configuration for tests"""
+        return {
+            "api": {
+                "dexscreener_api_key": "test_key",
+                "rate_limits": {"dexscreener": {"calls": 300, "period": 60}}
+            },
+            "security": {
+                "honeypot_checks": {
+                    "honeypot_is": "https://honeypot.is/api",
+                    "tokensniffer": "https://tokensniffer.com/api"
+                }
+            },
+            "data": {
+                "cache_ttl": {"token_info": 300}
+            }
+        }
     
     @pytest.mark.asyncio
-    async def test_dexscreener_to_database(self, db_manager, mock_dex_api):
+    async def test_dexscreener_to_database(self, db_manager, mock_dex_api, mock_config):
         """Test data flow from DexScreener to database"""
-        collector = DexScreenerCollector()
+        collector = DexScreenerCollector(mock_config)
+        await collector.initialize()
         
         with patch('aiohttp.ClientSession.get') as mock_get:
             mock_response = AsyncMock()
@@ -54,9 +75,10 @@ class TestDataIntegration:
             assert historical[0]["token"] == pairs[0]["address"]
     
     @pytest.mark.asyncio
-    async def test_honeypot_checker_caching(self, cache_manager, mock_dex_api):
+    async def test_honeypot_checker_caching(self, cache_manager, mock_dex_api, mock_config):
         """Test honeypot checker with caching"""
-        checker = HoneypotChecker()
+        checker = HoneypotChecker(mock_config)
+        await checker.initialize()
         checker.cache_manager = cache_manager
         
         token = "0x1234567890123456789012345678901234567890"
@@ -81,9 +103,10 @@ class TestDataIntegration:
             assert mock_get.call_count == 1
     
     @pytest.mark.asyncio
-    async def test_whale_tracker_integration(self, db_manager, cache_manager):
+    async def test_whale_tracker_integration(self, db_manager, cache_manager, mock_config):
         """Test whale tracker with storage integration"""
-        tracker = WhaleTracker()
+        tracker = WhaleTracker(mock_config)
+        await tracker.initialize()
         tracker.db_manager = db_manager
         tracker.cache_manager = cache_manager
         
@@ -133,11 +156,13 @@ class TestDataIntegration:
             assert cached["trend"] == "accumulation"
     
     @pytest.mark.asyncio
-    async def test_data_aggregation_pipeline(self, db_manager, cache_manager):
+    async def test_data_aggregation_pipeline(self, db_manager, cache_manager, mock_config):
         """Test complete data aggregation pipeline"""
         from data.processors.aggregator import DataAggregator
         
-        aggregator = DataAggregator(db_manager, cache_manager)
+        aggregator = DataAggregator(mock_config)
+        aggregator.db_manager = db_manager
+        aggregator.cache_manager = cache_manager
         
         # Simulate multiple data sources
         token = "0x1234567890123456789012345678901234567890"

@@ -1,44 +1,14 @@
 # Cross-file Reference & Signature Verification Report
 
 - Root: `C:\Users\HP\Desktop\ClaudeDex`
-- Python modules indexed: `97`
-- Calls analyzed: `13723`
-- Skipped (external): `3666`
-- Skipped (unknown/duck-typed): `9845`
+- Python modules indexed: `121`
+- Calls analyzed: `14894`
+- Skipped (external): `3905`
+- Skipped (unknown/duck-typed): `10735`
 
 
-## Missing Definitions (7)
+## Missing Definitions (2)
 
-- **Missing definition: monitoring.logger.setup_logger**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\main.py`:49
-  - expr: `setup_logger`
-  - target: `monitoring.logger.setup_logger`
-  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\monitoring\logger.py`
-  - target_kind: `method_or_attr`
-- **Missing definition: config.load_config**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\main.py`:71
-  - expr: `load_config`
-  - target: `config.load_config`
-  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\config\__init__.py`
-  - target_kind: `function`
-- **Missing definition: security.encryption.SecurityManager**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\main.py`:78
-  - expr: `SecurityManager`
-  - target: `security.encryption.SecurityManager`
-  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\security\encryption.py`
-  - target_kind: `method_or_attr`
-- **Missing definition: trading.strategies.StrategyManager**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\core\engine.py`:113
-  - expr: `StrategyManager`
-  - target: `trading.strategies.StrategyManager`
-  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\trading\strategies\__init__.py`
-  - target_kind: `method_or_attr`
-- **Missing definition: monitoring.alerts.AlertManager**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\core\engine.py`:119
-  - expr: `AlertManager`
-  - target: `monitoring.alerts.AlertManager`
-  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\monitoring\alerts.py`
-  - target_kind: `method_or_attr`
 - **Missing definition: ml.models.ensemble_model.EnsembleModel**  
   File: `C:\Users\HP\Desktop\ClaudeDex\tests\integration\test_ml_integration.py`:120
   - expr: `EnsembleModel`
@@ -58,38 +28,8 @@
 - None
 
 
-## Signature Mismatches (18)
+## Signature Mismatches (14)
 
-- **core.event_bus.Event.__init__: Too many positional args: 1>0; Unknown keywords: data**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\core\engine.py`:230
-  - called_expr: `Event`
-  - called_args: `{'positional': 1, 'keywords': ['data']}`
-  - declared_signature: `__init__()`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\core\event_bus.py`
-  - target_kind: `method`
-  - missing_params: `[]`
-  - unknown_keywords: `['data']`
-  - allowed_positionals: `0`
-- **core.event_bus.Event.__init__: Too many positional args: 1>0; Unknown keywords: data**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\core\engine.py`:404
-  - called_expr: `Event`
-  - called_args: `{'positional': 1, 'keywords': ['data']}`
-  - declared_signature: `__init__()`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\core\event_bus.py`
-  - target_kind: `method`
-  - missing_params: `[]`
-  - unknown_keywords: `['data']`
-  - allowed_positionals: `0`
-- **core.event_bus.Event.__init__: Too many positional args: 1>0; Unknown keywords: data**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\core\engine.py`:543
-  - called_expr: `Event`
-  - called_args: `{'positional': 1, 'keywords': ['data']}`
-  - declared_signature: `__init__()`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\core\event_bus.py`
-  - target_kind: `method`
-  - missing_params: `[]`
-  - unknown_keywords: `['data']`
-  - allowed_positionals: `0`
 - **config.config_manager.ConfigManager.__init__: Unknown keywords: encryption_key**  
   File: `C:\Users\HP\Desktop\ClaudeDex\tests\conftest.py`:88
   - called_expr: `ConfigManager`
@@ -230,16 +170,6 @@
   - missing_params: `['config']`
   - unknown_keywords: `[]`
   - allowed_positionals: `2`
-- **trading.strategies.base_strategy.TradingSignal.__init__: Unknown keywords: chain, confidence, entry_price, indicators, metadata, signal_type, strategy_name, strength, timeframe, token_address**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\trading\strategies\ai_strategy.py`:409
-  - called_expr: `TradingSignal`
-  - called_args: `{'positional': 0, 'keywords': ['chain', 'confidence', 'entry_price', 'indicators', 'metadata', 'signal_type', 'strategy_name', 'strength', 'timeframe', 'token_address']}`
-  - declared_signature: `__init__()`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\trading\strategies\base_strategy.py`
-  - target_kind: `method`
-  - missing_params: `[]`
-  - unknown_keywords: `['chain', 'confidence', 'entry_price', 'indicators', 'metadata', 'signal_type', 'strategy_name', 'strength', 'timeframe', 'token_address']`
-  - allowed_positionals: `0`
 
 
 ## Import Failures (Parse) (0)
@@ -247,17 +177,8 @@
 - None
 
 
-## Import Object Missing (39)
+## Import Object Missing (34)
 
-- **from monitoring.logger import setup_logger -> setup_logger not found in project module**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\main.py`:1
-  - imported_as: `setup_logger`
-- **from config import load_config -> load_config not found in project module**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\main.py`:1
-  - imported_as: `load_config`
-- **from security.encryption import SecurityManager -> SecurityManager not found in project module**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\main.py`:1
-  - imported_as: `SecurityManager`
 - **from utils.constants import CHAIN_RPC_URLS -> CHAIN_RPC_URLS not found in project module**  
   File: `C:\Users\HP\Desktop\ClaudeDex\analysis\dev_analyzer.py`:1
   - imported_as: `CHAIN_RPC_URLS`
@@ -276,12 +197,6 @@
 - **from ml.models.ensemble_model import EnsembleModel -> EnsembleModel not found in project module**  
   File: `C:\Users\HP\Desktop\ClaudeDex\analysis\token_scorer.py`:1
   - imported_as: `EnsembleModel`
-- **from trading.strategies import StrategyManager -> StrategyManager not found in project module**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\core\engine.py`:1
-  - imported_as: `StrategyManager`
-- **from monitoring.alerts import AlertManager -> AlertManager not found in project module**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\core\engine.py`:1
-  - imported_as: `AlertManager`
 - **from utils.constants import HONEYPOT_CHECKS -> HONEYPOT_CHECKS not found in project module**  
   File: `C:\Users\HP\Desktop\ClaudeDex\data\collectors\honeypot_checker.py`:1
   - imported_as: `HONEYPOT_CHECKS`
@@ -470,11 +385,17 @@
   - definitions: `[('trading.strategies.base_strategy', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\strategies\\base_strategy.py', 35), ('utils.constants', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\utils\\constants.py', 338)]`
 
 
-## Function Name Collisions (across modules) (6)
+## Function Name Collisions (across modules) (8)
 
+- **Function name 'test_web3_connection' appears in multiple modules**  
+  File: ``:1
+  - definitions: `[('main', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py', 52), ('trading.executors.base_executor', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\executors\\base_executor.py', 1118)]`
+- **Function name 'test_api_connection' appears in multiple modules**  
+  File: ``:1
+  - definitions: `[('main', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py', 57), ('data.collectors.dexscreener', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\data\\collectors\\dexscreener.py', 933)]`
 - **Function name 'main' appears in multiple modules**  
   File: ``:1
-  - definitions: `[('main', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py', 314), ('xref_symbol_db', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\xref_symbol_db.py', 516), ('scripts.health_check', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\health_check.py', 58), ('scripts.run_tests', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\run_tests.py', 201), ('scripts.verify_claudedex_plus', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus.py', 579), ('scripts.verify_claudedex_plus2', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus2.py', 490), ('scripts.verify_claudedex_plus3', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus3.py', 461)]`
+  - definitions: `[('main', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py', 372), ('setup_env_keys', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\setup_env_keys.py', 32), ('xref_symbol_db', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\xref_symbol_db.py', 516), ('scripts.health_check', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\health_check.py', 58), ('scripts.run_tests', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\run_tests.py', 201), ('scripts.verify_claudedex_plus', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus.py', 579), ('scripts.verify_claudedex_plus2', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus2.py', 490), ('scripts.verify_claudedex_plus3', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus3.py', 461)]`
 - **Function name 'parse_expectations_from_md' appears in multiple modules**  
   File: ``:1
   - definitions: `[('scripts.verify_claudedex_plus', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus.py', 118), ('scripts.verify_claudedex_plus2', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus2.py', 98), ('scripts.verify_claudedex_plus3', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus3.py', 155)]`
@@ -498,7 +419,7 @@
 
 
 ---
-**Total findings:** 96
+**Total findings:** 84
 
 > Notes:
 > - External/stdlib/3rd-party calls are skipped.

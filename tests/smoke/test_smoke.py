@@ -10,6 +10,14 @@ from decimal import Decimal
 @pytest.mark.smoke
 class TestSmoke:
     """Quick validation tests"""
+
+    @pytest.fixture
+    def mock_config(self):
+        """Mock configuration"""
+        return {
+            "ml": {"model_dir": "models/"},
+            "trading": {"mode": "test"}
+        }
     
     @pytest.mark.asyncio
     async def test_database_connection(self, db_manager):
@@ -49,11 +57,11 @@ class TestSmoke:
         assert security_config.require_2fa == True
     
     @pytest.mark.asyncio
-    async def test_ml_model_loading(self):
+    async def test_ml_model_loading(self, mock_config):
         """Test ML model initialization"""
         from ml.models.rug_classifier import RugClassifier
         
-        classifier = RugClassifier()
+        classifier = RugClassifier(mock_config)
         assert classifier is not None
         
         # Test simple prediction
@@ -87,11 +95,11 @@ class TestSmoke:
                     pytest.skip(f"API {endpoint} not available")
     
     @pytest.mark.asyncio
-    async def test_engine_startup(self, risk_manager):
+    async def test_engine_startup(self, risk_manager, mock_config):
         """Test engine basic startup"""
         from core.engine import TradingBotEngine
         
-        engine = TradingBotEngine()
+        engine = TradingBotEngine(mock_config, mode="test")
         engine.risk_manager = risk_manager
         
         # Mock dependencies

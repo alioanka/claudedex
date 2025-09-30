@@ -1458,6 +1458,48 @@
 - `ensure_dir(path)`
 - `ensure_file(path)`
 
+## scripts.analyze_strategy
+- File: `scripts\analyze_strategy.py`
+
+### Functions
+- `analyze_strategy(strategy)`
+
+## scripts.check_balance
+- File: `scripts\check_balance.py`
+
+### Functions
+- `check_balance()`
+
+## scripts.close_all_positions
+- File: `scripts\close_all_positions.py`
+
+### Functions
+- `close_all_positions(confirm)`
+
+## scripts.daily_report
+- File: `scripts\daily_report.py`
+
+### Functions
+- `daily_report()`
+
+## scripts.emergency_stop
+- File: `scripts\emergency_stop.py`
+
+### Functions
+- `emergency_stop()`
+
+## scripts.export_trades
+- File: `scripts\export_trades.py`
+
+### Functions
+- `export_trades(format, output)`
+
+## scripts.generate_report
+- File: `scripts\generate_report.py`
+
+### Functions
+- `generate_report(days, format)`
+
 ## scripts.health_check
 - File: `scripts\health_check.py`
 
@@ -1470,6 +1512,48 @@
 
 ### Functions
 - `init_config()`
+
+## scripts.migrate_database
+- File: `scripts\migrate_database.py`
+
+### Functions
+- `migrate_database()`
+
+## scripts.optimize_db
+- File: `scripts\optimize_db.py`
+
+### Functions
+- `optimize_db()`
+
+## scripts.overnight_summary
+- File: `scripts\overnight_summary.py`
+
+### Functions
+- `overnight_summary()`
+
+## scripts.post_update_check
+- File: `scripts\post_update_check.py`
+
+### Functions
+- `post_update_check()`
+
+## scripts.reset_db_sequences
+- File: `scripts\reset_db_sequences.py`
+
+### Functions
+- `reset_sequences()`
+
+## scripts.reset_nonce
+- File: `scripts\reset_nonce.py`
+
+### Functions
+- `reset_nonce()`
+
+## scripts.retrain_models
+- File: `scripts\retrain_models.py`
+
+### Functions
+- `retrain_models(days_back)`
 
 ## scripts.run_tests
 - File: `scripts\run_tests.py`
@@ -1490,11 +1574,47 @@
   - `setup_environment()`
   - `start_redis()`
 
+## scripts.security_audit
+- File: `scripts\security_audit.py`
+
+### Functions
+- `security_audit()`
+
 ## scripts.setup_database
 - File: `scripts\setup_database.py`
 
 ### Functions
 - `setup_database()`
+
+## scripts.strategy_analysis
+- File: `scripts\strategy_analysis.py`
+
+### Functions
+- `strategy_analysis(month)`
+
+## scripts.test_alerts
+- File: `scripts\test_alerts.py`
+
+### Functions
+- `test_alerts()`
+
+## scripts.test_apis
+- File: `scripts\test_apis.py`
+
+### Functions
+- `test_apis()`
+
+## scripts.update_blacklists
+- File: `scripts\update_blacklists.py`
+
+### Functions
+- `update_blacklists()`
+
+## scripts.update_models
+- File: `scripts\update_models.py`
+
+### Functions
+- `update_models(weights_file)`
 
 ## scripts.verify_claudedex_plus
 - File: `scripts\verify_claudedex_plus.py`
@@ -1600,6 +1720,18 @@
 - **_CallCollector**
   - `__init__()`
   - `visit_Call(node)`
+
+## scripts.weekly_report
+- File: `scripts\weekly_report.py`
+
+### Functions
+- `weekly_report()`
+
+## scripts.withdraw_funds
+- File: `scripts\withdraw_funds.py`
+
+### Functions
+- `withdraw_funds(to_address, amount, confirm)`
 
 ## security
 - File: `security\__init__.py`
@@ -1732,6 +1864,15 @@
 
 ### Functions
 - `read_requirements(file)`
+
+## setup_env_keys
+- File: `setup_env_keys.py`
+
+### Functions
+- `encrypt_private_key(private_key, encryption_key)`
+- `generate_encryption_key()`
+- `generate_jwt_secret()`
+- `main()`
 
 ## tests
 - File: `tests\__init__.py`

@@ -43,10 +43,180 @@
     "expected": [],
     "found_methods": [
       {
+        "name": "setup_logger",
+        "qualified_name": "setup_logger",
+        "is_async": false,
+        "lineno": 33,
+        "scope": "module",
+        "params": [
+          "name",
+          "mode"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": "logging.Logger",
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "StructuredLogger",
+          "getLogger"
+        ]
+      },
+      {
+        "name": "test_connection",
+        "qualified_name": "test_connection",
+        "is_async": true,
+        "lineno": 39,
+        "scope": "module",
+        "params": [],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "DatabaseManager",
+          "connect",
+          "disconnect"
+        ]
+      },
+      {
+        "name": "test_redis_connection",
+        "qualified_name": "test_redis_connection",
+        "is_async": true,
+        "lineno": 45,
+        "scope": "module",
+        "params": [],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "CacheManager",
+          "connect",
+          "disconnect"
+        ]
+      },
+      {
+        "name": "test_web3_connection",
+        "qualified_name": "test_web3_connection",
+        "is_async": true,
+        "lineno": 52,
+        "scope": "module",
+        "params": [],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "test_web3"
+        ]
+      },
+      {
+        "name": "test_api_connection",
+        "qualified_name": "test_api_connection",
+        "is_async": true,
+        "lineno": 57,
+        "scope": "module",
+        "params": [],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "test_api"
+        ]
+      },
+      {
+        "name": "verify_models_loaded",
+        "qualified_name": "verify_models_loaded",
+        "is_async": true,
+        "lineno": 62,
+        "scope": "module",
+        "params": [],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "EnsemblePredictor"
+        ]
+      },
+      {
+        "name": "check_wallet_balance",
+        "qualified_name": "check_wallet_balance",
+        "is_async": true,
+        "lineno": 68,
+        "scope": "module",
+        "params": [],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "WalletSecurityManager"
+        ]
+      },
+      {
+        "name": "close_all_connections",
+        "qualified_name": "close_all_connections",
+        "is_async": true,
+        "lineno": 75,
+        "scope": "module",
+        "params": [],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "public",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "__init__",
+        "qualified_name": "HealthChecker.__init__",
+        "is_async": false,
+        "lineno": 82,
+        "scope": "class:HealthChecker",
+        "params": [
+          "self",
+          "engine"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "private",
+        "decorators": [],
+        "calls": []
+      },
+      {
+        "name": "monitor",
+        "qualified_name": "HealthChecker.monitor",
+        "is_async": true,
+        "lineno": 85,
+        "scope": "class:HealthChecker",
+        "params": [
+          "self"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "sleep",
+          "print"
+        ]
+      },
+      {
         "name": "__init__",
         "qualified_name": "TradingBotApplication.__init__",
         "is_async": false,
-        "lineno": 36,
+        "lineno": 97,
         "scope": "class:TradingBotApplication",
         "params": [
           "self",
@@ -69,7 +239,7 @@
         "name": "_signal_handler",
         "qualified_name": "TradingBotApplication._signal_handler",
         "is_async": false,
-        "lineno": 55,
+        "lineno": 116,
         "scope": "class:TradingBotApplication",
         "params": [
           "self",
@@ -90,7 +260,7 @@
         "name": "initialize",
         "qualified_name": "TradingBotApplication.initialize",
         "is_async": true,
-        "lineno": 60,
+        "lineno": 121,
         "scope": "class:TradingBotApplication",
         "params": [
           "self"
@@ -109,17 +279,16 @@
           "now",
           "info",
           "info",
-          "load_config",
+          "ConfigManager",
+          "get_config",
           "_validate_environment",
           "info",
-          "SecurityManager",
-          "initialize",
+          "EncryptionManager",
           "info",
+          "hasattr",
+          "get_database_config",
           "DatabaseManager",
-          "initialize",
-          "needs_migration",
-          "info",
-          "run_migrations",
+          "connect",
           "info",
           "TradingBotEngine",
           "initialize",
@@ -135,7 +304,7 @@
         "name": "_validate_environment",
         "qualified_name": "TradingBotApplication._validate_environment",
         "is_async": false,
-        "lineno": 110,
+        "lineno": 167,
         "scope": "class:TradingBotApplication",
         "params": [
           "self"
@@ -157,7 +326,7 @@
         "name": "_perform_system_checks",
         "qualified_name": "TradingBotApplication._perform_system_checks",
         "is_async": true,
-        "lineno": 131,
+        "lineno": 188,
         "scope": "class:TradingBotApplication",
         "params": [
           "self"
@@ -178,7 +347,7 @@
         "name": "_check_database",
         "qualified_name": "TradingBotApplication._check_database",
         "is_async": true,
-        "lineno": 152,
+        "lineno": 209,
         "scope": "class:TradingBotApplication",
         "params": [
           "self"
@@ -196,7 +365,7 @@
         "name": "_check_redis",
         "qualified_name": "TradingBotApplication._check_redis",
         "is_async": true,
-        "lineno": 157,
+        "lineno": 214,
         "scope": "class:TradingBotApplication",
         "params": [
           "self"
@@ -214,7 +383,7 @@
         "name": "_check_web3",
         "qualified_name": "TradingBotApplication._check_web3",
         "is_async": true,
-        "lineno": 162,
+        "lineno": 219,
         "scope": "class:TradingBotApplication",
         "params": [
           "self"
@@ -232,7 +401,7 @@
         "name": "_check_apis",
         "qualified_name": "TradingBotApplication._check_apis",
         "is_async": true,
-        "lineno": 167,
+        "lineno": 224,
         "scope": "class:TradingBotApplication",
         "params": [
           "self"
@@ -250,7 +419,7 @@
         "name": "_check_models",
         "qualified_name": "TradingBotApplication._check_models",
         "is_async": true,
-        "lineno": 172,
+        "lineno": 229,
         "scope": "class:TradingBotApplication",
         "params": [
           "self"
@@ -268,7 +437,7 @@
         "name": "_check_wallet",
         "qualified_name": "TradingBotApplication._check_wallet",
         "is_async": true,
-        "lineno": 177,
+        "lineno": 234,
         "scope": "class:TradingBotApplication",
         "params": [
           "self"
@@ -287,7 +456,7 @@
         "name": "run",
         "qualified_name": "TradingBotApplication.run",
         "is_async": true,
-        "lineno": 185,
+        "lineno": 242,
         "scope": "class:TradingBotApplication",
         "params": [
           "self"
@@ -321,7 +490,7 @@
         "name": "_status_reporter",
         "qualified_name": "TradingBotApplication._status_reporter",
         "is_async": true,
-        "lineno": 223,
+        "lineno": 280,
         "scope": "class:TradingBotApplication",
         "params": [
           "self"
@@ -344,7 +513,7 @@
         "name": "_shutdown_monitor",
         "qualified_name": "TradingBotApplication._shutdown_monitor",
         "is_async": true,
-        "lineno": 237,
+        "lineno": 294,
         "scope": "class:TradingBotApplication",
         "params": [
           "self"
@@ -363,7 +532,7 @@
         "name": "shutdown",
         "qualified_name": "TradingBotApplication.shutdown",
         "is_async": true,
-        "lineno": 242,
+        "lineno": 299,
         "scope": "class:TradingBotApplication",
         "params": [
           "self"
@@ -389,7 +558,7 @@
         "name": "parse_arguments",
         "qualified_name": "parse_arguments",
         "is_async": false,
-        "lineno": 269,
+        "lineno": 327,
         "scope": "module",
         "params": [],
         "has_varargs": false,
@@ -412,7 +581,7 @@
         "name": "main",
         "qualified_name": "main",
         "is_async": true,
-        "lineno": 314,
+        "lineno": 372,
         "scope": "module",
         "params": [],
         "has_varargs": false,
@@ -433,9 +602,11 @@
       }
     ],
     "found_classes": [
+      "HealthChecker",
       "TradingBotApplication"
     ],
     "class_bases": {
+      "HealthChecker": [],
       "TradingBotApplication": []
     },
     "missing": [],
@@ -4109,10 +4280,40 @@
     ],
     "found_methods": [
       {
+        "name": "__init__",
+        "qualified_name": "Event.__init__",
+        "is_async": false,
+        "lineno": 70,
+        "scope": "class:Event",
+        "params": [
+          "self",
+          "event_type",
+          "data"
+        ],
+        "has_varargs": false,
+        "has_varkw": true,
+        "returns": null,
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "isinstance",
+          "get",
+          "get",
+          "get",
+          "now",
+          "get",
+          "str",
+          "uuid4",
+          "get",
+          "get",
+          "get"
+        ]
+      },
+      {
         "name": "to_dict",
         "qualified_name": "Event.to_dict",
         "is_async": false,
-        "lineno": 68,
+        "lineno": 96,
         "scope": "class:Event",
         "params": [
           "self"
@@ -4130,7 +4331,7 @@
         "name": "to_json",
         "qualified_name": "Event.to_json",
         "is_async": false,
-        "lineno": 80,
+        "lineno": 108,
         "scope": "class:Event",
         "params": [
           "self"
@@ -4149,7 +4350,7 @@
         "name": "__init__",
         "qualified_name": "EventBus.__init__",
         "is_async": false,
-        "lineno": 97,
+        "lineno": 125,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4171,7 +4372,7 @@
         "name": "start",
         "qualified_name": "EventBus.start",
         "is_async": true,
-        "lineno": 134,
+        "lineno": 162,
         "scope": "class:EventBus",
         "params": [
           "self"
@@ -4193,7 +4394,7 @@
         "name": "stop",
         "qualified_name": "EventBus.stop",
         "is_async": true,
-        "lineno": 147,
+        "lineno": 175,
         "scope": "class:EventBus",
         "params": [
           "self"
@@ -4215,7 +4416,7 @@
         "name": "emit",
         "qualified_name": "EventBus.emit",
         "is_async": true,
-        "lineno": 170,
+        "lineno": 198,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4237,7 +4438,7 @@
         "name": "subscribe_sync",
         "qualified_name": "EventBus.subscribe_sync",
         "is_async": false,
-        "lineno": 196,
+        "lineno": 224,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4266,7 +4467,7 @@
         "name": "unsubscribe_sync",
         "qualified_name": "EventBus.unsubscribe_sync",
         "is_async": false,
-        "lineno": 235,
+        "lineno": 263,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4286,7 +4487,7 @@
         "name": "_process_events",
         "qualified_name": "EventBus._process_events",
         "is_async": true,
-        "lineno": 261,
+        "lineno": 289,
         "scope": "class:EventBus",
         "params": [
           "self"
@@ -4308,7 +4509,7 @@
         "name": "_handle_event",
         "qualified_name": "EventBus._handle_event",
         "is_async": true,
-        "lineno": 286,
+        "lineno": 314,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4337,7 +4538,7 @@
         "name": "_apply_filters",
         "qualified_name": "EventBus._apply_filters",
         "is_async": false,
-        "lineno": 331,
+        "lineno": 359,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4363,7 +4564,7 @@
         "name": "_add_to_history",
         "qualified_name": "EventBus._add_to_history",
         "is_async": false,
-        "lineno": 366,
+        "lineno": 394,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4384,7 +4585,7 @@
         "name": "get_history",
         "qualified_name": "EventBus.get_history",
         "is_async": false,
-        "lineno": 378,
+        "lineno": 406,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4404,7 +4605,7 @@
         "name": "get_statistics",
         "qualified_name": "EventBus.get_statistics",
         "is_async": false,
-        "lineno": 402,
+        "lineno": 430,
         "scope": "class:EventBus",
         "params": [
           "self"
@@ -4428,7 +4629,7 @@
         "name": "wait_for",
         "qualified_name": "EventBus.wait_for",
         "is_async": true,
-        "lineno": 416,
+        "lineno": 444,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4455,7 +4656,7 @@
         "name": "callback",
         "qualified_name": "EventBus.callback",
         "is_async": false,
-        "lineno": 432,
+        "lineno": 460,
         "scope": "class:EventBus",
         "params": [
           "event"
@@ -4474,7 +4675,7 @@
         "name": "clear_dead_letter_queue",
         "qualified_name": "EventBus.clear_dead_letter_queue",
         "is_async": false,
-        "lineno": 459,
+        "lineno": 487,
         "scope": "class:EventBus",
         "params": [
           "self"
@@ -4493,7 +4694,7 @@
         "name": "add_global_filter",
         "qualified_name": "EventBus.add_global_filter",
         "is_async": false,
-        "lineno": 470,
+        "lineno": 498,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4512,7 +4713,7 @@
         "name": "remove_global_filter",
         "qualified_name": "EventBus.remove_global_filter",
         "is_async": false,
-        "lineno": 479,
+        "lineno": 507,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4531,7 +4732,7 @@
         "name": "replay_events",
         "qualified_name": "EventBus.replay_events",
         "is_async": true,
-        "lineno": 489,
+        "lineno": 517,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4553,7 +4754,7 @@
         "name": "create_event_stream",
         "qualified_name": "EventBus.create_event_stream",
         "is_async": false,
-        "lineno": 511,
+        "lineno": 539,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4576,7 +4777,7 @@
         "name": "stream_handler",
         "qualified_name": "EventBus.stream_handler",
         "is_async": true,
-        "lineno": 524,
+        "lineno": 552,
         "scope": "class:EventBus",
         "params": [
           "event"
@@ -4594,7 +4795,7 @@
         "name": "publish",
         "qualified_name": "EventBus.publish",
         "is_async": true,
-        "lineno": 542,
+        "lineno": 570,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4621,7 +4822,7 @@
         "name": "subscribe",
         "qualified_name": "EventBus.subscribe",
         "is_async": true,
-        "lineno": 577,
+        "lineno": 605,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4653,7 +4854,7 @@
         "name": "unsubscribe",
         "qualified_name": "EventBus.unsubscribe",
         "is_async": true,
-        "lineno": 624,
+        "lineno": 652,
         "scope": "class:EventBus",
         "params": [
           "self",
@@ -4679,7 +4880,7 @@
         "name": "process_events",
         "qualified_name": "EventBus.process_events",
         "is_async": true,
-        "lineno": 661,
+        "lineno": 689,
         "scope": "class:EventBus",
         "params": [
           "self"
@@ -4697,7 +4898,7 @@
         "name": "__init__",
         "qualified_name": "EventLogger.__init__",
         "is_async": false,
-        "lineno": 670,
+        "lineno": 698,
         "scope": "class:EventLogger",
         "params": [
           "self",
@@ -4714,7 +4915,7 @@
         "name": "log_event",
         "qualified_name": "EventLogger.log_event",
         "is_async": true,
-        "lineno": 679,
+        "lineno": 707,
         "scope": "class:EventLogger",
         "params": [
           "self",
@@ -4736,7 +4937,7 @@
         "name": "read_events",
         "qualified_name": "EventLogger.read_events",
         "is_async": false,
-        "lineno": 688,
+        "lineno": 716,
         "scope": "class:EventLogger",
         "params": [
           "self",
@@ -4767,7 +4968,7 @@
         "name": "__init__",
         "qualified_name": "EventAggregator.__init__",
         "is_async": false,
-        "lineno": 726,
+        "lineno": 754,
         "scope": "class:EventAggregator",
         "params": [
           "self",
@@ -4788,7 +4989,7 @@
         "name": "add_event",
         "qualified_name": "EventAggregator.add_event",
         "is_async": true,
-        "lineno": 740,
+        "lineno": 768,
         "scope": "class:EventAggregator",
         "params": [
           "self",
@@ -4812,7 +5013,7 @@
         "name": "flush",
         "qualified_name": "EventAggregator.flush",
         "is_async": true,
-        "lineno": 763,
+        "lineno": 791,
         "scope": "class:EventAggregator",
         "params": [
           "self"
@@ -30728,7 +30929,7 @@
         "name": "_determine_signal_strength",
         "qualified_name": "AIStrategy._determine_signal_strength",
         "is_async": false,
-        "lineno": 439,
+        "lineno": 441,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -30745,7 +30946,7 @@
         "name": "_calculate_model_agreement",
         "qualified_name": "AIStrategy._calculate_model_agreement",
         "is_async": false,
-        "lineno": 452,
+        "lineno": 454,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -30769,7 +30970,7 @@
         "name": "_assess_feature_quality",
         "qualified_name": "AIStrategy._assess_feature_quality",
         "is_async": false,
-        "lineno": 477,
+        "lineno": 479,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -30796,7 +30997,7 @@
         "name": "_prepare_pump_features",
         "qualified_name": "AIStrategy._prepare_pump_features",
         "is_async": false,
-        "lineno": 504,
+        "lineno": 506,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -30837,7 +31038,7 @@
         "name": "_calculate_technical_score",
         "qualified_name": "AIStrategy._calculate_technical_score",
         "is_async": true,
-        "lineno": 543,
+        "lineno": 545,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -30868,7 +31069,7 @@
         "name": "_calculate_returns",
         "qualified_name": "AIStrategy._calculate_returns",
         "is_async": false,
-        "lineno": 586,
+        "lineno": 588,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -30890,7 +31091,7 @@
         "name": "_calculate_log_returns",
         "qualified_name": "AIStrategy._calculate_log_returns",
         "is_async": false,
-        "lineno": 599,
+        "lineno": 601,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -30913,7 +31114,7 @@
         "name": "_calculate_volatility",
         "qualified_name": "AIStrategy._calculate_volatility",
         "is_async": false,
-        "lineno": 612,
+        "lineno": 614,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -30936,7 +31137,7 @@
         "name": "_calculate_momentum",
         "qualified_name": "AIStrategy._calculate_momentum",
         "is_async": false,
-        "lineno": 620,
+        "lineno": 622,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -30956,7 +31157,7 @@
         "name": "_calculate_volume_ratio",
         "qualified_name": "AIStrategy._calculate_volume_ratio",
         "is_async": false,
-        "lineno": 627,
+        "lineno": 629,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -30978,7 +31179,7 @@
         "name": "_calculate_vwap",
         "qualified_name": "AIStrategy._calculate_vwap",
         "is_async": false,
-        "lineno": 637,
+        "lineno": 639,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -31004,7 +31205,7 @@
         "name": "_calculate_skewness",
         "qualified_name": "AIStrategy._calculate_skewness",
         "is_async": false,
-        "lineno": 649,
+        "lineno": 651,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -31027,7 +31228,7 @@
         "name": "_calculate_kurtosis",
         "qualified_name": "AIStrategy._calculate_kurtosis",
         "is_async": false,
-        "lineno": 664,
+        "lineno": 666,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -31050,7 +31251,7 @@
         "name": "_calculate_hurst_exponent",
         "qualified_name": "AIStrategy._calculate_hurst_exponent",
         "is_async": false,
-        "lineno": 679,
+        "lineno": 681,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -31083,7 +31284,7 @@
         "name": "_estimate_spread",
         "qualified_name": "AIStrategy._estimate_spread",
         "is_async": true,
-        "lineno": 705,
+        "lineno": 707,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -31108,7 +31309,7 @@
         "name": "_calculate_order_imbalance",
         "qualified_name": "AIStrategy._calculate_order_imbalance",
         "is_async": true,
-        "lineno": 723,
+        "lineno": 725,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -31129,7 +31330,7 @@
         "name": "_calculate_rsi",
         "qualified_name": "AIStrategy._calculate_rsi",
         "is_async": false,
-        "lineno": 739,
+        "lineno": 741,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -31158,7 +31359,7 @@
         "name": "_calculate_macd_signal",
         "qualified_name": "AIStrategy._calculate_macd_signal",
         "is_async": false,
-        "lineno": 767,
+        "lineno": 769,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -31179,7 +31380,7 @@
         "name": "_calculate_bb_position",
         "qualified_name": "AIStrategy._calculate_bb_position",
         "is_async": false,
-        "lineno": 779,
+        "lineno": 781,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -31201,7 +31402,7 @@
         "name": "_detect_pattern_strength",
         "qualified_name": "AIStrategy._detect_pattern_strength",
         "is_async": true,
-        "lineno": 802,
+        "lineno": 804,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -31222,7 +31423,7 @@
         "name": "_calculate_support_distance",
         "qualified_name": "AIStrategy._calculate_support_distance",
         "is_async": false,
-        "lineno": 814,
+        "lineno": 816,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -31242,7 +31443,7 @@
         "name": "_calculate_resistance_distance",
         "qualified_name": "AIStrategy._calculate_resistance_distance",
         "is_async": false,
-        "lineno": 824,
+        "lineno": 826,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -31262,7 +31463,7 @@
         "name": "_calculate_trend",
         "qualified_name": "AIStrategy._calculate_trend",
         "is_async": false,
-        "lineno": 834,
+        "lineno": 836,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -31285,7 +31486,7 @@
         "name": "_record_prediction",
         "qualified_name": "AIStrategy._record_prediction",
         "is_async": true,
-        "lineno": 850,
+        "lineno": 852,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -31307,7 +31508,7 @@
         "name": "update_prediction_outcome",
         "qualified_name": "AIStrategy.update_prediction_outcome",
         "is_async": true,
-        "lineno": 868,
+        "lineno": 870,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -31327,7 +31528,7 @@
         "name": "_check_retrain",
         "qualified_name": "AIStrategy._check_retrain",
         "is_async": true,
-        "lineno": 883,
+        "lineno": 885,
         "scope": "class:AIStrategy",
         "params": [
           "self"
@@ -31349,7 +31550,7 @@
         "name": "_retrain_models",
         "qualified_name": "AIStrategy._retrain_models",
         "is_async": true,
-        "lineno": 901,
+        "lineno": 903,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -31373,7 +31574,7 @@
         "name": "_load_models",
         "qualified_name": "AIStrategy._load_models",
         "is_async": true,
-        "lineno": 927,
+        "lineno": 929,
         "scope": "class:AIStrategy",
         "params": [
           "self"
@@ -31392,7 +31593,7 @@
         "name": "get_feature_importance",
         "qualified_name": "AIStrategy.get_feature_importance",
         "is_async": false,
-        "lineno": 939,
+        "lineno": 941,
         "scope": "class:AIStrategy",
         "params": [
           "self"
@@ -31408,7 +31609,7 @@
         "name": "explain_prediction",
         "qualified_name": "AIStrategy.explain_prediction",
         "is_async": true,
-        "lineno": 944,
+        "lineno": 946,
         "scope": "class:AIStrategy",
         "params": [
           "self",
@@ -35174,6 +35375,120 @@
           "ChannelConfig",
           "get"
         ]
+      },
+      {
+        "name": "__init__",
+        "qualified_name": "AlertManager.__init__",
+        "is_async": false,
+        "lineno": 1391,
+        "scope": "class:AlertManager",
+        "params": [
+          "self",
+          "config"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "private",
+        "decorators": [],
+        "calls": [
+          "AlertsSystem"
+        ]
+      },
+      {
+        "name": "send_critical",
+        "qualified_name": "AlertManager.send_critical",
+        "is_async": true,
+        "lineno": 1396,
+        "scope": "class:AlertManager",
+        "params": [
+          "self",
+          "message"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "send_alert"
+        ]
+      },
+      {
+        "name": "send_error",
+        "qualified_name": "AlertManager.send_error",
+        "is_async": true,
+        "lineno": 1404,
+        "scope": "class:AlertManager",
+        "params": [
+          "self",
+          "message"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "send_alert"
+        ]
+      },
+      {
+        "name": "send_warning",
+        "qualified_name": "AlertManager.send_warning",
+        "is_async": true,
+        "lineno": 1412,
+        "scope": "class:AlertManager",
+        "params": [
+          "self",
+          "message"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "send_alert"
+        ]
+      },
+      {
+        "name": "send_info",
+        "qualified_name": "AlertManager.send_info",
+        "is_async": true,
+        "lineno": 1420,
+        "scope": "class:AlertManager",
+        "params": [
+          "self",
+          "message"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "send_alert"
+        ]
+      },
+      {
+        "name": "send_trade_alert",
+        "qualified_name": "AlertManager.send_trade_alert",
+        "is_async": true,
+        "lineno": 1428,
+        "scope": "class:AlertManager",
+        "params": [
+          "self",
+          "message"
+        ],
+        "has_varargs": false,
+        "has_varkw": false,
+        "returns": null,
+        "visibility": "public",
+        "decorators": [],
+        "calls": [
+          "send_trading_alert"
+        ]
       }
     ],
     "found_classes": [
@@ -35183,7 +35498,8 @@
       "Alert",
       "AlertRule",
       "ChannelConfig",
-      "AlertsSystem"
+      "AlertsSystem",
+      "AlertManager"
     ],
     "class_bases": {
       "AlertPriority": [
@@ -35198,7 +35514,8 @@
       "Alert": [],
       "AlertRule": [],
       "ChannelConfig": [],
-      "AlertsSystem": []
+      "AlertsSystem": [],
+      "AlertManager": []
     },
     "missing": [],
     "async_mismatches": [],

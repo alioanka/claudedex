@@ -1,33 +1,6 @@
 {
   "import_object_missing": [
     {
-      "message": "from monitoring.logger import setup_logger -> setup_logger not found in project module",
-      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
-      "module": "main",
-      "lineno": 1,
-      "context": {
-        "imported_as": "setup_logger"
-      }
-    },
-    {
-      "message": "from config import load_config -> load_config not found in project module",
-      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
-      "module": "main",
-      "lineno": 1,
-      "context": {
-        "imported_as": "load_config"
-      }
-    },
-    {
-      "message": "from security.encryption import SecurityManager -> SecurityManager not found in project module",
-      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
-      "module": "main",
-      "lineno": 1,
-      "context": {
-        "imported_as": "SecurityManager"
-      }
-    },
-    {
       "message": "from utils.constants import CHAIN_RPC_URLS -> CHAIN_RPC_URLS not found in project module",
       "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\analysis\\dev_analyzer.py",
       "module": "analysis.dev_analyzer",
@@ -79,24 +52,6 @@
       "lineno": 1,
       "context": {
         "imported_as": "EnsembleModel"
-      }
-    },
-    {
-      "message": "from trading.strategies import StrategyManager -> StrategyManager not found in project module",
-      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\core\\engine.py",
-      "module": "core.engine",
-      "lineno": 1,
-      "context": {
-        "imported_as": "StrategyManager"
-      }
-    },
-    {
-      "message": "from monitoring.alerts import AlertManager -> AlertManager not found in project module",
-      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\core\\engine.py",
-      "module": "core.engine",
-      "lineno": 1,
-      "context": {
-        "imported_as": "AlertManager"
       }
     },
     {
@@ -906,6 +861,46 @@
   ],
   "name_collision_function_across_modules": [
     {
+      "message": "Function name 'test_web3_connection' appears in multiple modules",
+      "filepath": "",
+      "module": "",
+      "lineno": 1,
+      "context": {
+        "definitions": [
+          [
+            "main",
+            "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
+            52
+          ],
+          [
+            "trading.executors.base_executor",
+            "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\executors\\base_executor.py",
+            1118
+          ]
+        ]
+      }
+    },
+    {
+      "message": "Function name 'test_api_connection' appears in multiple modules",
+      "filepath": "",
+      "module": "",
+      "lineno": 1,
+      "context": {
+        "definitions": [
+          [
+            "main",
+            "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
+            57
+          ],
+          [
+            "data.collectors.dexscreener",
+            "C:\\Users\\HP\\Desktop\\ClaudeDex\\data\\collectors\\dexscreener.py",
+            933
+          ]
+        ]
+      }
+    },
+    {
       "message": "Function name 'main' appears in multiple modules",
       "filepath": "",
       "module": "",
@@ -915,7 +910,12 @@
           [
             "main",
             "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
-            314
+            372
+          ],
+          [
+            "setup_env_keys",
+            "C:\\Users\\HP\\Desktop\\ClaudeDex\\setup_env_keys.py",
+            32
           ],
           [
             "xref_symbol_db",
@@ -1071,162 +1071,7 @@
       }
     }
   ],
-  "missing_definition": [
-    {
-      "message": "Missing definition: monitoring.logger.setup_logger",
-      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
-      "module": "main",
-      "lineno": 49,
-      "context": {
-        "expr": "setup_logger",
-        "target": "monitoring.logger.setup_logger",
-        "target_module_file": "C:\\Users\\HP\\Desktop\\ClaudeDex\\monitoring\\logger.py",
-        "target_kind": "method_or_attr"
-      }
-    },
-    {
-      "message": "Missing definition: config.load_config",
-      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
-      "module": "main",
-      "lineno": 71,
-      "context": {
-        "expr": "load_config",
-        "target": "config.load_config",
-        "target_module_file": "C:\\Users\\HP\\Desktop\\ClaudeDex\\config\\__init__.py",
-        "target_kind": "function"
-      }
-    },
-    {
-      "message": "Missing definition: security.encryption.SecurityManager",
-      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
-      "module": "main",
-      "lineno": 78,
-      "context": {
-        "expr": "SecurityManager",
-        "target": "security.encryption.SecurityManager",
-        "target_module_file": "C:\\Users\\HP\\Desktop\\ClaudeDex\\security\\encryption.py",
-        "target_kind": "method_or_attr"
-      }
-    },
-    {
-      "message": "Missing definition: trading.strategies.StrategyManager",
-      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\core\\engine.py",
-      "module": "core.engine",
-      "lineno": 113,
-      "context": {
-        "expr": "StrategyManager",
-        "target": "trading.strategies.StrategyManager",
-        "target_module_file": "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\strategies\\__init__.py",
-        "target_kind": "method_or_attr"
-      }
-    },
-    {
-      "message": "Missing definition: monitoring.alerts.AlertManager",
-      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\core\\engine.py",
-      "module": "core.engine",
-      "lineno": 119,
-      "context": {
-        "expr": "AlertManager",
-        "target": "monitoring.alerts.AlertManager",
-        "target_module_file": "C:\\Users\\HP\\Desktop\\ClaudeDex\\monitoring\\alerts.py",
-        "target_kind": "method_or_attr"
-      }
-    },
-    {
-      "message": "Missing definition: ml.models.ensemble_model.EnsembleModel",
-      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\tests\\integration\\test_ml_integration.py",
-      "module": "tests.integration.test_ml_integration",
-      "lineno": 120,
-      "context": {
-        "expr": "EnsembleModel",
-        "target": "ml.models.ensemble_model.EnsembleModel",
-        "target_module_file": "C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\models\\ensemble_model.py",
-        "target_kind": "method_or_attr"
-      }
-    },
-    {
-      "message": "Missing definition: ml.models.ensemble_model.EnsembleModel",
-      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\strategies\\ai_strategy.py",
-      "module": "trading.strategies.ai_strategy",
-      "lineno": 84,
-      "context": {
-        "expr": "EnsembleModel",
-        "target": "ml.models.ensemble_model.EnsembleModel",
-        "target_module_file": "C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\models\\ensemble_model.py",
-        "target_kind": "method_or_attr"
-      }
-    }
-  ],
   "signature_mismatch": [
-    {
-      "message": "core.event_bus.Event.__init__: Too many positional args: 1>0; Unknown keywords: data",
-      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\core\\engine.py",
-      "module": "core.engine",
-      "lineno": 230,
-      "context": {
-        "called_expr": "Event",
-        "called_args": {
-          "positional": 1,
-          "keywords": [
-            "data"
-          ]
-        },
-        "declared_signature": "__init__()",
-        "declared_in": "C:\\Users\\HP\\Desktop\\ClaudeDex\\core\\event_bus.py",
-        "target_kind": "method",
-        "missing_params": [],
-        "unknown_keywords": [
-          "data"
-        ],
-        "allowed_positionals": 0
-      }
-    },
-    {
-      "message": "core.event_bus.Event.__init__: Too many positional args: 1>0; Unknown keywords: data",
-      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\core\\engine.py",
-      "module": "core.engine",
-      "lineno": 404,
-      "context": {
-        "called_expr": "Event",
-        "called_args": {
-          "positional": 1,
-          "keywords": [
-            "data"
-          ]
-        },
-        "declared_signature": "__init__()",
-        "declared_in": "C:\\Users\\HP\\Desktop\\ClaudeDex\\core\\event_bus.py",
-        "target_kind": "method",
-        "missing_params": [],
-        "unknown_keywords": [
-          "data"
-        ],
-        "allowed_positionals": 0
-      }
-    },
-    {
-      "message": "core.event_bus.Event.__init__: Too many positional args: 1>0; Unknown keywords: data",
-      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\core\\engine.py",
-      "module": "core.engine",
-      "lineno": 543,
-      "context": {
-        "called_expr": "Event",
-        "called_args": {
-          "positional": 1,
-          "keywords": [
-            "data"
-          ]
-        },
-        "declared_signature": "__init__()",
-        "declared_in": "C:\\Users\\HP\\Desktop\\ClaudeDex\\core\\event_bus.py",
-        "target_kind": "method",
-        "missing_params": [],
-        "unknown_keywords": [
-          "data"
-        ],
-        "allowed_positionals": 0
-      }
-    },
     {
       "message": "config.config_manager.ConfigManager.__init__: Unknown keywords: encryption_key",
       "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\tests\\conftest.py",
@@ -1529,55 +1374,40 @@
         "unknown_keywords": [],
         "allowed_positionals": 2
       }
+    }
+  ],
+  "missing_definition": [
+    {
+      "message": "Missing definition: ml.models.ensemble_model.EnsembleModel",
+      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\tests\\integration\\test_ml_integration.py",
+      "module": "tests.integration.test_ml_integration",
+      "lineno": 120,
+      "context": {
+        "expr": "EnsembleModel",
+        "target": "ml.models.ensemble_model.EnsembleModel",
+        "target_module_file": "C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\models\\ensemble_model.py",
+        "target_kind": "method_or_attr"
+      }
     },
     {
-      "message": "trading.strategies.base_strategy.TradingSignal.__init__: Unknown keywords: chain, confidence, entry_price, indicators, metadata, signal_type, strategy_name, strength, timeframe, token_address",
+      "message": "Missing definition: ml.models.ensemble_model.EnsembleModel",
       "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\strategies\\ai_strategy.py",
       "module": "trading.strategies.ai_strategy",
-      "lineno": 409,
+      "lineno": 84,
       "context": {
-        "called_expr": "TradingSignal",
-        "called_args": {
-          "positional": 0,
-          "keywords": [
-            "chain",
-            "confidence",
-            "entry_price",
-            "indicators",
-            "metadata",
-            "signal_type",
-            "strategy_name",
-            "strength",
-            "timeframe",
-            "token_address"
-          ]
-        },
-        "declared_signature": "__init__()",
-        "declared_in": "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\strategies\\base_strategy.py",
-        "target_kind": "method",
-        "missing_params": [],
-        "unknown_keywords": [
-          "chain",
-          "confidence",
-          "entry_price",
-          "indicators",
-          "metadata",
-          "signal_type",
-          "strategy_name",
-          "strength",
-          "timeframe",
-          "token_address"
-        ],
-        "allowed_positionals": 0
+        "expr": "EnsembleModel",
+        "target": "ml.models.ensemble_model.EnsembleModel",
+        "target_module_file": "C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\models\\ensemble_model.py",
+        "target_kind": "method_or_attr"
       }
     }
   ],
   "_stats": [
     {
-      "skipped_external": 3666,
-      "skipped_unknown": 9845,
-      "modules_indexed": 97,
-      "calls_analyzed": 13723
+      "skipped_external": 3905,
+      "skipped_unknown": 10735,
+      "modules_indexed": 121,
+      "calls_analyzed": 14894
     }
   ]
 }

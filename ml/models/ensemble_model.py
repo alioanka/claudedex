@@ -508,6 +508,8 @@ class EnsemblePredictor:
 
     # Add this wrapper method to EnsemblePredictor class in ensemble_model.py:
 
+    # Replace the current predict() method (around line 565) with this fixed version:
+
     async def predict(self, token: str, chain: str) -> Dict:
         """
         Predict pump/rug probability for a token (API-compliant signature)
@@ -519,31 +521,63 @@ class EnsemblePredictor:
         Returns:
             Dictionary with prediction results
         """
-        # Import necessary data collector
-        from ..data.collectors.dexscreener import DexScreenerCollector
-        
-        # Fetch token data
-        collector = DexScreenerCollector()
-        token_data = await collector.get_token_info(token, chain)
-        
-        # Extract features and get prediction
-        features = self.extract_features(token_data)
-        result = await self._predict_from_features(features)  # Renamed internal method
-        
-        # Return API-compliant format
-        return {
-            'token': token,
-            'chain': chain,
-            'pump_probability': result.pump_probability,
-            'rug_probability': result.rug_probability,
-            'expected_return': result.expected_return,
-            'confidence': result.confidence,
-            'time_to_pump': result.time_to_pump,
-            'risk_adjusted_score': result.risk_adjusted_score,
-            'model_agreements': result.model_agreements,
-            'feature_importance': result.feature_importance,
-            'timestamp': result.prediction_timestamp.isoformat()
-        }
+        try:
+            # Import at runtime to avoid circular dependency
+            import sys
+            from pathlib import Path
+            
+            # Add parent directory to path if needed
+            current_dir = Path(__file__).parent
+            project_root = current_dir.parent.parent
+            if str(project_root) not in sys.path:
+                sys.path.insert(0, str(project_root))
+            
+            from data.collectors.dexscreener import DexScreenerCollector
+            from config.config_manager import ConfigManager
+            
+            # Initialize config if needed
+            config = ConfigManager(config_dir="config")
+            await config.initialize()
+            
+            # Fetch token data
+            collector = DexScreenerCollector(config)
+            await collector.initialize()
+            token_data = await collector.get_token_info(token, chain)
+            
+            # Extract features and get prediction
+            features = self.extract_features(token_data)
+            result = await self._predict_from_features(features)
+            
+            # Return API-compliant format
+            return {
+                'token': token,
+                'chain': chain,
+                'pump_probability': result.pump_probability,
+                'rug_probability': result.rug_probability,
+                'expected_return': result.expected_return,
+                'confidence': result.confidence,
+                'time_to_pump': result.time_to_pump,
+                'risk_adjusted_score': result.risk_adjusted_score,
+                'model_agreements': result.model_agreements,
+                'feature_importance': result.feature_importance,
+                'timestamp': result.prediction_timestamp.isoformat()
+            }
+        except Exception as e:
+            # Return safe default on error
+            return {
+                'token': token,
+                'chain': chain,
+                'pump_probability': 0.5,
+                'rug_probability': 0.5,
+                'expected_return': 0.0,
+                'confidence': 0.1,
+                'time_to_pump': None,
+                'risk_adjusted_score': 0.0,
+                'model_agreements': {},
+                'feature_importance': {},
+                'timestamp': datetime.now().isoformat(),
+                'error': str(e)
+            }
 
     # Rename existing predict method to _predict_from_features:
     async def _predict_from_features(self, features: np.ndarray) -> PredictionResult:

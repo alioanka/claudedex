@@ -19,6 +19,15 @@ from ml.models.rug_classifier import RugClassifier
 @pytest.mark.performance
 class TestPerformance:
     """Performance test suite"""
+
+    # Add mock_config fixture at top of TestPerformance class (after line 17):
+    @pytest.fixture
+    def mock_config(self):
+        """Mock configuration for performance tests"""
+        return {
+            "ml": {"model_dir": "models/"},
+            "trading": {"max_position_size": Decimal("1000")}
+        }
     
     @pytest.mark.asyncio
     async def test_database_write_performance(self, db_manager, benchmark_data):
@@ -66,9 +75,9 @@ class TestPerformance:
         assert read_throughput > 10000  # At least 10000 ops/second
     
     @pytest.mark.asyncio
-    async def test_ml_model_performance(self, benchmark_data):
+    async def test_ml_model_performance(self, benchmark_data, mock_config):
         """Test ML model inference performance"""
-        classifier = RugClassifier()
+        classifier = RugClassifier(mock_config)
         
         # Create test data
         test_tokens = []

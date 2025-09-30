@@ -18,11 +18,25 @@ from security.audit_logger import AuditLogger, AuditEventType, AuditSeverity
 @pytest.mark.security
 class TestSecurity:
     """Security test suite"""
+    @pytest.fixture
+    def mock_config(self):
+        """Mock security configuration"""
+        return {
+            "security": {
+                "encryption_key": "test_key_32_bytes_long_000000!",
+                "jwt_secret": "test_jwt_secret",
+                "rate_limits": {"default": {"requests": 100, "window": 60}}
+            },
+            "wallet": {
+                "security_level": "high",
+                "require_2fa": True
+            }
+        }
     
     @pytest.mark.asyncio
-    async def test_encryption_manager(self):
+    async def test_encryption_manager(self, mock_config):
         """Test encryption and decryption"""
-        manager = EncryptionManager()
+        manager = EncryptionManager(mock_config)
         
         # Test key generation
         key = manager.generate_key()
@@ -44,9 +58,9 @@ class TestSecurity:
         assert manager.decrypt(encrypted2) == sensitive_data
     
     @pytest.mark.asyncio
-    async def test_api_security_rate_limiting(self):
+    async def test_api_security_rate_limiting(self, mock_config):
         """Test API rate limiting"""
-        api_security = APISecurityManager()
+        api_security = APISecurityManager(mock_config)
         await api_security.initialize()
         
         client_ip = "192.168.1.1"
@@ -68,9 +82,9 @@ class TestSecurity:
         # In real scenario, would wait full window
     
     @pytest.mark.asyncio
-    async def test_api_authentication(self):
+    async def test_api_authentication(self, mock_config):
         """Test JWT authentication"""
-        api_security = APISecurityManager()
+        api_security = APISecurityManager(mock_config)
         await api_security.initialize()
         
         # Generate token
@@ -202,11 +216,11 @@ class TestSecurity:
             assert validator.validate_ethereum_address(address) == False
     
     @pytest.mark.asyncio
-    async def test_private_key_protection(self):
+    async def test_private_key_protection(self, mock_config):
         """Test private key protection"""
         from security.wallet_security import WalletSecurityManager
         
-        manager = WalletSecurityManager()
+        manager = WalletSecurityManager(mock_config)
         await manager.initialize()
         
         # Private keys should never be exposed in logs or errors

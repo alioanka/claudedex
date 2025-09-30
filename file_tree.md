@@ -5,6 +5,7 @@ ClaudeDex/
 ├── main.py
 ├── scaffold.py
 ├── setup.py
+├── setup_env_keys.py
 ├── verify_references.py
 ├── xref_symbol_db.py
 └── analysis/
@@ -71,14 +72,36 @@ ClaudeDex/
     ├── logger.py
     ├── performance.py
 └── scripts/
+    ├── analyze_strategy.py
+    ├── check_balance.py
+    ├── close_all_positions.py
+    ├── daily_report.py
+    ├── emergency_stop.py
+    ├── export_trades.py
+    ├── generate_report.py
     ├── health_check.py
     ├── init_config.py
+    ├── migrate_database.py
+    ├── optimize_db.py
+    ├── overnight_summary.py
+    ├── post_update_check.py
+    ├── reset_db_sequences.py
+    ├── reset_nonce.py
+    ├── retrain_models.py
     ├── run_tests.py
+    ├── security_audit.py
     ├── setup_database.py
+    ├── strategy_analysis.py
+    ├── test_alerts.py
+    ├── test_apis.py
     ├── train_models.py
+    ├── update_blacklists.py
+    ├── update_models.py
     ├── verify_claudedex_plus.py
     ├── verify_claudedex_plus2.py
     ├── verify_claudedex_plus3.py
+    ├── weekly_report.py
+    ├── withdraw_funds.py
 └── security/
     ├── __init__.py
     ├── api_security.py
