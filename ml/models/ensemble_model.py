@@ -535,11 +535,20 @@ class EnsemblePredictor:
             from data.collectors.dexscreener import DexScreenerCollector
             from config.config_manager import ConfigManager
             
-            # Initialize config if needed
-            config = ConfigManager(config_dir="config")
-            await config.initialize()
+            # ============================================
+            # FIX: Create config dict for DexScreenerCollector
+            # ============================================
+            config = {
+                'api_key': '',
+                'chains': ['ethereum', 'bsc', 'polygon', 'arbitrum', 'base'],
+                'rate_limit': 100,
+                'cache_duration': 60,
+                'min_liquidity': 10000,
+                'min_volume': 5000,
+                'max_age_hours': 24
+            }
             
-            # Fetch token data
+            # Fetch token data - NOW WITH CONFIG PARAMETER
             collector = DexScreenerCollector(config)
             await collector.initialize()
             token_data = await collector.get_token_info(token, chain)
@@ -934,9 +943,16 @@ class EnsemblePredictor:
         """
         # This would fetch token data from collectors
         # For now, return a placeholder
-        from ..data.collectors.dexscreener import DexScreenerCollector
-        collector = DexScreenerCollector()
-        token_data = await collector.get_token_info(token, chain)
+        from data.collectors.dexscreener import DexScreenerCollector
+        from config.config_manager import ConfigManager
+
+        # Initialize config if needed
+        config = ConfigManager(config_dir="config")
+        await config.initialize()
+
+        # Fetch token data
+        collector = DexScreenerCollector(config)  # ← Line 938 - This is CORRECT
+                token_data = await collector.get_token_info(token, chain)
         
         # Extract features and predict
         features = self.extract_features(token_data)

@@ -2,15 +2,15 @@
 
 - Root: `C:\Users\HP\Desktop\ClaudeDex`
 - Python modules indexed: `121`
-- Calls analyzed: `14894`
-- Skipped (external): `3905`
-- Skipped (unknown/duck-typed): `10735`
+- Calls analyzed: `14913`
+- Skipped (external): `3909`
+- Skipped (unknown/duck-typed): `10750`
 
 
 ## Missing Definitions (2)
 
 - **Missing definition: ml.models.ensemble_model.EnsembleModel**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\tests\integration\test_ml_integration.py`:120
+  File: `C:\Users\HP\Desktop\ClaudeDex\tests\integration\test_ml_integration.py`:140
   - expr: `EnsembleModel`
   - target: `ml.models.ensemble_model.EnsembleModel`
   - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\ml\models\ensemble_model.py`
@@ -28,148 +28,9 @@
 - None
 
 
-## Signature Mismatches (14)
+## Signature Mismatches (0)
 
-- **config.config_manager.ConfigManager.__init__: Unknown keywords: encryption_key**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\tests\conftest.py`:88
-  - called_expr: `ConfigManager`
-  - called_args: `{'positional': 0, 'keywords': ['config_dir', 'encryption_key']}`
-  - declared_signature: `__init__(config_dir) [defaults=1]`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\config\config_manager.py`
-  - target_kind: `method`
-  - missing_params: `[]`
-  - unknown_keywords: `['encryption_key']`
-  - allowed_positionals: `1`
-- **security.wallet_security.WalletSecurityManager.__init__: Missing: config**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\tests\conftest.py`:104
-  - called_expr: `WalletSecurityManager`
-  - called_args: `{'positional': 0, 'keywords': []}`
-  - declared_signature: `__init__(config)`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\security\wallet_security.py`
-  - target_kind: `method`
-  - missing_params: `['config']`
-  - unknown_keywords: `[]`
-  - allowed_positionals: `1`
-- **security.audit_logger.AuditLogger.__init__: Missing: config; Unknown keywords: log_dir, retention_days**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\tests\conftest.py`:114
-  - called_expr: `AuditLogger`
-  - called_args: `{'positional': 0, 'keywords': ['log_dir', 'retention_days']}`
-  - declared_signature: `__init__(config)`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\security\audit_logger.py`
-  - target_kind: `method`
-  - missing_params: `['config']`
-  - unknown_keywords: `['log_dir', 'retention_days']`
-  - allowed_positionals: `1`
-- **data.collectors.dexscreener.DexScreenerCollector.__init__: Missing: config**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\tests\integration\test_data_integration.py`:26
-  - called_expr: `DexScreenerCollector`
-  - called_args: `{'positional': 0, 'keywords': []}`
-  - declared_signature: `__init__(config)`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\data\collectors\dexscreener.py`
-  - target_kind: `method`
-  - missing_params: `['config']`
-  - unknown_keywords: `[]`
-  - allowed_positionals: `1`
-- **ml.models.rug_classifier.RugClassifier.__init__: Missing: config**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\tests\integration\test_ml_integration.py`:52
-  - called_expr: `RugClassifier`
-  - called_args: `{'positional': 0, 'keywords': []}`
-  - declared_signature: `__init__(config)`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\ml\models\rug_classifier.py`
-  - target_kind: `method`
-  - missing_params: `['config']`
-  - unknown_keywords: `[]`
-  - allowed_positionals: `1`
-- **ml.models.pump_predictor.PumpPredictor.__init__: Missing: config**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\tests\integration\test_ml_integration.py`:81
-  - called_expr: `PumpPredictor`
-  - called_args: `{'positional': 0, 'keywords': []}`
-  - declared_signature: `__init__(config)`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\ml\models\pump_predictor.py`
-  - target_kind: `method`
-  - missing_params: `['config']`
-  - unknown_keywords: `[]`
-  - allowed_positionals: `1`
-- **ml.models.rug_classifier.RugClassifier.__init__: Missing: config**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\tests\integration\test_ml_integration.py`:123
-  - called_expr: `RugClassifier`
-  - called_args: `{'positional': 0, 'keywords': []}`
-  - declared_signature: `__init__(config)`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\ml\models\rug_classifier.py`
-  - target_kind: `method`
-  - missing_params: `['config']`
-  - unknown_keywords: `[]`
-  - allowed_positionals: `1`
-- **ml.models.pump_predictor.PumpPredictor.__init__: Missing: config**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\tests\integration\test_ml_integration.py`:124
-  - called_expr: `PumpPredictor`
-  - called_args: `{'positional': 0, 'keywords': []}`
-  - declared_signature: `__init__(config)`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\ml\models\pump_predictor.py`
-  - target_kind: `method`
-  - missing_params: `['config']`
-  - unknown_keywords: `[]`
-  - allowed_positionals: `1`
-- **ml.models.rug_classifier.RugClassifier.__init__: Missing: config**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\tests\performance\test_performance.py`:71
-  - called_expr: `RugClassifier`
-  - called_args: `{'positional': 0, 'keywords': []}`
-  - declared_signature: `__init__(config)`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\ml\models\rug_classifier.py`
-  - target_kind: `method`
-  - missing_params: `['config']`
-  - unknown_keywords: `[]`
-  - allowed_positionals: `1`
-- **security.encryption.EncryptionManager.__init__: Missing: config**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\tests\security\test_security.py`:25
-  - called_expr: `EncryptionManager`
-  - called_args: `{'positional': 0, 'keywords': []}`
-  - declared_signature: `__init__(config)`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\security\encryption.py`
-  - target_kind: `method`
-  - missing_params: `['config']`
-  - unknown_keywords: `[]`
-  - allowed_positionals: `1`
-- **security.api_security.APISecurityManager.__init__: Missing: config**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\tests\security\test_security.py`:49
-  - called_expr: `APISecurityManager`
-  - called_args: `{'positional': 0, 'keywords': []}`
-  - declared_signature: `__init__(config)`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\security\api_security.py`
-  - target_kind: `method`
-  - missing_params: `['config']`
-  - unknown_keywords: `[]`
-  - allowed_positionals: `1`
-- **security.api_security.APISecurityManager.__init__: Missing: config**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\tests\security\test_security.py`:73
-  - called_expr: `APISecurityManager`
-  - called_args: `{'positional': 0, 'keywords': []}`
-  - declared_signature: `__init__(config)`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\security\api_security.py`
-  - target_kind: `method`
-  - missing_params: `['config']`
-  - unknown_keywords: `[]`
-  - allowed_positionals: `1`
-- **security.wallet_security.WalletSecurityManager.__init__: Missing: config**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\tests\security\test_security.py`:209
-  - called_expr: `WalletSecurityManager`
-  - called_args: `{'positional': 0, 'keywords': []}`
-  - declared_signature: `__init__(config)`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\security\wallet_security.py`
-  - target_kind: `method`
-  - missing_params: `['config']`
-  - unknown_keywords: `[]`
-  - allowed_positionals: `1`
-- **core.engine.TradingBotEngine.__init__: Missing: config**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\tests\unit\test_engine.py`:22
-  - called_expr: `TradingBotEngine`
-  - called_args: `{'positional': 0, 'keywords': []}`
-  - declared_signature: `__init__(config, mode) [defaults=1]`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\core\engine.py`
-  - target_kind: `method`
-  - missing_params: `['config']`
-  - unknown_keywords: `[]`
-  - allowed_positionals: `2`
+- None
 
 
 ## Import Failures (Parse) (0)
@@ -419,7 +280,7 @@
 
 
 ---
-**Total findings:** 84
+**Total findings:** 70
 
 > Notes:
 > - External/stdlib/3rd-party calls are skipped.

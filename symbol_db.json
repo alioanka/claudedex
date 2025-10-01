@@ -19127,7 +19127,9 @@
       },
       "wallet_security": {
         "name": "wallet_security",
-        "params": [],
+        "params": [
+          "config_manager"
+        ],
         "kwonly": [],
         "vararg": false,
         "kwarg": false,
@@ -19138,7 +19140,8 @@
       "audit_logger": {
         "name": "audit_logger",
         "params": [
-          "tmp_path"
+          "tmp_path",
+          "config_manager"
         ],
         "kwonly": [],
         "vararg": false,
@@ -19492,12 +19495,25 @@
     "classes": {
       "TestDataIntegration": {
         "methods": {
+          "mock_config": {
+            "name": "mock_config",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
           "test_dexscreener_to_database": {
             "name": "test_dexscreener_to_database",
             "params": [
               "self",
               "db_manager",
-              "mock_dex_api"
+              "mock_dex_api",
+              "mock_config"
             ],
             "kwonly": [],
             "vararg": false,
@@ -19511,7 +19527,8 @@
             "params": [
               "self",
               "cache_manager",
-              "mock_dex_api"
+              "mock_dex_api",
+              "mock_config"
             ],
             "kwonly": [],
             "vararg": false,
@@ -19525,7 +19542,8 @@
             "params": [
               "self",
               "db_manager",
-              "cache_manager"
+              "cache_manager",
+              "mock_config"
             ],
             "kwonly": [],
             "vararg": false,
@@ -19539,7 +19557,8 @@
             "params": [
               "self",
               "db_manager",
-              "cache_manager"
+              "cache_manager",
+              "mock_config"
             ],
             "kwonly": [],
             "vararg": false,
@@ -19577,6 +19596,18 @@
     "classes": {
       "TestMLIntegration": {
         "methods": {
+          "mock_config": {
+            "name": "mock_config",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
           "training_data": {
             "name": "training_data",
             "params": [
@@ -19594,7 +19625,8 @@
             "name": "test_rug_classifier_training",
             "params": [
               "self",
-              "training_data"
+              "training_data",
+              "mock_config"
             ],
             "kwonly": [],
             "vararg": false,
@@ -19607,7 +19639,8 @@
             "name": "test_pump_predictor_training",
             "params": [
               "self",
-              "db_manager"
+              "db_manager",
+              "mock_config"
             ],
             "kwonly": [],
             "vararg": false,
@@ -19621,7 +19654,8 @@
             "params": [
               "self",
               "training_data",
-              "db_manager"
+              "db_manager",
+              "mock_config"
             ],
             "kwonly": [],
             "vararg": false,
@@ -19701,6 +19735,18 @@
     "classes": {
       "TestPerformance": {
         "methods": {
+          "mock_config": {
+            "name": "mock_config",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
           "test_database_write_performance": {
             "name": "test_database_write_performance",
             "params": [
@@ -19732,7 +19778,8 @@
             "name": "test_ml_model_performance",
             "params": [
               "self",
-              "benchmark_data"
+              "benchmark_data",
+              "mock_config"
             ],
             "kwonly": [],
             "vararg": false,
@@ -19797,10 +19844,23 @@
     "classes": {
       "TestSecurity": {
         "methods": {
+          "mock_config": {
+            "name": "mock_config",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
           "test_encryption_manager": {
             "name": "test_encryption_manager",
             "params": [
-              "self"
+              "self",
+              "mock_config"
             ],
             "kwonly": [],
             "vararg": false,
@@ -19812,7 +19872,8 @@
           "test_api_security_rate_limiting": {
             "name": "test_api_security_rate_limiting",
             "params": [
-              "self"
+              "self",
+              "mock_config"
             ],
             "kwonly": [],
             "vararg": false,
@@ -19824,7 +19885,8 @@
           "test_api_authentication": {
             "name": "test_api_authentication",
             "params": [
-              "self"
+              "self",
+              "mock_config"
             ],
             "kwonly": [],
             "vararg": false,
@@ -19887,7 +19949,8 @@
           "test_private_key_protection": {
             "name": "test_private_key_protection",
             "params": [
-              "self"
+              "self",
+              "mock_config"
             ],
             "kwonly": [],
             "vararg": false,
@@ -19924,6 +19987,18 @@
     "classes": {
       "TestSmoke": {
         "methods": {
+          "mock_config": {
+            "name": "mock_config",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
           "test_database_connection": {
             "name": "test_database_connection",
             "params": [
@@ -19966,7 +20041,8 @@
           "test_ml_model_loading": {
             "name": "test_ml_model_loading",
             "params": [
-              "self"
+              "self",
+              "mock_config"
             ],
             "kwonly": [],
             "vararg": false,
@@ -19991,7 +20067,8 @@
             "name": "test_engine_startup",
             "params": [
               "self",
-              "risk_manager"
+              "risk_manager",
+              "mock_config"
             ],
             "kwonly": [],
             "vararg": false,
@@ -20016,11 +20093,24 @@
     "classes": {
       "TestTradingBotEngine": {
         "methods": {
+          "mock_config": {
+            "name": "mock_config",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
           "engine": {
             "name": "engine",
             "params": [
               "self",
-              "risk_manager"
+              "risk_manager",
+              "mock_config"
             ],
             "kwonly": [],
             "vararg": false,

@@ -1881,7 +1881,7 @@
 - File: `tests\conftest.py`
 
 ### Functions
-- `audit_logger(tmp_path)`
+- `audit_logger(tmp_path, config_manager)`
 - `benchmark_data()`
 - `cache_manager()`
 - `cleanup()`
@@ -1898,7 +1898,7 @@
 - `risk_manager()`
 - `sample_position()`
 - `sample_trading_opportunity()`
-- `wallet_security()`
+- `wallet_security(config_manager)`
 
 ## tests.fixtures.mock_data
 - File: `tests\fixtures\mock_data.py`
@@ -1930,20 +1930,22 @@
 
 ### Classes & Methods
 - **TestDataIntegration**
+  - `mock_config()`
   - `test_batch_processing(db_manager)`
-  - `test_data_aggregation_pipeline(db_manager, cache_manager)`
-  - `test_dexscreener_to_database(db_manager, mock_dex_api)`
-  - `test_honeypot_checker_caching(cache_manager, mock_dex_api)`
-  - `test_whale_tracker_integration(db_manager, cache_manager)`
+  - `test_data_aggregation_pipeline(db_manager, cache_manager, mock_config)`
+  - `test_dexscreener_to_database(db_manager, mock_dex_api, mock_config)`
+  - `test_honeypot_checker_caching(cache_manager, mock_dex_api, mock_config)`
+  - `test_whale_tracker_integration(db_manager, cache_manager, mock_config)`
 
 ## tests.integration.test_ml_integration
 - File: `tests\integration\test_ml_integration.py`
 
 ### Classes & Methods
 - **TestMLIntegration**
-  - `test_ensemble_model(training_data, db_manager)`
-  - `test_pump_predictor_training(db_manager)`
-  - `test_rug_classifier_training(training_data)`
+  - `mock_config()`
+  - `test_ensemble_model(training_data, db_manager, mock_config)`
+  - `test_pump_predictor_training(db_manager, mock_config)`
+  - `test_rug_classifier_training(training_data, mock_config)`
   - `training_data(db_manager)`
 
 ## tests.integration.test_trading_integration
@@ -1960,11 +1962,12 @@
 
 ### Classes & Methods
 - **TestPerformance**
+  - `mock_config()`
   - `test_cache_performance(cache_manager)`
   - `test_concurrent_request_handling(db_manager, cache_manager)`
   - `test_database_write_performance(db_manager, benchmark_data)`
   - `test_memory_usage(benchmark_data)`
-  - `test_ml_model_performance(benchmark_data)`
+  - `test_ml_model_performance(benchmark_data, mock_config)`
   - `test_order_execution_latency(benchmark)`
 
 ## tests.security.test_security
@@ -1972,12 +1975,13 @@
 
 ### Classes & Methods
 - **TestSecurity**
-  - `test_api_authentication()`
-  - `test_api_security_rate_limiting()`
+  - `mock_config()`
+  - `test_api_authentication(mock_config)`
+  - `test_api_security_rate_limiting(mock_config)`
   - `test_audit_logging(audit_logger)`
-  - `test_encryption_manager()`
+  - `test_encryption_manager(mock_config)`
   - `test_input_validation()`
-  - `test_private_key_protection()`
+  - `test_private_key_protection(mock_config)`
   - `test_secure_random_generation()`
   - `test_sql_injection_protection(db_manager)`
   - `test_wallet_security(wallet_security)`
@@ -1987,12 +1991,13 @@
 
 ### Classes & Methods
 - **TestSmoke**
+  - `mock_config()`
   - `test_api_endpoints_available()`
   - `test_cache_connection(cache_manager)`
   - `test_config_loading(config_manager)`
   - `test_database_connection(db_manager)`
-  - `test_engine_startup(risk_manager)`
-  - `test_ml_model_loading()`
+  - `test_engine_startup(risk_manager, mock_config)`
+  - `test_ml_model_loading(mock_config)`
 
 ## tests.test_all
 - File: `tests\test_all.py`
@@ -2005,7 +2010,8 @@
 
 ### Classes & Methods
 - **TestTradingBotEngine**
-  - `engine(risk_manager)`
+  - `engine(risk_manager, mock_config)`
+  - `mock_config()`
   - `test_analyze_opportunity(engine, mock_dex_api)`
   - `test_close_position(engine, sample_position)`
   - `test_engine_initialization(engine)`
