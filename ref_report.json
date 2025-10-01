@@ -1,4 +1,13 @@
 {
+  "import_failure": [
+    {
+      "message": "AST parse error: unexpected indent (ensemble_model.py, line 955)",
+      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\models\\ensemble_model.py",
+      "module": "ml.models.ensemble_model",
+      "lineno": 1,
+      "context": {}
+    }
+  ],
   "import_object_missing": [
     {
       "message": "from utils.constants import CHAIN_RPC_URLS -> CHAIN_RPC_URLS not found in project module",
@@ -19,15 +28,6 @@
       }
     },
     {
-      "message": "from ml.models.ensemble_model import EnsembleModel -> EnsembleModel not found in project module",
-      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\analysis\\market_analyzer.py",
-      "module": "analysis.market_analyzer",
-      "lineno": 1,
-      "context": {
-        "imported_as": "EnsembleModel"
-      }
-    },
-    {
       "message": "from utils.constants import CHAIN_RPC_URLS -> CHAIN_RPC_URLS not found in project module",
       "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\analysis\\smart_contract_analyzer.py",
       "module": "analysis.smart_contract_analyzer",
@@ -43,15 +43,6 @@
       "lineno": 1,
       "context": {
         "imported_as": "BLOCK_EXPLORERS"
-      }
-    },
-    {
-      "message": "from ml.models.ensemble_model import EnsembleModel -> EnsembleModel not found in project module",
-      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\analysis\\token_scorer.py",
-      "module": "analysis.token_scorer",
-      "lineno": 1,
-      "context": {
-        "imported_as": "EnsembleModel"
       }
     },
     {
@@ -190,15 +181,6 @@
       }
     },
     {
-      "message": "from ml.models.ensemble_model import EnsembleModel -> EnsembleModel not found in project module",
-      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\tests\\integration\\test_ml_integration.py",
-      "module": "tests.integration.test_ml_integration",
-      "lineno": 1,
-      "context": {
-        "imported_as": "EnsembleModel"
-      }
-    },
-    {
       "message": "from trading.executors.base_executor import BaseExecutor -> BaseExecutor not found in project module",
       "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\executors\\direct_dex.py",
       "module": "trading.executors.direct_dex",
@@ -241,15 +223,6 @@
       "lineno": 1,
       "context": {
         "imported_as": "BaseExecutor"
-      }
-    },
-    {
-      "message": "from ml.models.ensemble_model import EnsembleModel -> EnsembleModel not found in project module",
-      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\strategies\\ai_strategy.py",
-      "module": "trading.strategies.ai_strategy",
-      "lineno": 1,
-      "context": {
-        "imported_as": "EnsembleModel"
       }
     },
     {
@@ -1073,15 +1046,33 @@
   ],
   "missing_definition": [
     {
+      "message": "Missing definition: ml.models.ensemble_model.EnsemblePredictor",
+      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\core\\engine.py",
+      "module": "core.engine",
+      "lineno": 108,
+      "context": {
+        "expr": "EnsemblePredictor",
+        "target": "ml.models.ensemble_model.EnsemblePredictor"
+      }
+    },
+    {
+      "message": "Missing definition: ml.models.ensemble_model.EnsemblePredictor",
+      "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\update_models.py",
+      "module": "scripts.update_models",
+      "lineno": 20,
+      "context": {
+        "expr": "EnsemblePredictor",
+        "target": "ml.models.ensemble_model.EnsemblePredictor"
+      }
+    },
+    {
       "message": "Missing definition: ml.models.ensemble_model.EnsembleModel",
       "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\tests\\integration\\test_ml_integration.py",
       "module": "tests.integration.test_ml_integration",
       "lineno": 140,
       "context": {
         "expr": "EnsembleModel",
-        "target": "ml.models.ensemble_model.EnsembleModel",
-        "target_module_file": "C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\models\\ensemble_model.py",
-        "target_kind": "method_or_attr"
+        "target": "ml.models.ensemble_model.EnsembleModel"
       }
     },
     {
@@ -1091,18 +1082,16 @@
       "lineno": 84,
       "context": {
         "expr": "EnsembleModel",
-        "target": "ml.models.ensemble_model.EnsembleModel",
-        "target_module_file": "C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\models\\ensemble_model.py",
-        "target_kind": "method_or_attr"
+        "target": "ml.models.ensemble_model.EnsembleModel"
       }
     }
   ],
   "_stats": [
     {
-      "skipped_external": 3909,
-      "skipped_unknown": 10750,
-      "modules_indexed": 121,
-      "calls_analyzed": 14913
+      "skipped_external": 3812,
+      "skipped_unknown": 10453,
+      "modules_indexed": 120,
+      "calls_analyzed": 14519
     }
   ]
 }

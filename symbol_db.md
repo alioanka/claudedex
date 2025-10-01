@@ -1118,41 +1118,6 @@
 ## ml.models
 - File: `ml\models\__init__.py`
 
-## ml.models.ensemble_model
-- File: `ml\models\ensemble_model.py`
-
-### Classes & Methods
-- **EnsemblePredictor**
-  - `__init__(model_dir)`
-  - `_calculate_weighted_average(values, weights)`
-  - `_create_gradient_boosting_model()`
-  - `_create_lightgbm_model()`
-  - `_create_random_forest_model()`
-  - `_create_xgboost_model()`
-  - `_get_feature_importance(features)`
-  - `_predict_from_features(features)`
-  - `_train_lstm(X, y, epochs)`
-  - `_train_transformer(X, y, epochs)`
-  - `calculate_weighted_score(scores, weights)`
-  - `combine_predictions(predictions)`
-  - `extract_features(data)`
-  - `get_confidence_level(predictions)`
-  - `load_models()`
-  - `predict(token, chain)`
-  - `predict_from_token(token, chain)`
-  - `retrain(training_data)`
-  - `save_models()`
-  - `update_models(new_models)`
-  - `update_weights(performance_data)`
-- **LSTMPricePredictor**
-  - `__init__(input_dim, hidden_dim, num_layers, dropout)`
-  - `forward(x)`
-- **PredictionResult**
-  - `__post_init__()`
-- **TransformerPredictor**
-  - `__init__(input_dim, d_model, nhead, num_layers)`
-  - `forward(x)`
-
 ## ml.models.pump_predictor
 - File: `ml\models\pump_predictor.py`
 

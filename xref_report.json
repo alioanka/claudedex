@@ -949,57 +949,17 @@
         }
       }
     ],
-    "signature_mismatch": [
+    "import_failure": [
       {
-        "message": "data.collectors.dexscreener.DexScreenerCollector: Missing: config",
+        "message": "AST parse error: unexpected indent (ensemble_model.py, line 955)",
         "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\models\\ensemble_model.py",
         "module": "ml.models.ensemble_model",
-        "lineno": 938,
-        "context": {
-          "called_expr": "DexScreenerCollector",
-          "called_args": {
-            "positional": 0,
-            "keyword": 0
-          },
-          "declared_signature": "__init__(config)",
-          "declared_in": "C:\\Users\\HP\\Desktop\\ClaudeDex\\data\\collectors\\dexscreener.py",
-          "target_kind": "method",
-          "missing_params": [
-            "config"
-          ],
-          "unknown_keywords": [],
-          "allowed_positionals": 1
-        }
-      }
-    ],
-    "missing_definition": [
-      {
-        "message": "Missing definition: ml.models.ensemble_model.EnsembleModel",
-        "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\tests\\integration\\test_ml_integration.py",
-        "module": "tests.integration.test_ml_integration",
-        "lineno": 140,
-        "context": {
-          "expr": "EnsembleModel",
-          "target": "ml.models.ensemble_model.EnsembleModel",
-          "target_module_file": "C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\models\\ensemble_model.py",
-          "target_kind": "class_or_constructor"
-        }
-      },
-      {
-        "message": "Missing definition: ml.models.ensemble_model.EnsembleModel",
-        "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\strategies\\ai_strategy.py",
-        "module": "trading.strategies.ai_strategy",
-        "lineno": 84,
-        "context": {
-          "expr": "EnsembleModel",
-          "target": "ml.models.ensemble_model.EnsembleModel",
-          "target_module_file": "C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\models\\ensemble_model.py",
-          "target_kind": "class_or_constructor"
-        }
+        "lineno": 1,
+        "context": {}
       }
     ]
   },
   "stats": {
-    "skipped_external": 3699
+    "skipped_external": 3596
   }
 }

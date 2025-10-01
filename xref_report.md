@@ -1,40 +1,21 @@
 # XRef Verification Report (Mini-DB)
 - Root: `C:\Users\HP\Desktop\ClaudeDex`
 - Files scanned: `123`
-- Skipped external: `3699`
+- Skipped external: `3596`
 
 
-## Missing Definitions (2)
-- **Missing definition: ml.models.ensemble_model.EnsembleModel**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\tests\integration\test_ml_integration.py`:140
-  - expr: `EnsembleModel`
-  - target: `ml.models.ensemble_model.EnsembleModel`
-  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\ml\models\ensemble_model.py`
-  - target_kind: `class_or_constructor`
-- **Missing definition: ml.models.ensemble_model.EnsembleModel**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\trading\strategies\ai_strategy.py`:84
-  - expr: `EnsembleModel`
-  - target: `ml.models.ensemble_model.EnsembleModel`
-  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\ml\models\ensemble_model.py`
-  - target_kind: `class_or_constructor`
+## Missing Definitions (0)
+- None
 
 ## Missing Methods (0)
 - None
 
-## Signature Mismatches (1)
-- **data.collectors.dexscreener.DexScreenerCollector: Missing: config**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\ml\models\ensemble_model.py`:938
-  - called_expr: `DexScreenerCollector`
-  - called_args: `{'positional': 0, 'keyword': 0}`
-  - declared_signature: `__init__(config)`
-  - declared_in: `C:\Users\HP\Desktop\ClaudeDex\data\collectors\dexscreener.py`
-  - target_kind: `method`
-  - missing_params: `['config']`
-  - unknown_keywords: `[]`
-  - allowed_positionals: `1`
-
-## Import Failures (Parse) (0)
+## Signature Mismatches (0)
 - None
+
+## Import Failures (Parse) (1)
+- **AST parse error: unexpected indent (ensemble_model.py, line 955)**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\ml\models\ensemble_model.py`:1
 
 ## Import Name Shadowing (0)
 - None
@@ -182,4 +163,4 @@
   - definitions: `[['scripts.verify_claudedex_plus', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus.py', 490], ['scripts.verify_claudedex_plus2', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus2.py', 419]]`
 
 ---
-**Total findings:** 46
+**Total findings:** 44
