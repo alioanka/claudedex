@@ -952,7 +952,7 @@ class EnsemblePredictor:
 
         # Fetch token data
         collector = DexScreenerCollector(config)  # ← Line 938 - This is CORRECT
-                token_data = await collector.get_token_info(token, chain)
+        token_data = await collector.get_token_info(token, chain)
         
         # Extract features and predict
         features = self.extract_features(token_data)
