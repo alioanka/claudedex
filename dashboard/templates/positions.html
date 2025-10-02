@@ -1,0 +1,391 @@
+{% extends "base.html" %}
+
+{% block title %}Positions - DexScreener Trading Bot{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Active Positions</h1>
+    <div class="page-actions">
+        <button class="btn btn-secondary" onclick="refreshPositions()">
+            <i class="fas fa-sync"></i> Refresh
+        </button>
+        <button class="btn btn-danger" onclick="closeAllPositions()">
+            <i class="fas fa-times-circle"></i> Close All
+        </button>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="grid grid-4">
+    <div class="stat-card">
+        <i class="fas fa-wallet stat-icon"></i>
+        <div class="stat-label">Open Positions</div>
+        <div class="stat-value" id="openPositionsCount">0</div>
+    </div>
+    
+    <div class="stat-card success">
+        <i class="fas fa-chart-line stat-icon"></i>
+        <div class="stat-label">Total Value</div>
+        <div class="stat-value" id="totalPositionsValue">$0.00</div>
+    </div>
+    
+    <div class="stat-card">
+        <i class="fas fa-coins stat-icon"></i>
+        <div class="stat-label">Unrealized P&L</div>
+        <div class="stat-value" id="unrealizedPnl">$0.00</div>
+    </div>
+    
+    <div class="stat-card">
+        <i class="fas fa-percentage stat-icon"></i>
+        <div class="stat-label">Avg ROI</div>
+        <div class="stat-value" id="avgRoi">0%</div>
+    </div>
+</div>
+
+<!-- Positions Table -->
+<div class="card">
+    <div class="card-header">
+        <h3 class="card-title">
+            <i class="fas fa-list"></i>
+            Position Details
+        </h3>
+        <div class="card-actions">
+            <select id="sortBy" class="form-control" style="width: auto;" onchange="sortPositions()">
+                <option value="pnl">Sort by P&L</option>
+                <option value="value">Sort by Value</option>
+                <option value="time">Sort by Time</option>
+                <option value="token">Sort by Token</option>
+            </select>
+        </div>
+    </div>
+    <div class="card-body">
+        <div class="table-container">
+            <table id="positionsDetailTable">
+                <thead>
+                    <tr>
+                        <th>Token</th>
+                        <th>Entry Price</th>
+                        <th>Current Price</th>
+                        <th>Amount</th>
+                        <th>Value</th>
+                        <th>Unrealized P&L</th>
+                        <th>ROI</th>
+                        <th>Stop Loss</th>
+                        <th>Take Profit</th>
+                        <th>Duration</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="positionsTableBody">
+                    <tr>
+                        <td colspan="11" class="text-center">
+                            <div class="spinner"></div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Position History -->
+<div class="card">
+    <div class="card-header">
+        <h3 class="card-title">
+            <i class="fas fa-history"></i>
+            Closed Positions
+        </h3>
+    </div>
+    <div class="card-body">
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Token</th>
+                        <th>Entry</th>
+                        <th>Exit</th>
+                        <th>P&L</th>
+                        <th>ROI</th>
+                        <th>Duration</th>
+                        <th>Closed At</th>
+                        <th>Reason</th>
+                    </tr>
+                </thead>
+                <tbody id="closedPositionsBody">
+                    <tr>
+                        <td colspan="8" class="text-center text-muted">No closed positions</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Position Details Modal -->
+<div class="modal" id="positionModal">
+    <div class="modal-content" style="max-width: 800px;">
+        <div class="modal-header">
+            <h3 id="positionModalTitle">Position Details</h3>
+            <button class="close-btn" onclick="closePositionModal()">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="modal-body" id="positionModalBody">
+            <!-- Position details will be inserted here -->
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closePositionModal()">Close</button>
+            <button class="btn btn-warning" onclick="modifyCurrentPosition()">
+                <i class="fas fa-edit"></i> Modify
+            </button>
+            <button class="btn btn-danger" onclick="closeCurrentPosition()">
+                <i class="fas fa-times"></i> Close Position
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentPositions = [];
+let currentPositionId = null;
+
+async function loadPositions() {
+    const tbody = document.getElementById('positionsTableBody');
+    tbody.innerHTML = '<tr><td colspan="11" class="text-center"><div class="spinner"></div></td></tr>';
+    
+    try {
+        const response = await apiGet('/api/positions/open');
+        if (response.success) {
+            currentPositions = response.data;
+            displayPositions(currentPositions);
+            updatePositionsSummary(currentPositions);
+        }
+    } catch (error) {
+        tbody.innerHTML = '<tr><td colspan="11" class="text-center text-danger">Failed to load positions</td></tr>';
+    }
+}
+
+function displayPositions(positions) {
+    const tbody = document.getElementById('positionsTableBody');
+    
+    if (positions.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="11" class="text-center text-muted">No open positions</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = positions.map(pos => {
+        const pnl = parseFloat(pos.unrealized_pnl || 0);
+        const roi = parseFloat(pos.roi || 0);
+        const pnlClass = pnl >= 0 ? 'text-success' : 'text-danger';
+        const currentPrice = parseFloat(pos.current_price || pos.entry_price);
+        const value = parseFloat(pos.amount) * currentPrice;
+        
+        return `
+            <tr>
+                <td>
+                    <strong>${pos.token_symbol}</strong>
+                    <br>
+                    <small class="text-muted">${pos.token_address.substring(0, 8)}...</small>
+                </td>
+                <td>${formatCurrency(pos.entry_price)}</td>
+                <td>${formatCurrency(currentPrice)}</td>
+                <td>${formatNumber(pos.amount, 4)}</td>
+                <td>${formatCurrency(value)}</td>
+                <td class="${pnlClass}">
+                    <strong>${formatCurrency(pnl)}</strong>
+                </td>
+                <td class="${pnlClass}">
+                    <strong>${formatPercent(roi)}</strong>
+                </td>
+                <td>${pos.stop_loss ? formatCurrency(pos.stop_loss) : '-'}</td>
+                <td>${pos.take_profit ? formatCurrency(pos.take_profit) : '-'}</td>
+                <td>${timeAgo(pos.opened_at)}</td>
+                <td>
+                    <button class="btn btn-sm btn-icon btn-secondary" onclick="viewPositionDetails('${pos.id}')" title="View Details">
+                        <i class="fas fa-eye"></i>
+                    </button>
+                    <button class="btn btn-sm btn-icon btn-warning" onclick="modifyPosition('${pos.id}')" title="Modify">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button class="btn btn-sm btn-icon btn-danger" onclick="closePosition('${pos.id}')" title="Close">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function updatePositionsSummary(positions) {
+    document.getElementById('openPositionsCount').textContent = positions.length;
+    
+    const totalValue = positions.reduce((sum, pos) => {
+        const currentPrice = parseFloat(pos.current_price || pos.entry_price);
+        return sum + (parseFloat(pos.amount) * currentPrice);
+    }, 0);
+    document.getElementById('totalPositionsValue').textContent = formatCurrency(totalValue);
+    
+    const totalPnl = positions.reduce((sum, pos) => sum + parseFloat(pos.unrealized_pnl || 0), 0);
+    const pnlEl = document.getElementById('unrealizedPnl');
+    pnlEl.textContent = formatCurrency(totalPnl);
+    pnlEl.parentElement.classList.remove('success', 'danger');
+    pnlEl.parentElement.classList.add(totalPnl >= 0 ? 'success' : 'danger');
+    
+    const avgRoi = positions.length > 0 
+        ? positions.reduce((sum, pos) => sum + parseFloat(pos.roi || 0), 0) / positions.length 
+        : 0;
+    document.getElementById('avgRoi').textContent = formatPercent(avgRoi);
+}
+
+function sortPositions() {
+    const sortBy = document.getElementById('sortBy').value;
+    
+    const sorted = [...currentPositions].sort((a, b) => {
+        switch(sortBy) {
+            case 'pnl':
+                return parseFloat(b.unrealized_pnl || 0) - parseFloat(a.unrealized_pnl || 0);
+            case 'value':
+                const valueA = parseFloat(a.amount) * parseFloat(a.current_price || a.entry_price);
+                const valueB = parseFloat(b.amount) * parseFloat(b.current_price || b.entry_price);
+                return valueB - valueA;
+            case 'time':
+                return new Date(b.opened_at) - new Date(a.opened_at);
+            case 'token':
+                return a.token_symbol.localeCompare(b.token_symbol);
+            default:
+                return 0;
+        }
+    });
+    
+    displayPositions(sorted);
+}
+
+async function viewPositionDetails(positionId) {
+    currentPositionId = positionId;
+    const position = currentPositions.find(p => p.id === positionId);
+    if (!position) return;
+    
+    const modal = document.getElementById('positionModal');
+    const overlay = document.getElementById('modalOverlay');
+    const body = document.getElementById('positionModalBody');
+    
+    const pnl = parseFloat(position.unrealized_pnl || 0);
+    const roi = parseFloat(position.roi || 0);
+    
+    body.innerHTML = `
+        <div class="grid grid-2">
+            <div>
+                <h4>Position Info</h4>
+                <div class="metric-row">
+                    <span class="metric-label">Token</span>
+                    <span class="metric-value">${position.token_symbol}</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Contract</span>
+                    <span class="metric-value">${position.token_address}</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Entry Price</span>
+                    <span class="metric-value">${formatCurrency(position.entry_price)}</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Current Price</span>
+                    <span class="metric-value">${formatCurrency(position.current_price || position.entry_price)}</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Amount</span>
+                    <span class="metric-value">${formatNumber(position.amount, 4)}</span>
+                </div>
+            </div>
+            <div>
+                <h4>Performance</h4>
+                <div class="metric-row">
+                    <span class="metric-label">Unrealized P&L</span>
+                    <span class="metric-value ${pnl >= 0 ? 'text-success' : 'text-danger'}">${formatCurrency(pnl)}</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">ROI</span>
+                    <span class="metric-value ${roi >= 0 ? 'text-success' : 'text-danger'}">${formatPercent(roi)}</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Stop Loss</span>
+                    <span class="metric-value">${position.stop_loss ? formatCurrency(position.stop_loss) : 'Not set'}</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Take Profit</span>
+                    <span class="metric-value">${position.take_profit ? formatCurrency(position.take_profit) : 'Not set'}</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Opened</span>
+                    <span class="metric-value">${formatDate(position.opened_at)}</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Duration</span>
+                    <span class="metric-value">${timeAgo(position.opened_at)}</span>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    modal.classList.add('active');
+    overlay.classList.add('active');
+}
+
+function closePositionModal() {
+    const modal = document.getElementById('positionModal');
+    const overlay = document.getElementById('modalOverlay');
+    modal.classList.remove('active');
+    overlay.classList.remove('active');
+    currentPositionId = null;
+}
+
+async function modifyPosition(positionId) {
+    const position = currentPositions.find(p => p.id === positionId);
+    if (!position) return;
+    
+    // This would open a modal with edit fields
+    showToast('info', 'Position modification interface coming soon');
+}
+
+async function modifyCurrentPosition() {
+    if (currentPositionId) {
+        await modifyPosition(currentPositionId);
+    }
+}
+
+async function closeCurrentPosition() {
+    if (currentPositionId) {
+        closePositionModal();
+        await closePosition(currentPositionId);
+    }
+}
+
+async function closeAllPositions() {
+    const confirmed = await showConfirmation(
+        'Close All Positions',
+        `Close all ${currentPositions.length} open positions?`
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+        const response = await apiPost('/api/bot/emergency_exit', {});
+        if (response.success) {
+            showToast('success', response.message);
+            await loadPositions();
+        }
+    } catch (error) {
+        showToast('error', 'Failed to close all positions');
+    }
+}
+
+function refreshPositions() {
+    loadPositions();
+}
+
+document.addEventListener('DOMContentLoaded', loadPositions);
+
+// Auto-refresh every 5 seconds
+setInterval(loadPositions, 5000);
+</script>
+{% endblock %}

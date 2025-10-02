@@ -1,11 +1,22 @@
 # XRef Verification Report (Mini-DB)
 - Root: `C:\Users\HP\Desktop\ClaudeDex`
 - Files scanned: `123`
-- Skipped external: `3596`
+- Skipped external: `3699`
 
 
-## Missing Definitions (0)
-- None
+## Missing Definitions (2)
+- **Missing definition: ml.models.ensemble_model.EnsembleModel**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\tests\integration\test_ml_integration.py`:140
+  - expr: `EnsembleModel`
+  - target: `ml.models.ensemble_model.EnsembleModel`
+  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\ml\models\ensemble_model.py`
+  - target_kind: `class_or_constructor`
+- **Missing definition: ml.models.ensemble_model.EnsembleModel**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\trading\strategies\ai_strategy.py`:84
+  - expr: `EnsembleModel`
+  - target: `ml.models.ensemble_model.EnsembleModel`
+  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\ml\models\ensemble_model.py`
+  - target_kind: `class_or_constructor`
 
 ## Missing Methods (0)
 - None
@@ -13,9 +24,8 @@
 ## Signature Mismatches (0)
 - None
 
-## Import Failures (Parse) (1)
-- **AST parse error: unexpected indent (ensemble_model.py, line 955)**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\ml\models\ensemble_model.py`:1
+## Import Failures (Parse) (0)
+- None
 
 ## Import Name Shadowing (0)
 - None
@@ -163,4 +173,4 @@
   - definitions: `[['scripts.verify_claudedex_plus', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus.py', 490], ['scripts.verify_claudedex_plus2', 'C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus2.py', 419]]`
 
 ---
-**Total findings:** 44
+**Total findings:** 45

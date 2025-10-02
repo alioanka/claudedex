@@ -3,6 +3,11 @@ python-dotenv==1.0.0
 pyyaml==6.0.1
 asyncio==3.4.3
 aiohttp==3.9.1
+aiohttp-cors==0.7.0
+aiohttp-sse==2.2.0
+openpyxl==3.1.2
+reportlab==4.0.7
+python-socketio==5.10.0
 aiofiles==23.2.1
 
 # Web3 and Blockchain

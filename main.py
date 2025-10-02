@@ -22,7 +22,7 @@ from monitoring.logger import StructuredLogger  # Changed from setup_logger
 from config.config_manager import ConfigManager  # Changed import
 from data.storage.database import DatabaseManager
 from security.encryption import EncryptionManager  # Changed from SecurityManager
-
+from monitoring.enhanced_dashboard import DashboardEndpoints
 # Load environment variables
 load_dotenv()
 
@@ -108,6 +108,33 @@ class TradingBotApplication:
         self.health_checker = None
         self.shutdown_event = asyncio.Event()
         self.logger = setup_logger("TradingBot", mode)
+
+        # Initialize all your existing components first
+        self.config = load_config(config_path)
+        self.db_manager = DatabaseManager(self.config)
+        self.cache_manager = CacheManager(self.config)
+        self.config_manager = ConfigManager(config_dir='config')
+        
+        # ... initialize other components ...
+        
+        self.engine = TradingBotEngine(self.config, mode)
+        self.portfolio_manager = PortfolioManager(self.config)
+        self.order_manager = OrderManager(self.config)
+        self.risk_manager = RiskManager(self.config)
+        self.alerts_system = AlertsSystem(self.config)
+        self.dashboard = DashboardEndpoints(
+            host="0.0.0.0",
+            port=8080,
+            config=self.config,
+            trading_engine=self.engine,
+            portfolio_manager=self.portfolio_manager,
+            order_manager=self.order_manager,
+            risk_manager=self.risk_manager,
+            alerts_system=self.alerts_system,
+            config_manager=self.config_manager,
+            db_manager=self.db_manager
+        )
+        logger.info("Enhanced dashboard initialized")
         
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -242,6 +269,7 @@ class TradingBotApplication:
     async def run(self):
         """Main application loop"""
         try:
+            logger.info("Starting DexScreener Trading Bot...")
             # Initialize components
             await self.initialize()
             
@@ -253,7 +281,9 @@ class TradingBotApplication:
                 asyncio.create_task(self.engine.run()),
                 asyncio.create_task(self.health_checker.monitor()),
                 asyncio.create_task(self._status_reporter()),
+                asyncio.create_task(self.dashboard.start()),
                 asyncio.create_task(self._shutdown_monitor())
+                
             ]
             
             # Wait for shutdown or error

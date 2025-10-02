@@ -949,17 +949,34 @@
         }
       }
     ],
-    "import_failure": [
+    "missing_definition": [
       {
-        "message": "AST parse error: unexpected indent (ensemble_model.py, line 955)",
-        "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\models\\ensemble_model.py",
-        "module": "ml.models.ensemble_model",
-        "lineno": 1,
-        "context": {}
+        "message": "Missing definition: ml.models.ensemble_model.EnsembleModel",
+        "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\tests\\integration\\test_ml_integration.py",
+        "module": "tests.integration.test_ml_integration",
+        "lineno": 140,
+        "context": {
+          "expr": "EnsembleModel",
+          "target": "ml.models.ensemble_model.EnsembleModel",
+          "target_module_file": "C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\models\\ensemble_model.py",
+          "target_kind": "class_or_constructor"
+        }
+      },
+      {
+        "message": "Missing definition: ml.models.ensemble_model.EnsembleModel",
+        "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\strategies\\ai_strategy.py",
+        "module": "trading.strategies.ai_strategy",
+        "lineno": 84,
+        "context": {
+          "expr": "EnsembleModel",
+          "target": "ml.models.ensemble_model.EnsembleModel",
+          "target_module_file": "C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\models\\ensemble_model.py",
+          "target_kind": "class_or_constructor"
+        }
       }
     ]
   },
   "stats": {
-    "skipped_external": 3596
+    "skipped_external": 3699
   }
 }

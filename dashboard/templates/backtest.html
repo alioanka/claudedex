@@ -1,0 +1,401 @@
+{% extends "base.html" %}
+
+{% block title %}Backtesting - DexScreener Trading Bot{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Strategy Backtesting</h1>
+</div>
+
+<!-- Backtest Configuration -->
+<div class="card">
+    <div class="card-header">
+        <h3 class="card-title">
+            <i class="fas fa-cog"></i>
+            Configure Backtest
+        </h3>
+    </div>
+    <div class="card-body">
+        <div class="grid grid-2">
+            <div class="form-group">
+                <label class="form-label">Strategy</label>
+                <select class="form-control" id="strategySelect">
+                    <option value="momentum">Momentum Strategy</option>
+                    <option value="scalping">Scalping Strategy</option>
+                    <option value="swing">Swing Trading</option>
+                    <option value="mean_reversion">Mean Reversion</option>
+                    <option value="breakout">Breakout Strategy</option>
+                    <option value="ai_hybrid">AI Hybrid</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Initial Balance (ETH)</label>
+                <input type="number" class="form-control" id="initialBalance" value="1.0" step="0.1" min="0.1">
+            </div>
+        </div>
+        
+        <div class="grid grid-2">
+            <div class="form-group">
+                <label class="form-label">Start Date</label>
+                <input type="date" class="form-control" id="backtestStartDate">
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">End Date</label>
+                <input type="date" class="form-control" id="backtestEndDate">
+            </div>
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label">Strategy Parameters (JSON)</label>
+            <textarea class="form-control" id="strategyParams" rows="5" placeholder='{"param1": "value1", "param2": "value2"}'>{}</textarea>
+            <div class="form-help">Enter strategy-specific parameters as JSON</div>
+        </div>
+        
+        <button class="btn btn-primary btn-lg" onclick="runBacktest()">
+            <i class="fas fa-play"></i> Run Backtest
+        </button>
+    </div>
+</div>
+
+<!-- Backtest Progress -->
+<div class="card" id="backtestProgress" style="display: none;">
+    <div class="card-body text-center">
+        <div class="spinner" style="margin: 0 auto;"></div>
+        <p class="mt-2">Running backtest... This may take a few minutes.</p>
+        <p class="text-muted" id="progressText">Initializing...</p>
+    </div>
+</div>
+
+<!-- Backtest Results -->
+<div id="backtestResults" style="display: none;">
+    <!-- Summary -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">
+                <i class="fas fa-chart-bar"></i>
+                Backtest Summary
+            </h3>
+            <div class="card-actions">
+                <button class="btn btn-sm btn-secondary" onclick="exportBacktestResults()">
+                    <i class="fas fa-download"></i> Export Results
+                </button>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="grid grid-4">
+                <div class="stat-card">
+                    <div class="stat-label">Final Balance</div>
+                    <div class="stat-value" id="finalBalance">0 ETH</div>
+                </div>
+                <div class="stat-card success">
+                    <div class="stat-label">Total Return</div>
+                    <div class="stat-value" id="totalReturn">0%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Trades</div>
+                    <div class="stat-value" id="backtestTotalTrades">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Win Rate</div>
+                    <div class="stat-value" id="backtestWinRate">0%</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Performance Chart -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Equity Curve</h3>
+        </div>
+        <div class="card-body">
+            <canvas id="backtestEquityChart" height="300"></canvas>
+        </div>
+    </div>
+    
+    <!-- Detailed Metrics -->
+    <div class="grid grid-2">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Performance Metrics</h3>
+            </div>
+            <div class="card-body">
+                <div class="metric-row">
+                    <span class="metric-label">Total Profit/Loss</span>
+                    <span class="metric-value" id="backtestPnl">0 ETH</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Sharpe Ratio</span>
+                    <span class="metric-value" id="backtestSharpe">0.00</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Sortino Ratio</span>
+                    <span class="metric-value" id="backtestSortino">0.00</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Max Drawdown</span>
+                    <span class="metric-value text-danger" id="backtestMaxDD">0%</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Profit Factor</span>
+                    <span class="metric-value" id="backtestProfitFactor">0.00</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Trade Statistics</h3>
+            </div>
+            <div class="card-body">
+                <div class="metric-row">
+                    <span class="metric-label">Winning Trades</span>
+                    <span class="metric-value text-success" id="backtestWins">0</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Losing Trades</span>
+                    <span class="metric-value text-danger" id="backtestLosses">0</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Average Win</span>
+                    <span class="metric-value text-success" id="backtestAvgWin">0 ETH</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Average Loss</span>
+                    <span class="metric-value text-danger" id="backtestAvgLoss">0 ETH</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Largest Win</span>
+                    <span class="metric-value text-success" id="backtestLargestWin">0 ETH</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Largest Loss</span>
+                    <span class="metric-value text-danger" id="backtestLargestLoss">0 ETH</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Trade Log -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Trade Log</h3>
+        </div>
+        <div class="card-body">
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Type</th>
+                            <th>Entry</th>
+                            <th>Exit</th>
+                            <th>P&L</th>
+                            <th>Return</th>
+                            <th>Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody id="backtestTradeLog">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Comparison Section -->
+<div class="card">
+    <div class="card-header">
+        <h3 class="card-title">
+            <i class="fas fa-chart-line"></i>
+            Strategy Comparison
+        </h3>
+    </div>
+    <div class="card-body">
+        <p class="text-muted">Run multiple backtests to compare strategies</p>
+        <div id="comparisonChart"></div>
+    </div>
+</div>
+
+<script>
+let currentBacktestId = null;
+
+async function runBacktest() {
+    const strategy = document.getElementById('strategySelect').value;
+    const startDate = document.getElementById('backtestStartDate').value;
+    const endDate = document.getElementById('backtestEndDate').value;
+    const initialBalance = parseFloat(document.getElementById('initialBalance').value);
+    const paramsText = document.getElementById('strategyParams').value;
+    
+    if (!startDate || !endDate) {
+        showToast('warning', 'Please select date range');
+        return;
+    }
+    
+    let parameters = {};
+    try {
+        parameters = JSON.parse(paramsText);
+    } catch (e) {
+        showToast('error', 'Invalid JSON in parameters');
+        return;
+    }
+    
+    // Show progress
+    document.getElementById('backtestProgress').style.display = 'block';
+    document.getElementById('backtestResults').style.display = 'none';
+    
+    try {
+        const response = await apiPost('/api/backtest/run', {
+            strategy: strategy,
+            start_date: startDate,
+            end_date: endDate,
+            initial_balance: initialBalance,
+            parameters: parameters
+        });
+        
+        if (response.success) {
+            currentBacktestId = response.test_id;
+            showToast('success', 'Backtest started');
+            
+            // Poll for results
+            pollBacktestResults(response.test_id);
+        } else {
+            showToast('error', 'Failed to start backtest');
+            document.getElementById('backtestProgress').style.display = 'none';
+        }
+    } catch (error) {
+        showToast('error', 'Backtest failed: ' + error.message);
+        document.getElementById('backtestProgress').style.display = 'none';
+    }
+}
+
+async function pollBacktestResults(testId) {
+    const maxAttempts = 60; // 5 minutes max
+    let attempts = 0;
+    
+    const poll = setInterval(async () => {
+        attempts++;
+        
+        try {
+            const response = await apiGet(`/api/backtest/results/${testId}`);
+            
+            if (response.success && response.data.status === 'completed') {
+                clearInterval(poll);
+                displayBacktestResults(response.data);
+                document.getElementById('backtestProgress').style.display = 'none';
+                document.getElementById('backtestResults').style.display = 'block';
+            } else if (response.data.status === 'failed') {
+                clearInterval(poll);
+                showToast('error', 'Backtest failed');
+                document.getElementById('backtestProgress').style.display = 'none';
+            } else {
+                // Update progress
+                document.getElementById('progressText').textContent = 
+                    response.data.progress || 'Processing...';
+            }
+        } catch (error) {
+            console.error('Error polling backtest:', error);
+        }
+        
+        if (attempts >= maxAttempts) {
+            clearInterval(poll);
+            showToast('error', 'Backtest timeout');
+            document.getElementById('backtestProgress').style.display = 'none';
+        }
+    }, 5000); // Poll every 5 seconds
+}
+
+function displayBacktestResults(results) {
+    // Summary stats
+    document.getElementById('finalBalance').textContent = formatNumber(results.final_balance, 4) + ' ETH';
+    document.getElementById('totalReturn').textContent = formatPercent(results.total_return);
+    document.getElementById('backtestTotalTrades').textContent = results.total_trades;
+    document.getElementById('backtestWinRate').textContent = formatPercent(results.win_rate);
+    
+    // Performance metrics
+    document.getElementById('backtestPnl').textContent = formatNumber(results.total_pnl, 4) + ' ETH';
+    document.getElementById('backtestSharpe').textContent = formatNumber(results.sharpe_ratio, 2);
+    document.getElementById('backtestSortino').textContent = formatNumber(results.sortino_ratio, 2);
+    document.getElementById('backtestMaxDD').textContent = formatPercent(results.max_drawdown);
+    document.getElementById('backtestProfitFactor').textContent = formatNumber(results.profit_factor, 2);
+    
+    // Trade stats
+    document.getElementById('backtestWins').textContent = results.winning_trades;
+    document.getElementById('backtestLosses').textContent = results.losing_trades;
+    document.getElementById('backtestAvgWin').textContent = formatNumber(results.avg_win, 4) + ' ETH';
+    document.getElementById('backtestAvgLoss').textContent = formatNumber(results.avg_loss, 4) + ' ETH';
+    document.getElementById('backtestLargestWin').textContent = formatNumber(results.largest_win, 4) + ' ETH';
+    document.getElementById('backtestLargestLoss').textContent = formatNumber(results.largest_loss, 4) + ' ETH';
+    
+    // Equity curve chart
+    if (results.equity_curve) {
+        createChart('backtestEquityChart', {
+            type: 'line',
+            data: {
+                labels: results.equity_curve.map(d => formatDate(d.timestamp)),
+                datasets: [{
+                    label: 'Portfolio Value',
+                    data: results.equity_curve.map(d => d.value),
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: {
+                        ticks: { callback: value => formatNumber(value, 4) + ' ETH' }
+                    }
+                }
+            }
+        });
+    }
+    
+    // Trade log
+    if (results.trades) {
+        const tbody = document.getElementById('backtestTradeLog');
+        tbody.innerHTML = results.trades.map(trade => {
+            const pnl = trade.pnl || 0;
+            const pnlClass = pnl >= 0 ? 'text-success' : 'text-danger';
+            
+            return `
+                <tr>
+                    <td>${formatDate(trade.entry_time)}</td>
+                    <td><span class="badge badge-${trade.side === 'buy' ? 'success' : 'danger'}">${trade.side}</span></td>
+                    <td>${formatNumber(trade.entry_price, 6)}</td>
+                    <td>${formatNumber(trade.exit_price, 6)}</td>
+                    <td class="${pnlClass}">${formatNumber(pnl, 6)}</td>
+                    <td class="${pnlClass}">${formatPercent(trade.return)}</td>
+                    <td>${trade.duration}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+}
+
+async function exportBacktestResults() {
+    if (!currentBacktestId) {
+        showToast('warning', 'No backtest results to export');
+        return;
+    }
+    
+    await exportData('csv', `/api/backtest/results/${currentBacktestId}/export`);
+}
+
+// Set default dates
+document.addEventListener('DOMContentLoaded', function() {
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setMonth(startDate.getMonth() - 3); // 3 months ago
+    
+    document.getElementById('backtestStartDate').value = startDate.toISOString().split('T')[0];
+    document.getElementById('backtestEndDate').value = endDate.toISOString().split('T')[0];
+});
+</script>
+{% endblock %}

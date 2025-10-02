@@ -69,6 +69,7 @@ ClaudeDex/
     ├── __init__.py
     ├── alerts.py
     ├── dashboard.py
+    ├── enhanced_dashboard.py
     ├── logger.py
     ├── performance.py
 └── scripts/

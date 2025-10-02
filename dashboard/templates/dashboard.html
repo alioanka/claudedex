@@ -1,0 +1,500 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - DexScreener Trading Bot{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Dashboard Overview</h1>
+    <div class="page-actions">
+        <button class="btn btn-secondary" onclick="refreshDashboard()">
+            <i class="fas fa-sync"></i> Refresh
+        </button>
+        <button class="btn btn-primary" onclick="window.location.href='/reports'">
+            <i class="fas fa-file-download"></i> Generate Report
+        </button>
+    </div>
+</div>
+
+<!-- Key Metrics -->
+<div class="grid grid-4">
+    <div class="stat-card">
+        <i class="fas fa-wallet stat-icon"></i>
+        <div class="stat-label">Portfolio Value</div>
+        <div class="stat-value" id="portfolioValueStat">$0.00</div>
+        <div class="stat-change positive" id="portfolioChange">
+            <i class="fas fa-arrow-up"></i> 0.00%
+        </div>
+    </div>
+    
+    <div class="stat-card success">
+        <i class="fas fa-chart-line stat-icon"></i>
+        <div class="stat-label">Total P&L</div>
+        <div class="stat-value" id="totalPnlStat">$0.00</div>
+        <div class="stat-change positive" id="pnlChange">
+            <i class="fas fa-arrow-up"></i> 0.00%
+        </div>
+    </div>
+    
+    <div class="stat-card">
+        <i class="fas fa-exchange-alt stat-icon"></i>
+        <div class="stat-label">Open Positions</div>
+        <div class="stat-value" id="openPositionsStat">0</div>
+        <div class="stat-change" id="positionsChange">
+            Active trades
+        </div>
+    </div>
+    
+    <div class="stat-card warning">
+        <i class="fas fa-percentage stat-icon"></i>
+        <div class="stat-label">Win Rate</div>
+        <div class="stat-value" id="winRateStat">0%</div>
+        <div class="stat-change" id="winRateChange">
+            From trades
+        </div>
+    </div>
+</div>
+
+<!-- Charts Row -->
+<div class="grid grid-2">
+    <!-- Portfolio Value Chart -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">
+                <i class="fas fa-chart-area"></i>
+                Portfolio Value
+            </h3>
+            <div class="card-actions">
+                <select id="portfolioTimeframe" class="form-control" style="width: auto;">
+                    <option value="1h">1 Hour</option>
+                    <option value="24h" selected>24 Hours</option>
+                    <option value="7d">7 Days</option>
+                    <option value="30d">30 Days</option>
+                </select>
+            </div>
+        </div>
+        <div class="card-body">
+            <canvas id="portfolioChart" height="300"></canvas>
+        </div>
+    </div>
+    
+    <!-- P&L Chart -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">
+                <i class="fas fa-chart-line"></i>
+                Profit & Loss
+            </h3>
+            <div class="card-actions">
+                <select id="pnlTimeframe" class="form-control" style="width: auto;">
+                    <option value="1h">1 Hour</option>
+                    <option value="24h" selected>24 Hours</option>
+                    <option value="7d">7 Days</option>
+                    <option value="30d">30 Days</option>
+                </select>
+            </div>
+        </div>
+        <div class="card-body">
+            <canvas id="pnlChart" height="300"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Positions & Orders -->
+<div class="grid grid-2">
+    <!-- Recent Positions -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">
+                <i class="fas fa-wallet"></i>
+                Open Positions
+            </h3>
+            <div class="card-actions">
+                <a href="/positions" class="btn btn-sm btn-secondary">View All</a>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="table-container">
+                <table id="positionsTable">
+                    <thead>
+                        <tr>
+                            <th>Token</th>
+                            <th>Entry</th>
+                            <th>Current</th>
+                            <th>Amount</th>
+                            <th>P&L</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td colspan="7" class="text-center text-muted">
+                                Loading positions...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Recent Orders -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">
+                <i class="fas fa-list"></i>
+                Recent Orders
+            </h3>
+            <div class="card-actions">
+                <a href="/trades" class="btn btn-sm btn-secondary">View All</a>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="table-container">
+                <table id="ordersTable">
+                    <thead>
+                        <tr>
+                            <th>Token</th>
+                            <th>Side</th>
+                            <th>Type</th>
+                            <th>Price</th>
+                            <th>Amount</th>
+                            <th>Status</th>
+                            <th>Time</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td colspan="8" class="text-center text-muted">
+                                Loading orders...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Performance Metrics -->
+<div class="grid grid-3">
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">
+                <i class="fas fa-chart-pie"></i>
+                Win Rate
+            </h3>
+        </div>
+        <div class="card-body">
+            <canvas id="winRateChart" height="200"></canvas>
+        </div>
+    </div>
+    
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">
+                <i class="fas fa-tachometer-alt"></i>
+                Risk Metrics
+            </h3>
+        </div>
+        <div class="card-body">
+            <div class="metric-row">
+                <span class="metric-label">Sharpe Ratio</span>
+                <span class="metric-value" id="sharpeRatio">0.00</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Max Drawdown</span>
+                <span class="metric-value text-danger" id="maxDrawdown">0.00%</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">VaR (95%)</span>
+                <span class="metric-value" id="var95">$0.00</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Portfolio Beta</span>
+                <span class="metric-value" id="portfolioBeta">0.00</span>
+            </div>
+        </div>
+    </div>
+    
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">
+                <i class="fas fa-chart-bar"></i>
+                Trading Stats
+            </h3>
+        </div>
+        <div class="card-body">
+            <div class="metric-row">
+                <span class="metric-label">Total Trades</span>
+                <span class="metric-value" id="totalTrades">0</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Win Rate</span>
+                <span class="metric-value text-success" id="winRate">0%</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Avg Win</span>
+                <span class="metric-value text-success" id="avgWin">$0.00</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Avg Loss</span>
+                <span class="metric-value text-danger" id="avgLoss">$0.00</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-xl);
+}
+
+.page-actions {
+    display: flex;
+    gap: var(--spacing-md);
+}
+
+.metric-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-sm) 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.metric-row:last-child {
+    border-bottom: none;
+}
+
+.metric-label {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+.metric-value {
+    font-weight: 600;
+    font-size: 1rem;
+}
+
+.notification-item {
+    display: flex;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md);
+    background-color: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--spacing-sm);
+}
+
+.notification-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.notification-icon.info {
+    background-color: rgba(6, 182, 212, 0.2);
+    color: var(--accent-info);
+}
+
+.notification-icon.warning {
+    background-color: rgba(245, 158, 11, 0.2);
+    color: var(--accent-warning);
+}
+
+.notification-icon.error {
+    background-color: rgba(239, 68, 68, 0.2);
+    color: var(--accent-danger);
+}
+
+.notification-content {
+    flex: 1;
+}
+
+.notification-title {
+    font-weight: 600;
+    margin-bottom: var(--spacing-xs);
+}
+
+.notification-message {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-xs);
+}
+
+.notification-time {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Dashboard-specific JavaScript
+async function refreshDashboard() {
+    showToast('info', 'Refreshing dashboard...');
+    await loadDashboardData();
+    await loadCharts();
+    showToast('success', 'Dashboard refreshed');
+}
+
+async function loadCharts() {
+    // Load portfolio chart
+    loadPortfolioChart();
+    
+    // Load P&L chart
+    loadPnLChart();
+    
+    // Load win rate chart
+    loadWinRateChart();
+}
+
+async function loadPortfolioChart() {
+    const timeframe = document.getElementById('portfolioTimeframe').value;
+    
+    try {
+        const response = await apiGet(`/api/performance/charts?timeframe=${timeframe}`);
+        
+        if (response.success && response.data.portfolio_history) {
+            const data = response.data.portfolio_history;
+            
+            createChart('portfolioChart', {
+                type: 'line',
+                data: {
+                    labels: data.map(d => formatTime(d.timestamp)),
+                    datasets: [{
+                        label: 'Portfolio Value',
+                        data: data.map(d => d.value),
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            ticks: {
+                                callback: value => formatCurrency(value)
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Error loading portfolio chart:', error);
+    }
+}
+
+async function loadPnLChart() {
+    const timeframe = document.getElementById('pnlTimeframe').value;
+    
+    try {
+        const response = await apiGet(`/api/performance/charts?timeframe=${timeframe}`);
+        
+        if (response.success && response.data.pnl_history) {
+            const data = response.data.pnl_history;
+            
+            createChart('pnlChart', {
+                type: 'bar',
+                data: {
+                    labels: data.map(d => formatDate(d.timestamp)),
+                    datasets: [{
+                        label: 'P&L',
+                        data: data.map(d => d.value),
+                        backgroundColor: data.map(d => d.value >= 0 ? 
+                            'rgba(16, 185, 129, 0.8)' : 'rgba(239, 68, 68, 0.8)')
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: value => formatCurrency(value)
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Error loading P&L chart:', error);
+    }
+}
+
+async function loadWinRateChart() {
+    try {
+        const response = await apiGet('/api/performance/metrics');
+        
+        if (response.success && response.data) {
+            const winRate = response.data.win_rate || 0;
+            const lossRate = 1 - winRate;
+            
+            createChart('winRateChart', {
+                type: 'doughnut',
+                data: {
+                    labels: ['Wins', 'Losses'],
+                    datasets: [{
+                        data: [winRate * 100, lossRate * 100],
+                        backgroundColor: [
+                            'rgba(16, 185, 129, 0.8)',
+                            'rgba(239, 68, 68, 0.8)'
+                        ],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Error loading win rate chart:', error);
+    }
+}
+
+// Load charts when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    loadCharts();
+    
+    // Add timeframe change listeners
+    document.getElementById('portfolioTimeframe').addEventListener('change', loadPortfolioChart);
+    document.getElementById('pnlTimeframe').addEventListener('change', loadPnLChart);
+});
+</script>
+{% endblock %}

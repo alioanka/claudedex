@@ -1118,6 +1118,41 @@
 ## ml.models
 - File: `ml\models\__init__.py`
 
+## ml.models.ensemble_model
+- File: `ml\models\ensemble_model.py`
+
+### Classes & Methods
+- **EnsemblePredictor**
+  - `__init__(model_dir)`
+  - `_calculate_weighted_average(values, weights)`
+  - `_create_gradient_boosting_model()`
+  - `_create_lightgbm_model()`
+  - `_create_random_forest_model()`
+  - `_create_xgboost_model()`
+  - `_get_feature_importance(features)`
+  - `_predict_from_features(features)`
+  - `_train_lstm(X, y, epochs)`
+  - `_train_transformer(X, y, epochs)`
+  - `calculate_weighted_score(scores, weights)`
+  - `combine_predictions(predictions)`
+  - `extract_features(data)`
+  - `get_confidence_level(predictions)`
+  - `load_models()`
+  - `predict(token, chain)`
+  - `predict_from_token(token, chain)`
+  - `retrain(training_data)`
+  - `save_models()`
+  - `update_models(new_models)`
+  - `update_weights(performance_data)`
+- **LSTMPricePredictor**
+  - `__init__(input_dim, hidden_dim, num_layers, dropout)`
+  - `forward(x)`
+- **PredictionResult**
+  - `__post_init__()`
+- **TransformerPredictor**
+  - `__init__(input_dim, d_model, nhead, num_layers)`
+  - `forward(x)`
+
 ## ml.models.pump_predictor
 - File: `ml\models\pump_predictor.py`
 
@@ -1339,6 +1374,61 @@
   - `_update_risk_data()`
   - `connect_to_trading_system(engine, portfolio_manager, order_manager, alerts_system)`
 - **DashboardSection**
+
+## monitoring.enhanced_dashboard
+- File: `monitoring\enhanced_dashboard.py`
+
+### Classes & Methods
+- **DashboardEndpoints**
+  - `__init__(host, port, config, trading_engine, portfolio_manager, order_manager, risk_manager, alerts_system, config_manager, db_manager)`
+  - `_broadcast_loop()`
+  - `_export_csv(report)`
+  - `_export_excel(report)`
+  - `_export_pdf(report)`
+  - `_generate_custom_report(filters)`
+  - `_generate_report(period, start_date, end_date, metrics)`
+  - `_run_backtest_task(test_id, strategy, start_date, end_date, initial_balance, parameters)`
+  - `_send_initial_data(sid)`
+  - `_setup_routes()`
+  - `_setup_socketio()`
+  - `api_backtest_results(request)`
+  - `api_bot_restart(request)`
+  - `api_bot_start(request)`
+  - `api_bot_status(request)`
+  - `api_bot_stop(request)`
+  - `api_cancel_order(request)`
+  - `api_close_position(request)`
+  - `api_custom_report(request)`
+  - `api_dashboard_summary(request)`
+  - `api_emergency_exit(request)`
+  - `api_execute_trade(request)`
+  - `api_export_report(request)`
+  - `api_generate_report(request)`
+  - `api_get_settings(request)`
+  - `api_get_strategy_params(request)`
+  - `api_modify_position(request)`
+  - `api_open_positions(request)`
+  - `api_performance_charts(request)`
+  - `api_performance_metrics(request)`
+  - `api_positions_history(request)`
+  - `api_recent_alerts(request)`
+  - `api_recent_trades(request)`
+  - `api_revert_settings(request)`
+  - `api_run_backtest(request)`
+  - `api_settings_history(request)`
+  - `api_trade_history(request)`
+  - `api_update_settings(request)`
+  - `api_update_strategy_params(request)`
+  - `backtest_page(request)`
+  - `dashboard_page(request)`
+  - `index(request)`
+  - `performance_page(request)`
+  - `positions_page(request)`
+  - `reports_page(request)`
+  - `settings_page(request)`
+  - `sse_handler(request)`
+  - `start()`
+  - `trades_page(request)`
 
 ## monitoring.logger
 - File: `monitoring\logger.py`

@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Bot - Home</title>
+    <link rel="stylesheet" href="/static/css/main.css">
+    <link rel="stylesheet" href="/static/css/themes.css">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>DexScreener Bot</h2>
+                <div class="bot-status" id="botStatus">
+                    <span class="status-indicator"></span>
+                    <span class="status-text">Checking...</span>
+                </div>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <a href="/" class="nav-item active">
+                    <span class="nav-icon">📊</span>
+                    <span class="nav-text">Dashboard</span>
+                </a>
+                <a href="/trades" class="nav-item">
+                    <span class="nav-icon">💰</span>
+                    <span class="nav-text">Trades</span>
+                </a>
+                <a href="/positions" class="nav-item">
+                    <span class="nav-icon">📈</span>
+                    <span class="nav-text">Positions</span>
+                </a>
+                <a href="/performance" class="nav-item">
+                    <span class="nav-icon">📉</span>
+                    <span class="nav-text">Performance</span>
+                </a>
+                <a href="/reports" class="nav-item">
+                    <span class="nav-icon">📋</span>
+                    <span class="nav-text">Reports</span>
+                </a>
+                <a href="/backtest" class="nav-item">
+                    <span class="nav-icon">🔬</span>
+                    <span class="nav-text">Backtest</span>
+                </a>
+                <a href="/settings" class="nav-item">
+                    <span class="nav-icon">⚙️</span>
+                    <span class="nav-text">Settings</span>
+                </a>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="quick-stats">
+                    <div class="stat-item">
+                        <div class="stat-label">Uptime</div>
+                        <div class="stat-value" id="uptime">--</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Active Positions</div>
+                        <div class="stat-value" id="activePositions">0</div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Theme Toggle -->
+            <button class="theme-toggle" onclick="toggleTheme()" title="Toggle Theme">
+                <svg class="sun-icon" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z"/>
+                </svg>
+            </button>
+
+            <!-- Welcome Section -->
+            <div class="page-header">
+                <div>
+                    <h1>Welcome Back</h1>
+                    <p class="text-secondary">Here's what's happening with your trading bot</p>
+                </div>
+                <div class="page-actions">
+                    <button class="btn btn-secondary" onclick="window.location.reload()">
+                        Refresh
+                    </button>
+                    <button class="btn btn-primary" onclick="location.href='/trades'">
+                        View All Trades
+                    </button>
+                </div>
+            </div>
+
+            <!-- Bot Control Section -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h3>Bot Control</h3>
+                </div>
+                <div class="card-body">
+                    <div class="quick-actions">
+                        <div class="quick-action" onclick="startBot()">
+                            <div class="quick-action-icon">▶️</div>
+                            <div class="quick-action-title">Start Bot</div>
+                            <div class="quick-action-desc">Begin trading</div>
+                        </div>
+                        <div class="quick-action" onclick="stopBot()">
+                            <div class="quick-action-icon">⏸️</div>
+                            <div class="quick-action-title">Stop Bot</div>
+                            <div class="quick-action-desc">Pause trading</div>
+                        </div>
+                        <div class="quick-action" onclick="restartBot()">
+                            <div class="quick-action-icon">🔄</div>
+                            <div class="quick-action-title">Restart Bot</div>
+                            <div class="quick-action-desc">Restart system</div>
+                        </div>
+                        <div class="quick-action" onclick="emergencyExit()">
+                            <div class="quick-action-icon">🚨</div>
+                            <div class="quick-action-title">Emergency Exit</div>
+                            <div class="quick-action-desc">Close all positions</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Key Metrics Grid -->
+            <div class="stats-grid mb-4">
+                <div class="stat-card">
+                    <div class="stat-label">Portfolio Value</div>
+                    <div class="stat-value" id="portfolioValue">$0.00</div>
+                    <div class="stat-change positive" id="portfolioChange">+0.00%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Daily P&L</div>
+                    <div class="stat-value" id="dailyPnl">$0.00</div>
+                    <div class="stat-change" id="dailyPnlChange">0.00%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total P&L</div>
+                    <div class="stat-value" id="totalPnl">$0.00</div>
+                    <div class="stat-change" id="totalPnlChange">0.00%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Win Rate</div>
+                    <div class="stat-value" id="winRate">0%</div>
+                    <div class="stat-change" id="winRateChange">0 wins / 0 losses</div>
+                </div>
+            </div>
+
+            <!-- Charts Section -->
+            <div class="row mb-4">
+                <div class="col-md-8">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Portfolio Performance</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="chart-container" style="height: 300px;">
+                                <canvas id="portfolioChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Win/Loss Ratio</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="chart-container" style="height: 300px;">
+                                <canvas id="winRateChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Activity & Open Positions -->
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Recent Activity</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="activity-feed" id="activityFeed">
+                                <div class="empty-state">
+                                    <div class="empty-state-icon">📊</div>
+                                    <div class="empty-state-title">No recent activity</div>
+                                    <div class="empty-state-message">Activity will appear here once trading begins</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Open Positions</h3>
+                        </div>
+                        <div class="card-body">
+                            <div id="openPositions">
+                                <div class="empty-state">
+                                    <div class="empty-state-icon">📈</div>
+                                    <div class="empty-state-title">No open positions</div>
+                                    <div class="empty-state-message">Open positions will appear here</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Connection Status -->
+            <div class="connection-status" id="connectionStatus">
+                <span>Connected</span>
+            </div>
+        </main>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="/static/js/main.js"></script>
+    <script src="/static/js/charts.js"></script>
+    <script src="/static/js/websocket.js"></script>
+    <script src="/static/js/dashboard.js"></script>
+
+    <script>
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            // Load initial data
+            loadDashboardData();
+            
+            // Setup auto-refresh
+            setInterval(loadDashboardData, 30000); // Refresh every 30 seconds
+        });
+
+        async function loadDashboardData() {
+            try {
+                const response = await fetch('/api/dashboard/summary');
+                const data = await response.json();
+                
+                if (data.success) {
+                    updateDashboard(data.data);
+                }
+            } catch (error) {
+                console.error('Error loading dashboard data:', error);
+            }
+        }
+
+        function updateDashboard(data) {
+            // Update metrics
+            updateElement('portfolioValue', formatCurrency(data.portfolio_value));
+            updateElement('dailyPnl', formatCurrency(data.daily_pnl));
+            updateElement('totalPnl', formatCurrency(data.total_pnl));
+            updateElement('winRate', `${data.win_rate}%`);
+            updateElement('activePositions', data.open_positions);
+
+            // Update changes
+            updateChangeElement('portfolioChange', data.portfolio_change);
+            updateChangeElement('dailyPnlChange', data.daily_pnl_change);
+            updateChangeElement('totalPnlChange', data.total_pnl_change);
+            updateElement('winRateChange', `${data.wins} wins / ${data.losses} losses`);
+
+            // Update charts
+            if (data.portfolio_history) {
+                chartManager.createPortfolioChart('portfolioChart', {
+                    labels: data.portfolio_history.labels,
+                    values: data.portfolio_history.values
+                });
+            }
+
+            if (data.win_loss_data) {
+                chartManager.createWinRateChart('winRateChart', 
+                    data.win_loss_data.wins, 
+                    data.win_loss_data.losses
+                );
+            }
+
+            // Update activity feed
+            if (data.recent_activity) {
+                updateActivityFeed(data.recent_activity);
+            }
+
+            // Update open positions
+            if (data.open_positions_list) {
+                updateOpenPositions(data.open_positions_list);
+            }
+
+            // Update bot status
+            updateBotStatus(data.bot_status);
+        }
+
+        function updateActivityFeed(activities) {
+            const feed = document.getElementById('activityFeed');
+            if (!activities || activities.length === 0) return;
+
+            feed.innerHTML = activities.map(activity => `
+                <div class="activity-item">
+                    <div class="activity-icon ${activity.type}">
+                        ${activity.type === 'buy' ? '📈' : activity.type === 'sell' ? '📉' : '⚠️'}
+                    </div>
+                    <div class="activity-content">
+                        <div class="activity-title">${activity.title}</div>
+                        <div class="activity-description">${activity.description}</div>
+                        <div class="activity-time">${formatTimestamp(activity.timestamp)}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function updateOpenPositions(positions) {
+            const container = document.getElementById('openPositions');
+            if (!positions || positions.length === 0) return;
+
+            container.innerHTML = positions.map(pos => `
+                <div class="position-card">
+                    <div class="position-header">
+                        <span class="position-token">${pos.token_symbol}</span>
+                        <span class="position-type ${pos.position_type}">${pos.position_type}</span>
+                    </div>
+                    <div class="position-body">
+                        <div class="position-metric">
+                            <div class="position-metric-label">Entry Price</div>
+                            <div class="position-metric-value">${formatCurrency(pos.entry_price)}</div>
+                        </div>
+                        <div class="position-metric">
+                            <div class="position-metric-label">Current Price</div>
+                            <div class="position-metric-value">${formatCurrency(pos.current_price)}</div>
+                        </div>
+                        <div class="position-metric">
+                            <div class="position-metric-label">P&L</div>
+                            <div class="position-metric-value ${pos.pnl >= 0 ? 'positive' : 'negative'}">
+                                ${formatCurrency(pos.pnl)}
+                            </div>
+                        </div>
+                        <div class="position-metric">
+                            <div class="position-metric-label">ROI</div>
+                            <div class="position-metric-value ${pos.roi >= 0 ? 'positive' : 'negative'}">
+                                ${pos.roi.toFixed(2)}%
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function updateBotStatus(status) {
+            const statusEl = document.getElementById('botStatus');
+            const indicator = statusEl.querySelector('.status-indicator');
+            const text = statusEl.querySelector('.status-text');
+            
+            indicator.className = 'status-indicator';
+            if (status === 'running') {
+                indicator.classList.add('status-online');
+                text.textContent = 'Running';
+            } else if (status === 'stopped') {
+                indicator.classList.add('status-offline');
+                text.textContent = 'Stopped';
+            } else {
+                indicator.classList.add('status-warning');
+                text.textContent = 'Unknown';
+            }
+        }
+
+        // Bot control functions
+        async function startBot() {
+            if (!confirm('Start the trading bot?')) return;
+            await botControl('start');
+        }
+
+        async function stopBot() {
+            if (!confirm('Stop the trading bot?')) return;
+            await botControl('stop');
+        }
+
+        async function restartBot() {
+            if (!confirm('Restart the trading bot?')) return;
+            await botControl('restart');
+        }
+
+        async function emergencyExit() {
+            if (!confirm('EMERGENCY: Close all positions and stop trading?')) return;
+            await botControl('emergency_exit');
+        }
+
+        async function botControl(action) {
+            showLoading(`${action}...`);
+            try {
+                const response = await fetch(`/api/bot/${action}`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    showSuccess(data.message || `Bot ${action} successful`);
+                    setTimeout(loadDashboardData, 2000);
+                } else {
+                    showError(data.error || `Failed to ${action} bot`);
+                }
+            } catch (error) {
+                showError(`Error: ${error.message}`);
+            } finally {
+                hideLoading();
+            }
+        }
+    </script>
+</body>
+</html>

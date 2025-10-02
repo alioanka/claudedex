@@ -1,26 +1,31 @@
-# docker-compose.yml
 version: '3.8'
 
 services:
-  # Trading Bot Main Service
   trading-bot:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: trading-bot
     restart: unless-stopped
+    ports:
+      - "8080:8080"
     environment:
       - ENVIRONMENT=production
-      - DATABASE_URL=postgresql://trading:trading123@postgres:5432/tradingbot
+      # Use same password as .env
+      - DATABASE_URL=postgresql://trading:Madazulu11@postgres:5432/tradingbot
       - REDIS_URL=redis://redis:6379/0
       - LOG_LEVEL=INFO
+    env_file:
+      - .env  # Load all other variables from .env
     volumes:
       - ./config:/app/config
       - ./logs:/app/logs
       - ./data:/app/data
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - trading-network
     deploy:
@@ -28,11 +33,7 @@ services:
         limits:
           cpus: '2'
           memory: 4G
-        reservations:
-          cpus: '1'
-          memory: 2G
 
-  # PostgreSQL with TimescaleDB
   postgres:
     image: timescale/timescaledb:latest-pg14
     container_name: trading-postgres
@@ -40,7 +41,7 @@ services:
     environment:
       - POSTGRES_DB=tradingbot
       - POSTGRES_USER=trading
-      - POSTGRES_PASSWORD=trading123
+      - POSTGRES_PASSWORD=Madazulu11  # Match .env password
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -48,48 +49,24 @@ services:
       - "5432:5432"
     networks:
       - trading-network
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 2G
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trading -d tradingbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  # Redis Cache
   redis:
     image: redis:7-alpine
     container_name: trading-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --requirepass ""
     volumes:
       - redis-data:/data
     ports:
       - "6379:6379"
     networks:
       - trading-network
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
 
-  # Monitoring Dashboard
-  dashboard:
-    build:
-      context: ./dashboard
-      dockerfile: Dockerfile
-    container_name: trading-dashboard
-    restart: unless-stopped
-    environment:
-      - API_URL=http://trading-bot:8080
-      - NODE_ENV=production
-    ports:
-      - "3000:3000"
-    depends_on:
-      - trading-bot
-    networks:
-      - trading-network
-
-  # Prometheus for Metrics
   prometheus:
     image: prom/prometheus:latest
     container_name: trading-prometheus
@@ -102,7 +79,6 @@ services:
     networks:
       - trading-network
 
-  # Grafana for Visualization
   grafana:
     image: grafana/grafana:latest
     container_name: trading-grafana
@@ -117,23 +93,6 @@ services:
       - "3001:3000"
     depends_on:
       - prometheus
-    networks:
-      - trading-network
-
-  # Nginx Reverse Proxy
-  nginx:
-    image: nginx:alpine
-    container_name: trading-nginx
-    restart: unless-stopped
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
-      - ./nginx/ssl:/etc/nginx/ssl
-    ports:
-      - "80:80"
-      - "443:443"
-    depends_on:
-      - trading-bot
-      - dashboard
     networks:
       - trading-network
 

@@ -1,30 +1,26 @@
 # Cross-file Reference & Signature Verification Report
 
 - Root: `C:\Users\HP\Desktop\ClaudeDex`
-- Python modules indexed: `120`
-- Calls analyzed: `14519`
-- Skipped (external): `3812`
-- Skipped (unknown/duck-typed): `10453`
+- Python modules indexed: `121`
+- Calls analyzed: `14913`
+- Skipped (external): `3909`
+- Skipped (unknown/duck-typed): `10750`
 
 
-## Missing Definitions (4)
+## Missing Definitions (2)
 
-- **Missing definition: ml.models.ensemble_model.EnsemblePredictor**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\core\engine.py`:108
-  - expr: `EnsemblePredictor`
-  - target: `ml.models.ensemble_model.EnsemblePredictor`
-- **Missing definition: ml.models.ensemble_model.EnsemblePredictor**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\scripts\update_models.py`:20
-  - expr: `EnsemblePredictor`
-  - target: `ml.models.ensemble_model.EnsemblePredictor`
 - **Missing definition: ml.models.ensemble_model.EnsembleModel**  
   File: `C:\Users\HP\Desktop\ClaudeDex\tests\integration\test_ml_integration.py`:140
   - expr: `EnsembleModel`
   - target: `ml.models.ensemble_model.EnsembleModel`
+  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\ml\models\ensemble_model.py`
+  - target_kind: `method_or_attr`
 - **Missing definition: ml.models.ensemble_model.EnsembleModel**  
   File: `C:\Users\HP\Desktop\ClaudeDex\trading\strategies\ai_strategy.py`:84
   - expr: `EnsembleModel`
   - target: `ml.models.ensemble_model.EnsembleModel`
+  - target_module_file: `C:\Users\HP\Desktop\ClaudeDex\ml\models\ensemble_model.py`
+  - target_kind: `method_or_attr`
 
 
 ## Missing Methods (0)
@@ -37,13 +33,12 @@
 - None
 
 
-## Import Failures (Parse) (1)
+## Import Failures (Parse) (0)
 
-- **AST parse error: unexpected indent (ensemble_model.py, line 955)**  
-  File: `C:\Users\HP\Desktop\ClaudeDex\ml\models\ensemble_model.py`:1
+- None
 
 
-## Import Object Missing (30)
+## Import Object Missing (34)
 
 - **from utils.constants import CHAIN_RPC_URLS -> CHAIN_RPC_URLS not found in project module**  
   File: `C:\Users\HP\Desktop\ClaudeDex\analysis\dev_analyzer.py`:1
@@ -51,12 +46,18 @@
 - **from utils.constants import BLOCK_EXPLORERS -> BLOCK_EXPLORERS not found in project module**  
   File: `C:\Users\HP\Desktop\ClaudeDex\analysis\dev_analyzer.py`:1
   - imported_as: `BLOCK_EXPLORERS`
+- **from ml.models.ensemble_model import EnsembleModel -> EnsembleModel not found in project module**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\analysis\market_analyzer.py`:1
+  - imported_as: `EnsembleModel`
 - **from utils.constants import CHAIN_RPC_URLS -> CHAIN_RPC_URLS not found in project module**  
   File: `C:\Users\HP\Desktop\ClaudeDex\analysis\smart_contract_analyzer.py`:1
   - imported_as: `CHAIN_RPC_URLS`
 - **from utils.constants import BLOCK_EXPLORERS -> BLOCK_EXPLORERS not found in project module**  
   File: `C:\Users\HP\Desktop\ClaudeDex\analysis\smart_contract_analyzer.py`:1
   - imported_as: `BLOCK_EXPLORERS`
+- **from ml.models.ensemble_model import EnsembleModel -> EnsembleModel not found in project module**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\analysis\token_scorer.py`:1
+  - imported_as: `EnsembleModel`
 - **from utils.constants import HONEYPOT_CHECKS -> HONEYPOT_CHECKS not found in project module**  
   File: `C:\Users\HP\Desktop\ClaudeDex\data\collectors\honeypot_checker.py`:1
   - imported_as: `HONEYPOT_CHECKS`
@@ -102,6 +103,9 @@
 - **from utils.constants import STABLECOINS -> STABLECOINS not found in project module**  
   File: `C:\Users\HP\Desktop\ClaudeDex\data\collectors\whale_tracker.py`:1
   - imported_as: `STABLECOINS`
+- **from ml.models.ensemble_model import EnsembleModel -> EnsembleModel not found in project module**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\tests\integration\test_ml_integration.py`:1
+  - imported_as: `EnsembleModel`
 - **from trading.executors.base_executor import BaseExecutor -> BaseExecutor not found in project module**  
   File: `C:\Users\HP\Desktop\ClaudeDex\trading\executors\direct_dex.py`:1
   - imported_as: `BaseExecutor`
@@ -117,6 +121,9 @@
 - **from trading.executors.base_executor import BaseExecutor -> BaseExecutor not found in project module**  
   File: `C:\Users\HP\Desktop\ClaudeDex\trading\executors\toxisol_api.py`:1
   - imported_as: `BaseExecutor`
+- **from ml.models.ensemble_model import EnsembleModel -> EnsembleModel not found in project module**  
+  File: `C:\Users\HP\Desktop\ClaudeDex\trading\strategies\ai_strategy.py`:1
+  - imported_as: `EnsembleModel`
 - **from utils.constants import MAX_POSITION_SIZE_PERCENT -> MAX_POSITION_SIZE_PERCENT not found in project module**  
   File: `C:\Users\HP\Desktop\ClaudeDex\trading\strategies\base_strategy.py`:1
   - imported_as: `MAX_POSITION_SIZE_PERCENT`
@@ -273,7 +280,7 @@
 
 
 ---
-**Total findings:** 69
+**Total findings:** 70
 
 > Notes:
 > - External/stdlib/3rd-party calls are skipped.

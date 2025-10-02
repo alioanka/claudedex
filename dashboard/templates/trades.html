@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trades - Trading Bot</title>
+    <link rel="stylesheet" href="/static/css/main.css">
+    <link rel="stylesheet" href="/static/css/themes.css">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>DexScreener Bot</h2>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="/" class="nav-item">
+                    <span class="nav-icon">📊</span>
+                    <span class="nav-text">Dashboard</span>
+                </a>
+                <a href="/trades" class="nav-item active">
+                    <span class="nav-icon">💰</span>
+                    <span class="nav-text">Trades</span>
+                </a>
+                <a href="/positions" class="nav-item">
+                    <span class="nav-icon">📈</span>
+                    <span class="nav-text">Positions</span>
+                </a>
+                <a href="/performance" class="nav-item">
+                    <span class="nav-icon">📉</span>
+                    <span class="nav-text">Performance</span>
+                </a>
+                <a href="/reports" class="nav-item">
+                    <span class="nav-icon">📋</span>
+                    <span class="nav-text">Reports</span>
+                </a>
+                <a href="/backtest" class="nav-item">
+                    <span class="nav-icon">🔬</span>
+                    <span class="nav-text">Backtest</span>
+                </a>
+                <a href="/settings" class="nav-item">
+                    <span class="nav-icon">⚙️</span>
+                    <span class="nav-text">Settings</span>
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <button class="theme-toggle" onclick="toggleTheme()" title="Toggle Theme">
+                <svg class="sun-icon" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z"/>
+                </svg>
+            </button>
+
+            <div class="page-header">
+                <h1>Trade History</h1>
+                <div class="page-actions">
+                    <button class="btn btn-secondary" onclick="exportTrades()">Export</button>
+                    <button class="btn btn-primary" onclick="loadTrades()">Refresh</button>
+                </div>
+            </div>
+
+            <!-- Trade Summary Stats -->
+            <div class="stats-grid mb-4">
+                <div class="stat-card">
+                    <div class="stat-label">Total Trades</div>
+                    <div class="stat-value" id="totalTrades">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Winning Trades</div>
+                    <div class="stat-value positive" id="winningTrades">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Losing Trades</div>
+                    <div class="stat-value negative" id="losingTrades">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Win Rate</div>
+                    <div class="stat-value" id="tradeWinRate">0%</div>
+                </div>
+            </div>
+
+            <!-- Filters -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h3>Filters</h3>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3">
+                            <div class="form-group">
+                                <label for="filterStatus">Status</label>
+                                <select id="filterStatus" class="form-control" onchange="applyFilters()">
+                                    <option value="">All</option>
+                                    <option value="completed">Completed</option>
+                                    <option value="pending">Pending</option>
+                                    <option value="failed">Failed</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="form-group">
+                                <label for="filterSide">Side</label>
+                                <select id="filterSide" class="form-control" onchange="applyFilters()">
+                                    <option value="">All</option>
+                                    <option value="buy">Buy</option>
+                                    <option value="sell">Sell</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="form-group">
+                                <label for="filterStartDate">Start Date</label>
+                                <input type="date" id="filterStartDate" class="form-control" onchange="applyFilters()">
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="form-group">
+                                <label for="filterEndDate">End Date</label>
+                                <input type="date" id="filterEndDate" class="form-control" onchange="applyFilters()">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trades Table -->
+            <div class="card">
+                <div class="card-header">
+                    <h3>All Trades</h3>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Token</th>
+                                    <th>Side</th>
+                                    <th>Amount</th>
+                                    <th>Price</th>
+                                    <th>Total</th>
+                                    <th>Status</th>
+                                    <th>P&L</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tradesTableBody">
+                                <tr>
+                                    <td colspan="9" class="text-center">
+                                        <div class="loading">Loading trades...</div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Pagination -->
+                    <div class="pagination" id="pagination">
+                        <!-- Pagination buttons will be inserted here -->
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/js/main.js"></script>
+    <script>
+        let allTrades = [];
+        let filteredTrades = [];
+        let currentPage = 1;
+        const tradesPerPage = 20;
+
+        document.addEventListener('DOMContentLoaded', function() {
+            loadTrades();
+        });
+
+        async function loadTrades() {
+            showLoading('Loading trades...');
+            
+            try {
+                const response = await fetch('/api/trades/history');
+                const data = await response.json();
+                
+                if (data.success) {
+                    allTrades = data.trades;
+                    filteredTrades = allTrades;
+                    updateTradeStats(data.stats);
+                    applyFilters();
+                } else {
+                    showError('Failed to load trades');
+                }
+            } catch (error) {
+                showError('Error loading trades: ' + error.message);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function updateTradeStats(stats) {
+            updateElement('totalTrades', stats.total);
+            updateElement('winningTrades', stats.wins);
+            updateElement('losingTrades', stats.losses);
+            updateElement('tradeWinRate', `${stats.win_rate}%`);
+        }
+
+        function applyFilters() {
+            const status = document.getElementById('filterStatus').value;
+            const side = document.getElementById('filterSide').value;
+            const startDate = document.getElementById('filterStartDate').value;
+            const endDate = document.getElementById('filterEndDate').value;
+
+            filteredTrades = allTrades.filter(trade => {
+                if (status && trade.status !== status) return false;
+                if (side && trade.side !== side) return false;
+                if (startDate && new Date(trade.timestamp) < new Date(startDate)) return false;
+                if (endDate && new Date(trade.timestamp) > new Date(endDate)) return false;
+                return true;
+            });
+
+            currentPage = 1;
+            displayTrades();
+        }
+
+        function displayTrades() {
+            const tbody = document.getElementById('tradesTableBody');
+            const start = (currentPage - 1) * tradesPerPage;
+            const end = start + tradesPerPage;
+            const pageTrades = filteredTrades.slice(start, end);
+
+            if (pageTrades.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="9" class="text-center">
+                            <div class="empty-state">
+                                <div class="empty-state-icon">💰</div>
+                                <div class="empty-state-title">No trades found</div>
+                                <div class="empty-state-message">Try adjusting your filters</div>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            tbody.innerHTML = pageTrades.map(trade => {
+                const pnlClass = trade.pnl ? (trade.pnl >= 0 ? 'positive' : 'negative') : '';
+                const statusClass = trade.status === 'completed' ? 'success' : 
+                                  trade.status === 'pending' ? 'warning' : 'danger';
+
+                return `
+                    <tr>
+                        <td>${formatTimestamp(trade.timestamp)}</td>
+                        <td><strong>${trade.token_symbol}</strong></td>
+                        <td><span class="badge badge-${trade.side === 'buy' ? 'success' : 'danger'}">${trade.side.toUpperCase()}</span></td>
+                        <td>${formatNumber(trade.amount, 4)}</td>
+                        <td>${formatCurrency(trade.price)}</td>
+                        <td>${formatCurrency(trade.total_value)}</td>
+                        <td><span class="badge badge-${statusClass}">${trade.status}</span></td>
+                        <td class="${pnlClass}">${trade.pnl ? formatCurrency(trade.pnl) : '-'}</td>
+                        <td>
+                            <button class="btn btn-sm btn-secondary" onclick="viewTradeDetails('${trade.trade_id}')">
+                                View
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            displayPagination();
+        }
+
+        function displayPagination() {
+            const pagination = document.getElementById('pagination');
+            const totalPages = Math.ceil(filteredTrades.length / tradesPerPage);
+
+            if (totalPages <= 1) {
+                pagination.innerHTML = '';
+                return;
+            }
+
+            let html = '<div class="pagination-controls">';
+            
+            // Previous button
+            html += `<button class="btn btn-sm ${currentPage === 1 ? 'disabled' : ''}" 
+                     onclick="changePage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>
+                     Previous
+                     </button>`;
+
+            // Page numbers
+            for (let i = 1; i <= totalPages; i++) {
+                if (i === 1 || i === totalPages || (i >= currentPage - 2 && i <= currentPage + 2)) {
+                    html += `<button class="btn btn-sm ${i === currentPage ? 'active' : ''}" 
+                             onclick="changePage(${i})">${i}</button>`;
+                } else if (i === currentPage - 3 || i === currentPage + 3) {
+                    html += `<span>...</span>`;
+                }
+            }
+
+            // Next button
+            html += `<button class="btn btn-sm ${currentPage === totalPages ? 'disabled' : ''}" 
+                     onclick="changePage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>
+                     Next
+                     </button>`;
+
+            html += '</div>';
+            pagination.innerHTML = html;
+        }
+
+        function changePage(page) {
+            const totalPages = Math.ceil(filteredTrades.length / tradesPerPage);
+            if (page < 1 || page > totalPages) return;
+            currentPage = page;
+            displayTrades();
+        }
+
+        async function viewTradeDetails(tradeId) {
+            showLoading('Loading trade details...');
+            
+            try {
+                const response = await fetch(`/api/trades/${tradeId}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayTradeModal(data.trade);
+                } else {
+                    showError('Failed to load trade details');
+                }
+            } catch (error) {
+                showError('Error loading trade details: ' + error.message);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function displayTradeModal(trade) {
+            const modal = document.createElement('div');
+            modal.className = 'modal';
+            modal.innerHTML = `
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3>Trade Details</h3>
+                        <button class="modal-close" onclick="this.closest('.modal').remove()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="detail-row">
+                            <span class="detail-label">Trade ID:</span>
+                            <span class="detail-value">${trade.trade_id}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Token:</span>
+                            <span class="detail-value">${trade.token_symbol}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Side:</span>
+                            <span class="detail-value"><span class="badge badge-${trade.side === 'buy' ? 'success' : 'danger'}">${trade.side.toUpperCase()}</span></span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Amount:</span>
+                            <span class="detail-value">${formatNumber(trade.amount, 4)}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Price:</span>
+                            <span class="detail-value">${formatCurrency(trade.price)}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Total Value:</span>
+                            <span class="detail-value">${formatCurrency(trade.total_value)}</span>
+                        </div>
+                        ${trade.pnl ? `
+                        <div class="detail-row">
+                            <span class="detail-label">P&L:</span>
+                            <span class="detail-value ${trade.pnl >= 0 ? 'positive' : 'negative'}">${formatCurrency(trade.pnl)}</span>
+                        </div>
+                        ` : ''}
+                        <div class="detail-row">
+                            <span class="detail-label">Status:</span>
+                            <span class="detail-value">${trade.status}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Strategy:</span>
+                            <span class="detail-value">${trade.strategy || 'N/A'}</span>
+                        </div>
+                        ${trade.tx_hash ? `
+                        <div class="detail-row">
+                            <span class="detail-label">Transaction:</span>
+                            <span class="detail-value"><a href="https://etherscan.io/tx/${trade.tx_hash}" target="_blank">${trade.tx_hash.slice(0, 10)}...</a></span>
+                        </div>
+                        ` : ''}
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">Close</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        async function exportTrades() {
+            try {
+                const response = await fetch('/api/trades/export?format=csv');
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `trades-${Date.now()}.csv`;
+                a.click();
+                window.URL.revokeObjectURL(url);
+                showSuccess('Trades exported successfully');
+            } catch (error) {
+                showError('Error exporting trades: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html>

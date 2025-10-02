@@ -1,0 +1,399 @@
+{% extends "base.html" %}
+
+{% block title %}Performance Analytics - DexScreener Trading Bot{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Performance Analytics</h1>
+    <div class="page-actions">
+        <select id="performanceTimeframe" class="form-control" style="width: auto;">
+            <option value="24h">24 Hours</option>
+            <option value="7d" selected>7 Days</option>
+            <option value="30d">30 Days</option>
+            <option value="90d">90 Days</option>
+            <option value="all">All Time</option>
+        </select>
+        <button class="btn btn-secondary" onclick="refreshPerformance()">
+            <i class="fas fa-sync"></i> Refresh
+        </button>
+    </div>
+</div>
+
+<!-- Key Performance Metrics -->
+<div class="grid grid-4">
+    <div class="stat-card success">
+        <i class="fas fa-dollar-sign stat-icon"></i>
+        <div class="stat-label">Total Profit</div>
+        <div class="stat-value" id="totalProfit">$0.00</div>
+        <div class="stat-change positive" id="profitChange">
+            <i class="fas fa-arrow-up"></i> 0%
+        </div>
+    </div>
+    
+    <div class="stat-card">
+        <i class="fas fa-percentage stat-icon"></i>
+        <div class="stat-label">ROI</div>
+        <div class="stat-value" id="totalRoi">0%</div>
+        <div class="stat-change" id="roiChange">All time</div>
+    </div>
+    
+    <div class="stat-card">
+        <i class="fas fa-chart-line stat-icon"></i>
+        <div class="stat-label">Sharpe Ratio</div>
+        <div class="stat-value" id="sharpeRatio">0.00</div>
+        <div class="stat-change">Risk-adjusted</div>
+    </div>
+    
+    <div class="stat-card warning">
+        <i class="fas fa-chart-area stat-icon"></i>
+        <div class="stat-label">Max Drawdown</div>
+        <div class="stat-value text-danger" id="maxDrawdown">0%</div>
+        <div class="stat-change">Peak to trough</div>
+    </div>
+</div>
+
+<!-- Charts Row 1 -->
+<div class="grid grid-2">
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Equity Curve</h3>
+        </div>
+        <div class="card-body">
+            <canvas id="equityCurveChart" height="300"></canvas>
+        </div>
+    </div>
+    
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Cumulative P&L</h3>
+        </div>
+        <div class="card-body">
+            <canvas id="cumulativePnlChart" height="300"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Trade Statistics -->
+<div class="card">
+    <div class="card-header">
+        <h3 class="card-title">Trade Statistics</h3>
+    </div>
+    <div class="card-body">
+        <div class="grid grid-4">
+            <div>
+                <div class="metric-row">
+                    <span class="metric-label">Total Trades</span>
+                    <span class="metric-value" id="totalTrades">0</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Winning Trades</span>
+                    <span class="metric-value text-success" id="winningTrades">0</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Losing Trades</span>
+                    <span class="metric-value text-danger" id="losingTrades">0</span>
+                </div>
+            </div>
+            <div>
+                <div class="metric-row">
+                    <span class="metric-label">Win Rate</span>
+                    <span class="metric-value" id="winRate">0%</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Average Win</span>
+                    <span class="metric-value text-success" id="avgWin">$0.00</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Average Loss</span>
+                    <span class="metric-value text-danger" id="avgLoss">$0.00</span>
+                </div>
+            </div>
+            <div>
+                <div class="metric-row">
+                    <span class="metric-label">Best Trade</span>
+                    <span class="metric-value text-success" id="bestTrade">$0.00</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Worst Trade</span>
+                    <span class="metric-value text-danger" id="worstTrade">$0.00</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Avg Duration</span>
+                    <span class="metric-value" id="avgDuration">0h</span>
+                </div>
+            </div>
+            <div>
+                <div class="metric-row">
+                    <span class="metric-label">Profit Factor</span>
+                    <span class="metric-value" id="profitFactor">0.00</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Expectancy</span>
+                    <span class="metric-value" id="expectancy">$0.00</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Recovery Factor</span>
+                    <span class="metric-value" id="recoveryFactor">0.00</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts Row 2 -->
+<div class="grid grid-3">
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Strategy Performance</h3>
+        </div>
+        <div class="card-body">
+            <canvas id="strategyChart" height="250"></canvas>
+        </div>
+    </div>
+    
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Win/Loss Distribution</h3>
+        </div>
+        <div class="card-body">
+            <canvas id="winLossChart" height="250"></canvas>
+        </div>
+    </div>
+    
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Monthly Performance</h3>
+        </div>
+        <div class="card-body">
+            <canvas id="monthlyChart" height="250"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Risk Metrics -->
+<div class="card">
+    <div class="card-header">
+        <h3 class="card-title">Risk Metrics</h3>
+    </div>
+    <div class="card-body">
+        <div class="grid grid-3">
+            <div>
+                <h4>Volatility</h4>
+                <div class="metric-row">
+                    <span class="metric-label">Daily Volatility</span>
+                    <span class="metric-value" id="dailyVol">0%</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Annual Volatility</span>
+                    <span class="metric-value" id="annualVol">0%</span>
+                </div>
+            </div>
+            <div>
+                <h4>Risk Ratios</h4>
+                <div class="metric-row">
+                    <span class="metric-label">Sharpe Ratio</span>
+                    <span class="metric-value" id="sharpeRatioDetail">0.00</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Sortino Ratio</span>
+                    <span class="metric-value" id="sortinoRatio">0.00</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Calmar Ratio</span>
+                    <span class="metric-value" id="calmarRatio">0.00</span>
+                </div>
+            </div>
+            <div>
+                <h4>Drawdown</h4>
+                <div class="metric-row">
+                    <span class="metric-label">Max Drawdown</span>
+                    <span class="metric-value text-danger" id="maxDrawdownDetail">0%</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Avg Drawdown</span>
+                    <span class="metric-value" id="avgDrawdown">0%</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Recovery Time</span>
+                    <span class="metric-value" id="recoveryTime">0 days</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+async function loadPerformanceData() {
+    const timeframe = document.getElementById('performanceTimeframe').value;
+    
+    try {
+        const response = await apiGet(`/api/performance/metrics?period=${timeframe}`);
+        if (response.success) {
+            updatePerformanceMetrics(response.data);
+            await loadPerformanceCharts(timeframe);
+        }
+    } catch (error) {
+        showToast('error', 'Failed to load performance data');
+    }
+}
+
+function updatePerformanceMetrics(data) {
+    // Key metrics
+    document.getElementById('totalProfit').textContent = formatCurrency(data.total_pnl || 0);
+    document.getElementById('totalRoi').textContent = formatPercent(data.roi || 0);
+    document.getElementById('sharpeRatio').textContent = formatNumber(data.sharpe_ratio || 0, 2);
+    document.getElementById('maxDrawdown').textContent = formatPercent(data.max_drawdown || 0);
+    
+    // Trade statistics
+    document.getElementById('totalTrades').textContent = data.total_trades || 0;
+    document.getElementById('winningTrades').textContent = data.winning_trades || 0;
+    document.getElementById('losingTrades').textContent = data.losing_trades || 0;
+    document.getElementById('winRate').textContent = formatPercent(data.win_rate || 0);
+    document.getElementById('avgWin').textContent = formatCurrency(data.avg_win || 0);
+    document.getElementById('avgLoss').textContent = formatCurrency(data.avg_loss || 0);
+    document.getElementById('bestTrade').textContent = formatCurrency(data.best_trade || 0);
+    document.getElementById('worstTrade').textContent = formatCurrency(data.worst_trade || 0);
+    document.getElementById('profitFactor').textContent = formatNumber(data.profit_factor || 0, 2);
+    document.getElementById('expectancy').textContent = formatCurrency(data.expectancy || 0);
+    document.getElementById('recoveryFactor').textContent = formatNumber(data.recovery_factor || 0, 2);
+    
+    // Risk metrics
+    document.getElementById('sharpeRatioDetail').textContent = formatNumber(data.sharpe_ratio || 0, 2);
+    document.getElementById('sortinoRatio').textContent = formatNumber(data.sortino_ratio || 0, 2);
+    document.getElementById('maxDrawdownDetail').textContent = formatPercent(data.max_drawdown || 0);
+}
+
+async function loadPerformanceCharts(timeframe) {
+    try {
+        const response = await apiGet(`/api/performance/charts?timeframe=${timeframe}`);
+        if (response.success) {
+            createEquityCurveChart(response.data.equity_curve);
+            createCumulativePnlChart(response.data.cumulative_pnl);
+            createStrategyChart(response.data.strategy_performance);
+            createWinLossChart(response.data.win_loss);
+            createMonthlyChart(response.data.monthly);
+        }
+    } catch (error) {
+        console.error('Failed to load charts:', error);
+    }
+}
+
+function createEquityCurveChart(data) {
+    createChart('equityCurveChart', {
+        type: 'line',
+        data: {
+            labels: data.map(d => formatDate(d.timestamp)),
+            datasets: [{
+                label: 'Portfolio Value',
+                data: data.map(d => d.value),
+                borderColor: '#3b82f6',
+                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                y: {
+                    ticks: { callback: value => formatCurrency(value) }
+                }
+            }
+        }
+    });
+}
+
+function createCumulativePnlChart(data) {
+    createChart('cumulativePnlChart', {
+        type: 'line',
+        data: {
+            labels: data.map(d => formatDate(d.timestamp)),
+            datasets: [{
+                label: 'Cumulative P&L',
+                data: data.map(d => d.cumulative_pnl),
+                borderColor: '#10b981',
+                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                y: {
+                    ticks: { callback: value => formatCurrency(value) }
+                }
+            }
+        }
+    });
+}
+
+function createStrategyChart(data) {
+    createChart('strategyChart', {
+        type: 'bar',
+        data: {
+            labels: data.map(d => d.strategy),
+            datasets: [{
+                label: 'P&L',
+                data: data.map(d => d.pnl),
+                backgroundColor: data.map(d => d.pnl >= 0 ? 
+                    'rgba(16, 185, 129, 0.8)' : 'rgba(239, 68, 68, 0.8)')
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } }
+        }
+    });
+}
+
+function createWinLossChart(data) {
+    createChart('winLossChart', {
+        type: 'doughnut',
+        data: {
+            labels: ['Wins', 'Losses'],
+            datasets: [{
+                data: [data.wins, data.losses],
+                backgroundColor: ['rgba(16, 185, 129, 0.8)', 'rgba(239, 68, 68, 0.8)']
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false
+        }
+    });
+}
+
+function createMonthlyChart(data) {
+    createChart('monthlyChart', {
+        type: 'bar',
+        data: {
+            labels: data.map(d => d.month),
+            datasets: [{
+                label: 'Monthly P&L',
+                data: data.map(d => d.pnl),
+                backgroundColor: data.map(d => d.pnl >= 0 ? 
+                    'rgba(16, 185, 129, 0.8)' : 'rgba(239, 68, 68, 0.8)')
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } }
+        }
+    });
+}
+
+function refreshPerformance() {
+    loadPerformanceData();
+}
+
+document.addEventListener('DOMContentLoaded', loadPerformanceData);
+document.getElementById('performanceTimeframe').addEventListener('change', loadPerformanceData);
+</script>
+{% endblock %}

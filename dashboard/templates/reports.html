@@ -1,0 +1,363 @@
+{% extends "base.html" %}
+
+{% block title %}Reports - DexScreener Trading Bot{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Performance Reports</h1>
+</div>
+
+<!-- Quick Report Generation -->
+<div class="grid grid-3">
+    <div class="card">
+        <div class="card-body text-center">
+            <i class="fas fa-calendar-day" style="font-size: 3rem; color: var(--accent-primary); margin-bottom: var(--spacing-md);"></i>
+            <h3>Daily Report</h3>
+            <p class="text-muted">Today's trading performance</p>
+            <button class="btn btn-primary" onclick="generateReport('daily')">
+                <i class="fas fa-file-alt"></i> Generate
+            </button>
+        </div>
+    </div>
+    
+    <div class="card">
+        <div class="card-body text-center">
+            <i class="fas fa-calendar-week" style="font-size: 3rem; color: var(--accent-success); margin-bottom: var(--spacing-md);"></i>
+            <h3>Weekly Report</h3>
+            <p class="text-muted">Last 7 days performance</p>
+            <button class="btn btn-primary" onclick="generateReport('weekly')">
+                <i class="fas fa-file-alt"></i> Generate
+            </button>
+        </div>
+    </div>
+    
+    <div class="card">
+        <div class="card-body text-center">
+            <i class="fas fa-calendar-alt" style="font-size: 3rem; color: var(--accent-warning); margin-bottom: var(--spacing-md);"></i>
+            <h3>Monthly Report</h3>
+            <p class="text-muted">Last 30 days performance</p>
+            <button class="btn btn-primary" onclick="generateReport('monthly')">
+                <i class="fas fa-file-alt"></i> Generate
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Custom Report Builder -->
+<div class="card">
+    <div class="card-header">
+        <h3 class="card-title">
+            <i class="fas fa-cog"></i>
+            Custom Report Builder
+        </h3>
+    </div>
+    <div class="card-body">
+        <div class="grid grid-2">
+            <div class="form-group">
+                <label class="form-label">Start Date</label>
+                <input type="date" class="form-control" id="customStartDate">
+            </div>
+            <div class="form-group">
+                <label class="form-label">End Date</label>
+                <input type="date" class="form-control" id="customEndDate">
+            </div>
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label">Select Metrics</label>
+            <div class="checkbox-group">
+                <label><input type="checkbox" value="pnl" checked> P&L Analysis</label>
+                <label><input type="checkbox" value="trades" checked> Trade Statistics</label>
+                <label><input type="checkbox" value="winrate" checked> Win Rate</label>
+                <label><input type="checkbox" value="sharpe" checked> Sharpe Ratio</label>
+                <label><input type="checkbox" value="drawdown" checked> Drawdown Analysis</label>
+                <label><input type="checkbox" value="positions" checked> Position Summary</label>
+                <label><input type="checkbox" value="strategies" checked> Strategy Performance</label>
+                <label><input type="checkbox" value="risk" checked> Risk Metrics</label>
+            </div>
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label">Export Format</label>
+            <div class="btn-group">
+                <button class="btn btn-secondary" onclick="generateCustomReport('json')">
+                    <i class="fas fa-code"></i> JSON
+                </button>
+                <button class="btn btn-secondary" onclick="generateCustomReport('csv')">
+                    <i class="fas fa-file-csv"></i> CSV
+                </button>
+                <button class="btn btn-secondary" onclick="generateCustomReport('excel')">
+                    <i class="fas fa-file-excel"></i> Excel
+                </button>
+                <button class="btn btn-secondary" onclick="generateCustomReport('pdf')">
+                    <i class="fas fa-file-pdf"></i> PDF
+                </button>
+            </div>
+        </div>
+        
+        <button class="btn btn-primary btn-lg" onclick="generateCustomReport('view')">
+            <i class="fas fa-eye"></i> Preview Report
+        </button>
+    </div>
+</div>
+
+<!-- Report Preview -->
+<div class="card" id="reportPreview" style="display: none;">
+    <div class="card-header">
+        <h3 class="card-title">
+            <i class="fas fa-file-alt"></i>
+            Report Preview
+        </h3>
+        <div class="card-actions">
+            <button class="btn btn-sm btn-secondary" onclick="exportData('csv', '/api/reports/export/csv')">
+                <i class="fas fa-download"></i> CSV
+            </button>
+            <button class="btn btn-sm btn-secondary" onclick="exportData('excel', '/api/reports/export/excel')">
+                <i class="fas fa-download"></i> Excel
+            </button>
+            <button class="btn btn-sm btn-secondary" onclick="exportData('pdf', '/api/reports/export/pdf')">
+                <i class="fas fa-download"></i> PDF
+            </button>
+        </div>
+    </div>
+    <div class="card-body" id="reportContent">
+        <!-- Report content will be inserted here -->
+    </div>
+</div>
+
+<script>
+async function generateReport(period) {
+    showToast('info', `Generating ${period} report...`);
+    
+    try {
+        const response = await apiPost('/api/reports/generate', {
+            period: period,
+            metrics: ['all']
+        });
+        
+        if (response.success) {
+            displayReport(response.data, period);
+            showToast('success', 'Report generated successfully');
+        }
+    } catch (error) {
+        showToast('error', 'Failed to generate report');
+    }
+}
+
+async function generateCustomReport(format) {
+    const startDate = document.getElementById('customStartDate').value;
+    const endDate = document.getElementById('customEndDate').value;
+    
+    if (!startDate || !endDate) {
+        showToast('warning', 'Please select date range');
+        return;
+    }
+    
+    const metrics = Array.from(document.querySelectorAll('.checkbox-group input:checked'))
+        .map(cb => cb.value);
+    
+    if (metrics.length === 0) {
+        showToast('warning', 'Please select at least one metric');
+        return;
+    }
+    
+    if (format === 'view') {
+        showToast('info', 'Generating custom report...');
+        
+        try {
+            const response = await apiPost('/api/reports/generate', {
+                period: 'custom',
+                start_date: startDate,
+                end_date: endDate,
+                metrics: metrics
+            });
+            
+            if (response.success) {
+                displayReport(response.data, 'custom');
+                showToast('success', 'Report generated successfully');
+            }
+        } catch (error) {
+            showToast('error', 'Failed to generate report');
+        }
+    } else {
+        // Export directly
+        const params = new URLSearchParams({
+            start_date: startDate,
+            end_date: endDate,
+            metrics: metrics.join(',')
+        });
+        
+        await exportData(format, `/api/reports/export/${format}?${params.toString()}`);
+    }
+}
+
+function displayReport(data, period) {
+    const preview = document.getElementById('reportPreview');
+    const content = document.getElementById('reportContent');
+    
+    const html = `
+        <div class="report-header">
+            <h2>${period.charAt(0).toUpperCase() + period.slice(1)} Performance Report</h2>
+            <p class="text-muted">Generated: ${formatDate(data.generated_at)}</p>
+        </div>
+        
+        <div class="report-section">
+            <h3>Overview</h3>
+            <div class="grid grid-4">
+                <div class="report-metric">
+                    <div class="metric-label">Total P&L</div>
+                    <div class="metric-value ${data.metrics.total_pnl >= 0 ? 'text-success' : 'text-danger'}">
+                        ${formatCurrency(data.metrics.total_pnl || 0)}
+                    </div>
+                </div>
+                <div class="report-metric">
+                    <div class="metric-label">Total Trades</div>
+                    <div class="metric-value">${data.metrics.total_trades || 0}</div>
+                </div>
+                <div class="report-metric">
+                    <div class="metric-label">Win Rate</div>
+                    <div class="metric-value">${formatPercent(data.metrics.win_rate || 0)}</div>
+                </div>
+                <div class="report-metric">
+                    <div class="metric-label">Sharpe Ratio</div>
+                    <div class="metric-value">${formatNumber(data.metrics.sharpe_ratio || 0, 2)}</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="report-section">
+            <h3>Trade Breakdown</h3>
+            <div class="grid grid-3">
+                <div class="report-metric">
+                    <div class="metric-label">Winning Trades</div>
+                    <div class="metric-value text-success">${data.metrics.winning_trades || 0}</div>
+                </div>
+                <div class="report-metric">
+                    <div class="metric-label">Losing Trades</div>
+                    <div class="metric-value text-danger">${data.metrics.losing_trades || 0}</div>
+                </div>
+                <div class="report-metric">
+                    <div class="metric-label">Break-even Trades</div>
+                    <div class="metric-value">${data.metrics.breakeven_trades || 0}</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="report-section">
+            <h3>Performance Metrics</h3>
+            <table class="report-table">
+                <tr>
+                    <td>Average Win</td>
+                    <td class="text-success">${formatCurrency(data.metrics.avg_win || 0)}</td>
+                </tr>
+                <tr>
+                    <td>Average Loss</td>
+                    <td class="text-danger">${formatCurrency(data.metrics.avg_loss || 0)}</td>
+                </tr>
+                <tr>
+                    <td>Profit Factor</td>
+                    <td>${formatNumber(data.metrics.profit_factor || 0, 2)}</td>
+                </tr>
+                <tr>
+                    <td>Max Drawdown</td>
+                    <td class="text-danger">${formatPercent(data.metrics.max_drawdown || 0)}</td>
+                </tr>
+                <tr>
+                    <td>Recovery Factor</td>
+                    <td>${formatNumber(data.metrics.recovery_factor || 0, 2)}</td>
+                </tr>
+            </table>
+        </div>
+    `;
+    
+    content.innerHTML = html;
+    preview.style.display = 'block';
+    
+    // Scroll to preview
+    preview.scrollIntoView({ behavior: 'smooth' });
+}
+</script>
+
+<style>
+.checkbox-group {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--spacing-md);
+}
+
+.checkbox-group label {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    cursor: pointer;
+}
+
+.checkbox-group input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.btn-group {
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+.report-header {
+    margin-bottom: var(--spacing-xl);
+    padding-bottom: var(--spacing-lg);
+    border-bottom: 2px solid var(--border-color);
+}
+
+.report-section {
+    margin-bottom: var(--spacing-xl);
+}
+
+.report-section h3 {
+    margin-bottom: var(--spacing-lg);
+    color: var(--accent-primary);
+}
+
+.report-metric {
+    background: var(--bg-tertiary);
+    padding: var(--spacing-lg);
+    border-radius: var(--radius-md);
+    text-align: center;
+}
+
+.report-metric .metric-label {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.report-metric .metric-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+}
+
+.report-table {
+    width: 100%;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+}
+
+.report-table td {
+    padding: var(--spacing-md);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.report-table td:first-child {
+    color: var(--text-secondary);
+}
+
+.report-table td:last-child {
+    text-align: right;
+    font-weight: 600;
+}
+
+.report-table tr:last-child td {
+    border-bottom: none;
+}
+</style>
+{% endblock %}

@@ -12519,6 +12519,382 @@
       "methods": {}
     }
   },
+  "ml.models.ensemble_model": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\models\\ensemble_model.py",
+    "classes": {
+      "PredictionResult": {
+        "methods": {
+          "__post_init__": {
+            "name": "__post_init__",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          }
+        },
+        "has_init": false
+      },
+      "LSTMPricePredictor": {
+        "methods": {
+          "__init__": {
+            "name": "__init__",
+            "params": [
+              "self",
+              "input_dim",
+              "hidden_dim",
+              "num_layers",
+              "dropout"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 4,
+            "posonly": [],
+            "is_method": true
+          },
+          "forward": {
+            "name": "forward",
+            "params": [
+              "self",
+              "x"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          }
+        },
+        "has_init": true
+      },
+      "TransformerPredictor": {
+        "methods": {
+          "__init__": {
+            "name": "__init__",
+            "params": [
+              "self",
+              "input_dim",
+              "d_model",
+              "nhead",
+              "num_layers"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 4,
+            "posonly": [],
+            "is_method": true
+          },
+          "forward": {
+            "name": "forward",
+            "params": [
+              "self",
+              "x"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          }
+        },
+        "has_init": true
+      },
+      "EnsemblePredictor": {
+        "methods": {
+          "__init__": {
+            "name": "__init__",
+            "params": [
+              "self",
+              "model_dir"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 1,
+            "posonly": [],
+            "is_method": true
+          },
+          "load_models": {
+            "name": "load_models",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_create_xgboost_model": {
+            "name": "_create_xgboost_model",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_create_lightgbm_model": {
+            "name": "_create_lightgbm_model",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_create_random_forest_model": {
+            "name": "_create_random_forest_model",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_create_gradient_boosting_model": {
+            "name": "_create_gradient_boosting_model",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "extract_features": {
+            "name": "extract_features",
+            "params": [
+              "self",
+              "data"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "predict": {
+            "name": "predict",
+            "params": [
+              "self",
+              "token",
+              "chain"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_predict_from_features": {
+            "name": "_predict_from_features",
+            "params": [
+              "self",
+              "features"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_calculate_weighted_average": {
+            "name": "_calculate_weighted_average",
+            "params": [
+              "self",
+              "values",
+              "weights"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_get_feature_importance": {
+            "name": "_get_feature_importance",
+            "params": [
+              "self",
+              "features"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "retrain": {
+            "name": "retrain",
+            "params": [
+              "self",
+              "training_data"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_train_lstm": {
+            "name": "_train_lstm",
+            "params": [
+              "self",
+              "X",
+              "y",
+              "epochs"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 1,
+            "posonly": [],
+            "is_method": true
+          },
+          "_train_transformer": {
+            "name": "_train_transformer",
+            "params": [
+              "self",
+              "X",
+              "y",
+              "epochs"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 1,
+            "posonly": [],
+            "is_method": true
+          },
+          "update_models": {
+            "name": "update_models",
+            "params": [
+              "self",
+              "new_models"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "save_models": {
+            "name": "save_models",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "predict_from_token": {
+            "name": "predict_from_token",
+            "params": [
+              "self",
+              "token",
+              "chain"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "combine_predictions": {
+            "name": "combine_predictions",
+            "params": [
+              "self",
+              "predictions"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "calculate_weighted_score": {
+            "name": "calculate_weighted_score",
+            "params": [
+              "self",
+              "scores",
+              "weights"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_confidence_level": {
+            "name": "get_confidence_level",
+            "params": [
+              "self",
+              "predictions"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "update_weights": {
+            "name": "update_weights",
+            "params": [
+              "self",
+              "performance_data"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          }
+        },
+        "has_init": true
+      }
+    },
+    "functions": {},
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
   "ml.models.pump_predictor": {
     "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\models\\pump_predictor.py",
     "classes": {
@@ -14928,6 +15304,672 @@
           },
           "_update_risk_data": {
             "name": "_update_risk_data",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          }
+        },
+        "has_init": true
+      }
+    },
+    "functions": {},
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "monitoring.enhanced_dashboard": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\monitoring\\enhanced_dashboard.py",
+    "classes": {
+      "DashboardEndpoints": {
+        "methods": {
+          "__init__": {
+            "name": "__init__",
+            "params": [
+              "self",
+              "host",
+              "port",
+              "config",
+              "trading_engine",
+              "portfolio_manager",
+              "order_manager",
+              "risk_manager",
+              "alerts_system",
+              "config_manager",
+              "db_manager"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 10,
+            "posonly": [],
+            "is_method": true
+          },
+          "_setup_routes": {
+            "name": "_setup_routes",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_setup_socketio": {
+            "name": "_setup_socketio",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "index": {
+            "name": "index",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "dashboard_page": {
+            "name": "dashboard_page",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "trades_page": {
+            "name": "trades_page",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "positions_page": {
+            "name": "positions_page",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "performance_page": {
+            "name": "performance_page",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "settings_page": {
+            "name": "settings_page",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "reports_page": {
+            "name": "reports_page",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "backtest_page": {
+            "name": "backtest_page",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_dashboard_summary": {
+            "name": "api_dashboard_summary",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_recent_trades": {
+            "name": "api_recent_trades",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_trade_history": {
+            "name": "api_trade_history",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_open_positions": {
+            "name": "api_open_positions",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_positions_history": {
+            "name": "api_positions_history",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_performance_metrics": {
+            "name": "api_performance_metrics",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_performance_charts": {
+            "name": "api_performance_charts",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_recent_alerts": {
+            "name": "api_recent_alerts",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_bot_start": {
+            "name": "api_bot_start",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_bot_stop": {
+            "name": "api_bot_stop",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_bot_restart": {
+            "name": "api_bot_restart",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_emergency_exit": {
+            "name": "api_emergency_exit",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_bot_status": {
+            "name": "api_bot_status",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_get_settings": {
+            "name": "api_get_settings",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_update_settings": {
+            "name": "api_update_settings",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_revert_settings": {
+            "name": "api_revert_settings",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_settings_history": {
+            "name": "api_settings_history",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_execute_trade": {
+            "name": "api_execute_trade",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_close_position": {
+            "name": "api_close_position",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_modify_position": {
+            "name": "api_modify_position",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_cancel_order": {
+            "name": "api_cancel_order",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_generate_report": {
+            "name": "api_generate_report",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_export_report": {
+            "name": "api_export_report",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_custom_report": {
+            "name": "api_custom_report",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_run_backtest": {
+            "name": "api_run_backtest",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_backtest_results": {
+            "name": "api_backtest_results",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_get_strategy_params": {
+            "name": "api_get_strategy_params",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "api_update_strategy_params": {
+            "name": "api_update_strategy_params",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "sse_handler": {
+            "name": "sse_handler",
+            "params": [
+              "self",
+              "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_send_initial_data": {
+            "name": "_send_initial_data",
+            "params": [
+              "self",
+              "sid"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_broadcast_loop": {
+            "name": "_broadcast_loop",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_generate_report": {
+            "name": "_generate_report",
+            "params": [
+              "self",
+              "period",
+              "start_date",
+              "end_date",
+              "metrics"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_generate_custom_report": {
+            "name": "_generate_custom_report",
+            "params": [
+              "self",
+              "filters"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_export_csv": {
+            "name": "_export_csv",
+            "params": [
+              "self",
+              "report"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_export_excel": {
+            "name": "_export_excel",
+            "params": [
+              "self",
+              "report"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_export_pdf": {
+            "name": "_export_pdf",
+            "params": [
+              "self",
+              "report"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_run_backtest_task": {
+            "name": "_run_backtest_task",
+            "params": [
+              "self",
+              "test_id",
+              "strategy",
+              "start_date",
+              "end_date",
+              "initial_balance",
+              "parameters"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "start": {
+            "name": "start",
             "params": [
               "self"
             ],
@@ -25857,7 +26899,7 @@
         [
           "main",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
-          372
+          402
         ],
         [
           "setup_env_keys",
