@@ -5,7 +5,7 @@ Real-time DEX data collection and monitoring
 
 import asyncio
 import aiohttp
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, AsyncGenerator
 from datetime import datetime, timedelta
 import json
 from dataclasses import dataclass, field
@@ -165,7 +165,7 @@ class DexScreenerCollector:
     # 1. Fix get_new_pairs signature (line ~165)
     # REPLACE the existing method signature and update the implementation:
 
-    async def get_new_pairs(self, chain: str = 'ethereum') -> List[Dict]:
+    async def get_new_pairs(self, chain: str = 'ethereum', limit: int = 100) -> List[Dict]:
         """
         Get newly created pairs for a specific chain
         
@@ -210,7 +210,7 @@ class DexScreenerCollector:
             self.monitored_pairs.add(pair['pair_address'])
             await self.new_pairs_queue.put(pair)
             
-        return new_pairs
+        return new_pairs[:limit]
 
         
     async def get_token_price(self, token_address: str) -> Optional[float]:
