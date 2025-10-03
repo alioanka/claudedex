@@ -344,18 +344,20 @@ class CollMap:
     func_to_defs: Dict[str, List[Tuple[str,str,int]]] = field(default_factory=lambda: defaultdict(list))
 
 class Analyzer:
-    def __init__(self, root:str, exclude:Set[str], exclude_glob:Set[str], strict_config:bool, project_only:bool=True):
+    def __init__(self, root:str, exclude:Set[str], exclude_glob:Set[str], strict_config:bool, project_only:bool=True, deps_check:bool=True):
         self.root=os.path.abspath(root)
         self.exclude=exclude | DEFAULT_DIR_EXCLUDES
         self.exclude_glob=exclude_glob | DEFAULT_GLOB_EXCLUDES
         self.strict_config=strict_config
         self.project_only=project_only
+        self.deps_check=deps_check
         self.modules: Dict[str, ModuleInfo]={}
         self.calls: List[CallSite]=[]
         self.problems: List[Problem]=[]
         self.skipped_external=0
         self.skipped_unknown=0
         self.coll = CollMap()
+        self.project_prefixes: Set[str] = set()
 
     def _is_glob_excluded(self, path:str)->bool:
         name=os.path.basename(path)
@@ -384,6 +386,8 @@ class Analyzer:
                 self.problems.append(Problem("import_failure", f"AST parse error: {e}", fp, mod, 1)); continue
             idx = PyIndexer(self.root, fp, mod); idx.visit(tree)
             self.modules[mod]=idx.info
+            if mod:
+                self.project_prefixes.add(mod.split(".")[0])
 
             # collisions (public)
             for cls, _ci in idx.info.classes.items():
@@ -416,8 +420,19 @@ class Analyzer:
                 src_mod, obj = ref.split(":",1)
                 if not src_mod:
                     continue
+
+
+                # NEW: if any prefix of src_mod belongs to our project but module file doesn't exist -> flag missing module
                 proj_fp = file_for_module(self.root, src_mod)
                 if not proj_fp:
+                    # check prefix relationship (e.g., 'security' exists, but 'security.wallet_manager' missing)
+                    prefixes = [".".join(src_mod.split(".")[:k]) for k in range(1, len(src_mod.split("."))+1)]
+                    if any(p in self.modules for p in prefixes[:-1]):
+                        self.problems.append(Problem(
+                            "missing_module",
+                            f"Project module not found: {src_mod}",
+                            mi.filepath, mi.module, 1, {"imported_as": alias}
+                        ))
                     continue
                 if src_mod not in self.modules:
                     s = read_file(proj_fp)
@@ -434,6 +449,94 @@ class Analyzer:
                         "import_object_missing",
                         f"from {src_mod} import {obj} -> {obj} not found in project module",
                         mi.filepath, mi.module, 1, {"imported_as": alias}
+                    ))
+
+
+        # NEW: Annotation import checks (typing & Decimal)
+        TYPING_NAMES = {"Any","Optional","Dict","List","Tuple","Union"}
+        BUILTINS = {"int","str","float","bool","bytes","None"}
+        for mod, mi in self.modules.items():
+            src = read_file(mi.filepath)
+            if not src.strip(): continue
+            try:
+                tree = ast.parse(src, filename=mi.filepath)
+            except Exception:
+                continue
+            used: Set[str] = set()
+            def collect_ann(n):
+                if isinstance(n, ast.Name):
+                    used.add(n.id)
+                elif isinstance(n, ast.Subscript):
+                    collect_ann(n.value)
+                    if hasattr(n, "slice"):
+                        for child in ast.walk(n.slice):
+                            if isinstance(child, ast.Name): used.add(child.id)
+                elif isinstance(n, ast.Attribute):
+                    # 'decimal.Decimal' will appear as Attribute; skip bare capture
+                    pass
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if node.returns: collect_ann(node.returns)
+                    for a in node.args.args + node.args.kwonlyargs + node.args.posonlyargs:
+                        if getattr(a, "annotation", None): collect_ann(a.annotation)
+                elif isinstance(node, ast.AnnAssign):
+                    if getattr(node, "annotation", None): collect_ann(node.annotation)
+            # what is imported?
+            imported_typing = {alias for alias, ref in mi.imported_objects.items() if ref.startswith("typing:")}
+            has_typing_module = any(m=="typing" for m in mi.imports.values())
+            imported_decimal = any(ref=="decimal:Decimal" for ref in mi.imported_objects.values())
+            # Missing bare typing names
+            for name in sorted((used & TYPING_NAMES) - imported_typing):
+                # 'import typing' is NOT enough for bare `Any` etc.
+                self.problems.append(Problem(
+                    "missing_annotation_import",
+                    f"Annotation name '{name}' used but not imported from typing",
+                    mi.filepath, mi.module, 1, {"hint":"from typing import "+name}
+                ))
+            # Decimal
+            if "Decimal" in used and not imported_decimal:
+                self.problems.append(Problem(
+                    "missing_annotation_import",
+                    "Annotation name 'Decimal' used but not imported",
+                    mi.filepath, mi.module, 1, {"hint":"from decimal import Decimal"}
+                ))
+
+        # NEW: External dependency audit (imports vs requirements.txt)
+        if self.deps_check:
+            req_path = os.path.join(self.root, "requirements.txt")
+            reqs: Set[str] = set()
+            if os.path.isfile(req_path):
+                import re
+                for line in read_file(req_path).splitlines():
+                    line=line.strip()
+                    if not line or line.startswith("#"): continue
+                    pkg = re.split(r"[<>= \[]", line, 1)[0]
+                    reqs.add(pkg)
+            def norm(s:str)->str:
+                import re; return re.sub(r"[^a-z0-9]+","", s.lower())
+            req_norm = {norm(r) for r in reqs}
+            SPECIAL = {"eth_account":"ethaccount", "TA-Lib":"talib", "ta-lib":"talib"}
+            std = {"sys","os","re","json","asyncio","typing","dataclasses","functools","itertools","collections","datetime","time","math","random","statistics","logging","pathlib","subprocess","shutil","argparse","configparser","enum","hashlib","hmac","base64","secrets","threading","queue"}
+            externals: Set[str] = set()
+            for mod, mi in self.modules.items():
+                for m in mi.imports.values():
+                    top = (m or "").split(".")[0]
+                    if not top or top in std: continue
+                    if file_for_module(self.root, top): continue
+                    externals.add(top)
+                for (alias, ref) in mi.imported_objects.items():
+                    m, _ = ref.split(":",1)
+                    top = (m or "").split(".")[0]
+                    if not top or top in std: continue
+                    if file_for_module(self.root, top): continue
+                    externals.add(top)
+            for modname in sorted(externals):
+                key = norm(SPECIAL.get(modname, modname))
+                if key not in req_norm:
+                    self.problems.append(Problem(
+                        "dependency_missing",
+                        f"External module '{modname}' not found in requirements.txt",
+                        "", "", 1, {"suggestion": f"Add the package providing '{modname}' to requirements (e.g. '{modname}' or its PyPI name)"}
                     ))
 
         # duplicates (intra-module)
@@ -773,13 +876,14 @@ def parse_args():
     ap.add_argument("--json-out", default="ref_report.json", help="JSON output")
     ap.add_argument("--strict-config", action="store_true", help="Flag unresolved dotted refs in configs")
     ap.add_argument("--allow-external", action="store_true", help="If set, DO check external modules (not recommended)")
+    ap.add_argument("--no-deps-check", action="store_true", help="Disable requirements vs imports audit")
     return ap.parse_args()
 
 def main():
     args=parse_args()
     exclude=set([e.strip() for e in args.exclude.split(",") if e.strip()])
     exclude_glob=set([e.strip() for e in args.exclude_glob.split(",") if e.strip()])
-    az=Analyzer(args.root, exclude, exclude_glob, strict_config=args.strict_config, project_only=(not args.allow_external))
+    az=Analyzer(args.root, exclude, exclude_glob, strict_config=args.strict_config, project_only=(not args.allow_external), deps_check=(not args.no_deps_check))
     py,cfg=az.walk()
     az.index(py)
     az.scan_configs(cfg, args.strict_config)

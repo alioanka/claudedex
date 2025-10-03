@@ -343,6 +343,17 @@ def verify_with_db(root:str, files:List[str], db:Dict[str,Any])->Tuple[List[Prob
 
         imports, imported_objects, star_imports = import_table(tree, mod)
 
+
+        # NEW: flag missing project submodules like 'security.wallet_manager'
+        for alias,(src_mod, name) in imported_objects.items():
+            if src_mod:
+                # if any prefix exists in DB, but exact module file is missing → it's a project module missing
+                prefixes = [".".join(src_mod.split(".")[:k]) for k in range(1, len(src_mod.split("."))+1)]
+                if any(p in db for p in prefixes[:-1]):
+                    mfile = file_for_module(root, src_mod)
+                    if not mfile:
+                        problems.append(Problem("missing_module", f"Project module not found: {src_mod}", fp, mod, 1, {"imported_as": alias}))
+
         # import name shadowing
         entry = db.get(mod, {})
         if entry:
