@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps + TA-Lib C (source build with mirror fallback)
+# System deps + TA-Lib C (source build with mirror fallback; stable path)
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
@@ -10,14 +10,18 @@ RUN set -eux; \
     update-ca-certificates; \
     TA_GH="https://github.com/TA-Lib/ta-lib/releases/download/0.4.0/ta-lib-0.4.0-src.tar.gz"; \
     TA_SF="https://downloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz"; \
+    # download with fallback
     (curl -fL "$TA_GH" -o /tmp/ta-lib.tgz || curl -fL "$TA_SF" -o /tmp/ta-lib.tgz); \
     test -s /tmp/ta-lib.tgz; \
-    tar -xzf /tmp/ta-lib.tgz -C /tmp; \
-    cd /tmp/ta-lib-0.4.0; \
+    # extract into a known folder regardless of archive’s top-level dir name
+    mkdir -p /tmp/ta-src; \
+    tar -xzf /tmp/ta-lib.tgz -C /tmp/ta-src --strip-components=1; \
+    cd /tmp/ta-src; \
     ./configure --prefix=/usr; \
     make -j"$(nproc)"; \
     make install; \
-    rm -rf /tmp/ta-lib* /var/lib/apt/lists/*
+    # cleanup
+    rm -rf /tmp/ta-* /var/lib/apt/lists/*
 
 # Python deps
 COPY requirements.txt .
@@ -26,6 +30,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # App
 COPY . .
 
+# App dirs & perms
 RUN mkdir -p /app/logs /app/data /app/config && \
     chmod -R 777 /app/logs /app/data /app/config
 
