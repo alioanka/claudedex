@@ -10,6 +10,17 @@ RUN apt-get update && apt-get install -y \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
+
+# ---- TA-Lib C library (required for Python talib) ----
+    RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential gcc g++ wget ca-certificates \
+&& update-ca-certificates \
+&& wget -q https://github.com/TA-Lib/ta-lib/releases/download/0.4.0/ta-lib-0.4.0-src.tar.gz -O /tmp/ta-lib.tgz \
+&& tar -xzf /tmp/ta-lib.tgz -C /tmp \
+&& cd /tmp/ta-lib && ./configure --prefix=/usr && make && make install \
+&& cd / && rm -rf /tmp/ta-lib* \
+&& rm -rf /var/lib/apt/lists/*
+
 # Copy and install requirements
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
