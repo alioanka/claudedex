@@ -34,7 +34,7 @@ from trading.orders.position_tracker import PositionTracker
 from monitoring.alerts import AlertManager
 from monitoring.performance import PerformanceTracker
 
-from security.wallet_manager import WalletManager
+from security.wallet_security import WalletSecurityManager
 
 class BotState(Enum):
     """Bot operational states"""
@@ -120,7 +120,7 @@ class TradingBotEngine:
         self.performance_tracker = PerformanceTracker()
         
         # Security
-        self.wallet_manager = WalletManager(config['security'])
+        self.wallet_manager = WalletSecurityManager(config['security'])
         
         # Internal state
         self.active_positions: Dict[str, Any] = {}

@@ -13,7 +13,7 @@ import json
 
 from data.collectors.chain_data import ChainDataCollector
 from data.collectors.honeypot_checker import HoneypotChecker
-from security.wallet_manager import WalletManager
+from security.wallet_security import WalletSecurityManager
 
 class RiskLevel(Enum):
     """Risk level classifications"""
@@ -179,7 +179,7 @@ class RiskManager:
         self.config = config
         self.chain_collector = ChainDataCollector(config.get('web3', {}))
         self.honeypot_checker = HoneypotChecker()
-        self.wallet_manager = WalletManager(config.get('security', {}))
+        self.wallet_manager = WalletSecurityManager(config.get('security', {}))
         
         # Risk thresholds
         self.thresholds = config.get('risk_levels', {
