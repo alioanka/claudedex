@@ -5,6 +5,8 @@ aiohttp==3.9.1
 aiohttp-cors==0.7.0
 python-socketio==5.10.0
 aiofiles==23.2.1
+numpy==1.26.3
+TA-Lib==0.4.32
 
 
 # Web3 and Blockchain
@@ -23,8 +25,7 @@ alembic==1.13.1
 redis==5.0.1
 
 # Machine Learning
-numpy==1.26.3
-TA-Lib==0.4.32
+
 pandas==2.1.4
 scikit-learn==1.4.0
 

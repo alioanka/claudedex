@@ -2,33 +2,33 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps + TA-Lib C (needed by Python TA-Lib)
+# System deps + TA-Lib C (source build with mirror fallback)
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-      build-essential gcc g++ make wget curl ca-certificates postgresql-client; \
+      ca-certificates curl wget gcc g++ make build-essential postgresql-client; \
     update-ca-certificates; \
-    wget -q https://github.com/TA-Lib/ta-lib/releases/download/0.4.0/ta-lib-0.4.0-src.tar.gz -O /tmp/ta-lib.tgz; \
+    TA_GH="https://github.com/TA-Lib/ta-lib/releases/download/0.4.0/ta-lib-0.4.0-src.tar.gz"; \
+    TA_SF="https://downloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz"; \
+    (curl -fL "$TA_GH" -o /tmp/ta-lib.tgz || curl -fL "$TA_SF" -o /tmp/ta-lib.tgz); \
+    test -s /tmp/ta-lib.tgz; \
     tar -xzf /tmp/ta-lib.tgz -C /tmp; \
     cd /tmp/ta-lib-0.4.0; \
     ./configure --prefix=/usr; \
     make -j"$(nproc)"; \
     make install; \
-    rm -rf /tmp/ta-lib*; \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /tmp/ta-lib* /var/lib/apt/lists/*
 
-# Install Python deps
+# Python deps
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy app
+# App
 COPY . .
 
-# App dirs & perms
 RUN mkdir -p /app/logs /app/data /app/config && \
     chmod -R 777 /app/logs /app/data /app/config
 
-# Healthcheck (adjust port if different)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8080/api/health || exit 1
 
