@@ -37,7 +37,7 @@ def retry_async(max_retries: int = 3, delay: float = 1.0, exponential_backoff: b
                     logger.warning(f"Attempt {attempt + 1} failed: {e}. Retrying in {wait_time}s...")
                     await asyncio.sleep(wait_time)
             raise last_exception
-        return wrapper
+        return async_wrapper
     return decorator
 
 def measure_time(func):

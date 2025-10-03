@@ -646,7 +646,7 @@
   - `close()`
   - `get_boosts()`
   - `get_gainers_losers(chain, period)`
-  - `get_new_pairs(chain)`
+  - `get_new_pairs(chain, limit)`
   - `get_pair_data(pair_address)`
   - `get_price_history(address, chain, interval)`
   - `get_stats()`
@@ -1991,6 +1991,12 @@
   - `test_dexscreener_to_database(db_manager, mock_dex_api, mock_config)`
   - `test_honeypot_checker_caching(cache_manager, mock_dex_api, mock_config)`
   - `test_whale_tracker_integration(db_manager, cache_manager, mock_config)`
+
+## tests.integration.test_dexscreener
+- File: `tests\integration\test_dexscreener.py`
+
+### Functions
+- `test()`
 
 ## tests.integration.test_ml_integration
 - File: `tests\integration\test_ml_integration.py`

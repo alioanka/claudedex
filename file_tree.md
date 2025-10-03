@@ -118,6 +118,7 @@ ClaudeDex/
         ├── test_helpers.py
     └── integration/
         ├── test_data_integration.py
+        ├── test_dexscreener.py
         ├── test_ml_integration.py
         ├── test_trading_integration.py
     └── performance/

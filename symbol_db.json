@@ -7964,12 +7964,13 @@
             "name": "get_new_pairs",
             "params": [
               "self",
-              "chain"
+              "chain",
+              "limit"
             ],
             "kwonly": [],
             "vararg": false,
             "kwarg": false,
-            "defaults": 1,
+            "defaults": 2,
             "posonly": [],
             "is_method": true
           },
@@ -20251,6 +20252,27 @@
       }
     },
     "functions": {},
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "tests.integration.test_dexscreener": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\tests\\integration\\test_dexscreener.py",
+    "classes": {},
+    "functions": {
+      "test": {
+        "name": "test",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
     "dups": {
       "functions": {},
       "classes": {},
