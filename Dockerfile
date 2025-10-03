@@ -6,27 +6,24 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
-    git \
-    postgresql-client \
     curl \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
+# Copy and install requirements
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application
 COPY . .
 
-# Create non-root user
-RUN useradd -m -u 1000 trader && \
-    chown -R trader:trader /app
+# Create directories with proper permissions
+RUN mkdir -p /app/logs /app/data /app/config && \
+    chmod -R 777 /app/logs /app/data /app/config
 
-USER trader
-
-# Health check (fixed - use curl instead of Python requests)
+# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8080/api/health || exit 1
 
-# Run application
+# Run as root for now (fix permissions later)
 CMD ["python", "main.py", "--mode", "production"]
