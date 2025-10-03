@@ -63,7 +63,7 @@ Optional (Enhanced Features):
 ### Step 1: Clone Repository
 ```bash
 # Clone the repository
-git clone https://github.com/your-repo/claudedex-bot.git
+git clone https://github.com/alioanka/claudedex.git
 cd claudedex-bot
 
 # Create virtual environment
