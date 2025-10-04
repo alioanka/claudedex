@@ -19,10 +19,10 @@ from web3.middleware import geth_poa_middleware
 from eth_account import Account
 from eth_abi import encode_abi
 
-from ..orders.order_manager import Order, OrderType, OrderStatus
-from .base_executor import BaseExecutor
-from ...utils.helpers import retry_async, measure_time, wei_to_ether, ether_to_wei
-from ...utils.constants import DEX, DEX_ROUTERS, CHAIN_RPC_URLS
+from trading.orders.order_manager import Order, OrderType, OrderStatus
+from trading.executors.base_executor import BaseExecutor
+from utils.helpers import retry_async, measure_time, wei_to_ether, ether_to_wei
+from utils.constants import DEX, DEX_ROUTERS, CHAIN_RPC_URLS
 
 logger = logging.getLogger(__name__)
 

@@ -20,11 +20,11 @@ from .base_strategy import (
     SignalStrength,
     StrategyState
 )
-from ...ml.models.ensemble_model import EnsembleModel
-from ...ml.models.pump_predictor import PumpPredictor
-from ...ml.models.rug_classifier import RugClassifier
-from ...analysis.pattern_analyzer import PatternAnalyzer
-from ...utils.helpers import calculate_moving_average, calculate_ema
+from ml.models.ensemble_model import EnsembleModel
+from ml.models.pump_predictor import PumpPredictor
+from ml.models.rug_classifier import RugClassifier
+from core.pattern_analyzer import PatternAnalyzer
+from utils.helpers import calculate_moving_average, calculate_ema
 
 
 class AIStrategy(BaseStrategy):

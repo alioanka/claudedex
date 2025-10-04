@@ -21,10 +21,10 @@ from eth_account import Account
 from eth_account.datastructures import SignedTransaction
 import aiohttp
 
-from ..orders.order_manager import Order
-from .base_executor import BaseExecutor
-from ...utils.helpers import retry_async, measure_time
-from ...security.encryption import EncryptionManager
+from trading.orders.order_manager import Order
+from trading.executors.base_executor import BaseExecutor
+from utils.helpers import retry_async, measure_time
+from security.encryption import EncryptionManager
 
 logger = logging.getLogger(__name__)
 

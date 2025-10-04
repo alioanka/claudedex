@@ -10,11 +10,11 @@ import json
 from enum import Enum
 import numpy as np
 
-from .risk_manager import RiskManager, RiskScore
-from .pattern_analyzer import PatternAnalyzer
-from .decision_maker import DecisionMaker
-from .portfolio_manager import PortfolioManager
-from .event_bus import EventBus, Event, EventType
+from core.risk_manager import RiskManager, RiskScore
+from core.pattern_analyzer import PatternAnalyzer
+from core.decision_maker import DecisionMaker
+from core.portfolio_manager import PortfolioManager
+from core.event_bus import EventBus, Event, EventType
 
 from data.collectors.dexscreener import DexScreenerCollector
 from data.collectors.chain_data import ChainDataCollector

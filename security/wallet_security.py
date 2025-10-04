@@ -27,7 +27,7 @@ from hdwallet.symbols import ETH as ETH_SYMBOL
 import secrets
 import base64
 
-from .encryption import EncryptionManager
+from security.encryption import EncryptionManager
 
 logger = logging.getLogger(__name__)
 

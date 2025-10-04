@@ -1,6 +1,8 @@
 FROM python:3.11-slim
 WORKDIR /app
 
+ENV PYTHONPATH=/app
+
 # --- System deps + TA-Lib (use APT if available, else source) ---
 RUN set -eux; \
     apt-get update; \

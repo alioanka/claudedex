@@ -18,8 +18,8 @@ from loguru import logger
 import numpy as np
 from textblob import TextBlob
 
-from ...utils.helpers import retry_async, measure_time, TTLCache
-from ...utils.constants import API_RATE_LIMITS
+from utils.helpers import retry_async, measure_time, TTLCache
+from utils.constants import API_RATE_LIMITS
 
 
 class SentimentLevel(Enum):

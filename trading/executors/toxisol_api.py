@@ -21,10 +21,10 @@ from web3 import Web3
 from eth_account import Account
 from eth_account.datastructures import SignedTransaction
 
-from ..orders.order_manager import Order, OrderType, OrderStatus
-from .base_executor import BaseExecutor
-from ...utils.helpers import retry_async, measure_time
-from ...security.encryption import EncryptionManager
+from trading.orders.order_manager import Order, OrderType, OrderStatus
+from trading.executors.base_executor import BaseExecutor
+from utils.helpers import retry_async, measure_time
+from security.encryption import EncryptionManager
 
 logger = logging.getLogger(__name__)
 

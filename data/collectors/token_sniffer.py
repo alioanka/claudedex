@@ -15,8 +15,8 @@ import json
 import re
 from loguru import logger
 
-from ...utils.helpers import retry_async, measure_time
-from ...utils.constants import CHAIN_NAMES, HONEYPOT_THRESHOLDS
+from utils.helpers import retry_async, measure_time
+from utils.constants import CHAIN_NAMES, HONEYPOT_THRESHOLDS
 
 
 class TokenRisk(Enum):

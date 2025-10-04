@@ -20,8 +20,8 @@ from web3 import Web3
 from eth_utils import is_address, to_checksum_address
 from loguru import logger
 
-from ..utils.helpers import retry_async, measure_time
-from ..utils.constants import CHAIN_RPC_URLS, BLOCK_EXPLORERS
+from utils.helpers import retry_async, measure_time
+from utils.constants import CHAIN_RPC_URLS, BLOCK_EXPLORERS
 
 
 class DeveloperRisk(Enum):

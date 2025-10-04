@@ -10,13 +10,13 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from ..core.event_bus import EventBus
-from ..data.storage.database import DatabaseManager
-from ..data.storage.cache import CacheManager
-from ..ml.models.ensemble_model import EnsembleModel
-from .rug_detector import RugDetector
-from .liquidity_monitor import LiquidityMonitor
-from .market_analyzer import MarketAnalyzer
+from core.event_bus import EventBus
+from data.storage.database import DatabaseManager
+from data.storage.cache import CacheManager
+from ml.models.ensemble_model import EnsembleModel
+from analysis.rug_detector import RugDetector
+from analysis.liquidity_monitor import LiquidityMonitor
+from analysis.market_analyzer import MarketAnalyzer
 
 logger = logging.getLogger(__name__)
 

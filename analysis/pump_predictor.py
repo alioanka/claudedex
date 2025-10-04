@@ -12,11 +12,11 @@ from scipy import signal, stats
 import warnings
 warnings.filterwarnings('ignore')
 
-from ..core.event_bus import EventBus
-from ..data.storage.database import DatabaseManager
-from ..data.storage.cache import CacheManager
-from ..ml.models.pump_predictor import PumpPredictor as MLPumpPredictor
-from .market_analyzer import MarketAnalyzer
+from core.event_bus import EventBus
+from data.storage.database import DatabaseManager
+from data.storage.cache import CacheManager
+from ml.models.pump_predictor import PumpPredictor as MLPumpPredictor
+from analysis.market_analyzer import MarketAnalyzer
 
 logger = logging.getLogger(__name__)
 

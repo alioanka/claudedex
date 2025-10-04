@@ -16,12 +16,8 @@ import uuid
 from loguru import logger
 import numpy as np
 
-from ...utils.helpers import calculate_percentage_change, calculate_slippage
-from ...utils.constants import (
-    MAX_POSITION_SIZE_PERCENT, 
-    DEFAULT_STOP_LOSS,
-    RISK_PARAMETERS
-)
+from utils.helpers import calculate_percentage_change, calculate_slippage
+from utils.constants import MAX_POSITION_SIZE_PERCENT, DEFAULT_STOP_LOSS, RISK_PARAMETERS
 
 
 class SignalType(Enum):
