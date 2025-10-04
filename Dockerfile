@@ -1,6 +1,7 @@
 # ---------- base stage: build TA-Lib C once ----------
   FROM python:3.11-slim AS talib-base
   ARG TA_VER=0.4.0
+  ENV DEBIAN_FRONTEND=noninteractive
   RUN set -eux; \
       apt-get update; \
       apt-get install -y --no-install-recommends \
@@ -8,9 +9,14 @@
         autoconf automake libtool patch file; \
       update-ca-certificates; \
       curl -fsSL "https://downloads.sourceforge.net/ta-lib/ta-lib-${TA_VER}-src.tar.gz" -o /tmp/ta-lib.tgz; \
-      mkdir -p /tmp/ta-src; tar -xzf /tmp/ta-lib.tgz -C /tmp/ta-src --strip-components=1; \
-      cd /tmp/ta-src; ./configure --prefix=/usr CFLAGS='-O2 -fPIC'; \
-      make -j"$(nproc)"; make install; ldconfig || true; \
+      mkdir -p /tmp/ta-src; \
+      tar -xzf /tmp/ta-lib.tgz -C /tmp/ta-src --strip-components=1; \
+      cd /tmp/ta-src; \
+      ./configure --prefix=/usr CFLAGS='-O2 -fPIC'; \
+      export MAKEFLAGS=-j1; \
+      make -j1; \
+      make install; \
+      ldconfig || true; \
       rm -rf /tmp/ta-* /var/lib/apt/lists/*
   
   # ---------- runtime image ----------
@@ -25,20 +31,14 @@
   
   # python deps
   COPY requirements.txt .
-  RUN pip install --no-cache-dir "numpy<2" "TA-Lib==0.4.32" && \
-      pip install --no-cache-dir -r requirements.txt
+  RUN pip install --no-cache-dir "numpy<2" "TA-Lib==0.4.32" \
+   && pip install --no-cache-dir -r requirements.txt
   
-  # optional import smoke test (no heredoc)
+  # quick import smoke test (keeps builds honest)
   RUN python -c "import talib, numpy; print('talib', talib.__version__, 'numpy', numpy.__version__)"
   
   # app
   COPY . .
-  # (optional) create dirs / perms if you still need them
-  # RUN mkdir -p /app/logs /app/data /app/config && chmod -R 777 /app/logs /app/data /app/config
-  
-  # healthcheck (adjust port if needed)
-  # HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  #   CMD curl -f http://localhost:8080/api/health || exit 1
   
   CMD ["python", "main.py", "--mode", "production"]
   
