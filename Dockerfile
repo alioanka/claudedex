@@ -27,14 +27,14 @@
   # bring in TA-Lib artifacts
   COPY --from=talib-base /usr/lib/ /usr/lib/
   COPY --from=talib-base /usr/include/ /usr/include/
-  COPY --from=talib-base /usr/lib/pkgconfig/ /usr/lib/pkgconfig/
+  # (no pkgconfig COPY)
   
   # python deps
   COPY requirements.txt .
   RUN pip install --no-cache-dir "numpy<2" "TA-Lib==0.4.32" \
    && pip install --no-cache-dir -r requirements.txt
   
-  # quick import smoke test (keeps builds honest)
+  # import smoke test
   RUN python -c "import talib, numpy; print('talib', talib.__version__, 'numpy', numpy.__version__)"
   
   # app
