@@ -17,24 +17,32 @@
       make -j1; \
       make install; \
       ldconfig || true; \
-      rm -rf /tmp/ta-* /var/lib/apt/lists/*
+      rm -rf /tmp/ta-* /var/lib/apt/lists/*; \
+      \
+      # build TA-Lib Python wheel here (compiler available)
+      python -m pip install -U pip wheel setuptools && \
+      pip install --no-cache-dir "numpy<2" && \
+      pip wheel --no-binary :all: TA-Lib==0.4.32 -w /wheels
   
   # ---------- runtime image ----------
   FROM python:3.11-slim
   WORKDIR /app
   ENV PYTHONPATH=/app
   
-  # bring in TA-Lib artifacts
+  # TA-Lib C artifacts
   COPY --from=talib-base /usr/lib/ /usr/lib/
   COPY --from=talib-base /usr/include/ /usr/include/
-  # (no pkgconfig COPY)
+  
+  # Prebuilt TA-Lib wheel
+  COPY --from=talib-base /wheels /wheels
   
   # python deps
   COPY requirements.txt .
-  RUN pip install --no-cache-dir "numpy<2" "TA-Lib==0.4.32" \
+  RUN pip install --no-cache-dir "numpy<2" \
+   && pip install --no-cache-dir /wheels/TA_Lib-0.4.32-*.whl \
    && pip install --no-cache-dir -r requirements.txt
   
-  # import smoke test
+  # sanity check
   RUN python -c "import talib, numpy; print('talib', talib.__version__, 'numpy', numpy.__version__)"
   
   # app
