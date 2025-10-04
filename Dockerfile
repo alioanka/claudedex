@@ -1,4 +1,4 @@
-# ---------- base stage: compile TA-Lib once ----------
+# ---------- base stage: build TA-Lib C once ----------
   FROM python:3.11-slim AS talib-base
   ARG TA_VER=0.4.0
   RUN set -eux; \
@@ -8,13 +8,9 @@
         autoconf automake libtool patch file; \
       update-ca-certificates; \
       curl -fsSL "https://downloads.sourceforge.net/ta-lib/ta-lib-${TA_VER}-src.tar.gz" -o /tmp/ta-lib.tgz; \
-      mkdir -p /tmp/ta-src; \
-      tar -xzf /tmp/ta-lib.tgz -C /tmp/ta-src --strip-components=1; \
-      cd /tmp/ta-src; \
-      ./configure --prefix=/usr CFLAGS='-O2 -fPIC'; \
-      make -j"$(nproc)"; \
-      make install; \
-      ldconfig || true; \
+      mkdir -p /tmp/ta-src; tar -xzf /tmp/ta-lib.tgz -C /tmp/ta-src --strip-components=1; \
+      cd /tmp/ta-src; ./configure --prefix=/usr CFLAGS='-O2 -fPIC'; \
+      make -j"$(nproc)"; make install; ldconfig || true; \
       rm -rf /tmp/ta-* /var/lib/apt/lists/*
   
   # ---------- runtime image ----------
@@ -22,22 +18,27 @@
   WORKDIR /app
   ENV PYTHONPATH=/app
   
-  # copy only the compiled TA-Lib artifacts from base
+  # bring in TA-Lib artifacts
   COPY --from=talib-base /usr/lib/ /usr/lib/
   COPY --from=talib-base /usr/include/ /usr/include/
   COPY --from=talib-base /usr/lib/pkgconfig/ /usr/lib/pkgconfig/
   
-  # python deps (pre-pin numpy then TA-Lib to be safe)
+  # python deps
   COPY requirements.txt .
   RUN pip install --no-cache-dir "numpy<2" "TA-Lib==0.4.32" && \
       pip install --no-cache-dir -r requirements.txt
   
-  # optional build-time import smoke test
-  RUN python - <<'PY'
-  import talib, numpy; print("talib", talib.__version__, "numpy", numpy.__version__)
-  PY
+  # optional import smoke test (no heredoc)
+  RUN python -c "import talib, numpy; print('talib', talib.__version__, 'numpy', numpy.__version__)"
   
   # app
   COPY . .
+  # (optional) create dirs / perms if you still need them
+  # RUN mkdir -p /app/logs /app/data /app/config && chmod -R 777 /app/logs /app/data /app/config
+  
+  # healthcheck (adjust port if needed)
+  # HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  #   CMD curl -f http://localhost:8080/api/health || exit 1
+  
   CMD ["python", "main.py", "--mode", "production"]
   
