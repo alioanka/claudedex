@@ -3,7 +3,7 @@ Event Bus - Event-driven architecture for decoupled communication
 """
 
 import asyncio
-from typing import Dict, List, Callable, Any, Optional
+from typing import Dict, List, Callable, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
