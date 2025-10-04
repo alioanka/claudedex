@@ -2,6 +2,8 @@
 Configuration Manager for DexScreener Trading Bot
 Centralized configuration management with validation, hot-reloading, and environment handling
 """
+from __future__ import annotations
+from typing import Tuple
 
 import os
 import json

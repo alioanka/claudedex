@@ -3,6 +3,8 @@ Developer Analyzer - Team reputation and project analysis for ClaudeDex Trading 
 
 This module analyzes developer teams and their history to assess project risk.
 """
+from __future__ import annotations
+from typing import Set
 
 import asyncio
 from typing import Dict, List, Optional, Tuple, Any

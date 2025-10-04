@@ -67,3 +67,36 @@ isort==5.13.2
 
 # Additional Security
 pyotp==2.9.0
+PyJWT
+
+aiohttp-sse-client
+
+aioredis
+
+eth_abi
+
+eth_utils
+
+jsonschema
+
+lightgbm
+
+memory_profiler
+
+orjson
+
+psutil
+
+pytest
+
+scripts
+
+setuptools
+
+tensorflow
+
+textblob
+
+torch
+
+xgboost
