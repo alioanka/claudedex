@@ -1,14 +1,20 @@
-# ---------- stage 1: build TA-Lib C (race-free) ----------
-  FROM python:3.11-slim AS talib-c
+# ---------- stage 1: build TA-Lib C and Python wheel ----------
+  FROM python:3.11-slim AS talib-build
   ARG TA_VER=0.4.0
   ENV DEBIAN_FRONTEND=noninteractive \
-      MAKEFLAGS=-j1
+      MAKEFLAGS=-j1 \
+      TA_INCLUDE_PATH=/usr/include \
+      TA_LIBRARY_PATH=/usr/lib \
+      PIP_DISABLE_PIP_VERSION_CHECK=1 \
+      PIP_ROOT_USER_ACTION=ignore
+  
   RUN set -eux; \
       apt-get update; \
       apt-get install -y --no-install-recommends \
         ca-certificates curl wget build-essential gcc g++ make \
         autoconf automake libtool patch file; \
       update-ca-certificates; \
+      # build TA-Lib C
       curl -fsSL "https://downloads.sourceforge.net/ta-lib/ta-lib-${TA_VER}-src.tar.gz" -o /tmp/ta-lib.tgz; \
       mkdir -p /tmp/ta-src; \
       tar -xzf /tmp/ta-lib.tgz -C /tmp/ta-src --strip-components=1; \
@@ -17,35 +23,26 @@
       make; \
       make install; \
       ldconfig || true; \
-      rm -rf /tmp/ta-* /var/lib/apt/lists/*
-  
-  # ---------- stage 2: build Python TA-Lib wheel ----------
-  FROM python:3.11-slim AS talib-wheel
-  ENV DEBIAN_FRONTEND=noninteractive
-  # bring in the C headers/libs so pip can link against them
-  COPY --from=talib-c /usr/include/ /usr/include/
-  COPY --from=talib-c /usr/lib/ /usr/lib/
-  RUN set -eux; \
-      apt-get update; \
-      apt-get install -y --no-install-recommends build-essential gcc g++; \
+      rm -rf /tmp/ta-* /var/lib/apt/lists/*; \
+      \
+      # build Python TA-Lib wheel WITHOUT build isolation (fast) and capture logs
       python -m pip install -U pip wheel setuptools; \
       pip install --no-cache-dir "numpy<2"; \
-      pip wheel --no-binary :all: TA-Lib==0.4.32 -w /wheels; \
-      ls -l /wheels; \
-      apt-get purge -y --auto-remove build-essential gcc g++; \
-      rm -rf /var/lib/apt/lists/*
+      pip wheel -vv --no-binary :all: --no-build-isolation TA-Lib==0.4.32 -w /wheels \
+        2>&1 | tee /tmp/ta_wheel.log
   
-  # ---------- stage 3: runtime ----------
+  # ---------- stage 2: runtime ----------
   FROM python:3.11-slim
   WORKDIR /app
-  ENV PYTHONPATH=/app
+  ENV PYTHONPATH=/app \
+      PIP_DISABLE_PIP_VERSION_CHECK=1 \
+      PIP_ROOT_USER_ACTION=ignore
   
   # TA-Lib C artifacts
-  COPY --from=talib-c /usr/lib/ /usr/lib/
-  COPY --from=talib-c /usr/include/ /usr/include/
-  
+  COPY --from=talib-build /usr/lib/ /usr/lib/
+  COPY --from=talib-build /usr/include/ /usr/include/
   # Prebuilt Python TA-Lib wheel
-  COPY --from=talib-wheel /wheels /wheels
+  COPY --from=talib-build /wheels /wheels
   
   # Python deps
   COPY requirements.txt .
@@ -53,10 +50,10 @@
    && pip install --no-cache-dir /wheels/TA_Lib-0.4.32-*.whl \
    && pip install --no-cache-dir -r requirements.txt
   
-  # sanity check
+  # Quick sanity check
   RUN python -c "import talib, numpy; print('talib', talib.__version__, 'numpy', numpy.__version__)"
   
-  # app code
+  # App code
   COPY . .
   
   CMD ["python", "main.py", "--mode", "production"]
