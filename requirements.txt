@@ -6,7 +6,7 @@ aiohttp-cors==0.7.0
 python-socketio==5.10.0
 aiofiles==23.2.1
 numpy==1.26.3
-TA-Lib==0.4.32
+TA-Lib==0.6.7
 
 
 # Web3 and Blockchain
