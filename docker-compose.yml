@@ -7,8 +7,8 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: tradingbot
-      POSTGRES_USER: trading
-      POSTGRES_PASSWORD: Madazulu11
+      POSTGRES_USER: bot_user
+      POSTGRES_PASSWORD: bot_password
     volumes:
       - postgres-data:/var/lib/postgresql/data
 #      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -17,7 +17,7 @@ services:
     networks:
       - trading-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U trading -d tradingbot"]
+      test: ["CMD-SHELL", "pg_isready -U bot_user -d tradingbot"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -44,7 +44,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      DATABASE_URL: postgresql://trading:Madazulu11@postgres:5432/tradingbot
+      DATABASE_URL: postgresql://bot_user:bot_password@postgres:5432/tradingbot
       REDIS_URL: redis://redis:6379/0
       LOG_LEVEL: INFO
       PYTHONUNBUFFERED: "1"
