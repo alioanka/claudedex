@@ -288,7 +288,7 @@ class TradingBotApplication:
     async def run(self):
         """Main application loop"""
         try:
-            logger.info("Starting DexScreener Trading Bot...")
+#            logger.info("Starting DexScreener Trading Bot...")
 
             # To this:
             self.logger.info("Starting DexScreener Trading Bot...")
