@@ -149,7 +149,14 @@ class TradingBotApplication:
             # Load configuration asynchronously
             self.logger.info("Loading configuration...")
             await self.config_manager.initialize()
-            self.config = self.config_manager.load_config(self.mode)
+            # NEW - convert to nested dict:
+            raw_config = self.config_manager.load_config(self.mode)
+            self.config = {}
+            for config_type, config_obj in raw_config.items():
+                if hasattr(config_obj, 'dict'):
+                    self.config[config_type] = config_obj.dict()
+                else:
+                    self.config[config_type] = config_obj
             
             # Validate environment
             self._validate_environment()
