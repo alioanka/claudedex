@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Position Tracker for DexScreener Trading Bot
 Tracks all open positions and portfolio performance
