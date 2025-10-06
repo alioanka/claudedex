@@ -92,53 +92,51 @@ class Order:
     block_number: Optional[int] = None
     confirmations: int = 0
 
-    # If Order needs to be created from scratch:
-    def build_order(
-        token_address: str,
-        side: OrderSide,
-        amount: Decimal,
-        order_type: OrderType = OrderType.MARKET,
-        **kwargs
-    ) -> Order:
-        """
-        Helper to build Order object from parameters
+# Add this AFTER the Order class definition:
+def build_order(
+    token_address: str,
+    side: OrderSide,
+    amount: Decimal,
+    order_type: OrderType = OrderType.MARKET,
+    **kwargs
+) -> Order:
+    """
+    Helper to build Order object from parameters
+    
+    Args:
+        token_address: Token address
+        side: Buy/Sell
+        amount: Order amount
+        order_type: Order type
+        **kwargs: Additional parameters
         
-        Args:
-            token_address: Token address
-            side: Buy/Sell
-            amount: Order amount
-            order_type: Order type
-            **kwargs: Additional parameters
-            
-        Returns:
-            Order object
-        """
-        import uuid
-        
-        return Order(
-            order_id=str(uuid.uuid4()),
-            token_address=token_address,
-            side=side,
-            order_type=order_type,
-            amount=amount,
-            price=kwargs.get('price'),
-            stop_price=kwargs.get('stop_price'),
-            status=OrderStatus.PENDING,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-            execution_strategy=kwargs.get('execution_strategy', ExecutionStrategy.IMMEDIATE),
-            slippage_tolerance=kwargs.get('slippage_tolerance', 0.005),
-            gas_price=kwargs.get('gas_price', Decimal('0')),
-            gas_limit=kwargs.get('gas_limit', 300000),
-            deadline=kwargs.get('deadline'),
-            take_profit=kwargs.get('take_profit'),
-            stop_loss=kwargs.get('stop_loss'),
-            trailing_stop_distance=kwargs.get('trailing_stop_distance'),
-            strategy_id=kwargs.get('strategy_id'),
-            signal_id=kwargs.get('signal_id'),
-            parent_order_id=kwargs.get('parent_order_id'),
-            metadata=kwargs.get('metadata', {})
-        )
+    Returns:
+        Order object
+    """
+    return Order(
+        order_id=str(uuid.uuid4()),
+        token_address=token_address,
+        side=side,
+        order_type=order_type,
+        amount=amount,
+        price=kwargs.get('price'),
+        stop_price=kwargs.get('stop_price'),
+        status=OrderStatus.PENDING,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+        execution_strategy=kwargs.get('execution_strategy', ExecutionStrategy.IMMEDIATE),
+        slippage_tolerance=kwargs.get('slippage_tolerance', 0.005),
+        gas_price=kwargs.get('gas_price', Decimal('0')),
+        gas_limit=kwargs.get('gas_limit', 300000),
+        deadline=kwargs.get('deadline'),
+        take_profit=kwargs.get('take_profit'),
+        stop_loss=kwargs.get('stop_loss'),
+        trailing_stop_distance=kwargs.get('trailing_stop_distance'),
+        strategy_id=kwargs.get('strategy_id'),
+        signal_id=kwargs.get('signal_id'),
+        parent_order_id=kwargs.get('parent_order_id'),
+        metadata=kwargs.get('metadata', {})
+    )
 
 
 @dataclass
