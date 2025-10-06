@@ -1152,7 +1152,7 @@ class OrderManager:
                         if tx_status.get("confirmed"):
                             order.confirmations = tx_status["confirmations"]
                 
-                await asyncio.sleep(self.config["health_check_interval"])
+                await asyncio.sleep(self.config.get("health_check_interval", 30))
                 
             except Exception as e:
                 logger.error(f"Error in order monitoring: {e}")
@@ -1162,7 +1162,7 @@ class OrderManager:
         """Background task to cleanup old orders"""
         while True:
             try:
-                await asyncio.sleep(self.config["cleanup_interval"])
+                await asyncio.sleep(self.config.get("cleanup_interval", 300))
                 
                 current_time = datetime.utcnow()
                 expired_count = 0
