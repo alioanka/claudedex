@@ -117,44 +117,18 @@ class TradingBotApplication:
         self.shutdown_event = asyncio.Event()
         self.logger = setup_logger("TradingBot", mode)
 
-        # Initialize ConfigManager first
+        # Initialize ConfigManager but don't load configs yet
         self.config_manager = ConfigManager(config_dir='config')
         
-        # Load config using ConfigManager (this returns a dict)
-        self.config = self.config_manager.load_config(mode)
-        
-        # Initialize database and cache managers
-        self.db_manager = DatabaseManager(self.config.get('database', {}))
-        self.cache_manager = CacheManager(self.config.get('cache', {}))
-        
-        # Initialize other managers (add proper imports at top of file)
-        from core.portfolio_manager import PortfolioManager
-        from trading.orders.order_manager import OrderManager
-        from core.risk_manager import RiskManager
-        from monitoring.alerts import AlertsSystem
-        
-        self.portfolio_manager = PortfolioManager(self.config)
-        self.order_manager = OrderManager(self.config)
-        self.risk_manager = RiskManager(self.config)
-        self.alerts_system = AlertsSystem(self.config)
-        
-        # Initialize engine
-        self.engine = TradingBotEngine(self.config, mode)
-        
-        # Initialize dashboard
-        self.dashboard = DashboardEndpoints(
-            host="0.0.0.0",
-            port=8080,
-            config=self.config,
-            trading_engine=self.engine,
-            portfolio_manager=self.portfolio_manager,
-            order_manager=self.order_manager,
-            risk_manager=self.risk_manager,
-            alerts_system=self.alerts_system,
-            config_manager=self.config_manager,
-            db_manager=self.db_manager
-        )
-        logger.info("Enhanced dashboard initialized")
+        # These will be initialized in the async initialize() method
+        self.config = None
+        self.db_manager = None
+        self.cache_manager = None
+        self.portfolio_manager = None
+        self.order_manager = None
+        self.risk_manager = None
+        self.alerts_system = None
+        self.dashboard = None
         
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -174,13 +148,27 @@ class TradingBotApplication:
             self.logger.info(f"Time: {datetime.now().isoformat()}")
             self.logger.info("=" * 80)
             
-            # Load configuration using ConfigManager
+            # Load configuration asynchronously
             self.logger.info("Loading configuration...")
-            config_manager = ConfigManager(self.config_path)
-            config = config_manager.get_config('trading')  # Get trading config
+            await self.config_manager.initialize()
+            self.config = self.config_manager.load_config(self.mode)
             
             # Validate environment
             self._validate_environment()
+            
+            # Initialize components that need config
+            from data.storage.cache import CacheManager
+            from core.portfolio_manager import PortfolioManager
+            from trading.orders.order_manager import OrderManager
+            from core.risk_manager import RiskManager
+            from monitoring.alerts import AlertsSystem
+            
+            self.db_manager = DatabaseManager(self.config.get('database', {}))
+            self.cache_manager = CacheManager(self.config.get('cache', {}))
+            self.portfolio_manager = PortfolioManager(self.config)
+            self.order_manager = OrderManager(self.config)
+            self.risk_manager = RiskManager(self.config)
+            self.alerts_system = AlertsSystem(self.config)
             
             # Initialize security using EncryptionManager
             self.logger.info("Initializing security manager...")
@@ -188,14 +176,27 @@ class TradingBotApplication:
             
             # Initialize database
             self.logger.info("Connecting to database...")
-            db_config = config_manager.get_database_config() if hasattr(config_manager, 'get_database_config') else {}
-            db_manager = DatabaseManager(db_config)
-            await db_manager.connect()
+            await self.db_manager.connect()
             
             # Initialize trading engine
             self.logger.info("Initializing trading engine...")
-            self.engine = TradingBotEngine(config, mode=self.mode)
+            self.engine = TradingBotEngine(self.config, mode=self.mode)
             await self.engine.initialize()
+            
+            # Initialize dashboard
+            self.dashboard = DashboardEndpoints(
+                host="0.0.0.0",
+                port=8080,
+                config=self.config,
+                trading_engine=self.engine,
+                portfolio_manager=self.portfolio_manager,
+                order_manager=self.order_manager,
+                risk_manager=self.risk_manager,
+                alerts_system=self.alerts_system,
+                config_manager=self.config_manager,
+                db_manager=self.db_manager
+            )
+            self.logger.info("Enhanced dashboard initialized")
             
             # Initialize health checker
             self.logger.info("Starting health monitoring...")
