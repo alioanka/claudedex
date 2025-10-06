@@ -176,20 +176,28 @@ class TradingBotApplication:
             self.logger.info("Connecting to database...")
             await self.db_manager.connect()
 
-            # Add missing config sections with defaults
+            # Ensure all required config sections exist
             if 'portfolio' not in self.config:
                 self.config['portfolio'] = {
-                    'initial_balance': 10000.0,
+                    'initial_balance': float(os.getenv('BACKTEST_INITIAL_BALANCE', '1.0')),
                     'max_positions': 10,
                     'max_position_size_pct': 0.1,
                     'max_risk_per_trade': 0.05,
                     'max_portfolio_risk': 0.25,
-                    'min_position_size': 100.0,
+                    'min_position_size': float(os.getenv('MIN_TRADE_SIZE_USD', '100')),
                     'allocation_strategy': 'DYNAMIC',
-                    'daily_loss_limit': 0.1,
+                    'daily_loss_limit': float(os.getenv('MAX_DAILY_LOSS_PERCENT', '10')) / 100,
                     'consecutive_losses_limit': 5,
                     'correlation_threshold': 0.7,
                     'rebalance_frequency': 'daily'
+                }
+
+            if 'risk_management' not in self.config:
+                self.config['risk_management'] = {
+                    'max_position_size': float(os.getenv('MAX_POSITION_SIZE_PERCENT', '5')) / 100,
+                    'max_portfolio_risk': 0.02,
+                    'stop_loss_percentage': 0.05,
+                    'emergency_stop_drawdown': float(os.getenv('MAX_DRAWDOWN_PERCENT', '25')) / 100
                 }
 
             if 'data_sources' not in self.config:
@@ -202,24 +210,32 @@ class TradingBotApplication:
                     'social': {
                         'twitter_api_key': os.getenv('TWITTER_API_KEY', ''),
                         'twitter_api_secret': os.getenv('TWITTER_API_SECRET', ''),
-                        'enabled': False
+                        'enabled': bool(os.getenv('TWITTER_API_KEY'))
                     }
                 }
 
             if 'web3' not in self.config:
                 self.config['web3'] = {
                     'provider_url': os.getenv('WEB3_PROVIDER_URL'),
+                    'backup_providers': [
+                        os.getenv('WEB3_BACKUP_PROVIDER_1'),
+                        os.getenv('WEB3_BACKUP_PROVIDER_2')
+                    ],
                     'chain_id': int(os.getenv('CHAIN_ID', '1')),
-                    'gas_multiplier': 1.2
+                    'gas_multiplier': float(os.getenv('PRIORITY_GAS_MULTIPLIER', '1.2')),
+                    'max_gas_price': int(os.getenv('MAX_GAS_PRICE', '500'))
                 }
 
             if 'trading' not in self.config:
                 self.config['trading'] = {
                     'strategies': {
-                        'momentum': {'enabled': True},
-                        'scalping': {'enabled': True}
+                        'momentum': {'enabled': True, 'lookback_period': 20},
+                        'scalping': {'enabled': True, 'profit_target': 0.02},
+                        'ai_strategy': {'enabled': False}
                     },
-                    'min_opportunity_score': 0.7
+                    'min_opportunity_score': 0.7,
+                    'max_slippage': float(os.getenv('MAX_SLIPPAGE', '2')) / 100,
+                    'max_gas_price': int(os.getenv('MAX_GAS_PRICE', '500'))
                 }
 
             if 'notifications' not in self.config:
@@ -228,12 +244,23 @@ class TradingBotApplication:
                         'bot_token': os.getenv('TELEGRAM_BOT_TOKEN', ''),
                         'chat_id': os.getenv('TELEGRAM_CHAT_ID', ''),
                         'enabled': bool(os.getenv('TELEGRAM_BOT_TOKEN'))
+                    },
+                    'discord': {
+                        'webhook_url': os.getenv('DISCORD_WEBHOOK_URL', ''),
+                        'enabled': bool(os.getenv('DISCORD_WEBHOOK_URL'))
                     }
                 }
 
             if 'ml' not in self.config:
                 self.config['ml'] = {
-                    'retrain_interval_hours': 24
+                    'retrain_interval_hours': int(os.getenv('ML_RETRAIN_INTERVAL_HOURS', '24')),
+                    'min_confidence': float(os.getenv('ML_MIN_CONFIDENCE', '0.7'))
+                }
+
+            if 'security' not in self.config:
+                self.config['security'] = {
+                    'encryption_key': os.getenv('ENCRYPTION_KEY'),
+                    'private_key': os.getenv('PRIVATE_KEY')
                 }
 
 
