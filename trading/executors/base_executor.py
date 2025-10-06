@@ -72,7 +72,11 @@ class TradeExecutor:
         self.config = config
         
         # Web3 setup
-        self.w3 = Web3(Web3.HTTPProvider(config.get('web3_provider_url')))
+        # NEW:
+        provider_url = config.get('web3_provider_url') or config.get('web3', {}).get('provider_url')
+        if not provider_url:
+            raise ValueError("WEB3_PROVIDER_URL not found in configuration")
+        self.w3 = Web3(Web3.HTTPProvider(provider_url))
         # NEW:
         private_key = config.get('private_key') or config.get('security', {}).get('private_key')
         if not private_key:

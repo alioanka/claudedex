@@ -271,6 +271,13 @@ class TradingBotApplication:
                 }
 
 
+            # Before creating engine, flatten security and web3 config:
+            flat_config = self.config.copy()
+            if 'security' in self.config:
+                flat_config.update(self.config['security'])
+            if 'web3' in self.config:
+                flat_config.update(self.config['web3'])
+
             # Initialize trading engine
             self.logger.info("Initializing trading engine...")
             self.engine = TradingBotEngine(self.config, mode=self.mode)
