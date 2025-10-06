@@ -113,7 +113,7 @@ class DatabaseConfig(BaseModel):
     port: int = 5432
     database: str = "trading_bot"
     username: str = "postgres"
-    password: SecretStr
+    password: SecretStr = SecretStr("Madazulu11")  # ✅ Add default value
     
     # Connection pool settings
     pool_size: int = 10
@@ -136,7 +136,7 @@ class APIConfig(BaseModel):
     cors_methods: List[str] = ["GET", "POST", "PUT", "DELETE"]
     
     # Authentication
-    jwt_secret: SecretStr
+    jwt_secret: SecretStr = SecretStr("ti4o1XMf9NWB35RzTFvE0nqrCHblvviJC-N878PWoPs")  # ✅ Add default
     jwt_expiry: int = 3600  # seconds
     
     # Rate limiting
