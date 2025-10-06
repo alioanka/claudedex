@@ -539,8 +539,22 @@ class ConfigManager:
         Returns:
             Configuration dictionary
         """
-        # Map environment string to internal config loading
-        asyncio.run(self._load_all_configs())
+        # If configs are already loaded, return them
+        if self.configs:
+            result = {}
+            for config_type, config in self.configs.items():
+                result[config_type.value] = config.dict() if hasattr(config, 'dict') else config
+            return result
+        
+        # If configs aren't loaded yet, they should have been loaded by initialize()
+        # This is a fallback - return defaults synchronously
+        logger.warning("load_config called but configs not initialized - returning defaults")
+        
+        for config_type in ConfigType:
+            if config_type not in self.configs:
+                schema_class = self.config_schemas.get(config_type)
+                if schema_class:
+                    self.configs[config_type] = schema_class()
         
         # Return combined config dict
         result = {}
