@@ -1090,7 +1090,7 @@ class PositionTracker:
                 # Update portfolio metrics
                 await self._update_portfolio_value()
                 
-                await asyncio.sleep(self.config["update_interval"])
+                await asyncio.sleep(self.config.get("update_interval", 5))
                 
             except Exception as e:
                 logger.error(f"Error monitoring positions: {e}")
@@ -1100,7 +1100,7 @@ class PositionTracker:
         """Background task to calculate detailed portfolio metrics"""
         while True:
             try:
-                await asyncio.sleep(self.config["metrics_interval"])
+                await asyncio.sleep(self.config.get("metrics_interval", 60))
                 
                 if not self.positions:
                     continue

@@ -401,7 +401,7 @@ class Dashboard:
                         'data': self.positions_data
                     }))
                     
-                    await asyncio.sleep(self.config["broadcast_interval"])
+                    await asyncio.sleep(self.config.get("broadcast_interval", 1))
                     
             except ConnectionResetError:
                 pass
@@ -638,7 +638,7 @@ class Dashboard:
                 if self.dashboard_data:
                     self.dashboard_data.timestamp = datetime.utcnow()
                 
-                await asyncio.sleep(self.config["data_update_interval"])
+                await asyncio.sleep(self.config.get("data_update_interval", 1))
                 
             except Exception as e:
                 logger.error(f"Error updating dashboard data: {e}")
@@ -670,7 +670,7 @@ class Dashboard:
                             'data': recent_alerts
                         })
                 
-                await asyncio.sleep(self.config["broadcast_interval"])
+                await asyncio.sleep(self.config.get("broadcast_interval", 1))
                 
             except Exception as e:
                 logger.error(f"Error broadcasting updates: {e}")

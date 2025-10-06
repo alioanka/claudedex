@@ -581,7 +581,7 @@ class AlertsSystem:
         """Aggregate low-priority alerts"""
         while True:
             try:
-                await asyncio.sleep(self.config["aggregation_window"])
+                await asyncio.sleep(self.config.get("aggregation_window", 60))
                 
                 if not self.alert_buffer:
                     continue

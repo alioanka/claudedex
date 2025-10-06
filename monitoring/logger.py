@@ -564,7 +564,7 @@ class PerformanceTracker:
         """Persist data to database"""
         while True:
             try:
-                await asyncio.sleep(self.config["persist_interval"])
+                await asyncio.sleep(self.config.get("persist_interval", 300))
                 
                 conn = sqlite3.connect(str(self.db_path))
                 cursor = conn.cursor()
