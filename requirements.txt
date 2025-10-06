@@ -71,6 +71,8 @@ PyJWT
 
 aiohttp-sse-client
 
+aiohttp-sse
+
 aioredis
 
 eth_abi
