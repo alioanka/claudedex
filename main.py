@@ -96,9 +96,7 @@ class HealthChecker:
             except Exception as e:
                 print(f"Health check error: {e}")
 
-class TradingBotApplication:
-    """Main application class for the trading bot"""
-    
+  
 class TradingBotApplication:
     """Main application class for the trading bot"""
     
@@ -291,6 +289,9 @@ class TradingBotApplication:
         """Main application loop"""
         try:
             logger.info("Starting DexScreener Trading Bot...")
+
+            # To this:
+            self.logger.info("Starting DexScreener Trading Bot...")
             # Initialize components
             await self.initialize()
             
