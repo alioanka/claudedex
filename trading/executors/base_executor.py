@@ -73,7 +73,11 @@ class TradeExecutor:
         
         # Web3 setup
         self.w3 = Web3(Web3.HTTPProvider(config.get('web3_provider_url')))
-        self.account = Account.from_key(config.get('private_key'))
+        # NEW:
+        private_key = config.get('private_key') or config.get('security', {}).get('private_key')
+        if not private_key:
+            raise ValueError("PRIVATE_KEY not found in configuration")
+        self.account = Account.from_key(private_key)
         self.wallet_address = self.account.address
         
         # Chain configuration
