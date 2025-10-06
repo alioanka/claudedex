@@ -691,7 +691,15 @@ class StructuredLogger:
     def __init__(self, name: str = "TradingBot", config: Optional[Dict] = None):
         """Initialize structured logger"""
         self.name = name
-        self.config = config or self._default_config()
+        
+        # Always start with full default config
+        default_config = self._default_config()
+        
+        # Merge provided config into defaults (doesn't replace, just updates)
+        if config:
+            default_config.update(config)
+        
+        self.config = default_config
         self.setup_logging()
         
     def _default_config(self) -> Dict:
