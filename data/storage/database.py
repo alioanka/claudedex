@@ -38,7 +38,7 @@ class DatabaseManager:
                 
                 host = parsed.hostname or 'postgres'
                 port = parsed.port or 5432
-                user = parsed.username or 'trading'
+                user = parsed.username or 'bot_user'
                 password = parsed.password or ''
                 database = parsed.path.lstrip('/') or 'tradingbot'
                 
@@ -65,8 +65,8 @@ class DatabaseManager:
                 self.pool = await asyncpg.create_pool(
                     host=host,
                     port=self.config.get('DB_PORT', 5432),
-                    user=self.config.get('DB_USER', 'trading'),
-                    password=self.config.get('DB_PASSWORD', ''),
+                    user=self.config.get('DB_USER', 'bot_user'),
+                    password=self.config.get('DB_PASSWORD', 'bot_password'),
                     database=self.config.get('DB_NAME', 'tradingbot'),
                     min_size=self.config.get('DB_POOL_MIN', 10),
                     max_size=self.config.get('DB_POOL_MAX', 20),

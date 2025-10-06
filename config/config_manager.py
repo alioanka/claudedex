@@ -112,8 +112,8 @@ class DatabaseConfig(BaseModel):
     host: str = "localhost"
     port: int = 5432
     database: str = "trading_bot"
-    username: str = "postgres"
-    password: SecretStr = SecretStr("Madazulu11")  # ✅ Add default value
+    username: str = "bot_user"
+    password: SecretStr = SecretStr("bot_password")  # ✅ Add default value
     
     # Connection pool settings
     pool_size: int = 10

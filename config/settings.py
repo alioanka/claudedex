@@ -57,7 +57,7 @@ class Settings:
     JWT_SECRET = os.getenv('JWT_SECRET', 'jwt-secret-key')
     
     # Database
-    DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:password@localhost:5432/trading_bot')
+    DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://bot_user:bot_password@postgres:5432/tradingbot')
     REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
     
     # API Keys
