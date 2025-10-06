@@ -280,7 +280,7 @@ class TradingBotApplication:
 
             # Initialize trading engine
             self.logger.info("Initializing trading engine...")
-            self.engine = TradingBotEngine(self.config, mode=self.mode)
+            self.engine = TradingBotEngine(flat_config, mode=self.mode)
             await self.engine.initialize()
             
             # Initialize dashboard
