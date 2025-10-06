@@ -265,9 +265,24 @@ class TradingBotApplication:
                 }
 
             if 'security' not in self.config:
+                # Get encrypted private key from env
+                encrypted_key = os.getenv('PRIVATE_KEY')
+                encryption_key = os.getenv('ENCRYPTION_KEY')
+                
+                # Decrypt private key if encrypted
+                decrypted_key = encrypted_key
+                if encrypted_key and encrypted_key.startswith('gAAAAAB') and encryption_key:
+                    try:
+                        from cryptography.fernet import Fernet
+                        f = Fernet(encryption_key.encode())
+                        decrypted_key = f.decrypt(encrypted_key.encode()).decode()
+                    except Exception as e:
+                        self.logger.error(f"Failed to decrypt private key: {e}")
+                        raise ValueError("Cannot decrypt PRIVATE_KEY - check ENCRYPTION_KEY")
+                
                 self.config['security'] = {
-                    'encryption_key': os.getenv('ENCRYPTION_KEY'),
-                    'private_key': os.getenv('PRIVATE_KEY')
+                    'encryption_key': encryption_key,
+                    'private_key': decrypted_key  # Use decrypted key
                 }
 
 
