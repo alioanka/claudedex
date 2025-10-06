@@ -36,6 +36,7 @@ class ConfigType(Enum):
     MONITORING = "monitoring"
     ML_MODELS = "ml_models"
     RISK_MANAGEMENT = "risk_management"
+    PORTFOLIO = "portfolio"  # Add this
 
 class ConfigSource(Enum):
     """Configuration sources"""
@@ -218,6 +219,20 @@ class RiskManagementConfig(BaseModel):
             raise ValueError('max_portfolio_risk must be between 0 and 0.1 (10%)')
         return v
 
+class PortfolioConfig(BaseModel):
+    """Portfolio configuration schema"""
+    initial_balance: float = 10000.0
+    max_positions: int = 10
+    max_position_size_pct: float = 0.1  # 10%
+    max_risk_per_trade: float = 0.05  # 5%
+    max_portfolio_risk: float = 0.25  # 25%
+    min_position_size: float = 100.0
+    allocation_strategy: str = "DYNAMIC"
+    daily_loss_limit: float = 0.1  # 10%
+    consecutive_losses_limit: int = 5
+    correlation_threshold: float = 0.7
+    rebalance_frequency: str = "daily"
+
 class ConfigManager:
     """
     Centralized configuration management system with:
@@ -242,7 +257,8 @@ class ConfigManager:
             ConfigType.API: APIConfig,
             ConfigType.MONITORING: MonitoringConfig,
             ConfigType.ML_MODELS: MLModelsConfig,
-            ConfigType.RISK_MANAGEMENT: RiskManagementConfig
+            ConfigType.RISK_MANAGEMENT: RiskManagementConfig,
+            ConfigType.PORTFOLIO: PortfolioConfig  # Add this
         }
         
         # Configuration change tracking
@@ -694,6 +710,9 @@ class ConfigManager:
     # Rename the existing update_config to update_config_internal to avoid conflict
 
 
+    def get_portfolio_config(self) -> PortfolioConfig:
+        """Get portfolio configuration"""
+        return self.configs.get(ConfigType.PORTFOLIO, PortfolioConfig())
 
     def get_config_internal(self, config_type: ConfigType) -> Optional[BaseModel]:
         """Get configuration for specified type"""
