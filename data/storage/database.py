@@ -28,27 +28,59 @@ class DatabaseManager:
     async def connect(self) -> None:
         """Establish connection pool to PostgreSQL database."""
         try:
-            self.pool = await asyncpg.create_pool(
-                host=self.config.get('DB_HOST', 'localhost'),
-                port=self.config.get('DB_PORT', 5432),
-                user=self.config.get('DB_USER', 'trading_bot'),
-                password=self.config.get('DB_PASSWORD'),
-                database=self.config.get('DB_NAME', 'trading_bot_db'),
-                min_size=self.config.get('DB_POOL_MIN', 10),
-                max_size=self.config.get('DB_POOL_MAX', 20),
-                max_queries=self.config.get('DB_MAX_QUERIES', 50000),
-                max_inactive_connection_lifetime=self.config.get('DB_CONN_LIFETIME', 300),
-                command_timeout=self.config.get('DB_COMMAND_TIMEOUT', 60),
-            )
+            # Check if DATABASE_URL exists (single connection string)
+            database_url = self.config.get('DATABASE_URL')
             
-            # Initialize TimescaleDB extensions
+            if database_url:
+                # Parse DATABASE_URL: postgresql://user:pass@host:port/dbname
+                import urllib.parse
+                parsed = urllib.parse.urlparse(database_url)
+                
+                host = parsed.hostname or 'postgres'
+                port = parsed.port or 5432
+                user = parsed.username or 'trading'
+                password = parsed.password or ''
+                database = parsed.path.lstrip('/') or 'tradingbot'
+                
+                logger.info(f"Connecting to database at {host}:{port}/{database}")
+                
+                self.pool = await asyncpg.create_pool(
+                    host=host,
+                    port=port,
+                    user=user,
+                    password=password,
+                    database=database,
+                    min_size=self.config.get('DB_POOL_MIN', 10),
+                    max_size=self.config.get('DB_POOL_MAX', 20),
+                    max_queries=self.config.get('DB_MAX_QUERIES', 50000),
+                    max_inactive_connection_lifetime=self.config.get('DB_CONN_LIFETIME', 300),
+                    command_timeout=self.config.get('DB_COMMAND_TIMEOUT', 60),
+                )
+            else:
+                # Fall back to individual config keys with Docker-friendly defaults
+                host = self.config.get('DB_HOST', 'postgres')  # ✅ Changed default
+                
+                logger.info(f"Connecting to database at {host}:{self.config.get('DB_PORT', 5432)}")
+                
+                self.pool = await asyncpg.create_pool(
+                    host=host,
+                    port=self.config.get('DB_PORT', 5432),
+                    user=self.config.get('DB_USER', 'trading'),
+                    password=self.config.get('DB_PASSWORD', ''),
+                    database=self.config.get('DB_NAME', 'tradingbot'),
+                    min_size=self.config.get('DB_POOL_MIN', 10),
+                    max_size=self.config.get('DB_POOL_MAX', 20),
+                    max_queries=self.config.get('DB_MAX_QUERIES', 50000),
+                    max_inactive_connection_lifetime=self.config.get('DB_CONN_LIFETIME', 300),
+                    command_timeout=self.config.get('DB_COMMAND_TIMEOUT', 60),
+                )
+            
+            # Rest of the method stays the same...
             await self._initialize_timescaledb()
-            
-            # Create tables if they don't exist
             await self._create_tables()
             
             self.is_connected = True
-            logger.info("Successfully connected to PostgreSQL database")
+            logger.info("✅ Successfully connected to PostgreSQL database")
             
         except Exception as e:
             logger.error(f"Failed to connect to database: {e}")
