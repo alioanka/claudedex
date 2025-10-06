@@ -284,7 +284,8 @@ class TradingBotApplication:
                     'encryption_key': encryption_key,
                     'private_key': decrypted_key  # Use decrypted key
                 }
-
+                # Right after line 291 (after setting security config), add:
+                self.logger.info(f"DEBUG: security config set: {self.config.get('security', {})}")
 
             # Before creating engine, flatten security and web3 config:
             flat_config = self.config.copy()
@@ -292,6 +293,17 @@ class TradingBotApplication:
                 flat_config.update(self.config['security'])
             if 'web3' in self.config:
                 flat_config.update(self.config['web3'])
+
+            # ADD THIS - explicitly set it again to be safe:
+            flat_config['private_key'] = self.config.get('security', {}).get('private_key')
+            flat_config['encryption_key'] = self.config.get('security', {}).get('encryption_key')
+
+            # Right after line 295 (after creating flat_config), add:
+            self.logger.info(f"DEBUG: flat_config keys: {flat_config.keys()}")
+            self.logger.info(f"DEBUG: flat_config has private_key: {'private_key' in flat_config}")
+            if 'private_key' in flat_config:
+                # Only show first 10 chars for security
+                self.logger.info(f"DEBUG: private_key value: {str(flat_config.get('private_key'))[:10]}...")
 
             # Initialize trading engine
             self.logger.info("Initializing trading engine...")
