@@ -164,6 +164,8 @@ class MonitoringConfig(BaseModel):
 
 class MLModelsConfig(BaseModel):
     """ML Models configuration schema"""
+
+    model_config = {'protected_namespaces': ()}  # Add this line
     # Model settings
     enable_ensemble: bool = True
     model_update_frequency: int = 24  # hours

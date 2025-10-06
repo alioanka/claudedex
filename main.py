@@ -23,6 +23,11 @@ from config.config_manager import ConfigManager  # Changed import
 from data.storage.database import DatabaseManager
 from security.encryption import EncryptionManager  # Changed from SecurityManager
 from monitoring.enhanced_dashboard import DashboardEndpoints
+from data.storage.cache import CacheManager
+from core.portfolio_manager import PortfolioManager
+from trading.orders.order_manager import OrderManager
+from core.risk_manager import RiskManager
+from monitoring.alerts import AlertsSystem
 # Load environment variables
 load_dotenv()
 
@@ -94,6 +99,9 @@ class HealthChecker:
 class TradingBotApplication:
     """Main application class for the trading bot"""
     
+class TradingBotApplication:
+    """Main application class for the trading bot"""
+    
     def __init__(self, config_path: str = "config/settings.yaml", mode: str = "production"):
         """
         Initialize the trading bot application
@@ -109,19 +117,31 @@ class TradingBotApplication:
         self.shutdown_event = asyncio.Event()
         self.logger = setup_logger("TradingBot", mode)
 
-        # Initialize all your existing components first
-        self.config = load_config(config_path)
-        self.db_manager = DatabaseManager(self.config)
-        self.cache_manager = CacheManager(self.config)
+        # Initialize ConfigManager first
         self.config_manager = ConfigManager(config_dir='config')
         
-        # ... initialize other components ...
+        # Load config using ConfigManager (this returns a dict)
+        self.config = self.config_manager.load_config(mode)
         
-        self.engine = TradingBotEngine(self.config, mode)
+        # Initialize database and cache managers
+        self.db_manager = DatabaseManager(self.config.get('database', {}))
+        self.cache_manager = CacheManager(self.config.get('cache', {}))
+        
+        # Initialize other managers (add proper imports at top of file)
+        from core.portfolio_manager import PortfolioManager
+        from trading.orders.order_manager import OrderManager
+        from core.risk_manager import RiskManager
+        from monitoring.alerts import AlertsSystem
+        
         self.portfolio_manager = PortfolioManager(self.config)
         self.order_manager = OrderManager(self.config)
         self.risk_manager = RiskManager(self.config)
         self.alerts_system = AlertsSystem(self.config)
+        
+        # Initialize engine
+        self.engine = TradingBotEngine(self.config, mode)
+        
+        # Initialize dashboard
         self.dashboard = DashboardEndpoints(
             host="0.0.0.0",
             port=8080,
