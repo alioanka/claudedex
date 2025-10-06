@@ -98,7 +98,10 @@ class TradingBotEngine:
         self.portfolio_manager = PortfolioManager(config['portfolio'])
         
         # Data collectors
-        self.dex_collector = DexScreenerCollector(config['data_sources']['dexscreener'])
+        # Use:
+        self.dex_collector = DexScreenerCollector(
+            config.get('data_sources', {}).get('dexscreener', {})
+        )
         self.chain_collector = ChainDataCollector(config['web3'])
         self.social_collector = SocialDataCollector(config['data_sources']['social'])
         self.mempool_monitor = MempoolMonitor(config['web3'])

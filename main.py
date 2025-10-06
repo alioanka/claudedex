@@ -175,7 +175,68 @@ class TradingBotApplication:
             # Initialize database
             self.logger.info("Connecting to database...")
             await self.db_manager.connect()
-            
+
+            # Add missing config sections with defaults
+            if 'portfolio' not in self.config:
+                self.config['portfolio'] = {
+                    'initial_balance': 10000.0,
+                    'max_positions': 10,
+                    'max_position_size_pct': 0.1,
+                    'max_risk_per_trade': 0.05,
+                    'max_portfolio_risk': 0.25,
+                    'min_position_size': 100.0,
+                    'allocation_strategy': 'DYNAMIC',
+                    'daily_loss_limit': 0.1,
+                    'consecutive_losses_limit': 5,
+                    'correlation_threshold': 0.7,
+                    'rebalance_frequency': 'daily'
+                }
+
+            if 'data_sources' not in self.config:
+                self.config['data_sources'] = {
+                    'dexscreener': {
+                        'api_key': os.getenv('DEXSCREENER_API_KEY', ''),
+                        'base_url': 'https://api.dexscreener.com/latest',
+                        'rate_limit': 300
+                    },
+                    'social': {
+                        'twitter_api_key': os.getenv('TWITTER_API_KEY', ''),
+                        'twitter_api_secret': os.getenv('TWITTER_API_SECRET', ''),
+                        'enabled': False
+                    }
+                }
+
+            if 'web3' not in self.config:
+                self.config['web3'] = {
+                    'provider_url': os.getenv('WEB3_PROVIDER_URL'),
+                    'chain_id': int(os.getenv('CHAIN_ID', '1')),
+                    'gas_multiplier': 1.2
+                }
+
+            if 'trading' not in self.config:
+                self.config['trading'] = {
+                    'strategies': {
+                        'momentum': {'enabled': True},
+                        'scalping': {'enabled': True}
+                    },
+                    'min_opportunity_score': 0.7
+                }
+
+            if 'notifications' not in self.config:
+                self.config['notifications'] = {
+                    'telegram': {
+                        'bot_token': os.getenv('TELEGRAM_BOT_TOKEN', ''),
+                        'chat_id': os.getenv('TELEGRAM_CHAT_ID', ''),
+                        'enabled': bool(os.getenv('TELEGRAM_BOT_TOKEN'))
+                    }
+                }
+
+            if 'ml' not in self.config:
+                self.config['ml'] = {
+                    'retrain_interval_hours': 24
+                }
+
+
             # Initialize trading engine
             self.logger.info("Initializing trading engine...")
             self.engine = TradingBotEngine(self.config, mode=self.mode)
