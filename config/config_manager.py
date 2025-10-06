@@ -67,6 +67,13 @@ class TradingConfig(BaseModel):
     take_profit_percentage: float = 0.15  # 15%
     min_liquidity_threshold: float = 50000  # $50k
     max_gas_price: int = 100  # Gwei
+
+    # ADD THIS:
+    strategies: Dict[str, Dict[str, Any]] = {
+        'momentum': {'enabled': True, 'lookback_period': 20},
+        'scalping': {'enabled': True, 'profit_target': 0.02},
+        'ai_strategy': {'enabled': False}
+    }
     
     # Strategy settings
     enable_momentum_strategy: bool = True
