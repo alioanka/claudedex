@@ -39,7 +39,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: trading-bot
-    restart: unless-stopped
+    # restart: unless-stopped
+    restart: "no"  # Changed to prevent restart loop
     ports:
       - "8080:8080"
     environment:
