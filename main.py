@@ -215,7 +215,7 @@ class TradingBotApplication:
         required_vars = [
             'DATABASE_URL',
             'REDIS_URL',
-            'DEXSCREENER_API_KEY',
+            # 'DEXSCREENER_API_KEY',  # REMOVED - optional for DexScreener
             'WEB3_PROVIDER_URL',
             'PRIVATE_KEY',  # Should be encrypted
             'TELEGRAM_BOT_TOKEN',
@@ -226,11 +226,18 @@ class TradingBotApplication:
         
         if missing:
             raise ValueError(f"Missing required environment variables: {missing}")
-            
-        # Validate API keys format
-        if len(os.getenv('DEXSCREENER_API_KEY', '')) < 20:
-            raise ValueError("Invalid DEXSCREENER_API_KEY format")
-            
+        
+        # Optional API keys - log warnings but don't fail
+        optional_vars = {
+            'DEXSCREENER_API_KEY': 'DexScreener API (rate limits will be lower)',
+            'GOPLUS_API_KEY': 'GoPlus security checks',
+            'TOKENSNIFFER_API_KEY': 'TokenSniffer analysis'
+        }
+        
+        for var, description in optional_vars.items():
+            if not os.getenv(var):
+                self.logger.warning(f"Optional API key missing: {var} - {description}")
+                        
     async def _perform_system_checks(self):
         """Perform pre-flight system checks"""
         checks = [
