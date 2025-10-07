@@ -68,6 +68,8 @@ class TradingConfig(BaseModel):
     min_liquidity_threshold: float = 50000  # $50k
     max_gas_price: int = 100  # Gwei
 
+    min_opportunity_score: float = 0.7  # Minimum score to consider an opportunity
+
     # ADD THIS:
     strategies: Dict[str, Dict[str, Any]] = {
         'momentum': {'enabled': True, 'lookback_period': 20},
@@ -385,6 +387,20 @@ class ConfigManager:
     def _load_config_from_env(self, config_type: ConfigType) -> Dict:
         """Load configuration from environment variables"""
         env_data = {}
+        
+        # Direct environment variable mappings
+        if config_type == ConfigType.TRADING:
+            # Map specific env vars to trading config
+            if os.getenv('MIN_OPPORTUNITY_SCORE'):
+                env_data['min_opportunity_score'] = float(os.getenv('MIN_OPPORTUNITY_SCORE'))
+            if os.getenv('MAX_POSITION_SIZE_PERCENT'):
+                env_data['max_position_size'] = float(os.getenv('MAX_POSITION_SIZE_PERCENT')) / 100
+            if os.getenv('MAX_DAILY_LOSS_PERCENT'):
+                env_data['max_daily_loss'] = float(os.getenv('MAX_DAILY_LOSS_PERCENT')) / 100
+            if os.getenv('MAX_SLIPPAGE'):
+                env_data['max_slippage'] = float(os.getenv('MAX_SLIPPAGE'))
+        
+        # Generic prefix-based loading (existing code)
         prefix = f"BOT_{config_type.value.upper()}_"
         
         for key, value in os.environ.items():

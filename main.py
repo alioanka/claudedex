@@ -274,6 +274,10 @@ class TradingBotApplication:
                     'min_confidence': float(os.getenv('ML_MIN_CONFIDENCE', '0.7'))
                 }
 
+            # After loading config
+            trading_config = self.config_manager.get_trading_config()
+            logger.info(f"📊 Min Opportunity Score: {trading_config.min_opportunity_score}")
+
             # Replace the entire "if 'security' not in self.config:" block with this:
             # ALWAYS set/override security config from environment
             encrypted_key = os.getenv('PRIVATE_KEY')
