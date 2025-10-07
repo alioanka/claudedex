@@ -977,7 +977,21 @@ class AlertsSystem:
         priority: AlertPriority
     ) -> List[NotificationChannel]:
         """Get appropriate channels for priority level"""
-        return self.config["channel_priorities"].get(priority, [])
+        # Get channel priorities from config with fallback
+        channel_priorities = self.config.get("channel_priorities", {})
+        
+        # If not configured, use defaults
+        if not channel_priorities:
+            if priority == AlertPriority.CRITICAL:
+                return [NotificationChannel.TELEGRAM]
+            elif priority == AlertPriority.HIGH:
+                return [NotificationChannel.TELEGRAM]
+            elif priority == AlertPriority.MEDIUM:
+                return [NotificationChannel.TELEGRAM]
+            else:
+                return []
+        
+        return channel_priorities.get(priority, [])
     
     def _should_send_alert(self, alert: Alert) -> bool:
         """Check if alert should be sent (cooldown, dedup)"""

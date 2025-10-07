@@ -289,85 +289,83 @@ class TradingBotEngine:
         Comprehensive analysis of a trading opportunity
         """
         try:
-            # Parallel analysis tasks
-            tasks = [
-                self.risk_manager.analyze_token(pair['token_address']),
+            # Parallel analysis tasks - ALL properly awaited
+            results = await asyncio.gather(
+                self.risk_manager.analyze_token(pair.get('token_address', '')),
                 self.pattern_analyzer.analyze_patterns(pair),
-                self.chain_collector.get_token_info(pair['token_address']),
-                self.social_collector.get_sentiment(pair['token_address']),
-                self._check_developer_reputation(pair['creator_address']),
+                self.chain_collector.get_token_info(pair.get('token_address', '')),
+                self.social_collector.get_sentiment(pair.get('token_address', '')),
+                self._check_developer_reputation(pair.get('creator_address', '')),
                 self._analyze_liquidity_depth(pair),
-                self._check_smart_contract(pair['token_address']),
-                self._analyze_holder_distribution(pair['token_address'])
-            ]
-            
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Check for critical failures
-            if any(isinstance(r, Exception) for r in results):
-                return None
-                
-            risk_score, patterns, token_info, sentiment, dev_rep, liquidity, contract_check, holders = results
-            
-            # ML predictions
-            features = self._extract_features({
-                'pair': pair,
-                'risk_score': risk_score,
-                'patterns': patterns,
-                'token_info': token_info,
-                'sentiment': sentiment,
-                'dev_reputation': dev_rep,
-                'liquidity': liquidity,
-                'contract': contract_check,
-                'holders': holders
-            })
-            
-            ml_predictions = await self.ensemble_predictor.predict(features)
-            
-            # Decision making
-            decision = await self.decision_maker.make_decision({
-                'risk_score': risk_score,
-                'ml_predictions': ml_predictions,
-                'patterns': patterns,
-                'sentiment': sentiment
-            })
-            
-            if not decision['should_trade']:
-                return None
-                
-            # Calculate position size
-            position_size = self.risk_manager.calculate_position_size(
-                risk_score,
-                self.portfolio_manager.get_available_balance(),
-                ml_predictions['confidence']
+                self._check_smart_contract(pair.get('token_address', '')),
+                self._analyze_holder_distribution(pair.get('token_address', '')),
+                return_exceptions=True  # Don't fail if one task fails
             )
             
-            # Create opportunity
-            return TradingOpportunity(
-                token_address=pair['token_address'],
-                pair_address=pair['pair_address'],
-                chain=pair['chain'],
-                price=pair['price'],
-                liquidity=pair['liquidity'],
-                volume_24h=pair['volume_24h'],
+            # Unpack results
+            risk_score, patterns, token_info, sentiment, dev_reputation, \
+                liquidity_depth, contract_safety, holder_dist = results
+            
+            # Handle any exceptions in results
+            if isinstance(risk_score, Exception):
+                logger.error(f"Risk analysis failed: {risk_score}")
+                risk_score = None
+            if isinstance(patterns, Exception):
+                logger.error(f"Pattern analysis failed: {patterns}")
+                patterns = None
+            if isinstance(token_info, Exception):
+                logger.error(f"Token info failed: {token_info}")
+                token_info = None
+            if isinstance(sentiment, Exception):
+                logger.error(f"Sentiment analysis failed: {sentiment}")
+                sentiment = None
+            
+            # Calculate overall score
+            score = self._calculate_opportunity_score(
+                pair=pair,
                 risk_score=risk_score,
-                ml_confidence=ml_predictions['confidence'],
-                pump_probability=ml_predictions['pump_probability'],
-                rug_probability=ml_predictions['rug_probability'],
-                expected_return=decision['expected_return'],
-                recommended_position_size=position_size,
-                entry_strategy=decision['strategy'],
+                patterns=patterns,
+                sentiment=sentiment,
+                liquidity=liquidity_depth,
+                contract_safety=contract_safety
+            )
+            
+            # Check minimum threshold from config
+            min_score = self.config.get('trading', {}).get('min_opportunity_score', 0.7)
+            
+            if score < min_score:
+                logger.debug(f"Opportunity score {score:.2f} below threshold {min_score}")
+                return None
+            
+            # Create opportunity
+            opportunity = TradingOpportunity(
+                token_address=pair.get('token_address', ''),
+                token_symbol=pair.get('token_symbol', 'UNKNOWN'),
+                pair_address=pair.get('pair_address', ''),
+                dex=pair.get('dex', 'unknown'),
+                chain=pair.get('chain', 'ethereum'),
+                opportunity_score=score,
+                entry_price=pair.get('price_usd', 0),
+                target_price=self._calculate_target_price(pair, score),
+                stop_loss=self._calculate_stop_loss(pair),
+                confidence=score,
+                risk_level=self._determine_risk_level(risk_score),
+                timestamp=datetime.utcnow(),
                 metadata={
+                    'pair': pair,
+                    'risk_score': risk_score,
                     'patterns': patterns,
                     'sentiment': sentiment,
-                    'dev_reputation': dev_rep,
-                    'contract_analysis': contract_check,
-                    'holder_analysis': holders
+                    'liquidity_depth': liquidity_depth,
+                    'contract_safety': contract_safety,
+                    'holder_distribution': holder_dist
                 }
             )
             
+            return opportunity
+            
         except Exception as e:
-            await self.alert_manager.send_warning(f"Failed to analyze opportunity: {e}")
+            logger.error(f"Error analyzing opportunity: {e}", exc_info=True)
             return None
             
     async def _process_opportunities(self):

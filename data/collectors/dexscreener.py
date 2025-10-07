@@ -181,7 +181,7 @@ class DexScreenerCollector:
     async def get_new_pairs(self, chain: str = 'ethereum', limit: int = 100) -> List[Dict]:
         """
         Get newly created pairs for a specific chain
-        Uses token-boosts/latest/v1 endpoint to find recently promoted tokens
+        Enhanced version with multiple discovery strategies
         
         Args:
             chain: Blockchain network (ethereum, bsc, polygon, solana, etc.)
@@ -191,6 +191,7 @@ class DexScreenerCollector:
             List of new pair data
         """
         new_pairs = []
+        seen_addresses = set()
         
         # Check cache
         cache_key = f"new_pairs_{chain}"
@@ -200,81 +201,190 @@ class DexScreenerCollector:
                 return cached_data
         
         try:
-            # Strategy 1: Get latest boosted tokens (these are often new/promoted)
+            # STRATEGY 1: Latest boosted tokens (recently promoted)
+            print(f"Strategy 1: Fetching boosted tokens for {chain}...")
             boosted_endpoint = "token-boosts/latest/v1"
             boosted_data = await self._make_request(boosted_endpoint)
             
             if boosted_data:
-                # boosted_data is a list of token objects
                 tokens_to_fetch = []
                 
-                for boost in boosted_data if isinstance(boosted_data, list) else [boosted_data]:
-                    # Filter by chain
+                for boost in (boosted_data if isinstance(boosted_data, list) else [boosted_data]):
                     if boost.get('chainId', '').lower() == chain.lower():
-                        tokens_to_fetch.append(boost.get('tokenAddress'))
+                        token_addr = boost.get('tokenAddress')
+                        if token_addr and token_addr not in seen_addresses:
+                            tokens_to_fetch.append(token_addr)
+                            seen_addresses.add(token_addr)
                 
-                # Now fetch pair data for these tokens
-                for token_address in tokens_to_fetch[:50]:  # Limit to 50 tokens to avoid rate limits
+                # Fetch pairs for boosted tokens
+                for token_address in tokens_to_fetch[:20]:  # Limit to avoid rate limits
                     try:
-                        # Get pairs for this token
                         pairs_endpoint = f"token-pairs/v1/{chain}/{token_address}"
                         pairs_data = await self._make_request(pairs_endpoint)
                         
                         if pairs_data and isinstance(pairs_data, list):
-                            for pair_data in pairs_data:
+                            for pair_data in pairs_data[:2]:  # Top 2 pairs per token
                                 pair = self._parse_pair(pair_data)
                                 if pair and self._filter_pair(pair):
-                                    new_pairs.append(self._pair_to_dict(pair))
-                                    self.stats['pairs_found'] += 1
-                                else:
-                                    self.stats['pairs_filtered'] += 1
-                        
-                        # Stop if we have enough pairs
-                        if len(new_pairs) >= limit:
-                            break
-                            
-                    except Exception as e:
-                        # Continue to next token if one fails
-                        continue
-            
-            # Strategy 2: If we don't have enough pairs, search for high volume pairs
-            if len(new_pairs) < 10:
-                # Search for pairs with high volume (proxy for new/active pairs)
-                search_endpoint = "latest/dex/search"
-                # Search for common quote tokens to find active pairs
-                for quote in ['USDC', 'USDT', 'ETH', 'WETH']:
-                    params = {'q': quote}
-                    search_data = await self._make_request(search_endpoint, params)
-                    
-                    if search_data and 'pairs' in search_data:
-                        for pair_data in search_data['pairs']:
-                            pair = self._parse_pair(pair_data)
-                            if pair and pair.chain_id.lower() == chain.lower() and self._filter_pair(pair):
-                                pair_dict = self._pair_to_dict(pair)
-                                # Avoid duplicates
-                                if not any(p['pair_address'] == pair_dict['pair_address'] for p in new_pairs):
-                                    new_pairs.append(pair_dict)
-                                    self.stats['pairs_found'] += 1
-                            else:
-                                self.stats['pairs_filtered'] += 1
+                                    pair_dict = self._pair_to_dict(pair)
+                                    if pair_dict['pair_address'] not in seen_addresses:
+                                        new_pairs.append(pair_dict)
+                                        seen_addresses.add(pair_dict['pair_address'])
+                                        self.stats['pairs_found'] += 1
                             
                             if len(new_pairs) >= limit:
                                 break
-                    
+                                
+                    except Exception as e:
+                        print(f"Error fetching pairs for token {token_address}: {e}")
+                        continue
+            
+            print(f"Strategy 1 found {len(new_pairs)} pairs")
+            
+            # STRATEGY 2: Search for recently created high-volume pairs
+            if len(new_pairs) < limit:
+                print(f"Strategy 2: Searching for high-volume new pairs...")
+                search_terms = ['new', 'launch', 'gem', 'moon']
+                
+                for term in search_terms:
                     if len(new_pairs) >= limit:
                         break
+                        
+                    try:
+                        search_endpoint = "latest/dex/search"
+                        params = {'q': term}
+                        search_data = await self._make_request(search_endpoint, params)
+                        
+                        if search_data and 'pairs' in search_data:
+                            for pair_data in search_data['pairs'][:30]:
+                                pair = self._parse_pair(pair_data)
+                                if pair and pair.chain_id.lower() == chain.lower():
+                                    # Filter for recently created pairs (last 7 days)
+                                    if pair.created_at:
+                                        age_hours = (time.time() - pair.created_at) / 3600
+                                        if age_hours <= 168 and self._filter_pair(pair):  # 7 days
+                                            pair_dict = self._pair_to_dict(pair)
+                                            if pair_dict['pair_address'] not in seen_addresses:
+                                                new_pairs.append(pair_dict)
+                                                seen_addresses.add(pair_dict['pair_address'])
+                                                self.stats['pairs_found'] += 1
+                                
+                                if len(new_pairs) >= limit:
+                                    break
+                                    
+                    except Exception as e:
+                        print(f"Error searching for '{term}': {e}")
+                        continue
+            
+            print(f"Strategy 2 found {len(new_pairs)} total pairs")
+            
+            # STRATEGY 3: Get token profiles (newly listed tokens)
+            if len(new_pairs) < limit:
+                print(f"Strategy 3: Fetching latest token profiles...")
+                try:
+                    profiles_endpoint = "token-profiles/latest/v1"
+                    profiles_data = await self._make_request(profiles_endpoint)
+                    
+                    if profiles_data:
+                        profiles_list = profiles_data if isinstance(profiles_data, list) else [profiles_data]
+                        
+                        for profile in profiles_list[:20]:
+                            if profile.get('chainId', '').lower() == chain.lower():
+                                token_address = profile.get('tokenAddress')
+                                if token_address and token_address not in seen_addresses:
+                                    try:
+                                        # Get pairs for this token
+                                        pairs_endpoint = f"token-pairs/v1/{chain}/{token_address}"
+                                        pairs_data = await self._make_request(pairs_endpoint)
+                                        
+                                        if pairs_data and isinstance(pairs_data, list):
+                                            for pair_data in pairs_data[:1]:  # Just the main pair
+                                                pair = self._parse_pair(pair_data)
+                                                if pair and self._filter_pair(pair):
+                                                    pair_dict = self._pair_to_dict(pair)
+                                                    if pair_dict['pair_address'] not in seen_addresses:
+                                                        new_pairs.append(pair_dict)
+                                                        seen_addresses.add(pair_dict['pair_address'])
+                                                        self.stats['pairs_found'] += 1
+                                        
+                                        if len(new_pairs) >= limit:
+                                            break
+                                            
+                                    except Exception as e:
+                                        continue
+                                        
+                except Exception as e:
+                    print(f"Error fetching token profiles: {e}")
+            
+            print(f"Strategy 3 found {len(new_pairs)} total pairs")
+            
+            # STRATEGY 4: Search for common quote tokens to find active new pairs
+            if len(new_pairs) < 10:  # Only if we haven't found much
+                print(f"Strategy 4: Searching common quote tokens...")
+                quote_tokens = {
+                    'ethereum': ['WETH', 'USDC', 'USDT'],
+                    'bsc': ['WBNB', 'BUSD', 'USDT'],
+                    'polygon': ['WMATIC', 'USDC', 'USDT'],
+                    'solana': ['SOL', 'USDC'],
+                    'base': ['WETH', 'USDC'],
+                    'arbitrum': ['WETH', 'USDC']
+                }
+                
+                for quote in quote_tokens.get(chain, ['USDC', 'ETH'])[:2]:
+                    if len(new_pairs) >= limit:
+                        break
+                        
+                    try:
+                        search_endpoint = "latest/dex/search"
+                        params = {'q': quote}
+                        search_data = await self._make_request(search_endpoint, params)
+                        
+                        if search_data and 'pairs' in search_data:
+                            for pair_data in search_data['pairs'][:20]:
+                                pair = self._parse_pair(pair_data)
+                                if pair and pair.chain_id.lower() == chain.lower():
+                                    # Prefer newer pairs with decent volume
+                                    if pair.volume_24h and pair.volume_24h > 10000:  # $10k+ volume
+                                        if self._filter_pair(pair):
+                                            pair_dict = self._pair_to_dict(pair)
+                                            if pair_dict['pair_address'] not in seen_addresses:
+                                                new_pairs.append(pair_dict)
+                                                seen_addresses.add(pair_dict['pair_address'])
+                                                self.stats['pairs_found'] += 1
+                                
+                                if len(new_pairs) >= limit:
+                                    break
+                                    
+                    except Exception as e:
+                        print(f"Error searching quote token {quote}: {e}")
+                        continue
+            
+            print(f"Strategy 4 found {len(new_pairs)} total pairs")
             
         except Exception as e:
-            print(f"Error fetching new pairs: {e}")
+            print(f"Error in get_new_pairs: {e}")
         
-        # Sort by volume (most active first) and creation time
-        new_pairs.sort(key=lambda x: (x.get('volume_24h', 0), -x.get('age_hours', 999)), reverse=True)
+        # Sort by a combination of factors
+        def sort_key(p):
+            volume = p.get('volume_24h', 0)
+            age = p.get('age_hours', 999)
+            liquidity = p.get('liquidity_usd', 0)
+            
+            # Prefer: high volume, newer, good liquidity
+            return (
+                volume * 0.4 +           # 40% weight on volume
+                (1000 / max(age, 1)) * 0.3 +  # 30% weight on newness
+                liquidity * 0.3          # 30% weight on liquidity
+            )
+        
+        new_pairs.sort(key=sort_key, reverse=True)
         
         # Cache results
-        self.cache[cache_key] = (new_pairs[:limit], time.time())
+        final_pairs = new_pairs[:limit]
+        self.cache[cache_key] = (final_pairs, time.time())
         
         # Add to monitoring queue
-        for pair in new_pairs[:limit]:
+        for pair in final_pairs:
             self.monitored_pairs.add(pair['pair_address'])
             if not self.new_pairs_queue.full():
                 try:
@@ -282,7 +392,8 @@ class DexScreenerCollector:
                 except:
                     pass
         
-        return new_pairs[:limit]
+        print(f"✅ Total pairs found: {len(final_pairs)}")
+        return final_pairs
 
         
     async def get_token_price(self, token_address: str) -> Optional[float]:

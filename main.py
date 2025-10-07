@@ -265,6 +265,14 @@ class TradingBotApplication:
                     'discord': {
                         'webhook_url': os.getenv('DISCORD_WEBHOOK_URL', ''),
                         'enabled': bool(os.getenv('DISCORD_WEBHOOK_URL'))
+                    },
+                    # ADD THIS:
+                    'channel_priorities': ['telegram', 'discord'],  # Order of notification channels
+                    'alert_levels': {
+                        'critical': ['telegram', 'discord'],
+                        'error': ['telegram'],
+                        'warning': ['telegram'],
+                        'info': []
                     }
                 }
 
