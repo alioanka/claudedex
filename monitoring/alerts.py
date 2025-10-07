@@ -221,13 +221,16 @@ class AlertsSystem:
     
     def _initialize_channels(self):
         """Initialize notification channels"""
+        # Get rate limits from config with fallback to defaults
+        rate_limits = self.config.get("rate_limits", self._default_config()["rate_limits"])
+        
         # Telegram
         if self.config.get("telegram"):
             self.channel_configs[NotificationChannel.TELEGRAM] = ChannelConfig(
                 channel=NotificationChannel.TELEGRAM,
                 enabled=True,
                 config=self.config["telegram"],
-                rate_limit=self.config["rate_limits"][NotificationChannel.TELEGRAM]
+                rate_limit=rate_limits[NotificationChannel.TELEGRAM]  # Use local variable
             )
         
         # Discord
@@ -236,7 +239,7 @@ class AlertsSystem:
                 channel=NotificationChannel.DISCORD,
                 enabled=True,
                 config=self.config["discord"],
-                rate_limit=self.config["rate_limits"][NotificationChannel.DISCORD]
+                rate_limit=rate_limits[NotificationChannel.DISCORD]
             )
         
         # Email
