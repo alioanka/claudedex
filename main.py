@@ -441,6 +441,9 @@ class TradingBotApplication:
             self.logger.info("Starting DexScreener Trading Bot...")
             # Initialize components
             await self.initialize()
+
+            # Test DexScreener before starting
+            await test_dex_collector()            
             
             # Start the trading engine
             self.logger.info("🎯 Starting trading engine...")
@@ -567,6 +570,20 @@ def parse_arguments():
     )
     
     return parser.parse_args()
+
+async def test_dex_collector():
+    """Test DexScreener connectivity"""
+    from data.collectors.dexscreener import test_api_connection
+    
+    logger.info("Testing DexScreener API connection...")
+    success = await test_api_connection()
+    
+    if not success:
+        logger.warning("⚠️ DexScreener API connection failed - bot will not find new pairs!")
+    else:
+        logger.info("✅ DexScreener API connection successful")
+    
+    return success
 
 async def main():
     """Main entry point"""

@@ -160,6 +160,16 @@ class TradingBotEngine:
             if hasattr(self.risk_manager, 'initialize'):
                 await self.risk_manager.initialize()
             
+            # ADD THIS - Initialize data collectors!
+            if hasattr(self.dex_collector, 'initialize'):
+                await self.dex_collector.initialize()
+                
+            if hasattr(self.chain_collector, 'initialize'):
+                await self.chain_collector.initialize()
+                
+            if hasattr(self.social_collector, 'initialize'):
+                await self.social_collector.initialize()
+            
             if hasattr(self.ensemble_predictor, 'load_models'):
                 await self.ensemble_predictor.load_models()
             
@@ -168,6 +178,8 @@ class TradingBotEngine:
             
             if hasattr(self.order_manager, 'initialize'):
                 await self.order_manager.initialize()
+            
+            # Rest of initialization...
             
             # Setup event handlers
             self._setup_event_handlers()
@@ -219,36 +231,58 @@ class TradingBotEngine:
             
     async def _monitor_new_pairs(self):
         """Continuously monitor for new trading pairs"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info("🔍 Starting new pairs monitoring loop...")
+        
         while self.state == BotState.RUNNING:
             try:
                 # Get new pairs from DexScreener
+                logger.info("Fetching new pairs from DexScreener...")
                 new_pairs = await self.dex_collector.get_new_pairs()
+                
+                logger.info(f"📊 Received {len(new_pairs) if new_pairs else 0} pairs from DexScreener")
+                
+                if not new_pairs:
+                    logger.warning("No pairs returned from DexScreener - waiting 10 seconds")
+                    await asyncio.sleep(10)
+                    continue
                 
                 for pair in new_pairs:
                     self.stats['tokens_analyzed'] += 1
                     
                     # Quick filter checks
                     if self._is_blacklisted(pair):
+                        logger.debug(f"Pair {pair.get('pair_address', 'unknown')} is blacklisted")
                         continue
                         
                     # Analyze opportunity
+                    logger.info(f"Analyzing pair: {pair.get('token_symbol', 'UNKNOWN')}")
                     opportunity = await self._analyze_opportunity(pair)
                     
-                    if opportunity and opportunity.score > self.config['min_opportunity_score']:
-                        self.pending_opportunities.append(opportunity)
-                        self.stats['opportunities_found'] += 1
+                    min_score = self.config.get('trading', {}).get('min_opportunity_score', 0.7)
+                    
+                    if opportunity:
+                        logger.info(f"✨ Opportunity score: {opportunity.score:.2f} (min: {min_score})")
                         
-                        # Emit event
-                        await self.event_bus.emit(Event(
-                            event_type=EventType.OPPORTUNITY_FOUND,
-                            data=opportunity
-                        ))
+                        if opportunity.score > min_score:
+                            self.pending_opportunities.append(opportunity)
+                            self.stats['opportunities_found'] += 1
+                            
+                            logger.info(f"🎯 OPPORTUNITY FOUND: {pair.get('token_symbol')} - Score: {opportunity.score:.2f}")
+                            
+                            # Emit event
+                            await self.event_bus.emit(Event(
+                                event_type=EventType.OPPORTUNITY_FOUND,
+                                data=opportunity
+                            ))
                         
-                await asyncio.sleep(1)  # Check every second
+                await asyncio.sleep(5)  # Check every 5 seconds for new data
                 
             except Exception as e:
-                await self.alert_manager.send_error(f"Error monitoring pairs: {e}")
-                await asyncio.sleep(5)
+                logger.error(f"Error monitoring pairs: {e}", exc_info=True)
+                await asyncio.sleep(10)
                 
     async def _analyze_opportunity(self, pair: Dict) -> Optional[TradingOpportunity]:
         """
