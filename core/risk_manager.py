@@ -202,8 +202,20 @@ class RiskManager:
         
     async def initialize(self):
         """Initialize risk manager components"""
-        await self.chain_collector.initialize()
-        await self.honeypot_checker.initialize()
+        # Only initialize components that have initialize methods
+        if hasattr(self.chain_collector, 'initialize'):
+            await self.chain_collector.initialize()
+        
+        if hasattr(self.honeypot_checker, 'initialize'):
+            await self.honeypot_checker.initialize()
+        
+        # Initialize internal state
+        self.positions = {}
+        self.balance = Decimal("1.0")  # Default starting balance
+        self.peak_balance = self.balance
+        self.consecutive_losses = 0
+        self.returns_history = []
+        self.max_positions = self.config.get('max_positions', 10)
         
     async def analyze_token(self, token_address: str, force_refresh: bool = False) -> RiskScore:
         """
