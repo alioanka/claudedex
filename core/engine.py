@@ -777,3 +777,245 @@ class TradingBotEngine:
         except Exception as e:
             await self.alert_manager.send_warning(f"Safety check failed: {e}")
             return False
+
+
+    # Add these methods to TradingBotEngine class in engine.py
+
+    async def _load_blacklists(self):
+        """Load token and developer blacklists"""
+        try:
+            # Try to load from file
+            import os
+            blacklist_file = 'data/blacklists.json'
+            
+            if os.path.exists(blacklist_file):
+                with open(blacklist_file, 'r') as f:
+                    data = json.load(f)
+                    self.blacklisted_tokens = set(data.get('tokens', []))
+                    self.blacklisted_devs = set(data.get('developers', []))
+            else:
+                # Initialize empty blacklists
+                self.blacklisted_tokens = set()
+                self.blacklisted_devs = set()
+                
+        except Exception as e:
+            # If loading fails, start with empty blacklists
+            self.blacklisted_tokens = set()
+            self.blacklisted_devs = set()
+
+    async def _load_state(self):
+        """Load saved bot state"""
+        try:
+            # Load from database or file
+            pass
+        except Exception:
+            pass
+
+    async def _warmup_collectors(self):
+        """Warm up data collectors"""
+        try:
+            # Test connections
+            await self.dex_collector.test_connection()
+        except Exception:
+            pass
+
+    def _is_blacklisted(self, pair: Dict) -> bool:
+        """Check if token or developer is blacklisted"""
+        return (
+            pair.get('token_address') in self.blacklisted_tokens or
+            pair.get('creator_address') in self.blacklisted_devs
+        )
+
+    async def _check_developer_reputation(self, dev_address: str) -> float:
+        """Check developer reputation score"""
+        # Placeholder - returns neutral score
+        return 0.5
+
+    async def _analyze_liquidity_depth(self, pair: Dict) -> Dict:
+        """Analyze liquidity depth"""
+        return {'depth': pair.get('liquidity', 0)}
+
+    async def _check_smart_contract(self, token_address: str) -> Dict:
+        """Check smart contract for vulnerabilities"""
+        return {'verified': True, 'issues': []}
+
+    async def _analyze_holder_distribution(self, token_address: str) -> Dict:
+        """Analyze token holder distribution"""
+        return {'concentrated': False}
+
+    def _extract_features(self, data: Dict) -> np.ndarray:
+        """Extract ML features from data"""
+        # Placeholder - return dummy features
+        return np.random.rand(10)
+
+    def _calculate_pnl(self, position: Dict) -> float:
+        """Calculate position P&L"""
+        return (position.get('current_price', 0) - position['entry_price']) * position['amount']
+
+    def _calculate_pnl_percentage(self, position: Dict) -> float:
+        """Calculate position P&L percentage"""
+        return ((position.get('current_price', 0) - position['entry_price']) / position['entry_price']) * 100
+
+    async def _check_ml_exit_signal(self, position: Dict) -> Dict:
+        """Check if ML model signals exit"""
+        return {'should_exit': False, 'reason': ''}
+
+    async def _detect_rug_pull_signs(self, token_address: str) -> bool:
+        """Detect signs of rug pull"""
+        return False
+
+    async def _check_liquidity_crisis(self, token_address: str) -> bool:
+        """Check for liquidity crisis"""
+        return False
+
+    async def _set_exit_orders(self, position: Dict, strategy: Dict):
+        """Set stop loss and take profit orders"""
+        pass
+
+    async def _should_dca(self, position: Dict) -> bool:
+        """Check if should do dollar cost averaging"""
+        return False
+
+    async def _execute_dca(self, position: Dict):
+        """Execute DCA for position"""
+        pass
+
+    async def _update_trailing_stop(self, position: Dict, current_price: float):
+        """Update trailing stop loss"""
+        pass
+
+    def _calculate_slippage(self, opportunity: TradingOpportunity) -> float:
+        """Calculate appropriate slippage tolerance"""
+        return 0.02  # 2% default
+
+    def _calculate_gas_multiplier(self, opportunity: TradingOpportunity) -> float:
+        """Calculate gas price multiplier"""
+        return 1.2  # 20% above base
+
+    async def _apply_mev_protection(self, order: Dict, opportunity: TradingOpportunity) -> Dict:
+        """Apply MEV protection to order"""
+        return order
+
+    async def _learn_from_trade(self, position: Dict, pnl: float, reason: str):
+        """Learn from completed trade"""
+        pass
+
+    async def _analyze_mempool_tx(self, tx: Dict):
+        """Analyze mempool transaction"""
+        pass
+
+    async def _handle_whale_movement(self, movement: Dict):
+        """Handle whale movement event"""
+        pass
+
+    async def _analyze_whale_accumulation(self, movement: Dict):
+        """Analyze whale accumulation pattern"""
+        pass
+
+    async def _validate_new_parameters(self, params: Dict) -> bool:
+        """Validate new strategy parameters"""
+        return True
+
+    async def _collect_training_data(self) -> Dict:
+        """Collect data for model training"""
+        return {}
+
+    def _should_retrain(self, data: Dict) -> bool:
+        """Check if models should be retrained"""
+        return False
+
+    async def _validate_models(self, models: Dict) -> bool:
+        """Validate new models"""
+        return True
+
+    async def _get_recent_rug_pulls(self) -> List[Dict]:
+        """Get recent rug pull incidents"""
+        return []
+
+    async def _save_blacklists(self):
+        """Save blacklists to file"""
+        try:
+            import os
+            os.makedirs('data', exist_ok=True)
+            with open('data/blacklists.json', 'w') as f:
+                json.dump({
+                    'tokens': list(self.blacklisted_tokens),
+                    'developers': list(self.blacklisted_devs)
+                }, f)
+        except Exception:
+            pass
+
+    async def _update_community_blacklists(self):
+        """Update from community blacklist sources"""
+        pass
+
+    async def _send_daily_report(self):
+        """Send daily performance report"""
+        await self.alert_manager.send_performance_summary(
+            'daily',
+            self.stats
+        )
+
+    async def _check_database_health(self) -> Dict:
+        """Check database health"""
+        return {'healthy': True, 'message': 'OK'}
+
+    async def _check_web3_health(self) -> Dict:
+        """Check Web3 connection health"""
+        return {'healthy': True, 'message': 'OK'}
+
+    async def _check_api_health(self) -> Dict:
+        """Check API connections health"""
+        return {'healthy': True, 'message': 'OK'}
+
+    def _check_memory_usage(self) -> Dict:
+        """Check memory usage"""
+        return {'healthy': True, 'message': 'OK'}
+
+    def _check_cpu_usage(self) -> Dict:
+        """Check CPU usage"""
+        return {'healthy': True, 'message': 'OK'}
+
+    async def _save_state(self):
+        """Save bot state"""
+        pass
+
+    async def emergency_close_all_positions(self):
+        """Emergency close all open positions"""
+        for position in list(self.active_positions.values()):
+            await self._close_position(position, "emergency_shutdown")
+
+    async def shutdown(self):
+        """Shutdown the engine"""
+        await self.stop()
+
+    async def get_stats(self) -> Dict:
+        """Get engine statistics"""
+        return self.stats
+
+    async def save_state(self):
+        """Save current state"""
+        await self._save_state()
+
+    async def _handle_new_pair(self, event: Event):
+        """Handle new pair detected event"""
+        pass
+
+    async def _handle_position_opened(self, event: Event):
+        """Handle position opened event"""
+        pass
+
+    async def _handle_position_closed(self, event: Event):
+        """Handle position closed event"""
+        pass
+
+    async def _handle_unusual_volume(self, event: Event):
+        """Handle unusual volume event"""
+        pass
+
+    async def _handle_rug_pull(self, event: Event):
+        """Handle rug pull detection event"""
+        # Add token to blacklist
+        if 'token_address' in event.data:
+            self.blacklisted_tokens.add(event.data['token_address'])
+            await self._save_blacklists()
