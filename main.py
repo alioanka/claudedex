@@ -50,7 +50,15 @@ async def test_connection():
 async def test_redis_connection():
     """Test Redis connection"""
     from data.storage.cache import CacheManager
-    cache = CacheManager({})
+    import os
+    # Pass Redis config from environment
+    redis_config = {
+        'REDIS_URL': os.getenv('REDIS_URL', 'redis://redis:6379/0'),
+        'REDIS_HOST': 'redis',
+        'REDIS_PORT': 6379,
+        'REDIS_DB': 0
+    }
+    cache = CacheManager(redis_config)
     await cache.connect()
     await cache.disconnect()
 
@@ -169,7 +177,9 @@ class TradingBotApplication:
             from monitoring.alerts import AlertsSystem
             
             self.db_manager = DatabaseManager(self.config.get('database', {}))
-            self.cache_manager = CacheManager(self.config.get('cache', {}))
+            self.cache_manager = CacheManager({
+                'REDIS_URL': os.getenv('REDIS_URL', 'redis://redis:6379/0')
+            })
             self.portfolio_manager = PortfolioManager(self.config)
             self.order_manager = OrderManager(self.config)
             self.risk_manager = RiskManager(self.config)

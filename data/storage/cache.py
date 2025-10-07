@@ -51,11 +51,23 @@ class CacheManager:
     async def connect(self) -> None:
         """Establish connection to Redis server."""
         try:
+            # Get Redis URL from config
+            redis_url = self.config.get('REDIS_URL', 'redis://redis:6379/0')
+            
+            # If REDIS_URL is not set, construct from components
+            if redis_url == 'redis://redis:6379/0' and 'REDIS_HOST' in self.config:
+                redis_host = self.config.get('REDIS_HOST', 'redis')
+                redis_port = self.config.get('REDIS_PORT', 6379)
+                redis_db = self.config.get('REDIS_DB', 0)
+                redis_password = self.config.get('REDIS_PASSWORD')
+                
+                if redis_password:
+                    redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}/{redis_db}"
+                else:
+                    redis_url = f"redis://{redis_host}:{redis_port}/{redis_db}"
+            
             self.redis_client = await redis.from_url(
-                f"redis://{self.config.get('REDIS_HOST', 'localhost')}:"
-                f"{self.config.get('REDIS_PORT', 6379)}/"
-                f"{self.config.get('REDIS_DB', 0)}",
-                password=self.config.get('REDIS_PASSWORD'),
+                redis_url,
                 encoding='utf-8',
                 decode_responses=False,  # Handle decoding ourselves
                 socket_keepalive=True,
@@ -75,12 +87,12 @@ class CacheManager:
             await self._setup_keyspace_notifications()
             
             self.is_connected = True
-            logger.info("Successfully connected to Redis cache")
+            logger.info(f"Successfully connected to Redis cache at {redis_url.split('@')[-1] if '@' in redis_url else redis_url}")
             
         except Exception as e:
             logger.error(f"Failed to connect to Redis: {e}")
             raise
-    
+        
     async def disconnect(self) -> None:
         """Close Redis connection."""
         if self.redis_client:
