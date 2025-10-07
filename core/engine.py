@@ -394,6 +394,9 @@ class TradingBotEngine:
                 if not self.pending_opportunities:
                     await asyncio.sleep(0.1)
                     continue
+                
+                # ADD THIS DEBUG LOG:
+                logger.info(f"📋 Processing {len(self.pending_opportunities)} pending opportunities...")
                     
                 # Sort by score
                 self.pending_opportunities.sort(key=lambda x: x.score, reverse=True)
@@ -401,18 +404,30 @@ class TradingBotEngine:
                 # Process top opportunities
                 for opportunity in self.pending_opportunities[:5]:  # Process top 5
                     # Check if we can take more positions
-                    if not self.portfolio_manager.can_open_position():
+                    can_open = self.portfolio_manager.can_open_position()
+                    
+                    # ADD THIS DEBUG LOG:
+                    logger.info(f"   Can open position? {can_open}")
+                    
+                    if not can_open:
+                        logger.warning("❌ Portfolio manager says NO to new positions")
                         break
                         
                     # Final checks before execution
+                    logger.info(f"   Running final safety checks for {opportunity.token_address[:10]}...")
+                    
                     if await self._final_safety_checks(opportunity):
+                        logger.info(f"   ✅ Safety checks passed! Executing trade...")
                         await self._execute_opportunity(opportunity)
+                    else:
+                        logger.warning(f"   ❌ Safety checks failed for {opportunity.token_address[:10]}")
                         
                     self.pending_opportunities.remove(opportunity)
                     
                 await asyncio.sleep(0.5)
                 
             except Exception as e:
+                logger.error(f"Error processing opportunities: {e}", exc_info=True)
                 await self.alert_manager.send_error(f"Error processing opportunities: {e}")
                 await asyncio.sleep(5)
                 

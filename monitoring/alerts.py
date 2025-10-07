@@ -977,21 +977,35 @@ class AlertsSystem:
         priority: AlertPriority
     ) -> List[NotificationChannel]:
         """Get appropriate channels for priority level"""
-        # Get channel priorities from config with fallback
-        channel_priorities = self.config.get("channel_priorities", {})
-        
-        # If not configured, use defaults
-        if not channel_priorities:
-            if priority == AlertPriority.CRITICAL:
-                return [NotificationChannel.TELEGRAM]
-            elif priority == AlertPriority.HIGH:
-                return [NotificationChannel.TELEGRAM]
-            elif priority == AlertPriority.MEDIUM:
-                return [NotificationChannel.TELEGRAM]
-            else:
+        try:
+            # Get channel priorities from config with robust fallback
+            channel_priorities = self.config.get("channel_priorities")
+            
+            # Handle case where channel_priorities is None, list, or wrong type
+            if not channel_priorities or not isinstance(channel_priorities, dict):
+                logger.warning(f"Invalid channel_priorities in config: {type(channel_priorities)}")
+                # Return empty list if no channels configured
                 return []
-        
-        return channel_priorities.get(priority, [])
+            
+            # Get channels for this priority
+            channels = channel_priorities.get(priority, [])
+            
+            # Ensure channels is a list
+            if not isinstance(channels, list):
+                logger.warning(f"Channels for {priority} is not a list: {type(channels)}")
+                return []
+            
+            # Filter to only enabled and configured channels
+            enabled_channels = []
+            for ch in channels:
+                if ch in self.channel_configs and self.channel_configs[ch].enabled:
+                    enabled_channels.append(ch)
+            
+            return enabled_channels
+            
+        except Exception as e:
+            logger.error(f"Error getting channels for priority {priority}: {e}")
+            return []
     
     def _should_send_alert(self, alert: Alert) -> bool:
         """Check if alert should be sent (cooldown, dedup)"""
