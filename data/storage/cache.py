@@ -71,11 +71,7 @@ class CacheManager:
                 encoding='utf-8',
                 decode_responses=False,  # Handle decoding ourselves
                 socket_keepalive=True,
-                socket_keepalive_options={
-                    1: 1,  # TCP_KEEPIDLE
-                    2: 3,  # TCP_KEEPINTVL
-                    3: 5,  # TCP_KEEPCNT
-                },
+                # REMOVED problematic socket_keepalive_options that cause EINVAL error in Docker
                 max_connections=self.config.get('REDIS_MAX_CONNECTIONS', 50),
                 health_check_interval=30,
             )
@@ -92,7 +88,7 @@ class CacheManager:
         except Exception as e:
             logger.error(f"Failed to connect to Redis: {e}")
             raise
-        
+
     async def disconnect(self) -> None:
         """Close Redis connection."""
         if self.redis_client:
