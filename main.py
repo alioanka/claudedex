@@ -256,6 +256,8 @@ class TradingBotApplication:
                 }
 
             if 'notifications' not in self.config:
+                from monitoring.alerts import AlertPriority, NotificationChannel
+                
                 self.config['notifications'] = {
                     'telegram': {
                         'bot_token': os.getenv('TELEGRAM_BOT_TOKEN', ''),
@@ -266,14 +268,26 @@ class TradingBotApplication:
                         'webhook_url': os.getenv('DISCORD_WEBHOOK_URL', ''),
                         'enabled': bool(os.getenv('DISCORD_WEBHOOK_URL'))
                     },
-                    # ADD THIS:
-                    'channel_priorities': ['telegram', 'discord'],  # Order of notification channels
-                    'alert_levels': {
-                        'critical': ['telegram', 'discord'],
-                        'error': ['telegram'],
-                        'warning': ['telegram'],
-                        'info': []
-                    }
+                    # ✅ CORRECT - Dict mapping AlertPriority to list of NotificationChannel
+                    'channel_priorities': {
+                        AlertPriority.LOW: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else [],
+                        AlertPriority.MEDIUM: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else [],
+                        AlertPriority.HIGH: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else [],
+                        AlertPriority.CRITICAL: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else []
+                    },
+                    # ✅ Also add priority_cooldowns to avoid the second error
+                    'priority_cooldowns': {
+                        AlertPriority.LOW: 300,      # 5 minutes
+                        AlertPriority.MEDIUM: 60,    # 1 minute  
+                        AlertPriority.HIGH: 10,      # 10 seconds
+                        AlertPriority.CRITICAL: 0    # No cooldown
+                    },
+                    # Other alert settings
+                    'enabled': True,
+                    'max_retries': 3,
+                    'retry_delay': 30,
+                    'aggregation_enabled': True,
+                    'aggregation_window': 60
                 }
 
             if 'ml' not in self.config:

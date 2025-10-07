@@ -978,13 +978,22 @@ class AlertsSystem:
     ) -> List[NotificationChannel]:
         """Get appropriate channels for priority level"""
         try:
-            # Get channel priorities from config with robust fallback
+            # Get channel priorities from config
             channel_priorities = self.config.get("channel_priorities")
             
-            # Handle case where channel_priorities is None, list, or wrong type
-            if not channel_priorities or not isinstance(channel_priorities, dict):
-                logger.warning(f"Invalid channel_priorities in config: {type(channel_priorities)}")
-                # Return empty list if no channels configured
+            # Handle different config formats
+            if channel_priorities is None:
+                logger.warning("No channel_priorities configured")
+                return []
+            
+            # If it's a list (misconfigured), return empty
+            if isinstance(channel_priorities, list):
+                logger.warning(f"channel_priorities is a list, expected dict. Returning empty channels.")
+                return []
+            
+            # If it's not a dict, return empty
+            if not isinstance(channel_priorities, dict):
+                logger.warning(f"Invalid channel_priorities type: {type(channel_priorities)}")
                 return []
             
             # Get channels for this priority
@@ -1010,7 +1019,7 @@ class AlertsSystem:
     def _should_send_alert(self, alert: Alert) -> bool:
         """Check if alert should be sent (cooldown, dedup)"""
         try:
-            # Check cooldown for this alert type
+            # Check cooldown for this alert type with safe fallback
             priority_cooldowns = self.config.get("priority_cooldowns", {})
             cooldown = priority_cooldowns.get(alert.priority, 0)
             
@@ -1027,7 +1036,7 @@ class AlertsSystem:
             
         except Exception as e:
             logger.error(f"Error in _should_send_alert: {e}")
-            return True  # Allow sending on error
+            return True  # Allow sending on error to avoid blocking alerts
     
     def _check_rate_limit(self, channel: NotificationChannel) -> bool:
         """Check if channel rate limit allows sending"""
