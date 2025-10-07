@@ -22,6 +22,7 @@ from data.collectors.chain_data import ChainDataCollector
 from data.collectors.social_data import SocialDataCollector
 from data.collectors.mempool_monitor import MempoolMonitor
 from data.collectors.whale_tracker import WhaleTracker
+from data.collectors.honeypot_checker import HoneypotChecker
 
 from ml.models.ensemble_model import EnsemblePredictor
 from ml.optimization.hyperparameter import HyperparameterOptimizer
@@ -109,6 +110,9 @@ class TradingBotEngine:
         self.social_collector = SocialDataCollector(config['data_sources']['social'])
         self.mempool_monitor = MempoolMonitor(config['web3'])
         self.whale_tracker = WhaleTracker(config['web3'])
+
+        # ✅ ADD THIS LINE - Initialize honeypot checker
+        self.honeypot_checker = HoneypotChecker(config.get('security', {}))
         
         # ML components
         self.ensemble_predictor = EnsemblePredictor()
@@ -162,6 +166,10 @@ class TradingBotEngine:
             
             if hasattr(self.risk_manager, 'initialize'):
                 await self.risk_manager.initialize()
+
+            # ✅ ADD THIS - Initialize honeypot checker
+            if hasattr(self.honeypot_checker, 'initialize'):
+                await self.honeypot_checker.initialize()
             
             # ADD THIS - Initialize data collectors!
             if hasattr(self.dex_collector, 'initialize'):
