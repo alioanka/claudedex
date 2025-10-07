@@ -128,7 +128,7 @@ class DashboardEndpoints:
         # SSE for real-time updates
         self.app.router.add_get('/api/stream', self.sse_handler)
         
-        # Setup CORS
+        # Setup CORS - EXCLUDE socket.io routes
         cors = aiohttp_cors.setup(self.app, defaults={
             "*": aiohttp_cors.ResourceOptions(
                 allow_credentials=True,
@@ -138,8 +138,15 @@ class DashboardEndpoints:
             )
         })
         
+        # Add CORS to routes, but skip socket.io routes
         for route in list(self.app.router.routes()):
-            cors.add(route)
+            # Skip socket.io routes (they handle CORS internally)
+            if not route.resource or '/socket.io/' not in str(route.resource):
+                try:
+                    cors.add(route)
+                except ValueError as e:
+                    # Skip routes that already have OPTIONS handler
+                    logger.debug(f"Skipping CORS for route: {route.resource}")
     
     def _setup_socketio(self):
         """Setup Socket.IO handlers"""
