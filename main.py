@@ -382,8 +382,8 @@ class TradingBotApplication:
         # Optional API keys - log warnings but don't fail
         optional_vars = {
             'DEXSCREENER_API_KEY': 'DexScreener API (rate limits will be lower)',
-            'GOPLUS_API_KEY': 'GoPlus security checks',
-            'TOKENSNIFFER_API_KEY': 'TokenSniffer analysis'
+            'GOPLUS_API_KEY': 'GoPlus security checks'
+            #'TOKENSNIFFER_API_KEY': 'TokenSniffer analysis'
         }
         
         for var, description in optional_vars.items():

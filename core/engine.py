@@ -3,6 +3,7 @@ Core Trading Engine - Orchestrates all bot operations
 """
 
 import asyncio
+import logging  # ADD THIS LINE
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
@@ -45,6 +46,8 @@ class BotState(Enum):
     STOPPED = "stopped"
     ERROR = "error"
     MAINTENANCE = "maintenance"
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class TradingOpportunity:
@@ -289,12 +292,13 @@ class TradingBotEngine:
         Comprehensive analysis of a trading opportunity
         """
         try:
-            # Parallel analysis tasks - ALL properly awaited
+            # Parallel analysis tasks - properly awaited
+            # NOTE: Removed social_collector.get_sentiment() since it doesn't exist yet
             results = await asyncio.gather(
                 self.risk_manager.analyze_token(pair.get('token_address', '')),
                 self.pattern_analyzer.analyze_patterns(pair),
                 self.chain_collector.get_token_info(pair.get('token_address', '')),
-                self.social_collector.get_sentiment(pair.get('token_address', '')),
+                # self.social_collector.get_sentiment(pair.get('token_address', '')),  # COMMENTED OUT
                 self._check_developer_reputation(pair.get('creator_address', '')),
                 self._analyze_liquidity_depth(pair),
                 self._check_smart_contract(pair.get('token_address', '')),
@@ -302,9 +306,12 @@ class TradingBotEngine:
                 return_exceptions=True  # Don't fail if one task fails
             )
             
-            # Unpack results
-            risk_score, patterns, token_info, sentiment, dev_reputation, \
+            # Unpack results (adjusted for removed sentiment)
+            risk_score, patterns, token_info, dev_reputation, \
                 liquidity_depth, contract_safety, holder_dist = results
+            
+            # Set sentiment to None since we don't have it
+            sentiment = None
             
             # Handle any exceptions in results
             if isinstance(risk_score, Exception):
@@ -316,16 +323,13 @@ class TradingBotEngine:
             if isinstance(token_info, Exception):
                 logger.error(f"Token info failed: {token_info}")
                 token_info = None
-            if isinstance(sentiment, Exception):
-                logger.error(f"Sentiment analysis failed: {sentiment}")
-                sentiment = None
             
             # Calculate overall score
             score = self._calculate_opportunity_score(
                 pair=pair,
                 risk_score=risk_score,
                 patterns=patterns,
-                sentiment=sentiment,
+                sentiment=sentiment,  # Will be None
                 liquidity=liquidity_depth,
                 contract_safety=contract_safety
             )
@@ -337,20 +341,22 @@ class TradingBotEngine:
                 logger.debug(f"Opportunity score {score:.2f} below threshold {min_score}")
                 return None
             
-            # Create opportunity
+            # Create opportunity using existing TradingOpportunity structure
+            # Map to expected fields
             opportunity = TradingOpportunity(
                 token_address=pair.get('token_address', ''),
-                token_symbol=pair.get('token_symbol', 'UNKNOWN'),
                 pair_address=pair.get('pair_address', ''),
-                dex=pair.get('dex', 'unknown'),
                 chain=pair.get('chain', 'ethereum'),
-                opportunity_score=score,
-                entry_price=pair.get('price_usd', 0),
-                target_price=self._calculate_target_price(pair, score),
-                stop_loss=self._calculate_stop_loss(pair),
-                confidence=score,
-                risk_level=self._determine_risk_level(risk_score),
-                timestamp=datetime.utcnow(),
+                price=pair.get('price_usd', 0),
+                liquidity=pair.get('liquidity_usd', 0),
+                volume_24h=pair.get('volume_24h', 0),
+                risk_score=risk_score if risk_score else RiskScore(overall_risk=0.5),
+                ml_confidence=score,
+                pump_probability=score * 0.8,
+                rug_probability=0.2,
+                expected_return=score * 100,
+                recommended_position_size=1000,
+                entry_strategy='momentum',
                 metadata={
                     'pair': pair,
                     'risk_score': risk_score,
@@ -358,8 +364,10 @@ class TradingBotEngine:
                     'sentiment': sentiment,
                     'liquidity_depth': liquidity_depth,
                     'contract_safety': contract_safety,
-                    'holder_distribution': holder_dist
-                }
+                    'holder_distribution': holder_dist,
+                    'token_symbol': pair.get('token_symbol', 'UNKNOWN')
+                },
+                timestamp=datetime.utcnow()
             )
             
             return opportunity
@@ -1060,3 +1068,96 @@ class TradingBotEngine:
         if 'token_address' in event.data:
             self.blacklisted_tokens.add(event.data['token_address'])
             await self._save_blacklists()
+
+
+    def _calculate_target_price(self, pair: Dict, score: float) -> float:
+        """Calculate target price based on score"""
+        current_price = pair.get('price_usd', 0)
+        # Higher score = higher target (5-20% profit target)
+        profit_target = 0.05 + (score * 0.15)
+        return current_price * (1 + profit_target)
+
+    def _calculate_stop_loss(self, pair: Dict) -> float:
+        """Calculate stop loss price"""
+        current_price = pair.get('price_usd', 0)
+        # 5% stop loss by default
+        return current_price * 0.95
+
+    def _determine_risk_level(self, risk_score: Optional[RiskScore]) -> str:
+        """Determine risk level from risk score"""
+        if not risk_score or not hasattr(risk_score, 'overall_risk'):
+            return 'MEDIUM'
+        
+        risk = risk_score.overall_risk
+        if risk < 0.3:
+            return 'LOW'
+        elif risk < 0.6:
+            return 'MEDIUM'
+        elif risk < 0.8:
+            return 'HIGH'
+        else:
+            return 'CRITICAL'
+
+    def _calculate_opportunity_score(
+        self,
+        pair: Dict,
+        risk_score: Optional[RiskScore],
+        patterns: Optional[Dict],
+        sentiment: Optional[Dict],
+        liquidity: Optional[Dict],
+        contract_safety: Optional[Dict]
+    ) -> float:
+        """
+        Calculate overall opportunity score
+        
+        Returns:
+            Score between 0 and 1
+        """
+        try:
+            score = 0.0
+            weights = 0.0
+            
+            # Risk score (30% weight)
+            if risk_score and hasattr(risk_score, 'overall_risk'):
+                # Invert risk (lower risk = higher score)
+                risk_component = 1.0 - risk_score.overall_risk
+                score += risk_component * 0.3
+                weights += 0.3
+            
+            # Pattern analysis (25% weight)
+            if patterns and isinstance(patterns, dict):
+                pattern_score = patterns.get('score', 0.5)
+                score += pattern_score * 0.25
+                weights += 0.25
+            
+            # Liquidity (20% weight)
+            if liquidity and isinstance(liquidity, dict):
+                depth = liquidity.get('depth', 0)
+                # Normalize liquidity score
+                liq_score = min(depth / 100000, 1.0)  # $100k = max score
+                score += liq_score * 0.2
+                weights += 0.2
+            
+            # Sentiment (15% weight) - optional
+            if sentiment and isinstance(sentiment, dict):
+                sent_score = sentiment.get('score', 0.5)
+                score += sent_score * 0.15
+                weights += 0.15
+            
+            # Contract safety (10% weight)
+            if contract_safety and isinstance(contract_safety, dict):
+                safety_score = 1.0 if contract_safety.get('verified') else 0.3
+                score += safety_score * 0.1
+                weights += 0.1
+            
+            # Normalize by total weights used
+            if weights > 0:
+                score = score / weights
+            else:
+                score = 0.5  # Default neutral score
+            
+            return max(0.0, min(1.0, score))  # Clamp between 0 and 1
+            
+        except Exception as e:
+            logger.error(f"Error calculating opportunity score: {e}")
+            return 0.5  # Return neutral score on error

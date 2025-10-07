@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 class ConfigType(Enum):
     """Configuration types"""
-    SYSTEM = "system"
+    #SYSTEM = "system"
     TRADING = "trading"
     SECURITY = "security"
     DATABASE = "database"
