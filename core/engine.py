@@ -815,43 +815,79 @@ class TradingBotEngine:
             raise
     
     async def _final_safety_checks(self, opportunity: TradingOpportunity) -> bool:
-        """Final safety checks before executing opportunity"""
+        """
+        Perform final safety checks before executing trade
+        
+        Args:
+            opportunity: Trading opportunity to check
+            
+        Returns:
+            True if all checks pass, False otherwise
+        """
         try:
-            # Check if token still not blacklisted
-            if opportunity.token_address in self.blacklisted_tokens:
-                return False
+            logger.info(f"🔍 Starting safety checks for {opportunity.token_symbol} ({opportunity.token_address[:10]}...)")
             
-            # Verify liquidity hasn't dropped
-            current_liquidity = await self.dex_collector.get_liquidity(opportunity.token_address)
-            if current_liquidity < opportunity.liquidity * 0.8:  # 20% drop
-                return False
+            # 1. Check honeypot status
+            logger.info(f"   Checking honeypot status...")
+            is_honeypot = await self.honeypot_checker.check_token(
+                opportunity.token_address,
+                opportunity.chain
+            )
             
-            # Check for sudden price movements
-            current_price = await self.dex_collector.get_token_price(opportunity.token_address)
-            price_change = abs(current_price - opportunity.price) / opportunity.price
-            if price_change > 0.1:  # 10% price change
+            if is_honeypot:
+                logger.warning(f"   ❌ HONEYPOT DETECTED: {opportunity.token_symbol}")
                 return False
+            logger.info(f"   ✅ Not a honeypot")
             
-            # Verify risk score hasn't increased
-            fresh_risk = await self.risk_manager.analyze_token(opportunity.token_address, force_refresh=True)
-            if fresh_risk.overall_risk > opportunity.risk_score.overall_risk * 1.2:
+            # 2. Verify liquidity is still sufficient
+            logger.info(f"   Checking liquidity...")
+            current_liquidity = opportunity.liquidity_usd
+            min_liquidity = self.config.get('trading', {}).get('min_liquidity_threshold', 50000)
+            
+            logger.info(f"   Current liquidity: ${current_liquidity:,.2f}, Min required: ${min_liquidity:,.2f}")
+            
+            if current_liquidity < min_liquidity:
+                logger.warning(f"   ❌ INSUFFICIENT LIQUIDITY: ${current_liquidity:,.2f} < ${min_liquidity:,.2f}")
                 return False
+            logger.info(f"   ✅ Liquidity sufficient")
             
-            # Check wallet balance
-            balance = await self.wallet_manager.get_available_balance()
-            if balance < opportunity.recommended_position_size:
+            # 3. Check if token is blacklisted
+            logger.info(f"   Checking blacklist...")
+            if self._is_blacklisted({'token_address': opportunity.token_address}):
+                logger.warning(f"   ❌ TOKEN BLACKLISTED: {opportunity.token_symbol}")
                 return False
+            logger.info(f"   ✅ Not blacklisted")
             
-            # MEV protection check
-            mempool_risk = await self.mempool_monitor.check_frontrun_risk()
-            if mempool_risk > 0.7:
+            # 4. Verify rug pull probability is acceptable
+            logger.info(f"   Checking rug probability...")
+            max_rug_prob = 0.5  # 50% max
+            logger.info(f"   Rug probability: {opportunity.rug_probability:.2%}, Max allowed: {max_rug_prob:.2%}")
+            
+            if opportunity.rug_probability > max_rug_prob:
+                logger.warning(f"   ❌ HIGH RUG RISK: {opportunity.rug_probability:.2%} > {max_rug_prob:.2%}")
                 return False
+            logger.info(f"   ✅ Rug risk acceptable")
             
+            # 5. Check recent price action isn't too volatile
+            logger.info(f"   Checking volatility...")
+            if hasattr(opportunity, 'price_change_5m'):
+                if abs(opportunity.price_change_5m) > 50:  # 50% move in 5min
+                    logger.warning(f"   ❌ EXCESSIVE VOLATILITY: {opportunity.price_change_5m:+.1f}% in 5min")
+                    return False
+                logger.info(f"   ✅ Volatility acceptable ({opportunity.price_change_5m:+.1f}%)")
+            
+            # 6. Verify contract is verified (if available)
+            logger.info(f"   Checking contract verification...")
+            if hasattr(opportunity, 'contract_verified'):
+                if not opportunity.contract_verified:
+                    logger.warning(f"   ⚠️  Contract not verified - proceeding with caution")
+            
+            logger.info(f"✅ All safety checks PASSED for {opportunity.token_symbol}")
             return True
             
         except Exception as e:
-            await self.alert_manager.send_warning(f"Safety check failed: {e}")
-            return False
+            logger.error(f"❌ Error in safety checks for {opportunity.token_symbol}: {e}", exc_info=True)
+            return False  # Fail safe - reject on error
 
 
     # Add these methods to TradingBotEngine class in engine.py

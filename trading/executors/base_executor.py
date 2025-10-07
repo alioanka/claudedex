@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import time
 import json
+import os
 from web3 import Web3
 from eth_account import Account
 import aiohttp
