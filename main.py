@@ -65,26 +65,30 @@ async def test_redis_connection():
 async def test_web3_connection():
     """Test Web3 connection"""
     import os
+    import logging
     from web3 import Web3
+    
+    # Use module logger instead of global logger
+    _logger = logging.getLogger(__name__)
     
     try:
         provider_url = os.getenv('WEB3_PROVIDER_URL')
         if not provider_url:
-            logger.warning("No WEB3_PROVIDER_URL configured")
+            _logger.warning("No WEB3_PROVIDER_URL configured")
             return True  # Skip check if not configured
         
         w3 = Web3(Web3.HTTPProvider(provider_url))
         is_connected = w3.is_connected()
         
         if is_connected:
-            logger.info(f"✅ Web3 connected to {provider_url}")
+            _logger.info(f"✅ Web3 connected to {provider_url}")
         else:
-            logger.warning(f"⚠️  Web3 connection failed to {provider_url}")
+            _logger.warning(f"⚠️  Web3 connection failed to {provider_url}")
             
         return is_connected
         
     except Exception as e:
-        logger.error(f"Web3 connection error: {e}")
+        _logger.error(f"Web3 connection error: {e}")
         return False  # Don't fail startup on Web3 error in development
     
 async def test_api_connection():
