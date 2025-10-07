@@ -46,27 +46,26 @@ CHAIN_SYMBOLS = {
 
 CHAIN_RPC_URLS = {
     Chain.ETHEREUM: [
-        "https://eth-mainnet.g.alchemy.com/v2/",
-        "https://mainnet.infura.io/v3/",
-        "https://rpc.ankr.com/eth"
+        "https://eth-mainnet.g.alchemy.com/v2/bAwxYCUc1oIDIIYAL3w98NKh00DQK45B",
+        "https://mainnet.infura.io/v3/c5cbdbc6ba4f42d293de03e5cd191089",
+        "https://rpc.ankr.com/eth/4daecdbd46f7cc39b14e343e5ee0cc0be57e5f52faa2aff6baefe3826227064d"
     ],
     Chain.BSC: [
-        "https://bsc-dataseed1.binance.org",
+        "https://bnb-mainnet.g.alchemy.com/v2/bAwxYCUc1oIDIIYAL3w98NKh00DQK45B",
         "https://bsc-dataseed2.binance.org",
-        "https://rpc.ankr.com/bsc"
+        "https://rpc.ankr.com/bsc/85e891889f34c452ace96e25a7422fd8996bd74a0f34bb96a0cd4bb79af6080a"
     ],
     Chain.POLYGON: [
-        "https://polygon-rpc.com",
-        "https://rpc.ankr.com/polygon",
-        "https://polygon-mainnet.g.alchemy.com/v2/"
+        "https://polygon-mainnet.g.alchemy.com/v2/bAwxYCUc1oIDIIYAL3w98NKh00DQK45B",
+        "https://rpc.ankr.com/polygon/85e891889f34c452ace96e25a7422fd8996bd74a0f34bb96a0cd4bb79af6080a"
     ],
     Chain.ARBITRUM: [
-        "https://arb1.arbitrum.io/rpc",
-        "https://rpc.ankr.com/arbitrum"
+        "https://arb-mainnet.g.alchemy.com/v2/bAwxYCUc1oIDIIYAL3w98NKh00DQK45B",
+        "https://rpc.ankr.com/arbitrum/85e891889f34c452ace96e25a7422fd8996bd74a0f34bb96a0cd4bb79af6080a"
     ],
     Chain.BASE: [
-        "https://mainnet.base.org",
-        "https://base.gateway.tenderly.co"
+        "https://base-mainnet.g.alchemy.com/v2/bAwxYCUc1oIDIIYAL3w98NKh00DQK45B",
+        "https://rpc.ankr.com/base/85e891889f34c452ace96e25a7422fd8996bd74a0f34bb96a0cd4bb79af6080a"
     ]
 }
 

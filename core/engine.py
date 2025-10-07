@@ -242,10 +242,8 @@ class TradingBotEngine:
             
     async def _monitor_new_pairs(self):
         """Continuously monitor for new trading pairs"""
-        import logging
-        logger = logging.getLogger(__name__)
-        
         logger.info("🔍 Starting new pairs monitoring loop...")
+#        token_address = address.lower()  # Always normalize to lowercase!
         
         while self.state == BotState.RUNNING:
             try:
@@ -263,6 +261,14 @@ class TradingBotEngine:
                 for pair in new_pairs:
                     self.stats['tokens_analyzed'] += 1
                     
+                    # ✅ IMPROVED: Check blacklist with normalized address
+                    token_address = pair.get('token_address', '').lower()
+                    
+                    if token_address in self.blacklisted_tokens:
+                        logger.debug(f"⛔ Token {pair.get('token_symbol')} ({token_address[:10]}...) is blacklisted - SKIPPING")
+                        continue
+                    
+                    
                     # Quick filter checks
                     if self._is_blacklisted(pair):
                         logger.debug(f"Pair {pair.get('pair_address', 'unknown')} is blacklisted")
@@ -271,6 +277,8 @@ class TradingBotEngine:
                     # Analyze opportunity
                     logger.info(f"Analyzing pair: {pair.get('token_symbol', 'UNKNOWN')}")
                     opportunity = await self._analyze_opportunity(pair)
+                    
+                    # ... rest of code
                     
                     min_score = self.config.get('trading', {}).get('min_opportunity_score', 0.7)
                     
@@ -751,6 +759,7 @@ class TradingBotEngine:
                 # Track performance
                 await self.performance_tracker.record_metrics(metrics)
                 
+                logger.info(f"📊 Blacklist size: {len(self.blacklisted_tokens)} tokens")
                 # Send daily report
                 if datetime.now().hour == 0 and datetime.now().minute == 0:
                     await self._send_daily_report()
@@ -840,14 +849,25 @@ class TradingBotEngine:
             
             # 1. Check honeypot status
             logger.info(f"   Checking honeypot status...")
-            is_honeypot = await self.honeypot_checker.check_token(
+            
+            # ✅ FIX: Assign result to variable
+            honeypot_result = await self.honeypot_checker.check_token(
                 opportunity.token_address,
                 opportunity.chain
             )
             
-            if is_honeypot:
+            # ✅ NOW this works:
+            if honeypot_result.get('is_honeypot', False):
                 logger.warning(f"   ❌ HONEYPOT DETECTED: {token_symbol}")
+                
+                # ✅ ADD TO BLACKLIST
+                self.blacklisted_tokens.add(opportunity.token_address.lower())
+                await self._save_blacklists()
+                
+                logger.info(f"   🚫 Added {token_symbol} ({opportunity.token_address}) to blacklist")
+                
                 return False
+                
             logger.info(f"   ✅ Not a honeypot")
             
             # 2. Verify liquidity is still sufficient
@@ -942,6 +962,7 @@ class TradingBotEngine:
 
     def _is_blacklisted(self, pair: Dict) -> bool:
         """Check if token or developer is blacklisted"""
+        token_address = address.lower()  # Always normalize to lowercase!
         return (
             pair.get('token_address') in self.blacklisted_tokens or
             pair.get('creator_address') in self.blacklisted_devs

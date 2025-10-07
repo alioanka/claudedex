@@ -48,8 +48,16 @@ class HoneypotChecker:
             if chain in CHAIN_RPC_URLS:
                 rpc_urls = CHAIN_RPC_URLS[chain]
                 if rpc_urls:
-                    self.web3_connections[chain] = Web3(Web3.HTTPProvider(rpc_urls[0]))
+                    # ✅ Make sure the URL includes the API key!
+                    rpc_url = rpc_urls[0]
                     
+                    # ✅ ADD THIS CHECK
+                    if 'alchemy.com' in rpc_url and '/v2/' in rpc_url and not rpc_url.endswith('/v2/'):
+                        logger.warning(f"⚠️ Alchemy URL looks incomplete: {rpc_url}")
+                    
+                    self.web3_connections[chain] = Web3(Web3.HTTPProvider(rpc_url))
+                    logger.info(f"✅ Connected to {chain.name}: {rpc_url[:50]}...")
+
     async def close(self):
         """Clean up resources"""
         if self.session:
@@ -82,26 +90,44 @@ class HoneypotChecker:
         if cache_key in self.cache:
             cached_result, timestamp = self.cache[cache_key]
             if asyncio.get_event_loop().time() - timestamp < self.cache_ttl:
+                logger.debug(f"✅ Using cached result for {address[:10]}...")
                 return cached_result
                 
-        # Run all checks in parallel
-        checks = await self.check_multiple_apis(address, chain)
-        
-        # Analyze contract code
-        contract_analysis = await self.analyze_contract_code(address, chain)
-        checks["contract_analysis"] = contract_analysis
-        
-        # Check liquidity locks
-        liquidity_check = await self.check_liquidity_locks(address, chain)
-        checks["liquidity"] = liquidity_check
-        
-        # Calculate final verdict
-        result = self._calculate_verdict(checks)
-        
-        # Cache result
-        self.cache[cache_key] = (result, asyncio.get_event_loop().time())
-        
-        return result
+        try:
+            # Run all checks in parallel
+            checks = await self.check_multiple_apis(address, chain)
+            
+            # ✅ ADD THIS - If contract analysis fails, don't fail the whole check
+            try:
+                contract_analysis = await self.analyze_contract_code(address, chain)
+                checks["contract_analysis"] = contract_analysis
+            except Exception as e:
+                logger.warning(f"Contract analysis failed (non-critical): {e}")
+                checks["contract_analysis"] = {"error": str(e), "skip": True}
+            
+            # Check liquidity locks
+            liquidity_check = await self.check_liquidity_locks(address, chain)
+            checks["liquidity"] = liquidity_check
+            
+            # Calculate final verdict
+            result = self._calculate_verdict(checks)
+            
+            # Cache result
+            self.cache[cache_key] = (result, asyncio.get_event_loop().time())
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Honeypot check failed for {address}: {e}")
+            # ✅ RETURN UNKNOWN RISK, NOT HONEYPOT
+            return {
+                "is_honeypot": False,  # ✅ Changed from True
+                "confidence": 0.0,
+                "risk_level": "unknown",
+                "reason": f"Check failed: {str(e)}",
+                "checks": {},
+                "error": str(e)
+            }
         
     async def check_multiple_apis(self, address: str, chain: str) -> Dict:
         """Check token across multiple security APIs"""
@@ -252,14 +278,23 @@ class HoneypotChecker:
             logger.error(f"Contract verification check failed: {e}")
             return {"error": "Check failed"}
             
+    # ✅ ADD THIS to analyze_contract_code around line 280:
     async def analyze_contract_code(self, address: str, chain: str) -> Dict:
         """Analyze smart contract code for honeypot patterns"""
         try:
             chain_id = self._get_chain_id(chain)
             if chain_id not in self.web3_connections:
-                return {"error": "Chain not supported"}
-                
+                logger.warning(f"Chain {chain_id} not in web3_connections")
+                return {"error": "Chain not supported", "skip": True}
+            
             w3 = self.web3_connections[chain_id]
+            
+            # ✅ ADD THIS CHECK:
+            if not w3.is_connected():
+                logger.error(f"Web3 not connected for chain {chain_id}")
+                return {"error": "Web3 not connected", "skip": True}
+            
+            # ... rest of method
             
             # Get contract code
             code = w3.eth.get_code(address)

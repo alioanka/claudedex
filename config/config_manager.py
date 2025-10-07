@@ -457,6 +457,26 @@ class ConfigManager:
         
         return decrypt_recursive(config_data.copy())
 
+
+    # ✅ ADD THIS METHOD around line 450:
+    def validate_environment(self) -> List[str]:
+        """Validate required environment variables are set"""
+        required_vars = [
+            'ALCHEMY_API_KEY',
+            'PRIVATE_KEY',
+            'DATABASE_URL'
+        ]
+        
+        missing = []
+        for var in required_vars:
+            if not os.getenv(var):
+                missing.append(var)
+        
+        if missing:
+            logger.warning(f"Missing environment variables: {', '.join(missing)}")
+        
+        return missing
+
     async def _load_default_config(self, config_type: ConfigType) -> None:
         """Load default configuration when file loading fails"""
         schema_class = self.config_schemas.get(config_type)
