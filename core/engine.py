@@ -962,7 +962,7 @@ class TradingBotEngine:
 
     def _is_blacklisted(self, pair: Dict) -> bool:
         """Check if token or developer is blacklisted"""
-        token_address = address.lower()  # Always normalize to lowercase!
+    #    token_address = address.lower()  # Always normalize to lowercase!
         return (
             pair.get('token_address') in self.blacklisted_tokens or
             pair.get('creator_address') in self.blacklisted_devs
