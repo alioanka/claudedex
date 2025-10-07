@@ -153,12 +153,21 @@ class TradingBotEngine:
             # Load blacklists
             await self._load_blacklists()
             
-            # Initialize components in order
-            await self.wallet_manager.initialize()
-            await self.risk_manager.initialize()
-            await self.ensemble_predictor.load_models()
-            await self.strategy_manager.initialize()
-            await self.order_manager.initialize()
+            # Initialize components in order (only if they have initialize methods)
+            if hasattr(self.wallet_manager, 'initialize'):
+                await self.wallet_manager.initialize()
+            
+            if hasattr(self.risk_manager, 'initialize'):
+                await self.risk_manager.initialize()
+            
+            if hasattr(self.ensemble_predictor, 'load_models'):
+                await self.ensemble_predictor.load_models()
+            
+            if hasattr(self.strategy_manager, 'initialize'):
+                await self.strategy_manager.initialize()
+            
+            if hasattr(self.order_manager, 'initialize'):
+                await self.order_manager.initialize()
             
             # Setup event handlers
             self._setup_event_handlers()

@@ -228,7 +228,28 @@ class OrderManager:
             "health_check_interval": 30,
             "cleanup_interval": 300  # 5 minutes
         }
-    
+
+    async def initialize(self):
+        """Initialize order manager components"""
+        try:
+            # Initialize execution engine if it has initialize method
+            if hasattr(self.execution_engine, 'initialize'):
+                await self.execution_engine.initialize()
+            
+            # Initialize risk monitor if it has initialize method
+            if hasattr(self.risk_monitor, 'initialize'):
+                await self.risk_monitor.initialize()
+            
+            # Initialize settlement processor if it has initialize method
+            if hasattr(self.settlement_processor, 'initialize'):
+                await self.settlement_processor.initialize()
+            
+            logger.info("OrderManager initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"Error initializing OrderManager: {e}")
+            raise
+
     def _initialize_components(self):
         """Initialize order management components"""
         self.execution_engine = ExecutionEngine(self.config)
