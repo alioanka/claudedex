@@ -37,9 +37,10 @@ class StrategyManager:
             from .ai_strategy import AIStrategy
             self.strategies['ai'] = AIStrategy(self.config.get('ai', {}))
             
-        # Initialize active strategies
+        # Initialize active strategies (only if they have initialize method)
         for name, strategy in self.strategies.items():
-            await strategy.initialize()
+            if hasattr(strategy, 'initialize'):
+                await strategy.initialize()
             self.active_strategies.add(name)
             
         logger.info(f"Initialized {len(self.strategies)} strategies")
@@ -70,9 +71,9 @@ class StrategyManager:
         """Update strategy parameters"""
         self.parameters.update(new_params)
         
-        # Update individual strategies
+        # Update individual strategies (only if they have the method)
         for name, strategy in self.strategies.items():
-            if name in new_params:
+            if name in new_params and hasattr(strategy, 'update_parameters'):
                 await strategy.update_parameters(new_params[name])
 
 # Export main classes
