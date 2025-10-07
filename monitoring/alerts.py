@@ -807,34 +807,57 @@ class AlertsSystem:
 
 
     async def _send_telegram(self, alert: Alert) -> bool:
-        """Send alert to Telegram"""
+        """Send alert via Telegram"""
         try:
-            config = self.channel_configs[NotificationChannel.TELEGRAM].config
-            bot_token = config.get("bot_token")
-            chat_id = config.get("chat_id")
-            
-            if not bot_token or not chat_id:
+            config = self.channel_configs.get(NotificationChannel.TELEGRAM)
+            if not config or not config.enabled:
                 return False
             
-            # Format message with markdown
-            text = f"*{alert.title}*\n\n{alert.message}"
+            # Build message
+            # ❌ REMOVE OR FIX THIS LINE:
+            # timestamp_str = alert.timestamp.strftime("%Y-%m-%d %H:%M:%S") if config.get('include_timestamp', True) else ""
             
-            if self.config["include_timestamp"]:
-                text += f"\n\n__{alert.timestamp.strftime('%Y-%m-%d %H:%M:%S')} UTC__"
+            # ✅ USE THIS INSTEAD:
+            timestamp_str = alert.timestamp.strftime("%Y-%m-%d %H:%M:%S")
             
-            # Send message
+            emoji_map = {
+                AlertPriority.LOW: "ℹ️",
+                AlertPriority.MEDIUM: "⚠️",
+                AlertPriority.HIGH: "🚨",
+                AlertPriority.CRITICAL: "🔥"
+            }
+            
+            emoji = emoji_map.get(alert.priority, "📢")
+            
+            message = f"{emoji} *{alert.title}*\n"
+            message += f"⏰ {timestamp_str}\n"
+            message += f"📝 {alert.message}\n"
+            
+            if alert.metadata:
+                message += "\n_Details:_\n"
+                for key, value in alert.metadata.items():
+                    message += f"• {key}: {value}\n"
+            
+            # Send to Telegram
+            bot_token = config.bot_token
+            chat_id = config.chat_id
+            
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             payload = {
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": "Markdown" if self.config["use_markdown"] else None,
-                "disable_web_page_preview": True
+                'chat_id': chat_id,
+                'text': message,
+                'parse_mode': 'Markdown'
             }
             
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload) as response:
-                    return response.status == 200
-                    
+                async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    if response.status == 200:
+                        return True
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"Telegram API error: {error_text}")
+                        return False
+                        
         except Exception as e:
             logger.error(f"Telegram send error: {e}")
             return False

@@ -825,7 +825,10 @@ class TradingBotEngine:
             True if all checks pass, False otherwise
         """
         try:
-            logger.info(f"🔍 Starting safety checks for {opportunity.token_symbol} ({opportunity.token_address[:10]}...)")
+            # Get symbol from metadata
+            token_symbol = opportunity.metadata.get('token_symbol', 'UNKNOWN')
+            
+            logger.info(f"🔍 Starting safety checks for {token_symbol} ({opportunity.token_address[:10]}...)")
             
             # 1. Check honeypot status
             logger.info(f"   Checking honeypot status...")
@@ -835,13 +838,13 @@ class TradingBotEngine:
             )
             
             if is_honeypot:
-                logger.warning(f"   ❌ HONEYPOT DETECTED: {opportunity.token_symbol}")
+                logger.warning(f"   ❌ HONEYPOT DETECTED: {token_symbol}")
                 return False
             logger.info(f"   ✅ Not a honeypot")
             
             # 2. Verify liquidity is still sufficient
             logger.info(f"   Checking liquidity...")
-            current_liquidity = opportunity.liquidity_usd
+            current_liquidity = opportunity.liquidity
             min_liquidity = self.config.get('trading', {}).get('min_liquidity_threshold', 50000)
             
             logger.info(f"   Current liquidity: ${current_liquidity:,.2f}, Min required: ${min_liquidity:,.2f}")
@@ -854,7 +857,7 @@ class TradingBotEngine:
             # 3. Check if token is blacklisted
             logger.info(f"   Checking blacklist...")
             if self._is_blacklisted({'token_address': opportunity.token_address}):
-                logger.warning(f"   ❌ TOKEN BLACKLISTED: {opportunity.token_symbol}")
+                logger.warning(f"   ❌ TOKEN BLACKLISTED: {token_symbol}")
                 return False
             logger.info(f"   ✅ Not blacklisted")
             
@@ -870,25 +873,24 @@ class TradingBotEngine:
             
             # 5. Check recent price action isn't too volatile
             logger.info(f"   Checking volatility...")
-            if hasattr(opportunity, 'price_change_5m'):
-                if abs(opportunity.price_change_5m) > 50:  # 50% move in 5min
-                    logger.warning(f"   ❌ EXCESSIVE VOLATILITY: {opportunity.price_change_5m:+.1f}% in 5min")
-                    return False
-                logger.info(f"   ✅ Volatility acceptable ({opportunity.price_change_5m:+.1f}%)")
+            price_change = opportunity.metadata.get('pair', {}).get('price_change_5m', 0)
+            if price_change and abs(price_change) > 50:  # 50% move in 5min
+                logger.warning(f"   ❌ EXCESSIVE VOLATILITY: {price_change:+.1f}% in 5min")
+                return False
+            logger.info(f"   ✅ Volatility acceptable")
             
             # 6. Verify contract is verified (if available)
             logger.info(f"   Checking contract verification...")
-            if hasattr(opportunity, 'contract_verified'):
-                if not opportunity.contract_verified:
-                    logger.warning(f"   ⚠️  Contract not verified - proceeding with caution")
+            contract_safety = opportunity.metadata.get('contract_safety', {})
+            if not contract_safety.get('verified', True):
+                logger.warning(f"   ⚠️  Contract not verified - proceeding with caution")
             
-            logger.info(f"✅ All safety checks PASSED for {opportunity.token_symbol}")
+            logger.info(f"✅ All safety checks PASSED for {token_symbol}")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Error in safety checks for {opportunity.token_symbol}: {e}", exc_info=True)
+            logger.error(f"❌ Error in safety checks for {opportunity.token_address}: {e}", exc_info=True)
             return False  # Fail safe - reject on error
-
 
     # Add these methods to TradingBotEngine class in engine.py
 
