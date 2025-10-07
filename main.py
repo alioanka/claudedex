@@ -276,7 +276,7 @@ class TradingBotApplication:
 
             # After loading config
             trading_config = self.config_manager.get_trading_config()
-            logger.info(f"📊 Min Opportunity Score: {trading_config.min_opportunity_score}")
+            self.logger.info(f"📊 Min Opportunity Score: {trading_config.min_opportunity_score}")
 
             # Replace the entire "if 'security' not in self.config:" block with this:
             # ALWAYS set/override security config from environment
@@ -447,7 +447,7 @@ class TradingBotApplication:
             await self.initialize()
 
             # Test DexScreener before starting
-            await test_dex_collector()            
+            await test_dex_collector(self.logger)  # Pass the logger          
             
             # Start the trading engine
             self.logger.info("🎯 Starting trading engine...")
@@ -575,17 +575,17 @@ def parse_arguments():
     
     return parser.parse_args()
 
-async def test_dex_collector():
+async def test_dex_collector(logger_instance):
     """Test DexScreener connectivity"""
     from data.collectors.dexscreener import test_api_connection
     
-    logger.info("Testing DexScreener API connection...")
+    logger_instance.info("Testing DexScreener API connection...")
     success = await test_api_connection()
     
     if not success:
-        logger.warning("⚠️ DexScreener API connection failed - bot will not find new pairs!")
+        logger_instance.warning("⚠️ DexScreener API connection failed - bot will not find new pairs!")
     else:
-        logger.info("✅ DexScreener API connection successful")
+        logger_instance.info("✅ DexScreener API connection successful")
     
     return success
 
