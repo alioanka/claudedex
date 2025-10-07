@@ -1009,19 +1009,25 @@ class AlertsSystem:
     
     def _should_send_alert(self, alert: Alert) -> bool:
         """Check if alert should be sent (cooldown, dedup)"""
-        # Check cooldown for this alert type
-        cooldown = self.config["priority_cooldowns"].get(alert.priority, 0)
-        
-        if cooldown > 0:
-            # Check last sent time for this type
-            for past_alert in reversed(self.alerts_history):
-                if past_alert.alert_type == alert.alert_type and past_alert.sent:
-                    time_diff = (alert.timestamp - past_alert.timestamp).total_seconds()
-                    if time_diff < cooldown:
-                        return False
-                    break
-        
-        return True
+        try:
+            # Check cooldown for this alert type
+            priority_cooldowns = self.config.get("priority_cooldowns", {})
+            cooldown = priority_cooldowns.get(alert.priority, 0)
+            
+            if cooldown > 0:
+                # Check last sent time for this type
+                for past_alert in reversed(self.alerts_history):
+                    if past_alert.alert_type == alert.alert_type and past_alert.sent:
+                        time_diff = (alert.timestamp - past_alert.timestamp).total_seconds()
+                        if time_diff < cooldown:
+                            return False
+                        break
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error in _should_send_alert: {e}")
+            return True  # Allow sending on error
     
     def _check_rate_limit(self, channel: NotificationChannel) -> bool:
         """Check if channel rate limit allows sending"""
