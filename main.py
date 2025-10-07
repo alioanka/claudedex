@@ -264,29 +264,30 @@ class TradingBotApplication:
                     'min_confidence': float(os.getenv('ML_MIN_CONFIDENCE', '0.7'))
                 }
 
-            if 'security' not in self.config:
-                # Get encrypted private key from env
-                encrypted_key = os.getenv('PRIVATE_KEY')
-                encryption_key = os.getenv('ENCRYPTION_KEY')
-                
-                # Decrypt private key if encrypted
-                decrypted_key = encrypted_key
-                if encrypted_key and encrypted_key.startswith('gAAAAAB') and encryption_key:
-                    try:
-                        from cryptography.fernet import Fernet
-                        f = Fernet(encryption_key.encode())
-                        decrypted_key = f.decrypt(encrypted_key.encode()).decode()
-                    except Exception as e:
-                        self.logger.error(f"Failed to decrypt private key: {e}")
-                        raise ValueError("Cannot decrypt PRIVATE_KEY - check ENCRYPTION_KEY")
-                
-                self.config['security'] = {
-                    'encryption_key': encryption_key,
-                    'private_key': decrypted_key  # Use decrypted key
-                }
-                # Right after line 291 (after setting security config), add:
-                self.logger.info(f"DEBUG: security config set: {self.config.get('security', {})}")
+            # Replace the entire "if 'security' not in self.config:" block with this:
+            # ALWAYS set/override security config from environment
+            encrypted_key = os.getenv('PRIVATE_KEY')
+            encryption_key = os.getenv('ENCRYPTION_KEY')
 
+            # Decrypt private key if encrypted
+            decrypted_key = encrypted_key
+            if encrypted_key and encrypted_key.startswith('gAAAAAB') and encryption_key:
+                try:
+                    from cryptography.fernet import Fernet
+                    f = Fernet(encryption_key.encode())
+                    decrypted_key = f.decrypt(encrypted_key.encode()).decode()
+                    self.logger.info("✅ Successfully decrypted private key")
+                except Exception as e:
+                    self.logger.error(f"Failed to decrypt private key: {e}")
+                    raise ValueError("Cannot decrypt PRIVATE_KEY - check ENCRYPTION_KEY")
+
+            # Override or create security config
+            self.config['security'] = {
+                'encryption_key': encryption_key,
+                'private_key': decrypted_key
+            }
+            self.logger.info(f"DEBUG: Set security config with private_key: {decrypted_key[:10] if decrypted_key else 'None'}...")
+                        
             # Before creating engine, flatten security and web3 config:
             flat_config = self.config.copy()
             if 'security' in self.config:
