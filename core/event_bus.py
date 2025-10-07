@@ -18,6 +18,7 @@ class EventType(Enum):
     PRICE_UPDATE = "price_update"
     VOLUME_SURGE = "volume_surge"
     LIQUIDITY_CHANGE = "liquidity_change"
+    UNUSUAL_VOLUME = "unusual_volume"  # ADD THIS
     
     # Trading events
     OPPORTUNITY_FOUND = "opportunity_found"
@@ -30,9 +31,17 @@ class EventType(Enum):
     
     # Risk events
     HIGH_RISK_DETECTED = "high_risk_detected"
+    RUG_PULL_DETECTED = "rug_pull_detected"  # ADD THIS
     RUG_PULL_WARNING = "rug_pull_warning"
     STOP_LOSS_TRIGGERED = "stop_loss_triggered"
     TAKE_PROFIT_HIT = "take_profit_hit"
+
+    # Whale events - ADD THESE
+    WHALE_MOVEMENT = "whale_movement"
+    WHALE_ACCUMULATION = "whale_accumulation"
+
+    # MEV events - ADD THIS
+    SANDWICH_DETECTED = "sandwich_detected"
     
     # System events
     SYSTEM_STARTED = "system_started"
