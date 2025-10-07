@@ -267,20 +267,31 @@ class TradingBotEngine:
                     min_score = self.config.get('trading', {}).get('min_opportunity_score', 0.7)
                     
                     if opportunity:
-                        logger.info(f"✨ Opportunity score: {opportunity.score:.2f} (min: {min_score})")
+                        # ADD THIS DEBUG LOG:
+                        logger.info(f"✨ Opportunity created for {pair.get('token_symbol')}")
+                        logger.info(f"   Score: {opportunity.score:.3f} (min: {min_score})")
+                        logger.info(f"   ML Confidence: {opportunity.ml_confidence:.3f}")
+                        logger.info(f"   Pump Prob: {opportunity.pump_probability:.3f}")
+                        logger.info(f"   Rug Prob: {opportunity.rug_probability:.3f}")
                         
                         if opportunity.score > min_score:
                             self.pending_opportunities.append(opportunity)
                             self.stats['opportunities_found'] += 1
                             
-                            logger.info(f"🎯 OPPORTUNITY FOUND: {pair.get('token_symbol')} - Score: {opportunity.score:.2f}")
+                            logger.info(f"🎯 OPPORTUNITY FOUND: {pair.get('token_symbol')} - Score: {opportunity.score:.3f}")
                             
                             # Emit event
                             await self.event_bus.emit(Event(
                                 event_type=EventType.OPPORTUNITY_FOUND,
                                 data=opportunity
                             ))
-                        
+                        else:
+                            # ADD THIS:
+                            logger.warning(f"❌ Opportunity score {opportunity.score:.3f} below minimum {min_score} for {pair.get('token_symbol')}")
+                    else:
+                        # ADD THIS:
+                        logger.warning(f"❌ No opportunity created for {pair.get('token_symbol')} - analysis returned None")
+                
                 await asyncio.sleep(5)  # Check every 5 seconds for new data
                 
             except Exception as e:
@@ -1117,47 +1128,58 @@ class TradingBotEngine:
             score = 0.0
             weights = 0.0
             
-            # Risk score (30% weight)
+            # Volume score (30% weight) - NEW!
+            volume_24h = pair.get('volume_24h', 0)
+            if volume_24h > 0:
+                # Higher volume = better score
+                volume_score = min(volume_24h / 100000, 1.0)  # $100k = max
+                score += volume_score * 0.3
+                weights += 0.3
+                logger.debug(f"Volume score: {volume_score:.3f} (volume: ${volume_24h:,.0f})")
+            
+            # Liquidity score (25% weight) - UPDATED
+            liquidity_usd = pair.get('liquidity_usd', 0)
+            if liquidity_usd > 0:
+                # Higher liquidity = better
+                liq_score = min(liquidity_usd / 50000, 1.0)  # $50k = max
+                score += liq_score * 0.25
+                weights += 0.25
+                logger.debug(f"Liquidity score: {liq_score:.3f} (liq: ${liquidity_usd:,.0f})")
+            
+            # Price change score (20% weight) - NEW!
+            price_change_5m = pair.get('price_change_5m', 0)
+            if price_change_5m:
+                # Positive price change = good
+                price_score = min(max(price_change_5m / 10, 0), 1.0)  # 10% gain = max
+                score += price_score * 0.2
+                weights += 0.2
+                logger.debug(f"Price change score: {price_score:.3f} (change: {price_change_5m:+.1f}%)")
+            
+            # Risk score (15% weight)
             if risk_score and hasattr(risk_score, 'overall_risk'):
                 # Invert risk (lower risk = higher score)
                 risk_component = 1.0 - risk_score.overall_risk
-                score += risk_component * 0.3
-                weights += 0.3
-            
-            # Pattern analysis (25% weight)
-            if patterns and isinstance(patterns, dict):
-                pattern_score = patterns.get('score', 0.5)
-                score += pattern_score * 0.25
-                weights += 0.25
-            
-            # Liquidity (20% weight)
-            if liquidity and isinstance(liquidity, dict):
-                depth = liquidity.get('depth', 0)
-                # Normalize liquidity score
-                liq_score = min(depth / 100000, 1.0)  # $100k = max score
-                score += liq_score * 0.2
-                weights += 0.2
-            
-            # Sentiment (15% weight) - optional
-            if sentiment and isinstance(sentiment, dict):
-                sent_score = sentiment.get('score', 0.5)
-                score += sent_score * 0.15
+                score += risk_component * 0.15
                 weights += 0.15
+                logger.debug(f"Risk score: {risk_component:.3f}")
             
-            # Contract safety (10% weight)
-            if contract_safety and isinstance(contract_safety, dict):
-                safety_score = 1.0 if contract_safety.get('verified') else 0.3
-                score += safety_score * 0.1
+            # Age bonus (10% weight) - NEW!
+            age_hours = pair.get('age_hours', 999)
+            if age_hours < 24:  # New tokens (< 24h old)
+                age_score = 1.0 - (age_hours / 24)  # Newer = better
+                score += age_score * 0.1
                 weights += 0.1
+                logger.debug(f"Age score: {age_score:.3f} (age: {age_hours:.1f}h)")
             
             # Normalize by total weights used
             if weights > 0:
-                score = score / weights
+                final_score = score / weights
             else:
-                score = 0.5  # Default neutral score
+                final_score = 0.3  # Default low score
             
-            return max(0.0, min(1.0, score))  # Clamp between 0 and 1
+            logger.info(f"Final opportunity score: {final_score:.3f} (weights: {weights:.2f})")
+            return max(0.0, min(1.0, final_score))  # Clamp between 0 and 1
             
         except Exception as e:
             logger.error(f"Error calculating opportunity score: {e}")
-            return 0.5  # Return neutral score on error
+            return 0.3  # Return low score on error
