@@ -1386,8 +1386,8 @@ class TradingBotEngine:
             return 'CRITICAL'
 
     # ============================================================================
-    # FIX #3: core/engine.py - Enhanced _calculate_opportunity_score
-    # Replace the existing method (around line 1100) with this enhanced version
+    # FINAL FIX: core/engine.py - Fix liquidity key in _calculate_opportunity_score
+    # Around line 1450 in _calculate_opportunity_score method
     # ============================================================================
 
     def _calculate_opportunity_score(
@@ -1406,12 +1406,12 @@ class TradingBotEngine:
         try:
             score = 0.0
             weights = 0.0
-            score_breakdown = {}  # Track individual components
+            score_breakdown = {}
             
             # Volume score (30% weight)
             volume_24h = pair.get('volume_24h', 0)
             if volume_24h > 0:
-                volume_score = min(volume_24h / 100000, 1.0)  # $100k = max
+                volume_score = min(volume_24h / 100000, 1.0)
                 score += volume_score * 0.3
                 weights += 0.3
                 score_breakdown['volume'] = {
@@ -1421,10 +1421,16 @@ class TradingBotEngine:
                     'raw_value': volume_24h
                 }
             
-            # Liquidity score (25% weight)
-            liquidity_usd = pair.get('liquidity_usd', 0)
+            # Liquidity score (25% weight) - FIX THIS SECTION:
+            # OLD (BROKEN):
+            # liquidity_usd = pair.get('liquidity_usd', 0)
+            
+            # NEW (FIXED) - Check both possible keys:
+            liquidity_usd = pair.get('liquidity_usd') or pair.get('liquidity') or 0
+            
             if liquidity_usd > 0:
-                liq_score = min(liquidity_usd / 50000, 1.0)  # $50k = max
+                # Lowered threshold: $10k = max (was $50k)
+                liq_score = min(liquidity_usd / 10000, 1.0)
                 score += liq_score * 0.25
                 weights += 0.25
                 score_breakdown['liquidity'] = {
@@ -1436,8 +1442,7 @@ class TradingBotEngine:
             
             # Price change score (20% weight)
             price_change_5m = pair.get('price_change_5m', 0)
-            if price_change_5m:
-                # Positive price change = good, but cap at 10% for max score
+            if price_change_5m or price_change_5m == 0:
                 price_score = min(max(price_change_5m / 10, 0), 1.0)
                 score += price_score * 0.2
                 weights += 0.2
@@ -1462,8 +1467,8 @@ class TradingBotEngine:
             
             # Age bonus (10% weight)
             age_hours = pair.get('age_hours', 999)
-            if age_hours < 24:
-                age_score = 1.0 - (age_hours / 24)  # Newer = better
+            if age_hours < 24:  # Keep at 24h for now
+                age_score = 1.0 - (age_hours / 24)
                 score += age_score * 0.1
                 weights += 0.1
                 score_breakdown['age'] = {
@@ -1479,7 +1484,7 @@ class TradingBotEngine:
             else:
                 final_score = 0.3
             
-            # ADD DETAILED LOGGING
+            # Detailed logging
             token_symbol = pair.get('token_symbol', 'UNKNOWN')
             logger.info(f"      📊 Scoring breakdown for {token_symbol}:")
             
