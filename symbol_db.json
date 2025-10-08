@@ -258,6 +258,16 @@
       }
     },
     "functions": {
+      "setup_multichain_config": {
+        "name": "setup_multichain_config",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
       "setup_logger": {
         "name": "setup_logger",
         "params": [
@@ -344,6 +354,18 @@
       "parse_arguments": {
         "name": "parse_arguments",
         "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "test_dex_collector": {
+        "name": "test_dex_collector",
+        "params": [
+          "logger_instance"
+        ],
         "kwonly": [],
         "vararg": false,
         "kwarg": false,
@@ -685,12 +707,13 @@
               "exclude",
               "exclude_glob",
               "strict_config",
-              "project_only"
+              "project_only",
+              "deps_check"
             ],
             "kwonly": [],
             "vararg": false,
             "kwarg": false,
-            "defaults": 1,
+            "defaults": 2,
             "posonly": [],
             "is_method": true
           },
@@ -4334,6 +4357,10 @@
         },
         "has_init": false
       },
+      "PortfolioConfig": {
+        "methods": {},
+        "has_init": false
+      },
       "ConfigManager": {
         "methods": {
           "__init__": {
@@ -4444,6 +4471,18 @@
             "params": [
               "self",
               "config_data"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "validate_environment": {
+            "name": "validate_environment",
+            "params": [
+              "self"
             ],
             "kwonly": [],
             "vararg": false,
@@ -4600,6 +4639,18 @@
             "params": [
               "self",
               "key"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_portfolio_config": {
+            "name": "get_portfolio_config",
+            "params": [
+              "self"
             ],
             "kwonly": [],
             "vararg": false,
@@ -6132,6 +6183,675 @@
             "defaults": 0,
             "posonly": [],
             "is_method": true
+          },
+          "_load_blacklists": {
+            "name": "_load_blacklists",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_load_state": {
+            "name": "_load_state",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_warmup_collectors": {
+            "name": "_warmup_collectors",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_is_blacklisted": {
+            "name": "_is_blacklisted",
+            "params": [
+              "self",
+              "pair"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_check_developer_reputation": {
+            "name": "_check_developer_reputation",
+            "params": [
+              "self",
+              "dev_address"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_analyze_liquidity_depth": {
+            "name": "_analyze_liquidity_depth",
+            "params": [
+              "self",
+              "pair"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_check_smart_contract": {
+            "name": "_check_smart_contract",
+            "params": [
+              "self",
+              "token_address"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_analyze_holder_distribution": {
+            "name": "_analyze_holder_distribution",
+            "params": [
+              "self",
+              "token_address"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_extract_features": {
+            "name": "_extract_features",
+            "params": [
+              "self",
+              "data"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_calculate_pnl": {
+            "name": "_calculate_pnl",
+            "params": [
+              "self",
+              "position"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_calculate_pnl_percentage": {
+            "name": "_calculate_pnl_percentage",
+            "params": [
+              "self",
+              "position"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_check_ml_exit_signal": {
+            "name": "_check_ml_exit_signal",
+            "params": [
+              "self",
+              "position"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_detect_rug_pull_signs": {
+            "name": "_detect_rug_pull_signs",
+            "params": [
+              "self",
+              "token_address"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_check_liquidity_crisis": {
+            "name": "_check_liquidity_crisis",
+            "params": [
+              "self",
+              "token_address"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_set_exit_orders": {
+            "name": "_set_exit_orders",
+            "params": [
+              "self",
+              "position",
+              "strategy"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_should_dca": {
+            "name": "_should_dca",
+            "params": [
+              "self",
+              "position"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_execute_dca": {
+            "name": "_execute_dca",
+            "params": [
+              "self",
+              "position"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_update_trailing_stop": {
+            "name": "_update_trailing_stop",
+            "params": [
+              "self",
+              "position",
+              "current_price"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_calculate_slippage": {
+            "name": "_calculate_slippage",
+            "params": [
+              "self",
+              "opportunity"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_calculate_gas_multiplier": {
+            "name": "_calculate_gas_multiplier",
+            "params": [
+              "self",
+              "opportunity"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_apply_mev_protection": {
+            "name": "_apply_mev_protection",
+            "params": [
+              "self",
+              "order",
+              "opportunity"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_learn_from_trade": {
+            "name": "_learn_from_trade",
+            "params": [
+              "self",
+              "position",
+              "pnl",
+              "reason"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_analyze_mempool_tx": {
+            "name": "_analyze_mempool_tx",
+            "params": [
+              "self",
+              "tx"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_handle_whale_movement": {
+            "name": "_handle_whale_movement",
+            "params": [
+              "self",
+              "movement"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_analyze_whale_accumulation": {
+            "name": "_analyze_whale_accumulation",
+            "params": [
+              "self",
+              "movement"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_validate_new_parameters": {
+            "name": "_validate_new_parameters",
+            "params": [
+              "self",
+              "params"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_collect_training_data": {
+            "name": "_collect_training_data",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_should_retrain": {
+            "name": "_should_retrain",
+            "params": [
+              "self",
+              "data"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_validate_models": {
+            "name": "_validate_models",
+            "params": [
+              "self",
+              "models"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_get_recent_rug_pulls": {
+            "name": "_get_recent_rug_pulls",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_save_blacklists": {
+            "name": "_save_blacklists",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_update_community_blacklists": {
+            "name": "_update_community_blacklists",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_send_daily_report": {
+            "name": "_send_daily_report",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_check_database_health": {
+            "name": "_check_database_health",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_check_web3_health": {
+            "name": "_check_web3_health",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_check_api_health": {
+            "name": "_check_api_health",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_check_memory_usage": {
+            "name": "_check_memory_usage",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_check_cpu_usage": {
+            "name": "_check_cpu_usage",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_save_state": {
+            "name": "_save_state",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "emergency_close_all_positions": {
+            "name": "emergency_close_all_positions",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "shutdown": {
+            "name": "shutdown",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_stats": {
+            "name": "get_stats",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "save_state": {
+            "name": "save_state",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_handle_new_pair": {
+            "name": "_handle_new_pair",
+            "params": [
+              "self",
+              "event"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_handle_position_opened": {
+            "name": "_handle_position_opened",
+            "params": [
+              "self",
+              "event"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_handle_position_closed": {
+            "name": "_handle_position_closed",
+            "params": [
+              "self",
+              "event"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_handle_unusual_volume": {
+            "name": "_handle_unusual_volume",
+            "params": [
+              "self",
+              "event"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_handle_rug_pull": {
+            "name": "_handle_rug_pull",
+            "params": [
+              "self",
+              "event"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_calculate_target_price": {
+            "name": "_calculate_target_price",
+            "params": [
+              "self",
+              "pair",
+              "score"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_calculate_stop_loss": {
+            "name": "_calculate_stop_loss",
+            "params": [
+              "self",
+              "pair"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_determine_risk_level": {
+            "name": "_determine_risk_level",
+            "params": [
+              "self",
+              "risk_score"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_calculate_opportunity_score": {
+            "name": "_calculate_opportunity_score",
+            "params": [
+              "self",
+              "pair",
+              "risk_score",
+              "patterns",
+              "sentiment",
+              "liquidity",
+              "contract_safety"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
           }
         },
         "has_init": true
@@ -7160,6 +7880,165 @@
           },
           "check_diversification": {
             "name": "check_diversification",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_portfolio_summary": {
+            "name": "get_portfolio_summary",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_open_positions": {
+            "name": "get_open_positions",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_performance_report": {
+            "name": "get_performance_report",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "close_position": {
+            "name": "close_position",
+            "params": [
+              "self",
+              "position_id"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "update_position": {
+            "name": "update_position",
+            "params": [
+              "self",
+              "position_id",
+              "modifications"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_calculate_avg_win": {
+            "name": "_calculate_avg_win",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_calculate_avg_loss": {
+            "name": "_calculate_avg_loss",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_calculate_profit_factor": {
+            "name": "_calculate_profit_factor",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_calculate_risk_exposure": {
+            "name": "_calculate_risk_exposure",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_calculate_diversification_score": {
+            "name": "_calculate_diversification_score",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_calculate_total_risk": {
+            "name": "_calculate_total_risk",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_check_daily_loss_limit": {
+            "name": "_check_daily_loss_limit",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_update_performance_metrics": {
+            "name": "_update_performance_metrics",
             "params": [
               "self"
             ],
@@ -13718,6 +14597,397 @@
       "methods": {}
     }
   },
+  "ml.optimization.hyperparameter": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\optimization\\hyperparameter.py",
+    "classes": {
+      "HyperparameterSpace": {
+        "methods": {},
+        "has_init": false
+      },
+      "HyperparameterOptimizer": {
+        "methods": {
+          "__init__": {
+            "name": "__init__",
+            "params": [
+              "self",
+              "config"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 1,
+            "posonly": [],
+            "is_method": true
+          },
+          "_default_config": {
+            "name": "_default_config",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_define_parameter_spaces": {
+            "name": "_define_parameter_spaces",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "optimize": {
+            "name": "optimize",
+            "params": [
+              "self",
+              "performance_data",
+              "current_params"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_calculate_objective": {
+            "name": "_calculate_objective",
+            "params": [
+              "self",
+              "performance"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_random_sample_params": {
+            "name": "_random_sample_params",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_bayesian_suggest_params": {
+            "name": "_bayesian_suggest_params",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_fit_gp_surrogate": {
+            "name": "_fit_gp_surrogate",
+            "params": [
+              "self",
+              "X",
+              "y"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_expected_improvement": {
+            "name": "_expected_improvement",
+            "params": [
+              "self",
+              "X",
+              "mean",
+              "std",
+              "best_y"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_grid_search_next": {
+            "name": "_grid_search_next",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_best_parameters": {
+            "name": "get_best_parameters",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_optimization_summary": {
+            "name": "get_optimization_summary",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          }
+        },
+        "has_init": true
+      }
+    },
+    "functions": {},
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "ml.optimization.reinforcement": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\optimization\\reinforcement.py",
+    "classes": {
+      "State": {
+        "methods": {},
+        "has_init": false
+      },
+      "Action": {
+        "methods": {},
+        "has_init": false
+      },
+      "Experience": {
+        "methods": {},
+        "has_init": false
+      },
+      "RLOptimizer": {
+        "methods": {
+          "__init__": {
+            "name": "__init__",
+            "params": [
+              "self",
+              "config"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 1,
+            "posonly": [],
+            "is_method": true
+          },
+          "_default_config": {
+            "name": "_default_config",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_initialize_policy": {
+            "name": "_initialize_policy",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "update_policy": {
+            "name": "update_policy",
+            "params": [
+              "self",
+              "performance_data"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_extract_state": {
+            "name": "_extract_state",
+            "params": [
+              "self",
+              "performance_data"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_calculate_reward": {
+            "name": "_calculate_reward",
+            "params": [
+              "self",
+              "performance_data"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_select_action": {
+            "name": "_select_action",
+            "params": [
+              "self",
+              "state"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_random_action": {
+            "name": "_random_action",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_greedy_action": {
+            "name": "_greedy_action",
+            "params": [
+              "self",
+              "state"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_discretize_state": {
+            "name": "_discretize_state",
+            "params": [
+              "self",
+              "state"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_action_to_key": {
+            "name": "_action_to_key",
+            "params": [
+              "self",
+              "action"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_action_from_key": {
+            "name": "_action_from_key",
+            "params": [
+              "self",
+              "key"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_train_step": {
+            "name": "_train_step",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_current_policy": {
+            "name": "get_current_policy",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_training_stats": {
+            "name": "get_training_stats",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          }
+        },
+        "has_init": true
+      }
+    },
+    "functions": {},
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
   "ml.optimization": {
     "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\ml\\optimization\\__init__.py",
     "classes": {},
@@ -15442,6 +16712,20 @@
             "posonly": [],
             "is_method": true
           },
+          "error_handler_middleware": {
+            "name": "error_handler_middleware",
+            "params": [
+              "self",
+              "request",
+              "handler"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
           "settings_page": {
             "name": "settings_page",
             "params": [
@@ -16806,6 +18090,164 @@
       "methods": {}
     }
   },
+  "scripts.dev_autofix_imports": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\dev_autofix_imports.py",
+    "classes": {},
+    "functions": {
+      "find_py_files": {
+        "name": "find_py_files",
+        "params": [
+          "root"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "get_module_path": {
+        "name": "get_module_path",
+        "params": [
+          "root",
+          "file"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "parse_imports": {
+        "name": "parse_imports",
+        "params": [
+          "src"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "collect_annotation_names": {
+        "name": "collect_annotation_names",
+        "params": [
+          "tree"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "build_local_name_index": {
+        "name": "build_local_name_index",
+        "params": [
+          "root"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "insertion_index": {
+        "name": "insertion_index",
+        "params": [
+          "src"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "ensure_future_annotations": {
+        "name": "ensure_future_annotations",
+        "params": [
+          "lines"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "ensure_import_lines": {
+        "name": "ensure_import_lines",
+        "params": [
+          "src",
+          "need_typing",
+          "need_decimal",
+          "add_future"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "find_external_modules": {
+        "name": "find_external_modules",
+        "params": [
+          "src"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "is_local_module": {
+        "name": "is_local_module",
+        "params": [
+          "root",
+          "name"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "normalize_req_line": {
+        "name": "normalize_req_line",
+        "params": [
+          "line"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "main": {
+        "name": "main",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
   "scripts.emergency_stop": {
     "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\emergency_stop.py",
     "classes": {},
@@ -16841,6 +18283,123 @@
         "vararg": false,
         "kwarg": false,
         "defaults": 2,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.fix_illegal_relatives": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\fix_illegal_relatives.py",
+    "classes": {
+      "Replacement": {
+        "methods": {},
+        "has_init": false
+      }
+    },
+    "functions": {
+      "iter_py_files": {
+        "name": "iter_py_files",
+        "params": [
+          "root"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "path_to_module": {
+        "name": "path_to_module",
+        "params": [
+          "root",
+          "file"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "module_exists": {
+        "name": "module_exists",
+        "params": [
+          "root",
+          "mod"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "top_level_package": {
+        "name": "top_level_package",
+        "params": [
+          "mod"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "compute_absolute_from_relative": {
+        "name": "compute_absolute_from_relative",
+        "params": [
+          "curr_module",
+          "node"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "rewrite_import_line": {
+        "name": "rewrite_import_line",
+        "params": [
+          "abs_module",
+          "node"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "fix_file": {
+        "name": "fix_file",
+        "params": [
+          "root",
+          "file",
+          "write",
+          "no_backup"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "main": {
+        "name": "main",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
         "posonly": [],
         "is_method": false
       }
@@ -22722,23 +24281,7 @@
         "has_init": false
       },
       "Order": {
-        "methods": {
-          "build_order": {
-            "name": "build_order",
-            "params": [
-              "token_address",
-              "side",
-              "amount",
-              "order_type"
-            ],
-            "kwonly": [],
-            "vararg": false,
-            "kwarg": true,
-            "defaults": 1,
-            "posonly": [],
-            "is_method": true
-          }
-        },
+        "methods": {},
         "has_init": false
       },
       "OrderBook": {
@@ -22766,6 +24309,18 @@
           },
           "_default_config": {
             "name": "_default_config",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "initialize": {
+            "name": "initialize",
             "params": [
               "self"
             ],
@@ -23425,7 +24980,23 @@
         "has_init": true
       }
     },
-    "functions": {},
+    "functions": {
+      "build_order": {
+        "name": "build_order",
+        "params": [
+          "token_address",
+          "side",
+          "amount",
+          "order_type"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": true,
+        "defaults": 1,
+        "posonly": [],
+        "is_method": false
+      }
+    },
     "dups": {
       "functions": {},
       "classes": {},
@@ -26558,7 +28129,7 @@
         [
           "utils.constants",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\utils\\constants.py",
-          381
+          380
         ]
       ],
       "ValidationResult": [
@@ -26582,7 +28153,7 @@
         [
           "core.risk_manager",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\core\\risk_manager.py",
-          28
+          29
         ]
       ],
       "TradingOpportunity": [
@@ -26594,12 +28165,12 @@
         [
           "core.engine",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\core\\engine.py",
-          50
+          54
         ],
         [
           "core.risk_manager",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\core\\risk_manager.py",
-          137
+          138
         ]
       ],
       "Position": [
@@ -26611,7 +28182,7 @@
         [
           "core.risk_manager",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\core\\risk_manager.py",
-          154
+          155
         ],
         [
           "data.storage.models",
@@ -26621,19 +28192,19 @@
         [
           "trading.orders.position_tracker",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\orders\\position_tracker.py",
-          40
+          42
         ]
       ],
       "RiskLevel": [
         [
           "core.risk_manager",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\core\\risk_manager.py",
-          18
+          19
         ],
         [
           "trading.orders.position_tracker",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\orders\\position_tracker.py",
-          32
+          34
         ]
       ],
       "TokenAnalysis": [
@@ -26657,7 +28228,7 @@
         [
           "trading.orders.position_tracker",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\orders\\position_tracker.py",
-          19
+          21
         ]
       ],
       "AlertPriority": [
@@ -26693,7 +28264,7 @@
         [
           "trading.orders.position_tracker",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\orders\\position_tracker.py",
-          169
+          171
         ]
       ],
       "MetricType": [
@@ -26760,7 +28331,7 @@
         [
           "monitoring.logger",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\monitoring\\logger.py",
-          947
+          955
         ],
         [
           "monitoring.performance",
@@ -26772,7 +28343,7 @@
         [
           "monitoring.logger",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\monitoring\\logger.py",
-          970
+          978
         ],
         [
           "monitoring.performance",
@@ -26784,7 +28355,7 @@
         [
           "monitoring.logger",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\monitoring\\logger.py",
-          991
+          999
         ],
         [
           "monitoring.performance",
@@ -26796,7 +28367,7 @@
         [
           "monitoring.logger",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\monitoring\\logger.py",
-          1001
+          1009
         ],
         [
           "monitoring.performance",
@@ -26864,7 +28435,7 @@
         [
           "utils.constants",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\utils\\constants.py",
-          410
+          409
         ]
       ],
       "OrderType": [
@@ -26876,19 +28447,19 @@
         [
           "utils.constants",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\utils\\constants.py",
-          400
+          399
         ]
       ],
       "SignalStrength": [
         [
           "trading.strategies.base_strategy",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\strategies\\base_strategy.py",
-          35
+          31
         ],
         [
           "utils.constants",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\utils\\constants.py",
-          338
+          337
         ]
       ]
     },
@@ -26897,31 +28468,31 @@
         [
           "main",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
-          52
+          105
         ],
         [
           "trading.executors.base_executor",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\executors\\base_executor.py",
-          1118
+          1127
         ]
       ],
       "test_api_connection": [
         [
           "main",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
-          57
+          134
         ],
         [
           "data.collectors.dexscreener",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\data\\collectors\\dexscreener.py",
-          933
+          1116
         ]
       ],
       "main": [
         [
           "main",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
-          402
+          703
         ],
         [
           "setup_env_keys",
@@ -26931,12 +28502,22 @@
         [
           "verify_references",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\verify_references.py",
-          778
+          882
         ],
         [
           "xref_symbol_db",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\xref_symbol_db.py",
-          516
+          527
+        ],
+        [
+          "scripts.dev_autofix_imports",
+          "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\dev_autofix_imports.py",
+          236
+        ],
+        [
+          "scripts.fix_illegal_relatives",
+          "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\fix_illegal_relatives.py",
+          184
         ],
         [
           "scripts.health_check",
@@ -27052,12 +28633,12 @@
         [
           "verify_references",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\verify_references.py",
-          767
+          870
         ],
         [
           "xref_symbol_db",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\xref_symbol_db.py",
-          505
+          516
         ]
       ],
       "parse_expectations_from_md": [

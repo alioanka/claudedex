@@ -244,7 +244,16 @@ class TradingBotEngine:
         """Continuously monitor for new trading pairs"""
         logger.info("🔍 Starting new pairs monitoring loop...")
         # Get enabled chains from config
-        enabled_chains = self.config.get('data_sources', {}).get('dexscreener', {}).get('chains', ['ethereum'])
+        # Get enabled chains from config - try multiple config paths
+        enabled_chains = (
+            self.config.get('data_sources', {}).get('dexscreener', {}).get('chains') or
+            self.config.get('chains', {}).get('enabled') or
+            self.config.get('enabled_chains', '').split(',') or
+            ['ethereum', 'bsc', 'base', 'arbitrum', 'polygon']
+        )
+
+        # Clean up chain names
+        enabled_chains = [chain.strip() for chain in enabled_chains if chain.strip()]
         max_pairs_per_chain = self.config.get('chains', {}).get('max_pairs_per_chain', 50)
         discovery_interval = self.config.get('chains', {}).get('discovery_interval', 300)
 
@@ -386,41 +395,57 @@ class TradingBotEngine:
                 logger.error(f"Error in multi-chain discovery: {e}", exc_info=True)
                 await asyncio.sleep(60)  # Wait longer on error
                 
+    # ============================================================================
+    # FIX #2: core/engine.py
+    # Add more detailed logging to see WHY pairs are being filtered out
+    # ============================================================================
+
+    # Find the _analyze_opportunity method in core/engine.py (around line 402)
+    # Replace the scoring section with this enhanced version:
+
     async def _analyze_opportunity(self, pair: Dict) -> Optional[TradingOpportunity]:
         """
         Comprehensive analysis of a trading opportunity
         """
         try:
-            # Parallel analysis tasks - properly awaited
-            # NOTE: Removed social_collector.get_sentiment() since it doesn't exist yet
+            # Get token symbol for logging
+            token_symbol = pair.get('token_symbol', 'UNKNOWN')
+            token_address = pair.get('token_address', '')
+            
+            # ADD THIS LOG
+            logger.info(f"🔬 Analyzing {token_symbol} on {pair.get('chain', 'unknown')}")
+            logger.info(f"   Price: ${pair.get('price_usd', 0):.8f}")
+            logger.info(f"   Liquidity: ${pair.get('liquidity_usd', 0):,.2f}")
+            logger.info(f"   Volume 24h: ${pair.get('volume_24h', 0):,.2f}")
+            logger.info(f"   Age: {pair.get('age_hours', 999):.1f}h")
+            
+            # Parallel analysis tasks
             results = await asyncio.gather(
                 self.risk_manager.analyze_token(pair.get('token_address', '')),
                 self.pattern_analyzer.analyze_patterns(pair),
                 self.chain_collector.get_token_info(pair.get('token_address', '')),
-                # self.social_collector.get_sentiment(pair.get('token_address', '')),  # COMMENTED OUT
                 self._check_developer_reputation(pair.get('creator_address', '')),
                 self._analyze_liquidity_depth(pair),
                 self._check_smart_contract(pair.get('token_address', '')),
                 self._analyze_holder_distribution(pair.get('token_address', '')),
-                return_exceptions=True  # Don't fail if one task fails
+                return_exceptions=True
             )
             
-            # Unpack results (adjusted for removed sentiment)
+            # Unpack results
             risk_score, patterns, token_info, dev_reputation, \
-                liquidity_depth, contract_safety, holder_dist = results
+            liquidity_depth, contract_safety, holder_dist = results
             
-            # Set sentiment to None since we don't have it
             sentiment = None
             
-            # Handle any exceptions in results
+            # Handle exceptions
             if isinstance(risk_score, Exception):
-                logger.error(f"Risk analysis failed: {risk_score}")
+                logger.debug(f"Risk analysis failed: {risk_score}")
                 risk_score = None
             if isinstance(patterns, Exception):
-                logger.error(f"Pattern analysis failed: {patterns}")
+                logger.debug(f"Pattern analysis failed: {patterns}")
                 patterns = None
             if isinstance(token_info, Exception):
-                logger.error(f"Token info failed: {token_info}")
+                logger.debug(f"Token info failed: {token_info}")
                 token_info = None
             
             # Calculate overall score
@@ -428,20 +453,24 @@ class TradingBotEngine:
                 pair=pair,
                 risk_score=risk_score,
                 patterns=patterns,
-                sentiment=sentiment,  # Will be None
+                sentiment=sentiment,
                 liquidity=liquidity_depth,
                 contract_safety=contract_safety
             )
             
-            # Check minimum threshold from config
+            # ADD THIS DETAILED LOG
             min_score = self.config.get('trading', {}).get('min_opportunity_score', 0.7)
+            logger.info(f"   📊 Score: {score:.4f} (min required: {min_score})")
             
             if score < min_score:
-                logger.debug(f"Opportunity score {score:.2f} below threshold {min_score}")
+                # ADD THIS LOG TO SEE WHY IT FAILED
+                logger.info(f"   ❌ REJECTED: Score {score:.4f} < {min_score}")
                 return None
             
-            # Create opportunity using existing TradingOpportunity structure
-            # Map to expected fields
+            # If we get here, score is good enough!
+            logger.info(f"   ✅ PASSED: Score {score:.4f} >= {min_score}")
+            
+            # Create opportunity
             opportunity = TradingOpportunity(
                 token_address=pair.get('token_address', ''),
                 pair_address=pair.get('pair_address', ''),
@@ -464,7 +493,7 @@ class TradingBotEngine:
                     'liquidity_depth': liquidity_depth,
                     'contract_safety': contract_safety,
                     'holder_distribution': holder_dist,
-                    'token_symbol': pair.get('token_symbol', 'UNKNOWN')
+                    'token_symbol': token_symbol
                 },
                 timestamp=datetime.utcnow()
             )
@@ -737,6 +766,11 @@ class TradingBotEngine:
             except Exception as e:
                 await asyncio.sleep(10)
                 
+    # ============================================================================
+    # FIX #1: core/engine.py (Line ~878)
+    # Replace the _optimize_strategies method
+    # ============================================================================
+
     async def _optimize_strategies(self):
         """Continuously optimize trading strategies"""
         while self.state == BotState.RUNNING:
@@ -744,25 +778,55 @@ class TradingBotEngine:
                 # Wait for enough data
                 await asyncio.sleep(3600)  # Optimize every hour
                 
-                # Get recent performance data
-                performance_data = await self.performance_tracker.get_recent_performance()
+                # FIX: Use the correct method name from PerformanceTracker
+                # The actual method is get_performance_report(), not get_recent_performance()
+                try:
+                    performance_data = self.performance_tracker.get_performance_report(period="daily")
+                except AttributeError as e:
+                    logger.warning(f"Performance tracking method not available: {e}")
+                    continue  # Skip this optimization cycle
+                except Exception as e:
+                    logger.error(f"Error getting performance data: {e}")
+                    continue
+                
+                # Check if we have valid performance data
+                if not performance_data or 'error' in performance_data:
+                    logger.info("No sufficient performance data for optimization")
+                    continue
+                
+                # Only optimize if we have enough trades
+                if performance_data.get('summary', {}).get('total_trades', 0) < 10:
+                    logger.info("Not enough trades for meaningful optimization (need 10+)")
+                    continue
                 
                 # Run hyperparameter optimization
-                new_params = await self.hyperparam_optimizer.optimize(
-                    performance_data,
-                    current_params=self.strategy_manager.get_parameters()
-                )
-                
-                # Validate new parameters
-                if await self._validate_new_parameters(new_params):
-                    await self.strategy_manager.update_parameters(new_params)
-                    await self.alert_manager.send_info("Strategy parameters optimized")
+                try:
+                    new_params = await self.hyperparam_optimizer.optimize(
+                        performance_data,
+                        current_params=self.strategy_manager.get_parameters()
+                    )
                     
-                # RL optimization
-                await self.rl_optimizer.update_policy(performance_data)
+                    # Validate new parameters
+                    if await self._validate_new_parameters(new_params):
+                        await self.strategy_manager.update_parameters(new_params)
+                        logger.info("Strategy parameters optimized successfully")
+                        await self.alert_manager.send_info("Strategy parameters optimized")
+                except Exception as e:
+                    logger.error(f"Hyperparameter optimization failed: {e}")
                 
+                # RL optimization
+                try:
+                    await self.rl_optimizer.update_policy(performance_data)
+                except Exception as e:
+                    logger.error(f"RL optimization failed: {e}")
+                
+            except asyncio.CancelledError:
+                logger.info("Strategy optimization loop cancelled")
+                break
             except Exception as e:
-                await self.alert_manager.send_warning(f"Strategy optimization error: {e}")
+                logger.error(f"Strategy optimization error: {e}", exc_info=True)
+                # Don't send Telegram alert here - it's too spammy
+                # The error is already logged
                 
     async def _retrain_models(self):
         """Periodically retrain ML models"""
@@ -1263,6 +1327,11 @@ class TradingBotEngine:
         else:
             return 'CRITICAL'
 
+    # ============================================================================
+    # FIX #3: core/engine.py - Enhanced _calculate_opportunity_score
+    # Replace the existing method (around line 1100) with this enhanced version
+    # ============================================================================
+
     def _calculate_opportunity_score(
         self,
         pair: Dict,
@@ -1273,67 +1342,119 @@ class TradingBotEngine:
         contract_safety: Optional[Dict]
     ) -> float:
         """
-        Calculate overall opportunity score
-        
-        Returns:
-            Score between 0 and 1
+        Calculate overall opportunity score with detailed logging
+        Returns: Score between 0 and 1
         """
         try:
             score = 0.0
             weights = 0.0
+            score_breakdown = {}  # Track individual components
             
-            # Volume score (30% weight) - NEW!
+            # Volume score (30% weight)
             volume_24h = pair.get('volume_24h', 0)
             if volume_24h > 0:
-                # Higher volume = better score
                 volume_score = min(volume_24h / 100000, 1.0)  # $100k = max
                 score += volume_score * 0.3
                 weights += 0.3
-                logger.debug(f"Volume score: {volume_score:.3f} (volume: ${volume_24h:,.0f})")
+                score_breakdown['volume'] = {
+                    'score': volume_score,
+                    'weight': 0.3,
+                    'contribution': volume_score * 0.3,
+                    'raw_value': volume_24h
+                }
             
-            # Liquidity score (25% weight) - UPDATED
+            # Liquidity score (25% weight)
             liquidity_usd = pair.get('liquidity_usd', 0)
             if liquidity_usd > 0:
-                # Higher liquidity = better
                 liq_score = min(liquidity_usd / 50000, 1.0)  # $50k = max
                 score += liq_score * 0.25
                 weights += 0.25
-                logger.debug(f"Liquidity score: {liq_score:.3f} (liq: ${liquidity_usd:,.0f})")
+                score_breakdown['liquidity'] = {
+                    'score': liq_score,
+                    'weight': 0.25,
+                    'contribution': liq_score * 0.25,
+                    'raw_value': liquidity_usd
+                }
             
-            # Price change score (20% weight) - NEW!
+            # Price change score (20% weight)
             price_change_5m = pair.get('price_change_5m', 0)
             if price_change_5m:
-                # Positive price change = good
-                price_score = min(max(price_change_5m / 10, 0), 1.0)  # 10% gain = max
+                # Positive price change = good, but cap at 10% for max score
+                price_score = min(max(price_change_5m / 10, 0), 1.0)
                 score += price_score * 0.2
                 weights += 0.2
-                logger.debug(f"Price change score: {price_score:.3f} (change: {price_change_5m:+.1f}%)")
+                score_breakdown['price_change'] = {
+                    'score': price_score,
+                    'weight': 0.2,
+                    'contribution': price_score * 0.2,
+                    'raw_value': price_change_5m
+                }
             
             # Risk score (15% weight)
             if risk_score and hasattr(risk_score, 'overall_risk'):
-                # Invert risk (lower risk = higher score)
                 risk_component = 1.0 - risk_score.overall_risk
                 score += risk_component * 0.15
                 weights += 0.15
-                logger.debug(f"Risk score: {risk_component:.3f}")
+                score_breakdown['risk'] = {
+                    'score': risk_component,
+                    'weight': 0.15,
+                    'contribution': risk_component * 0.15,
+                    'raw_value': risk_score.overall_risk
+                }
             
-            # Age bonus (10% weight) - NEW!
+            # Age bonus (10% weight)
             age_hours = pair.get('age_hours', 999)
-            if age_hours < 24:  # New tokens (< 24h old)
+            if age_hours < 24:
                 age_score = 1.0 - (age_hours / 24)  # Newer = better
                 score += age_score * 0.1
                 weights += 0.1
-                logger.debug(f"Age score: {age_score:.3f} (age: {age_hours:.1f}h)")
+                score_breakdown['age'] = {
+                    'score': age_score,
+                    'weight': 0.1,
+                    'contribution': age_score * 0.1,
+                    'raw_value': age_hours
+                }
             
             # Normalize by total weights used
             if weights > 0:
                 final_score = score / weights
             else:
-                final_score = 0.3  # Default low score
+                final_score = 0.3
             
-            logger.info(f"Final opportunity score: {final_score:.3f} (weights: {weights:.2f})")
-            return max(0.0, min(1.0, final_score))  # Clamp between 0 and 1
+            # ADD DETAILED LOGGING
+            token_symbol = pair.get('token_symbol', 'UNKNOWN')
+            logger.info(f"      📊 Scoring breakdown for {token_symbol}:")
+            
+            for component, data in score_breakdown.items():
+                logger.info(
+                    f"         • {component.upper()}: "
+                    f"score={data['score']:.3f}, "
+                    f"weight={data['weight']:.0%}, "
+                    f"contribution={data['contribution']:.4f} "
+                    f"(raw={data['raw_value']})"
+                )
+            
+            logger.info(f"      📈 Total weights: {weights:.2f}")
+            logger.info(f"      🎯 Final normalized score: {final_score:.4f}")
+            
+            # Check what's missing
+            missing_components = []
+            if 'volume' not in score_breakdown:
+                missing_components.append('volume')
+            if 'liquidity' not in score_breakdown:
+                missing_components.append('liquidity')
+            if 'price_change' not in score_breakdown:
+                missing_components.append('price_change')
+            if 'risk' not in score_breakdown:
+                missing_components.append('risk')
+            if 'age' not in score_breakdown:
+                missing_components.append('age')
+            
+            if missing_components:
+                logger.warning(f"      ⚠️  Missing score components: {', '.join(missing_components)}")
+            
+            return max(0.0, min(1.0, final_score))
             
         except Exception as e:
-            logger.error(f"Error calculating opportunity score: {e}")
-            return 0.3  # Return low score on error
+            logger.error(f"Error calculating opportunity score: {e}", exc_info=True)
+            return 0.3

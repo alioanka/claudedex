@@ -63,6 +63,8 @@ ClaudeDex/
         ├── volume_validator.py
     └── optimization/
         ├── __init__.py
+        ├── hyperparameter.py
+        ├── reinforcement.py
     └── training/
         ├── __init__.py
 └── monitoring/
@@ -77,8 +79,10 @@ ClaudeDex/
     ├── check_balance.py
     ├── close_all_positions.py
     ├── daily_report.py
+    ├── dev_autofix_imports.py
     ├── emergency_stop.py
     ├── export_trades.py
+    ├── fix_illegal_relatives.py
     ├── generate_report.py
     ├── health_check.py
     ├── init_config.py

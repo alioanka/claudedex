@@ -296,6 +296,7 @@
   - `get_database_config()`
   - `get_ml_models_config()`
   - `get_monitoring_config()`
+  - `get_portfolio_config()`
   - `get_risk_management_config()`
   - `get_security_config()`
   - `get_trading_config()`
@@ -309,11 +310,13 @@
   - `update_config_internal(config_type, updates, user, reason, persist)`
   - `validate_config(config)`
   - `validate_config_internal(config_type, config_data)`
+  - `validate_environment()`
 - **ConfigSource**
 - **ConfigType**
 - **DatabaseConfig**
 - **MLModelsConfig**
 - **MonitoringConfig**
+- **PortfolioConfig**
 - **RiskManagementConfig**
   - `validate_portfolio_risk(cls, v)`
 - **SecurityConfig**
@@ -425,12 +428,49 @@
 - **BotState**
 - **TradingBotEngine**
   - `__init__(config, mode)`
+  - `_analyze_holder_distribution(token_address)`
+  - `_analyze_liquidity_depth(pair)`
+  - `_analyze_mempool_tx(tx)`
   - `_analyze_opportunity(pair)`
+  - `_analyze_whale_accumulation(movement)`
+  - `_apply_mev_protection(order, opportunity)`
+  - `_calculate_gas_multiplier(opportunity)`
+  - `_calculate_opportunity_score(pair, risk_score, patterns, sentiment, liquidity, contract_safety)`
+  - `_calculate_pnl(position)`
+  - `_calculate_pnl_percentage(position)`
+  - `_calculate_slippage(opportunity)`
+  - `_calculate_stop_loss(pair)`
+  - `_calculate_target_price(pair, score)`
+  - `_check_api_health()`
+  - `_check_cpu_usage()`
+  - `_check_database_health()`
+  - `_check_developer_reputation(dev_address)`
   - `_check_exit_conditions(position)`
+  - `_check_liquidity_crisis(token_address)`
+  - `_check_memory_usage()`
+  - `_check_ml_exit_signal(position)`
+  - `_check_smart_contract(token_address)`
+  - `_check_web3_health()`
   - `_close_position(position, reason)`
+  - `_collect_training_data()`
+  - `_detect_rug_pull_signs(token_address)`
+  - `_determine_risk_level(risk_score)`
+  - `_execute_dca(position)`
   - `_execute_opportunity(opportunity)`
+  - `_extract_features(data)`
   - `_final_safety_checks(opportunity)`
+  - `_get_recent_rug_pulls()`
+  - `_handle_new_pair(event)`
+  - `_handle_position_closed(event)`
+  - `_handle_position_opened(event)`
+  - `_handle_rug_pull(event)`
+  - `_handle_unusual_volume(event)`
+  - `_handle_whale_movement(movement)`
   - `_health_check()`
+  - `_is_blacklisted(pair)`
+  - `_learn_from_trade(position, pnl, reason)`
+  - `_load_blacklists()`
+  - `_load_state()`
   - `_monitor_existing_positions()`
   - `_monitor_mempool()`
   - `_monitor_new_pairs()`
@@ -438,11 +478,26 @@
   - `_optimize_strategies()`
   - `_process_opportunities()`
   - `_retrain_models()`
+  - `_save_blacklists()`
+  - `_save_state()`
+  - `_send_daily_report()`
+  - `_set_exit_orders(position, strategy)`
   - `_setup_event_handlers()`
+  - `_should_dca(position)`
+  - `_should_retrain(data)`
   - `_track_whales()`
   - `_update_blacklists()`
+  - `_update_community_blacklists()`
+  - `_update_trailing_stop(position, current_price)`
+  - `_validate_models(models)`
+  - `_validate_new_parameters(params)`
+  - `_warmup_collectors()`
+  - `emergency_close_all_positions()`
+  - `get_stats()`
   - `initialize()`
   - `run()`
+  - `save_state()`
+  - `shutdown()`
   - `start()`
   - `stop()`
 - **TradingOpportunity**
@@ -532,17 +587,30 @@
 - **AllocationStrategy**
 - **PortfolioManager**
   - `__init__(config)`
+  - `_calculate_avg_loss()`
+  - `_calculate_avg_win()`
+  - `_calculate_diversification_score()`
+  - `_calculate_profit_factor()`
+  - `_calculate_risk_exposure()`
+  - `_calculate_total_risk()`
+  - `_check_daily_loss_limit()`
   - `_equal_weight_allocation(opportunities, available)`
   - `_risk_parity_allocation(opportunities, available)`
+  - `_update_performance_metrics()`
   - `allocate_capital(opportunities)`
   - `calculate_allocation(token)`
   - `can_open_position()`
   - `check_diversification()`
+  - `close_position(position_id)`
   - `get_available_balance()`
+  - `get_open_positions()`
+  - `get_performance_report()`
   - `get_portfolio_metrics()`
+  - `get_portfolio_summary()`
   - `get_portfolio_value()`
   - `rebalance_portfolio()`
   - `update_portfolio(trade)`
+  - `update_position(position_id, modifications)`
 - **PortfolioMetrics**
 - **Position**
   - `age()`
@@ -1085,8 +1153,10 @@
 - `main()`
 - `parse_arguments()`
 - `setup_logger(name, mode)`
+- `setup_multichain_config()`
 - `test_api_connection()`
 - `test_connection()`
+- `test_dex_collector(logger_instance)`
 - `test_redis_connection()`
 - `test_web3_connection()`
 - `verify_models_loaded()`
@@ -1231,6 +1301,49 @@
 
 ## ml.optimization
 - File: `ml\optimization\__init__.py`
+
+## ml.optimization.hyperparameter
+- File: `ml\optimization\hyperparameter.py`
+
+### Classes & Methods
+- **HyperparameterOptimizer**
+  - `__init__(config)`
+  - `_bayesian_suggest_params()`
+  - `_calculate_objective(performance)`
+  - `_default_config()`
+  - `_define_parameter_spaces()`
+  - `_expected_improvement(X, mean, std, best_y)`
+  - `_fit_gp_surrogate(X, y)`
+  - `_grid_search_next()`
+  - `_random_sample_params()`
+  - `get_best_parameters()`
+  - `get_optimization_summary()`
+  - `optimize(performance_data, current_params)`
+- **HyperparameterSpace**
+
+## ml.optimization.reinforcement
+- File: `ml\optimization\reinforcement.py`
+
+### Classes & Methods
+- **Action**
+- **Experience**
+- **RLOptimizer**
+  - `__init__(config)`
+  - `_action_from_key(key)`
+  - `_action_to_key(action)`
+  - `_calculate_reward(performance_data)`
+  - `_default_config()`
+  - `_discretize_state(state)`
+  - `_extract_state(performance_data)`
+  - `_greedy_action(state)`
+  - `_initialize_policy()`
+  - `_random_action()`
+  - `_select_action(state)`
+  - `_train_step()`
+  - `get_current_policy()`
+  - `get_training_stats()`
+  - `update_policy(performance_data)`
+- **State**
 
 ## ml.training
 - File: `ml\training\__init__.py`
@@ -1421,6 +1534,7 @@
   - `api_update_strategy_params(request)`
   - `backtest_page(request)`
   - `dashboard_page(request)`
+  - `error_handler_middleware(request, handler)`
   - `index(request)`
   - `performance_page(request)`
   - `positions_page(request)`
@@ -1537,6 +1651,23 @@
 ### Functions
 - `daily_report()`
 
+## scripts.dev_autofix_imports
+- File: `scripts\dev_autofix_imports.py`
+
+### Functions
+- `build_local_name_index(root)`
+- `collect_annotation_names(tree)`
+- `ensure_future_annotations(lines)`
+- `ensure_import_lines(src, need_typing, need_decimal, add_future)`
+- `find_external_modules(src)`
+- `find_py_files(root)`
+- `get_module_path(root, file)`
+- `insertion_index(src)`
+- `is_local_module(root, name)`
+- `main()`
+- `normalize_req_line(line)`
+- `parse_imports(src)`
+
 ## scripts.emergency_stop
 - File: `scripts\emergency_stop.py`
 
@@ -1548,6 +1679,22 @@
 
 ### Functions
 - `export_trades(format, output)`
+
+## scripts.fix_illegal_relatives
+- File: `scripts\fix_illegal_relatives.py`
+
+### Functions
+- `compute_absolute_from_relative(curr_module, node)`
+- `fix_file(root, file, write, no_backup)`
+- `iter_py_files(root)`
+- `main()`
+- `module_exists(root, mod)`
+- `path_to_module(root, file)`
+- `rewrite_import_line(abs_module, node)`
+- `top_level_package(mod)`
+
+### Classes & Methods
+- **Replacement**
 
 ## scripts.generate_report
 - File: `scripts\generate_report.py`
@@ -2259,6 +2406,9 @@
 ## trading.orders.order_manager
 - File: `trading\orders\order_manager.py`
 
+### Functions
+- `build_order(token_address, side, amount, order_type)`
+
 ### Classes & Methods
 - **ExecutionEngine**
   - `__init__(config)`
@@ -2271,7 +2421,6 @@
 - **ExecutionStrategy**
 - **Fill**
 - **Order**
-  - `build_order(token_address, side, amount, order_type)`
 - **OrderBook**
 - **OrderManager**
   - `__init__(config)`
@@ -2310,6 +2459,7 @@
   - `get_metrics()`
   - `get_open_orders()`
   - `get_order_status(order_id)`
+  - `initialize()`
   - `modify_order(order_id, modifications)`
   - `submit_order(order_id)`
 - **OrderRiskMonitor**
@@ -2633,7 +2783,7 @@
 
 ### Classes & Methods
 - **Analyzer**
-  - `__init__(root, exclude, exclude_glob, strict_config, project_only)`
+  - `__init__(root, exclude, exclude_glob, strict_config, project_only, deps_check)`
   - `_check_sig(defsig, given_pos, given_kw)`
   - `_is_glob_excluded(path)`
   - `_target_kind_from_sig(sig, fq)`

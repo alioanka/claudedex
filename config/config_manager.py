@@ -68,7 +68,7 @@ class TradingConfig(BaseModel):
     min_liquidity_threshold: float = 50000  # $50k
     max_gas_price: int = 100  # Gwei
 
-    min_opportunity_score: float = 0.7  # Minimum score to consider an opportunity
+    min_opportunity_score: float = 0.05  # Minimum score to consider an opportunity
 
     # ADD THIS:
     strategies: Dict[str, Dict[str, Any]] = {
