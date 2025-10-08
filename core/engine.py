@@ -240,23 +240,51 @@ class TradingBotEngine:
             await self.alert_manager.send_critical(f"Engine error: {e}")
             raise
             
+    # ============================================================================
+    # FIX #5: core/engine.py - Fix chain configuration
+    # Around line 248 in _monitor_new_pairs method
+    # ============================================================================
+
+    # FIND THIS CODE:
     async def _monitor_new_pairs(self):
         """Continuously monitor for new trading pairs"""
         logger.info("🔍 Starting new pairs monitoring loop...")
+        
         # Get enabled chains from config
-        # Get enabled chains from config - try multiple config paths
+        # OLD (BROKEN):
+        # enabled_chains = self.config.get('data_sources', {}).get('dexscreener', {}).get('chains', ['ethereum'])
+        
+        # NEW (FIXED) - Try multiple config paths:
         enabled_chains = (
             self.config.get('data_sources', {}).get('dexscreener', {}).get('chains') or
             self.config.get('chains', {}).get('enabled') or
-            self.config.get('enabled_chains', '').split(',') or
-            ['ethereum', 'bsc', 'base', 'arbitrum', 'polygon']
+            []
         )
-
-        # Clean up chain names
-        enabled_chains = [chain.strip() for chain in enabled_chains if chain.strip()]
+        
+        # If still empty, try parsing ENABLED_CHAINS from config
+        if not enabled_chains:
+            enabled_chains_str = self.config.get('enabled_chains', 'ethereum,bsc,base,arbitrum,polygon')
+            if isinstance(enabled_chains_str, str):
+                enabled_chains = [c.strip() for c in enabled_chains_str.split(',') if c.strip()]
+            else:
+                enabled_chains = ['ethereum', 'bsc', 'base', 'arbitrum', 'polygon']
+        
+        # Filter out chains that are explicitly disabled
+        enabled_chains = [
+            chain for chain in enabled_chains 
+            if self.config.get(f'{chain}_enabled', 'true').lower() != 'false'
+        ]
+        
+        # ADD DEBUG LOG
+        logger.info(f"🌐 Config check:")
+        logger.info(f"   data_sources.dexscreener.chains: {self.config.get('data_sources', {}).get('dexscreener', {}).get('chains')}")
+        logger.info(f"   chains.enabled: {self.config.get('chains', {}).get('enabled')}")
+        logger.info(f"   enabled_chains: {self.config.get('enabled_chains')}")
+        logger.info(f"   Final enabled_chains: {enabled_chains}")
+        
         max_pairs_per_chain = self.config.get('chains', {}).get('max_pairs_per_chain', 50)
         discovery_interval = self.config.get('chains', {}).get('discovery_interval', 300)
-
+        
         logger.info(f"🌐 Multi-chain mode: {len(enabled_chains)} chains enabled")
         logger.info(f"   Chains: {', '.join(enabled_chains)}")
         logger.info(f"   Max pairs per chain: {max_pairs_per_chain}")
@@ -292,8 +320,25 @@ class TradingBotEngine:
                         
                         if pairs:
                             logger.info(f"    ✅ Found {len(pairs)} pairs on {chain.upper()}")
+
+                            # ADD THIS DEBUG CODE:
+                            if len(pairs) > 0:
+                                sample_pair = pairs[0]
+                                logger.info(f"    🔍 DEBUG: Sample pair keys: {list(sample_pair.keys())}")
+                                logger.info(f"    🔍 DEBUG: Sample pair data:")
+                                logger.info(f"       token_symbol: {sample_pair.get('token_symbol')}")
+                                logger.info(f"       liquidity_usd: {sample_pair.get('liquidity_usd')}")
+                                logger.info(f"       liquidity: {sample_pair.get('liquidity')}")
+                                logger.info(f"       volume_24h: {sample_pair.get('volume_24h')}")
+                                logger.info(f"       price: {sample_pair.get('price')}")
+                                logger.info(f"       price_usd: {sample_pair.get('price_usd')}")
                             
-                            # Analyze each pair for opportunities
+                            # ============================================================================
+                            # FIX #4: core/engine.py - Fix liquidity key mismatch
+                            # Around line 300 in _monitor_new_pairs method
+                            # ============================================================================
+
+                            # FIND THIS CODE (around line 300):
                             for pair in pairs:
                                 try:
                                     self.stats['tokens_analyzed'] += 1
@@ -311,9 +356,22 @@ class TradingBotEngine:
                                         logger.debug(f"⛔ Pair {pair.get('pair_address', 'unknown')} is blacklisted")
                                         continue
                                     
-                                    # Quick liquidity filter
-                                    if pair.get('liquidity_usd', 0) < min_liquidity:
+                                    # REPLACE THIS SECTION:
+                                    # OLD (BROKEN):
+                                    # if pair.get('liquidity_usd', 0) < min_liquidity:
+                                    #     continue
+                                    
+                                    # NEW (FIXED) - Check both possible key names:
+                                    liquidity = pair.get('liquidity_usd') or pair.get('liquidity') or 0
+                                    
+                                    # ADD DEBUG LOG
+                                    logger.info(f"  🔍 Checking {pair.get('token_symbol', 'UNKNOWN')}: liq=${liquidity:,.0f}, min=${min_liquidity:,.0f}")
+                                    
+                                    if liquidity < min_liquidity:
+                                        logger.debug(f"    ❌ Rejected: Liquidity ${liquidity:,.0f} < ${min_liquidity:,.0f}")
                                         continue
+                                    
+                                    logger.info(f"  ✅ Passed liquidity filter: {pair.get('token_symbol', 'UNKNOWN')}")
                                     
                                     # Analyze opportunity
                                     logger.debug(f"Analyzing pair: {pair.get('token_symbol', 'UNKNOWN')} on {chain}")
@@ -321,14 +379,12 @@ class TradingBotEngine:
                                     
                                     if opportunity:
                                         min_score = self.config.get('trading', {}).get('min_opportunity_score', 0.7)
-                                        
-                                        logger.debug(f"   Score: {opportunity.score:.3f} (min: {min_score})")
+                                        logger.debug(f"  Score: {opportunity.score:.3f} (min: {min_score})")
                                         
                                         if opportunity.score > min_score:
-                                            opportunity.chain = chain  # Ensure chain is set
+                                            opportunity.chain = chain
                                             all_opportunities.append(opportunity)
                                             self.stats['opportunities_found'] += 1
-                                            
                                             logger.info(f"🎯 OPPORTUNITY: {pair.get('token_symbol')} on {chain.upper()} - Score: {opportunity.score:.3f}")
                                             
                                             # Emit event
@@ -336,7 +392,9 @@ class TradingBotEngine:
                                                 event_type=EventType.OPPORTUNITY_FOUND,
                                                 data=opportunity
                                             ))
-                                        
+                                        else:
+                                            logger.info(f"  ❌ Score too low: {opportunity.score:.3f} < {min_score}")
+                                            
                                 except Exception as e:
                                     logger.debug(f"Error analyzing pair on {chain}: {e}")
                                     continue
