@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 import logging
 from datetime import datetime
 import argparse
+from typing import Dict
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -33,6 +34,45 @@ load_dotenv()
 
 # Global logger
 logger = None
+
+# ============================================================================
+# 🔧 PATCH 1: Multi-Chain Configuration Helper
+# ADD THIS ENTIRE FUNCTION (around line 55)
+# ============================================================================
+
+def setup_multichain_config() -> Dict:
+    """
+    Setup multi-chain configuration from environment variables
+    This enables the bot to discover opportunities across multiple blockchains
+    """
+    import os
+    
+    # Parse enabled chains from environment
+    enabled_chains_str = os.getenv('ENABLED_CHAINS', 'ethereum,bsc,base')
+    enabled_chains = [c.strip() for c in enabled_chains_str.split(',')]
+    
+    print(f"🌐 Enabled chains: {', '.join(enabled_chains)}")
+    
+    # Multi-chain configuration
+    chains_config = {
+        'enabled': enabled_chains,
+        'default': os.getenv('DEFAULT_CHAIN', 'ethereum'),
+        'max_pairs_per_chain': int(os.getenv('MAX_PAIRS_PER_CHAIN', '50')),
+        'discovery_interval': int(os.getenv('DISCOVERY_INTERVAL_SECONDS', '300')),
+    }
+    
+    # Chain-specific settings
+    for chain in enabled_chains:
+        chain_upper = chain.upper()
+        chains_config[chain] = {
+            'enabled': True,
+            'min_liquidity': float(os.getenv(f'{chain_upper}_MIN_LIQUIDITY', '10000')),
+            'min_volume': float(os.getenv(f'{chain_upper}_MIN_VOLUME', '5000')),
+            'max_age_hours': int(os.getenv(f'{chain_upper}_MAX_AGE_HOURS', '24'))
+        }
+        print(f"  └─ {chain}: min_liq=${chains_config[chain]['min_liquidity']:,.0f}")
+    
+    return chains_config
 
 # Add this function to main.py after imports:
 def setup_logger(name: str, mode: str) -> logging.Logger:
@@ -241,12 +281,25 @@ class TradingBotApplication:
                     'emergency_stop_drawdown': float(os.getenv('MAX_DRAWDOWN_PERCENT', '25')) / 100
                 }
 
+# ============================================================================
+            # 🔧 PATCH 2: Multi-Chain Data Sources Configuration
+            # REPLACE the existing 'data_sources' block with this (around line 340)
+            # ============================================================================
+            
             if 'data_sources' not in self.config:
+                # Setup multi-chain configuration
+                chains_config = setup_multichain_config()
+                
                 self.config['data_sources'] = {
                     'dexscreener': {
                         'api_key': os.getenv('DEXSCREENER_API_KEY', ''),
                         'base_url': 'https://api.dexscreener.com/latest',
-                        'rate_limit': 300
+                        'rate_limit': 300,
+                        'chains': chains_config['enabled'],  # ✅ ADD THIS
+                        'min_liquidity': 10000,
+                        'min_volume': 5000,
+                        'max_age_hours': 24,
+                        'cache_duration': 60
                     },
                     'social': {
                         'twitter_api_key': os.getenv('TWITTER_API_KEY', ''),
@@ -254,6 +307,9 @@ class TradingBotApplication:
                         'enabled': bool(os.getenv('TWITTER_API_KEY'))
                     }
                 }
+                
+                # ✅ ADD THIS: Store chains config at top level too
+                self.config['chains'] = chains_config
 
             if 'web3' not in self.config:
                 self.config['web3'] = {
@@ -497,6 +553,15 @@ class TradingBotApplication:
             
             # Start the trading engine
             self.logger.info("🎯 Starting trading engine...")
+
+            # Log multi-chain status
+            if 'chains' in self.config:
+                chains = self.config['chains']['enabled']
+                self.logger.info(f"🌐 Multi-chain mode: {len(chains)} chains enabled")
+                self.logger.info(f"   Chains: {', '.join(chains)}")
+            else:
+                self.logger.warning("⚠️ Single-chain mode (multi-chain not configured)")
+
             
             # Create main tasks
             tasks = [

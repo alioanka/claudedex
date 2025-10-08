@@ -813,11 +813,19 @@ class AlertsSystem:
             if not config or not config.enabled:
                 return False
             
-            # Build message
-            # ❌ REMOVE OR FIX THIS LINE:
-            # timestamp_str = alert.timestamp.strftime("%Y-%m-%d %H:%M:%S") if config.get('include_timestamp', True) else ""
+            # ✅ FIX: Access config dict properly
+            telegram_config = config.config  # Get the config dict
             
-            # ✅ USE THIS INSTEAD:
+            # ✅ FIX: Get bot_token and chat_id from the config dict
+            bot_token = telegram_config.get('telegram_bot_token') or telegram_config.get('bot_token')
+            chat_id = telegram_config.get('telegram_chat_id') or telegram_config.get('chat_id')
+            
+            # ✅ ADD: Validate credentials
+            if not bot_token or not chat_id:
+                logger.warning("Telegram credentials not configured. Skipping alert.")
+                return False
+            
+            # Build message
             timestamp_str = alert.timestamp.strftime("%Y-%m-%d %H:%M:%S")
             
             emoji_map = {
@@ -835,13 +843,10 @@ class AlertsSystem:
             
             if alert.metadata:
                 message += "\n_Details:_\n"
-                for key, value in alert.metadata.items():
+                for key, value in list(alert.metadata.items())[:5]:  # Limit to 5
                     message += f"• {key}: {value}\n"
             
             # Send to Telegram
-            bot_token = config.bot_token
-            chat_id = config.chat_id
-            
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             payload = {
                 'chat_id': chat_id,

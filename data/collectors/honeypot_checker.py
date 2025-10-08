@@ -52,8 +52,8 @@ class HoneypotChecker:
                     rpc_url = rpc_urls[0]
                     
                     # ✅ ADD THIS CHECK
-                    if 'alchemy.com' in rpc_url and '/v2/' in rpc_url and not rpc_url.endswith('/v2/'):
-                        logger.warning(f"⚠️ Alchemy URL looks incomplete: {rpc_url}")
+#                    if 'alchemy.com' in rpc_url and '/v2/' in rpc_url and not rpc_url.endswith('/v2/'):
+#                        logger.warning(f"⚠️ Alchemy URL looks incomplete: {rpc_url}")
                     
                     self.web3_connections[chain] = Web3(Web3.HTTPProvider(rpc_url))
                     logger.info(f"✅ Connected to {chain.name}: {rpc_url[:50]}...")

@@ -70,6 +70,10 @@ class DashboardEndpoints:
     
     def _setup_routes(self):
         """Setup all routes"""
+
+        # ✅ ADD: Add error handling middleware FIRST
+        self.app.middlewares.append(self.error_handler_middleware)
+        
         # Static files
         self.app.router.add_static('/static', 'dashboard/static', name='static')
         
@@ -198,6 +202,28 @@ class DashboardEndpoints:
             text=template.render(page='performance'),
             content_type='text/html'
         )
+
+    @web.middleware
+    async def error_handler_middleware(self, request, handler):
+        """
+        Middleware to handle errors gracefully and suppress scanner spam
+        """
+        try:
+            return await handler(request)
+        except web.HTTPException as e:
+            # Let HTTP exceptions through normally
+            raise
+        except asyncio.CancelledError:
+            # Client disconnected - this is normal, don't log
+            raise
+        except ConnectionResetError:
+            # Client closed connection - normal, don't log
+            return web.Response(status=499, text="Client Closed Request")
+        except Exception as e:
+            # Log actual errors but don't spam
+            if not any(x in str(e).lower() for x in ['bad request', 'invalid method', 'connection reset']):
+                logger.error(f"Request error: {e}")
+            return web.Response(status=500, text="Internal Server Error")
     
     async def settings_page(self, request):
         """Settings management page"""
@@ -887,21 +913,40 @@ class DashboardEndpoints:
         """Server-Sent Events for real-time updates"""
         async with sse_response(request) as resp:
             try:
+                # ✅ ADD: Send initial connection message
+                await resp.send(json.dumps({
+                    'type': 'connected',
+                    'timestamp': datetime.utcnow().isoformat()
+                }))
+                
                 while True:
-                    # Send updates
-                    if self.portfolio:
-                        summary = self.portfolio.get_portfolio_summary()
-                        await resp.send(json.dumps({
-                            'type': 'portfolio_update',
-                            'data': {
-                                'value': float(summary.get('total_value', 0)),
-                                'pnl': float(summary.get('daily_pnl', 0))
-                            }
-                        }))
-                    
-                    await asyncio.sleep(2)
+                    try:
+                        # ✅ FIX: Increase interval from 2 to 10 seconds
+                        await asyncio.sleep(10)  # Changed from 2 to 10
+                        
+                        # Send updates
+                        if self.portfolio:
+                            summary = self.portfolio.get_portfolio_summary()
+                            await resp.send(json.dumps({
+                                'type': 'portfolio_update',
+                                'data': {
+                                    'value': float(summary.get('total_value', 0)),
+                                    'pnl': float(summary.get('daily_pnl', 0)),
+                                    'timestamp': datetime.utcnow().isoformat()
+                                }
+                            }))
+                        
+                    except asyncio.CancelledError:
+                        logger.debug("SSE connection cancelled")
+                        break
+                        
             except ConnectionResetError:
-                pass
+                logger.debug("SSE connection reset by client")
+            except Exception as e:
+                logger.error(f"SSE error: {e}")
+            finally:
+                logger.debug("SSE connection closed")
+        
         return resp
     
     # ==================== HELPER METHODS ====================
@@ -926,20 +971,31 @@ class DashboardEndpoints:
         """Broadcast updates to all connected clients"""
         while True:
             try:
-                await asyncio.sleep(1)
+                # ✅ FIX: Reduce from 1 second to 5 seconds
+                await asyncio.sleep(5)  # Changed from 1 to 5
+                
+                # ✅ ADD: Only broadcast if there are connected clients
+                if not self.sio.manager.rooms:
+                    continue
                 
                 # Broadcast dashboard updates
                 if self.portfolio:
-                    summary = self.portfolio.get_portfolio_summary()
-                    await self.sio.emit('dashboard_update', {
-                        'portfolio_value': float(summary.get('total_value', 0)),
-                        'daily_pnl': float(summary.get('daily_pnl', 0)),
-                        'open_positions': summary.get('open_positions', 0)
-                    })
+                    try:
+                        summary = self.portfolio.get_portfolio_summary()
+                        await self.sio.emit('dashboard_update', {
+                            'portfolio_value': float(summary.get('total_value', 0)),
+                            'daily_pnl': float(summary.get('daily_pnl', 0)),
+                            'open_positions': summary.get('open_positions', 0),
+                            'timestamp': datetime.utcnow().isoformat()
+                        })
+                    except Exception as e:
+                        logger.debug(f"Error broadcasting update: {e}")
                 
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 logger.error(f"Error in broadcast loop: {e}")
-                await asyncio.sleep(5)
+                await asyncio.sleep(10)  # Wait longer on error
     
     async def _generate_report(self, period, start_date, end_date, metrics):
         """Generate performance report"""

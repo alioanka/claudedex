@@ -243,76 +243,148 @@ class TradingBotEngine:
     async def _monitor_new_pairs(self):
         """Continuously monitor for new trading pairs"""
         logger.info("🔍 Starting new pairs monitoring loop...")
-#        token_address = address.lower()  # Always normalize to lowercase!
-        
+        # Get enabled chains from config
+        enabled_chains = self.config.get('data_sources', {}).get('dexscreener', {}).get('chains', ['ethereum'])
+        max_pairs_per_chain = self.config.get('chains', {}).get('max_pairs_per_chain', 50)
+        discovery_interval = self.config.get('chains', {}).get('discovery_interval', 300)
+
+        logger.info(f"🌐 Multi-chain mode: {len(enabled_chains)} chains enabled")
+        logger.info(f"   Chains: {', '.join(enabled_chains)}")
+        logger.info(f"   Max pairs per chain: {max_pairs_per_chain}")
+        logger.info(f"   Discovery interval: {discovery_interval}s")
+
+        discovery_count = 0
+
         while self.state == BotState.RUNNING:
             try:
-                # Get new pairs from DexScreener
-                logger.info("Fetching new pairs from DexScreener...")
-                new_pairs = await self.dex_collector.get_new_pairs()
+                discovery_count += 1
+                all_opportunities = []
+                chain_stats = {}
                 
-                logger.info(f"📊 Received {len(new_pairs) if new_pairs else 0} pairs from DexScreener")
+                logger.info(f"🌐 Discovery cycle #{discovery_count} across {len(enabled_chains)} chains...")
+                cycle_start = asyncio.get_event_loop().time()
                 
-                if not new_pairs:
-                    logger.warning("No pairs returned from DexScreener - waiting 10 seconds")
-                    await asyncio.sleep(10)
-                    continue
-                
-                for pair in new_pairs:
-                    self.stats['tokens_analyzed'] += 1
-                    
-                    # ✅ IMPROVED: Check blacklist with normalized address
-                    token_address = pair.get('token_address', '').lower()
-                    
-                    if token_address in self.blacklisted_tokens:
-                        logger.debug(f"⛔ Token {pair.get('token_symbol')} ({token_address[:10]}...) is blacklisted - SKIPPING")
-                        continue
-                    
-                    
-                    # Quick filter checks
-                    if self._is_blacklisted(pair):
-                        logger.debug(f"Pair {pair.get('pair_address', 'unknown')} is blacklisted")
-                        continue
+                # ✅ CRITICAL: Loop through each enabled chain
+                for chain in enabled_chains:
+                    try:
+                        chain_start = asyncio.get_event_loop().time()
                         
-                    # Analyze opportunity
-                    logger.info(f"Analyzing pair: {pair.get('token_symbol', 'UNKNOWN')}")
-                    opportunity = await self._analyze_opportunity(pair)
-                    
-                    # ... rest of code
-                    
-                    min_score = self.config.get('trading', {}).get('min_opportunity_score', 0.7)
-                    
-                    if opportunity:
-                        # ADD THIS DEBUG LOG:
-                        logger.info(f"✨ Opportunity created for {pair.get('token_symbol')}")
-                        logger.info(f"   Score: {opportunity.score:.3f} (min: {min_score})")
-                        logger.info(f"   ML Confidence: {opportunity.ml_confidence:.3f}")
-                        logger.info(f"   Pump Prob: {opportunity.pump_probability:.3f}")
-                        logger.info(f"   Rug Prob: {opportunity.rug_probability:.3f}")
+                        # Get chain-specific settings
+                        chain_config = self.config.get('chains', {}).get(chain, {})
+                        min_liquidity = chain_config.get('min_liquidity', 10000)
                         
-                        if opportunity.score > min_score:
-                            self.pending_opportunities.append(opportunity)
-                            self.stats['opportunities_found'] += 1
+                        logger.info(f"  🔗 Scanning {chain.upper()}... (min liquidity: ${min_liquidity:,.0f})")
+                        
+                        # ✅ CRITICAL: Pass chain parameter to get_new_pairs
+                        pairs = await self.dex_collector.get_new_pairs(
+                            chain=chain, 
+                            limit=max_pairs_per_chain
+                        )
+                        
+                        if pairs:
+                            logger.info(f"    ✅ Found {len(pairs)} pairs on {chain.upper()}")
                             
-                            logger.info(f"🎯 OPPORTUNITY FOUND: {pair.get('token_symbol')} - Score: {opportunity.score:.3f}")
-                            
-                            # Emit event
-                            await self.event_bus.emit(Event(
-                                event_type=EventType.OPPORTUNITY_FOUND,
-                                data=opportunity
-                            ))
+                            # Analyze each pair for opportunities
+                            for pair in pairs:
+                                try:
+                                    self.stats['tokens_analyzed'] += 1
+                                    
+                                    # Normalize token address
+                                    token_address = pair.get('token_address', '').lower()
+                                    
+                                    # Check blacklist
+                                    if token_address in self.blacklisted_tokens:
+                                        logger.debug(f"⛔ Token {pair.get('token_symbol')} is blacklisted - SKIPPING")
+                                        continue
+                                    
+                                    # Quick filter checks
+                                    if self._is_blacklisted(pair):
+                                        logger.debug(f"⛔ Pair {pair.get('pair_address', 'unknown')} is blacklisted")
+                                        continue
+                                    
+                                    # Quick liquidity filter
+                                    if pair.get('liquidity_usd', 0) < min_liquidity:
+                                        continue
+                                    
+                                    # Analyze opportunity
+                                    logger.debug(f"Analyzing pair: {pair.get('token_symbol', 'UNKNOWN')} on {chain}")
+                                    opportunity = await self._analyze_opportunity(pair)
+                                    
+                                    if opportunity:
+                                        min_score = self.config.get('trading', {}).get('min_opportunity_score', 0.7)
+                                        
+                                        logger.debug(f"   Score: {opportunity.score:.3f} (min: {min_score})")
+                                        
+                                        if opportunity.score > min_score:
+                                            opportunity.chain = chain  # Ensure chain is set
+                                            all_opportunities.append(opportunity)
+                                            self.stats['opportunities_found'] += 1
+                                            
+                                            logger.info(f"🎯 OPPORTUNITY: {pair.get('token_symbol')} on {chain.upper()} - Score: {opportunity.score:.3f}")
+                                            
+                                            # Emit event
+                                            await self.event_bus.emit(Event(
+                                                event_type=EventType.OPPORTUNITY_FOUND,
+                                                data=opportunity
+                                            ))
+                                        
+                                except Exception as e:
+                                    logger.debug(f"Error analyzing pair on {chain}: {e}")
+                                    continue
                         else:
-                            # ADD THIS:
-                            logger.warning(f"❌ Opportunity score {opportunity.score:.3f} below minimum {min_score} for {pair.get('token_symbol')}")
-                    else:
-                        # ADD THIS:
-                        logger.warning(f"❌ No opportunity created for {pair.get('token_symbol')} - analysis returned None")
+                            logger.warning(f"    ⚠️  No pairs found on {chain.upper()}")
+                        
+                        # Track stats
+                        chain_elapsed = asyncio.get_event_loop().time() - chain_start
+                        chain_stats[chain] = {
+                            'pairs_found': len(pairs) if pairs else 0,
+                            'opportunities': len([o for o in all_opportunities if o.chain == chain]),
+                            'scan_time': chain_elapsed
+                        }
+                        
+                        # Brief delay between chains to avoid rate limits
+                        await asyncio.sleep(2)
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Error scanning {chain}: {e}")
+                        chain_stats[chain] = {'pairs_found': 0, 'opportunities': 0, 'error': str(e)}
+                        continue
                 
-                await asyncio.sleep(5)  # Check every 5 seconds for new data
+                # Log summary
+                cycle_elapsed = asyncio.get_event_loop().time() - cycle_start
+                total_pairs = sum(s.get('pairs_found', 0) for s in chain_stats.values())
+                total_opps = len(all_opportunities)
                 
+                logger.info(f"📊 Discovery #{discovery_count} Complete ({cycle_elapsed:.1f}s):")
+                logger.info(f"   • Total pairs scanned: {total_pairs}")
+                logger.info(f"   • Opportunities found: {total_opps}")
+                for chain, stats in chain_stats.items():
+                    logger.info(f"   • {chain.upper()}: {stats.get('pairs_found', 0)} pairs → "
+                            f"{stats.get('opportunities', 0)} opportunities "
+                            f"({stats.get('scan_time', 0):.1f}s)")
+                
+                # Add opportunities to pending queue
+                if all_opportunities:
+                    # Sort by score
+                    all_opportunities.sort(key=lambda x: x.score, reverse=True)
+                    
+                    # Add to pending
+                    self.pending_opportunities.extend(all_opportunities[:10])  # Top 10
+                    
+                    logger.info(f"📋 Added {min(len(all_opportunities), 10)} opportunities to pending queue")
+                else:
+                    logger.info("⏸️  No qualifying opportunities in this cycle")
+                
+                # Wait before next discovery cycle
+                logger.info(f"⏳ Waiting {discovery_interval}s until next discovery cycle...")
+                await asyncio.sleep(discovery_interval)
+                
+            except asyncio.CancelledError:
+                logger.info("Discovery loop cancelled")
+                break
             except Exception as e:
-                logger.error(f"Error monitoring pairs: {e}", exc_info=True)
-                await asyncio.sleep(10)
+                logger.error(f"Error in multi-chain discovery: {e}", exc_info=True)
+                await asyncio.sleep(60)  # Wait longer on error
                 
     async def _analyze_opportunity(self, pair: Dict) -> Optional[TradingOpportunity]:
         """
