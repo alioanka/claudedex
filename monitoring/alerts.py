@@ -382,49 +382,21 @@ class AlertsSystem:
     ):
         """Send trading-specific alerts"""
         try:
-            # Determine alert type and priority
-            alert_map = {
-                "position_opened": (AlertType.POSITION_OPENED, AlertPriority.MEDIUM),
-                "position_closed": (AlertType.POSITION_CLOSED, AlertPriority.MEDIUM),
-                "stop_loss": (AlertType.STOP_LOSS_HIT, AlertPriority.HIGH),
-                "take_profit": (AlertType.TAKE_PROFIT_HIT, AlertPriority.MEDIUM),
-                "trailing_stop": (AlertType.TRAILING_STOP_UPDATED, AlertPriority.LOW)
-            }
+            # Use send_alert_internal directly with simple message
+            message = position.get('message', '')
+            if not message:
+                # Build message from position data
+                message = f"Trade Alert: {event_type}"
+                if 'token_symbol' in position:
+                    message += f" - {position['token_symbol']}"
             
-            alert_type, priority = alert_map.get(
-                event_type,
-                (AlertType.POSITION_OPENED, AlertPriority.MEDIUM)
-            )
-            
-            # Format message
-            emoji = self._get_emoji(alert_type)
-            
-            if event_type == "position_opened":
-                title = f"{emoji} New Position Opened"
-                message = self._format_position_opened(position)
-            elif event_type == "position_closed":
-                title = f"{emoji} Position Closed"
-                message = self._format_position_closed(position, kwargs.get("pnl"))
-            elif event_type == "stop_loss":
-                title = f"{emoji} Stop Loss Hit!"
-                message = self._format_stop_loss(position, kwargs.get("loss"))
-                priority = AlertPriority.HIGH
-            elif event_type == "take_profit":
-                title = f"{emoji} Take Profit Hit!"
-                message = self._format_take_profit(position, kwargs.get("profit"))
-            else:
-                title = f"{emoji} Trading Event"
-                message = json.dumps(position, default=str)
-            
-            # Send alert
-            await self.send_alert(
-                alert_type=alert_type,
-                title=title,
+            await self.send_alert_internal(
+                alert_type=AlertType.POSITION_OPENED,
+                title=f"Trade: {event_type}",
                 message=message,
-                priority=priority,
+                priority=AlertPriority.MEDIUM,
                 data=position
             )
-            
         except Exception as e:
             logger.error(f"Error sending trading alert: {e}")
     
@@ -979,7 +951,8 @@ class AlertsSystem:
     
     def _get_emoji(self, alert_type: AlertType) -> str:
         """Get emoji for alert type"""
-        if not self.config["use_emoji"]:
+        # Safe config access with default
+        if not self.config.get("use_emoji", True):
             return ""
         
         emoji_map = {
