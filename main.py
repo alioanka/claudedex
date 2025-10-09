@@ -424,23 +424,23 @@ class TradingBotApplication:
 
             # ✅ ADD THIS: Parse enabled_chains from .env and add to config
             enabled_chains_str = os.getenv('ENABLED_CHAINS', 'ethereum,bsc,base,arbitrum,polygon')
-            config['enabled_chains'] = enabled_chains_str
-            config['chains'] = config.get('chains', {})
-            config['chains']['enabled'] = [c.strip() for c in enabled_chains_str.split(',')]
+            self.config['enabled_chains'] = enabled_chains_str
+            self.config['chains'] = self.config.get('chains', {})
+            self.config['chains']['enabled'] = [c.strip() for c in enabled_chains_str.split(',')]
 
             # Parse chain-specific liquidity settings
-            config['chains']['ethereum'] = {'min_liquidity': int(os.getenv('ETHEREUM_MIN_LIQUIDITY', 10000))}
-            config['chains']['bsc'] = {'min_liquidity': int(os.getenv('BSC_MIN_LIQUIDITY', 1000))}
-            config['chains']['base'] = {'min_liquidity': int(os.getenv('BASE_MIN_LIQUIDITY', 5000))}
-            config['chains']['arbitrum'] = {'min_liquidity': int(os.getenv('ARBITRUM_MIN_LIQUIDITY', 10000))}
-            config['chains']['polygon'] = {'min_liquidity': int(os.getenv('POLYGON_MIN_LIQUIDITY', 1000))}
+            self.config['chains']['ethereum'] = {'min_liquidity': int(os.getenv('ETHEREUM_MIN_LIQUIDITY', 10000))}
+            self.config['chains']['bsc'] = {'min_liquidity': int(os.getenv('BSC_MIN_LIQUIDITY', 1000))}
+            self.config['chains']['base'] = {'min_liquidity': int(os.getenv('BASE_MIN_LIQUIDITY', 5000))}
+            self.config['chains']['arbitrum'] = {'min_liquidity': int(os.getenv('ARBITRUM_MIN_LIQUIDITY', 10000))}
+            self.config['chains']['polygon'] = {'min_liquidity': int(os.getenv('POLYGON_MIN_LIQUIDITY', 1000))}
 
-            config['chains']['max_pairs_per_chain'] = int(os.getenv('MAX_PAIRS_PER_CHAIN', 50))
-            config['chains']['discovery_interval'] = int(os.getenv('DISCOVERY_INTERVAL_SECONDS', 300))
+            self.config['chains']['max_pairs_per_chain'] = int(os.getenv('MAX_PAIRS_PER_CHAIN', 50))
+            self.config['chains']['discovery_interval'] = int(os.getenv('DISCOVERY_INTERVAL_SECONDS', 300))
 
-            logger.info("✅ Chain configuration loaded:")
-            logger.info(f"  Enabled chains: {config['chains']['enabled']}")
-            logger.info(f"  Chain settings: {config['chains']}")
+            self.logger.info("✅ Chain configuration loaded:")
+            self.logger.info(f"  Enabled chains: {self.config['chains']['enabled']}")
+            self.logger.info(f"  Chain settings: {self.config['chains']}")
 
             # Initialize trading engine
             self.logger.info("Initializing trading engine...")
