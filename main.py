@@ -281,7 +281,7 @@ class TradingBotApplication:
                     'emergency_stop_drawdown': float(os.getenv('MAX_DRAWDOWN_PERCENT', '25')) / 100
                 }
 
-# ============================================================================
+            # ============================================================================
             # 🔧 PATCH 2: Multi-Chain Data Sources Configuration
             # REPLACE the existing 'data_sources' block with this (around line 340)
             # ============================================================================
@@ -421,6 +421,26 @@ class TradingBotApplication:
             if 'private_key' in flat_config:
                 # Only show first 10 chars for security
                 self.logger.info(f"DEBUG: private_key value: {str(flat_config.get('private_key'))[:10]}...")
+
+            # ✅ ADD THIS: Parse enabled_chains from .env and add to config
+            enabled_chains_str = os.getenv('ENABLED_CHAINS', 'ethereum,bsc,base,arbitrum,polygon')
+            config['enabled_chains'] = enabled_chains_str
+            config['chains'] = config.get('chains', {})
+            config['chains']['enabled'] = [c.strip() for c in enabled_chains_str.split(',')]
+
+            # Parse chain-specific liquidity settings
+            config['chains']['ethereum'] = {'min_liquidity': int(os.getenv('ETHEREUM_MIN_LIQUIDITY', 10000))}
+            config['chains']['bsc'] = {'min_liquidity': int(os.getenv('BSC_MIN_LIQUIDITY', 1000))}
+            config['chains']['base'] = {'min_liquidity': int(os.getenv('BASE_MIN_LIQUIDITY', 5000))}
+            config['chains']['arbitrum'] = {'min_liquidity': int(os.getenv('ARBITRUM_MIN_LIQUIDITY', 10000))}
+            config['chains']['polygon'] = {'min_liquidity': int(os.getenv('POLYGON_MIN_LIQUIDITY', 1000))}
+
+            config['chains']['max_pairs_per_chain'] = int(os.getenv('MAX_PAIRS_PER_CHAIN', 50))
+            config['chains']['discovery_interval'] = int(os.getenv('DISCOVERY_INTERVAL_SECONDS', 300))
+
+            logger.info("✅ Chain configuration loaded:")
+            logger.info(f"  Enabled chains: {config['chains']['enabled']}")
+            logger.info(f"  Chain settings: {config['chains']}")
 
             # Initialize trading engine
             self.logger.info("Initializing trading engine...")

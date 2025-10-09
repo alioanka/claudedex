@@ -395,6 +395,19 @@ class HoneypotChecker:
         
     def _calculate_verdict(self, checks: Dict) -> Dict:
         """Calculate final honeypot verdict based on all checks"""
+
+        # ✅ HIGH ACTIVITY BYPASS - If token has high volume/liquidity, be lenient
+        has_high_activity = False
+        for api_name, result in checks.items():
+            if isinstance(result, dict):
+                volume = result.get("volume_24h", 0)
+                liquidity = result.get("liquidity", 0)
+                # $100K+ volume OR $50K+ liquidity = likely legitimate
+                if volume > 100000 or liquidity > 50000:
+                    has_high_activity = True
+                    logger.info(f"🔥 High activity detected: vol=${volume:,.0f}, liq=${liquidity:,.0f}")
+                    break
+
         honeypot_indicators = []
         confidence_scores = []
         reasons = []
@@ -493,7 +506,21 @@ class HoneypotChecker:
                     honeypot_indicators.append("low_liquidity")
                     confidence_scores.append(0.7)
                     reasons.append(f"Low liquidity: ${liquidity_usd:,.0f}")
-                    
+
+        # Then BEFORE the final verdict calculation (around line 483), add:
+        if has_high_activity and avg_confidence < 0.8:
+            logger.info(f"✅ Bypassing strict check due to high activity")
+            return {
+                "is_honeypot": False,
+                "confidence": 0.5,
+                "risk_level": "low",
+                "reason": "High trading activity suggests legitimate token",
+                "checks": checks,
+                "indicators": honeypot_indicators,
+                "bypass_reason": "high_activity"
+            } 
+
+        # Calculate final verdict
         # Calculate final verdict
         if not honeypot_indicators:
             return {
@@ -504,24 +531,27 @@ class HoneypotChecker:
                 "checks": checks,
                 "indicators": []
             }
-            
+
         # Calculate weighted confidence
         avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0
-        
-        # Determine risk level
-        if avg_confidence >= 0.8 or len(honeypot_indicators) >= 3:
+
+        # ✅ FIXED THRESHOLDS - Much more reasonable:
+        if avg_confidence >= 0.9 and len(honeypot_indicators) >= 4:
+            risk_level = "critical"
+            is_honeypot = True
+        elif avg_confidence >= 0.75 and len(honeypot_indicators) >= 3:
             risk_level = "high"
             is_honeypot = True
         elif avg_confidence >= 0.6 or len(honeypot_indicators) >= 2:
             risk_level = "medium"
-            is_honeypot = True
+            is_honeypot = False  # ✅ LET MEDIUM RISK THROUGH
         elif avg_confidence >= 0.4 or len(honeypot_indicators) >= 1:
             risk_level = "low"
             is_honeypot = False
         else:
             risk_level = "minimal"
             is_honeypot = False
-            
+
         return {
             "is_honeypot": is_honeypot,
             "confidence": avg_confidence,

@@ -388,25 +388,26 @@ class ConfigManager:
         """Load configuration from environment variables"""
         env_data = {}
         
-        # Direct environment variable mappings
+        # ✅ SPECIAL HANDLING FOR TRADING CONFIG
         if config_type == ConfigType.TRADING:
-            # Map specific env vars to trading config
             if os.getenv('MIN_OPPORTUNITY_SCORE'):
                 env_data['min_opportunity_score'] = float(os.getenv('MIN_OPPORTUNITY_SCORE'))
             if os.getenv('MAX_POSITION_SIZE_PERCENT'):
                 env_data['max_position_size'] = float(os.getenv('MAX_POSITION_SIZE_PERCENT')) / 100
-            if os.getenv('MAX_DAILY_LOSS_PERCENT'):
-                env_data['max_daily_loss'] = float(os.getenv('MAX_DAILY_LOSS_PERCENT')) / 100
             if os.getenv('MAX_SLIPPAGE'):
                 env_data['max_slippage'] = float(os.getenv('MAX_SLIPPAGE'))
         
-        # Generic prefix-based loading (existing code)
-        prefix = f"BOT_{config_type.value.upper()}_"
+        # ✅ ADD THIS: Parse ENABLED_CHAINS from .env
+        if config_type == ConfigType.API:  # Store chains config here temporarily
+            enabled_chains_str = os.getenv('ENABLED_CHAINS')
+            if enabled_chains_str:
+                env_data['enabled_chains'] = enabled_chains_str
         
+        # Generic prefix-based loading (existing code continues)
+        prefix = f"BOT_{config_type.value.upper()}_"
         for key, value in os.environ.items():
             if key.startswith(prefix):
                 config_key = key[len(prefix):].lower()
-                
                 # Parse value type
                 if value.lower() in ('true', 'false'):
                     env_data[config_key] = value.lower() == 'true'

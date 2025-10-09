@@ -245,51 +245,44 @@ class TradingBotEngine:
     # Around line 248 in _monitor_new_pairs method
     # ============================================================================
 
-    # FIND THIS CODE:
     async def _monitor_new_pairs(self):
         """Continuously monitor for new trading pairs"""
         logger.info("🔍 Starting new pairs monitoring loop...")
         
-        # Get enabled chains from config
-        # OLD (BROKEN):
-        # enabled_chains = self.config.get('data_sources', {}).get('dexscreener', {}).get('chains', ['ethereum'])
+        # ✅ FIX: Simplified chain configuration reading
+        # Try multiple config paths
+        enabled_chains = None
         
-        # NEW (FIXED) - Try multiple config paths:
-        enabled_chains = (
-            self.config.get('data_sources', {}).get('dexscreener', {}).get('chains') or
-            self.config.get('chains', {}).get('enabled') or
-            []
-        )
+        # Method 1: Direct from config
+        if 'enabled_chains' in self.config:
+            chains_str = self.config['enabled_chains']
+            if isinstance(chains_str, str):
+                enabled_chains = [c.strip() for c in chains_str.split(',') if c.strip()]
+            elif isinstance(chains_str, list):
+                enabled_chains = chains_str
         
-        # If still empty, try parsing ENABLED_CHAINS from config
+        # Method 2: From chains.enabled
+        if not enabled_chains and 'chains' in self.config:
+            enabled_chains = self.config['chains'].get('enabled')
+        
+        # Method 3: From data_sources.dexscreener.chains
+        if not enabled_chains and 'data_sources' in self.config:
+            enabled_chains = self.config.get('data_sources', {}).get('dexscreener', {}).get('chains')
+        
+        # Default fallback
         if not enabled_chains:
-            enabled_chains_str = self.config.get('enabled_chains', 'ethereum,bsc,base,arbitrum,polygon')
-            if isinstance(enabled_chains_str, str):
-                enabled_chains = [c.strip() for c in enabled_chains_str.split(',') if c.strip()]
-            else:
-                enabled_chains = ['ethereum', 'bsc', 'base', 'arbitrum', 'polygon']
+            enabled_chains = ['ethereum', 'bsc', 'base', 'arbitrum', 'polygon']
+            logger.warning(f"⚠️ Using default chains: {enabled_chains}")
         
-        # Filter out chains that are explicitly disabled
-        enabled_chains = [
-            chain for chain in enabled_chains 
-            if self.config.get(f'{chain}_enabled', 'true').lower() != 'false'
-        ]
-        
-        # ADD DEBUG LOG
-        logger.info(f"🌐 Config check:")
-        logger.info(f"   data_sources.dexscreener.chains: {self.config.get('data_sources', {}).get('dexscreener', {}).get('chains')}")
-        logger.info(f"   chains.enabled: {self.config.get('chains', {}).get('enabled')}")
-        logger.info(f"   enabled_chains: {self.config.get('enabled_chains')}")
-        logger.info(f"   Final enabled_chains: {enabled_chains}")
-        
+        # Get other settings
         max_pairs_per_chain = self.config.get('chains', {}).get('max_pairs_per_chain', 50)
         discovery_interval = self.config.get('chains', {}).get('discovery_interval', 300)
         
         logger.info(f"🌐 Multi-chain mode: {len(enabled_chains)} chains enabled")
-        logger.info(f"   Chains: {', '.join(enabled_chains)}")
-        logger.info(f"   Max pairs per chain: {max_pairs_per_chain}")
-        logger.info(f"   Discovery interval: {discovery_interval}s")
-
+        logger.info(f"  Chains: {', '.join(enabled_chains)}")
+        logger.info(f"  Max pairs per chain: {max_pairs_per_chain}")
+        logger.info(f"  Discovery interval: {discovery_interval}s")
+        
         discovery_count = 0
 
         while self.state == BotState.RUNNING:
