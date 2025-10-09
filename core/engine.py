@@ -1061,9 +1061,9 @@ class TradingBotEngine:
             logger.info(f"   Checking liquidity...")
             current_liquidity = opportunity.liquidity
  #           min_liquidity = self.config.get('trading', {}).get('min_liquidity_threshold', 50000)
-            chain_name = opportunity.get('chain', 'ethereum').lower()
+            chain_name = opportunity.chain.lower() if hasattr(opportunity, 'chain') else 'ethereum'
             chain_config = self.config.get('chains', {}).get(chain_name, {})
-            min_liquidity = chain_config.get('min_liquidity', 50000)  # Use chain-specific or default to 50k            
+            min_liquidity = chain_config.get('min_liquidity', 50000)          
             logger.info(f"   Current liquidity: ${current_liquidity:,.2f}, Min required: ${min_liquidity:,.2f}")
             
             if current_liquidity < min_liquidity:
