@@ -120,10 +120,24 @@ class TradingBotEngine:
         self.rl_optimizer = RLOptimizer()
         
         # Trading components
+
+        executor_config = {
+            'web3_provider_url': config.get('web3', {}).get('provider_url'),
+            'private_key': config.get('security', {}).get('private_key'),
+            'chain_id': config.get('web3', {}).get('chain_id', 1),
+            'max_gas_price': config.get('web3', {}).get('max_gas_price', 500),
+            'gas_limit': config.get('web3', {}).get('gas_limit', 500000),
+            'max_retries': 3,
+            'retry_delay': 1,
+            'uniswap_v2_router': '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',  # Mainnet router
+            '1inch_api_key': config.get('api', {}).get('1inch_api_key'),
+            'paraswap_api_key': config.get('api', {}).get('paraswap_api_key'),
+        }
+
         self.strategy_manager = StrategyManager(config['trading']['strategies'])
         self.order_manager = OrderManager(config)
         self.position_tracker = PositionTracker()
-        self.trade_executor = TradeExecutor(config)
+        self.trade_executor = TradeExecutor(executor_config)
         
         # Monitoring
         self.alert_manager = AlertManager(config['notifications'])
@@ -602,58 +616,102 @@ class TradingBotEngine:
     async def _execute_opportunity(self, opportunity: TradingOpportunity):
         """Execute a trading opportunity"""
         try:
-            # Select strategy
-            strategy = self.strategy_manager.select_strategy(opportunity)
+            token_symbol = opportunity.metadata.get('token_symbol', 'UNKNOWN')
             
-            # Prepare order
-            order = await self.order_manager.prepare_order({
-                'token_address': opportunity.token_address,
-                'side': 'buy',
-                'amount': opportunity.recommended_position_size,
-                'strategy': strategy,
-                'slippage': self._calculate_slippage(opportunity),
-                'gas_price_multiplier': self._calculate_gas_multiplier(opportunity)
-            })
+            # Check if in DRY_RUN mode
+            if self.config.get('dry_run', True):
+                logger.info(f"🎯 DRY RUN - WOULD EXECUTE TRADE:")
+                logger.info(f"   Token: {token_symbol}")
+                logger.info(f"   Address: {opportunity.token_address}")
+                logger.info(f"   Chain: {opportunity.chain}")
+                logger.info(f"   Price: ${opportunity.price:.8f}")
+                logger.info(f"   Score: {opportunity.score:.3f}")
+                
+                # Update stats
+                self.stats['total_trades'] += 1
+                self.stats['successful_trades'] += 1
+                
+                # Send alert
+                await self.alert_manager.send_trade_alert(
+                    f"✅ DRY RUN: {token_symbol}\n"
+                    f"Chain: {opportunity.chain}\n"
+                    f"Price: ${opportunity.price:.8f}\n"
+                    f"Score: {opportunity.score:.3f}\n"
+                    f"(Paper trade - no real execution)"
+                )
+                return
             
-            # MEV protection
-            order = await self._apply_mev_protection(order, opportunity)
+            # REAL EXECUTION
+            logger.info(f"💰 EXECUTING REAL TRADE for {token_symbol}")
+            
+            # Create trade order
+            from trading.executors.base_executor import TradeOrder
+            
+            order = TradeOrder(
+                token_address=opportunity.token_address,
+                side='buy',
+                amount=opportunity.recommended_position_size / opportunity.price,  # ETH amount
+                slippage=0.05,  # 5% slippage
+                deadline=300,  # 5 minutes
+                gas_price_multiplier=1.2,
+                use_mev_protection=True,
+                urgency='normal',
+                metadata={
+                    'opportunity_id': opportunity.metadata.get('opportunity_id'),
+                    'token_symbol': token_symbol,
+                    'chain': opportunity.chain,
+                    'score': opportunity.score
+                }
+            )
             
             # Execute trade
             result = await self.trade_executor.execute(order)
             
-            if result['success']:
+            if result.success:
                 # Track position
-                position = await self.position_tracker.open_position({
+                position = {
                     'token_address': opportunity.token_address,
-                    'entry_price': result['execution_price'],
-                    'amount': result['amount'],
-                    'strategy': strategy,
+                    'token_symbol': token_symbol,
+                    'entry_price': result.execution_price,
+                    'amount': result.token_amount,
+                    'entry_value': opportunity.recommended_position_size,
+                    'tx_hash': result.tx_hash,
+                    'chain': opportunity.chain,
+                    'strategy': {'name': opportunity.entry_strategy},
                     'risk_score': opportunity.risk_score,
+                    'entry_time': datetime.now(),
+                    'stop_loss_percentage': 0.1,  # 10% stop loss
+                    'take_profit_percentage': 0.3,  # 30% take profit
                     'metadata': opportunity.metadata
-                })
+                }
                 
                 self.active_positions[opportunity.token_address] = position
                 self.stats['total_trades'] += 1
+                self.stats['successful_trades'] += 1
                 
-                # Set stop loss and take profit
-                await self._set_exit_orders(position, strategy)
-                
-                # Alert
+                # Send success alert
                 await self.alert_manager.send_trade_alert(
-                    f"✅ Opened position in {opportunity.token_address[:8]}...\n"
-                    f"Price: {result['execution_price']}\n"
-                    f"Amount: {result['amount']}\n"
-                    f"Risk Score: {opportunity.risk_score.overall_risk:.2f}"
+                    f"✅ OPENED POSITION: {token_symbol}\n"
+                    f"Entry: ${result.execution_price:.8f}\n"
+                    f"Amount: {result.token_amount:.4f}\n"
+                    f"Value: ${opportunity.recommended_position_size:.2f}\n"
+                    f"Tx: {result.tx_hash[:10]}...\n"
+                    f"Gas: ${result.gas_used * result.gas_price / 1e18:.2f}"
                 )
                 
-                # Emit event
-                await self.event_bus.emit(Event(
-                    event_type=EventType.POSITION_OPENED,
-                    data=position
-                ))
+            else:
+                self.stats['failed_trades'] += 1
+                
+                # Send failure alert
+                await self.alert_manager.send_warning(
+                    f"❌ TRADE FAILED: {token_symbol}\n"
+                    f"Error: {result.error}\n"
+                    f"Route: {result.route}"
+                )
                 
         except Exception as e:
-            await self.alert_manager.send_error(f"Failed to execute opportunity: {e}")
+            logger.error(f"Error executing opportunity: {e}", exc_info=True)
+            await self.alert_manager.send_error(f"Trade execution error: {e}")
             
     async def _monitor_existing_positions(self):
         """Monitor and manage existing positions"""

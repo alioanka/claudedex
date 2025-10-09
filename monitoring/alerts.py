@@ -18,6 +18,14 @@ import hmac
 
 logger = logging.getLogger(__name__)
 
+# Add this function at the top of alerts.py
+def escape_markdown(text: str) -> str:
+    """Escape special characters for Telegram MarkdownV2"""
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
+
 class AlertPriority(Enum):
     """Alert priority levels"""
     LOW = "low"
@@ -813,19 +821,15 @@ class AlertsSystem:
             if not config or not config.enabled:
                 return False
             
-            # ✅ FIX: Access config dict properly
-            telegram_config = config.config  # Get the config dict
-            
-            # ✅ FIX: Get bot_token and chat_id from the config dict
+            telegram_config = config.config
             bot_token = telegram_config.get('telegram_bot_token') or telegram_config.get('bot_token')
             chat_id = telegram_config.get('telegram_chat_id') or telegram_config.get('chat_id')
             
-            # ✅ ADD: Validate credentials
             if not bot_token or not chat_id:
                 logger.warning("Telegram credentials not configured. Skipping alert.")
                 return False
             
-            # Build message
+            # Build message with proper escaping
             timestamp_str = alert.timestamp.strftime("%Y-%m-%d %H:%M:%S")
             
             emoji_map = {
@@ -837,21 +841,29 @@ class AlertsSystem:
             
             emoji = emoji_map.get(alert.priority, "📢")
             
-            message = f"{emoji} *{alert.title}*\n"
-            message += f"⏰ {timestamp_str}\n"
-            message += f"📝 {alert.message}\n"
+            # Escape BEFORE adding markdown formatting
+            title_escaped = escape_markdown(alert.title)
+            message_escaped = escape_markdown(alert.message)
+            timestamp_escaped = escape_markdown(timestamp_str)
+            
+            # Now build message with MarkdownV2 formatting
+            message = f"{emoji} *{title_escaped}*\n"
+            message += f"⏰ {timestamp_escaped}\n"
+            message += f"📝 {message_escaped}\n"
             
             if alert.metadata:
                 message += "\n_Details:_\n"
-                for key, value in list(alert.metadata.items())[:5]:  # Limit to 5
-                    message += f"• {key}: {value}\n"
+                for key, value in list(alert.metadata.items())[:5]:
+                    key_escaped = escape_markdown(str(key))
+                    value_escaped = escape_markdown(str(value))
+                    message += f"• {key_escaped}: {value_escaped}\n"
             
-            # Send to Telegram
+            # Send to Telegram with MarkdownV2
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             payload = {
                 'chat_id': chat_id,
                 'text': message,
-                'parse_mode': 'Markdown'
+                'parse_mode': 'MarkdownV2'  # Changed to MarkdownV2
             }
             
             async with aiohttp.ClientSession() as session:
@@ -1460,48 +1472,58 @@ class AlertsSystem:
 # (Replace the existing incomplete AlertManager at the end of the file)
 
 class AlertManager:
-    """Simplified alert manager wrapper around AlertsSystem"""
+    """Alert manager wrapper"""
     
-    def __init__(self, config: Dict):
-        """Initialize alert manager with config"""
-        self.config = config
+    def __init__(self, config: Dict = None):
+        """Initialize with optional config"""
+        self.config = config or {}
         self.alerts_system = AlertsSystem(config)
+    
+    async def initialize(self):
+        """Initialize alert manager"""
+        # Any initialization needed
+        pass
         
+    async def send_alert(self, alert_type: str, message: str, priority: str = 'medium'):
+        """Send generic alert"""
+        priority_map = {
+            'low': AlertPriority.LOW,
+            'medium': AlertPriority.MEDIUM,
+            'high': AlertPriority.HIGH,
+            'critical': AlertPriority.CRITICAL
+        }
+        
+        await self.alerts_system.send_alert_internal(
+            alert_type=AlertType.SYSTEM_ERROR,
+            title=message[:50],
+            message=message,
+            priority=priority_map.get(priority, AlertPriority.MEDIUM),
+            data={}
+        )
+    
     async def send_critical(self, message: str):
         """Send critical alert"""
-        await self.alerts_system.send_alert(
-            alert_type="system_error",  # Use string type for the wrapper method
-            message=message,
-            data={"severity": "critical"}
-        )
-        
+        await self.send_alert('critical', message, 'critical')
+    
     async def send_error(self, message: str):
         """Send error alert"""
-        await self.alerts_system.send_alert(
-            alert_type="system_error",
-            message=message,
-            data={"severity": "error"}
-        )
-        
+        await self.send_alert('error', message, 'high')
+    
     async def send_warning(self, message: str):
         """Send warning alert"""
-        await self.alerts_system.send_alert(
-            alert_type="high_risk_warning",
-            message=message,
-            data={"severity": "warning"}
-        )
-        
+        await self.send_alert('warning', message, 'medium')
+    
     async def send_info(self, message: str):
         """Send info alert"""
-        await self.alerts_system.send_alert(
-            alert_type="system_error",
-            message=message,
-            data={"severity": "info"}
-        )
-        
+        await self.send_alert('info', message, 'low')
+    
     async def send_trade_alert(self, message: str):
-        """Send trading alert"""
+        """Send trade alert"""
         await self.alerts_system.send_trading_alert(
             event_type="position_opened",
-            position={"message": message}
+            position={'message': message}
         )
+    
+    async def send_performance_summary(self, period: str, metrics: Dict):
+        """Send performance summary"""
+        await self.alerts_system.send_performance_summary(period, metrics)
