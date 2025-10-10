@@ -613,10 +613,30 @@ class TradingBotEngine:
                 await self.alert_manager.send_error(f"Error processing opportunities: {e}")
                 await asyncio.sleep(5)
                 
+    # ============================================================================
+    # FIX 4: engine.py - Add duplicate position check in _execute_opportunity
+    # Add this check at the beginning of _execute_opportunity method (around line 620)
+    # ============================================================================
+
     async def _execute_opportunity(self, opportunity: TradingOpportunity):
         """Execute a trading opportunity"""
         try:
             token_symbol = opportunity.metadata.get('token_symbol', 'UNKNOWN')
+            token_address = opportunity.token_address.lower()
+            
+            # CHECK FOR DUPLICATE POSITION
+            if token_address in self.active_positions:
+                logger.warning(f"⚠️ Already have position in {token_symbol} - SKIPPING")
+                return
+            
+            # CHECK PORTFOLIO LIMITS
+            if len(self.active_positions) >= self.config.get('max_positions', 10):
+                logger.warning(f"⚠️ Max positions reached ({len(self.active_positions)}) - SKIPPING")
+                return
+            
+            # Rest of the existing _execute_opportunity code...
+            # (Continue with the existing implementation)
+
             
             # Check if in DRY_RUN mode
             if self.config.get('dry_run', True):
@@ -713,89 +733,172 @@ class TradingBotEngine:
             logger.error(f"Error executing opportunity: {e}", exc_info=True)
             await self.alert_manager.send_error(f"Trade execution error: {e}")
             
+    # ============================================================================
+    # FIX 1: engine.py - Fix position monitoring and tracking
+    # Replace the entire _monitor_existing_positions method (around line 750)
+    # ============================================================================
+
     async def _monitor_existing_positions(self):
         """Monitor and manage existing positions"""
+        logger.info("🔍 Starting position monitoring loop...")
+        
         while self.state == BotState.RUNNING:
             try:
+                if not self.active_positions:
+                    await asyncio.sleep(5)
+                    continue
+                
+                logger.info(f"📊 Monitoring {len(self.active_positions)} active positions...")
+                
                 for token_address, position in list(self.active_positions.items()):
-                    # Get current price
-                    current_price = await self.dex_collector.get_token_price(token_address)
-                    
-                    if not current_price:
+                    try:
+                        # Get current price from DexScreener
+                        chain = position.get('chain', 'ethereum')
+                        current_price = await self.dex_collector.get_token_price(
+                            token_address, 
+                            chain=chain
+                        )
+                        
+                        if not current_price:
+                            logger.warning(f"⚠️ Could not get price for {token_address[:10]}...")
+                            continue
+                        
+                        # Update position with current price
+                        position['current_price'] = current_price
+                        position['current_value'] = current_price * position['amount']
+                        
+                        # Calculate P&L
+                        entry_value = position['entry_price'] * position['amount']
+                        current_value = current_price * position['amount']
+                        position['pnl'] = current_value - entry_value
+                        position['pnl_percentage'] = ((current_value - entry_value) / entry_value) * 100
+                        
+                        # Calculate holding time
+                        holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60  # minutes
+                        
+                        logger.info(
+                            f"  📈 {position.get('token_symbol', 'TOKEN')} - "
+                            f"Entry: ${position['entry_price']:.8f}, Current: ${current_price:.8f}, "
+                            f"P&L: {position['pnl_percentage']:.2f}% (${position['pnl']:.2f}), "
+                            f"Time: {holding_time:.1f}min"
+                        )
+                        
+                        # Check exit conditions
+                        should_exit, reason = await self._check_exit_conditions(position)
+                        
+                        if should_exit:
+                            logger.info(f"  🚪 EXIT SIGNAL for {position.get('token_symbol')}: {reason}")
+                            await self._close_position(position, reason)
+                        else:
+                            # Update position in tracker
+                            if hasattr(self, 'position_tracker') and self.position_tracker:
+                                await self.position_tracker.update_position(
+                                    position.get('tracker_id'),
+                                    {'current_price': current_price}
+                                )
+                        
+                    except Exception as e:
+                        logger.error(f"Error monitoring position {token_address[:10]}: {e}")
                         continue
-                        
-                    # Update position
-                    position['current_price'] = current_price
-                    position['pnl'] = self._calculate_pnl(position)
-                    position['pnl_percentage'] = self._calculate_pnl_percentage(position)
-                    
-                    # Check exit conditions
-                    should_exit, reason = await self._check_exit_conditions(position)
-                    
-                    if should_exit:
-                        await self._close_position(position, reason)
-                        
-                    # Check for trailing stop update
-                    elif position['strategy'].get('trailing_stop'):
-                        await self._update_trailing_stop(position, current_price)
-                        
-                    # Check for DCA opportunity
-                    elif await self._should_dca(position):
-                        await self._execute_dca(position)
-                        
-                await asyncio.sleep(1)  # Check every second
+                
+                # Log portfolio summary
+                total_value = sum(p.get('current_value', 0) for p in self.active_positions.values())
+                total_pnl = sum(p.get('pnl', 0) for p in self.active_positions.values())
+                logger.info(f"💼 Portfolio: {len(self.active_positions)} positions, Value: ${total_value:.2f}, P&L: ${total_pnl:.2f}")
+                
+                await asyncio.sleep(10)  # Check every 10 seconds
                 
             except Exception as e:
-                await self.alert_manager.send_error(f"Error monitoring positions: {e}")
-                await asyncio.sleep(5)
+                logger.error(f"Error in position monitoring loop: {e}", exc_info=True)
+                await asyncio.sleep(30)
+
                 
+    # ============================================================================
+    # FIX 2: engine.py - Fix _check_exit_conditions method (around line 820)
+    # ============================================================================
+
     async def _check_exit_conditions(self, position: Dict) -> tuple[bool, str]:
         """Check if position should be closed"""
-        # Take profit hit
-        if position['pnl_percentage'] >= position['take_profit_percentage']:
-            return True, "take_profit"
+        try:
+            # Get position details
+            pnl_percentage = position.get('pnl_percentage', 0)
+            holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60  # minutes
             
-        # Stop loss hit
-        if position['pnl_percentage'] <= -position['stop_loss_percentage']:
-            return True, "stop_loss"
+            # 1. Take profit hit (default 30%)
+            take_profit = position.get('take_profit_percentage', 0.3) * 100
+            if pnl_percentage >= take_profit:
+                logger.info(f"  ✅ Take profit hit: {pnl_percentage:.2f}% >= {take_profit:.2f}%")
+                return True, "take_profit"
             
-        # Time-based exit
-        if position.get('max_hold_time'):
-            if (datetime.now() - position['entry_time']).seconds > position['max_hold_time']:
+            # 2. Stop loss hit (default -10%)
+            stop_loss = -position.get('stop_loss_percentage', 0.1) * 100
+            if pnl_percentage <= stop_loss:
+                logger.info(f"  🛑 Stop loss hit: {pnl_percentage:.2f}% <= {stop_loss:.2f}%")
+                return True, "stop_loss"
+            
+            # 3. Time-based exit (default 60 minutes for scalping)
+            max_hold_time = position.get('max_hold_time', 60)  # minutes
+            if holding_time > max_hold_time:
+                logger.info(f"  ⏰ Max hold time reached: {holding_time:.1f}min > {max_hold_time}min")
                 return True, "time_limit"
+            
+            # 4. Trailing stop (if profit > 10%, exit if drops back to 5%)
+            if pnl_percentage > 10:
+                max_profit = position.get('max_profit', pnl_percentage)
+                position['max_profit'] = max(max_profit, pnl_percentage)
                 
-        # ML-based exit signal
-        exit_signal = await self._check_ml_exit_signal(position)
-        if exit_signal['should_exit']:
-            return True, f"ml_signal_{exit_signal['reason']}"
+                # If dropped more than 50% from peak
+                if pnl_percentage < (position['max_profit'] * 0.5):
+                    logger.info(f"  📉 Trailing stop: dropped from {position['max_profit']:.2f}% to {pnl_percentage:.2f}%")
+                    return True, "trailing_stop"
             
-        # Rug pull detection
-        if await self._detect_rug_pull_signs(position['token_address']):
-            return True, "rug_pull_detected"
+            # 5. Volatility exit (sudden price movement)
+            if 'last_price' in position:
+                price_change = abs((position['current_price'] - position['last_price']) / position['last_price']) * 100
+                if price_change > 20:  # 20% sudden move
+                    logger.info(f"  ⚡ High volatility exit: {price_change:.2f}% price change")
+                    return True, "high_volatility"
             
-        # Liquidity crisis
-        if await self._check_liquidity_crisis(position['token_address']):
-            return True, "liquidity_crisis"
+            position['last_price'] = position.get('current_price', position['entry_price'])
             
-        return False, ""
+            # 6. ML-based exit signal (if available)
+            if self.config.get('use_ml_exits', False):
+                exit_signal = await self._check_ml_exit_signal(position)
+                if exit_signal['should_exit']:
+                    return True, f"ml_signal_{exit_signal['reason']}"
+            
+            return False, ""
+            
+        except Exception as e:
+            logger.error(f"Error checking exit conditions: {e}")
+            # On error, hold position
+            return False, ""
         
+    # ============================================================================
+    # FIX 3: engine.py - Fix _close_position method (around line 880)
+    # ============================================================================
+
     async def _close_position(self, position: Dict, reason: str):
         """Close a trading position"""
         try:
-            # Prepare sell order
-            order = await self.order_manager.prepare_order({
-                'token_address': position['token_address'],
-                'side': 'sell',
-                'amount': position['amount'],
-                'urgency': 'high' if 'rug' in reason else 'normal'
-            })
+            token_address = position['token_address']
+            token_symbol = position.get('token_symbol', 'UNKNOWN')
             
-            # Execute
-            result = await self.trade_executor.execute(order)
+            logger.info(f"💰 CLOSING POSITION: {token_symbol} ({token_address[:10]}...)")
+            logger.info(f"   Reason: {reason}")
             
-            if result['success']:
-                # Calculate final P&L
-                final_pnl = result['execution_price'] * position['amount'] - position['entry_price'] * position['amount']
+            # Check if in DRY_RUN mode
+            if self.config.get('dry_run', True):
+                # Simulate closure
+                final_pnl = position.get('pnl', 0)
+                pnl_percentage = position.get('pnl_percentage', 0)
+                
+                logger.info(f"🎯 DRY RUN - WOULD CLOSE POSITION:")
+                logger.info(f"   Token: {token_symbol}")
+                logger.info(f"   Entry: ${position['entry_price']:.8f}")
+                logger.info(f"   Exit: ${position.get('current_price', position['entry_price']):.8f}")
+                logger.info(f"   P&L: ${final_pnl:.2f} ({pnl_percentage:.2f}%)")
+                logger.info(f"   Reason: {reason}")
                 
                 # Update stats
                 self.stats['total_profit'] += final_pnl
@@ -803,33 +906,90 @@ class TradingBotEngine:
                     self.stats['successful_trades'] += 1
                 else:
                     self.stats['failed_trades'] += 1
-                    
-                # Close position
-                await self.position_tracker.close_position(
-                    position['id'],
-                    result['execution_price'],
-                    reason
-                )
                 
-                # Remove from active
-                del self.active_positions[position['token_address']]
+                # Remove from active positions
+                del self.active_positions[token_address]
                 
-                # Alert
+                # Send alert
                 emoji = "💰" if final_pnl > 0 else "💸"
                 await self.alert_manager.send_trade_alert(
-                    f"{emoji} Closed position in {position['token_address'][:8]}...\n"
-                    f"Entry: {position['entry_price']}\n"
-                    f"Exit: {result['execution_price']}\n"
-                    f"P&L: ${final_pnl:.2f} ({position['pnl_percentage']:.2f}%)\n"
+                    f"{emoji} DRY RUN - Position Closed: {token_symbol}\n"
+                    f"Entry: ${position['entry_price']:.8f}\n"
+                    f"Exit: ${position.get('current_price', position['entry_price']):.8f}\n"
+                    f"P&L: ${final_pnl:.2f} ({pnl_percentage:.2f}%)\n"
                     f"Reason: {reason}"
                 )
                 
-                # Learn from trade
-                await self._learn_from_trade(position, final_pnl, reason)
+                return
+            
+            # REAL EXECUTION
+            from trading.executors.base_executor import TradeOrder
+            
+            # Prepare sell order
+            order = TradeOrder(
+                token_address=token_address,
+                side='sell',
+                amount=position['amount'],
+                slippage=0.05,  # 5% slippage for exit
+                deadline=300,
+                gas_price_multiplier=1.5 if 'rug' in reason else 1.2,
+                use_mev_protection=True,
+                urgency='high' if reason in ['stop_loss', 'rug_pull_detected'] else 'normal',
+                metadata={
+                    'position_id': position.get('id'),
+                    'token_symbol': token_symbol,
+                    'exit_reason': reason
+                }
+            )
+            
+            # Execute trade
+            result = await self.trade_executor.execute(order)
+            
+            if result.success:
+                # Calculate final P&L
+                exit_price = result.execution_price
+                final_pnl = (exit_price - position['entry_price']) * position['amount']
+                pnl_percentage = ((exit_price - position['entry_price']) / position['entry_price']) * 100
+                
+                # Update stats
+                self.stats['total_profit'] += final_pnl
+                if final_pnl > 0:
+                    self.stats['successful_trades'] += 1
+                else:
+                    self.stats['failed_trades'] += 1
+                
+                # Update position tracker
+                if hasattr(self, 'position_tracker') and position.get('tracker_id'):
+                    await self.position_tracker.close_position(position['tracker_id'])
+                
+                # Remove from active positions
+                del self.active_positions[token_address]
+                
+                # Send success alert
+                emoji = "💰" if final_pnl > 0 else "💸"
+                await self.alert_manager.send_trade_alert(
+                    f"{emoji} Position Closed: {token_symbol}\n"
+                    f"Entry: ${position['entry_price']:.8f}\n"
+                    f"Exit: ${exit_price:.8f}\n"
+                    f"P&L: ${final_pnl:.2f} ({pnl_percentage:.2f}%)\n"
+                    f"Reason: {reason}\n"
+                    f"Tx: {result.tx_hash[:10]}..."
+                )
+                
+                logger.info(f"✅ Successfully closed position: {token_symbol}")
+                
+            else:
+                logger.error(f"❌ Failed to close position: {result.error}")
+                await self.alert_manager.send_warning(
+                    f"⚠️ Failed to close {token_symbol}\n"
+                    f"Error: {result.error}\n"
+                    f"Will retry..."
+                )
                 
         except Exception as e:
-            await self.alert_manager.send_critical(f"Failed to close position: {e}")
-            
+            logger.error(f"Error closing position: {e}", exc_info=True)
+            await self.alert_manager.send_critical(f"Critical error closing position: {e}")
+
     async def _monitor_mempool(self):
         """Monitor mempool for relevant transactions"""
         while self.state == BotState.RUNNING:

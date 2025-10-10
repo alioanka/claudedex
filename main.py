@@ -503,7 +503,31 @@ class TradingBotApplication:
         for var, description in optional_vars.items():
             if not os.getenv(var):
                 self.logger.warning(f"Optional API key missing: {var} - {description}")
-                        
+
+
+    # And add this method to TradingBotApplication class:
+    async def _position_monitor(self):
+        """Monitor positions separately to ensure it's running"""
+        while not self.shutdown_event.is_set():
+            try:
+                if self.engine and self.engine.active_positions:
+                    positions_info = []
+                    for addr, pos in self.engine.active_positions.items():
+                        positions_info.append(
+                            f"{pos.get('token_symbol', 'TOKEN')}: "
+                            f"P&L {pos.get('pnl_percentage', 0):.2f}%"
+                        )
+                    
+                    if positions_info:
+                        self.logger.info(f"📊 Active Positions: {', '.join(positions_info)}")
+                
+                await asyncio.sleep(30)  # Report every 30 seconds
+                
+            except Exception as e:
+                self.logger.error(f"Error in position monitor: {e}")
+                await asyncio.sleep(60)
+
+
     async def _perform_system_checks(self):
         """Perform pre-flight system checks"""
         checks = [
@@ -589,7 +613,8 @@ class TradingBotApplication:
                 asyncio.create_task(self.health_checker.monitor()),
                 asyncio.create_task(self._status_reporter()),
                 asyncio.create_task(self.dashboard.start()),
-                asyncio.create_task(self._shutdown_monitor())
+                asyncio.create_task(self._shutdown_monitor()),
+                asyncio.create_task(self._position_monitor())  # Ensure positions are monitored
                 
             ]
             
