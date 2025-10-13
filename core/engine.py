@@ -624,31 +624,51 @@ class TradingBotEngine:
             token_symbol = opportunity.metadata.get('token_symbol', 'UNKNOWN')
             token_address = opportunity.token_address.lower()
             
-            # ✅ CHECK FOR DUPLICATE POSITION (should already be there)
+            # CHECK FOR DUPLICATE POSITION
             if token_address in self.active_positions:
                 logger.warning(f"⚠️ Already have position in {token_symbol} - SKIPPING")
                 return
             
-            # ✅ CHECK PORTFOLIO LIMITS (should already be there)
-            max_positions = self.config.get('max_positions', 10)
-            if len(self.active_positions) >= max_positions:
+            # CHECK PORTFOLIO LIMITS
+            if len(self.active_positions) >= self.config.get('max_positions', 10):
                 logger.warning(f"⚠️ Max positions reached ({len(self.active_positions)}) - SKIPPING")
                 return
             
-            # Rest of the method continues...
-            
-            # Rest of the existing _execute_opportunity code...
-            # (Continue with the existing implementation)
-
-            
             # Check if in DRY_RUN mode
             if self.config.get('dry_run', True):
-                logger.info(f"🎯 DRY RUN - WOULD EXECUTE TRADE:")
+                logger.info(f"🎯 DRY RUN - SIMULATING TRADE:")
                 logger.info(f"   Token: {token_symbol}")
                 logger.info(f"   Address: {opportunity.token_address}")
                 logger.info(f"   Chain: {opportunity.chain}")
                 logger.info(f"   Price: ${opportunity.price:.8f}")
                 logger.info(f"   Score: {opportunity.score:.3f}")
+                
+                # ✅ CREATE SIMULATED POSITION for tracking
+                from decimal import Decimal
+                from datetime import datetime
+                
+                simulated_amount = 1000 / opportunity.price  # $1000 position
+                
+                position = {
+                    'position_id': f"DRY-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{token_symbol}",
+                    'token_address': token_address,
+                    'token_symbol': token_symbol,
+                    'entry_price': Decimal(str(opportunity.price)),
+                    'amount': Decimal(str(simulated_amount)),
+                    'entry_value': Decimal('1000'),  # $1000 simulated position
+                    'entry_time': datetime.now(),
+                    'chain': opportunity.chain,
+                    'strategy': {'name': opportunity.entry_strategy},
+                    'risk_score': opportunity.risk_score,
+                    'stop_loss_percentage': 0.1,  # 10% stop loss
+                    'take_profit_percentage': 0.3,  # 30% take profit
+                    'max_hold_time': 60,  # 60 minutes
+                    'metadata': opportunity.metadata,
+                    'is_dry_run': True  # Mark as simulated
+                }
+                
+                # Add to active positions
+                self.active_positions[token_address] = position
                 
                 # Update stats
                 self.stats['total_trades'] += 1
@@ -656,16 +676,23 @@ class TradingBotEngine:
                 
                 # Send alert
                 await self.alert_manager.send_trade_alert(
-                    f"✅ DRY RUN: {token_symbol}\n"
+                    f"📝 DRY RUN - OPENED POSITION: {token_symbol}\n"
                     f"Chain: {opportunity.chain}\n"
-                    f"Price: ${opportunity.price:.8f}\n"
+                    f"Entry: ${opportunity.price:.8f}\n"
+                    f"Amount: {simulated_amount:.2f} tokens\n"
+                    f"Value: $1000 (simulated)\n"
                     f"Score: {opportunity.score:.3f}\n"
-                    f"(Paper trade - no real execution)"
+                    f"Stop Loss: -10% | Take Profit: +30%\n"
+                    f"Max Hold: 60 minutes"
                 )
+                
+                logger.info(f"✅ DRY RUN position added to tracking: {token_symbol}")
                 return
             
-            # REAL EXECUTION
+            # REAL EXECUTION (rest of the existing code continues unchanged...)
             logger.info(f"💰 EXECUTING REAL TRADE for {token_symbol}")
+            
+            # ... rest of existing real execution code ...
             
             # Create trade order
             from trading.executors.base_executor import TradeOrder
@@ -895,21 +922,32 @@ class TradingBotEngine:
             logger.info(f"💰 CLOSING POSITION: {token_symbol} ({token_address[:10]}...)")
             logger.info(f"   Reason: {reason}")
             
-            # Check if in DRY_RUN mode
-            if self.config.get('dry_run', True):
+            # Check if in DRY_RUN mode or position is simulated
+            is_dry_run = self.config.get('dry_run', True) or position.get('is_dry_run', False)
+            
+            if is_dry_run:
                 # Simulate closure
-                final_pnl = position.get('pnl', 0)
-                pnl_percentage = position.get('pnl_percentage', 0)
+                current_price = position.get('current_price', position['entry_price'])
+                entry_price = position['entry_price']
+                amount = position['amount']
                 
-                logger.info(f"🎯 DRY RUN - WOULD CLOSE POSITION:")
+                # Calculate P&L
+                final_pnl = (current_price - entry_price) * amount
+                pnl_percentage = float((current_price - entry_price) / entry_price * 100)
+                
+                # Calculate holding time
+                holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
+                
+                logger.info(f"📝 DRY RUN - CLOSING POSITION:")
                 logger.info(f"   Token: {token_symbol}")
-                logger.info(f"   Entry: ${position['entry_price']:.8f}")
-                logger.info(f"   Exit: ${position.get('current_price', position['entry_price']):.8f}")
-                logger.info(f"   P&L: ${final_pnl:.2f} ({pnl_percentage:.2f}%)")
+                logger.info(f"   Entry: ${entry_price:.8f}")
+                logger.info(f"   Exit: ${current_price:.8f}")
+                logger.info(f"   P&L: ${final_pnl:.2f} ({pnl_percentage:+.2f}%)")
+                logger.info(f"   Holding Time: {holding_time:.1f} minutes")
                 logger.info(f"   Reason: {reason}")
                 
                 # Update stats
-                self.stats['total_profit'] += final_pnl
+                self.stats['total_profit'] += float(final_pnl)
                 if final_pnl > 0:
                     self.stats['successful_trades'] += 1
                 else:
@@ -922,13 +960,18 @@ class TradingBotEngine:
                 emoji = "💰" if final_pnl > 0 else "💸"
                 await self.alert_manager.send_trade_alert(
                     f"{emoji} DRY RUN - Position Closed: {token_symbol}\n"
-                    f"Entry: ${position['entry_price']:.8f}\n"
-                    f"Exit: ${position.get('current_price', position['entry_price']):.8f}\n"
-                    f"P&L: ${final_pnl:.2f} ({pnl_percentage:.2f}%)\n"
-                    f"Reason: {reason}"
+                    f"Entry: ${entry_price:.8f}\n"
+                    f"Exit: ${current_price:.8f}\n"
+                    f"P&L: ${final_pnl:.2f} ({pnl_percentage:+.2f}%)\n"
+                    f"Holding Time: {holding_time:.1f}min\n"
+                    f"Reason: {reason}\n"
+                    f"(Paper trade - no real execution)"
                 )
                 
+                logger.info(f"✅ DRY RUN position closed and removed from tracking")
                 return
+            
+            # REAL EXECUTION continues with existing code...
             
             # REAL EXECUTION
             from trading.executors.base_executor import TradeOrder
