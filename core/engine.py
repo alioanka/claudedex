@@ -36,6 +36,7 @@ from trading.orders.position_tracker import PositionTracker
 
 from monitoring.alerts import AlertManager
 from monitoring.performance import PerformanceTracker
+from monitoring.logger import StructuredLogger  # Add import at top
 
 from security.wallet_security import WalletSecurityManager
 
@@ -143,6 +144,8 @@ class TradingBotEngine:
         # Monitoring
         self.alert_manager = AlertManager(config['notifications'])
         self.performance_tracker = PerformanceTracker()
+
+        self.structured_logger = StructuredLogger("TradingBot", config.get('logging', {}))
         
         # Security
         self.wallet_manager = WalletSecurityManager(config['security'])
