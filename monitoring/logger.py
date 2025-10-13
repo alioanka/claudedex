@@ -1012,10 +1012,11 @@ class TradeFormatter(logging.Formatter):
     def format(self, record):
         if hasattr(record, 'trade_data'):
             trade = record.trade_data
+            timestamp = datetime.fromtimestamp(record.created).strftime('%Y-%m-%d %H:%M:%S')
             return (
-                f"{record.created} | {trade['symbol']} | "
-                f"{trade['action']} | P&L: {trade['pnl']} | "
-                f"ROI: {trade['roi']} | {trade['strategy']}"
+                f"{timestamp} | {trade['symbol']} | "
+                f"{trade['action']} | P&L: ${trade['pnl']:.2f} | "
+                f"ROI: {trade['roi']:.2%} | {trade['strategy']}"
             )
         return super().format(record)
 

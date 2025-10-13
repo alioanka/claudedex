@@ -3,6 +3,7 @@ Core Trading Engine - Orchestrates all bot operations
 """
 
 import asyncio
+import uuid
 import logging  # ADD THIS LINE
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
@@ -952,6 +953,27 @@ class TradingBotEngine:
                     self.stats['successful_trades'] += 1
                 else:
                     self.stats['failed_trades'] += 1
+
+                # After line 967 (after self.stats['failed_trades'] += 1)
+                # Add trade logging
+                trade_data = {
+                    'trade_id': position.get('id', str(uuid.uuid4())),
+                    'timestamp': datetime.now(),
+                    'token_address': token_address,
+                    'token_symbol': token_symbol,
+                    'strategy': position.get('strategy', 'unknown'),
+                    'action': 'close',
+                    'entry_price': float(entry_price),
+                    'exit_price': float(current_price),
+                    'entry_amount': float(amount),
+                    'pnl': float(final_pnl),
+                    'roi': pnl_percentage / 100,
+                    'holding_time': holding_time,
+                    'exit_reason': reason
+                }
+
+                # Log the trade
+                self.structured_logger.log_trade(trade_data)
                 
                 # Remove from active positions
                 del self.active_positions[token_address]
