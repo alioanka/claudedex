@@ -30,6 +30,8 @@ logging.addLevelName(TRADE_LOG, "TRADE")
 logging.addLevelName(PROFIT_LOG, "PROFIT")
 logging.addLevelName(LOSS_LOG, "LOSS")
 
+logger = logging.getLogger(__name__)
+
 class MetricType(Enum):
     """Types of performance metrics"""
     RETURN = "return"
