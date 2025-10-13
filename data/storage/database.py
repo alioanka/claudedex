@@ -744,57 +744,59 @@ class DatabaseManager:
             return stats
 
     async def get_performance_summary(self) -> Dict[str, Any]:
-            """Get comprehensive performance summary from database"""
-            try:
-                if not self.db or not self.db.is_connected:
-                    return {'error': 'Database not connected'}
+        """Get comprehensive performance summary from database"""
+        try:
+            # ✅ FIX: Use self.pool instead of self.db
+            if not self.pool or not self.is_connected:
+                return {'error': 'Database not connected'}
+            
+            # ✅ FIX: Use self.pool.acquire() instead of self.db.acquire()
+            async with self.pool.acquire() as conn:
+                # Get all closed trades
+                trades = await conn.fetch("""
+                    SELECT 
+                        COUNT(*) as total_trades,
+                        COUNT(*) FILTER (WHERE profit_loss > 0) as winning_trades,
+                        COUNT(*) FILTER (WHERE profit_loss <= 0) as losing_trades,
+                        SUM(profit_loss) as total_pnl,
+                        AVG(profit_loss) as avg_pnl,
+                        AVG(profit_loss) FILTER (WHERE profit_loss > 0) as avg_win,
+                        AVG(profit_loss) FILTER (WHERE profit_loss <= 0) as avg_loss,
+                        MAX(profit_loss) as best_trade,
+                        MIN(profit_loss) as worst_trade
+                    FROM trades
+                    WHERE status = 'closed' AND side = 'buy'
+                """)
                 
-                async with self.db.acquire() as conn:
-                    # Get all closed trades
-                    trades = await conn.fetch("""
-                        SELECT 
-                            COUNT(*) as total_trades,
-                            COUNT(*) FILTER (WHERE profit_loss > 0) as winning_trades,
-                            COUNT(*) FILTER (WHERE profit_loss <= 0) as losing_trades,
-                            SUM(profit_loss) as total_pnl,
-                            AVG(profit_loss) as avg_pnl,
-                            AVG(profit_loss) FILTER (WHERE profit_loss > 0) as avg_win,
-                            AVG(profit_loss) FILTER (WHERE profit_loss <= 0) as avg_loss,
-                            MAX(profit_loss) as best_trade,
-                            MIN(profit_loss) as worst_trade
-                        FROM trades
-                        WHERE status = 'closed' AND side = 'buy'
-                    """)
-                    
-                    row = trades[0] if trades else None
-                    if not row:
-                        return {
-                            'total_trades': 0,
-                            'winning_trades': 0,
-                            'losing_trades': 0,
-                            'total_pnl': 0,
-                            'win_rate': 0,
-                            'message': 'No closed trades yet'
-                        }
-                    
-                    total = row['total_trades'] or 0
-                    wins = row['winning_trades'] or 0
-                    losses = row['losing_trades'] or 0
-                    
+                row = trades[0] if trades else None
+                if not row:
                     return {
-                        'total_trades': total,
-                        'winning_trades': wins,
-                        'losing_trades': losses,
-                        'win_rate': (wins / total * 100) if total > 0 else 0,
-                        'total_pnl': float(row['total_pnl'] or 0),
-                        'avg_pnl': float(row['avg_pnl'] or 0),
-                        'avg_win': float(row['avg_win'] or 0),
-                        'avg_loss': float(row['avg_loss'] or 0),
-                        'best_trade': float(row['best_trade'] or 0),
-                        'worst_trade': float(row['worst_trade'] or 0),
-                        'active_positions': len(self.active_positions),
-                        'positions_on_cooldown': len(self.recently_closed)
+                        'total_trades': 0,
+                        'winning_trades': 0,
+                        'losing_trades': 0,
+                        'total_pnl': 0,
+                        'win_rate': 0,
+                        'message': 'No closed trades yet'
                     }
-            except Exception as e:
-                logger.error(f"Error getting performance summary: {e}")
-                return {'error': str(e)}
+                
+                total = row['total_trades'] or 0
+                wins = row['winning_trades'] or 0
+                losses = row['losing_trades'] or 0
+                
+                return {
+                    'total_trades': total,
+                    'winning_trades': wins,
+                    'losing_trades': losses,
+                    'win_rate': (wins / total * 100) if total > 0 else 0,
+                    'total_pnl': float(row['total_pnl'] or 0),
+                    'avg_pnl': float(row['avg_pnl'] or 0),
+                    'avg_win': float(row['avg_win'] or 0),
+                    'avg_loss': float(row['avg_loss'] or 0),
+                    'best_trade': float(row['best_trade'] or 0),
+                    'worst_trade': float(row['worst_trade'] or 0),
+                    'active_positions': len(self.active_positions) if hasattr(self, 'active_positions') else 0,
+                    'positions_on_cooldown': len(self.recently_closed) if hasattr(self, 'recently_closed') else 0
+                }
+        except Exception as e:
+            logger.error(f"Error getting performance summary: {e}")
+            return {'error': str(e)}
