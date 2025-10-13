@@ -364,16 +364,25 @@ class DashboardEndpoints:
     async def api_performance_metrics(self, request):
         """Get performance metrics"""
         try:
-            period = request.query.get('period', 'all')  # daily, weekly, monthly, all
+            period = request.query.get('period', 'all')
             
             if not self.portfolio:
                 return web.json_response({'error': 'Portfolio manager not available'}, status=503)
             
-            metrics = self.portfolio.get_performance_report()
+            portfolio_metrics = self.portfolio.get_performance_report()
+            
+            # ✅ FIX: Add await since get_performance_summary is async
+            db_metrics = await self.db.get_performance_summary() if self.db else {}
+            
+            combined_metrics = {
+                **portfolio_metrics,
+                'historical': db_metrics,
+                'period': period
+            }
             
             return web.json_response({
                 'success': True,
-                'data': metrics
+                'data': combined_metrics
             })
         except Exception as e:
             logger.error(f"Error getting performance metrics: {e}")
@@ -971,10 +980,8 @@ class DashboardEndpoints:
         """Broadcast updates to all connected clients"""
         while True:
             try:
-                # ✅ FIX: Reduce from 1 second to 5 seconds
-                await asyncio.sleep(5)  # Changed from 1 to 5
+                await asyncio.sleep(5)
                 
-                # ✅ ADD: Only broadcast if there are connected clients
                 if not self.sio.manager.rooms:
                     continue
                 
@@ -989,13 +996,25 @@ class DashboardEndpoints:
                             'timestamp': datetime.utcnow().isoformat()
                         })
                     except Exception as e:
-                        logger.debug(f"Error broadcasting update: {e}")
+                        logger.debug(f"Error broadcasting portfolio update: {e}")
+                
+                # ✅ FIX: Add await for async method
+                if self.db:
+                    try:
+                        perf_data = await self.db.get_performance_summary()
+                        if 'error' not in perf_data:  # Only broadcast if no error
+                            await self.sio.emit('performance_update', {
+                                **perf_data,
+                                'timestamp': datetime.utcnow().isoformat()
+                            })
+                    except Exception as e:
+                        logger.debug(f"Error broadcasting performance update: {e}")
                 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Error in broadcast loop: {e}")
-                await asyncio.sleep(10)  # Wait longer on error
+                await asyncio.sleep(10)
     
     async def _generate_report(self, period, start_date, end_date, metrics):
         """Generate performance report"""

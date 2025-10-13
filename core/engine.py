@@ -5,7 +5,8 @@ Core Trading Engine - Orchestrates all bot operations
 import asyncio
 import uuid
 import logging  # ADD THIS LINE
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
+from collections import defaultdict
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 import json
@@ -81,6 +82,19 @@ class TradingOpportunity:
             min(self.expected_return / 100, 1) * 0.2
         )
 
+@dataclass
+class ClosedPositionRecord:
+    """Track recently closed positions for cooldown"""
+    token_address: str
+    closed_at: datetime
+    reason: str
+    pnl: float
+    
+    def is_cooled_down(self, cooldown_minutes: int = 60) -> bool:
+        """Check if cooldown period has elapsed"""
+        elapsed = (datetime.now() - self.closed_at).total_seconds() / 60
+        return elapsed >= cooldown_minutes
+
 class TradingBotEngine:
     """Main orchestration engine for the trading bot"""
     
@@ -155,6 +169,14 @@ class TradingBotEngine:
         self.pending_opportunities: List[TradingOpportunity] = []
         self.blacklisted_tokens: set = set()
         self.blacklisted_devs: set = set()
+
+# Cooldown tracking
+        self.recently_closed: Dict[str, ClosedPositionRecord] = {}  # token_address -> record
+        self.cooldown_minutes = config.get('trading', {}).get('position_cooldown_minutes', 60)
+        
+        # Database connection for logging
+        from data.storage.database import DatabaseManager
+        self.db = DatabaseManager(config.get('database', {}))        
         
         # Statistics
         self.stats = {
@@ -181,6 +203,11 @@ class TradingBotEngine:
             # Initialize components in order (only if they have initialize methods)
             if hasattr(self.wallet_manager, 'initialize'):
                 await self.wallet_manager.initialize()
+
+            # Initialize database
+            if hasattr(self.db, 'connect'):
+                await self.db.connect()
+                logger.info("✅ Database connected")
             
             if hasattr(self.risk_manager, 'initialize'):
                 await self.risk_manager.initialize()
@@ -628,13 +655,31 @@ class TradingBotEngine:
             token_symbol = opportunity.metadata.get('token_symbol', 'UNKNOWN')
             token_address = opportunity.token_address.lower()
             
-            # CHECK FOR DUPLICATE POSITION
+            # ✅ CHECK 1: Already have active position?
             if token_address in self.active_positions:
                 logger.warning(f"⚠️ Already have position in {token_symbol} - SKIPPING")
                 return
             
-            # CHECK PORTFOLIO LIMITS
-            if len(self.active_positions) >= self.config.get('max_positions', 10):
+            # ✅ CHECK 2: Position on cooldown?
+            if token_address in self.recently_closed:
+                record = self.recently_closed[token_address]
+                if not record.is_cooled_down(self.cooldown_minutes):
+                    elapsed = (datetime.now() - record.closed_at).total_seconds() / 60
+                    remaining = self.cooldown_minutes - elapsed
+                    logger.warning(
+                        f"❄️ COOLDOWN ACTIVE for {token_symbol}: "
+                        f"closed {elapsed:.1f}min ago (reason: {record.reason}), "
+                        f"{remaining:.1f}min remaining"
+                    )
+                    return
+                else:
+                    # Cooldown expired, remove from tracking
+                    logger.info(f"♻️ Cooldown expired for {token_symbol}, can re-enter")
+                    del self.recently_closed[token_address]
+            
+            # ✅ CHECK 3: Portfolio limits
+            max_positions = self.config.get('trading', {}).get('max_positions', 10)
+            if len(self.active_positions) >= max_positions:
                 logger.warning(f"⚠️ Max positions reached ({len(self.active_positions)}) - SKIPPING")
                 return
             
@@ -647,32 +692,66 @@ class TradingBotEngine:
                 logger.info(f"   Price: ${opportunity.price:.8f}")
                 logger.info(f"   Score: {opportunity.score:.3f}")
                 
-                # ✅ CREATE SIMULATED POSITION for tracking
+                # Create simulated position
                 from decimal import Decimal
-                from datetime import datetime
+                import uuid
                 
-                simulated_amount = 1000 / opportunity.price  # $1000 position
+                simulated_amount = 1000 / opportunity.price
+                trade_id = str(uuid.uuid4())
                 
                 position = {
+                    'id': trade_id,
                     'position_id': f"DRY-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{token_symbol}",
                     'token_address': token_address,
                     'token_symbol': token_symbol,
                     'entry_price': Decimal(str(opportunity.price)),
                     'amount': Decimal(str(simulated_amount)),
-                    'entry_value': Decimal('1000'),  # $1000 simulated position
+                    'entry_value': Decimal('1000'),
                     'entry_time': datetime.now(),
                     'chain': opportunity.chain,
                     'strategy': {'name': opportunity.entry_strategy},
                     'risk_score': opportunity.risk_score,
-                    'stop_loss_percentage': 0.1,  # 10% stop loss
-                    'take_profit_percentage': 0.3,  # 30% take profit
-                    'max_hold_time': 60,  # 60 minutes
+                    'stop_loss_percentage': 0.1,
+                    'take_profit_percentage': 0.3,
+                    'max_hold_time': 60,
                     'metadata': opportunity.metadata,
-                    'is_dry_run': True  # Mark as simulated
+                    'is_dry_run': True
                 }
                 
                 # Add to active positions
                 self.active_positions[token_address] = position
+                
+                # ✅ LOG TO DATABASE
+                try:
+                    trade_data = {
+                        'trade_id': trade_id,
+                        'token_address': token_address,
+                        'chain': opportunity.chain,
+                        'side': 'buy',
+                        'entry_price': float(opportunity.price),
+                        'exit_price': None,
+                        'amount': float(simulated_amount),
+                        'usd_value': 1000.0,
+                        'gas_fee': 0.0,
+                        'slippage': 0.0,
+                        'profit_loss': None,
+                        'profit_loss_percentage': None,
+                        'strategy': opportunity.entry_strategy,
+                        'risk_score': float(opportunity.risk_score.overall_risk) if opportunity.risk_score else None,
+                        'ml_confidence': float(opportunity.ml_confidence),
+                        'entry_timestamp': datetime.now(),
+                        'exit_timestamp': None,
+                        'status': 'open',
+                        'metadata': {
+                            'token_symbol': token_symbol,
+                            'is_dry_run': True,
+                            'opportunity_score': float(opportunity.score)
+                        }
+                    }
+                    await self.db.save_trade(trade_data)
+                    logger.info(f"✅ Trade logged to database: {trade_id}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to log trade to database: {e}")
                 
                 # Update stats
                 self.stats['total_trades'] += 1
@@ -918,7 +997,7 @@ class TradingBotEngine:
     # ============================================================================
 
     async def _close_position(self, position: Dict, reason: str):
-        """Close a trading position"""
+        """Close a trading position and add to cooldown"""
         try:
             token_address = position['token_address']
             token_symbol = position.get('token_symbol', 'UNKNOWN')
@@ -926,20 +1005,16 @@ class TradingBotEngine:
             logger.info(f"💰 CLOSING POSITION: {token_symbol} ({token_address[:10]}...)")
             logger.info(f"   Reason: {reason}")
             
-            # Check if in DRY_RUN mode or position is simulated
             is_dry_run = self.config.get('dry_run', True) or position.get('is_dry_run', False)
             
             if is_dry_run:
-                # Simulate closure
+                # Calculate P&L
                 current_price = position.get('current_price', position['entry_price'])
                 entry_price = position['entry_price']
                 amount = position['amount']
                 
-                # Calculate P&L
                 final_pnl = (current_price - entry_price) * amount
                 pnl_percentage = float((current_price - entry_price) / entry_price * 100)
-                
-                # Calculate holding time
                 holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
                 
                 logger.info(f"📝 DRY RUN - CLOSING POSITION:")
@@ -956,27 +1031,37 @@ class TradingBotEngine:
                     self.stats['successful_trades'] += 1
                 else:
                     self.stats['failed_trades'] += 1
-
-                # After line 967 (after self.stats['failed_trades'] += 1)
-                # Add trade logging
-                trade_data = {
-                    'trade_id': position.get('id', str(uuid.uuid4())),
-                    'timestamp': datetime.now(),
-                    'token_address': token_address,
-                    'token_symbol': token_symbol,
-                    'strategy': position.get('strategy', 'unknown'),
-                    'action': 'close',
-                    'entry_price': float(entry_price),
-                    'exit_price': float(current_price),
-                    'entry_amount': float(amount),
-                    'pnl': float(final_pnl),
-                    'roi': pnl_percentage / 100,
-                    'holding_time': holding_time,
-                    'exit_reason': reason
-                }
-
-                # Log the trade
-                self.structured_logger.log_trade(trade_data)
+                
+                # ✅ UPDATE DATABASE
+                try:
+                    trade_id = position.get('id')
+                    if trade_id:
+                        updates = {
+                            'exit_price': float(current_price),
+                            'exit_timestamp': datetime.now(),
+                            'profit_loss': float(final_pnl),
+                            'profit_loss_percentage': float(pnl_percentage),
+                            'status': 'closed',
+                            'metadata': {
+                                **position.get('metadata', {}),
+                                'exit_reason': reason,
+                                'holding_time_minutes': holding_time
+                            }
+                        }
+                        await self.db.update_trade(trade_id, updates)
+                        logger.info(f"✅ Trade updated in database: {trade_id}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to update trade in database: {e}")
+                
+                # ✅ ADD TO COOLDOWN TRACKING
+                cooldown_record = ClosedPositionRecord(
+                    token_address=token_address,
+                    closed_at=datetime.now(),
+                    reason=reason,
+                    pnl=float(final_pnl)
+                )
+                self.recently_closed[token_address] = cooldown_record
+                logger.info(f"❄️ Added {token_symbol} to cooldown ({self.cooldown_minutes} min)")
                 
                 # Remove from active positions
                 del self.active_positions[token_address]
@@ -990,10 +1075,10 @@ class TradingBotEngine:
                     f"P&L: ${final_pnl:.2f} ({pnl_percentage:+.2f}%)\n"
                     f"Holding Time: {holding_time:.1f}min\n"
                     f"Reason: {reason}\n"
-                    f"(Paper trade - no real execution)"
+                    f"Cooldown: {self.cooldown_minutes}min"
                 )
                 
-                logger.info(f"✅ DRY RUN position closed and removed from tracking")
+                logger.info(f"✅ DRY RUN position closed and added to cooldown")
                 return
             
             # REAL EXECUTION continues with existing code...
