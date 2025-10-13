@@ -624,15 +624,18 @@ class TradingBotEngine:
             token_symbol = opportunity.metadata.get('token_symbol', 'UNKNOWN')
             token_address = opportunity.token_address.lower()
             
-            # CHECK FOR DUPLICATE POSITION
+            # ✅ CHECK FOR DUPLICATE POSITION (should already be there)
             if token_address in self.active_positions:
                 logger.warning(f"⚠️ Already have position in {token_symbol} - SKIPPING")
                 return
             
-            # CHECK PORTFOLIO LIMITS
-            if len(self.active_positions) >= self.config.get('max_positions', 10):
+            # ✅ CHECK PORTFOLIO LIMITS (should already be there)
+            max_positions = self.config.get('max_positions', 10)
+            if len(self.active_positions) >= max_positions:
                 logger.warning(f"⚠️ Max positions reached ({len(self.active_positions)}) - SKIPPING")
                 return
+            
+            # Rest of the method continues...
             
             # Rest of the existing _execute_opportunity code...
             # (Continue with the existing implementation)
@@ -740,7 +743,7 @@ class TradingBotEngine:
 
     async def _monitor_existing_positions(self):
         """Monitor and manage existing positions"""
-        logger.info("🔍 Starting position monitoring loop...")
+        logger.info("📊 Starting position monitoring loop...")
         
         while self.state == BotState.RUNNING:
             try:
@@ -754,24 +757,27 @@ class TradingBotEngine:
                     try:
                         # Get current price from DexScreener
                         chain = position.get('chain', 'ethereum')
+                        
+                        # ✅ FIX: Call with correct signature
                         current_price = await self.dex_collector.get_token_price(
-                            token_address, 
-                            chain=chain
+                            token_address=token_address,  # ✅ Named parameter
+                            chain=chain                    # ✅ Named parameter
                         )
                         
                         if not current_price:
-                            logger.warning(f"⚠️ Could not get price for {token_address[:10]}...")
+                            logger.warning(f"⚠️ Could not get price for {token_address[:10]}... on {chain}")
                             continue
                         
                         # Update position with current price
-                        position['current_price'] = current_price
-                        position['current_value'] = current_price * position['amount']
+                        from decimal import Decimal
+                        position['current_price'] = Decimal(str(current_price))
+                        position['current_value'] = Decimal(str(current_price)) * position['amount']
                         
                         # Calculate P&L
                         entry_value = position['entry_price'] * position['amount']
-                        current_value = current_price * position['amount']
+                        current_value = position['current_value']
                         position['pnl'] = current_value - entry_value
-                        position['pnl_percentage'] = ((current_value - entry_value) / entry_value) * 100
+                        position['pnl_percentage'] = float((current_value - entry_value) / entry_value * 100)
                         
                         # Calculate holding time
                         holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60  # minutes
@@ -793,7 +799,7 @@ class TradingBotEngine:
                             # Update position in tracker
                             if hasattr(self, 'position_tracker') and self.position_tracker:
                                 await self.position_tracker.update_position(
-                                    position.get('tracker_id'),
+                                    position.get('tracker_id', ''),
                                     {'current_price': current_price}
                                 )
                         
@@ -806,7 +812,9 @@ class TradingBotEngine:
                 total_pnl = sum(p.get('pnl', 0) for p in self.active_positions.values())
                 logger.info(f"💼 Portfolio: {len(self.active_positions)} positions, Value: ${total_value:.2f}, P&L: ${total_pnl:.2f}")
                 
-                await asyncio.sleep(10)  # Check every 10 seconds
+                # ✅ Get interval from config or use default
+                update_interval = self.config.get('position_update_interval_seconds', 10)
+                await asyncio.sleep(update_interval)
                 
             except Exception as e:
                 logger.error(f"Error in position monitoring loop: {e}", exc_info=True)

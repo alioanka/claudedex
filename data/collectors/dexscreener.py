@@ -358,38 +358,53 @@ class DexScreenerCollector:
             traceback.print_exc()
             return []
         
-    async def get_token_price(self, token_address: str) -> Optional[float]:
+    async def get_token_price(self, token_address: str, chain: str = 'ethereum') -> Optional[float]:
         """
         Get current token price
         
         Args:
             token_address: Token contract address
+            chain: Blockchain network (ethereum, bsc, polygon, etc.)
             
         Returns:
             Current price in USD or None
         """
         # Check cache
-        cache_key = f"price_{token_address}"
+        cache_key = f"price_{chain}_{token_address}"
         if cache_key in self.cache:
             cached_data, cached_time = self.cache[cache_key]
             if time.time() - cached_time < 10:  # 10 second cache for prices
                 return cached_data
-                
-        # Search for token
-        endpoint = f"tokens/{token_address}"
-        data = await self._make_request(endpoint)
         
-        if data and 'pairs' in data and len(data['pairs']) > 0:
-            # Get price from most liquid pair
-            pairs = sorted(data['pairs'], key=lambda x: x.get('liquidity', {}).get('usd', 0), reverse=True)
-            price = pairs[0].get('priceUsd')
+        try:
+            # ✅ Use CORRECT DexScreener endpoint with chain
+            endpoint = f"latest/dex/tokens/{token_address}"
+            data = await self._make_request(endpoint)
             
-            if price:
-                price = float(price)
-                self.cache[cache_key] = (price, time.time())
-                return price
+            if data and 'pairs' in data and len(data['pairs']) > 0:
+                # Filter pairs for the correct chain
+                chain_pairs = [p for p in data['pairs'] if p.get('chainId', '').lower() == chain.lower()]
                 
-        return None
+                if not chain_pairs:
+                    # If no exact chain match, use any pair
+                    chain_pairs = data['pairs']
+                
+                # Get price from most liquid pair
+                pairs = sorted(chain_pairs, key=lambda x: x.get('liquidity', {}).get('usd', 0), reverse=True)
+                
+                if pairs:
+                    price_str = pairs[0].get('priceUsd')
+                    
+                    if price_str:
+                        price = float(price_str)
+                        self.cache[cache_key] = (price, time.time())
+                        return price
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error getting token price for {token_address} on {chain}: {e}")
+            return None
         
     async def get_pair_data(self, pair_address: str) -> Optional[Dict]:
         """
