@@ -123,12 +123,13 @@
                             <th>Amount</th>
                             <th>P&L</th>
                             <th>Status</th>
+                            <th>Network</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr>
-                            <td colspan="7" class="text-center text-muted">
+                            <td colspan="8" class="text-center text-muted">
                                 Loading positions...
                             </td>
                         </tr>
@@ -159,14 +160,15 @@
                             <th>Type</th>
                             <th>Price</th>
                             <th>Amount</th>
+                            <th>P&L</th>
                             <th>Status</th>
+                            <th>Network</th>
                             <th>Time</th>
-                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr>
-                            <td colspan="8" class="text-center text-muted">
+                            <td colspan="9" class="text-center text-muted">
                                 Loading orders...
                             </td>
                         </tr>
@@ -593,27 +595,45 @@ function updatePositionsTable(positions) {
     if (!tbody) return;
     
     if (!positions || positions.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No open positions</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No open positions</td></tr>';
         return;
     }
     
-    tbody.innerHTML = positions.map(pos => `
-        <tr>
-            <td>${pos.token_symbol || 'Unknown'}</td>
-            <td>$${(pos.entry_price || 0).toFixed(8)}</td>
-            <td>$${(pos.current_price || pos.entry_price || 0).toFixed(8)}</td>
-            <td>${(pos.amount || 0).toFixed(4)}</td>
-            <td class="${(pos.unrealized_pnl || 0) >= 0 ? 'text-success' : 'text-danger'}">
-                ${formatCurrency(pos.unrealized_pnl || 0)}
-            </td>
-            <td><span class="badge badge-success">${pos.status || 'open'}</span></td>
-            <td>
-                <button class="btn btn-sm btn-danger" onclick="closePosition('${pos.id}')">
-                    Close
-                </button>
-            </td>
-        </tr>
-    `).join('');
+    tbody.innerHTML = positions.map(pos => {
+        // ✅ Calculate P&L if not provided
+        const entryPrice = pos.entry_price || 0;
+        const currentPrice = pos.current_price || entryPrice;
+        const amount = pos.amount || 0;
+        const entryValue = pos.entry_value || (entryPrice * amount);
+        
+        // Calculate unrealized P&L
+        let unrealizedPnl = pos.unrealized_pnl || 0;
+        if (unrealizedPnl === 0 && entryPrice > 0) {
+            unrealizedPnl = (currentPrice - entryPrice) * amount;
+        }
+        
+        // Calculate P&L percentage
+        const pnlPercent = entryValue > 0 ? ((unrealizedPnl / entryValue) * 100) : 0;
+        
+        return `
+            <tr>
+                <td>${pos.token_symbol || 'Unknown'}</td>
+                <td>$${entryPrice.toFixed(8)}</td>
+                <td>$${currentPrice.toFixed(8)}</td>
+                <td>${amount.toFixed(2)}</td>
+                <td class="${unrealizedPnl >= 0 ? 'text-success' : 'text-danger'}">
+                    ${formatCurrency(unrealizedPnl)} (${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%)
+                </td>
+                <td><span class="badge badge-success">${pos.status || 'open'}</span></td>
+                <td><span class="badge badge-info">${pos.chain ? pos.chain.toUpperCase() : 'N/A'}</span></td>
+                <td>
+                    <button class="btn btn-sm btn-danger" onclick="closePosition('${pos.id}')">
+                        Close
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
 }
 
 // Update orders table  
@@ -622,12 +642,11 @@ function updateOrdersTable(orders) {
     if (!tbody) return;
     
     if (!orders || orders.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No recent orders</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">No recent orders</td></tr>';
         return;
     }
     
     tbody.innerHTML = orders.slice(0, 5).map(order => {
-        // ✅ FIX: Parse metadata to get token_symbol
         let tokenSymbol = 'Unknown';
         try {
             if (order.metadata) {
@@ -636,9 +655,15 @@ function updateOrdersTable(orders) {
                     : order.metadata;
                 tokenSymbol = metadata.token_symbol || tokenSymbol;
             }
-        } catch (e) {
-            // If metadata parsing fails, keep "Unknown"
-        }
+        } catch (e) {}
+        
+        // ✅ Calculate P&L
+        const pnl = order.profit_loss || 0;
+        const pnlPercent = order.profit_loss_percentage || 0;
+        const pnlClass = pnl >= 0 ? 'text-success' : 'text-danger';
+        const pnlDisplay = order.status === 'closed' 
+            ? `${formatCurrency(pnl)} (${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%)`
+            : '-';
         
         return `
             <tr>
@@ -647,9 +672,10 @@ function updateOrdersTable(orders) {
                 <td>Market</td>
                 <td>$${(order.entry_price || 0).toFixed(8)}</td>
                 <td>${(order.amount || 0).toFixed(2)}</td>
+                <td class="${pnlClass}">${pnlDisplay}</td>
                 <td><span class="badge badge-${order.status === 'open' ? 'info' : order.status === 'closed' ? 'success' : 'secondary'}">${order.status || 'N/A'}</span></td>
+                <td><span class="badge badge-info">${order.chain ? order.chain.toUpperCase() : 'N/A'}</span></td>
                 <td>${timeAgo(order.entry_timestamp || Date.now())}</td>
-                <td>-</td>
             </tr>
         `;
     }).join('');
