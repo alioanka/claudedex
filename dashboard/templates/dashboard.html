@@ -456,8 +456,18 @@ async function loadWinRateChart() {
         const response = await apiGet('/api/performance/metrics');
         
         if (response.success && response.data) {
-            const winRate = response.data.win_rate || 0;
+            // ✅ FIX: Use historical data instead of current portfolio data
+            const historical = response.data.historical || {};
+            const winRate = (historical.win_rate || 0) / 100; // Convert percentage to decimal
             const lossRate = 1 - winRate;
+            
+            // ✅ UPDATE: Also update the stats display
+            document.getElementById('totalTrades').textContent = historical.total_trades || 0;
+            document.getElementById('winRate').textContent = `${(historical.win_rate || 0).toFixed(2)}%`;
+            document.getElementById('avgWin').textContent = formatCurrency(historical.avg_win || 0);
+            document.getElementById('avgLoss').textContent = formatCurrency(historical.avg_loss || 0);
+            document.getElementById('totalPnlStat').textContent = formatCurrency(historical.total_pnl || 0);
+            document.getElementById('winRateStat').textContent = `${(historical.win_rate || 0).toFixed(1)}%`;
             
             createChart('winRateChart', {
                 type: 'doughnut',

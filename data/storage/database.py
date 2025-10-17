@@ -297,6 +297,16 @@ class DatabaseManager:
     
     async def save_trade(self, trade: Dict[str, Any]) -> str:
         """Save a trade record to the database."""
+        
+        # ✅ Helper function to prevent database numeric overflow
+        def safe_float(value, default=0.0, max_val=1e11):
+            """Ensure float values don't overflow database precision (max 10^12)"""
+            try:
+                f = float(value) if value is not None else default
+                return min(max(-max_val, f), max_val)
+            except (ValueError, TypeError):
+                return default
+        
         async with self.acquire() as conn:
             result = await conn.fetchrow("""
                 INSERT INTO trades (
@@ -307,13 +317,23 @@ class DatabaseManager:
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
                 RETURNING id, trade_id
             """,
-                trade['trade_id'], trade['token_address'], trade['chain'],
-                trade['side'], trade['entry_price'], trade.get('exit_price'),
-                trade['amount'], trade['usd_value'], trade.get('gas_fee'),
-                trade.get('slippage'), trade.get('profit_loss'),
-                trade.get('profit_loss_percentage'), trade['strategy'],
-                trade.get('risk_score'), trade.get('ml_confidence'),
-                trade['entry_timestamp'], trade.get('exit_timestamp'),
+                trade['trade_id'], 
+                trade['token_address'], 
+                trade['chain'],
+                trade['side'], 
+                safe_float(trade['entry_price']),
+                safe_float(trade.get('exit_price')),
+                safe_float(trade['amount']),
+                safe_float(trade['usd_value']),
+                safe_float(trade.get('gas_fee')),
+                safe_float(trade.get('slippage')),
+                safe_float(trade.get('profit_loss')),
+                safe_float(trade.get('profit_loss_percentage')),
+                trade['strategy'],
+                safe_float(trade.get('risk_score')),
+                safe_float(trade.get('ml_confidence')),
+                trade['entry_timestamp'], 
+                trade.get('exit_timestamp'),
                 trade.get('status', 'open'),
                 orjson.dumps(trade.get('metadata', {})).decode()
             )
