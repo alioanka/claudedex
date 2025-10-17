@@ -287,7 +287,8 @@ class DashboardEndpoints:
             if not self.db:
                 return web.json_response({'error': 'Database not available'}, status=503)
             
-            trades = self.db.get_recent_trades(limit=limit)
+            # ✅ FIX: Add await
+            trades = await self.db.get_recent_trades(limit=limit)
             
             return web.json_response({
                 'success': True,
@@ -306,8 +307,8 @@ class DashboardEndpoints:
             end_date = request.query.get('end_date')
             status = request.query.get('status')
             
-            # Implement filtering logic
-            trades = self.db.get_recent_trades(limit=1000, status=status)
+            # ✅ FIX: Add await
+            trades = await self.db.get_recent_trades(limit=1000, status=status)
             
             # Apply date filters if provided
             if start_date:
@@ -330,10 +331,27 @@ class DashboardEndpoints:
     async def api_open_positions(self, request):
         """Get open positions"""
         try:
-            if not self.portfolio:
-                return web.json_response({'error': 'Portfolio manager not available'}, status=503)
+            # ✅ FIX: Get positions from ENGINE, not portfolio
+            if not self.engine:
+                return web.json_response({'error': 'Trading engine not available'}, status=503)
             
-            positions = self.portfolio.get_open_positions()
+            # Get active positions from engine
+            positions = []
+            if hasattr(self.engine, 'active_positions'):
+                for token_address, position in self.engine.active_positions.items():
+                    positions.append({
+                        'id': position.get('id'),
+                        'token_address': token_address,
+                        'token_symbol': position.get('token_symbol', 'Unknown'),
+                        'entry_price': float(position.get('entry_price', 0)),
+                        'current_price': float(position.get('current_price', position.get('entry_price', 0))),
+                        'amount': float(position.get('amount', 0)),
+                        'entry_value': float(position.get('entry_value', 0)),
+                        'unrealized_pnl': float(position.get('unrealized_pnl', 0)),
+                        'status': position.get('status', 'open'),
+                        'entry_time': position.get('entry_time').isoformat() if position.get('entry_time') else None,
+                        'chain': position.get('chain', 'unknown')
+                    })
             
             return web.json_response({
                 'success': True,

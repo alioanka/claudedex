@@ -456,12 +456,11 @@ async function loadWinRateChart() {
         const response = await apiGet('/api/performance/metrics');
         
         if (response.success && response.data) {
-            // ✅ FIX: Use historical data instead of current portfolio data
             const historical = response.data.historical || {};
-            const winRate = (historical.win_rate || 0) / 100; // Convert percentage to decimal
+            const winRate = (historical.win_rate || 0) / 100;
             const lossRate = 1 - winRate;
             
-            // ✅ UPDATE: Also update the stats display
+            // Update stats
             document.getElementById('totalTrades').textContent = historical.total_trades || 0;
             document.getElementById('winRate').textContent = `${(historical.win_rate || 0).toFixed(2)}%`;
             document.getElementById('avgWin').textContent = formatCurrency(historical.avg_win || 0);
@@ -469,12 +468,23 @@ async function loadWinRateChart() {
             document.getElementById('totalPnlStat').textContent = formatCurrency(historical.total_pnl || 0);
             document.getElementById('winRateStat').textContent = `${(historical.win_rate || 0).toFixed(1)}%`;
             
-            createChart('winRateChart', {
+            // ✅ Destroy existing chart first
+            const ctx = document.getElementById('winRateChart');
+            if (!ctx) return;
+            
+            // Get existing chart instance
+            const existingChart = Chart.getChart(ctx);
+            if (existingChart) {
+                existingChart.destroy();
+            }
+            
+            // Create new chart
+            new Chart(ctx, {
                 type: 'doughnut',
                 data: {
                     labels: ['Wins', 'Losses'],
                     datasets: [{
-                        data: [winRate * 100, lossRate * 100],
+                        data: [historical.winning_trades || 0, historical.losing_trades || 0],
                         backgroundColor: [
                             'rgba(16, 185, 129, 0.8)',
                             'rgba(239, 68, 68, 0.8)'
@@ -484,10 +494,21 @@ async function loadWinRateChart() {
                 },
                 options: {
                     responsive: true,
-                    maintainAspectRatio: false,
+                    maintainAspectRatio: true,
                     plugins: {
                         legend: {
-                            position: 'bottom'
+                            position: 'bottom',
+                            labels: {
+                                generateLabels: function(chart) {
+                                    const data = chart.data;
+                                    return data.labels.map((label, i) => ({
+                                        text: `${label}: ${data.datasets[0].data[i]}`,
+                                        fillStyle: data.datasets[0].backgroundColor[i],
+                                        hidden: false,
+                                        index: i
+                                    }));
+                                }
+                            }
                         }
                     }
                 }
@@ -521,46 +542,48 @@ async function loadHistoricalStats() {
     }
 }
 
-// Load open positions
-async function loadPositions() {
-    try {
-        const response = await apiGet('/api/positions/open');
-        if (response.success && response.data) {
-            updatePositionsTable(response.data);
-        } else {
-            // No positions
-            const tbody = document.querySelector('#positionsTable tbody');
-            if (tbody) {
-                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No open positions</td></tr>';
-            }
-        }
-    } catch (error) {
-        console.error('Error loading positions:', error);
-        const tbody = document.querySelector('#positionsTable tbody');
-        if (tbody) {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No open positions</td></tr>';
-        }
-    }
-}
-
-// Load recent orders
+// Load recent trades (handle errors gracefully)
 async function loadOrders() {
     try {
         const response = await apiGet('/api/trades/recent?limit=10');
-        if (response.success && response.data) {
+        if (response && response.success && response.data) {
             updateOrdersTable(response.data);
         } else {
-            const tbody = document.querySelector('#ordersTable tbody');
-            if (tbody) {
-                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No recent orders</td></tr>';
-            }
+            showEmptyOrders();
         }
     } catch (error) {
         console.error('Error loading orders:', error);
-        const tbody = document.querySelector('#ordersTable tbody');
-        if (tbody) {
-            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No recent orders</td></tr>';
+        showEmptyOrders();
+    }
+}
+
+// Load open positions (handle errors gracefully)
+async function loadPositions() {
+    try {
+        const response = await apiGet('/api/positions/open');
+        if (response && response.success && response.data) {
+            updatePositionsTable(response.data);
+        } else {
+            showEmptyPositions();
         }
+    } catch (error) {
+        console.error('Error loading positions:', error);
+        showEmptyPositions();
+    }
+}
+
+// Helper functions
+function showEmptyPositions() {
+    const tbody = document.querySelector('#positionsTable tbody');
+    if (tbody) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No open positions</td></tr>';
+    }
+}
+
+function showEmptyOrders() {
+    const tbody = document.querySelector('#ordersTable tbody');
+    if (tbody) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No recent trades</td></tr>';
     }
 }
 
@@ -619,20 +642,22 @@ function updateOrdersTable(orders) {
 
 // ✅ MODIFY your existing DOMContentLoaded to call these functions
 document.addEventListener('DOMContentLoaded', function() {
-    // Load all data on page load
+    // ✅ Load everything ONCE on page load
     loadHistoricalStats();
     loadCharts();
     loadPositions();
     loadOrders();
     
-    // Add timeframe change listeners
+    // Add timeframe change listeners (these will reload specific charts)
     document.getElementById('portfolioTimeframe').addEventListener('change', loadPortfolioChart);
     document.getElementById('pnlTimeframe').addEventListener('change', loadPnLChart);
     
-    // Initialize WebSocket for live updates
+    // Initialize WebSocket
     if (typeof initWebSocket === 'function') {
         initWebSocket();
     }
+    
+    // ✅ DON'T call loadCharts() repeatedly - only load once!
 });
 </script>
 {% endblock %}
