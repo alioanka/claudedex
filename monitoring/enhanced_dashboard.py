@@ -999,16 +999,16 @@ class DashboardEndpoints:
                         logger.debug(f"Error broadcasting portfolio update: {e}")
                 
                 # ✅ FIX: Add await for async method
-                if self.db:
-                    try:
-                        perf_data = await self.db.get_performance_summary()
-                        if 'error' not in perf_data:  # Only broadcast if no error
-                            await self.sio.emit('performance_update', {
-                                **perf_data,
-                                'timestamp': datetime.utcnow().isoformat()
-                            })
-                    except Exception as e:
-                        logger.debug(f"Error broadcasting performance update: {e}")
+#                if self.db:
+#                    try:
+#                        perf_data = await self.db.get_performance_summary()
+#                        if 'error' not in perf_data:  # Only broadcast if no error
+#                            await self.sio.emit('performance_update', {
+#                                **perf_data,
+#                                'timestamp': datetime.utcnow().isoformat()
+#                            })
+#                    except Exception as e:
+#                        logger.debug(f"Error broadcasting performance update: {e}")
                 
             except asyncio.CancelledError:
                 break
