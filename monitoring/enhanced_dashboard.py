@@ -67,6 +67,19 @@ class DashboardEndpoints:
         
         # Start update tasks
         asyncio.create_task(self._broadcast_loop())
+
+    @staticmethod
+    def _serialize_decimals(obj):
+        """Convert Decimal objects to float for JSON serialization"""
+        if isinstance(obj, dict):
+            return {k: DashboardEndpoints._serialize_decimals(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [DashboardEndpoints._serialize_decimals(item) for item in obj]
+        elif isinstance(obj, Decimal):
+            return float(obj)
+        elif isinstance(obj, datetime):
+            return obj.isoformat()
+        return obj
     
     def _setup_routes(self):
         """Setup all routes"""
@@ -287,12 +300,11 @@ class DashboardEndpoints:
             if not self.db:
                 return web.json_response({'error': 'Database not available'}, status=503)
             
-            # ✅ FIX: Add await
             trades = await self.db.get_recent_trades(limit=limit)
             
             return web.json_response({
                 'success': True,
-                'data': trades,
+                'data': self._serialize_decimals(trades),  # ✅ Convert here
                 'count': len(trades)
             })
         except Exception as e:
