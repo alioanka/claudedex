@@ -498,13 +498,141 @@ async function loadWinRateChart() {
     }
 }
 
-// Load charts when page loads
+// ✅ ADD these new functions (don't remove your existing code)
+
+// Load historical stats ONCE on page load
+async function loadHistoricalStats() {
+    try {
+        const response = await apiGet('/api/performance/metrics');
+        
+        if (response.success && response.data && response.data.historical) {
+            const hist = response.data.historical;
+            
+            // Update Trading Stats section (already done in loadWinRateChart)
+            document.getElementById('totalTrades').textContent = hist.total_trades || 0;
+            document.getElementById('winRate').textContent = `${(hist.win_rate || 0).toFixed(2)}%`;
+            document.getElementById('avgWin').textContent = formatCurrency(hist.avg_win || 0);
+            document.getElementById('avgLoss').textContent = formatCurrency(hist.avg_loss || 0);
+            document.getElementById('totalPnlStat').textContent = formatCurrency(hist.total_pnl || 0);
+            document.getElementById('winRateStat').textContent = `${(hist.win_rate || 0).toFixed(1)}%`;
+        }
+    } catch (error) {
+        console.error('Error loading historical stats:', error);
+    }
+}
+
+// Load open positions
+async function loadPositions() {
+    try {
+        const response = await apiGet('/api/positions/open');
+        if (response.success && response.data) {
+            updatePositionsTable(response.data);
+        } else {
+            // No positions
+            const tbody = document.querySelector('#positionsTable tbody');
+            if (tbody) {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No open positions</td></tr>';
+            }
+        }
+    } catch (error) {
+        console.error('Error loading positions:', error);
+        const tbody = document.querySelector('#positionsTable tbody');
+        if (tbody) {
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No open positions</td></tr>';
+        }
+    }
+}
+
+// Load recent orders
+async function loadOrders() {
+    try {
+        const response = await apiGet('/api/trades/recent?limit=10');
+        if (response.success && response.data) {
+            updateOrdersTable(response.data);
+        } else {
+            const tbody = document.querySelector('#ordersTable tbody');
+            if (tbody) {
+                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No recent orders</td></tr>';
+            }
+        }
+    } catch (error) {
+        console.error('Error loading orders:', error);
+        const tbody = document.querySelector('#ordersTable tbody');
+        if (tbody) {
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No recent orders</td></tr>';
+        }
+    }
+}
+
+// Update positions table
+function updatePositionsTable(positions) {
+    const tbody = document.querySelector('#positionsTable tbody');
+    if (!tbody) return;
+    
+    if (!positions || positions.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No open positions</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = positions.map(pos => `
+        <tr>
+            <td>${pos.token_symbol || 'Unknown'}</td>
+            <td>$${(pos.entry_price || 0).toFixed(8)}</td>
+            <td>$${(pos.current_price || pos.entry_price || 0).toFixed(8)}</td>
+            <td>${(pos.amount || 0).toFixed(4)}</td>
+            <td class="${(pos.unrealized_pnl || 0) >= 0 ? 'text-success' : 'text-danger'}">
+                ${formatCurrency(pos.unrealized_pnl || 0)}
+            </td>
+            <td><span class="badge badge-success">${pos.status || 'open'}</span></td>
+            <td>
+                <button class="btn btn-sm btn-danger" onclick="closePosition('${pos.id}')">
+                    Close
+                </button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+// Update orders table  
+function updateOrdersTable(orders) {
+    const tbody = document.querySelector('#ordersTable tbody');
+    if (!tbody) return;
+    
+    if (!orders || orders.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No recent orders</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = orders.slice(0, 5).map(order => `
+        <tr>
+            <td>${order.token_symbol || 'Unknown'}</td>
+            <td><span class="badge badge-${order.side === 'buy' ? 'success' : 'danger'}">${order.side || 'N/A'}</span></td>
+            <td>Market</td>
+            <td>$${(order.entry_price || 0).toFixed(8)}</td>
+            <td>${(order.amount || 0).toFixed(4)}</td>
+            <td><span class="badge badge-info">${order.status || 'N/A'}</span></td>
+            <td>${timeAgo(order.entry_timestamp || Date.now())}</td>
+            <td>-</td>
+        </tr>
+    `).join('');
+}
+
+// ✅ MODIFY your existing DOMContentLoaded to call these functions
 document.addEventListener('DOMContentLoaded', function() {
+    // Load all data on page load
+    loadHistoricalStats();
     loadCharts();
+    loadPositions();
+    loadOrders();
     
     // Add timeframe change listeners
     document.getElementById('portfolioTimeframe').addEventListener('change', loadPortfolioChart);
     document.getElementById('pnlTimeframe').addEventListener('change', loadPnLChart);
+    
+    // Initialize WebSocket for live updates
+    if (typeof initWebSocket === 'function') {
+        initWebSocket();
+    }
 });
 </script>
 {% endblock %}
