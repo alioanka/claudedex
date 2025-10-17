@@ -9,6 +9,7 @@ const dashboardState = {
 
 // Initialize dashboard-specific features
 function initDashboard() {
+    loadHistoricalStats(); // Load historical data ONCE
     setupDashboardRefresh();
     setupQuickActions();
     setupActivityFeed();
@@ -38,28 +39,66 @@ async function refreshDashboardData() {
 
 // Update dashboard metrics
 function updateDashboardMetrics(data) {
-    // Update stat cards
+    // ✅ ONLY update LIVE metrics, NOT historical stats
+    
+    // Update portfolio value (live data)
     const portfolioValueStat = document.getElementById('portfolioValueStat');
     if (portfolioValueStat) {
         portfolioValueStat.textContent = formatCurrency(data.portfolio_value);
     }
     
-    const totalPnlStat = document.getElementById('totalPnlStat');
-    if (totalPnlStat) {
-        totalPnlStat.textContent = formatCurrency(data.total_pnl);
-        const card = totalPnlStat.closest('.stat-card');
-        card.classList.remove('success', 'danger');
-        card.classList.add(data.total_pnl >= 0 ? 'success' : 'danger');
-    }
-    
+    // Update open positions (live data)
     const openPositionsStat = document.getElementById('openPositionsStat');
     if (openPositionsStat) {
         openPositionsStat.textContent = data.open_positions;
     }
     
-    const winRateStat = document.getElementById('winRateStat');
-    if (winRateStat) {
-        winRateStat.textContent = formatPercent(data.win_rate);
+    // ❌ REMOVE these lines - they overwrite historical data:
+    // const totalPnlStat = document.getElementById('totalPnlStat');
+    // const winRateStat = document.getElementById('winRateStat');
+    
+    // NOTE: totalPnlStat and winRateStat are now ONLY updated by loadHistoricalStats()
+}
+
+// ✅ NEW: Add function to load historical stats ONCE on page load
+async function loadHistoricalStats() {
+    try {
+        const response = await apiGet('/api/performance/metrics');
+        
+        if (response.success && response.data && response.data.historical) {
+            const hist = response.data.historical;
+            
+            // Update historical stats (these should NOT be overwritten by WebSocket)
+            const totalPnlStat = document.getElementById('totalPnlStat');
+            if (totalPnlStat) {
+                totalPnlStat.textContent = formatCurrency(hist.total_pnl || 0);
+                const card = totalPnlStat.closest('.stat-card');
+                if (card) {
+                    card.classList.remove('success', 'danger');
+                    card.classList.add(hist.total_pnl >= 0 ? 'success' : 'danger');
+                }
+            }
+            
+            const winRateStat = document.getElementById('winRateStat');
+            if (winRateStat) {
+                winRateStat.textContent = `${(hist.win_rate || 0).toFixed(1)}%`;
+            }
+            
+            // Update Trading Stats section
+            const totalTrades = document.getElementById('totalTrades');
+            if (totalTrades) totalTrades.textContent = hist.total_trades || 0;
+            
+            const winRate = document.getElementById('winRate');
+            if (winRate) winRate.textContent = `${(hist.win_rate || 0).toFixed(2)}%`;
+            
+            const avgWin = document.getElementById('avgWin');
+            if (avgWin) avgWin.textContent = formatCurrency(hist.avg_win || 0);
+            
+            const avgLoss = document.getElementById('avgLoss');
+            if (avgLoss) avgLoss.textContent = formatCurrency(hist.avg_loss || 0);
+        }
+    } catch (error) {
+        console.error('Error loading historical stats:', error);
     }
 }
 

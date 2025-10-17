@@ -81,10 +81,35 @@ function handleInitialData(data) {
 }
 
 function handleDashboardUpdate(data) {
-    // Update dashboard stats in real-time
-    if (data.data) {
-        updateDashboardUI(data.data);
+    // ✅ ONLY update LIVE metrics from WebSocket
+    if (data.portfolio_value !== undefined) {
+        const portfolioValueStat = document.getElementById('portfolioValueStat');
+        if (portfolioValueStat) {
+            portfolioValueStat.textContent = formatCurrency(data.portfolio_value);
+        }
     }
+    
+    if (data.open_positions !== undefined) {
+        const openPositionsStat = document.getElementById('openPositionsStat');
+        if (openPositionsStat) {
+            openPositionsStat.textContent = data.open_positions;
+        }
+    }
+    
+    if (data.daily_pnl !== undefined) {
+        const pnlIndicator = document.getElementById('pnlIndicator');
+        if (pnlIndicator) {
+            const valueElement = pnlIndicator.querySelector('.value');
+            if (valueElement) {
+                valueElement.textContent = formatCurrency(data.daily_pnl);
+                pnlIndicator.classList.remove('positive', 'negative');
+                pnlIndicator.classList.add(data.daily_pnl >= 0 ? 'positive' : 'negative');
+            }
+        }
+    }
+    
+    // ❌ DO NOT update totalPnlStat or winRateStat from WebSocket
+    // Those are HISTORICAL and should only load once from /api/performance/metrics
 }
 
 function handlePositionsUpdate(data) {
