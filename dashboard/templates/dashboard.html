@@ -100,7 +100,7 @@
 </div>
 
 <!-- Recent Positions & Orders -->
-<div class="grid grid-2">
+<div class="grid grid-1">
     <!-- Recent Positions -->
     <div class="card">
         <div class="card-header">
@@ -626,18 +626,33 @@ function updateOrdersTable(orders) {
         return;
     }
     
-    tbody.innerHTML = orders.slice(0, 5).map(order => `
-        <tr>
-            <td>${order.token_symbol || 'Unknown'}</td>
-            <td><span class="badge badge-${order.side === 'buy' ? 'success' : 'danger'}">${order.side || 'N/A'}</span></td>
-            <td>Market</td>
-            <td>$${(order.entry_price || 0).toFixed(8)}</td>
-            <td>${(order.amount || 0).toFixed(4)}</td>
-            <td><span class="badge badge-info">${order.status || 'N/A'}</span></td>
-            <td>${timeAgo(order.entry_timestamp || Date.now())}</td>
-            <td>-</td>
-        </tr>
-    `).join('');
+    tbody.innerHTML = orders.slice(0, 5).map(order => {
+        // ✅ FIX: Parse metadata to get token_symbol
+        let tokenSymbol = 'Unknown';
+        try {
+            if (order.metadata) {
+                const metadata = typeof order.metadata === 'string' 
+                    ? JSON.parse(order.metadata) 
+                    : order.metadata;
+                tokenSymbol = metadata.token_symbol || tokenSymbol;
+            }
+        } catch (e) {
+            // If metadata parsing fails, keep "Unknown"
+        }
+        
+        return `
+            <tr>
+                <td>${tokenSymbol}</td>
+                <td><span class="badge badge-${order.side === 'buy' ? 'success' : 'danger'}">${(order.side || 'N/A').toUpperCase()}</span></td>
+                <td>Market</td>
+                <td>$${(order.entry_price || 0).toFixed(8)}</td>
+                <td>${(order.amount || 0).toFixed(2)}</td>
+                <td><span class="badge badge-${order.status === 'open' ? 'info' : order.status === 'closed' ? 'success' : 'secondary'}">${order.status || 'N/A'}</span></td>
+                <td>${timeAgo(order.entry_timestamp || Date.now())}</td>
+                <td>-</td>
+            </tr>
+        `;
+    }).join('');
 }
 
 // ✅ MODIFY your existing DOMContentLoaded to call these functions
@@ -658,6 +673,11 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     // ✅ DON'T call loadCharts() repeatedly - only load once!
+    // ✅ Auto-refresh positions and orders every 5 seconds
+    setInterval(async () => {
+        await loadPositions();
+        await loadOrders();
+    }, 5000);
 });
 </script>
 {% endblock %}
