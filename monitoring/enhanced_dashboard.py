@@ -991,18 +991,46 @@ class DashboardEndpoints:
     # ==================== HELPER METHODS ====================
     
     async def _send_initial_data(self, sid):
-        """Send initial data to connected client"""
+        """Send initial data to newly connected client"""
         try:
-            data = {}
-            
+            # Get portfolio summary
+            portfolio_data = {}
             if self.portfolio:
-                data['portfolio'] = self.portfolio.get_portfolio_summary()
-                data['positions'] = self.portfolio.get_open_positions()
+                portfolio_data = self.portfolio.get_portfolio_summary()
             
-            if self.orders:
-                data['orders'] = self.orders.get_active_orders()
+            # ✅ FIX: Get ACTUAL positions from engine
+            positions_data = []
+            if self.engine and hasattr(self.engine, 'active_positions'):
+                for token_address, position in self.engine.active_positions.items():
+                    positions_data.append({
+                        'id': position.get('id'),
+                        'token_address': token_address,
+                        'token_symbol': position.get('token_symbol', 'Unknown'),
+                        'entry_price': float(position.get('entry_price', 0)),
+                        'current_price': float(position.get('current_price', position.get('entry_price', 0))),
+                        'amount': float(position.get('amount', 0)),
+                        'unrealized_pnl': float(position.get('unrealized_pnl', 0)),
+                        'status': position.get('status', 'open')
+                    })
             
-            await self.sio.emit('initial_data', data, to=sid)
+            # ✅ FIX: Get ACTUAL recent orders from database
+            orders_data = []
+            if self.db:
+                try:
+                    recent_trades = await self.db.get_recent_trades(limit=10)
+                    orders_data = self._serialize_decimals(recent_trades)
+                except Exception as e:
+                    logger.error(f"Error getting recent trades: {e}")
+            
+            # Send initial data
+            await self.sio.emit('initial_data', {
+                'portfolio': portfolio_data,
+                'positions': positions_data,
+                'orders': orders_data
+            }, room=sid)
+            
+            logger.debug(f"Sent initial data to {sid}: {len(positions_data)} positions, {len(orders_data)} orders")
+            
         except Exception as e:
             logger.error(f"Error sending initial data: {e}")
     

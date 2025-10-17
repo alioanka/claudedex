@@ -69,14 +69,25 @@ function handleInitialData(data) {
         updateDashboardUI(data.portfolio);
     }
     
-    if (data.positions) {
+    // ✅ Only update if we have actual data
+    if (data.positions && data.positions.length > 0) {
         state.positions = data.positions;
         updatePositionsTable(data.positions);
+    } else {
+        // Load from API instead
+        if (typeof loadPositions === 'function') {
+            loadPositions();
+        }
     }
     
-    if (data.orders) {
+    if (data.orders && data.orders.length > 0) {
         state.orders = data.orders;
         updateOrdersTable(data.orders);
+    } else {
+        // Load from API instead
+        if (typeof loadOrders === 'function') {
+            loadOrders();
+        }
     }
 }
 
