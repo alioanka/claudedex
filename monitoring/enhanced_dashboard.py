@@ -267,26 +267,52 @@ class DashboardEndpoints:
     async def api_dashboard_summary(self, request):
         """Get dashboard summary data"""
         try:
-            if not self.portfolio:
-                return web.json_response({'error': 'Portfolio manager not available'}, status=503)
+            summary = {}
             
-            summary = self.portfolio.get_portfolio_summary()
+            # Get portfolio data if available
+            if self.portfolio:
+                portfolio_summary = self.portfolio.get_portfolio_summary()
+                summary = {
+                    'cash_balance': float(portfolio_summary.get('cash_balance', 10000)),
+                    'positions_value': float(portfolio_summary.get('positions_value', 0)),
+                    'daily_pnl': float(portfolio_summary.get('daily_pnl', 0)),
+                    'win_rate': float(portfolio_summary.get('win_rate', 0)),
+                    'sharpe_ratio': float(portfolio_summary.get('sharpe_ratio', 0)),
+                    'max_drawdown': float(portfolio_summary.get('max_drawdown', 0)),
+                }
+            
+            # ✅ Get ACTUAL cumulative P&L and position count from database/engine
+            total_pnl = 0
+            open_positions_count = 0
+            
+            if self.db:
+                try:
+                    perf_data = await self.db.get_performance_summary()
+                    if perf_data and 'total_pnl' in perf_data:
+                        total_pnl = float(perf_data.get('total_pnl', 0))
+                except Exception as e:
+                    logger.error(f"Error getting performance data: {e}")
+            
+            # Get actual open positions count from engine
+            if self.engine and hasattr(self.engine, 'active_positions'):
+                open_positions_count = len(self.engine.active_positions)
+            
+            # Calculate portfolio value: starting balance + cumulative P&L
+            starting_balance = 10000
+            portfolio_value = starting_balance + total_pnl
+            
+            # Update summary with calculated values
+            summary.update({
+                'portfolio_value': portfolio_value,
+                'total_pnl': total_pnl,
+                'open_positions': open_positions_count,
+                'pending_orders': len(self.orders.active_orders) if self.orders else 0,
+                'active_alerts': len(self.alerts.alerts_queue._queue) if self.alerts else 0
+            })
             
             return web.json_response({
                 'success': True,
-                'data': {
-                    'portfolio_value': float(summary.get('total_value', 0)),
-                    'cash_balance': float(summary.get('cash_balance', 0)),
-                    'positions_value': float(summary.get('positions_value', 0)),
-                    'daily_pnl': float(summary.get('daily_pnl', 0)),
-                    'total_pnl': float(summary.get('net_profit', 0)),
-                    'open_positions': summary.get('open_positions', 0),
-                    'pending_orders': len(self.orders.active_orders) if self.orders else 0,
-                    'win_rate': float(summary.get('win_rate', 0)),
-                    'sharpe_ratio': float(summary.get('sharpe_ratio', 0)),
-                    'max_drawdown': float(summary.get('max_drawdown', 0)),
-                    'active_alerts': len(self.alerts.alerts_queue._queue) if self.alerts else 0
-                }
+                'data': summary
             })
         except Exception as e:
             logger.error(f"Error getting dashboard summary: {e}")
@@ -426,60 +452,69 @@ class DashboardEndpoints:
             if not self.db:
                 return web.json_response({'error': 'Database not available'}, status=503)
             
-            # Get trades for the timeframe
-            limit_map = {
-                '1h': 10,
-                '24h': 50,
-                '7d': 200,
-                '30d': 500
-            }
-            limit = limit_map.get(timeframe, 50)
-            
-            trades = await self.db.get_recent_trades(limit=limit)
+            # Get all closed trades
+            trades = await self.db.get_recent_trades(limit=1000, status='closed')
             trades = self._serialize_decimals(trades)
             
-            # Generate portfolio history from trades
+            # ✅ Sort by exit timestamp
+            trades_sorted = sorted(
+                [t for t in trades if t.get('exit_timestamp')],
+                key=lambda x: x['exit_timestamp']
+            )
+            
+            # Filter by timeframe
+            from datetime import datetime, timedelta
+            now = datetime.utcnow()
+            
+            timeframe_hours = {
+                '1h': 1,
+                '24h': 24,
+                '7d': 168,
+                '30d': 720
+            }
+            hours = timeframe_hours.get(timeframe, 24)
+            cutoff = now - timedelta(hours=hours)
+            
+            filtered_trades = [
+                t for t in trades_sorted 
+                if datetime.fromisoformat(t['exit_timestamp'].replace('Z', '+00:00')) >= cutoff
+            ]
+            
+            # Generate portfolio history
             portfolio_history = []
             pnl_history = []
-            cumulative_pnl = 0
-            portfolio_value = 10000  # Starting value
-            
-            # Group trades by date for P&L history
             from collections import defaultdict
             daily_pnl = defaultdict(float)
             
-            for trade in reversed(trades):  # Process oldest first
-                if trade.get('exit_timestamp'):
-                    # Closed trade - has P&L
-                    pnl = float(trade.get('profit_loss', 0))
-                    cumulative_pnl += pnl
-                    portfolio_value += pnl
-                    
-                    # Add to portfolio history
-                    portfolio_history.append({
-                        'timestamp': trade['exit_timestamp'],
-                        'value': portfolio_value
-                    })
-                    
-                    # Add to daily P&L
-                    date_key = trade['exit_timestamp'][:10]  # YYYY-MM-DD
-                    daily_pnl[date_key] += pnl
+            cumulative_pnl = 0
+            starting_value = 10000
             
-            # Convert daily P&L to list
-            for date, pnl in sorted(daily_pnl.items()):
-                pnl_history.append({
-                    'timestamp': date,
-                    'value': pnl
-                })
+            # Get cumulative P&L up to cutoff
+            for trade in trades_sorted:
+                trade_time = datetime.fromisoformat(trade['exit_timestamp'].replace('Z', '+00:00'))
+                if trade_time < cutoff:
+                    cumulative_pnl += float(trade.get('profit_loss', 0))
             
-            # If no closed trades, create sample data point
-            if not portfolio_history:
-                from datetime import datetime, timedelta
-                now = datetime.utcnow()
+            # Process filtered trades
+            for trade in filtered_trades:
+                pnl = float(trade.get('profit_loss', 0))
+                cumulative_pnl += pnl
+                portfolio_value = starting_value + cumulative_pnl
+                
                 portfolio_history.append({
-                    'timestamp': now.isoformat(),
+                    'timestamp': trade['exit_timestamp'],
                     'value': portfolio_value
                 })
+                
+                # Group by date for P&L chart
+                date_key = trade['exit_timestamp'][:10]
+                daily_pnl[date_key] += pnl
+            
+            # Convert daily P&L to sorted list
+            pnl_history = [
+                {'timestamp': date, 'value': pnl}
+                for date, pnl in sorted(daily_pnl.items())
+            ]
             
             return web.json_response({
                 'success': True,
@@ -782,16 +817,58 @@ class DashboardEndpoints:
                     'error': 'Position ID required'
                 }, status=400)
             
-            result = self.portfolio.close_position(position_id)
+            # ✅ FIX: Look for position in ENGINE's active_positions
+            if not self.engine or not hasattr(self.engine, 'active_positions'):
+                return web.json_response({
+                    'success': False,
+                    'error': 'Trading engine not available'
+                }, status=503)
             
-            return web.json_response({
-                'success': True,
-                'message': 'Position closed successfully',
-                'data': result
-            })
+            # Find the position by ID
+            position = None
+            token_address = None
+            
+            for addr, pos in self.engine.active_positions.items():
+                if pos.get('id') == position_id:
+                    position = pos
+                    token_address = addr
+                    break
+            
+            if not position:
+                return web.json_response({
+                    'success': False,
+                    'error': f'Position {position_id} not found in active positions'
+                }, status=404)
+            
+            # ✅ Close the position via engine
+            try:
+                # Call the engine's close position method
+                await self.engine._close_position(position, reason="Manual close via dashboard")
+                
+                logger.info(f"Position {position_id} closed successfully via dashboard")
+                
+                return web.json_response({
+                    'success': True,
+                    'message': f"Position closed: {position.get('token_symbol', 'Unknown')}",
+                    'data': {
+                        'position_id': position_id,
+                        'token_symbol': position.get('token_symbol'),
+                        'closed': True
+                    }
+                })
+            except Exception as e:
+                logger.error(f"Error closing position via engine: {e}")
+                return web.json_response({
+                    'success': False,
+                    'error': f'Failed to close position: {str(e)}'
+                }, status=500)
+                
         except Exception as e:
-            logger.error(f"Error closing position: {e}")
-            return web.json_response({'error': str(e)}, status=500)
+            logger.error(f"Error in api_close_position: {e}")
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
     
     async def api_modify_position(self, request):
         """Modify position (stop loss, take profit)"""

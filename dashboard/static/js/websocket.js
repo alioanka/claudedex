@@ -100,12 +100,12 @@ function handleDashboardUpdate(data) {
         }
     }
     
-    if (data.open_positions !== undefined) {
-        const openPositionsStat = document.getElementById('openPositionsStat');
-        if (openPositionsStat) {
-            openPositionsStat.textContent = data.open_positions;
-        }
-    }
+//    if (data.open_positions !== undefined) {
+//        const openPositionsStat = document.getElementById('openPositionsStat');
+//        if (openPositionsStat) {
+//            openPositionsStat.textContent = data.open_positions;
+//        }
+//    }
     
     if (data.daily_pnl !== undefined) {
         const pnlIndicator = document.getElementById('pnlIndicator');

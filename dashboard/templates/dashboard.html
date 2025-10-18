@@ -372,10 +372,20 @@ async function loadPortfolioChart() {
         if (response.success && response.data.portfolio_history && response.data.portfolio_history.length > 0) {
             const data = response.data.portfolio_history;
             
+            // ✅ Format labels based on timeframe
+            const formatLabel = (timestamp) => {
+                const date = new Date(timestamp);
+                if (timeframe === '7d' || timeframe === '30d') {
+                    return date.toLocaleDateString(); // Show date for longer timeframes
+                } else {
+                    return date.toLocaleTimeString(); // Show time for 1h/24h
+                }
+            };
+            
             createChart('portfolioChart', {
                 type: 'line',
                 data: {
-                    labels: data.map(d => formatTime(d.timestamp)),
+                    labels: data.map(d => formatLabel(d.timestamp)),
                     datasets: [{
                         label: 'Portfolio Value',
                         data: data.map(d => d.value),
@@ -388,30 +398,15 @@ async function loadPortfolioChart() {
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false }
-                    },
+                    plugins: { legend: { display: false } },
                     scales: {
                         y: {
                             beginAtZero: false,
-                            ticks: {
-                                callback: value => formatCurrency(value)
-                            }
+                            ticks: { callback: value => formatCurrency(value) }
                         }
                     }
                 }
             });
-        } else {
-            // ✅ Show "No data" message
-            const canvas = document.getElementById('portfolioChart');
-            if (canvas) {
-                const ctx = canvas.getContext('2d');
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                ctx.font = '16px Arial';
-                ctx.fillStyle = '#999';
-                ctx.textAlign = 'center';
-                ctx.fillText('No data available for this timeframe', canvas.width / 2, canvas.height / 2);
-            }
         }
     } catch (error) {
         console.error('Error loading portfolio chart:', error);
@@ -559,12 +554,12 @@ async function loadHistoricalStats() {
             document.getElementById('winRateStat').textContent = `${(hist.win_rate || 0).toFixed(1)}%`;
             
             // ✅ FIX: Update Risk Metrics
+            // In loadHistoricalStats
             const sharpeRatio = document.getElementById('sharpeRatio');
-            if (sharpeRatio) sharpeRatio.textContent = (portfolio.sharpe_ratio || 0).toFixed(2);
-            
+            if (sharpeRatio && hist.sharpe_ratio) sharpeRatio.textContent = hist.sharpe_ratio.toFixed(2);
+
             const maxDrawdown = document.getElementById('maxDrawdown');
-            if (maxDrawdown) maxDrawdown.textContent = `${(portfolio.max_drawdown || 0).toFixed(2)}%`;
-            
+            if (maxDrawdown && hist.max_drawdown) maxDrawdown.textContent = `${hist.max_drawdown.toFixed(2)}%`;            
             // Calculate VaR as a simple estimate (5% of portfolio value)
             const portfolioValue = portfolio.total_value || 10000;
             const var95 = document.getElementById('var95');
@@ -692,7 +687,6 @@ function updatePositionsTable(positions) {
 }
 
 
-// Close position function
 async function closePosition(positionId) {
     if (!confirm('Are you sure you want to close this position?')) {
         return;
@@ -705,10 +699,14 @@ async function closePosition(positionId) {
             position_id: positionId 
         });
         
+        console.log('Close response:', response);
+        
         if (response && response.success) {
-            showToast('success', 'Position closed successfully');
-            // Reload positions
-            await loadPositions();
+            showToast('success', response.message || 'Position closed successfully');
+            // Reload positions after 1 second
+            setTimeout(async () => {
+                await loadPositions();
+            }, 1000);
         } else {
             showToast('error', response.error || 'Failed to close position');
         }
@@ -718,7 +716,6 @@ async function closePosition(positionId) {
     }
 }
 
-// Make it globally available
 window.closePosition = closePosition;
 
 // Update orders table  
@@ -788,6 +785,8 @@ document.addEventListener('DOMContentLoaded', function() {
     setInterval(async () => {
         await loadPositions();
         await loadOrders();
+        await loadPortfolioChart();  // ✅ Add this
+        await loadPnLChart();         // ✅ Add this
     }, 5000);
 });
 </script>
