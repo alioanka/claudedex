@@ -452,33 +452,50 @@ class DashboardEndpoints:
             if not self.db:
                 return web.json_response({'error': 'Database not available'}, status=503)
             
-            # Get all closed trades
-            trades = await self.db.get_recent_trades(limit=1000, status='closed')
-            trades = self._serialize_decimals(trades)
+            # Get closed trades
+            all_trades = await self.db.get_recent_trades(limit=1000)
+            all_trades = self._serialize_decimals(all_trades)
             
-            # ✅ Sort by exit timestamp
-            trades_sorted = sorted(
-                [t for t in trades if t.get('exit_timestamp')],
-                key=lambda x: x['exit_timestamp']
-            )
+            # Filter only closed trades with exit timestamps
+            closed_trades = [t for t in all_trades if t.get('status') == 'closed' and t.get('exit_timestamp')]
+            
+            if not closed_trades:
+                return web.json_response({
+                    'success': True,
+                    'data': {
+                        'portfolio_history': [],
+                        'pnl_history': [],
+                        'strategy_performance': {}
+                    }
+                })
+            
+            # Sort by exit timestamp
+            closed_trades.sort(key=lambda x: x['exit_timestamp'])
             
             # Filter by timeframe
             from datetime import datetime, timedelta
             now = datetime.utcnow()
             
-            timeframe_hours = {
-                '1h': 1,
-                '24h': 24,
-                '7d': 168,
-                '30d': 720
-            }
+            timeframe_hours = {'1h': 1, '24h': 24, '7d': 168, '30d': 720}
             hours = timeframe_hours.get(timeframe, 24)
             cutoff = now - timedelta(hours=hours)
             
-            filtered_trades = [
-                t for t in trades_sorted 
-                if datetime.fromisoformat(t['exit_timestamp'].replace('Z', '+00:00')) >= cutoff
-            ]
+            # ✅ Calculate cumulative P&L before the timeframe
+            cumulative_pnl_before = 0
+            filtered_trades = []
+            
+            for trade in closed_trades:
+                try:
+                    trade_time = datetime.fromisoformat(trade['exit_timestamp'].replace('Z', '+00:00').replace('+00:00', ''))
+                    trade_time = trade_time.replace(tzinfo=None)  # Make naive for comparison
+                    cutoff_naive = cutoff.replace(tzinfo=None)
+                    
+                    if trade_time < cutoff_naive:
+                        cumulative_pnl_before += float(trade.get('profit_loss', 0))
+                    else:
+                        filtered_trades.append(trade)
+                except:
+                    pass
             
             # Generate portfolio history
             portfolio_history = []
@@ -486,16 +503,9 @@ class DashboardEndpoints:
             from collections import defaultdict
             daily_pnl = defaultdict(float)
             
-            cumulative_pnl = 0
             starting_value = 10000
+            cumulative_pnl = cumulative_pnl_before
             
-            # Get cumulative P&L up to cutoff
-            for trade in trades_sorted:
-                trade_time = datetime.fromisoformat(trade['exit_timestamp'].replace('Z', '+00:00'))
-                if trade_time < cutoff:
-                    cumulative_pnl += float(trade.get('profit_loss', 0))
-            
-            # Process filtered trades
             for trade in filtered_trades:
                 pnl = float(trade.get('profit_loss', 0))
                 cumulative_pnl += pnl
@@ -506,15 +516,15 @@ class DashboardEndpoints:
                     'value': portfolio_value
                 })
                 
-                # Group by date for P&L chart
                 date_key = trade['exit_timestamp'][:10]
                 daily_pnl[date_key] += pnl
             
-            # Convert daily P&L to sorted list
             pnl_history = [
                 {'timestamp': date, 'value': pnl}
                 for date, pnl in sorted(daily_pnl.items())
             ]
+            
+            logger.info(f"Chart data: {len(portfolio_history)} portfolio points, {len(pnl_history)} P&L points")
             
             return web.json_response({
                 'success': True,

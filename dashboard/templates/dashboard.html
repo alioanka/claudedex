@@ -550,24 +550,39 @@ async function loadHistoricalStats() {
             document.getElementById('winRate').textContent = `${(hist.win_rate || 0).toFixed(2)}%`;
             document.getElementById('avgWin').textContent = formatCurrency(hist.avg_win || 0);
             document.getElementById('avgLoss').textContent = formatCurrency(hist.avg_loss || 0);
-            document.getElementById('totalPnlStat').textContent = formatCurrency(hist.total_pnl || 0);
+            
+            // ✅ Update Portfolio Value and Total P&L with percentages
+            const totalPnl = hist.total_pnl || 0;
+            const startingBalance = 10000;
+            const portfolioValue = startingBalance + totalPnl;
+            const pnlPercent = (totalPnl / startingBalance) * 100;
+            
+            document.getElementById('portfolioValueStat').textContent = formatCurrency(portfolioValue);
+            document.getElementById('totalPnlStat').textContent = formatCurrency(totalPnl);
             document.getElementById('winRateStat').textContent = `${(hist.win_rate || 0).toFixed(1)}%`;
             
-            // ✅ FIX: Update Risk Metrics
-            // In loadHistoricalStats
+            // ✅ Update percentage indicators
+            const portfolioChange = document.getElementById('portfolioChange');
+            if (portfolioChange) {
+                portfolioChange.className = `stat-change ${pnlPercent >= 0 ? 'positive' : 'negative'}`;
+                portfolioChange.innerHTML = `<i class="fas fa-arrow-${pnlPercent >= 0 ? 'up' : 'down'}"></i> ${Math.abs(pnlPercent).toFixed(2)}%`;
+            }
+            
+            const pnlChange = document.getElementById('pnlChange');
+            if (pnlChange) {
+                pnlChange.className = `stat-change ${pnlPercent >= 0 ? 'positive' : 'negative'}`;
+                pnlChange.innerHTML = `<i class="fas fa-arrow-${pnlPercent >= 0 ? 'up' : 'down'}"></i> ${Math.abs(pnlPercent).toFixed(2)}%`;
+            }
+            
+            // Update Risk Metrics
             const sharpeRatio = document.getElementById('sharpeRatio');
-            if (sharpeRatio && hist.sharpe_ratio) sharpeRatio.textContent = hist.sharpe_ratio.toFixed(2);
-
+            if (sharpeRatio) sharpeRatio.textContent = (hist.sharpe_ratio || 0).toFixed(2);
+            
             const maxDrawdown = document.getElementById('maxDrawdown');
-            if (maxDrawdown && hist.max_drawdown) maxDrawdown.textContent = `${hist.max_drawdown.toFixed(2)}%`;            
-            // Calculate VaR as a simple estimate (5% of portfolio value)
-            const portfolioValue = portfolio.total_value || 10000;
+            if (maxDrawdown) maxDrawdown.textContent = `${Math.abs(hist.max_drawdown || 0).toFixed(2)}%`;
+            
             const var95 = document.getElementById('var95');
             if (var95) var95.textContent = formatCurrency(portfolioValue * 0.05);
-            
-            // Portfolio Beta (default to 1.0 if not calculated)
-            const portfolioBeta = document.getElementById('portfolioBeta');
-            if (portfolioBeta) portfolioBeta.textContent = '1.00';
         }
     } catch (error) {
         console.error('Error loading historical stats:', error);

@@ -25,11 +25,20 @@ function setupDashboardRefresh() {
 }
 
 // Refresh dashboard data
+// Refresh dashboard data
 async function refreshDashboardData() {
     try {
         const response = await apiGet('/api/dashboard/summary');
         if (response.success) {
-            updateDashboardMetrics(response.data);
+            // ❌ REMOVE THIS LINE - it's overwriting with wrong data
+            // updateDashboardMetrics(response.data);
+            
+            // ✅ ONLY update the open positions count
+            const openPositionsStat = document.getElementById('openPositionsStat');
+            if (openPositionsStat && response.data.open_positions !== undefined) {
+                openPositionsStat.textContent = response.data.open_positions;
+            }
+            
             dashboardState.lastUpdate = new Date();
         }
     } catch (error) {
