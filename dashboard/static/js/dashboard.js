@@ -39,25 +39,17 @@ async function refreshDashboardData() {
 
 // Update dashboard metrics
 function updateDashboardMetrics(data) {
-    // ✅ ONLY update LIVE metrics, NOT historical stats
-    
     // Update portfolio value (live data)
     const portfolioValueStat = document.getElementById('portfolioValueStat');
     if (portfolioValueStat) {
         portfolioValueStat.textContent = formatCurrency(data.portfolio_value);
     }
     
-    // Update open positions (live data)
+    // ✅ FIX: Update open positions count
     const openPositionsStat = document.getElementById('openPositionsStat');
     if (openPositionsStat) {
-        openPositionsStat.textContent = data.open_positions;
+        openPositionsStat.textContent = data.open_positions || 0;
     }
-    
-    // ❌ REMOVE these lines - they overwrite historical data:
-    // const totalPnlStat = document.getElementById('totalPnlStat');
-    // const winRateStat = document.getElementById('winRateStat');
-    
-    // NOTE: totalPnlStat and winRateStat are now ONLY updated by loadHistoricalStats()
 }
 
 // ✅ NEW: Add function to load historical stats ONCE on page load

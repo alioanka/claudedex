@@ -369,7 +369,7 @@ async function loadPortfolioChart() {
     try {
         const response = await apiGet(`/api/performance/charts?timeframe=${timeframe}`);
         
-        if (response.success && response.data.portfolio_history) {
+        if (response.success && response.data.portfolio_history && response.data.portfolio_history.length > 0) {
             const data = response.data.portfolio_history;
             
             createChart('portfolioChart', {
@@ -389,9 +389,7 @@ async function loadPortfolioChart() {
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: {
-                        legend: {
-                            display: false
-                        }
+                        legend: { display: false }
                     },
                     scales: {
                         y: {
@@ -403,6 +401,17 @@ async function loadPortfolioChart() {
                     }
                 }
             });
+        } else {
+            // ✅ Show "No data" message
+            const canvas = document.getElementById('portfolioChart');
+            if (canvas) {
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.font = '16px Arial';
+                ctx.fillStyle = '#999';
+                ctx.textAlign = 'center';
+                ctx.fillText('No data available for this timeframe', canvas.width / 2, canvas.height / 2);
+            }
         }
     } catch (error) {
         console.error('Error loading portfolio chart:', error);
@@ -415,7 +424,7 @@ async function loadPnLChart() {
     try {
         const response = await apiGet(`/api/performance/charts?timeframe=${timeframe}`);
         
-        if (response.success && response.data.pnl_history) {
+        if (response.success && response.data.pnl_history && response.data.pnl_history.length > 0) {
             const data = response.data.pnl_history;
             
             createChart('pnlChart', {
@@ -433,9 +442,7 @@ async function loadPnLChart() {
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: {
-                        legend: {
-                            display: false
-                        }
+                        legend: { display: false }
                     },
                     scales: {
                         y: {
@@ -447,6 +454,17 @@ async function loadPnLChart() {
                     }
                 }
             });
+        } else {
+            // ✅ Show "No data" message
+            const canvas = document.getElementById('pnlChart');
+            if (canvas) {
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.font = '16px Arial';
+                ctx.fillStyle = '#999';
+                ctx.textAlign = 'center';
+                ctx.fillText('No data available for this timeframe', canvas.width / 2, canvas.height / 2);
+            }
         }
     } catch (error) {
         console.error('Error loading P&L chart:', error);
@@ -528,16 +546,33 @@ async function loadHistoricalStats() {
     try {
         const response = await apiGet('/api/performance/metrics');
         
-        if (response.success && response.data && response.data.historical) {
-            const hist = response.data.historical;
+        if (response.success && response.data) {
+            const hist = response.data.historical || {};
+            const portfolio = response.data || {};
             
-            // Update Trading Stats section (already done in loadWinRateChart)
+            // Update Trading Stats
             document.getElementById('totalTrades').textContent = hist.total_trades || 0;
             document.getElementById('winRate').textContent = `${(hist.win_rate || 0).toFixed(2)}%`;
             document.getElementById('avgWin').textContent = formatCurrency(hist.avg_win || 0);
             document.getElementById('avgLoss').textContent = formatCurrency(hist.avg_loss || 0);
             document.getElementById('totalPnlStat').textContent = formatCurrency(hist.total_pnl || 0);
             document.getElementById('winRateStat').textContent = `${(hist.win_rate || 0).toFixed(1)}%`;
+            
+            // ✅ FIX: Update Risk Metrics
+            const sharpeRatio = document.getElementById('sharpeRatio');
+            if (sharpeRatio) sharpeRatio.textContent = (portfolio.sharpe_ratio || 0).toFixed(2);
+            
+            const maxDrawdown = document.getElementById('maxDrawdown');
+            if (maxDrawdown) maxDrawdown.textContent = `${(portfolio.max_drawdown || 0).toFixed(2)}%`;
+            
+            // Calculate VaR as a simple estimate (5% of portfolio value)
+            const portfolioValue = portfolio.total_value || 10000;
+            const var95 = document.getElementById('var95');
+            if (var95) var95.textContent = formatCurrency(portfolioValue * 0.05);
+            
+            // Portfolio Beta (default to 1.0 if not calculated)
+            const portfolioBeta = document.getElementById('portfolioBeta');
+            if (portfolioBeta) portfolioBeta.textContent = '1.00';
         }
     } catch (error) {
         console.error('Error loading historical stats:', error);
@@ -559,12 +594,32 @@ async function loadOrders() {
     }
 }
 
-// Load open positions (handle errors gracefully)
+// Load and update open positions count
+async function updatePositionsCount() {
+    try {
+        const response = await apiGet('/api/positions/open');
+        if (response && response.success && response.data) {
+            const openPositionsStat = document.getElementById('openPositionsStat');
+            if (openPositionsStat) {
+                openPositionsStat.textContent = response.data.length;
+            }
+        }
+    } catch (error) {
+        console.error('Error updating positions count:', error);
+    }
+}
+
+// Call it when loading positions
 async function loadPositions() {
     try {
         const response = await apiGet('/api/positions/open');
         if (response && response.success && response.data) {
             updatePositionsTable(response.data);
+            // ✅ Update count
+            const openPositionsStat = document.getElementById('openPositionsStat');
+            if (openPositionsStat) {
+                openPositionsStat.textContent = response.data.length;
+            }
         } else {
             showEmptyPositions();
         }
@@ -635,6 +690,36 @@ function updatePositionsTable(positions) {
         `;
     }).join('');
 }
+
+
+// Close position function
+async function closePosition(positionId) {
+    if (!confirm('Are you sure you want to close this position?')) {
+        return;
+    }
+    
+    try {
+        showToast('info', 'Closing position...');
+        
+        const response = await apiPost('/api/position/close', { 
+            position_id: positionId 
+        });
+        
+        if (response && response.success) {
+            showToast('success', 'Position closed successfully');
+            // Reload positions
+            await loadPositions();
+        } else {
+            showToast('error', response.error || 'Failed to close position');
+        }
+    } catch (error) {
+        console.error('Error closing position:', error);
+        showToast('error', 'Failed to close position: ' + error.message);
+    }
+}
+
+// Make it globally available
+window.closePosition = closePosition;
 
 // Update orders table  
 function updateOrdersTable(orders) {

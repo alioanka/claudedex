@@ -419,30 +419,78 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_performance_charts(self, request):
-        """Get data for performance charts"""
+        """Get performance chart data"""
         try:
-            # Get historical data for charts
-            timeframe = request.query.get('timeframe', '1d')
+            timeframe = request.query.get('timeframe', '24h')
             
-            # Portfolio value over time
-            portfolio_history = []  # Fetch from database
+            if not self.db:
+                return web.json_response({'error': 'Database not available'}, status=503)
             
-            # P&L over time
-            pnl_history = []  # Fetch from database
+            # Get trades for the timeframe
+            limit_map = {
+                '1h': 10,
+                '24h': 50,
+                '7d': 200,
+                '30d': 500
+            }
+            limit = limit_map.get(timeframe, 50)
             
-            # Win rate by strategy
-            strategy_performance = {}  # Calculate from trades
+            trades = await self.db.get_recent_trades(limit=limit)
+            trades = self._serialize_decimals(trades)
+            
+            # Generate portfolio history from trades
+            portfolio_history = []
+            pnl_history = []
+            cumulative_pnl = 0
+            portfolio_value = 10000  # Starting value
+            
+            # Group trades by date for P&L history
+            from collections import defaultdict
+            daily_pnl = defaultdict(float)
+            
+            for trade in reversed(trades):  # Process oldest first
+                if trade.get('exit_timestamp'):
+                    # Closed trade - has P&L
+                    pnl = float(trade.get('profit_loss', 0))
+                    cumulative_pnl += pnl
+                    portfolio_value += pnl
+                    
+                    # Add to portfolio history
+                    portfolio_history.append({
+                        'timestamp': trade['exit_timestamp'],
+                        'value': portfolio_value
+                    })
+                    
+                    # Add to daily P&L
+                    date_key = trade['exit_timestamp'][:10]  # YYYY-MM-DD
+                    daily_pnl[date_key] += pnl
+            
+            # Convert daily P&L to list
+            for date, pnl in sorted(daily_pnl.items()):
+                pnl_history.append({
+                    'timestamp': date,
+                    'value': pnl
+                })
+            
+            # If no closed trades, create sample data point
+            if not portfolio_history:
+                from datetime import datetime, timedelta
+                now = datetime.utcnow()
+                portfolio_history.append({
+                    'timestamp': now.isoformat(),
+                    'value': portfolio_value
+                })
             
             return web.json_response({
                 'success': True,
                 'data': {
                     'portfolio_history': portfolio_history,
                     'pnl_history': pnl_history,
-                    'strategy_performance': strategy_performance
+                    'strategy_performance': {}
                 }
             })
         except Exception as e:
-            logger.error(f"Error getting performance charts: {e}")
+            logger.error(f"Error getting performance charts: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_recent_alerts(self, request):
