@@ -16,6 +16,61 @@ from eth_account import Account
 import aiohttp
 from decimal import Decimal
 
+from abc import ABC, abstractmethod
+
+class BaseExecutor(ABC):
+    """
+    Abstract base class for all executors (EVM and Solana)
+    Defines the common interface that all executors must implement
+    """
+    
+    def __init__(self, config: Dict):
+        """Initialize base executor"""
+        self.config = config
+        self.stats = {
+            'total_trades': 0,
+            'successful_trades': 0,
+            'failed_trades': 0,
+        }
+    
+    @abstractmethod
+    async def initialize(self):
+        """Initialize the executor (connect to RPC, etc.)"""
+        pass
+    
+    @abstractmethod
+    async def execute_trade(self, order, quote=None) -> Dict:
+        """
+        Execute a trade
+        
+        Args:
+            order: Order object
+            quote: Optional pre-fetched quote
+            
+        Returns:
+            Dict with execution result
+        """
+        pass
+    
+    @abstractmethod
+    async def get_quote(self, *args, **kwargs):
+        """Get a quote for a trade"""
+        pass
+    
+    @abstractmethod
+    def validate_order(self, order) -> bool:
+        """Validate an order before execution"""
+        pass
+    
+    @abstractmethod
+    async def cleanup(self):
+        """Cleanup resources"""
+        pass
+    
+    async def get_execution_stats(self) -> Dict:
+        """Get execution statistics"""
+        return self.stats.copy()
+
 @dataclass
 class TradeOrder:
     """Trade order structure"""
@@ -60,8 +115,8 @@ class ExecutionRoute(Enum):
     TOXISOL = "toxisol"
     DIRECT = "direct"
 
-class TradeExecutor:
-    """Base trade executor with multiple routes"""
+class TradeExecutor(BaseExecutor):  # ✅ Add BaseExecutor inheritance
+    """EVM trade executor with multiple routes"""
     
     def __init__(self, config: Dict):
         """
@@ -70,6 +125,7 @@ class TradeExecutor:
         Args:
             config: Configuration dictionary
         """
+        super().__init__(config)  # ✅ Call parent __init__
         self.config = config
         
         # Web3 setup
@@ -131,6 +187,19 @@ class TradeExecutor:
             'total_slippage': 0,
             'routes_used': {}
         }
+
+    async def initialize(self):
+        """Initialize EVM executor"""
+        # Test Web3 connection
+        if not self.w3.is_connected():
+            raise ConnectionError("Web3 connection failed")
+        
+        print(f"EVM Executor initialized for chain {self.chain_id}")
+    
+    async def cleanup(self):
+        """Cleanup EVM executor resources"""
+        # Close any open connections
+        print("EVM Executor cleanup complete")
         
     async def execute(self, order: TradeOrder) -> ExecutionResult:
         """
@@ -1137,3 +1206,5 @@ async def test_web3_connection():
     except Exception as e:
         print(f"Web3 connection error: {e}")
         return False
+
+__all__ = ['BaseExecutor', 'TradeExecutor', 'TradeOrder', 'ExecutionResult', 'ExecutionRoute']
