@@ -81,7 +81,7 @@ class DexScreenerCollector:
         self.min_liquidity = config.get('min_liquidity', 10000)
         self.min_volume = config.get('min_volume', 5000)
         self.max_age_hours = config.get('max_age_hours', 24)
-        self.chains = config.get('chains', ['ethereum', 'bsc', 'polygon', 'arbitrum', 'base'])
+        self.chains = config.get('chains', ['ethereum', 'bsc', 'polygon', 'arbitrum', 'base', 'solana'])
         
         # Session
         self.session: Optional[aiohttp.ClientSession] = None
@@ -94,7 +94,42 @@ class DexScreenerCollector:
             'pairs_found': 0,
             'pairs_filtered': 0
         }
+
+    # Add this class-level constant after __init__:
+    CHAIN_MAPPING = {
+        # EVM chains
+        'ethereum': 'ethereum',
+        'eth': 'ethereum',
+        'bsc': 'bsc',
+        'bnb': 'bsc',
+        'polygon': 'polygon',
+        'matic': 'polygon',
+        'arbitrum': 'arbitrum',
+        'arb': 'arbitrum',
+        'base': 'base',
+        'optimism': 'optimism',
+        'op': 'optimism',
+        'avalanche': 'avalanche',
+        'avax': 'avalanche',
         
+        # Solana - IMPORTANT: DexScreener uses 'solana' (lowercase)
+        'solana': 'solana',
+        'sol': 'solana',
+    }
+
+    def _normalize_chain(self, chain: str) -> str:
+        """
+        Normalize chain name for DexScreener API
+        
+        Args:
+            chain: Chain name (can be 'solana', 'SOL', 'Solana', etc.)
+            
+        Returns:
+            Normalized chain name for API
+        """
+        chain_lower = chain.lower()
+        return self.CHAIN_MAPPING.get(chain_lower, chain_lower)
+
     async def initialize(self):
         """Initialize the collector"""
         if not self.session:
@@ -178,17 +213,25 @@ class DexScreenerCollector:
     # 1. Fix get_new_pairs signature (line ~165)
     # REPLACE the existing method signature and update the implementation:
 
+    # ============================================
+    # PATCH 2: Update get_new_pairs to normalize chain (line ~170)
+    # Replace the beginning of get_new_pairs method:
+    # ============================================
+
     async def get_new_pairs(self, chain: str = 'ethereum', limit: int = 100) -> List[Dict]:
         """
         Get newly created pairs using CORRECT DexScreener API v1 endpoints
         
         Args:
-            chain: Blockchain network
+            chain: Blockchain network (ethereum, bsc, solana, etc.)
             limit: Maximum number of pairs to return
             
         Returns:
             List of new pair data
         """
+        # ✅ CRITICAL: Normalize chain name for DexScreener
+        chain = self._normalize_chain(chain)
+        
         new_pairs = []
         seen_addresses = set()
         
@@ -203,7 +246,7 @@ class DexScreenerCollector:
         try:
             print(f"🔍 Fetching new pairs for {chain}...")
             
-            # ✅ STRATEGY 1: Latest boosted tokens (CORRECT endpoint)
+            # ✅ STRATEGY 1: Latest boosted tokens
             try:
                 boosted_data = await self._make_request("/token-boosts/latest/v1")
                 
@@ -212,23 +255,24 @@ class DexScreenerCollector:
                     
                     tokens_list = boosted_data if isinstance(boosted_data, list) else [boosted_data]
                     
-                    for boost in tokens_list[:10]:  # Top 10 boosted
+                    for boost in tokens_list[:10]:
                         try:
-                            token_chain = boost.get('chainId', '').lower()
-                            if token_chain != chain.lower():
+                            # ✅ Normalize token chain too
+                            token_chain = self._normalize_chain(boost.get('chainId', ''))
+                            if token_chain != chain:
                                 continue
                             
                             token_address = boost.get('tokenAddress')
                             if not token_address:
                                 continue
                             
-                            # ✅ Get pairs for this token (CORRECT endpoint)
+                            # ✅ Get pairs for this token
                             pairs_data = await self._make_request(
                                 f"/token-pairs/v1/{chain}/{token_address}"
                             )
                             
                             if pairs_data and isinstance(pairs_data, list):
-                                for pair_data in pairs_data[:2]:  # Top 2 pairs per token
+                                for pair_data in pairs_data[:2]:
                                     pair = self._parse_pair(pair_data)
                                     if pair and self._filter_pair(pair):
                                         pair_dict = self._pair_to_dict(pair)
@@ -296,13 +340,21 @@ class DexScreenerCollector:
             print(f"  Strategy 2 (Profiles): {len(new_pairs)} pairs")
             
             # ✅ STRATEGY 3: Search common quote tokens (CORRECT endpoint)
-            if len(new_pairs) < 10:  # Only if we haven't found much
+            # ============================================
+            # PATCH 3: Update search_pairs quote tokens for Solana (line ~310)
+            # In the STRATEGY 3 section of get_new_pairs, update quote_tokens dict:
+            # ============================================
+
+            # ✅ STRATEGY 3: Search common quote tokens
+            if len(new_pairs) < 10:
                 quote_tokens = {
                     'ethereum': ['WETH', 'USDC', 'USDT'],
                     'bsc': ['WBNB', 'BUSD', 'USDT'],
                     'polygon': ['WMATIC', 'USDC'],
                     'arbitrum': ['WETH', 'USDC'],
-                    'base': ['WETH', 'USDC']
+                    'base': ['WETH', 'USDC'],
+                    # ✅ ADD SOLANA:
+                    'solana': ['SOL', 'USDC', 'USDT', 'RAY', 'BONK']
                 }
                 
                 for quote in quote_tokens.get(chain, ['USDC'])[:2]:
@@ -310,7 +362,6 @@ class DexScreenerCollector:
                         break
                     
                     try:
-                        # ✅ CORRECT search endpoint
                         search_data = await self._make_request(
                             "/latest/dex/search",
                             params={'q': quote}
@@ -318,7 +369,9 @@ class DexScreenerCollector:
                         
                         if search_data and 'pairs' in search_data:
                             for pair_data in search_data['pairs'][:20]:
-                                if pair_data.get('chainId', '').lower() != chain.lower():
+                                # ✅ Normalize chain for comparison
+                                pair_chain = self._normalize_chain(pair_data.get('chainId', ''))
+                                if pair_chain != chain:
                                     continue
                                 
                                 pair = self._parse_pair(pair_data)
@@ -358,17 +411,24 @@ class DexScreenerCollector:
             traceback.print_exc()
             return []
         
+    # ============================================
+    # PATCH 4: Update get_token_price to normalize chain (line ~370)
+    # ============================================
+
     async def get_token_price(self, token_address: str, chain: str = 'ethereum') -> Optional[float]:
         """
         Get current token price
         
         Args:
             token_address: Token contract address
-            chain: Blockchain network (ethereum, bsc, polygon, etc.)
+            chain: Blockchain network (ethereum, bsc, polygon, solana, etc.)
             
         Returns:
             Current price in USD or None
         """
+        # ✅ Normalize chain name
+        chain = self._normalize_chain(chain)
+        
         # Check cache
         cache_key = f"price_{chain}_{token_address}"
         if cache_key in self.cache:
@@ -383,14 +443,21 @@ class DexScreenerCollector:
             
             if data and 'pairs' in data and len(data['pairs']) > 0:
                 # Filter pairs for the correct chain
-                chain_pairs = [p for p in data['pairs'] if p.get('chainId', '').lower() == chain.lower()]
+                chain_pairs = [
+                    p for p in data['pairs'] 
+                    if self._normalize_chain(p.get('chainId', '')) == chain
+                ]
                 
                 if not chain_pairs:
                     # If no exact chain match, use any pair
                     chain_pairs = data['pairs']
                 
                 # Get price from most liquid pair
-                pairs = sorted(chain_pairs, key=lambda x: x.get('liquidity', {}).get('usd', 0), reverse=True)
+                pairs = sorted(
+                    chain_pairs, 
+                    key=lambda x: x.get('liquidity', {}).get('usd', 0), 
+                    reverse=True
+                )
                 
                 if pairs:
                     price_str = pairs[0].get('priceUsd')
@@ -738,9 +805,13 @@ class DexScreenerCollector:
             'metadata': pair.info
         }
         
+    # ============================================
+    # PATCH 5: Update _filter_pair for Solana-specific thresholds (line ~680)
+    # ============================================
+
     def _filter_pair(self, pair: TokenPair) -> bool:
         """
-        Filter pairs based on criteria
+        Filter pairs based on criteria (chain-aware)
         
         Args:
             pair: TokenPair to filter
@@ -748,26 +819,54 @@ class DexScreenerCollector:
         Returns:
             True if pair passes filters
         """
+        # ✅ Get chain-specific thresholds
+        chain = self._normalize_chain(pair.chain_id)
+        
+        # Chain-specific minimum liquidity
+        chain_min_liquidity = {
+            'ethereum': 10000,
+            'bsc': 1000,
+            'polygon': 1000,
+            'arbitrum': 10000,
+            'base': 5000,
+            'solana': 5000,  # ✅ Solana minimum liquidity
+        }
+        
+        min_liquidity = chain_min_liquidity.get(chain, self.min_liquidity)
+        
         # Check liquidity
-        if pair.liquidity_usd < self.min_liquidity:
+        if pair.liquidity_usd < min_liquidity:
             return False
-            
+        
+        # Chain-specific minimum volume
+        chain_min_volume = {
+            'ethereum': 5000,
+            'bsc': 1000,
+            'polygon': 1000,
+            'arbitrum': 5000,
+            'base': 2000,
+            'solana': 2000,  # ✅ Solana minimum volume
+        }
+        
+        min_volume = chain_min_volume.get(chain, self.min_volume)
+        
         # Check volume
-        if pair.volume_24h < self.min_volume:
+        if pair.volume_24h < min_volume:
             return False
-            
-        # Check age
-        if pair.age_hours > self.max_age_hours:
+        
+        # Check age (Solana tokens can be newer)
+        max_age = 48 if chain == 'solana' else self.max_age_hours  # ✅ Solana can be 48h
+        if pair.age_hours > max_age:
             return False
-            
+        
         # Check for honeypot indicators
         if pair.buyers_24h == 0 and pair.sellers_24h > 0:
             return False  # Only sells, likely honeypot
-            
+        
         # Check price
         if pair.price_usd <= 0:
             return False
-            
+        
         return True
         
     def _detect_changes(self, previous: Dict, current: Dict) -> Optional[Dict]:
@@ -938,6 +1037,10 @@ class DexScreenerCollector:
     # Add these methods to the DexScreenerCollector class
     # ============================================================================
 
+    # ============================================
+    # PATCH 6: Update get_token_info to normalize chain (line ~880)
+    # ============================================
+
     async def get_token_info(self, address: str, chain: str = 'ethereum') -> Dict:
         """
         Get token information
@@ -949,8 +1052,11 @@ class DexScreenerCollector:
         Returns:
             Token information dictionary
         """
+        # ✅ Normalize chain
+        chain = self._normalize_chain(chain)
+        
         # Use existing get_token_price and extend it
-        price = await self.get_token_price(address)
+        price = await self.get_token_price(address, chain)
         pairs = await self.get_token_pairs(address)
         
         if pairs and len(pairs) > 0:
@@ -966,7 +1072,7 @@ class DexScreenerCollector:
                 'liquidity': main_pair.get('liquidity', 0),
                 'volume_24h': main_pair.get('volume_24h', 0),
                 'price_change_24h': main_pair.get('price_change_24h', 0),
-                'market_cap': 0,  # Would need total supply
+                'market_cap': 0,
                 'pairs_count': len(pairs),
                 'main_pair': main_pair.get('pair_address', ''),
                 'created_at': main_pair.get('created_at', 0)

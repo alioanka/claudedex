@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 import json
 from enum import Enum
 import numpy as np
+from trading.chains.solana.jupiter_executor import JupiterExecutor
+from trading.chains.solana.solana_client import SolanaClient
 
 from core.risk_manager import RiskManager, RiskScore
 from core.pattern_analyzer import PatternAnalyzer
@@ -154,6 +156,22 @@ class TradingBotEngine:
         self.order_manager = OrderManager(config)
         self.position_tracker = PositionTracker()
         self.trade_executor = TradeExecutor(executor_config)
+
+        # Find this section in __init__:
+        # self.trade_executor = DirectDEXExecutor(config)
+        # OR
+        # self.trade_executor = ToxiSolAPIExecutor(config)
+
+        # Add AFTER the existing executor initialization:
+
+        # Initialize Solana executor if enabled
+        self.solana_executor = None
+        if config.get('solana', {}).get('enabled', False):
+            try:
+                self.solana_executor = JupiterExecutor(config.get('solana', {}))
+                logger.info("✅ Solana Jupiter Executor initialized")
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize Solana executor: {e}")
         
         # Monitoring
         self.alert_manager = AlertManager(config['notifications'])
@@ -170,7 +188,7 @@ class TradingBotEngine:
         self.blacklisted_tokens: set = set()
         self.blacklisted_devs: set = set()
 
-# Cooldown tracking
+        # Cooldown tracking
         self.recently_closed: Dict[str, ClosedPositionRecord] = {}  # token_address -> record
         self.cooldown_minutes = config.get('trading', {}).get('position_cooldown_minutes', 60)
         
@@ -234,7 +252,16 @@ class TradingBotEngine:
             
             if hasattr(self.order_manager, 'initialize'):
                 await self.order_manager.initialize()
-            
+
+            # Initialize Solana executor
+            if self.solana_executor:
+                try:
+                    await self.solana_executor.initialize()
+                    logger.info("Solana trading enabled via Jupiter")
+                except Exception as e:
+                    logger.error(f"Solana executor initialization failed: {e}")
+                    self.solana_executor = None
+                        
             # Rest of initialization...
             
             # Setup event handlers
@@ -673,7 +700,6 @@ class TradingBotEngine:
                     )
                     return
                 else:
-                    # Cooldown expired, remove from tracking
                     logger.info(f"♻️ Cooldown expired for {token_symbol}, can re-enter")
                     del self.recently_closed[token_address]
             
@@ -683,16 +709,32 @@ class TradingBotEngine:
                 logger.warning(f"⚠️ Max positions reached ({len(self.active_positions)}) - SKIPPING")
                 return
             
+            # ✅ NEW: Chain-specific executor routing
+            chain = opportunity.chain.lower()
+            
+            # Select appropriate executor
+            if chain == 'solana':
+                executor = self.solana_executor
+                if not executor:
+                    logger.error("❌ Solana executor not available")
+                    return
+                logger.info(f"🔷 Using Jupiter executor for Solana")
+            else:
+                # EVM chains use existing executor
+                executor = self.trade_executor
+                logger.info(f"🔶 Using EVM executor for {chain}")
+            
             # Check if in DRY_RUN mode
             if self.config.get('dry_run', True):
                 logger.info(f"🎯 DRY RUN - SIMULATING TRADE:")
                 logger.info(f"   Token: {token_symbol}")
                 logger.info(f"   Address: {opportunity.token_address}")
-                logger.info(f"   Chain: {opportunity.chain}")
+                logger.info(f"   Chain: {chain.upper()}")
+                logger.info(f"   Executor: {'Jupiter' if chain == 'solana' else 'EVM'}")
                 logger.info(f"   Price: ${opportunity.price:.8f}")
                 logger.info(f"   Score: {opportunity.score:.3f}")
                 
-                # Create simulated position
+                # Create simulated position (same as before)
                 from decimal import Decimal
                 import uuid
                 
@@ -715,7 +757,8 @@ class TradingBotEngine:
                     'take_profit_percentage': 0.3,
                     'max_hold_time': 60,
                     'metadata': opportunity.metadata,
-                    'is_dry_run': True
+                    'is_dry_run': True,
+                    'executor_type': 'Jupiter' if chain == 'solana' else 'EVM'
                 }
                 
                 # Add to active positions
@@ -745,7 +788,8 @@ class TradingBotEngine:
                         'metadata': {
                             'token_symbol': token_symbol,
                             'is_dry_run': True,
-                            'opportunity_score': float(opportunity.score)
+                            'opportunity_score': float(opportunity.score),
+                            'executor_type': 'Jupiter' if chain == 'solana' else 'EVM'
                         }
                     }
                     await self.db.save_trade(trade_data)
@@ -758,9 +802,11 @@ class TradingBotEngine:
                 self.stats['successful_trades'] += 1
                 
                 # Send alert
+                executor_emoji = "🔷" if chain == 'solana' else "🔶"
                 await self.alert_manager.send_trade_alert(
                     f"📝 DRY RUN - OPENED POSITION: {token_symbol}\n"
-                    f"Chain: {opportunity.chain}\n"
+                    f"Chain: {chain.upper()} {executor_emoji}\n"
+                    f"Executor: {'Jupiter' if chain == 'solana' else 'EVM DEX'}\n"
                     f"Entry: ${opportunity.price:.8f}\n"
                     f"Amount: {simulated_amount:.2f} tokens\n"
                     f"Value: $1000 (simulated)\n"
@@ -772,50 +818,53 @@ class TradingBotEngine:
                 logger.info(f"✅ DRY RUN position added to tracking: {token_symbol}")
                 return
             
-            # REAL EXECUTION (rest of the existing code continues unchanged...)
-            logger.info(f"💰 EXECUTING REAL TRADE for {token_symbol}")
+            # REAL EXECUTION
+            logger.info(f"💰 EXECUTING REAL TRADE for {token_symbol} on {chain.upper()}")
             
-            # ... rest of existing real execution code ...
+            # Create trade order (chain-agnostic)
+            from trading.orders.order_manager import Order, OrderType
             
-            # Create trade order
-            from trading.executors.base_executor import TradeOrder
-            
-            order = TradeOrder(
-                token_address=opportunity.token_address,
-                side='buy',
-                amount=opportunity.recommended_position_size / opportunity.price,  # ETH amount
-                slippage=0.05,  # 5% slippage
-                deadline=300,  # 5 minutes
-                gas_price_multiplier=1.2,
-                use_mev_protection=True,
-                urgency='normal',
+            # For Solana, token addresses are base58 mints
+            # For EVM, they're hex addresses
+            order = Order(
+                order_id=str(uuid.uuid4()),
+                token_in="So11111111111111111111111111111111111111112" if chain == 'solana' else self.config.get('weth_address'),  # SOL or WETH
+                token_out=opportunity.token_address,
+                amount=Decimal(str(opportunity.recommended_position_size / opportunity.price)),
+                order_type=OrderType.MARKET,
+                slippage=0.05,
+                chain=opportunity.chain,
+                wallet_address=str(self.solana_executor.wallet_keypair.pubkey()) if chain == 'solana' else self.config.get('wallet_address'),
                 metadata={
                     'opportunity_id': opportunity.metadata.get('opportunity_id'),
                     'token_symbol': token_symbol,
-                    'chain': opportunity.chain,
-                    'score': opportunity.score
+                    'score': opportunity.score,
+                    'executor_type': 'Jupiter' if chain == 'solana' else 'EVM'
                 }
             )
             
-            # Execute trade
-            result = await self.trade_executor.execute(order)
+            # Execute trade using appropriate executor
+            result = await executor.execute_trade(order)
             
-            if result.success:
+            if result['success']:
                 # Track position
                 position = {
                     'token_address': opportunity.token_address,
                     'token_symbol': token_symbol,
-                    'entry_price': result.execution_price,
-                    'amount': result.token_amount,
+                    'entry_price': result.get('execution_price', opportunity.price),
+                    'amount': result.get('token_amount', order.amount),
                     'entry_value': opportunity.recommended_position_size,
-                    'tx_hash': result.tx_hash,
+                    'tx_hash': result.get('signature' if chain == 'solana' else 'transactionHash'),
                     'chain': opportunity.chain,
                     'strategy': {'name': opportunity.entry_strategy},
                     'risk_score': opportunity.risk_score,
                     'entry_time': datetime.now(),
-                    'stop_loss_percentage': 0.1,  # 10% stop loss
-                    'take_profit_percentage': 0.3,  # 30% take profit
-                    'metadata': opportunity.metadata
+                    'stop_loss_percentage': 0.1,
+                    'take_profit_percentage': 0.3,
+                    'metadata': {
+                        **opportunity.metadata,
+                        'executor_type': 'Jupiter' if chain == 'solana' else 'EVM'
+                    }
                 }
                 
                 self.active_positions[opportunity.token_address] = position
@@ -823,23 +872,25 @@ class TradingBotEngine:
                 self.stats['successful_trades'] += 1
                 
                 # Send success alert
+                tx_link = result.get('explorer_url', f"Transaction: {result.get('signature' or 'transactionHash', 'N/A')[:10]}...")
+                
                 await self.alert_manager.send_trade_alert(
                     f"✅ OPENED POSITION: {token_symbol}\n"
-                    f"Entry: ${result.execution_price:.8f}\n"
-                    f"Amount: {result.token_amount:.4f}\n"
+                    f"Chain: {chain.upper()}\n"
+                    f"Executor: {'Jupiter 🔷' if chain == 'solana' else 'EVM DEX 🔶'}\n"
+                    f"Entry: ${result.get('execution_price', opportunity.price):.8f}\n"
+                    f"Amount: {result.get('token_amount', order.amount):.4f}\n"
                     f"Value: ${opportunity.recommended_position_size:.2f}\n"
-                    f"Tx: {result.tx_hash[:10]}...\n"
-                    f"Gas: ${result.gas_used * result.gas_price / 1e18:.2f}"
+                    f"Tx: {tx_link}"
                 )
                 
             else:
                 self.stats['failed_trades'] += 1
                 
-                # Send failure alert
                 await self.alert_manager.send_warning(
                     f"❌ TRADE FAILED: {token_symbol}\n"
-                    f"Error: {result.error}\n"
-                    f"Route: {result.route}"
+                    f"Chain: {chain.upper()}\n"
+                    f"Error: {result.get('error', 'Unknown error')}"
                 )
                 
         except Exception as e:
@@ -1371,9 +1422,15 @@ class TradingBotEngine:
             self.state = BotState.ERROR
             raise Exception(f"Failed to start engine: {e}")
     
+    # ============================================
+    # ALSO UPDATE: Modify stop() method to call cleanup()
+    # Find the stop() method (around line 950) and update it:
+    # ============================================
+
     async def stop(self):
         """Stop the trading engine"""
         try:
+            logger.info("🛑 Stopping trading engine...")
             self.state = BotState.STOPPING
             
             # Cancel all tasks
@@ -1382,20 +1439,105 @@ class TradingBotEngine:
             
             # Wait for tasks to complete
             await asyncio.gather(*self.tasks, return_exceptions=True)
+            logger.info("✅ All tasks cancelled")
             
             # Close positions if configured
             if self.config.get('close_on_stop', False):
+                logger.info("💰 Closing all positions...")
                 for position in list(self.active_positions.values()):
                     await self._close_position(position, "engine_stopped")
             
-            # Save state
+            # Save state before cleanup
             await self._save_state()
+            logger.info("✅ State saved")
+            
+            # ⭐ NEW: Call cleanup method
+            await self.cleanup()
             
             self.state = BotState.STOPPED
+            logger.info("✅ Trading engine stopped")
             
         except Exception as e:
+            logger.error(f"Error stopping engine: {e}", exc_info=True)
             await self.alert_manager.send_critical(f"Error stopping engine: {e}")
             raise
+
+
+    # ============================================
+    # PATCH: Add cleanup() method to TradingBotEngine class
+    # Add this method after the stop() method in engine.py (around line 1000)
+    # ============================================
+
+    async def cleanup(self):
+        """
+        Cleanup all resources and connections
+        Called during shutdown or after stop()
+        """
+        try:
+            logger.info("🧹 Starting engine cleanup...")
+            
+            # 1. Cleanup Solana executor
+            if self.solana_executor:
+                try:
+                    await self.solana_executor.cleanup()
+                    logger.info("✅ Solana executor cleaned up")
+                except Exception as e:
+                    logger.error(f"Error cleaning up Solana executor: {e}")
+            
+            # 2. Cleanup EVM executor
+            if hasattr(self.trade_executor, 'cleanup'):
+                try:
+                    await self.trade_executor.cleanup()
+                    logger.info("✅ Trade executor cleaned up")
+                except Exception as e:
+                    logger.error(f"Error cleaning up trade executor: {e}")
+            
+            # 3. Cleanup data collectors
+            collectors = [
+                ('DexScreener', self.dex_collector),
+                ('Chain Data', self.chain_collector),
+                ('Social Data', self.social_collector),
+                ('Mempool Monitor', self.mempool_monitor),
+                ('Whale Tracker', self.whale_tracker),
+                ('Honeypot Checker', self.honeypot_checker),
+            ]
+            
+            for name, collector in collectors:
+                if hasattr(collector, 'cleanup'):
+                    try:
+                        await collector.cleanup()
+                        logger.info(f"✅ {name} collector cleaned up")
+                    except Exception as e:
+                        logger.debug(f"Error cleaning up {name}: {e}")
+            
+            # 4. Cleanup database connection
+            if hasattr(self.db, 'disconnect'):
+                try:
+                    await self.db.disconnect()
+                    logger.info("✅ Database disconnected")
+                except Exception as e:
+                    logger.error(f"Error disconnecting database: {e}")
+            
+            # 5. Cleanup alert manager
+            if hasattr(self.alert_manager, 'cleanup'):
+                try:
+                    await self.alert_manager.cleanup()
+                    logger.info("✅ Alert manager cleaned up")
+                except Exception as e:
+                    logger.debug(f"Error cleaning up alert manager: {e}")
+            
+            # 6. Save final state
+            try:
+                await self._save_state()
+                logger.info("✅ Final state saved")
+            except Exception as e:
+                logger.error(f"Error saving final state: {e}")
+            
+            logger.info("✅ Engine cleanup completed")
+            
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}", exc_info=True)
+
     
     async def _final_safety_checks(self, opportunity: TradingOpportunity) -> bool:
         """
@@ -1695,9 +1837,26 @@ class TradingBotEngine:
         for position in list(self.active_positions.values()):
             await self._close_position(position, "emergency_shutdown")
 
+    # ============================================
+    # ALSO UPDATE: Modify shutdown() method to call cleanup()
+    # Find the shutdown() method (around line 1450) and update it:
+    # ============================================
+
     async def shutdown(self):
-        """Shutdown the engine"""
-        await self.stop()
+        """Shutdown the engine gracefully"""
+        try:
+            logger.info("🔴 Initiating graceful shutdown...")
+            
+            # Stop the engine (which now includes cleanup)
+            await self.stop()
+            
+            # Send shutdown notification
+            await self.alert_manager.send_info("🔴 Trading bot has been shut down")
+            
+            logger.info("✅ Shutdown complete")
+            
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}", exc_info=True)
 
     async def get_stats(self) -> Dict:
         """Get engine statistics"""

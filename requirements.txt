@@ -8,6 +8,11 @@ aiofiles==23.2.1
 numpy==1.26.3
 TA-Lib==0.6.7
 
+#solana
+solders==0.18.1
+base58==2.1.1
+
+
 
 # Web3 and Blockchain
 web3==6.11.4
