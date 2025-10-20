@@ -19,47 +19,29 @@ from decimal import Decimal
 from abc import ABC, abstractmethod
 
 class BaseExecutor(ABC):
-    """
-    Abstract base class for all executors (EVM and Solana)
-    Defines the common interface that all executors must implement
-    """
-    
+    """Abstract base for all executors"""
     def __init__(self, config: Dict):
-        """Initialize base executor"""
         self.config = config
-        self.stats = {
-            'total_trades': 0,
-            'successful_trades': 0,
-            'failed_trades': 0,
-        }
+        self.stats = {'total_trades': 0, 'successful_trades': 0, 'failed_trades': 0}
     
     @abstractmethod
     async def initialize(self):
-        """Initialize the executor (connect to RPC, etc.)"""
+        """Initialize executor"""
         pass
     
     @abstractmethod
     async def execute_trade(self, order, quote=None) -> Dict:
-        """
-        Execute a trade
-        
-        Args:
-            order: Order object
-            quote: Optional pre-fetched quote
-            
-        Returns:
-            Dict with execution result
-        """
+        """Execute a trade"""
         pass
     
     @abstractmethod
     async def get_quote(self, *args, **kwargs):
-        """Get a quote for a trade"""
+        """Get quote for a trade"""
         pass
     
     @abstractmethod
     def validate_order(self, order) -> bool:
-        """Validate an order before execution"""
+        """Validate order"""
         pass
     
     @abstractmethod
@@ -68,7 +50,7 @@ class BaseExecutor(ABC):
         pass
     
     async def get_execution_stats(self) -> Dict:
-        """Get execution statistics"""
+        """Get execution stats"""
         return self.stats.copy()
 
 @dataclass
@@ -195,6 +177,28 @@ class TradeExecutor(BaseExecutor):  # ✅ Add BaseExecutor inheritance
             raise ConnectionError("Web3 connection failed")
         
         print(f"EVM Executor initialized for chain {self.chain_id}")
+
+    async def get_quote(self, token_in: str, token_out: str, amount: float, chain: str = 'ethereum'):
+        """
+        Get quote for a trade (placeholder for EVM executor)
+        
+        Args:
+            token_in: Input token address
+            token_out: Output token address
+            amount: Amount to trade
+            chain: Chain name
+            
+        Returns:
+            Quote dictionary
+        """
+        # This is a simplified version - real implementation would call DEX aggregators
+        return {
+            'input_token': token_in,
+            'output_token': token_out,
+            'input_amount': amount,
+            'output_amount': 0,  # Would be calculated
+            'route': 'direct'
+        }
     
     async def cleanup(self):
         """Cleanup EVM executor resources"""
