@@ -12,6 +12,8 @@ from web3 import Web3
 from web3.exceptions import ContractLogicError
 import json
 
+from solders.pubkey import Pubkey  # For Solana address validation
+
 from utils.helpers import retry_async, rate_limit, is_valid_address, format_token_amount
 from utils.constants import (
     HONEYPOT_CHECKS, HONEYPOT_THRESHOLDS, Chain, CHAIN_RPC_URLS,
@@ -20,9 +22,23 @@ from utils.constants import (
 
 logger = logging.getLogger(__name__)
 
+
+
 class HoneypotChecker:
     """Advanced multi-API honeypot detection system"""
-    
+
+    SAFE_SOLANA_TOKENS = {
+        # Major established tokens
+        "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263": "BONK",
+        "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN": "JUP",
+        "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R": "RAY (Raydium)",
+        "So11111111111111111111111111111111111111112": "SOL (Wrapped)",
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": "USDC",
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": "USDT",
+        "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So": "mSOL (Marinade)",
+        "7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj": "stSOL (Lido)",
+    }
+
     def __init__(self, config: Dict = None):
         """Initialize honeypot checker with configuration"""
         self.config = config or {}
@@ -38,9 +54,10 @@ class HoneypotChecker:
         
     async def initialize(self):
         """Initialize connections and resources"""
-        self.session = aiohttp.ClientSession()
+        timeout = aiohttp.ClientTimeout(total=30)  # Increase timeout for Solana
+        self.session = aiohttp.ClientSession(timeout=timeout)
         await self._setup_web3_connections()
-        logger.info("HoneypotChecker initialized successfully")
+        logger.info("✅ HoneypotChecker initialized (EVM + Solana support)")
         
     async def _setup_web3_connections(self):
         """Setup Web3 connections for each chain"""
@@ -52,9 +69,7 @@ class HoneypotChecker:
                     rpc_url = rpc_urls[0]
                     
                     # ✅ ADD THIS CHECK
-#                    if 'alchemy.com' in rpc_url and '/v2/' in rpc_url and not rpc_url.endswith('/v2/'):
-#                        logger.warning(f"⚠️ Alchemy URL looks incomplete: {rpc_url}")
-                    
+           
                     self.web3_connections[chain] = Web3(Web3.HTTPProvider(rpc_url))
                     logger.info(f"✅ Connected to {chain.name}: {rpc_url[:50]}...")
 
@@ -68,6 +83,11 @@ class HoneypotChecker:
         Main method to check if token is a honeypot
         Returns comprehensive analysis from multiple sources
         """
+        # ✅ Route Solana tokens to dedicated checker
+        if chain.lower() in ['solana', 'sol']:
+            return await self._check_solana_token(address)
+        
+        # Existing EVM validation continues below...
         if not is_valid_address(address):
             return {
                 "is_honeypot": True,
@@ -128,7 +148,282 @@ class HoneypotChecker:
                 "checks": {},
                 "error": str(e)
             }
+
+    async def _check_solana_token(self, address: str) -> Dict:
+        """
+        Comprehensive Solana token verification using RugCheck.xyz v1 API
+        Uses /report/summary endpoint for fast, lightweight checks
         
+        Rate Limit: 15 requests per minute (based on response headers)
+        """
+        try:
+            # Validate Solana address format (base58, ~32-44 chars)
+            try:
+                Pubkey.from_string(address)
+            except Exception as e:
+                logger.warning(f"Invalid Solana address format: {address[:10]}... - {e}")
+                return {
+                    "is_honeypot": True,
+                    "confidence": 0.95,
+                    "risk_level": "high",
+                    "reason": "Invalid Solana address format",
+                    "checks": {"address_validation": "failed"}
+                }
+
+            # Check whitelist (skip API call for known safe tokens)
+            if address in SAFE_SOLANA_TOKENS:
+                logger.info(f"✅ Whitelisted token: {SAFE_SOLANA_TOKENS[address]}")
+                return {
+                    "is_honeypot": False,
+                    "confidence": 1.0,
+                    "risk_level": "minimal",
+                    "reason": f"Whitelisted established token: {SAFE_SOLANA_TOKENS[address]}",
+                    "checks": {"whitelist": True}
+                }
+            # Check blacklist first (fast local check)
+            if self._is_blacklisted(address):
+                logger.warning(f"🚫 Solana token {address[:8]}... is blacklisted")
+                return {
+                    "is_honeypot": True,
+                    "confidence": 1.0,
+                    "risk_level": "critical",
+                    "reason": "Token is blacklisted",
+                    "checks": {"blacklist": True}
+                }
+            
+            # Check cache (5 min TTL)
+            cache_key = f"solana:{address}"
+            if cache_key in self.cache:
+                cached_result, timestamp = self.cache[cache_key]
+                if asyncio.get_event_loop().time() - timestamp < self.cache_ttl:
+                    logger.debug(f"✅ Using cached Solana result for {address[:8]}...")
+                    return cached_result
+            
+            # Fetch RugCheck summary report
+            rugcheck_result = await self._check_rugcheck_summary(address)
+            
+            # Calculate verdict from RugCheck data
+            result = self._calculate_solana_verdict(rugcheck_result, address)
+            
+            # Cache result
+            self.cache[cache_key] = (result, asyncio.get_event_loop().time())
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Solana token check failed for {address}: {e}")
+            # ✅ On error, allow through with unknown risk (don't block trading)
+            return {
+                "is_honeypot": False,
+                "confidence": 0.5,
+                "risk_level": "unknown",
+                "reason": f"Verification failed: {str(e)}",
+                "checks": {"error": str(e)}
+            }
+
+
+
+    @retry_async(max_retries=2, delay=1.0)  # Lower retries for speed
+    @rate_limit(calls=12, period=60.0)  # Stay under 15/min limit with buffer
+    async def _check_rugcheck_summary(self, address: str) -> Dict:
+        """
+        Check token using RugCheck.xyz v1 summary API
+        Endpoint: GET /v1/tokens/{id}/report/summary
+        
+        Returns:
+        {
+        "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "tokenType": "",
+        "risks": [
+            {
+            "name": "Mutable metadata",
+            "value": "",
+            "description": "Token metadata can be changed by the owner",
+            "score": 100,
+            "level": "warn"
+            }
+        ],
+        "score": 101,
+        "score_normalised": 7,
+        "lpLockedPct": 2.9768640982543357
+        }
+        """
+        try:
+            url = f"https://api.rugcheck.xyz/v1/tokens/{address}/report/summary"
+            
+            async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                # Check rate limit headers
+                rate_limit_remaining = response.headers.get('x-rate-limit-remaining')
+                if rate_limit_remaining:
+                    logger.debug(f"RugCheck rate limit remaining: {rate_limit_remaining}")
+                
+                if response.status == 200:
+                    data = await response.json()
+                    
+                    # Extract and normalize data
+                    return {
+                        "status": "success",
+                        "token_program": data.get("tokenProgram", ""),
+                        "token_type": data.get("tokenType", ""),
+                        "risks": data.get("risks", []),
+                        "score": data.get("score", 0),  # Raw score
+                        "score_normalised": data.get("score_normalised", 0),  # 0-10 scale
+                        "lp_locked_pct": data.get("lpLockedPct", 0),
+                    }
+                    
+                elif response.status == 404:
+                    # Token not found in RugCheck database
+                    logger.warning(f"⚠️ Token {address[:8]}... not found in RugCheck")
+                    return {
+                        "status": "not_found",
+                        "reason": "Token not indexed by RugCheck (may be very new)"
+                    }
+                    
+                elif response.status == 429:
+                    # Rate limited
+                    logger.error(f"🚫 RugCheck rate limit exceeded")
+                    return {
+                        "status": "rate_limited",
+                        "error": "Rate limit exceeded"
+                    }
+                    
+                else:
+                    logger.error(f"RugCheck API error: HTTP {response.status}")
+                    return {
+                        "status": "error",
+                        "error": f"API returned {response.status}"
+                    }
+                    
+        except asyncio.TimeoutError:
+            logger.error(f"RugCheck API timeout for {address[:8]}...")
+            return {
+                "status": "timeout",
+                "error": "API request timed out"
+            }
+        except Exception as e:
+            logger.error(f"RugCheck check failed for {address[:8]}...: {e}")
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+
+
+    # ==============================================================================
+    # 6. ADD NEW METHOD - Calculate Verdict from RugCheck Data
+    # ==============================================================================
+    def _calculate_solana_verdict(self, rugcheck_data: Dict, address: str) -> Dict:
+        """
+        Calculate honeypot verdict from RugCheck summary data
+        
+        RugCheck Scoring:
+        - score: Raw risk score (higher = riskier)
+        - score_normalised: 0-10 scale (0=safest, 10=most dangerous)
+        - risks: Array of risk objects with level (warn/danger/critical)
+        - lpLockedPct: % of LP locked (higher = safer)
+        
+        Risk Levels:
+        - warn: Minor issues (e.g., mutable metadata)
+        - danger: Moderate risks
+        - critical: Severe risks (scam/rug likely)
+        """
+        status = rugcheck_data.get("status")
+        
+        # Handle API failures gracefully
+        if status == "error" or status == "timeout" or status == "rate_limited":
+            logger.warning(f"⚠️ RugCheck unavailable for {address[:8]}... - allowing with caution")
+            return {
+                "is_honeypot": False,
+                "confidence": 0.4,
+                "risk_level": "medium",
+                "reason": f"Token verification unavailable ({status}) - proceed with extreme caution",
+                "checks": rugcheck_data,
+                "note": "RugCheck data unavailable"
+            }
+        
+        # Handle new/unknown tokens
+        if status == "not_found":
+            logger.info(f"🆕 Token {address[:8]}... not indexed - treating as high risk")
+            return {
+                "is_honeypot": False,  # Don't block, but warn
+                "confidence": 0.5,
+                "risk_level": "high",
+                "reason": "Token not verified by RugCheck - very new or obscure",
+                "checks": rugcheck_data,
+                "note": "Unverified token - trade at your own risk"
+            }
+        
+        # Extract risk data
+        score_normalised = rugcheck_data.get("score_normalised", 5)  # 0-10 scale
+        risks = rugcheck_data.get("risks", [])
+        lp_locked_pct = rugcheck_data.get("lp_locked_pct", 0)
+        
+        # Count risks by severity
+        critical_risks = [r for r in risks if r.get("level") == "critical"]
+        danger_risks = [r for r in risks if r.get("level") == "danger"]
+        warn_risks = [r for r in risks if r.get("level") == "warn"]
+        
+        # Build risk indicators list
+        risk_names = [r.get("name", "Unknown") for r in risks[:5]]  # Top 5 risks
+        
+        # ✅ DECISION LOGIC - Based on RugCheck normalized score (0-10)
+        
+        # CRITICAL: Block immediately (score 9-10)
+        if score_normalised >= 9 or len(critical_risks) > 0:
+            return {
+                "is_honeypot": True,
+                "confidence": 0.95,
+                "risk_level": "critical",
+                "reason": f"Critical risks detected (score: {score_normalised}/10, {len(critical_risks)} critical)",
+                "checks": rugcheck_data,
+                "indicators": risk_names
+            }
+        
+        # HIGH RISK: Block (score 7-8)
+        if score_normalised >= 7 or len(danger_risks) >= 2:
+            return {
+                "is_honeypot": True,
+                "confidence": 0.85,
+                "risk_level": "high",
+                "reason": f"High risk token (score: {score_normalised}/10, {len(danger_risks)} danger risks)",
+                "checks": rugcheck_data,
+                "indicators": risk_names
+            }
+        
+        # MEDIUM RISK: Allow with warning (score 5-6)
+        if score_normalised >= 5 or len(danger_risks) >= 1:
+            return {
+                "is_honeypot": False,  # ✅ Allow through
+                "confidence": 0.65,
+                "risk_level": "medium",
+                "reason": f"Medium risk (score: {score_normalised}/10) - proceed with caution",
+                "checks": rugcheck_data,
+                "indicators": risk_names,
+                "warning": "Trade at your own risk"
+            }
+        
+        # LOW RISK: Allow (score 3-4)
+        if score_normalised >= 3 or len(warn_risks) >= 2:
+            return {
+                "is_honeypot": False,
+                "confidence": 0.75,
+                "risk_level": "low",
+                "reason": f"Low risk token (score: {score_normalised}/10, minor warnings only)",
+                "checks": rugcheck_data,
+                "indicators": risk_names if warn_risks else []
+            }
+        
+        # MINIMAL RISK: Safe (score 0-2)
+        return {
+            "is_honeypot": False,
+            "confidence": 0.9,
+            "risk_level": "minimal",
+            "reason": f"Token passed safety checks (score: {score_normalised}/10)",
+            "checks": rugcheck_data,
+            "indicators": [],
+            "lp_locked": f"{lp_locked_pct:.1f}%" if lp_locked_pct > 0 else "unknown"
+        }
+
+
     async def check_multiple_apis(self, address: str, chain: str) -> Dict:
         """Check token across multiple security APIs"""
         results = {}
@@ -388,9 +683,10 @@ class HoneypotChecker:
             "polygon": Chain.POLYGON,
             "matic": Chain.POLYGON,
             "arbitrum": Chain.ARBITRUM,
-            "base": Chain.BASE
+            "base": Chain.BASE,
+            "solana": 999,  # Solana uses different addressing, not EVM chain ID
+            "sol": 999
         }
-        
         return chain_map.get(chain.lower(), Chain.ETHEREUM)
         
     def _calculate_verdict(self, checks: Dict) -> Dict:
