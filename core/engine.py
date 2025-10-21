@@ -166,12 +166,36 @@ class TradingBotEngine:
 
         # Initialize Solana executor if enabled
         self.solana_executor = None
-        if config.get('solana', {}).get('enabled', False):
+
+        # ✅ FIXED: Check both nested and flat config structures
+        solana_config = config.get('solana', {})
+        solana_enabled = (
+            solana_config.get('enabled', False) or 
+            config.get('solana_enabled', False)
+        )
+
+        if solana_enabled:
             try:
-                self.solana_executor = JupiterExecutor(config.get('solana', {}))
+                # Try nested config first, fallback to flat
+                if solana_config:
+                    self.solana_executor = JupiterExecutor(solana_config)
+                else:
+                    # Build config from flat structure
+                    solana_config = {
+                        'enabled': config.get('solana_enabled', False),
+                        'rpc_url': config.get('solana_rpc_url'),
+                        'private_key': config.get('solana_private_key'),
+                        'max_slippage_bps': config.get('jupiter_max_slippage_bps', 500),
+                    }
+                    self.solana_executor = JupiterExecutor(solana_config)
+                
                 logger.info("✅ Solana Jupiter Executor initialized")
             except Exception as e:
                 logger.error(f"❌ Failed to initialize Solana executor: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+        else:
+            logger.info("ℹ️ Solana trading disabled")
         
         # Monitoring
         self.alert_manager = AlertManager(config['notifications'])
