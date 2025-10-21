@@ -162,6 +162,9 @@ async def test_jupiter_executor():
         print(f"   ⚠️  Cleanup warning: {e}")
         print()
     
+    # Extra wait to ensure cleanup completes
+    await asyncio.sleep(0.1)
+    
     # Summary
     print("=" * 60)
     print("✅ All Tests Passed!")

@@ -277,11 +277,11 @@ class JupiterExecutor(BaseExecutor):
                 'inputMint': input_mint,
                 'outputMint': output_mint,
                 'amount': str(amount),
-                'slippageBps': slippage_bps,
+                'slippageBps': str(slippage_bps),
                 'swapMode': 'ExactIn',
-                'onlyDirectRoutes': False,
-                'asLegacyTransaction': False,
-                'maxAccounts': 64,
+                'onlyDirectRoutes': 'false',  # Must be string, not boolean
+                'asLegacyTransaction': 'false',  # Must be string, not boolean
+                'maxAccounts': '64',
             }
             
             logger.debug(f"Requesting Jupiter quote with params: {params}")
