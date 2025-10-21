@@ -442,6 +442,53 @@ class TradingBotApplication:
             self.logger.info(f"  Enabled chains: {self.config['chains']['enabled']}")
             self.logger.info(f"  Chain settings: {self.config['chains']}")
 
+            # ✅ ADD THIS ENTIRE SECTION HERE (BEFORE "Initialize trading engine"):
+            # ============================================================================
+            # 🔧 SOLANA CONFIGURATION - Add to config dict
+            # ============================================================================
+
+            # Check if Solana is enabled
+            solana_enabled = os.getenv('SOLANA_ENABLED', 'false').lower() == 'true'
+
+            if solana_enabled:
+                self.logger.info("🟣 Configuring Solana integration...")
+                
+                # Add Solana to flat config for TradingEngine
+                self.config['solana_enabled'] = True
+                self.config['solana_rpc_url'] = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
+                self.config['solana_private_key'] = os.getenv('SOLANA_PRIVATE_KEY')
+                self.config['jupiter_max_slippage_bps'] = int(os.getenv('JUPITER_MAX_SLIPPAGE_BPS', '500'))
+                self.config['solana_min_liquidity'] = float(os.getenv('SOLANA_MIN_LIQUIDITY', '5000'))
+                
+                # Also add as nested config (for consistency)
+                self.config['solana'] = {
+                    'enabled': True,
+                    'rpc_url': os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com'),
+                    'private_key': os.getenv('SOLANA_PRIVATE_KEY'),
+                    'max_slippage_bps': int(os.getenv('JUPITER_MAX_SLIPPAGE_BPS', '500')),
+                    'min_liquidity': float(os.getenv('SOLANA_MIN_LIQUIDITY', '5000')),
+                }
+                
+                # Add Solana to chains config
+                if 'solana' not in self.config['chains']['enabled']:
+                    self.config['chains']['enabled'].append('solana')
+                
+                self.config['chains']['solana'] = {
+                    'enabled': True,
+                    'min_liquidity': float(os.getenv('SOLANA_MIN_LIQUIDITY', '5000')),
+                    'min_volume': float(os.getenv('SOLANA_MIN_VOLUME', '2500')),
+                    'max_age_hours': int(os.getenv('SOLANA_MAX_AGE_HOURS', '24'))
+                }
+                
+                self.logger.info("  ✅ Solana enabled")
+                self.logger.info(f"     RPC: {self.config['solana_rpc_url'][:50]}...")
+                self.logger.info(f"     Min Liquidity: ${self.config['solana_min_liquidity']:,.0f}")
+                self.logger.info(f"     Max Slippage: {self.config['jupiter_max_slippage_bps']/100:.2f}%")
+            else:
+                self.logger.info("ℹ️  Solana integration disabled")
+                self.config['solana_enabled'] = False
+
+
             # Initialize trading engine
             self.logger.info("Initializing trading engine...")
             self.engine = TradingBotEngine(flat_config, mode=self.mode)
