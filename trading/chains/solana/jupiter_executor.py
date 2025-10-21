@@ -15,12 +15,18 @@ import logging
 import base58
 import base64
 
-from solders.keypair import Keypair
-from solders.pubkey import Pubkey
-from solders.transaction import VersionedTransaction
-from solders.message import Message as TransactionMessage
+try:
+    from solders.keypair import Keypair
+    from solders.pubkey import Pubkey
+    from solders.transaction import VersionedTransaction
+    from solders.message import Message as TransactionMessage
+except ImportError:
+    # Fallback if solders not available
+    Keypair = None
+    Pubkey = None
+    VersionedTransaction = None
+    TransactionMessage = None
 
-from trading.orders.order_manager import Order, OrderType, OrderStatus
 from trading.executors.base_executor import BaseExecutor
 
 logger = logging.getLogger(__name__)
@@ -59,7 +65,7 @@ class JupiterExecutor(BaseExecutor):
         
         # Initialize keypair from private key
         private_key = config.get('private_key') or config.get('solana_private_key')
-        if private_key:
+        if private_key and Keypair:
             try:
                 # Handle base58 encoded private key
                 if isinstance(private_key, str):
@@ -75,7 +81,10 @@ class JupiterExecutor(BaseExecutor):
                 self.keypair = None
                 self.wallet_address = None
         else:
-            logger.warning("No Solana private key provided - executor will not be able to sign transactions")
+            if not Keypair:
+                logger.warning("solders library not available - limited functionality")
+            if not private_key:
+                logger.warning("No Solana private key provided - executor will not be able to sign transactions")
             self.keypair = None
             self.wallet_address = None
         
@@ -110,7 +119,7 @@ class JupiterExecutor(BaseExecutor):
             self.session = aiohttp.ClientSession(timeout=timeout)
             logger.info("Jupiter executor session initialized")
     
-    async def execute_trade(self, order: Order) -> Dict[str, Any]:
+    async def execute_trade(self, order) -> Dict[str, Any]:
         """
         Execute a trade using Jupiter aggregator
         
@@ -124,7 +133,7 @@ class JupiterExecutor(BaseExecutor):
             await self.initialize()
         
         try:
-            logger.info(f"🟣 Executing Solana trade for {order.symbol}")
+            logger.info(f"🟣 Executing Solana trade for {getattr(order, 'symbol', 'unknown')}")
             
             # Step 1: Get quote from Jupiter v1 API
             quote = await self._get_quote(
@@ -139,8 +148,8 @@ class JupiterExecutor(BaseExecutor):
                 return {'success': False, 'error': 'Failed to get quote'}
             
             logger.info(f"📊 Jupiter quote received:")
-            logger.info(f"   Input: {quote['inAmount']} ({order.symbol_in})")
-            logger.info(f"   Output: {quote['outAmount']} ({order.symbol_out})")
+            logger.info(f"   Input: {quote['inAmount']} ({getattr(order, 'symbol_in', 'unknown')})")
+            logger.info(f"   Output: {quote['outAmount']} ({getattr(order, 'symbol_out', 'unknown')})")
             logger.info(f"   Price Impact: {quote.get('priceImpactPct', 'N/A')}%")
             
             # Step 2: Get swap transaction
@@ -171,6 +180,76 @@ class JupiterExecutor(BaseExecutor):
                 'success': False,
                 'error': str(e)
             }
+    
+    async def get_quote(
+        self,
+        token_in: str,
+        token_out: str,
+        amount_in: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get quote for swap (BaseExecutor abstract method implementation)
+        
+        Args:
+            token_in: Input token mint address
+            token_out: Output token mint address
+            amount_in: Input amount in smallest units
+            
+        Returns:
+            Quote dict or None
+        """
+        return await self._get_quote(
+            input_mint=token_in,
+            output_mint=token_out,
+            amount=amount_in,
+            slippage_bps=self.max_slippage_bps
+        )
+    
+    async def validate_order(self, order) -> bool:
+        """
+        Validate order parameters (BaseExecutor abstract method implementation)
+        
+        Args:
+            order: Order object to validate
+            
+        Returns:
+            True if valid, False otherwise
+        """
+        try:
+            # Validate token addresses
+            if not getattr(order, 'token_in', None) or not getattr(order, 'token_out', None):
+                logger.error("Missing token_in or token_out")
+                return False
+            
+            # Validate amount
+            amount_in = getattr(order, 'amount_in', None)
+            if not amount_in or amount_in <= 0:
+                logger.error("Invalid amount_in")
+                return False
+            
+            # Validate slippage
+            if hasattr(order, 'max_slippage_bps'):
+                if order.max_slippage_bps < 0 or order.max_slippage_bps > 10000:
+                    logger.error("Invalid slippage (must be 0-10000 bps)")
+                    return False
+            
+            # Check if we can get a quote (validates tokens exist)
+            quote = await self.get_quote(
+                token_in=order.token_in,
+                token_out=order.token_out,
+                amount_in=amount_in
+            )
+            
+            if not quote:
+                logger.error("Unable to get quote for order validation")
+                return False
+            
+            logger.debug(f"Order validation passed for {getattr(order, 'symbol', 'unknown')}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Order validation error: {e}")
+            return False
     
     async def _get_quote(
         self,
@@ -230,7 +309,7 @@ class JupiterExecutor(BaseExecutor):
     async def _execute_swap(
         self,
         quote: Dict[str, Any],
-        order: Order
+        order
     ) -> Dict[str, Any]:
         """
         Execute swap using Jupiter v1 API
