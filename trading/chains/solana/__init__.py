@@ -3,13 +3,11 @@
 Solana trading integration via Jupiter aggregator
 """
 
-from .jupiter_executor import JupiterExecutor, JupiterQuote, JupiterRoute
+from .jupiter_executor import JupiterExecutor
 from .solana_client import SolanaClient
 
 __all__ = [
     'JupiterExecutor',
-    'JupiterQuote',
-    'JupiterRoute',
     'SolanaClient',
     'COMMON_TOKENS'
 ]
