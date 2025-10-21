@@ -55,8 +55,8 @@ class Order:
     side: OrderSide
     order_type: OrderType
     amount: Decimal
-    price: Optional[Decimal]  # For limit orders
-    stop_price: Optional[Decimal]  # For stop orders
+    price: Optional[Decimal]
+    stop_price: Optional[Decimal]
     status: OrderStatus
     created_at: datetime
     updated_at: datetime
@@ -91,6 +91,28 @@ class Order:
     tx_hash: Optional[str] = None
     block_number: Optional[int] = None
     confirmations: int = 0
+    
+    # 🆕 ADD THESE SOLANA-SPECIFIC FIELDS:
+    chain: Optional[str] = None  # 'ethereum', 'bsc', 'solana', etc.
+    token_in: Optional[str] = None  # For Solana: input mint address
+    token_out: Optional[str] = None  # For Solana: output mint address
+    symbol: Optional[str] = None  # Token symbol (e.g., "BONK")
+    symbol_in: Optional[str] = None  # Input token symbol (e.g., "SOL")
+    symbol_out: Optional[str] = None  # Output token symbol (e.g., "USDC")
+    amount_in: Optional[int] = None  # Raw amount for Solana (in lamports/token units)
+    amount_out: Optional[int] = None  # Expected output amount
+    
+    # Property methods
+    @property
+    def is_solana(self) -> bool:
+        """Check if this is a Solana order"""
+        return self.chain and self.chain.lower() == 'solana'
+    
+    @property
+    def is_evm(self) -> bool:
+        """Check if this is an EVM chain order"""
+        return self.chain and self.chain.lower() in ['ethereum', 'bsc', 'base', 'arbitrum', 'polygon']
+
 
 # Add this AFTER the Order class definition:
 def build_order(
@@ -135,9 +157,17 @@ def build_order(
         strategy_id=kwargs.get('strategy_id'),
         signal_id=kwargs.get('signal_id'),
         parent_order_id=kwargs.get('parent_order_id'),
-        metadata=kwargs.get('metadata', {})
+        metadata=kwargs.get('metadata', {}),
+        # 🆕 ADD THESE:
+        chain=kwargs.get('chain'),
+        token_in=kwargs.get('token_in'),
+        token_out=kwargs.get('token_out'),
+        symbol=kwargs.get('symbol'),
+        symbol_in=kwargs.get('symbol_in'),
+        symbol_out=kwargs.get('symbol_out'),
+        amount_in=kwargs.get('amount_in'),
+        amount_out=kwargs.get('amount_out')
     )
-
 
 @dataclass
 class OrderBook:
@@ -1404,3 +1434,134 @@ class SettlementProcessor:
         """Process order settlement"""
         # Implementation would handle settlement logic
         return True
+
+def create_solana_order(
+    symbol: str,
+    token_address: str,
+    input_mint: str,
+    output_mint: str,
+    amount_in: int,
+    symbol_in: str = "SOL",
+    symbol_out: str = "USDC",
+    entry_price: Optional[Decimal] = None,
+    max_slippage_bps: int = 500,
+    **kwargs
+) -> Order:
+    """
+    Create a Solana swap order compatible with JupiterExecutor
+    
+    Args:
+        symbol: Token symbol (e.g., "BONK")
+        token_address: Token mint address
+        input_mint: Input token mint address
+        output_mint: Output token mint address
+        amount_in: Amount in smallest unit (lamports for SOL, token decimals for SPL)
+        symbol_in: Input token symbol
+        symbol_out: Output token symbol
+        entry_price: Entry price (optional)
+        max_slippage_bps: Maximum slippage in basis points
+        **kwargs: Additional order parameters
+    
+    Returns:
+        Order object configured for Solana
+    """
+    return Order(
+        order_id=str(uuid.uuid4()),
+        token_address=token_address,
+        side=OrderSide.BUY,  # Default to BUY
+        order_type=OrderType.MARKET,
+        amount=Decimal(str(amount_in)),
+        price=entry_price,
+        stop_price=None,
+        status=OrderStatus.PENDING,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+        execution_strategy=ExecutionStrategy.IMMEDIATE,
+        slippage_tolerance=max_slippage_bps / 10000,  # Convert bps to decimal
+        gas_price=Decimal('0'),
+        gas_limit=0,
+        deadline=None,
+        take_profit=kwargs.get('take_profit'),
+        stop_loss=kwargs.get('stop_loss'),
+        trailing_stop_distance=kwargs.get('trailing_stop_distance'),
+        strategy_id=kwargs.get('strategy_id'),
+        signal_id=kwargs.get('signal_id'),
+        parent_order_id=kwargs.get('parent_order_id'),
+        metadata=kwargs.get('metadata', {}),
+        # Solana-specific fields
+        chain='solana',
+        token_in=input_mint,
+        token_out=output_mint,
+        symbol=symbol,
+        symbol_in=symbol_in,
+        symbol_out=symbol_out,
+        amount_in=amount_in,
+        amount_out=kwargs.get('amount_out')
+    )
+
+
+def create_evm_order(
+    symbol: str,
+    chain: str,
+    token_address: str,
+    input_token: str,
+    output_token: str,
+    amount_in: int,
+    symbol_in: str = "ETH",
+    symbol_out: str = "USDC",
+    entry_price: Optional[Decimal] = None,
+    max_slippage: float = 0.005,
+    **kwargs
+) -> Order:
+    """
+    Create an EVM chain swap order
+    
+    Args:
+        symbol: Token symbol
+        chain: Chain name ('ethereum', 'bsc', 'base', etc.)
+        token_address: Token contract address
+        input_token: Input token address
+        output_token: Output token address
+        amount_in: Amount in wei
+        symbol_in: Input token symbol
+        symbol_out: Output token symbol
+        entry_price: Entry price (optional)
+        max_slippage: Maximum slippage as decimal (0.005 = 0.5%)
+        **kwargs: Additional order parameters
+    
+    Returns:
+        Order object configured for EVM chains
+    """
+    return Order(
+        order_id=str(uuid.uuid4()),
+        token_address=token_address,
+        side=OrderSide.BUY,  # Default to BUY
+        order_type=OrderType.MARKET,
+        amount=Decimal(str(amount_in)),
+        price=entry_price,
+        stop_price=None,
+        status=OrderStatus.PENDING,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+        execution_strategy=ExecutionStrategy.IMMEDIATE,
+        slippage_tolerance=max_slippage,
+        gas_price=Decimal(str(kwargs.get('gas_price', 0))),
+        gas_limit=kwargs.get('gas_limit', 300000),
+        deadline=kwargs.get('deadline'),
+        take_profit=kwargs.get('take_profit'),
+        stop_loss=kwargs.get('stop_loss'),
+        trailing_stop_distance=kwargs.get('trailing_stop_distance'),
+        strategy_id=kwargs.get('strategy_id'),
+        signal_id=kwargs.get('signal_id'),
+        parent_order_id=kwargs.get('parent_order_id'),
+        metadata=kwargs.get('metadata', {}),
+        # Multi-chain fields
+        chain=chain.lower(),
+        token_in=input_token,
+        token_out=output_token,
+        symbol=symbol,
+        symbol_in=symbol_in,
+        symbol_out=symbol_out,
+        amount_in=amount_in,
+        amount_out=kwargs.get('amount_out')
+    )
