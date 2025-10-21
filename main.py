@@ -490,7 +490,19 @@ class TradingBotApplication:
 
 
             # Initialize trading engine
+            # Initialize trading engine
             self.logger.info("Initializing trading engine...")
+
+            # ✅ CRITICAL: Merge Solana config into flat_config BEFORE creating engine
+            if self.config.get('solana_enabled'):
+                self.logger.info("🔧 Merging Solana config into flat_config...")
+                flat_config['solana_enabled'] = self.config['solana_enabled']
+                flat_config['solana_rpc_url'] = self.config['solana_rpc_url']
+                flat_config['solana_private_key'] = self.config['solana_private_key']
+                flat_config['jupiter_max_slippage_bps'] = self.config.get('jupiter_max_slippage_bps', 500)
+                flat_config['solana'] = self.config.get('solana', {})
+                self.logger.info(f"   ✅ Solana config merged: {list(flat_config.get('solana', {}).keys())}")
+
             self.engine = TradingBotEngine(flat_config, mode=self.mode)
             await self.engine.initialize()
             
