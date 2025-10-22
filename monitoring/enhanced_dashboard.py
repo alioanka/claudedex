@@ -401,47 +401,118 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_positions_history(self, request):
-        """Get positions history"""
+        """Get closed positions history"""
         try:
             limit = int(request.query.get('limit', 100))
             
-            # Get closed positions from database
-            positions = self.db.get_active_positions()  # You'll need to add closed positions query
+            if not self.db:
+                return web.json_response({'error': 'Database not available'}, status=503)
+            
+            # ✅ Get closed trades from database
+            trades = await self.db.get_recent_trades(limit=limit, status='closed')
+            
+            closed_positions = []
+            for trade in trades:
+                closed_positions.append({
+                    'token_symbol': trade.get('symbol', 'Unknown'),
+                    'entry_price': float(trade.get('entry_price', 0)),
+                    'exit_price': float(trade.get('exit_price', 0)),
+                    'pnl': float(trade.get('profit_loss', 0)),
+                    'roi': float(trade.get('profit_loss_percentage', 0)),
+                    'duration': self._calculate_duration(
+                        trade.get('entry_timestamp'),
+                        trade.get('exit_timestamp')
+                    ),
+                    'closed_at': trade.get('exit_timestamp'),
+                    'reason': trade.get('exit_reason', 'Manual close')
+                })
             
             return web.json_response({
                 'success': True,
-                'data': positions,
-                'count': len(positions)
+                'data': closed_positions,
+                'count': len(closed_positions)
             })
         except Exception as e:
-            logger.error(f"Error getting positions history: {e}")
+            logger.error(f"Error getting closed positions: {e}")
             return web.json_response({'error': str(e)}, status=500)
+
+    def _calculate_duration(self, start, end):
+        """Calculate duration between two timestamps"""
+        if not start or not end:
+            return "Unknown"
+        try:
+            from datetime import datetime
+            start_dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
+            end_dt = datetime.fromisoformat(end.replace('Z', '+00:00'))
+            delta = end_dt - start_dt
+            hours = delta.total_seconds() / 3600
+            if hours < 1:
+                return f"{int(delta.total_seconds() / 60)}m"
+            elif hours < 24:
+                return f"{int(hours)}h"
+            else:
+                return f"{int(hours / 24)}d"
+        except:
+            return "Unknown"
     
     async def api_performance_metrics(self, request):
         """Get performance metrics"""
         try:
             period = request.query.get('period', 'all')
             
-            if not self.portfolio:
-                return web.json_response({'error': 'Portfolio manager not available'}, status=503)
+            if not self.db:
+                return web.json_response({'error': 'Database not available'}, status=503)
             
-            portfolio_metrics = self.portfolio.get_performance_report()
-            
-            # ✅ FIX: Add await since get_performance_summary is async
+            # Get performance data
             db_metrics = await self.db.get_performance_summary() if self.db else {}
             
+            # ✅ ADD: Calculate Sharpe Ratio
+            trades = await self.db.get_recent_trades(limit=1000)
+            closed_trades = [t for t in trades if t.get('status') == 'closed']
+            
+            if len(closed_trades) > 1:
+                returns = [float(t.get('profit_loss_percentage', 0)) for t in closed_trades]
+                avg_return = sum(returns) / len(returns)
+                std_dev = (sum((r - avg_return) ** 2 for r in returns) / len(returns)) ** 0.5
+                sharpe_ratio = (avg_return / std_dev) if std_dev > 0 else 0
+            else:
+                sharpe_ratio = 0
+            
+            # ✅ ADD: Calculate Max Drawdown
+            portfolio_values = []
+            cumulative_pnl = 0
+            starting_balance = 10000
+            
+            for trade in sorted(closed_trades, key=lambda x: x.get('exit_timestamp', '')):
+                cumulative_pnl += float(trade.get('profit_loss', 0))
+                portfolio_values.append(starting_balance + cumulative_pnl)
+            
+            max_drawdown = 0
+            if portfolio_values:
+                peak = portfolio_values[0]
+                for value in portfolio_values:
+                    if value > peak:
+                        peak = value
+                    drawdown = ((peak - value) / peak) * 100 if peak > 0 else 0
+                    if drawdown > max_drawdown:
+                        max_drawdown = drawdown
+            
+            # ✅ ADD calculated metrics
+            db_metrics['sharpe_ratio'] = round(sharpe_ratio, 2)
+            db_metrics['max_drawdown'] = round(max_drawdown, 2)
+            db_metrics['portfolio_beta'] = 1.0  # Placeholder - requires market data
+            
             combined_metrics = {
-                **portfolio_metrics,
-                'historical': db_metrics,
+                **db_metrics,
                 'period': period
             }
             
             return web.json_response({
                 'success': True,
-                'data': combined_metrics
+                'data': {'historical': combined_metrics}
             })
         except Exception as e:
-            logger.error(f"Error getting performance metrics: {e}")
+            logger.error(f"Error getting performance metrics: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_performance_charts(self, request):

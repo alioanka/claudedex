@@ -797,12 +797,17 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // ✅ DON'T call loadCharts() repeatedly - only load once!
     // ✅ Auto-refresh positions and orders every 5 seconds
+    // Positions/Orders refresh every 5 seconds
     setInterval(async () => {
         await loadPositions();
         await loadOrders();
-        await loadPortfolioChart();  // ✅ Add this
-        await loadPnLChart();         // ✅ Add this
     }, 5000);
+
+    // Charts refresh every 15 minutes
+    setInterval(async () => {
+        await loadPortfolioChart();
+        await loadPnLChart();
+    }, 900000);  // 15 minutes = 900,000 ms
 });
 </script>
 {% endblock %}

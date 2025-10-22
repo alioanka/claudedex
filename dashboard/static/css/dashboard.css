@@ -22,6 +22,28 @@
     flex-wrap: wrap;
 }
 
+
+/* Prevent table from jumping on refresh */
+.table-container {
+    overflow-x: auto;
+    position: relative;
+}
+
+.table-container table {
+    width: 100%;
+    table-layout: fixed; /* Prevents column width changes */
+}
+
+/* Sticky scroll position */
+.table-container::-webkit-scrollbar {
+    height: 8px;
+}
+
+.table-container::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
 /* Stat Cards Enhancement */
 .stat-card {
     transition: all var(--transition-normal);

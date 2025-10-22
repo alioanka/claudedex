@@ -1,4 +1,4 @@
-// DexScreener Trading Bot - Main JavaScript
+// DexScreener Trading Bot - Main JavaScript - FIXED VERSION
 
 // Global state
 const state = {
@@ -9,7 +9,8 @@ const state = {
     positions: [],
     orders: [],
     alerts: [],
-    charts: {}
+    charts: {},
+    historicalDataLoaded: false  // ✅ Track if historical data is loaded
 };
 
 // Initialize dashboard
@@ -166,7 +167,7 @@ async function handleEmergencyExit() {
     }
 }
 
-// Load dashboard data
+// ✅ FIX: Load dashboard data - DON'T update portfolio/P&L from this
 async function loadDashboardData() {
     try {
         const response = await fetch('/api/dashboard/summary');
@@ -174,41 +175,89 @@ async function loadDashboardData() {
         
         if (data.success) {
             state.dashboardData = data.data;
-            updateDashboardUI(data.data);
+            // ✅ ONLY update notification badge and open positions count
+            updateDashboardUIMinimal(data.data);
         }
     } catch (error) {
         console.error('Error loading dashboard data:', error);
     }
 }
 
-// Update dashboard UI
-function updateDashboardUI(data) {
-    // Update portfolio value
-    const portfolioValue = document.getElementById('portfolioValue');
-    if (portfolioValue) {
-        const valueElement = portfolioValue.querySelector('.value');
-        if (valueElement) {
-            valueElement.textContent = formatCurrency(data.portfolio_value);
-        }
-    }
-    
-    // Update P&L
-    const pnlIndicator = document.getElementById('pnlIndicator');
-    if (pnlIndicator) {
-        const valueElement = pnlIndicator.querySelector('.value');
-        if (valueElement) {
-            valueElement.textContent = formatCurrency(data.daily_pnl);
-            pnlIndicator.classList.remove('positive', 'negative');
-            pnlIndicator.classList.add(data.daily_pnl >= 0 ? 'positive' : 'negative');
-        }
-    }
-    
+// ✅ NEW: Minimal update - ONLY notification and positions count
+function updateDashboardUIMinimal(data) {
     // Update notification badge
     const notificationBadge = document.getElementById('notificationBadge');
     if (notificationBadge) {
-        notificationBadge.textContent = data.active_alerts || 0;
-        notificationBadge.style.display = data.active_alerts > 0 ? 'block' : 'none';
+        const count = data.active_alerts || 0;
+        notificationBadge.textContent = count;
+        notificationBadge.style.display = count > 0 ? 'block' : 'none';
     }
+    
+    // Update open positions count (only in dashboard page)
+    const openPositionsStat = document.getElementById('openPositionsStat');
+    if (openPositionsStat && data.open_positions !== undefined) {
+        openPositionsStat.textContent = data.open_positions;
+    }
+}
+
+// ✅ NEW: Load top bar data ONCE from performance metrics
+async function loadTopBarData() {
+    try {
+        const response = await apiGet('/api/performance/metrics');
+        
+        if (response.success && response.data && response.data.historical) {
+            const hist = response.data.historical;
+            
+            // Calculate portfolio value
+            const totalPnl = hist.total_pnl || 0;
+            const startingBalance = 10000;
+            const portfolioValue = startingBalance + totalPnl;
+            
+            // Update top bar portfolio value
+            const portfolioValueEl = document.querySelector('#portfolioValue .value');
+            if (portfolioValueEl) {
+                portfolioValueEl.textContent = formatCurrency(portfolioValue);
+            }
+            
+            // Calculate 24h P&L
+            const recentResponse = await apiGet('/api/trades/recent?limit=1000');
+            if (recentResponse.success && recentResponse.data) {
+                const oneDayAgo = new Date();
+                oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+                
+                const dailyTrades = recentResponse.data.filter(t => {
+                    if (!t.exit_timestamp || t.status !== 'closed') return false;
+                    return new Date(t.exit_timestamp) > oneDayAgo;
+                });
+                
+                const dailyPnl = dailyTrades.reduce((sum, t) => 
+                    sum + parseFloat(t.profit_loss || 0), 0
+                );
+                
+                // Update top bar 24h P&L
+                const pnlValueEl = document.querySelector('#pnlIndicator .value');
+                if (pnlValueEl) {
+                    pnlValueEl.textContent = formatCurrency(dailyPnl);
+                    
+                    // Update indicator color
+                    const pnlIndicator = document.getElementById('pnlIndicator');
+                    if (pnlIndicator) {
+                        pnlIndicator.classList.remove('positive', 'negative');
+                        pnlIndicator.classList.add(dailyPnl >= 0 ? 'positive' : 'negative');
+                    }
+                }
+            }
+            
+            state.historicalDataLoaded = true;
+        }
+    } catch (error) {
+        console.error('Error loading top bar data:', error);
+    }
+}
+
+// Update dashboard UI (legacy - kept for compatibility)
+function updateDashboardUI(data) {
+    updateDashboardUIMinimal(data);
 }
 
 // Update bot status
@@ -217,9 +266,11 @@ async function updateBotStatus() {
         const response = await fetch('/api/bot/status');
         const data = await response.json();
         
-        if (data.success) {
+        if (data.success && data.data) {
             const status = data.data;
-            state.botStatus = status.running ? 'online' : 'offline';
+            // ✅ FIX: Check if bot is running (handle both boolean and string)
+            const isRunning = status.running === true || status.running === 'running';
+            state.botStatus = isRunning ? 'online' : 'offline';
             
             const statusIndicator = document.getElementById('botStatus');
             if (statusIndicator) {
@@ -228,22 +279,38 @@ async function updateBotStatus() {
                 
                 const statusText = statusIndicator.querySelector('.status-text');
                 if (statusText) {
-                    statusText.textContent = status.running ? 'Bot Running' : 'Bot Stopped';
+                    statusText.textContent = isRunning ? 'Bot Running' : 'Bot Stopped';
                 }
             }
         }
     } catch (error) {
         console.error('Error updating bot status:', error);
+        // Set as offline on error
+        const statusIndicator = document.getElementById('botStatus');
+        if (statusIndicator) {
+            statusIndicator.classList.remove('online');
+            statusIndicator.classList.add('offline');
+            const statusText = statusIndicator.querySelector('.status-text');
+            if (statusText) {
+                statusText.textContent = 'Bot Stopped';
+            }
+        }
     }
 }
 
-// Periodic updates
+// ✅ FIX: Periodic updates - Changed intervals
 function startPeriodicUpdates() {
-    // Update dashboard every 2 seconds
-    setInterval(loadDashboardData, 2000);
+    // ✅ Load top bar data ONCE on startup
+    loadTopBarData();
+    
+    // ✅ Update ONLY notification badge and positions count every 10 seconds (was 2)
+    setInterval(loadDashboardData, 10000);
     
     // Update bot status every 5 seconds
     setInterval(updateBotStatus, 5000);
+    
+    // ✅ Refresh top bar portfolio/P&L every 5 minutes (not every 2 seconds!)
+    setInterval(loadTopBarData, 300000);  // 5 minutes
 }
 
 // Toast notifications
@@ -332,6 +399,10 @@ function showAlert(type, title, message) {
 
 // Format helpers
 function formatCurrency(value, decimals = 2) {
+    // ✅ FIX: Handle invalid values
+    if (value === null || value === undefined || isNaN(value)) {
+        return '$0.00';
+    }
     return new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'USD',
@@ -341,14 +412,20 @@ function formatCurrency(value, decimals = 2) {
 }
 
 function formatPercent(value, decimals = 2) {
+    if (value === null || value === undefined || isNaN(value)) {
+        return '0.00%';
+    }
     return new Intl.NumberFormat('en-US', {
         style: 'percent',
         minimumFractionDigits: decimals,
         maximumFractionDigits: decimals
-    }).format(value);
+    }).format(value / 100);  // ✅ Divide by 100 for percentages
 }
 
 function formatNumber(value, decimals = 2) {
+    if (value === null || value === undefined || isNaN(value)) {
+        return '0.00';
+    }
     return new Intl.NumberFormat('en-US', {
         minimumFractionDigits: decimals,
         maximumFractionDigits: decimals
@@ -356,7 +433,10 @@ function formatNumber(value, decimals = 2) {
 }
 
 function formatDate(timestamp) {
+    if (!timestamp) return 'N/A';
     const date = new Date(timestamp);
+    if (isNaN(date.getTime())) return 'Invalid Date';
+    
     return new Intl.DateTimeFormat('en-US', {
         month: 'short',
         day: 'numeric',
@@ -366,7 +446,10 @@ function formatDate(timestamp) {
 }
 
 function formatTime(timestamp) {
+    if (!timestamp) return 'N/A';
     const date = new Date(timestamp);
+    if (isNaN(date.getTime())) return 'Invalid Time';
+    
     return new Intl.DateTimeFormat('en-US', {
         hour: '2-digit',
         minute: '2-digit',
@@ -375,7 +458,14 @@ function formatTime(timestamp) {
 }
 
 function timeAgo(timestamp) {
-    const seconds = Math.floor((new Date() - new Date(timestamp)) / 1000);
+    if (!timestamp) return 'unknown';
+    
+    const date = new Date(timestamp);
+    if (isNaN(date.getTime())) return 'unknown';
+    
+    const seconds = Math.floor((new Date() - date) / 1000);
+    
+    if (seconds < 0) return 'just now';  // Future date
     
     const intervals = {
         year: 31536000,
@@ -477,8 +567,9 @@ async function exportData(format, endpoint) {
 document.addEventListener('DOMContentLoaded', function() {
     loadTheme();
     initDashboard();
-    loadDashboardData();
-    updateBotStatus();
+    updateBotStatus();  // Load bot status first
+    loadTopBarData();    // ✅ Load top bar ONCE
+    loadDashboardData(); // Load other data
 });
 
 // Export global functions
@@ -496,3 +587,4 @@ window.apiPost = apiPost;
 window.createChart = createChart;
 window.updateChart = updateChart;
 window.exportData = exportData;
+window.loadTopBarData = loadTopBarData;  // ✅ Export for manual refresh

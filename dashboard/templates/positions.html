@@ -149,7 +149,14 @@
 let currentPositions = [];
 let currentPositionId = null;
 
+// Remember scroll position
+let tableScrollPosition = 0;
+
 async function loadPositions() {
+    const container = document.querySelector('.table-container');
+    if (container) {
+        tableScrollPosition = container.scrollLeft;
+    }
     const tbody = document.getElementById('positionsTableBody');
     tbody.innerHTML = '<tr><td colspan="11" class="text-center"><div class="spinner"></div></td></tr>';
     
@@ -163,7 +170,48 @@ async function loadPositions() {
     } catch (error) {
         tbody.innerHTML = '<tr><td colspan="11" class="text-center text-danger">Failed to load positions</td></tr>';
     }
+
+    if (container) {
+        setTimeout(() => {
+            container.scrollLeft = tableScrollPosition;
+        }, 50);
+    }
+
 }
+
+async function loadClosedPositions() {
+    try {
+        const response = await apiGet('/api/positions/history?limit=50');
+        if (response.success && response.data.length > 0) {
+            const tbody = document.getElementById('closedPositionsBody');
+            tbody.innerHTML = response.data.map(pos => `
+                <tr>
+                    <td><strong>${pos.token_symbol}</strong></td>
+                    <td>${formatCurrency(pos.entry_price)}</td>
+                    <td>${formatCurrency(pos.exit_price)}</td>
+                    <td class="${pos.pnl >= 0 ? 'text-success' : 'text-danger'}">
+                        <strong>${formatCurrency(pos.pnl)}</strong>
+                    </td>
+                    <td class="${pos.roi >= 0 ? 'text-success' : 'text-danger'}">
+                        <strong>${pos.roi.toFixed(2)}%</strong>
+                    </td>
+                    <td>${pos.duration}</td>
+                    <td>${formatDate(pos.closed_at)}</td>
+                    <td>${pos.reason}</td>
+                </tr>
+            `).join('');
+        }
+    } catch (error) {
+        console.error('Error loading closed positions:', error);
+    }
+}
+
+// Call it on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadPositions();
+    loadClosedPositions();  // ✅ Add this
+    setInterval(loadPositions, 5000);
+});
 
 function displayPositions(positions) {
     const tbody = document.getElementById('positionsTableBody');
@@ -180,12 +228,21 @@ function displayPositions(positions) {
         const currentPrice = parseFloat(pos.current_price || pos.entry_price);
         const value = parseFloat(pos.amount) * currentPrice;
         
+        // ✅ FIX: Calculate proper duration
+        const duration = pos.entry_time || pos.opened_at || pos.created_at;
+        const durationText = duration ? timeAgo(duration) : 'Unknown';
+        
+        // ✅ FIX: Calculate ROI if missing
+        const entryValue = parseFloat(pos.entry_value || (pos.entry_price * pos.amount));
+        const calculatedRoi = entryValue > 0 ? ((pnl / entryValue) * 100) : 0;
+        const displayRoi = roi || calculatedRoi;
+        
         return `
             <tr>
                 <td>
-                    <strong>${pos.token_symbol}</strong>
+                    <strong>${pos.token_symbol || 'Unknown'}</strong>
                     <br>
-                    <small class="text-muted">${pos.token_address.substring(0, 8)}...</small>
+                    <small class="text-muted">${(pos.token_address || '').substring(0, 10)}...</small>
                 </td>
                 <td>${formatCurrency(pos.entry_price)}</td>
                 <td>${formatCurrency(currentPrice)}</td>
@@ -195,11 +252,11 @@ function displayPositions(positions) {
                     <strong>${formatCurrency(pnl)}</strong>
                 </td>
                 <td class="${pnlClass}">
-                    <strong>${formatPercent(roi)}</strong>
+                    <strong>${displayRoi.toFixed(2)}%</strong>
                 </td>
                 <td>${pos.stop_loss ? formatCurrency(pos.stop_loss) : '-'}</td>
                 <td>${pos.take_profit ? formatCurrency(pos.take_profit) : '-'}</td>
-                <td>${timeAgo(pos.opened_at)}</td>
+                <td>${durationText}</td>
                 <td>
                     <button class="btn btn-sm btn-icon btn-secondary" onclick="viewPositionDetails('${pos.id}')" title="View Details">
                         <i class="fas fa-eye"></i>
