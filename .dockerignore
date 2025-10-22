@@ -1,0 +1,62 @@
+# Python
+venv/
+venv3.*/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+
+# Data
+*.db
+*.sqlite
+*.sqlite3
+
+# Temp
+*.tmp
+*.temp
+.cache/
+
+# Large files
+*.tar
+*.zip
+*.gz
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Docs
+docs/
+*.md
+README.md
+
+# Tests
+tests/
+test_*.py
+*_test.py
+
+# Backups
+*.backup
+*.bak
+*.old

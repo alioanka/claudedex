@@ -223,3 +223,4 @@ ssl_certificates/
 !Dockerfile
 !.env.example
 !pytest.ini
+!.dockerignore
