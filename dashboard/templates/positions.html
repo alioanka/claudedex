@@ -246,7 +246,7 @@ function displayPositions(positions) {
         const value = parseFloat(pos.amount) * currentPrice;
         
         // ✅ FIX: Calculate proper duration
-        const duration = pos.entry_time || pos.opened_at || pos.created_at;
+        const duration = pos.entry_timestamp || pos.entry_time || pos.opened_at || pos.created_at;
         const durationText = duration ? timeAgo(duration) : 'Unknown';
         
         // ✅ FIX: Calculate ROI if missing
@@ -391,11 +391,11 @@ async function viewPositionDetails(positionId) {
                 </div>
                 <div class="metric-row">
                     <span class="metric-label">Opened</span>
-                    <span class="metric-value">${formatDate(position.opened_at)}</span>
+                    <span class="metric-value">${formatDate(position.entry_timestamp || position.opened_at)}</span>
                 </div>
                 <div class="metric-row">
                     <span class="metric-label">Duration</span>
-                    <span class="metric-value">${timeAgo(position.opened_at)}</span>
+                    <span class="metric-value">${timeAgo(position.entry_timestamp || position.opened_at)}</span>
                 </div>
             </div>
         </div>

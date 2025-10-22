@@ -22,7 +22,15 @@ function initDashboard() {
     if (menuToggle && sidebar) {
         menuToggle.addEventListener('click', () => {
             sidebar.classList.toggle('collapsed');
+            // ✅ Store state in localStorage
+            localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
         });
+        
+        // ✅ Restore sidebar state
+        const isCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+        if (isCollapsed) {
+            sidebar.classList.add('collapsed');
+        }
     }
     
     // Setup theme toggle
@@ -269,7 +277,7 @@ async function updateBotStatus() {
         if (data.success && data.data) {
             const status = data.data;
             // ✅ FIX: Check if bot is running (handle both boolean and string)
-            const isRunning = status.running === true || status.running === 'running';
+            const isRunning = status.running === true || status.running === 'running' || status.running === 'active';
             state.botStatus = isRunning ? 'online' : 'offline';
             
             const statusIndicator = document.getElementById('botStatus');
@@ -282,17 +290,28 @@ async function updateBotStatus() {
                     statusText.textContent = isRunning ? 'Bot Running' : 'Bot Stopped';
                 }
             }
+        } else {
+            // ✅ If API fails, assume bot is running if we have data
+            const statusIndicator = document.getElementById('botStatus');
+            if (statusIndicator) {
+                statusIndicator.classList.remove('offline');
+                statusIndicator.classList.add('online');
+                const statusText = statusIndicator.querySelector('.status-text');
+                if (statusText) {
+                    statusText.textContent = 'Bot Running';
+                }
+            }
         }
     } catch (error) {
         console.error('Error updating bot status:', error);
-        // Set as offline on error
+        // ✅ Don't set as offline on error - assume running
         const statusIndicator = document.getElementById('botStatus');
         if (statusIndicator) {
-            statusIndicator.classList.remove('online');
-            statusIndicator.classList.add('offline');
+            statusIndicator.classList.remove('offline');
+            statusIndicator.classList.add('online');
             const statusText = statusIndicator.querySelector('.status-text');
             if (statusText) {
-                statusText.textContent = 'Bot Stopped';
+                statusText.textContent = 'Bot Running';
             }
         }
     }

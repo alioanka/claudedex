@@ -472,8 +472,9 @@ async function loadWinRateChart() {
         
         if (response.success && response.data) {
             const historical = response.data.historical || {};
-            const winRate = (historical.win_rate || 0) / 100;
-            const lossRate = 1 - winRate;
+            const winningTrades = historical.winning_trades || 0;
+            const losingTrades = historical.losing_trades || 0;
+            const totalTrades = winningTrades + losingTrades;
             
             // Update stats
             document.getElementById('totalTrades').textContent = historical.total_trades || 0;
@@ -493,13 +494,16 @@ async function loadWinRateChart() {
                 existingChart.destroy();
             }
             
+            // ✅ FIX: Use actual trade counts, not percentages
+            const chartData = totalTrades > 0 ? [winningTrades, losingTrades] : [1, 0];
+            
             // Create new chart
             new Chart(ctx, {
                 type: 'doughnut',
                 data: {
                     labels: ['Wins', 'Losses'],
                     datasets: [{
-                        data: [historical.winning_trades || 0, historical.losing_trades || 0],
+                        data: chartData,
                         backgroundColor: [
                             'rgba(16, 185, 129, 0.8)',
                             'rgba(239, 68, 68, 0.8)'
@@ -583,6 +587,9 @@ async function loadHistoricalStats() {
             
             const var95 = document.getElementById('var95');
             if (var95) var95.textContent = formatCurrency(portfolioValue * 0.05);
+            
+            const portfolioBeta = document.getElementById('portfolioBeta');
+            if (portfolioBeta) portfolioBeta.textContent = (hist.portfolio_beta || 0).toFixed(2);
         }
     } catch (error) {
         console.error('Error loading historical stats:', error);
@@ -690,7 +697,7 @@ function updatePositionsTable(positions) {
                     ${formatCurrency(unrealizedPnl)} (${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%)
                 </td>
                 <td><span class="badge badge-success">${pos.status || 'open'}</span></td>
-                <td><span class="badge badge-info">${pos.chain ? pos.chain.toUpperCase() : 'N/A'}</span></td>
+                <td><span class="badge badge-info">${pos.chain ? pos.chain.toUpperCase() : (pos.network ? pos.network.toUpperCase() : 'SOL')}</span></td>
                 <td>
                     <button class="btn btn-sm btn-danger" onclick="closePosition('${pos.id}')">
                         Close
@@ -808,6 +815,8 @@ document.addEventListener('DOMContentLoaded', function() {
         await loadPortfolioChart();
         await loadPnLChart();
     }, 900000);  // 15 minutes = 900,000 ms
+    
+    // ✅ DON'T refresh summary stats - they should only be loaded once
 });
 </script>
 {% endblock %}

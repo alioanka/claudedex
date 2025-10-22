@@ -115,7 +115,13 @@ let allTrades = [];
 
 async function loadTrades() {
     try {
-        const response = await apiGet('/api/trades/history?limit=1000');
+        // ✅ Try recent trades first, then history
+        let response = await apiGet('/api/trades/recent?limit=1000');
+        
+        if (!response.success || !response.data || response.data.length === 0) {
+            // Fallback to history endpoint
+            response = await apiGet('/api/trades/history?limit=1000');
+        }
         
         if (response.success && response.data) {
             allTrades = response.data;

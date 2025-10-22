@@ -252,11 +252,32 @@ document.addEventListener('DOMContentLoaded', async function() {
                 }
             }
         } else {
-            showToast('error', 'Failed to load settings');
+            // ✅ If API fails, populate with default values
+            document.getElementById('tradingEnabled').checked = true;
+            document.getElementById('maxPositionSize').value = 1000;
+            document.getElementById('maxOpenPositions').value = 5;
+            document.getElementById('defaultStopLoss').value = 5;
+            document.getElementById('defaultTakeProfit').value = 10;
+            document.getElementById('slippageTolerance').value = 1;
+            
+            document.getElementById('maxDrawdown').value = 20;
+            document.getElementById('maxDailyLoss').value = 500;
+            document.getElementById('positionSizeMethod').value = 'fixed';
+            document.getElementById('riskPerTrade').value = 2;
+            
+            showToast('warning', 'Using default settings - API not available');
         }
     } catch (error) {
         console.error('Error loading settings:', error);
-        showToast('error', 'Error loading settings');
+        // ✅ Populate with defaults on error
+        document.getElementById('tradingEnabled').checked = true;
+        document.getElementById('maxPositionSize').value = 1000;
+        document.getElementById('maxOpenPositions').value = 5;
+        document.getElementById('defaultStopLoss').value = 5;
+        document.getElementById('defaultTakeProfit').value = 10;
+        document.getElementById('slippageTolerance').value = 1;
+        
+        showToast('warning', 'Using default settings - Error loading from API');
     }
 });
 </script>

@@ -227,40 +227,53 @@ async function loadPerformanceData() {
     const timeframe = document.getElementById('performanceTimeframe').value;
     
     try {
-        const response = await apiGet(`/api/performance/metrics?period=${timeframe}`);
-        if (response.success) {
+        // ✅ Try without period parameter first
+        let response = await apiGet('/api/performance/metrics');
+        
+        if (response.success && response.data) {
             updatePerformanceMetrics(response.data);
             await loadPerformanceCharts(timeframe);
+        } else {
+            // Fallback with period parameter
+            response = await apiGet(`/api/performance/metrics?period=${timeframe}`);
+            if (response.success) {
+                updatePerformanceMetrics(response.data);
+                await loadPerformanceCharts(timeframe);
+            }
         }
     } catch (error) {
+        console.error('Failed to load performance data:', error);
         showToast('error', 'Failed to load performance data');
     }
 }
 
 function updatePerformanceMetrics(data) {
+    // ✅ Handle both direct data and nested historical data
+    const metrics = data.historical || data;
+    
     // Key metrics
-    document.getElementById('totalProfit').textContent = formatCurrency(data.total_pnl || 0);
-    document.getElementById('totalRoi').textContent = formatPercent(data.roi || 0);
-    document.getElementById('sharpeRatio').textContent = formatNumber(data.sharpe_ratio || 0, 2);
-    document.getElementById('maxDrawdown').textContent = formatPercent(data.max_drawdown || 0);
+    document.getElementById('totalProfit').textContent = formatCurrency(metrics.total_pnl || 0);
+    document.getElementById('totalRoi').textContent = formatPercent(metrics.roi || 0);
+    document.getElementById('sharpeRatio').textContent = formatNumber(metrics.sharpe_ratio || 0, 2);
+    document.getElementById('maxDrawdown').textContent = formatPercent(metrics.max_drawdown || 0);
     
     // Trade statistics
-    document.getElementById('totalTrades').textContent = data.total_trades || 0;
-    document.getElementById('winningTrades').textContent = data.winning_trades || 0;
-    document.getElementById('losingTrades').textContent = data.losing_trades || 0;
-    document.getElementById('winRate').textContent = formatPercent(data.win_rate || 0);
-    document.getElementById('avgWin').textContent = formatCurrency(data.avg_win || 0);
-    document.getElementById('avgLoss').textContent = formatCurrency(data.avg_loss || 0);
-    document.getElementById('bestTrade').textContent = formatCurrency(data.best_trade || 0);
-    document.getElementById('worstTrade').textContent = formatCurrency(data.worst_trade || 0);
-    document.getElementById('profitFactor').textContent = formatNumber(data.profit_factor || 0, 2);
-    document.getElementById('expectancy').textContent = formatCurrency(data.expectancy || 0);
-    document.getElementById('recoveryFactor').textContent = formatNumber(data.recovery_factor || 0, 2);
+    document.getElementById('totalTrades').textContent = metrics.total_trades || 0;
+    document.getElementById('winningTrades').textContent = metrics.winning_trades || 0;
+    document.getElementById('losingTrades').textContent = metrics.losing_trades || 0;
+    document.getElementById('winRate').textContent = formatPercent(metrics.win_rate || 0);
+    document.getElementById('avgWin').textContent = formatCurrency(metrics.avg_win || 0);
+    document.getElementById('avgLoss').textContent = formatCurrency(metrics.avg_loss || 0);
+    document.getElementById('bestTrade').textContent = formatCurrency(metrics.best_trade || 0);
+    document.getElementById('worstTrade').textContent = formatCurrency(metrics.worst_trade || 0);
+    document.getElementById('profitFactor').textContent = formatNumber(metrics.profit_factor || 0, 2);
+    document.getElementById('expectancy').textContent = formatCurrency(metrics.expectancy || 0);
+    document.getElementById('recoveryFactor').textContent = formatNumber(metrics.recovery_factor || 0, 2);
     
     // Risk metrics
-    document.getElementById('sharpeRatioDetail').textContent = formatNumber(data.sharpe_ratio || 0, 2);
-    document.getElementById('sortinoRatio').textContent = formatNumber(data.sortino_ratio || 0, 2);
-    document.getElementById('maxDrawdownDetail').textContent = formatPercent(data.max_drawdown || 0);
+    document.getElementById('sharpeRatioDetail').textContent = formatNumber(metrics.sharpe_ratio || 0, 2);
+    document.getElementById('sortinoRatio').textContent = formatNumber(metrics.sortino_ratio || 0, 2);
+    document.getElementById('maxDrawdownDetail').textContent = formatPercent(metrics.max_drawdown || 0);
 }
 
 async function loadPerformanceCharts(timeframe) {
