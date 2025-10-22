@@ -9,7 +9,7 @@ const dashboardState = {
 
 // Initialize dashboard-specific features
 function initDashboard() {
-    loadHistoricalStats(); // Load historical data ONCE
+//    loadHistoricalStats(); // Load historical data ONCE
     setupDashboardRefresh();
     setupQuickActions();
     setupActivityFeed();
@@ -30,15 +30,7 @@ async function refreshDashboardData() {
     try {
         const response = await apiGet('/api/dashboard/summary');
         if (response.success) {
-            // ❌ REMOVE THIS LINE - it's overwriting with wrong data
-            // updateDashboardMetrics(response.data);
-            
-            // ✅ ONLY update the open positions count
-            const openPositionsStat = document.getElementById('openPositionsStat');
-            if (openPositionsStat && response.data.open_positions !== undefined) {
-                openPositionsStat.textContent = response.data.open_positions;
-            }
-            
+            updateDashboardMetrics(response.data);
             dashboardState.lastUpdate = new Date();
         }
     } catch (error) {
@@ -48,16 +40,28 @@ async function refreshDashboardData() {
 
 // Update dashboard metrics
 function updateDashboardMetrics(data) {
-    // Update portfolio value (live data)
+    // Update portfolio value
     const portfolioValueStat = document.getElementById('portfolioValueStat');
     if (portfolioValueStat) {
-        portfolioValueStat.textContent = formatCurrency(data.portfolio_value);
+        portfolioValueStat.textContent = formatCurrency(data.total_value || 10000);
     }
     
-    // ✅ FIX: Update open positions count
+    // Update total P&L
+    const totalPnlStat = document.getElementById('totalPnlStat');
+    if (totalPnlStat) {
+        totalPnlStat.textContent = formatCurrency(data.net_profit || 0);
+    }
+    
+    // Update open positions
     const openPositionsStat = document.getElementById('openPositionsStat');
     if (openPositionsStat) {
         openPositionsStat.textContent = data.open_positions || 0;
+    }
+    
+    // Update win rate
+    const winRateStat = document.getElementById('winRateStat');
+    if (winRateStat) {
+        winRateStat.textContent = `${(data.win_rate || 0).toFixed(1)}%`;
     }
 }
 
