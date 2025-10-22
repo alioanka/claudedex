@@ -2,10 +2,13 @@
 ```
 ClaudeDex/
 ├── count_loc.py
+├── jup_text.py
 ├── main.py
 ├── scaffold.py
 ├── setup.py
 ├── setup_env_keys.py
+├── test_dexscreener_solana.py
+├── test_solana.py
 ├── verify_references.py
 ├── xref_symbol_db.py
 └── analysis/
@@ -84,6 +87,7 @@ ClaudeDex/
     ├── export_trades.py
     ├── fix_illegal_relatives.py
     ├── generate_report.py
+    ├── generate_solana_wallet.py
     ├── health_check.py
     ├── init_config.py
     ├── migrate_database.py
@@ -96,9 +100,11 @@ ClaudeDex/
     ├── run_tests.py
     ├── security_audit.py
     ├── setup_database.py
+    ├── solana_wallet_balance.py
     ├── strategy_analysis.py
     ├── test_alerts.py
     ├── test_apis.py
+    ├── test_solana_setup.py
     ├── train_models.py
     ├── update_blacklists.py
     ├── update_models.py
@@ -136,6 +142,13 @@ ClaudeDex/
         ├── test_risk_manager.py
 └── trading/
     ├── __init__.py
+    └── chains/
+        ├── __init__.py
+        └── solana/
+            ├── __init__.py
+            ├── jupiter_executor.py
+            ├── solana_client.py
+            ├── spl_token_handler.py
     └── executors/
         ├── __init__.py
         ├── base_executor.py

@@ -367,29 +367,78 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_open_positions(self, request):
-        """Get open positions"""
+        """Get open positions with ALL required fields"""
         try:
-            # ✅ FIX: Get positions from ENGINE, not portfolio
-            if not self.engine:
-                return web.json_response({'error': 'Trading engine not available'}, status=503)
-            
-            # Get active positions from engine
             positions = []
-            if hasattr(self.engine, 'active_positions'):
+            
+            if self.engine and hasattr(self.engine, 'active_positions'):
                 for token_address, position in self.engine.active_positions.items():
+                    # Extract and calculate all required fields
+                    entry_price = float(position.get('entry_price', 0))
+                    current_price = float(position.get('current_price', entry_price))
+                    amount = float(position.get('amount', 0))
+                    
+                    # Calculate value
+                    value = amount * current_price
+                    
+                    # Calculate P&L
+                    entry_value = amount * entry_price
+                    unrealized_pnl = value - entry_value
+                    
+                    # Calculate ROI
+                    roi = ((current_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
+                    
+                    # Calculate duration
+                    entry_timestamp = position.get('entry_timestamp') or position.get('opened_at') or position.get('timestamp')
+                    duration_str = 'unknown'
+                    
+                    if entry_timestamp:
+                        try:
+                            if isinstance(entry_timestamp, str):
+                                entry_time = datetime.fromisoformat(entry_timestamp.replace('Z', '+00:00'))
+                            elif isinstance(entry_timestamp, datetime):
+                                entry_time = entry_timestamp
+                            else:
+                                entry_time = datetime.fromtimestamp(float(entry_timestamp))
+                            
+                            duration_delta = datetime.utcnow() - entry_time
+                            total_seconds = duration_delta.total_seconds()
+                            
+                            if total_seconds < 60:
+                                duration_str = 'just now'
+                            elif total_seconds < 3600:
+                                minutes = int(total_seconds // 60)
+                                duration_str = f"{minutes}m ago"
+                            elif total_seconds < 86400:
+                                hours = int(total_seconds // 3600)
+                                minutes = int((total_seconds % 3600) // 60)
+                                duration_str = f"{hours}h {minutes}m ago"
+                            else:
+                                days = int(total_seconds // 86400)
+                                hours = int((total_seconds % 86400) // 3600)
+                                duration_str = f"{days}d {hours}h ago"
+                        except Exception as e:
+                            logger.error(f"Error calculating duration: {e}")
+                            duration_str = 'unknown'
+                    
                     positions.append({
-                        'id': position.get('id'),
+                        'id': position.get('id', str(token_address)),
                         'token_address': token_address,
-                        'token_symbol': position.get('token_symbol', 'Unknown'),
-                        'entry_price': float(position.get('entry_price', 0)),
-                        'current_price': float(position.get('current_price', position.get('entry_price', 0))),
-                        'amount': float(position.get('amount', 0)),
-                        'entry_value': float(position.get('entry_value', 0)),
-                        'unrealized_pnl': float(position.get('unrealized_pnl', 0)),
-                        'status': position.get('status', 'open'),
-                        'entry_time': position.get('entry_time').isoformat() if position.get('entry_time') else None,
-                        'chain': position.get('chain', 'unknown')
+                        'token_symbol': position.get('token_symbol', position.get('symbol', 'UNKNOWN')),
+                        'entry_price': round(entry_price, 8),
+                        'current_price': round(current_price, 8),
+                        'amount': round(amount, 4),
+                        'value': round(value, 2),
+                        'unrealized_pnl': round(unrealized_pnl, 2),
+                        'roi': round(roi, 2),
+                        'stop_loss': position.get('stop_loss'),
+                        'take_profit': position.get('take_profit'),
+                        'entry_timestamp': entry_timestamp.isoformat() if isinstance(entry_timestamp, datetime) else entry_timestamp,
+                        'duration': duration_str,
+                        'status': position.get('status', 'open')
                     })
+            
+            logger.info(f"Returning {len(positions)} open positions")
             
             return web.json_response({
                 'success': True,
@@ -398,34 +447,60 @@ class DashboardEndpoints:
             })
         except Exception as e:
             logger.error(f"Error getting open positions: {e}")
-            return web.json_response({'error': str(e)}, status=500)
+            return web.json_response({
+                'success': False,
+                'error': str(e),
+                'data': [],
+                'count': 0
+            }, status=200)
     
     async def api_positions_history(self, request):
         """Get closed positions history"""
         try:
             limit = int(request.query.get('limit', 100))
-            
-            if not self.db:
-                return web.json_response({'error': 'Database not available'}, status=503)
-            
-            # ✅ Get closed trades from database
-            trades = await self.db.get_recent_trades(limit=limit, status='closed')
-            
             closed_positions = []
-            for trade in trades:
-                closed_positions.append({
-                    'token_symbol': trade.get('symbol', 'Unknown'),
-                    'entry_price': float(trade.get('entry_price', 0)),
-                    'exit_price': float(trade.get('exit_price', 0)),
-                    'pnl': float(trade.get('profit_loss', 0)),
-                    'roi': float(trade.get('profit_loss_percentage', 0)),
-                    'duration': self._calculate_duration(
-                        trade.get('entry_timestamp'),
-                        trade.get('exit_timestamp')
-                    ),
-                    'closed_at': trade.get('exit_timestamp'),
-                    'reason': trade.get('exit_reason', 'Manual close')
-                })
+            
+            if self.db:
+                # Get closed trades from database
+                trades = await self.db.get_closed_trades(limit=limit)
+                
+                for trade in trades:
+                    # Calculate duration
+                    duration = 'unknown'
+                    if trade.get('entry_timestamp') and trade.get('exit_timestamp'):
+                        try:
+                            entry = datetime.fromisoformat(str(trade['entry_timestamp']).replace('Z', '+00:00'))
+                            exit_time = datetime.fromisoformat(str(trade['exit_timestamp']).replace('Z', '+00:00'))
+                            delta = exit_time - entry
+                            
+                            hours = int(delta.total_seconds() // 3600)
+                            minutes = int((delta.total_seconds() % 3600) // 60)
+                            
+                            if hours > 24:
+                                days = hours // 24
+                                remaining_hours = hours % 24
+                                duration = f"{days}d {remaining_hours}h"
+                            elif hours > 0:
+                                duration = f"{hours}h {minutes}m"
+                            else:
+                                duration = f"{minutes}m"
+                        except:
+                            pass
+                    
+                    closed_positions.append({
+                        'id': trade.get('id'),
+                        'token_symbol': trade.get('token_symbol', 'UNKNOWN'),
+                        'token_address': trade.get('token_address'),
+                        'entry_price': float(trade.get('entry_price', 0)),
+                        'exit_price': float(trade.get('exit_price', 0)),
+                        'amount': float(trade.get('amount', 0)),
+                        'profit_loss': float(trade.get('profit_loss', 0)),
+                        'roi': float(trade.get('roi', 0)),
+                        'entry_timestamp': trade.get('entry_timestamp'),
+                        'exit_timestamp': trade.get('exit_timestamp'),
+                        'duration': duration,
+                        'exit_reason': trade.get('exit_reason', 'manual')
+                    })
             
             return web.json_response({
                 'success': True,
@@ -434,7 +509,12 @@ class DashboardEndpoints:
             })
         except Exception as e:
             logger.error(f"Error getting closed positions: {e}")
-            return web.json_response({'error': str(e)}, status=500)
+            return web.json_response({
+                'success': False,
+                'error': str(e),
+                'data': [],
+                'count': 0
+            }, status=200)
 
     def _calculate_duration(self, start, end):
         """Calculate duration between two timestamps"""
@@ -456,64 +536,149 @@ class DashboardEndpoints:
             return "Unknown"
     
     async def api_performance_metrics(self, request):
-        """Get performance metrics"""
+        """Get comprehensive performance metrics"""
         try:
-            period = request.query.get('period', 'all')
+            period = request.query.get('period', '7d')
             
-            if not self.db:
-                return web.json_response({'error': 'Database not available'}, status=503)
-            
-            # Get performance data
-            db_metrics = await self.db.get_performance_summary() if self.db else {}
-            
-            # ✅ ADD: Calculate Sharpe Ratio
-            trades = await self.db.get_recent_trades(limit=1000)
-            closed_trades = [t for t in trades if t.get('status') == 'closed']
-            
-            if len(closed_trades) > 1:
-                returns = [float(t.get('profit_loss_percentage', 0)) for t in closed_trades]
-                avg_return = sum(returns) / len(returns)
-                std_dev = (sum((r - avg_return) ** 2 for r in returns) / len(returns)) ** 0.5
-                sharpe_ratio = (avg_return / std_dev) if std_dev > 0 else 0
-            else:
-                sharpe_ratio = 0
-            
-            # ✅ ADD: Calculate Max Drawdown
-            portfolio_values = []
-            cumulative_pnl = 0
-            starting_balance = 10000
-            
-            for trade in sorted(closed_trades, key=lambda x: x.get('exit_timestamp', '')):
-                cumulative_pnl += float(trade.get('profit_loss', 0))
-                portfolio_values.append(starting_balance + cumulative_pnl)
-            
-            max_drawdown = 0
-            if portfolio_values:
-                peak = portfolio_values[0]
-                for value in portfolio_values:
-                    if value > peak:
-                        peak = value
-                    drawdown = ((peak - value) / peak) * 100 if peak > 0 else 0
-                    if drawdown > max_drawdown:
-                        max_drawdown = drawdown
-            
-            # ✅ ADD calculated metrics
-            db_metrics['sharpe_ratio'] = round(sharpe_ratio, 2)
-            db_metrics['max_drawdown'] = round(max_drawdown, 2)
-            db_metrics['portfolio_beta'] = 1.0  # Placeholder - requires market data
-            
-            combined_metrics = {
-                **db_metrics,
-                'period': period
+            # Initialize metrics structure
+            metrics = {
+                'summary': {
+                    'total_profit': 0.0,
+                    'roi': 0.0,
+                    'sharpe_ratio': 0.0,
+                    'max_drawdown': 0.0
+                },
+                'trades': {
+                    'total': 0,
+                    'winning': 0,
+                    'losing': 0,
+                    'win_rate': 0.0,
+                    'avg_win': 0.0,
+                    'avg_loss': 0.0,
+                    'best_trade': 0.0,
+                    'worst_trade': 0.0,
+                    'avg_duration': '0h',
+                    'profit_factor': 0.0,
+                    'expectancy': 0.0,
+                    'recovery_factor': 0.0
+                },
+                'risk': {
+                    'daily_volatility': 0.0,
+                    'annual_volatility': 0.0,
+                    'sharpe_ratio': 0.0,
+                    'sortino_ratio': 0.0,
+                    'calmar_ratio': 0.0,
+                    'max_drawdown': 0.0,
+                    'avg_drawdown': 0.0,
+                    'recovery_time': 0
+                },
+                'historical': {
+                    'total_pnl': 0.0,
+                    'equity_curve': [],
+                    'cumulative_pnl': []
+                }
             }
+            
+            if self.db:
+                # Get all closed trades
+                all_trades = await self.db.get_closed_trades(limit=10000)
+                
+                if all_trades:
+                    # Filter by period
+                    filtered_trades = self._filter_by_period(all_trades, period)
+                    
+                    if filtered_trades:
+                        # Calculate metrics
+                        metrics['trades']['total'] = len(filtered_trades)
+                        
+                        winning_trades = [t for t in filtered_trades if float(t.get('profit_loss', 0)) > 0]
+                        losing_trades = [t for t in filtered_trades if float(t.get('profit_loss', 0)) < 0]
+                        
+                        metrics['trades']['winning'] = len(winning_trades)
+                        metrics['trades']['losing'] = len(losing_trades)
+                        metrics['trades']['win_rate'] = (len(winning_trades) / len(filtered_trades) * 100) if filtered_trades else 0
+                        
+                        if winning_trades:
+                            metrics['trades']['avg_win'] = sum(float(t.get('profit_loss', 0)) for t in winning_trades) / len(winning_trades)
+                            metrics['trades']['best_trade'] = max(float(t.get('profit_loss', 0)) for t in winning_trades)
+                        
+                        if losing_trades:
+                            metrics['trades']['avg_loss'] = sum(float(t.get('profit_loss', 0)) for t in losing_trades) / len(losing_trades)
+                            metrics['trades']['worst_trade'] = min(float(t.get('profit_loss', 0)) for t in losing_trades)
+                        
+                        # Total P&L
+                        total_pnl = sum(float(t.get('profit_loss', 0)) for t in filtered_trades)
+                        metrics['summary']['total_profit'] = total_pnl
+                        metrics['historical']['total_pnl'] = total_pnl
+                        
+                        # ROI
+                        starting_balance = 10000
+                        metrics['summary']['roi'] = (total_pnl / starting_balance * 100) if starting_balance > 0 else 0
+                        
+                        # Profit factor
+                        total_wins = sum(float(t.get('profit_loss', 0)) for t in winning_trades)
+                        total_losses = abs(sum(float(t.get('profit_loss', 0)) for t in losing_trades))
+                        metrics['trades']['profit_factor'] = (total_wins / total_losses) if total_losses > 0 else 0
+                        
+                        # Expectancy
+                        metrics['trades']['expectancy'] = total_pnl / len(filtered_trades) if filtered_trades else 0
+                        
+                        # Build equity curve
+                        sorted_trades = sorted(filtered_trades, key=lambda t: t.get('exit_timestamp', ''))
+                        cumulative = starting_balance
+                        
+                        for trade in sorted_trades:
+                            cumulative += float(trade.get('profit_loss', 0))
+                            metrics['historical']['equity_curve'].append({
+                                'timestamp': trade.get('exit_timestamp'),
+                                'value': cumulative
+                            })
+                        
+                        # Calculate drawdown
+                        if metrics['historical']['equity_curve']:
+                            peak = metrics['historical']['equity_curve'][0]['value']
+                            max_dd = 0
+                            
+                            for point in metrics['historical']['equity_curve']:
+                                if point['value'] > peak:
+                                    peak = point['value']
+                                dd = (peak - point['value']) / peak * 100 if peak > 0 else 0
+                                if dd > max_dd:
+                                    max_dd = dd
+                            
+                            metrics['summary']['max_drawdown'] = max_dd
+                            metrics['risk']['max_drawdown'] = max_dd
             
             return web.json_response({
                 'success': True,
-                'data': {'historical': combined_metrics}
+                'data': self._serialize_decimals(metrics)
             })
         except Exception as e:
-            logger.error(f"Error getting performance metrics: {e}", exc_info=True)
-            return web.json_response({'error': str(e)}, status=500)
+            logger.error(f"Error getting performance metrics: {e}")
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    def _filter_by_period(self, trades, period):
+        """Filter trades by time period"""
+        if period == 'all':
+            return trades
+        
+        now = datetime.utcnow()
+        period_map = {
+            '1h': timedelta(hours=1),
+            '24h': timedelta(days=1),
+            '7d': timedelta(days=7),
+            '30d': timedelta(days=30),
+            '90d': timedelta(days=90)
+        }
+        
+        delta = period_map.get(period, timedelta(days=7))
+        cutoff = now - delta
+        
+        return [t for t in trades if t.get('exit_timestamp') and 
+                datetime.fromisoformat(str(t['exit_timestamp']).replace('Z', '+00:00')) > cutoff]
     
     async def api_performance_charts(self, request):
         """Get performance chart data"""
@@ -715,13 +880,52 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_bot_status(self, request):
-        """Get bot status"""
+        """Get bot status with robust detection"""
         try:
+            # ✅ FIX: Check multiple possible state indicators
+            is_running = False
+            uptime_str = 'N/A'
+            
+            if self.engine:
+                # Try different state attribute names
+                if hasattr(self.engine, 'state'):
+                    # Check for various "running" values
+                    state_val = str(self.engine.state).lower()
+                    is_running = state_val in ['running', 'active', 'started', 'true', '1']
+                elif hasattr(self.engine, 'running'):
+                    is_running = bool(self.engine.running)
+                elif hasattr(self.engine, 'is_running'):
+                    is_running = bool(self.engine.is_running)
+                elif hasattr(self.engine, '_running'):
+                    is_running = bool(self.engine._running)
+                elif hasattr(self.engine, 'active'):
+                    is_running = bool(self.engine.active)
+                
+                # Calculate uptime if running
+                if is_running:
+                    start_time = None
+                    if hasattr(self.engine, 'start_time') and self.engine.start_time:
+                        start_time = self.engine.start_time
+                    elif hasattr(self.engine, 'started_at') and self.engine.started_at:
+                        start_time = self.engine.started_at
+                    elif hasattr(self.engine, 'startup_time') and self.engine.startup_time:
+                        start_time = self.engine.startup_time
+                    
+                    if start_time:
+                        try:
+                            uptime_delta = datetime.utcnow() - start_time
+                            hours = int(uptime_delta.total_seconds() // 3600)
+                            minutes = int((uptime_delta.total_seconds() % 3600) // 60)
+                            uptime_str = f"{hours}h {minutes}m"
+                        except Exception as e:
+                            logger.warning(f"Error calculating uptime: {e}")
+                            uptime_str = "Running"
+            
             status = {
-                'running': self.engine.state == 'running' if self.engine else False,
-                'uptime': str(datetime.utcnow() - self.engine.start_time) if self.engine and hasattr(self.engine, 'start_time') else 'N/A',
+                'running': is_running,
+                'uptime': uptime_str,
                 'mode': self.config.get('mode', 'unknown'),
-                'version': '1.0.0',  # Add version tracking
+                'version': '1.0.0',
                 'last_health_check': datetime.utcnow().isoformat()
             }
             
@@ -731,7 +935,17 @@ class DashboardEndpoints:
             })
         except Exception as e:
             logger.error(f"Error getting bot status: {e}")
-            return web.json_response({'error': str(e)}, status=500)
+            # Return success with offline status instead of error
+            return web.json_response({
+                'success': True,
+                'data': {
+                    'running': False,
+                    'uptime': 'N/A',
+                    'mode': 'unknown',
+                    'version': '1.0.0',
+                    'last_health_check': datetime.utcnow().isoformat()
+                }
+            }, status=200)
     
     # ==================== API - SETTINGS ====================
     

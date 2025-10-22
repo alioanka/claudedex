@@ -34,6 +34,55 @@
       "methods": {}
     }
   },
+  "jup_text": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\jup_text.py",
+    "classes": {
+      "MockOrder": {
+        "methods": {
+          "__init__": {
+            "name": "__init__",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          }
+        },
+        "has_init": true
+      }
+    },
+    "functions": {
+      "test_jupiter_executor": {
+        "name": "test_jupiter_executor",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "test_api_only": {
+        "name": "test_api_only",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
   "main": {
     "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
     "classes": {
@@ -111,6 +160,18 @@
           },
           "_validate_environment": {
             "name": "_validate_environment",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_position_monitor": {
+            "name": "_position_monitor",
             "params": [
               "self"
             ],
@@ -487,6 +548,138 @@
       },
       "main": {
         "name": "main",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "test_dexscreener_solana": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\test_dexscreener_solana.py",
+    "classes": {},
+    "functions": {
+      "test_solana_pairs": {
+        "name": "test_solana_pairs",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "test_solana_token_price": {
+        "name": "test_solana_token_price",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "test_solana_chain_normalization": {
+        "name": "test_solana_chain_normalization",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "test_solana_filter_thresholds": {
+        "name": "test_solana_filter_thresholds",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "run_all_tests": {
+        "name": "run_all_tests",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "test_solana": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\test_solana.py",
+    "classes": {},
+    "functions": {
+      "test_jupiter_quote": {
+        "name": "test_jupiter_quote",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "test_solana_rpc": {
+        "name": "test_solana_rpc",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "test_wallet_balance": {
+        "name": "test_wallet_balance",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "test_multiple_quotes": {
+        "name": "test_multiple_quotes",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "test_execution_stats": {
+        "name": "test_execution_stats",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "run_all_tests": {
+        "name": "run_all_tests",
         "params": [],
         "kwonly": [],
         "vararg": false,
@@ -5922,6 +6115,24 @@
         },
         "has_init": false
       },
+      "ClosedPositionRecord": {
+        "methods": {
+          "is_cooled_down": {
+            "name": "is_cooled_down",
+            "params": [
+              "self",
+              "cooldown_minutes"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 1,
+            "posonly": [],
+            "is_method": true
+          }
+        },
+        "has_init": false
+      },
       "TradingBotEngine": {
         "methods": {
           "__init__": {
@@ -6161,6 +6372,18 @@
           },
           "stop": {
             "name": "stop",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "cleanup": {
+            "name": "cleanup",
             "params": [
               "self"
             ],
@@ -8789,6 +9012,19 @@
             "posonly": [],
             "is_method": true
           },
+          "_normalize_chain": {
+            "name": "_normalize_chain",
+            "params": [
+              "self",
+              "chain"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
           "initialize": {
             "name": "initialize",
             "params": [
@@ -8857,12 +9093,13 @@
             "name": "get_token_price",
             "params": [
               "self",
-              "token_address"
+              "token_address",
+              "chain"
             ],
             "kwonly": [],
             "vararg": false,
             "kwarg": false,
-            "defaults": 0,
+            "defaults": 1,
             "posonly": [],
             "is_method": true
           },
@@ -9186,6 +9423,46 @@
               "self",
               "address",
               "chain"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_check_solana_token": {
+            "name": "_check_solana_token",
+            "params": [
+              "self",
+              "address"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_check_rugcheck_summary": {
+            "name": "_check_rugcheck_summary",
+            "params": [
+              "self",
+              "address"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_calculate_solana_verdict": {
+            "name": "_calculate_solana_verdict",
+            "params": [
+              "self",
+              "rugcheck_data",
+              "address"
             ],
             "kwonly": [],
             "vararg": false,
@@ -13186,6 +13463,18 @@
             "defaults": 0,
             "posonly": [],
             "is_method": true
+          },
+          "get_performance_summary": {
+            "name": "get_performance_summary",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
           }
         },
         "has_init": true
@@ -15762,7 +16051,34 @@
             "kwonly": [],
             "vararg": false,
             "kwarg": false,
+            "defaults": 1,
+            "posonly": [],
+            "is_method": true
+          },
+          "initialize": {
+            "name": "initialize",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
             "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "send_alert": {
+            "name": "send_alert",
+            "params": [
+              "self",
+              "alert_type",
+              "message",
+              "priority"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 1,
             "posonly": [],
             "is_method": true
           },
@@ -15830,12 +16146,39 @@
             "defaults": 0,
             "posonly": [],
             "is_method": true
+          },
+          "send_performance_summary": {
+            "name": "send_performance_summary",
+            "params": [
+              "self",
+              "period",
+              "metrics"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
           }
         },
         "has_init": true
       }
     },
-    "functions": {},
+    "functions": {
+      "escape_markdown": {
+        "name": "escape_markdown",
+        "params": [
+          "text"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
     "dups": {
       "functions": {},
       "classes": {},
@@ -16623,6 +16966,18 @@
             "posonly": [],
             "is_method": true
           },
+          "_serialize_decimals": {
+            "name": "_serialize_decimals",
+            "params": [
+              "obj"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
           "_setup_routes": {
             "name": "_setup_routes",
             "params": [
@@ -16822,6 +17177,20 @@
             "params": [
               "self",
               "request"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_calculate_duration": {
+            "name": "_calculate_duration",
+            "params": [
+              "self",
+              "start",
+              "end"
             ],
             "kwonly": [],
             "vararg": false,
@@ -18434,6 +18803,47 @@
       "methods": {}
     }
   },
+  "scripts.generate_solana_wallet": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\generate_solana_wallet.py",
+    "classes": {},
+    "functions": {
+      "generate_wallet": {
+        "name": "generate_wallet",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "import_wallet": {
+        "name": "import_wallet",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      },
+      "main": {
+        "name": "main",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
   "scripts.health_check": {
     "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\health_check.py",
     "classes": {},
@@ -18830,6 +19240,27 @@
       "methods": {}
     }
   },
+  "scripts.solana_wallet_balance": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\solana_wallet_balance.py",
+    "classes": {},
+    "functions": {
+      "check_balance": {
+        "name": "check_balance",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
   "scripts.strategy_analysis": {
     "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\strategy_analysis.py",
     "classes": {},
@@ -18880,6 +19311,27 @@
     "functions": {
       "test_apis": {
         "name": "test_apis",
+        "params": [],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "scripts.test_solana_setup": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\test_solana_setup.py",
+    "classes": {},
+    "functions": {
+      "test": {
+        "name": "test",
         "params": [],
         "kwonly": [],
         "vararg": false,
@@ -22630,9 +23082,555 @@
       "methods": {}
     }
   },
+  "trading.chains.solana.jupiter_executor": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\chains\\solana\\jupiter_executor.py",
+    "classes": {
+      "JupiterExecutor": {
+        "methods": {
+          "__init__": {
+            "name": "__init__",
+            "params": [
+              "self",
+              "config"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "initialize": {
+            "name": "initialize",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "execute_trade": {
+            "name": "execute_trade",
+            "params": [
+              "self",
+              "order"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_quote": {
+            "name": "get_quote",
+            "params": [
+              "self",
+              "token_in",
+              "token_out",
+              "amount_in"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "validate_order": {
+            "name": "validate_order",
+            "params": [
+              "self",
+              "order"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_get_quote": {
+            "name": "_get_quote",
+            "params": [
+              "self",
+              "input_mint",
+              "output_mint",
+              "amount",
+              "slippage_bps"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 1,
+            "posonly": [],
+            "is_method": true
+          },
+          "_execute_swap": {
+            "name": "_execute_swap",
+            "params": [
+              "self",
+              "quote",
+              "order"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_wait_for_confirmation": {
+            "name": "_wait_for_confirmation",
+            "params": [
+              "self",
+              "signature",
+              "max_wait_seconds"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 1,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_token_balance": {
+            "name": "get_token_balance",
+            "params": [
+              "self",
+              "token_mint"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_get_sol_balance": {
+            "name": "_get_sol_balance",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_execution_stats": {
+            "name": "get_execution_stats",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "cleanup": {
+            "name": "cleanup",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "__del__": {
+            "name": "__del__",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          }
+        },
+        "has_init": true
+      }
+    },
+    "functions": {},
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "trading.chains.solana.solana_client": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\chains\\solana\\solana_client.py",
+    "classes": {
+      "SolanaClient": {
+        "methods": {
+          "__init__": {
+            "name": "__init__",
+            "params": [
+              "self",
+              "rpc_urls",
+              "timeout"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 1,
+            "posonly": [],
+            "is_method": true
+          },
+          "initialize": {
+            "name": "initialize",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "_request": {
+            "name": "_request",
+            "params": [
+              "self",
+              "method",
+              "params",
+              "rpc_url"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 1,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_balance": {
+            "name": "get_balance",
+            "params": [
+              "self",
+              "address"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_token_balance": {
+            "name": "get_token_balance",
+            "params": [
+              "self",
+              "address",
+              "mint"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_recent_blockhash": {
+            "name": "get_recent_blockhash",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_slot": {
+            "name": "get_slot",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_token_supply": {
+            "name": "get_token_supply",
+            "params": [
+              "self",
+              "mint"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_transaction": {
+            "name": "get_transaction",
+            "params": [
+              "self",
+              "signature"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "cleanup": {
+            "name": "cleanup",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          }
+        },
+        "has_init": true
+      }
+    },
+    "functions": {},
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "trading.chains.solana.spl_token_handler": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\chains\\solana\\spl_token_handler.py",
+    "classes": {
+      "SPLTokenHandler": {
+        "methods": {
+          "__init__": {
+            "name": "__init__",
+            "params": [
+              "self",
+              "solana_client"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_token_balance": {
+            "name": "get_token_balance",
+            "params": [
+              "self",
+              "wallet_address",
+              "token_mint"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_token_info": {
+            "name": "get_token_info",
+            "params": [
+              "self",
+              "token_mint"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "format_token_amount": {
+            "name": "format_token_amount",
+            "params": [
+              "self",
+              "amount",
+              "decimals"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 1,
+            "posonly": [],
+            "is_method": true
+          },
+          "to_raw_amount": {
+            "name": "to_raw_amount",
+            "params": [
+              "self",
+              "amount",
+              "decimals"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 1,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_token_accounts": {
+            "name": "get_token_accounts",
+            "params": [
+              "self",
+              "wallet_address"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          }
+        },
+        "has_init": true
+      }
+    },
+    "functions": {
+      "get_token_decimals": {
+        "name": "get_token_decimals",
+        "params": [
+          "token_mint"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": false,
+        "defaults": 0,
+        "posonly": [],
+        "is_method": false
+      }
+    },
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
+  "trading.chains.solana": {
+    "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\chains\\solana\\__init__.py",
+    "classes": {},
+    "functions": {},
+    "dups": {
+      "functions": {},
+      "classes": {},
+      "methods": {}
+    }
+  },
   "trading.executors.base_executor": {
     "filepath": "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\executors\\base_executor.py",
     "classes": {
+      "BaseExecutor": {
+        "methods": {
+          "__init__": {
+            "name": "__init__",
+            "params": [
+              "self",
+              "config"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "initialize": {
+            "name": "initialize",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "execute_trade": {
+            "name": "execute_trade",
+            "params": [
+              "self",
+              "order",
+              "quote"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 1,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_quote": {
+            "name": "get_quote",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": true,
+            "kwarg": true,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "validate_order": {
+            "name": "validate_order",
+            "params": [
+              "self",
+              "order"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "cleanup": {
+            "name": "cleanup",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_execution_stats": {
+            "name": "get_execution_stats",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          }
+        },
+        "has_init": true
+      },
       "TradeOrder": {
         "methods": {},
         "has_init": false
@@ -22652,6 +23650,46 @@
             "params": [
               "self",
               "config"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "initialize": {
+            "name": "initialize",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "get_quote": {
+            "name": "get_quote",
+            "params": [
+              "self",
+              "token_in",
+              "token_out",
+              "amount",
+              "chain"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 1,
+            "posonly": [],
+            "is_method": true
+          },
+          "cleanup": {
+            "name": "cleanup",
+            "params": [
+              "self"
             ],
             "kwonly": [],
             "vararg": false,
@@ -24281,7 +25319,32 @@
         "has_init": false
       },
       "Order": {
-        "methods": {},
+        "methods": {
+          "is_solana": {
+            "name": "is_solana",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          },
+          "is_evm": {
+            "name": "is_evm",
+            "params": [
+              "self"
+            ],
+            "kwonly": [],
+            "vararg": false,
+            "kwarg": false,
+            "defaults": 0,
+            "posonly": [],
+            "is_method": true
+          }
+        },
         "has_init": false
       },
       "OrderBook": {
@@ -24993,6 +26056,47 @@
         "vararg": false,
         "kwarg": true,
         "defaults": 1,
+        "posonly": [],
+        "is_method": false
+      },
+      "create_solana_order": {
+        "name": "create_solana_order",
+        "params": [
+          "symbol",
+          "token_address",
+          "input_mint",
+          "output_mint",
+          "amount_in",
+          "symbol_in",
+          "symbol_out",
+          "entry_price",
+          "max_slippage_bps"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": true,
+        "defaults": 4,
+        "posonly": [],
+        "is_method": false
+      },
+      "create_evm_order": {
+        "name": "create_evm_order",
+        "params": [
+          "symbol",
+          "chain",
+          "token_address",
+          "input_token",
+          "output_token",
+          "amount_in",
+          "symbol_in",
+          "symbol_out",
+          "entry_price",
+          "max_slippage"
+        ],
+        "kwonly": [],
+        "vararg": false,
+        "kwarg": true,
+        "defaults": 4,
         "posonly": [],
         "is_method": false
       }
@@ -28129,7 +29233,7 @@
         [
           "utils.constants",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\utils\\constants.py",
-          380
+          393
         ]
       ],
       "ValidationResult": [
@@ -28165,7 +29269,7 @@
         [
           "core.engine",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\core\\engine.py",
-          54
+          59
         ],
         [
           "core.risk_manager",
@@ -28240,7 +29344,7 @@
         [
           "monitoring.alerts",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\monitoring\\alerts.py",
-          21
+          29
         ]
       ],
       "Alert": [
@@ -28252,7 +29356,7 @@
         [
           "monitoring.alerts",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\monitoring\\alerts.py",
-          79
+          87
         ]
       ],
       "PerformanceMetrics": [
@@ -28271,7 +29375,7 @@
         [
           "monitoring.logger",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\monitoring\\logger.py",
-          33
+          35
         ],
         [
           "monitoring.performance",
@@ -28283,7 +29387,7 @@
         [
           "monitoring.logger",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\monitoring\\logger.py",
-          43
+          45
         ],
         [
           "monitoring.performance",
@@ -28295,7 +29399,7 @@
         [
           "monitoring.logger",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\monitoring\\logger.py",
-          82
+          84
         ],
         [
           "monitoring.performance",
@@ -28307,7 +29411,7 @@
         [
           "monitoring.logger",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\monitoring\\logger.py",
-          123
+          125
         ],
         [
           "monitoring.performance",
@@ -28319,7 +29423,7 @@
         [
           "monitoring.logger",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\monitoring\\logger.py",
-          686
+          688
         ],
         [
           "monitoring.performance",
@@ -28331,7 +29435,7 @@
         [
           "monitoring.logger",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\monitoring\\logger.py",
-          955
+          957
         ],
         [
           "monitoring.performance",
@@ -28343,7 +29447,7 @@
         [
           "monitoring.logger",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\monitoring\\logger.py",
-          978
+          980
         ],
         [
           "monitoring.performance",
@@ -28355,7 +29459,7 @@
         [
           "monitoring.logger",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\monitoring\\logger.py",
-          999
+          1001
         ],
         [
           "monitoring.performance",
@@ -28367,7 +29471,7 @@
         [
           "monitoring.logger",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\monitoring\\logger.py",
-          1009
+          1011
         ],
         [
           "monitoring.performance",
@@ -28435,7 +29539,7 @@
         [
           "utils.constants",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\utils\\constants.py",
-          409
+          422
         ]
       ],
       "OrderType": [
@@ -28447,7 +29551,7 @@
         [
           "utils.constants",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\utils\\constants.py",
-          399
+          412
         ]
       ],
       "SignalStrength": [
@@ -28459,7 +29563,7 @@
         [
           "utils.constants",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\utils\\constants.py",
-          337
+          350
         ]
       ]
     },
@@ -28473,7 +29577,7 @@
         [
           "trading.executors.base_executor",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\trading\\executors\\base_executor.py",
-          1127
+          1200
         ]
       ],
       "test_api_connection": [
@@ -28485,14 +29589,14 @@
         [
           "data.collectors.dexscreener",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\data\\collectors\\dexscreener.py",
-          1116
+          1201
         ]
       ],
       "main": [
         [
           "main",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\main.py",
-          703
+          807
         ],
         [
           "setup_env_keys",
@@ -28520,6 +29624,11 @@
           184
         ],
         [
+          "scripts.generate_solana_wallet",
+          "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\generate_solana_wallet.py",
+          199
+        ],
+        [
           "scripts.health_check",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\health_check.py",
           58
@@ -28543,6 +29652,23 @@
           "scripts.verify_claudedex_plus3",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\verify_claudedex_plus3.py",
           461
+        ]
+      ],
+      "run_all_tests": [
+        [
+          "test_dexscreener_solana",
+          "C:\\Users\\HP\\Desktop\\ClaudeDex\\test_dexscreener_solana.py",
+          212
+        ],
+        [
+          "test_solana",
+          "C:\\Users\\HP\\Desktop\\ClaudeDex\\test_solana.py",
+          250
+        ],
+        [
+          "tests.test_all",
+          "C:\\Users\\HP\\Desktop\\ClaudeDex\\tests\\test_all.py",
+          9
         ]
       ],
       "is_py": [
@@ -28639,6 +29765,30 @@
           "xref_symbol_db",
           "C:\\Users\\HP\\Desktop\\ClaudeDex\\xref_symbol_db.py",
           516
+        ]
+      ],
+      "check_balance": [
+        [
+          "scripts.check_balance",
+          "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\check_balance.py",
+          10
+        ],
+        [
+          "scripts.solana_wallet_balance",
+          "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\solana_wallet_balance.py",
+          3
+        ]
+      ],
+      "test": [
+        [
+          "scripts.test_solana_setup",
+          "C:\\Users\\HP\\Desktop\\ClaudeDex\\scripts\\test_solana_setup.py",
+          5
+        ],
+        [
+          "tests.integration.test_dexscreener",
+          "C:\\Users\\HP\\Desktop\\ClaudeDex\\tests\\integration\\test_dexscreener.py",
+          5
         ]
       ],
       "parse_expectations_from_md": [

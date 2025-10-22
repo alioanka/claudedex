@@ -1,0 +1,277 @@
+ClaudeDex/
+├── build.trading-bot.log
+├── count_loc.py
+├── create_tree.py
+├── debug_solana_init.sh
+├── diagnose_dashboard.sh
+├── docker-compose copy.yml.example
+├── docker-compose.yml
+├── Dockerfile
+├── ExDockerfile_copy.txt
+├── file_tree.md
+├── file_tree2.md
+├── generate_file_tree.py
+├── jup_text.py
+├── main.py
+├── pytest.ini
+├── README.md
+├── ref_report.json
+├── ref_report.md
+├── ref_report2.md
+├── requirements.txt
+├── scaffold.py
+├── setup.py
+├── setup_env_keys.py
+├── symbol_db.json
+├── symbol_db.md
+├── symbol_db2.md
+├── test-requirements.txt
+├── test_dexscreener_solana.py
+├── test_solana.py
+├── verifier_report.json
+├── verifier_report.md
+├── verify_references.py
+├── xref_report copy.md
+├── xref_report.json
+├── xref_report.md
+├── xref_report2.md
+├── xref_symbol_db.py
+├── analysis/
+│   ├── __init__.py
+│   ├── dev_analyzer.py
+│   ├── liquidity_monitor.py
+│   ├── market_analyzer.py
+│   ├── pump_predictor.py
+│   ├── rug_detector.py
+│   ├── smart_contract_analyzer.py
+│   └── token_scorer.py
+├── config/
+│   ├── __init__.py
+│   ├── config_manager.py
+│   ├── settings.py
+│   └── validation.py
+├── core/
+│   ├── __init__.py
+│   ├── decision_maker.py
+│   ├── engine.py
+│   ├── engine.py.backup
+│   ├── engine_preSOL.py.backup
+│   ├── event_bus.py
+│   ├── pattern_analyzer.py
+│   ├── portfolio_manager.py
+│   └── risk_manager.py
+├── dashboard/
+│   ├── Dockerfile
+│   ├── static/
+│   │   ├── css/
+│   │   │   ├── charts.css
+│   │   │   ├── dashboard.css
+│   │   │   ├── main.css
+│   │   │   └── themes.css
+│   │   ├── img/
+│   │   └── js/
+│   │       ├── charts.js
+│   │       ├── dashboard.js
+│   │       ├── main.js
+│   │       ├── settings.js
+│   │       └── websocket.js
+│   └── templates/
+│       ├── backtest.html
+│       ├── base.html
+│       ├── dashboard.html
+│       ├── index.html
+│       ├── performance.html
+│       ├── positions.html
+│       ├── reports.html
+│       ├── settings.html
+│       └── trades.html
+├── data/
+│   ├── __init__.py
+│   ├── collectors/
+│   │   ├── __init__.py
+│   │   ├── chain_data.py
+│   │   ├── dexscreener.py
+│   │   ├── dexscreener.py.backup
+│   │   ├── honeypot_checker.py
+│   │   ├── honeypot_checker.py.backup
+│   │   ├── honeypot_checker_beforeRugcheck.py.backup
+│   │   ├── mempool_monitor.py
+│   │   ├── social_data.py
+│   │   ├── token_sniffer.py
+│   │   ├── volume_analyzer.py
+│   │   └── whale_tracker.py
+│   ├── processors/
+│   │   ├── __init__.py
+│   │   ├── aggregator.py
+│   │   ├── feature_extractor.py
+│   │   ├── normalizer.py
+│   │   └── validator.py
+│   └── storage/
+│       ├── __init__.py
+│       ├── cache.py
+│       ├── database.py
+│       ├── models.py
+│       └── migrations/
+├── docs/
+│   ├── api_documentation.md
+│   ├── architecture.md
+│   ├── Continue_Prompt_full.md
+│   ├── corrected_file_structure.md
+│   ├── Dashboard_Deployment_guide.md
+│   ├── deployment_checklist.md
+│   ├── deployment_guide.md
+│   ├── file_tree.txt
+│   ├── Fresh_Deployment_Guide.md
+│   ├── key_methods.md
+│   ├── project_completion.md
+│   ├── Quick_Real_Trade_Switch.md
+│   ├── README.md
+│   ├── rugcheck_integration.md
+│   ├── solana_integration_guide.md
+│   ├── solana_roadmap.md
+│   ├── User_Guide.md
+│   ├── wallet_encrption.md
+│   └── review/
+│       ├── helpers_patch.diff
+│       ├── static_issues_report.md
+│       ├── symbol_db_generated.csv
+│       └── symbol_db_generated.json
+├── kubernetes/
+│   ├── configmap.yaml
+│   ├── deployment.yaml
+│   ├── ingress.yaml
+│   ├── secret.yaml
+│   └── service.yaml
+├── logs/
+│   ├── TradingBot.log
+│   ├── TradingBot_errors.log
+│   └── TradingBot_trades.log
+├── ml/
+│   ├── __init__.py
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── ensemble_model.py
+│   │   ├── pump_predictor.py
+│   │   ├── rug_classifier.py
+│   │   └── volume_validator.py
+│   ├── optimization/
+│   │   ├── __init__.py
+│   │   ├── hyperparameter.py
+│   │   └── reinforcement.py
+│   └── training/
+│       └── __init__.py
+├── monitoring/
+│   ├── __init__.py
+│   ├── alerts.py
+│   ├── dashboard.py
+│   ├── enhanced_dashboard.py
+│   ├── logger.py
+│   └── performance.py
+├── observability/
+│   ├── alerts.yml
+│   ├── prometheus.yml
+│   └── grafana/
+│       └── dashboard.json
+├── scripts/
+│   ├── analyze_strategy.py
+│   ├── check_balance.py
+│   ├── close_all_positions.py
+│   ├── daily_report.py
+│   ├── deploy.sh
+│   ├── dev_autofix_imports.py
+│   ├── emergency_stop.py
+│   ├── export_trades.py
+│   ├── fix_illegal_relatives.py
+│   ├── full_backup.sh
+│   ├── generate_report.py
+│   ├── generate_solana_wallet.py
+│   ├── health_check.py
+│   ├── init.sql
+│   ├── init_config.py
+│   ├── migrate_database.py
+│   ├── optimize_db.py
+│   ├── overnight_summary.py
+│   ├── post_update_check.py
+│   ├── reset_db_sequences.py
+│   ├── reset_nonce.py
+│   ├── retrain_models.py
+│   ├── run_tests.py
+│   ├── run_tests.sh
+│   ├── security_audit.py
+│   ├── setup_database.py
+│   ├── solana_wallet_balance.py
+│   ├── strategy_analysis.py
+│   ├── test_alerts.py
+│   ├── test_apis.py
+│   ├── test_solana_setup.py
+│   ├── train_models.py
+│   ├── update_blacklists.py
+│   ├── update_models.py
+│   ├── verify_claudedex_plus.py
+│   ├── verify_claudedex_plus2.py
+│   ├── verify_claudedex_plus3.py
+│   ├── weekly_report.py
+│   └── withdraw_funds.py
+├── security/
+│   ├── __init__.py
+│   ├── api_security.py
+│   ├── audit_logger.py
+│   ├── encryption.py
+│   └── wallet_security.py
+├── tests/
+│   ├── __init__.py
+│   ├── conftest.py
+│   ├── test_all.py
+│   ├── fixtures/
+│   │   ├── mock_data.py
+│   │   └── test_helpers.py
+│   ├── integration/
+│   │   ├── test_data_integration.py
+│   │   ├── test_dexscreener.py
+│   │   ├── test_ml_integration.py
+│   │   └── test_trading_integration.py
+│   ├── performance/
+│   │   └── test_performance.py
+│   ├── security/
+│   │   └── test_security.py
+│   ├── smoke/
+│   │   └── test_smoke.py
+│   └── unit/
+│       ├── test_engine.py
+│       └── test_risk_manager.py
+├── trading/
+│   ├── __init__.py
+│   ├── __pycache__/
+│   │   └── __init__.cpython-313.pyc
+│   ├── chains/
+│   │   ├── __init__.py
+│   │   └── solana/
+│   │       ├── __init__.py
+│   │       ├── jupiter_executor.py
+│   │       ├── jupiter_executor.py.backup
+│   │       ├── solana_client.py
+│   │       ├── spl_token_handler.py
+│   │       └── __pycache__/
+│   │           ├── __init__.cpython-313.pyc
+│   │           └── jupiter_executor.cpython-313.pyc
+│   ├── executors/
+│   │   ├── __init__.py
+│   │   ├── base_executor.py
+│   │   ├── direct_dex.py
+│   │   ├── mev_protection.py
+│   │   └── toxisol_api.py
+│   ├── orders/
+│   │   ├── __init__.py
+│   │   ├── order_manager.py
+│   │   └── position_tracker.py
+│   └── strategies/
+│       ├── __init__.py
+│       ├── ai_strategy.py
+│       ├── base_strategy.py
+│       ├── momentum.py
+│       ├── scalping copy.py
+│       └── scalping.py
+└── utils/
+    ├── __init__.py
+    ├── constants.py
+    └── helpers.py

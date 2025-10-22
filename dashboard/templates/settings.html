@@ -1,342 +1,263 @@
-<!DOCTYPE html>
-<html lang="en" data-theme="dark">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Settings - Trading Bot</title>
-    <link rel="stylesheet" href="/static/css/main.css">
-    <link rel="stylesheet" href="/static/css/themes.css">
-    <link rel="stylesheet" href="/static/css/dashboard.css">
-</head>
-<body>
-    <div class="container">
-        <!-- Sidebar (same as index.html) -->
-        <aside class="sidebar">
-            <div class="sidebar-header">
-                <h2>DexScreener Bot</h2>
-            </div>
-            <nav class="sidebar-nav">
-                <a href="/" class="nav-item">
-                    <span class="nav-icon">📊</span>
-                    <span class="nav-text">Dashboard</span>
-                </a>
-                <a href="/trades" class="nav-item">
-                    <span class="nav-icon">💰</span>
-                    <span class="nav-text">Trades</span>
-                </a>
-                <a href="/positions" class="nav-item">
-                    <span class="nav-icon">📈</span>
-                    <span class="nav-text">Positions</span>
-                </a>
-                <a href="/performance" class="nav-item">
-                    <span class="nav-icon">📉</span>
-                    <span class="nav-text">Performance</span>
-                </a>
-                <a href="/reports" class="nav-item">
-                    <span class="nav-icon">📋</span>
-                    <span class="nav-text">Reports</span>
-                </a>
-                <a href="/backtest" class="nav-item">
-                    <span class="nav-icon">🔬</span>
-                    <span class="nav-text">Backtest</span>
-                </a>
-                <a href="/settings" class="nav-item active">
-                    <span class="nav-icon">⚙️</span>
-                    <span class="nav-text">Settings</span>
-                </a>
-            </nav>
-        </aside>
+{% extends "base.html" %}
 
-        <!-- Main Content -->
-        <main class="main-content">
-            <button class="theme-toggle" onclick="toggleTheme()" title="Toggle Theme">
-                <svg class="sun-icon" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z"/>
-                </svg>
-            </button>
+{% block title %}Settings - DexScreener Trading Bot{% endblock %}
 
-            <div class="page-header">
-                <h1>Settings</h1>
-                <div class="page-actions">
-                    <button class="btn btn-secondary" id="revertSettings">Revert Changes</button>
-                    <button class="btn btn-primary" id="saveSettings">Save Settings</button>
-                </div>
-            </div>
-
-            <!-- Settings Navigation Tabs -->
-            <div class="tabs mb-4">
-                <button class="tab-btn active category-tab" data-category="trading">Trading</button>
-                <button class="tab-btn category-tab" data-category="risk">Risk Management</button>
-                <button class="tab-btn category-tab" data-category="api">API & Connections</button>
-                <button class="tab-btn category-tab" data-category="notifications">Notifications</button>
-                <button class="tab-btn category-tab" data-category="strategies">Strategies</button>
-                <button class="tab-btn category-tab" data-category="advanced">Advanced</button>
-            </div>
-
-            <!-- Trading Settings -->
-            <div id="tradingSettings" class="settings-section">
-                <div class="card">
-                    <div class="card-header">
-                        <h3>Trading Configuration</h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="form-group">
-                            <label for="tradingEnabled">
-                                <input type="checkbox" id="tradingEnabled" class="settings-input">
-                                Enable Trading
-                            </label>
-                            <small class="form-text">Master switch for all trading activity</small>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="maxPositionSize">Max Position Size ($)</label>
-                            <input type="number" id="maxPositionSize" class="form-control settings-input" step="0.01">
-                            <small class="form-text">Maximum amount per single position</small>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="maxOpenPositions">Max Open Positions</label>
-                            <input type="number" id="maxOpenPositions" class="form-control settings-input" min="1" max="20">
-                            <small class="form-text">Maximum number of concurrent positions</small>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="defaultStopLoss">Default Stop Loss (%)</label>
-                            <input type="number" id="defaultStopLoss" class="form-control settings-input" step="0.1">
-                            <small class="form-text">Default stop loss percentage</small>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="defaultTakeProfit">Default Take Profit (%)</label>
-                            <input type="number" id="defaultTakeProfit" class="form-control settings-input" step="0.1">
-                            <small class="form-text">Default take profit percentage</small>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="slippageTolerance">Slippage Tolerance (%)</label>
-                            <input type="number" id="slippageTolerance" class="form-control settings-input" step="0.1">
-                            <small class="form-text">Maximum acceptable slippage</small>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Risk Management Settings -->
-            <div id="riskSettings" class="settings-section" style="display: none;">
-                <div class="card">
-                    <div class="card-header">
-                        <h3>Risk Management</h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="form-group">
-                            <label for="maxDrawdown">Max Drawdown (%)</label>
-                            <input type="number" id="maxDrawdown" class="form-control settings-input" step="0.1">
-                            <small class="form-text">Maximum acceptable portfolio drawdown</small>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="maxDailyLoss">Max Daily Loss ($)</label>
-                            <input type="number" id="maxDailyLoss" class="form-control settings-input" step="0.01">
-                            <small class="form-text">Stop trading if daily loss exceeds this</small>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="positionSizeMethod">Position Sizing Method</label>
-                            <select id="positionSizeMethod" class="form-control settings-input">
-                                <option value="fixed">Fixed Amount</option>
-                                <option value="percentage">Percentage of Portfolio</option>
-                                <option value="kelly">Kelly Criterion</option>
-                                <option value="risk_parity">Risk Parity</option>
-                            </select>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="riskPerTrade">Risk Per Trade (%)</label>
-                            <input type="number" id="riskPerTrade" class="form-control settings-input" step="0.1" min="0.1" max="10">
-                            <small class="form-text">Percentage of portfolio to risk per trade</small>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- API Settings -->
-            <div id="apiSettings" class="settings-section" style="display: none;">
-                <div class="card">
-                    <div class="card-header">
-                        <h3>API & Connections</h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="form-group">
-                            <label for="dexscreenerKey">DexScreener API Key</label>
-                            <input type="password" id="dexscreenerKey" class="form-control settings-input">
-                            <small class="form-text">Your DexScreener API key</small>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="web3Provider">Web3 Provider URL</label>
-                            <input type="text" id="web3Provider" class="form-control settings-input">
-                            <small class="form-text">RPC endpoint for blockchain interaction</small>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="rpcTimeout">RPC Timeout (seconds)</label>
-                            <input type="number" id="rpcTimeout" class="form-control settings-input" min="5" max="60">
-                        </div>
-
-                        <div class="form-group">
-                            <label for="maxRetries">Max Retries</label>
-                            <input type="number" id="maxRetries" class="form-control settings-input" min="1" max="10">
-                            <small class="form-text">Maximum API call retries</small>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Notifications Settings -->
-            <div id="notificationsSettings" class="settings-section" style="display: none;">
-                <div class="card mb-3">
-                    <div class="card-header">
-                        <h3>Telegram Notifications</h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="form-group">
-                            <label for="telegramEnabled">
-                                <input type="checkbox" id="telegramEnabled" class="settings-input">
-                                Enable Telegram Notifications
-                            </label>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="telegramBotToken">Bot Token</label>
-                            <input type="password" id="telegramBotToken" class="form-control settings-input">
-                        </div>
-
-                        <div class="form-group">
-                            <label for="telegramChatId">Chat ID</label>
-                            <input type="text" id="telegramChatId" class="form-control settings-input">
-                        </div>
-
-                        <button class="btn btn-secondary" onclick="settingsManager.testNotification('telegram')">
-                            Test Telegram
-                        </button>
-                    </div>
-                </div>
-
-                <div class="card mb-3">
-                    <div class="card-header">
-                        <h3>Discord Notifications</h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="form-group">
-                            <label for="discordEnabled">
-                                <input type="checkbox" id="discordEnabled" class="settings-input">
-                                Enable Discord Notifications
-                            </label>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="discordWebhook">Webhook URL</label>
-                            <input type="password" id="discordWebhook" class="form-control settings-input">
-                        </div>
-
-                        <button class="btn btn-secondary" onclick="settingsManager.testNotification('discord')">
-                            Test Discord
-                        </button>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <div class="card-header">
-                        <h3>Email Notifications</h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="form-group">
-                            <label for="emailEnabled">
-                                <input type="checkbox" id="emailEnabled" class="settings-input">
-                                Enable Email Notifications
-                            </label>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Strategies Settings -->
-            <div id="strategiesSettings" class="settings-section" style="display: none;">
-                <div class="card mb-3">
-                    <div class="card-header">
-                        <h3>Active Strategies</h3>
-                    </div>
-                    <div class="card-body">
-                        <p class="text-secondary">Configure parameters for each trading strategy</p>
-                        
-                        <!-- Momentum Strategy -->
-                        <form class="strategy-form mb-4" data-strategy="momentum">
-                            <h4>Momentum Strategy</h4>
-                            <div class="form-group">
-                                <label>
-                                    <input type="checkbox" name="enabled" value="true">
-                                    Enable Strategy
-                                </label>
-                            </div>
-                            <div class="form-group">
-                                <label for="momentum_threshold">Momentum Threshold</label>
-                                <input type="number" name="threshold" class="form-control" step="0.01">
-                            </div>
-                            <button type="submit" class="btn btn-primary">Save Parameters</button>
-                        </form>
-
-                        <!-- AI Strategy -->
-                        <form class="strategy-form" data-strategy="ai">
-                            <h4>AI/ML Strategy</h4>
-                            <div class="form-group">
-                                <label>
-                                    <input type="checkbox" name="enabled" value="true">
-                                    Enable Strategy
-                                </label>
-                            </div>
-                            <div class="form-group">
-                                <label for="ai_confidence">Min Confidence Score</label>
-                                <input type="number" name="min_confidence" class="form-control" step="0.01" min="0" max="1">
-                            </div>
-                            <button type="submit" class="btn btn-primary">Save Parameters</button>
-                        </form>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Advanced Settings -->
-            <div id="advancedSettings" class="settings-section" style="display: none;">
-                <div class="card mb-3">
-                    <div class="card-header">
-                        <h3>Import/Export</h3>
-                    </div>
-                    <div class="card-body">
-                        <button class="btn btn-secondary" onclick="settingsManager.exportSettings()">
-                            Export Settings
-                        </button>
-                        <input type="file" id="importFile" accept=".json" style="display: none;" 
-                               onchange="settingsManager.importSettings(this.files[0])">
-                        <button class="btn btn-secondary" onclick="document.getElementById('importFile').click()">
-                            Import Settings
-                        </button>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <div class="card-header">
-                        <h3>Settings History</h3>
-                    </div>
-                    <div class="card-body">
-                        <div id="settingsHistory">
-                            <p class="text-secondary">Loading history...</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </main>
+{% block content %}
+<div class="page-header">
+    <h1>Settings</h1>
+    <div class="page-actions">
+        <button class="btn btn-secondary" id="revertSettings">
+            <i class="fas fa-undo"></i> Revert Changes
+        </button>
+        <button class="btn btn-primary" id="saveSettings">
+            <i class="fas fa-save"></i> Save Settings
+        </button>
     </div>
+</div>
 
-    <script src="/static/js/main.js"></script>
-    <script src="/static/js/settings.js"></script>
-</body>
-</html>
+<!-- Settings Tabs -->
+<div class="tabs">
+    <button class="tab-btn active category-tab" data-category="trading">Trading</button>
+    <button class="tab-btn category-tab" data-category="risk">Risk Management</button>
+    <button class="tab-btn category-tab" data-category="api">API & Connections</button>
+    <button class="tab-btn category-tab" data-category="notifications">Notifications</button>
+    <button class="tab-btn category-tab" data-category="strategies">Strategies</button>
+    <button class="tab-btn category-tab" data-category="advanced">Advanced</button>
+</div>
+
+<!-- Trading Settings -->
+<div class="card settings-section" id="tradingSettings">
+    <div class="card-header">
+        <h3 class="card-title">Trading Configuration</h3>
+    </div>
+    <div class="card-body">
+        <div class="form-group">
+            <label class="form-label">
+                <input type="checkbox" id="tradingEnabled" class="settings-input">
+                Enable Trading
+            </label>
+            <small class="form-help">Master switch for all trading activity</small>
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label">Max Position Size ($)</label>
+            <input type="number" id="maxPositionSize" class="form-control settings-input" step="100">
+            <small class="form-help">Maximum amount per single position</small>
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label">Max Open Positions</label>
+            <input type="number" id="maxOpenPositions" class="form-control settings-input" min="1" max="20">
+            <small class="form-help">Maximum number of concurrent positions</small>
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label">Default Stop Loss (%)</label>
+            <input type="number" id="defaultStopLoss" class="form-control settings-input" step="0.1">
+            <small class="form-help">Default stop loss percentage</small>
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label">Default Take Profit (%)</label>
+            <input type="number" id="defaultTakeProfit" class="form-control settings-input" step="0.1">
+            <small class="form-help">Default take profit percentage</small>
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label">Slippage Tolerance (%)</label>
+            <input type="number" id="slippageTolerance" class="form-control settings-input" step="0.1">
+            <small class="form-help">Maximum acceptable slippage</small>
+        </div>
+    </div>
+</div>
+
+<!-- Risk Management Settings -->
+<div class="card settings-section" id="riskSettings" style="display: none;">
+    <div class="card-header">
+        <h3 class="card-title">Risk Management</h3>
+    </div>
+    <div class="card-body">
+        <div class="form-group">
+            <label class="form-label">Max Drawdown (%)</label>
+            <input type="number" id="maxDrawdown" class="form-control settings-input" step="0.1">
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label">Max Daily Loss ($)</label>
+            <input type="number" id="maxDailyLoss" class="form-control settings-input" step="100">
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label">Position Size Method</label>
+            <select id="positionSizeMethod" class="form-control settings-input">
+                <option value="fixed">Fixed Amount</option>
+                <option value="percentage">Percentage of Portfolio</option>
+                <option value="kelly">Kelly Criterion</option>
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label">Risk Per Trade (%)</label>
+            <input type="number" id="riskPerTrade" class="form-control settings-input" step="0.1">
+        </div>
+    </div>
+</div>
+
+<!-- API Settings -->
+<div class="card settings-section" id="apiSettings" style="display: none;">
+    <div class="card-header">
+        <h3 class="card-title">API & Connections</h3>
+    </div>
+    <div class="card-body">
+        <div class="form-group">
+            <label class="form-label">DexScreener API Key</label>
+            <input type="password" id="dexscreenerKey" class="form-control settings-input">
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label">Web3 Provider URL</label>
+            <input type="text" id="web3Provider" class="form-control settings-input">
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label">RPC Timeout (seconds)</label>
+            <input type="number" id="rpcTimeout" class="form-control settings-input" min="5" max="60">
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label">Max Retries</label>
+            <input type="number" id="maxRetries" class="form-control settings-input" min="1" max="10">
+        </div>
+    </div>
+</div>
+
+<!-- Notification Settings -->
+<div class="card settings-section" id="notificationsSettings" style="display: none;">
+    <div class="card-header">
+        <h3 class="card-title">Notifications</h3>
+    </div>
+    <div class="card-body">
+        <h4>Telegram</h4>
+        <div class="form-group">
+            <label class="form-label">
+                <input type="checkbox" id="telegramEnabled" class="settings-input">
+                Enable Telegram Notifications
+            </label>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Bot Token</label>
+            <input type="password" id="telegramBotToken" class="form-control settings-input">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Chat ID</label>
+            <input type="text" id="telegramChatId" class="form-control settings-input">
+        </div>
+        
+        <h4>Discord</h4>
+        <div class="form-group">
+            <label class="form-label">
+                <input type="checkbox" id="discordEnabled" class="settings-input">
+                Enable Discord Notifications
+            </label>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Webhook URL</label>
+            <input type="password" id="discordWebhook" class="form-control settings-input">
+        </div>
+    </div>
+</div>
+
+<!-- Strategies Settings -->
+<div class="card settings-section" id="strategiesSettings" style="display: none;">
+    <div class="card-header">
+        <h3 class="card-title">Strategy Parameters</h3>
+    </div>
+    <div class="card-body">
+        <p class="text-muted">Configure strategy-specific parameters here.</p>
+    </div>
+</div>
+
+<!-- Advanced Settings -->
+<div class="card settings-section" id="advancedSettings" style="display: none;">
+    <div class="card-header">
+        <h3 class="card-title">Advanced Configuration</h3>
+    </div>
+    <div class="card-body">
+        <p class="text-muted">Advanced settings for experienced users.</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/settings.js"></script>
+<script>
+// Tab switching
+document.querySelectorAll('.category-tab').forEach(tab => {
+    tab.addEventListener('click', function() {
+        // Update active tab
+        document.querySelectorAll('.category-tab').forEach(t => t.classList.remove('active'));
+        this.classList.add('active');
+        
+        // Show corresponding section
+        const category = this.dataset.category;
+        document.querySelectorAll('.settings-section').forEach(section => {
+            section.style.display = 'none';
+        });
+        document.getElementById(category + 'Settings').style.display = 'block';
+    });
+});
+
+// Load settings on page load
+document.addEventListener('DOMContentLoaded', async function() {
+    try {
+        const response = await apiGet('/api/settings/all');
+        
+        if (response.success && response.data) {
+            // Populate trading settings
+            if (response.data.trading) {
+                document.getElementById('tradingEnabled').checked = response.data.trading.enabled || false;
+                document.getElementById('maxPositionSize').value = response.data.trading.max_position_size || 1000;
+                document.getElementById('maxOpenPositions').value = response.data.trading.max_open_positions || 5;
+                document.getElementById('defaultStopLoss').value = response.data.trading.default_stop_loss || 5;
+                document.getElementById('defaultTakeProfit').value = response.data.trading.default_take_profit || 10;
+                document.getElementById('slippageTolerance').value = response.data.trading.slippage_tolerance || 1;
+            }
+            
+            // Populate risk settings
+            if (response.data.risk) {
+                document.getElementById('maxDrawdown').value = response.data.risk.max_drawdown || 20;
+                document.getElementById('maxDailyLoss').value = response.data.risk.max_daily_loss || 500;
+                document.getElementById('positionSizeMethod').value = response.data.risk.position_size_method || 'fixed';
+                document.getElementById('riskPerTrade').value = response.data.risk.risk_per_trade || 2;
+            }
+            
+            // Populate API settings
+            if (response.data.api) {
+                document.getElementById('dexscreenerKey').value = response.data.api.dexscreener_api_key || '';
+                document.getElementById('web3Provider').value = response.data.api.web3_provider_url || '';
+                document.getElementById('rpcTimeout').value = response.data.api.rpc_timeout || 30;
+                document.getElementById('maxRetries').value = response.data.api.max_retries || 3;
+            }
+            
+            // Populate notification settings
+            if (response.data.notifications) {
+                if (response.data.notifications.telegram) {
+                    document.getElementById('telegramEnabled').checked = response.data.notifications.telegram.enabled || false;
+                    document.getElementById('telegramBotToken').value = response.data.notifications.telegram.bot_token || '';
+                    document.getElementById('telegramChatId').value = response.data.notifications.telegram.chat_id || '';
+                }
+                if (response.data.notifications.discord) {
+                    document.getElementById('discordEnabled').checked = response.data.notifications.discord.enabled || false;
+                    document.getElementById('discordWebhook').value = response.data.notifications.discord.webhook_url || '';
+                }
+            }
+        } else {
+            showToast('error', 'Failed to load settings');
+        }
+    } catch (error) {
+        console.error('Error loading settings:', error);
+        showToast('error', 'Error loading settings');
+    }
+});
+</script>
+{% endblock %}

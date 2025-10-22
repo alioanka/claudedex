@@ -182,29 +182,46 @@ async function loadPositions() {
 async function loadClosedPositions() {
     try {
         const response = await apiGet('/api/positions/history?limit=50');
-        if (response.success && response.data.length > 0) {
-            const tbody = document.getElementById('closedPositionsBody');
-            tbody.innerHTML = response.data.map(pos => `
-                <tr>
-                    <td><strong>${pos.token_symbol}</strong></td>
-                    <td>${formatCurrency(pos.entry_price)}</td>
-                    <td>${formatCurrency(pos.exit_price)}</td>
-                    <td class="${pos.pnl >= 0 ? 'text-success' : 'text-danger'}">
-                        <strong>${formatCurrency(pos.pnl)}</strong>
-                    </td>
-                    <td class="${pos.roi >= 0 ? 'text-success' : 'text-danger'}">
-                        <strong>${pos.roi.toFixed(2)}%</strong>
-                    </td>
-                    <td>${pos.duration}</td>
-                    <td>${formatDate(pos.closed_at)}</td>
-                    <td>${pos.reason}</td>
-                </tr>
-            `).join('');
+        
+        if (response.success && response.data) {
+            displayClosedPositions(response.data);
         }
     } catch (error) {
         console.error('Error loading closed positions:', error);
     }
 }
+
+function displayClosedPositions(positions) {
+    const tbody = document.querySelector('#closedPositionsTable tbody');
+    if (!tbody) return;
+    
+    if (positions.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-center">No closed positions</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = positions.map(pos => {
+        const pnlClass = pos.profit_loss >= 0 ? 'text-success' : 'text-danger';
+        return `
+            <tr>
+                <td>${pos.token_symbol}</td>
+                <td>${formatCurrency(pos.entry_price)}</td>
+                <td>${formatCurrency(pos.exit_price)}</td>
+                <td class="${pnlClass}">${formatCurrency(pos.profit_loss)}</td>
+                <td class="${pnlClass}">${formatPercent(pos.roi)}</td>
+                <td>${pos.duration}</td>
+                <td>${formatDate(pos.exit_timestamp)}</td>
+                <td>${pos.exit_reason || 'manual'}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Call on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadClosedPositions();
+    setInterval(loadClosedPositions, 30000); // Refresh every 30 seconds
+});
 
 // Call it on page load
 document.addEventListener('DOMContentLoaded', function() {

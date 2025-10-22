@@ -426,6 +426,8 @@
 
 ### Classes & Methods
 - **BotState**
+- **ClosedPositionRecord**
+  - `is_cooled_down(cooldown_minutes)`
 - **TradingBotEngine**
   - `__init__(config, mode)`
   - `_analyze_holder_distribution(token_address)`
@@ -492,6 +494,7 @@
   - `_validate_models(models)`
   - `_validate_new_parameters(params)`
   - `_warmup_collectors()`
+  - `cleanup()`
   - `emergency_close_all_positions()`
   - `get_stats()`
   - `initialize()`
@@ -707,6 +710,7 @@
   - `_detect_changes(previous, current)`
   - `_filter_pair(pair)`
   - `_make_request(endpoint, params)`
+  - `_normalize_chain(chain)`
   - `_pair_to_dict(pair)`
   - `_parse_pair(data)`
   - `_rate_limit()`
@@ -720,7 +724,7 @@
   - `get_stats()`
   - `get_token_info(address, chain)`
   - `get_token_pairs(token_address)`
-  - `get_token_price(token_address)`
+  - `get_token_price(token_address, chain)`
   - `get_trending_pairs()`
   - `get_trending_tokens(chain)`
   - `initialize()`
@@ -738,12 +742,15 @@
 ### Classes & Methods
 - **HoneypotChecker**
   - `__init__(config)`
+  - `_calculate_solana_verdict(rugcheck_data, address)`
   - `_calculate_verdict(checks)`
   - `_check_contract_verification(address, chain)`
   - `_check_dextools(address, chain)`
   - `_check_erc20_interface(w3, address)`
   - `_check_goplus(address, chain)`
   - `_check_honeypot_is(address, chain)`
+  - `_check_rugcheck_summary(address)`
+  - `_check_solana_token(address)`
   - `_check_tokensniffer(address, chain)`
   - `_get_chain_id(chain)`
   - `_is_blacklisted(address)`
@@ -1103,6 +1110,7 @@
   - `get_active_positions()`
   - `get_historical_data(token, timeframe)`
   - `get_historical_data_extended(token_address, timeframe, limit, chain)`
+  - `get_performance_summary()`
   - `get_recent_trades(limit, status)`
   - `get_statistics()`
   - `get_token_analysis(token_address, chain, hours_back)`
@@ -1144,6 +1152,17 @@
 - **TradeStatus**
 - **WhaleWallet**
 
+## jup_text
+- File: `jup_text.py`
+
+### Functions
+- `test_api_only()`
+- `test_jupiter_executor()`
+
+### Classes & Methods
+- **MockOrder**
+  - `__init__()`
+
 ## main
 - File: `main.py`
 
@@ -1174,6 +1193,7 @@
   - `_check_wallet()`
   - `_check_web3()`
   - `_perform_system_checks()`
+  - `_position_monitor()`
   - `_shutdown_monitor()`
   - `_signal_handler(signum, frame)`
   - `_status_reporter()`
@@ -1354,13 +1374,19 @@
 ## monitoring.alerts
 - File: `monitoring\alerts.py`
 
+### Functions
+- `escape_markdown(text)`
+
 ### Classes & Methods
 - **Alert**
 - **AlertManager**
   - `__init__(config)`
+  - `initialize()`
+  - `send_alert(alert_type, message, priority)`
   - `send_critical(message)`
   - `send_error(message)`
   - `send_info(message)`
+  - `send_performance_summary(period, metrics)`
   - `send_trade_alert(message)`
   - `send_warning(message)`
 - **AlertPriority**
@@ -1495,6 +1521,7 @@
 - **DashboardEndpoints**
   - `__init__(host, port, config, trading_engine, portfolio_manager, order_manager, risk_manager, alerts_system, config_manager, db_manager)`
   - `_broadcast_loop()`
+  - `_calculate_duration(start, end)`
   - `_export_csv(report)`
   - `_export_excel(report)`
   - `_export_pdf(report)`
@@ -1502,6 +1529,7 @@
   - `_generate_report(period, start_date, end_date, metrics)`
   - `_run_backtest_task(test_id, strategy, start_date, end_date, initial_balance, parameters)`
   - `_send_initial_data(sid)`
+  - `_serialize_decimals(obj)`
   - `_setup_routes()`
   - `_setup_socketio()`
   - `api_backtest_results(request)`
@@ -1702,6 +1730,14 @@
 ### Functions
 - `generate_report(days, format)`
 
+## scripts.generate_solana_wallet
+- File: `scripts\generate_solana_wallet.py`
+
+### Functions
+- `generate_wallet()`
+- `import_wallet()`
+- `main()`
+
 ## scripts.health_check
 - File: `scripts\health_check.py`
 
@@ -1788,6 +1824,12 @@
 ### Functions
 - `setup_database()`
 
+## scripts.solana_wallet_balance
+- File: `scripts\solana_wallet_balance.py`
+
+### Functions
+- `check_balance()`
+
 ## scripts.strategy_analysis
 - File: `scripts\strategy_analysis.py`
 
@@ -1805,6 +1847,12 @@
 
 ### Functions
 - `test_apis()`
+
+## scripts.test_solana_setup
+- File: `scripts\test_solana_setup.py`
+
+### Functions
+- `test()`
 
 ## scripts.update_blacklists
 - File: `scripts\update_blacklists.py`
@@ -2076,6 +2124,27 @@
 - `generate_jwt_secret()`
 - `main()`
 
+## test_dexscreener_solana
+- File: `test_dexscreener_solana.py`
+
+### Functions
+- `run_all_tests()`
+- `test_solana_chain_normalization()`
+- `test_solana_filter_thresholds()`
+- `test_solana_pairs()`
+- `test_solana_token_price()`
+
+## test_solana
+- File: `test_solana.py`
+
+### Functions
+- `run_all_tests()`
+- `test_execution_stats()`
+- `test_jupiter_quote()`
+- `test_multiple_quotes()`
+- `test_solana_rpc()`
+- `test_wallet_balance()`
+
 ## tests
 - File: `tests\__init__.py`
 
@@ -2247,6 +2316,59 @@
 ## trading
 - File: `trading\__init__.py`
 
+## trading.chains.solana
+- File: `trading\chains\solana\__init__.py`
+
+## trading.chains.solana.jupiter_executor
+- File: `trading\chains\solana\jupiter_executor.py`
+
+### Classes & Methods
+- **JupiterExecutor**
+  - `__del__()`
+  - `__init__(config)`
+  - `_execute_swap(quote, order)`
+  - `_get_quote(input_mint, output_mint, amount, slippage_bps)`
+  - `_get_sol_balance()`
+  - `_wait_for_confirmation(signature, max_wait_seconds)`
+  - `cleanup()`
+  - `execute_trade(order)`
+  - `get_execution_stats()`
+  - `get_quote(token_in, token_out, amount_in)`
+  - `get_token_balance(token_mint)`
+  - `initialize()`
+  - `validate_order(order)`
+
+## trading.chains.solana.solana_client
+- File: `trading\chains\solana\solana_client.py`
+
+### Classes & Methods
+- **SolanaClient**
+  - `__init__(rpc_urls, timeout)`
+  - `_request(method, params, rpc_url)`
+  - `cleanup()`
+  - `get_balance(address)`
+  - `get_recent_blockhash()`
+  - `get_slot()`
+  - `get_token_balance(address, mint)`
+  - `get_token_supply(mint)`
+  - `get_transaction(signature)`
+  - `initialize()`
+
+## trading.chains.solana.spl_token_handler
+- File: `trading\chains\solana\spl_token_handler.py`
+
+### Functions
+- `get_token_decimals(token_mint)`
+
+### Classes & Methods
+- **SPLTokenHandler**
+  - `__init__(solana_client)`
+  - `format_token_amount(amount, decimals)`
+  - `get_token_accounts(wallet_address)`
+  - `get_token_balance(wallet_address, token_mint)`
+  - `get_token_info(token_mint)`
+  - `to_raw_amount(amount, decimals)`
+
 ## trading.executors
 - File: `trading\executors\__init__.py`
 
@@ -2257,6 +2379,14 @@
 - `test_web3_connection()`
 
 ### Classes & Methods
+- **BaseExecutor**
+  - `__init__(config)`
+  - `cleanup()`
+  - `execute_trade(order, quote)`
+  - `get_execution_stats()`
+  - `get_quote()`
+  - `initialize()`
+  - `validate_order(order)`
 - **ExecutionResult**
 - **ExecutionRoute**
 - **TradeExecutor**
@@ -2278,11 +2408,14 @@
   - `_send_private_transaction(signed_tx)`
   - `_verify_token_contract(token_address)`
   - `cancel_order(order_id)`
+  - `cleanup()`
   - `emergency_sell_all()`
   - `execute(order)`
   - `execute_trade(order)`
   - `get_order_status(order_id)`
+  - `get_quote(token_in, token_out, amount, chain)`
   - `get_stats()`
+  - `initialize()`
   - `modify_order(order_id, updates)`
   - `validate_order(order)`
 - **TradeOrder**
@@ -2408,6 +2541,8 @@
 
 ### Functions
 - `build_order(token_address, side, amount, order_type)`
+- `create_evm_order(symbol, chain, token_address, input_token, output_token, amount_in, symbol_in, symbol_out, entry_price, max_slippage)`
+- `create_solana_order(symbol, token_address, input_mint, output_mint, amount_in, symbol_in, symbol_out, entry_price, max_slippage_bps)`
 
 ### Classes & Methods
 - **ExecutionEngine**
@@ -2421,6 +2556,8 @@
 - **ExecutionStrategy**
 - **Fill**
 - **Order**
+  - `is_evm()`
+  - `is_solana()`
 - **OrderBook**
 - **OrderManager**
   - `__init__(config)`
@@ -2851,4 +2988,4 @@
 ---
 ## Collisions (public names)
 - Class name collisions: 27
-- Function name collisions: 16
+- Function name collisions: 19
