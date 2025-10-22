@@ -338,44 +338,24 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_trade_history(self, request):
-        """Get trade history"""
+        """Get trade history with filters"""
         try:
-            limit = int(request.query.get('limit', 1000))
-            status = request.query.get('status', 'all')
+            # Parse query parameters
+            start_date = request.query.get('start_date')
+            end_date = request.query.get('end_date')
+            status = request.query.get('status')
             
-            trades = []
+            # ✅ FIX: Add await
+            trades = await self.db.get_recent_trades(limit=1000, status=status)
             
-            if self.db:
-                try:
-                    # Try to get all trades
-                    if hasattr(self.db, 'get_all_trades'):
-                        all_trades = await self.db.get_all_trades(limit=limit)
-                    elif hasattr(self.db, 'get_trades'):
-                        all_trades = await self.db.get_trades(limit=limit)
-                    else:
-                        logger.warning("No trade retrieval method found in DB")
-                        all_trades = []
-                    
-                    for trade in all_trades:
-                        # Filter by status if needed
-                        if status != 'all' and trade.get('status') != status:
-                            continue
-                        
-                        trades.append({
-                            'id': trade.get('id'),
-                            'token_symbol': trade.get('token_symbol', 'UNKNOWN'),
-                            'token_address': trade.get('token_address'),
-                            'side': trade.get('side', 'buy'),
-                            'amount': float(trade.get('amount', 0)),
-                            'entry_price': float(trade.get('entry_price', 0)),
-                            'exit_price': float(trade.get('exit_price', 0)) if trade.get('exit_price') else None,
-                            'profit_loss': float(trade.get('profit_loss', 0)) if trade.get('profit_loss') else None,
-                            'status': trade.get('status', 'open'),
-                            'entry_timestamp': trade.get('entry_timestamp'),
-                            'exit_timestamp': trade.get('exit_timestamp')
-                        })
-                except Exception as db_error:
-                    logger.error(f"Error getting trades from DB: {db_error}")
+            # Apply date filters if provided
+            if start_date:
+                start = datetime.fromisoformat(start_date)
+                trades = [t for t in trades if datetime.fromisoformat(t['timestamp']) >= start]
+            
+            if end_date:
+                end = datetime.fromisoformat(end_date)
+                trades = [t for t in trades if datetime.fromisoformat(t['timestamp']) <= end]
             
             return web.json_response({
                 'success': True,
@@ -383,77 +363,82 @@ class DashboardEndpoints:
                 'count': len(trades)
             })
         except Exception as e:
-            logger.error(f"Error in api_trade_history: {e}")
-            return web.json_response({
-                'success': False,
-                'error': str(e),
-                'data': [],
-                'count': 0
-            })
+            logger.error(f"Error getting trade history: {e}")
+            return web.json_response({'error': str(e)}, status=500)
     
     async def api_open_positions(self, request):
-        """Get open positions with all fields"""
+        """Get open positions with ALL required fields"""
         try:
             positions = []
             
             if self.engine and hasattr(self.engine, 'active_positions'):
-                for token_address, pos in self.engine.active_positions.items():
-                    entry_price = float(pos.get('entry_price', 0))
-                    current_price = float(pos.get('current_price', entry_price))
-                    amount = float(pos.get('amount', 0))
+                for token_address, position in self.engine.active_positions.items():
+                    # Extract and calculate all required fields
+                    entry_price = float(position.get('entry_price', 0))
+                    current_price = float(position.get('current_price', entry_price))
+                    amount = float(position.get('amount', 0))
+                    
+                    # Calculate value
                     value = amount * current_price
-                    unrealized_pnl = value - (amount * entry_price)
+                    
+                    # Calculate P&L
+                    entry_value = amount * entry_price
+                    unrealized_pnl = value - entry_value
+                    
+                    # Calculate ROI
                     roi = ((current_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
                     
-                    # Duration calculation
-                    entry_ts = pos.get('entry_timestamp') or pos.get('opened_at') or pos.get('timestamp')
-                    duration_str = 'Unknown'
+                    # Calculate duration
+                    entry_timestamp = position.get('entry_timestamp') or position.get('opened_at') or position.get('timestamp')
+                    duration_str = 'unknown'
                     
-                    if entry_ts:
+                    if entry_timestamp:
                         try:
-                            if isinstance(entry_ts, str):
-                                entry_time = datetime.fromisoformat(entry_ts.replace('Z', '+00:00'))
-                            elif isinstance(entry_ts, datetime):
-                                entry_time = entry_ts
+                            if isinstance(entry_timestamp, str):
+                                entry_time = datetime.fromisoformat(entry_timestamp.replace('Z', '+00:00'))
+                            elif isinstance(entry_timestamp, datetime):
+                                entry_time = entry_timestamp
                             else:
-                                entry_time = datetime.fromtimestamp(float(entry_ts))
+                                entry_time = datetime.fromtimestamp(float(entry_timestamp))
                             
-                            now = datetime.utcnow()
-                            delta = now - entry_time
-                            seconds = delta.total_seconds()
+                            duration_delta = datetime.utcnow() - entry_time
+                            total_seconds = duration_delta.total_seconds()
                             
-                            if seconds < 60:
-                                duration_str = 'Just now'
-                            elif seconds < 3600:
-                                duration_str = f"{int(seconds // 60)}m ago"
-                            elif seconds < 86400:
-                                hours = int(seconds // 3600)
-                                minutes = int((seconds % 3600) // 60)
+                            if total_seconds < 60:
+                                duration_str = 'just now'
+                            elif total_seconds < 3600:
+                                minutes = int(total_seconds // 60)
+                                duration_str = f"{minutes}m ago"
+                            elif total_seconds < 86400:
+                                hours = int(total_seconds // 3600)
+                                minutes = int((total_seconds % 3600) // 60)
                                 duration_str = f"{hours}h {minutes}m ago"
                             else:
-                                days = int(seconds // 86400)
-                                hours = int((seconds % 86400) // 3600)
+                                days = int(total_seconds // 86400)
+                                hours = int((total_seconds % 86400) // 3600)
                                 duration_str = f"{days}d {hours}h ago"
                         except Exception as e:
-                            logger.error(f"Duration calc error: {e}")
+                            logger.error(f"Error calculating duration: {e}")
+                            duration_str = 'unknown'
                     
                     positions.append({
-                        'id': pos.get('id', str(token_address)),
+                        'id': position.get('id', str(token_address)),
                         'token_address': token_address,
-                        'token_symbol': pos.get('token_symbol', 'UNKNOWN'),
+                        'token_symbol': position.get('token_symbol', position.get('symbol', 'UNKNOWN')),
                         'entry_price': round(entry_price, 8),
                         'current_price': round(current_price, 8),
                         'amount': round(amount, 4),
                         'value': round(value, 2),
                         'unrealized_pnl': round(unrealized_pnl, 2),
                         'roi': round(roi, 2),
-                        'stop_loss': pos.get('stop_loss'),
-                        'take_profit': pos.get('take_profit'),
-                        'entry_timestamp': entry_ts if isinstance(entry_ts, str) else 
-                                        (entry_ts.isoformat() if isinstance(entry_ts, datetime) else str(entry_ts)),
+                        'stop_loss': position.get('stop_loss'),
+                        'take_profit': position.get('take_profit'),
+                        'entry_timestamp': entry_timestamp.isoformat() if isinstance(entry_timestamp, datetime) else entry_timestamp,
                         'duration': duration_str,
-                        'status': pos.get('status', 'open')
+                        'status': position.get('status', 'open')
                     })
+            
+            logger.info(f"Returning {len(positions)} open positions")
             
             return web.json_response({
                 'success': True,
@@ -461,60 +446,61 @@ class DashboardEndpoints:
                 'count': len(positions)
             })
         except Exception as e:
-            logger.error(f"Error in api_open_positions: {e}")
-            return web.json_response({'success': False, 'error': str(e), 'data': [], 'count': 0})
+            logger.error(f"Error getting open positions: {e}")
+            return web.json_response({
+                'success': False,
+                'error': str(e),
+                'data': [],
+                'count': 0
+            }, status=200)
     
     async def api_positions_history(self, request):
-        """Get closed positions"""
+        """Get closed positions history"""
         try:
             limit = int(request.query.get('limit', 100))
             closed_positions = []
             
             if self.db:
-                try:
-                    # Get closed trades
-                    if hasattr(self.db, 'get_closed_trades'):
-                        trades = await self.db.get_closed_trades(limit=limit)
-                    elif hasattr(self.db, 'get_all_trades'):
-                        all_trades = await self.db.get_all_trades(limit=limit)
-                        trades = [t for t in all_trades if t.get('status') == 'closed']
-                    else:
-                        trades = []
+                # Get closed trades from database
+                trades = await self.db.get_closed_trades(limit=limit)
+                
+                for trade in trades:
+                    # Calculate duration
+                    duration = 'unknown'
+                    if trade.get('entry_timestamp') and trade.get('exit_timestamp'):
+                        try:
+                            entry = datetime.fromisoformat(str(trade['entry_timestamp']).replace('Z', '+00:00'))
+                            exit_time = datetime.fromisoformat(str(trade['exit_timestamp']).replace('Z', '+00:00'))
+                            delta = exit_time - entry
+                            
+                            hours = int(delta.total_seconds() // 3600)
+                            minutes = int((delta.total_seconds() % 3600) // 60)
+                            
+                            if hours > 24:
+                                days = hours // 24
+                                remaining_hours = hours % 24
+                                duration = f"{days}d {remaining_hours}h"
+                            elif hours > 0:
+                                duration = f"{hours}h {minutes}m"
+                            else:
+                                duration = f"{minutes}m"
+                        except:
+                            pass
                     
-                    for trade in trades:
-                        # Calculate duration
-                        duration = 'Unknown'
-                        if trade.get('entry_timestamp') and trade.get('exit_timestamp'):
-                            try:
-                                entry = datetime.fromisoformat(str(trade['entry_timestamp']).replace('Z', '+00:00'))
-                                exit_t = datetime.fromisoformat(str(trade['exit_timestamp']).replace('Z', '+00:00'))
-                                delta = exit_t - entry
-                                hours = int(delta.total_seconds() // 3600)
-                                minutes = int((delta.total_seconds() % 3600) // 60)
-                                
-                                if hours > 24:
-                                    days = hours // 24
-                                    hours = hours % 24
-                                    duration = f"{days}d {hours}h"
-                                else:
-                                    duration = f"{hours}h {minutes}m"
-                            except:
-                                pass
-                        
-                        closed_positions.append({
-                            'id': trade.get('id'),
-                            'token_symbol': trade.get('token_symbol', 'UNKNOWN'),
-                            'token_address': trade.get('token_address'),
-                            'entry_price': float(trade.get('entry_price', 0)),
-                            'exit_price': float(trade.get('exit_price', 0)),
-                            'profit_loss': float(trade.get('profit_loss', 0)),
-                            'roi': float(trade.get('roi', 0)),
-                            'duration': duration,
-                            'exit_timestamp': trade.get('exit_timestamp'),
-                            'exit_reason': trade.get('exit_reason', 'manual')
-                        })
-                except Exception as db_error:
-                    logger.error(f"Error getting closed positions: {db_error}")
+                    closed_positions.append({
+                        'id': trade.get('id'),
+                        'token_symbol': trade.get('token_symbol', 'UNKNOWN'),
+                        'token_address': trade.get('token_address'),
+                        'entry_price': float(trade.get('entry_price', 0)),
+                        'exit_price': float(trade.get('exit_price', 0)),
+                        'amount': float(trade.get('amount', 0)),
+                        'profit_loss': float(trade.get('profit_loss', 0)),
+                        'roi': float(trade.get('roi', 0)),
+                        'entry_timestamp': trade.get('entry_timestamp'),
+                        'exit_timestamp': trade.get('exit_timestamp'),
+                        'duration': duration,
+                        'exit_reason': trade.get('exit_reason', 'manual')
+                    })
             
             return web.json_response({
                 'success': True,
@@ -522,8 +508,13 @@ class DashboardEndpoints:
                 'count': len(closed_positions)
             })
         except Exception as e:
-            logger.error(f"Error in api_positions_history: {e}")
-            return web.json_response({'success': False, 'error': str(e), 'data': [], 'count': 0})
+            logger.error(f"Error getting closed positions: {e}")
+            return web.json_response({
+                'success': False,
+                'error': str(e),
+                'data': [],
+                'count': 0
+            }, status=200)
 
     def _calculate_duration(self, start, end):
         """Calculate duration between two timestamps"""
@@ -813,103 +804,88 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_bot_status(self, request):
-        """Get bot status with multiple detection methods"""
+        """Get bot status with robust detection"""
         try:
+            # ✅ FIX: Check multiple possible state indicators
             is_running = False
             uptime_str = 'N/A'
             
             if self.engine:
-                # Try multiple state attributes
+                # Try different state attribute names
                 if hasattr(self.engine, 'state'):
-                    state = str(self.engine.state).lower()
-                    is_running = state in ['running', 'active', 'started', 'true']
+                    # Check for various "running" values
+                    state_val = str(self.engine.state).lower()
+                    is_running = state_val in ['running', 'active', 'started', 'true', '1']
                 elif hasattr(self.engine, 'running'):
                     is_running = bool(self.engine.running)
                 elif hasattr(self.engine, 'is_running'):
                     is_running = bool(self.engine.is_running)
                 elif hasattr(self.engine, '_running'):
                     is_running = bool(self.engine._running)
+                elif hasattr(self.engine, 'active'):
+                    is_running = bool(self.engine.active)
                 
-                # Calculate uptime
+                # Calculate uptime if running
                 if is_running:
-                    start_time = getattr(self.engine, 'start_time', None) or \
-                                getattr(self.engine, 'started_at', None)
+                    start_time = None
+                    if hasattr(self.engine, 'start_time') and self.engine.start_time:
+                        start_time = self.engine.start_time
+                    elif hasattr(self.engine, 'started_at') and self.engine.started_at:
+                        start_time = self.engine.started_at
+                    elif hasattr(self.engine, 'startup_time') and self.engine.startup_time:
+                        start_time = self.engine.startup_time
+                    
                     if start_time:
                         try:
-                            delta = datetime.utcnow() - start_time
-                            hours = int(delta.total_seconds() // 3600)
-                            minutes = int((delta.total_seconds() % 3600) // 60)
+                            uptime_delta = datetime.utcnow() - start_time
+                            hours = int(uptime_delta.total_seconds() // 3600)
+                            minutes = int((uptime_delta.total_seconds() % 3600) // 60)
                             uptime_str = f"{hours}h {minutes}m"
-                        except:
+                        except Exception as e:
+                            logger.warning(f"Error calculating uptime: {e}")
                             uptime_str = "Running"
+            
+            status = {
+                'running': is_running,
+                'uptime': uptime_str,
+                'mode': self.config.get('mode', 'unknown'),
+                'version': '1.0.0',
+                'last_health_check': datetime.utcnow().isoformat()
+            }
             
             return web.json_response({
                 'success': True,
-                'data': {
-                    'running': is_running,
-                    'uptime': uptime_str,
-                    'mode': self.config.get('mode', 'paper'),
-                    'version': '1.0.0'
-                }
+                'data': status
             })
         except Exception as e:
             logger.error(f"Error getting bot status: {e}")
+            # Return success with offline status instead of error
             return web.json_response({
                 'success': True,
-                'data': {'running': False, 'uptime': 'N/A', 'mode': 'unknown', 'version': '1.0.0'}
-            })
+                'data': {
+                    'running': False,
+                    'uptime': 'N/A',
+                    'mode': 'unknown',
+                    'version': '1.0.0',
+                    'last_health_check': datetime.utcnow().isoformat()
+                }
+            }, status=200)
     
     # ==================== API - SETTINGS ====================
     
     async def api_get_settings(self, request):
         """Get all settings"""
         try:
-            settings = {}
+            if not self.config_mgr:
+                return web.json_response({'error': 'Config manager not available'}, status=503)
             
-            if self.config_mgr:
-                try:
-                    settings = {
-                        'trading': self.config_mgr.get_trading_config() if hasattr(self.config_mgr, 'get_trading_config') else {},
-                        'risk': self.config_mgr.get_risk_management_config() if hasattr(self.config_mgr, 'get_risk_management_config') else {},
-                        'api': self.config_mgr.get_api_config() if hasattr(self.config_mgr, 'get_api_config') else {},
-                        'notifications': {}
-                    }
-                except Exception as e:
-                    logger.error(f"Error getting settings from config_mgr: {e}")
-                    # Return defaults
-                    settings = {
-                        'trading': {
-                            'enabled': False,
-                            'max_position_size': 1000,
-                            'max_open_positions': 5,
-                            'default_stop_loss': 5,
-                            'default_take_profit': 10,
-                            'slippage_tolerance': 1
-                        },
-                        'risk': {
-                            'max_drawdown': 20,
-                            'max_daily_loss': 500,
-                            'position_size_method': 'fixed',
-                            'risk_per_trade': 2
-                        },
-                        'api': {},
-                        'notifications': {}
-                    }
-            else:
-                # No config manager, return defaults
-                settings = {
-                    'trading': {
-                        'enabled': False,
-                        'max_position_size': 1000,
-                        'max_open_positions': 5,
-                        'default_stop_loss': 5,
-                        'default_take_profit': 10,
-                        'slippage_tolerance': 1
-                    },
-                    'risk': {},
-                    'api': {},
-                    'notifications': {}
-                }
+            settings = {
+                'trading': self.config_mgr.get_trading_config(),
+                'risk': self.config_mgr.get_risk_management_config(),
+                'api': self.config_mgr.get_api_config(),
+                'monitoring': self.config_mgr.get_monitoring_config(),
+                'ml_models': self.config_mgr.get_ml_models_config()
+            }
             
             return web.json_response({
                 'success': True,
@@ -917,7 +893,7 @@ class DashboardEndpoints:
             })
         except Exception as e:
             logger.error(f"Error getting settings: {e}")
-            return web.json_response({'success': False, 'error': str(e)}, status=500)
+            return web.json_response({'error': str(e)}, status=500)
     
     async def api_update_settings(self, request):
         """Update settings"""
