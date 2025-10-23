@@ -195,25 +195,42 @@ async function loadClosedPositions() {
 
 function displayClosedPositions(positions) {
     const tbody = document.querySelector('#closedPositionsTable tbody');
-    if (!tbody) return;
+    if (!tbody) {
+        console.error('Closed positions table body not found');
+        return;
+    }
     
-    if (positions.length === 0) {
+    if (!positions || positions.length === 0) {
         tbody.innerHTML = '<tr><td colspan="8" class="text-center">No closed positions</td></tr>';
         return;
     }
     
     tbody.innerHTML = positions.map(pos => {
-        const pnlClass = pos.profit_loss >= 0 ? 'text-success' : 'text-danger';
+        const pnl = parseFloat(pos.profit_loss || 0);
+        const roi = parseFloat(pos.roi || 0);
+        const pnlClass = pnl >= 0 ? 'text-success' : 'text-danger';
+        
         return `
             <tr>
-                <td>${pos.token_symbol}</td>
+                <td>
+                    <strong>${pos.token_symbol || 'Unknown'}</strong><br>
+                    <small class="text-muted">${(pos.token_address || '').substring(0, 10)}...</small>
+                </td>
                 <td>${formatCurrency(pos.entry_price)}</td>
                 <td>${formatCurrency(pos.exit_price)}</td>
-                <td class="${pnlClass}">${formatCurrency(pos.profit_loss)}</td>
-                <td class="${pnlClass}">${formatPercent(pos.roi)}</td>
-                <td>${pos.duration}</td>
+                <td class="${pnlClass}">
+                    <strong>${formatCurrency(pnl)}</strong>
+                </td>
+                <td class="${pnlClass}">
+                    <strong>${roi.toFixed(2)}%</strong>
+                </td>
+                <td>${pos.duration || 'unknown'}</td>
                 <td>${formatDate(pos.exit_timestamp)}</td>
-                <td>${pos.exit_reason || 'manual'}</td>
+                <td>
+                    <span class="badge badge-${pos.exit_reason === 'take_profit' ? 'success' : pos.exit_reason === 'stop_loss' ? 'danger' : 'secondary'}">
+                        ${pos.exit_reason || 'manual'}
+                    </span>
+                </td>
             </tr>
         `;
     }).join('');

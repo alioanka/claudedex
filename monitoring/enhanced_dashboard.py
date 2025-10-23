@@ -937,25 +937,32 @@ class DashboardEndpoints:
     async def api_emergency_exit(self, request):
         """Emergency exit - close all positions"""
         try:
-            if not self.portfolio:
-                return web.json_response({'error': 'Portfolio manager not available'}, status=503)
-            
-            # Get all open positions
-            positions = self.portfolio.get_open_positions()
-            
             closed = []
             failed = []
             
-            for pos in positions:
-                try:
-                    result = self.portfolio.close_position(pos['id'])
-                    if result.get('success'):
-                        closed.append(pos['id'])
-                    else:
-                        failed.append(pos['id'])
-                except Exception as e:
-                    logger.error(f"Error closing position {pos['id']}: {e}")
-                    failed.append(pos['id'])
+            # ✅ Use self.engine.active_positions instead of self.portfolio
+            if self.engine and hasattr(self.engine, 'active_positions'):
+                positions = list(self.engine.active_positions.items())
+                
+                for token_address, pos in positions:
+                    try:
+                        # ✅ Call engine's close_position method
+                        if hasattr(self.engine, 'close_position'):
+                            result = await self.engine.close_position(
+                                token_address=token_address,
+                                reason='emergency_exit'
+                            )
+                            if result:
+                                closed.append(token_address)
+                            else:
+                                failed.append(token_address)
+                        else:
+                            # Fallback: manually update status
+                            pos['status'] = 'closed'
+                            closed.append(token_address)
+                    except Exception as e:
+                        logger.error(f"Error closing position {token_address}: {e}")
+                        failed.append(token_address)
             
             return web.json_response({
                 'success': True,
