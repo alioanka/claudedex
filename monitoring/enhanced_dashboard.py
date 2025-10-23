@@ -419,8 +419,46 @@ class DashboardEndpoints:
                     # Calculate ROI
                     roi = ((current_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
                     
-                    # Calculate duration
+                    # ✅ Get entry_timestamp and stop_loss/take_profit from database
                     entry_timestamp = position.get('entry_timestamp') or position.get('opened_at') or position.get('timestamp')
+                    stop_loss = position.get('stop_loss')
+                    take_profit = position.get('take_profit')
+                    
+                    # ✅ Try to enrich from database if fields are missing
+                    if (not entry_timestamp or not stop_loss or not take_profit) and self.db:
+                        try:
+                            async with self.db.pool.acquire() as conn:
+                                trade = await conn.fetchrow("""
+                                    SELECT entry_timestamp, metadata
+                                    FROM trades
+                                    WHERE token_address = $1 
+                                    AND status = 'open'
+                                    ORDER BY entry_timestamp DESC
+                                    LIMIT 1
+                                """, token_address)
+                                
+                                if trade:
+                                    if not entry_timestamp and trade['entry_timestamp']:
+                                        entry_timestamp = trade['entry_timestamp']
+                                    
+                                    # Extract stop_loss/take_profit from metadata
+                                    if trade['metadata']:
+                                        try:
+                                            import json
+                                            metadata = trade['metadata']
+                                            if isinstance(metadata, str):
+                                                metadata = json.loads(metadata)
+                                            
+                                            if not stop_loss:
+                                                stop_loss = metadata.get('stop_loss')
+                                            if not take_profit:
+                                                take_profit = metadata.get('take_profit')
+                                        except:
+                                            pass
+                        except Exception as e:
+                            logger.error(f"Error enriching position from DB: {e}")
+                    
+                    # Calculate duration
                     duration_str = 'unknown'
                     
                     if entry_timestamp:
@@ -431,6 +469,10 @@ class DashboardEndpoints:
                                 entry_time = entry_timestamp
                             else:
                                 entry_time = datetime.fromtimestamp(float(entry_timestamp))
+                            
+                            # Make sure entry_time is timezone-naive for comparison
+                            if entry_time.tzinfo:
+                                entry_time = entry_time.replace(tzinfo=None)
                             
                             duration_delta = datetime.utcnow() - entry_time
                             total_seconds = duration_delta.total_seconds()
@@ -462,9 +504,9 @@ class DashboardEndpoints:
                         'value': round(value, 2),
                         'unrealized_pnl': round(unrealized_pnl, 2),
                         'roi': round(roi, 2),
-                        'stop_loss': position.get('stop_loss'),
-                        'take_profit': position.get('take_profit'),
-                        'entry_timestamp': entry_timestamp.isoformat() if isinstance(entry_timestamp, datetime) else entry_timestamp,
+                        'stop_loss': stop_loss,  # ✅ Now enriched from DB
+                        'take_profit': take_profit,  # ✅ Now enriched from DB
+                        'entry_timestamp': entry_timestamp.isoformat() if isinstance(entry_timestamp, datetime) else entry_timestamp,  # ✅ Now enriched from DB
                         'duration': duration_str,
                         'status': position.get('status', 'open'),
                         'chain': position.get('chain', 'unknown'),
