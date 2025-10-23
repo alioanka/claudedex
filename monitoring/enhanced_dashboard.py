@@ -494,7 +494,6 @@ class DashboardEndpoints:
             closed_positions = []
             
             if self.db:
-                # Get closed trades from database
                 trades = await self.db.get_closed_trades(limit=limit)
                 
                 for trade in trades:
@@ -520,28 +519,43 @@ class DashboardEndpoints:
                         except:
                             pass
                     
+                    # ✅ Extract token_symbol from metadata
+                    token_symbol = trade.get('token_symbol', 'UNKNOWN')
+                    
+                    if token_symbol == 'UNKNOWN' and trade.get('metadata'):
+                        try:
+                            import json
+                            metadata = trade.get('metadata')
+                            
+                            if isinstance(metadata, str):
+                                metadata = json.loads(metadata)
+                            
+                            token_symbol = metadata.get('token_symbol', 'UNKNOWN')
+                        except:
+                            pass
+                    
                     # Convert timestamps to ISO string
                     entry_ts = trade.get('entry_timestamp')
                     exit_ts = trade.get('exit_timestamp')
-
+                    
                     closed_positions.append({
                         'id': trade.get('id'),
-                        'token_symbol': trade.get('token_symbol', 'UNKNOWN'),
+                        'token_symbol': token_symbol,  # ✅ Use extracted symbol
                         'token_address': trade.get('token_address'),
                         'entry_price': float(trade.get('entry_price', 0)),
                         'exit_price': float(trade.get('exit_price', 0)),
                         'amount': float(trade.get('amount', 0)),
                         'profit_loss': float(trade.get('profit_loss', 0)),
-                        'roi': float(trade.get('roi', 0)),
-                        'entry_timestamp': entry_ts.isoformat() if entry_ts else None,  # ✅ Convert to string
-                        'exit_timestamp': exit_ts.isoformat() if exit_ts else None,      # ✅ Convert to string
+                        'roi': float(trade.get('roi', 0)) if trade.get('roi') else (float(trade.get('profit_loss_percentage', 0)) if trade.get('profit_loss_percentage') else 0),
+                        'entry_timestamp': entry_ts.isoformat() if entry_ts else None,
+                        'exit_timestamp': exit_ts.isoformat() if exit_ts else None,
                         'duration': duration,
                         'exit_reason': trade.get('exit_reason', 'manual')
                     })
             
             return web.json_response({
                 'success': True,
-                'data': closed_positions,
+                'data': self._serialize_decimals(closed_positions),
                 'count': len(closed_positions)
             })
         except Exception as e:
