@@ -605,7 +605,7 @@ document.addEventListener('DOMContentLoaded', function() {
     loadTheme();
     initDashboard();
     updateBotStatus();  // Load bot status first
-//    loadTopBarData();    // ✅ Load top bar ONCE
+    loadTopBarData();    // ✅ Load top bar ONCE
     loadDashboardData(); // Load other data
 });
 
