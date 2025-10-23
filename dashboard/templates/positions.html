@@ -194,7 +194,7 @@ async function loadClosedPositions() {
 }
 
 function displayClosedPositions(positions) {
-    const tbody = document.querySelector('#closedPositionsTable tbody');
+    const tbody = document.getElementById('closedPositionsBody'); // ✅ Use correct ID
     if (!tbody) {
         console.error('Closed positions table body not found');
         return;
@@ -236,17 +236,15 @@ function displayClosedPositions(positions) {
     }).join('');
 }
 
-// Call on page load
+// Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
-    loadClosedPositions();
-    setInterval(loadClosedPositions, 90000); // Refresh every 30 seconds
-});
-
-// Call it on page load
-document.addEventListener('DOMContentLoaded', function() {
+    loadTheme();
     loadPositions();
-    loadClosedPositions();  // ✅ Add this
-    setInterval(loadPositions, 60000);
+    loadClosedPositions();
+    
+    // Auto-refresh
+    setInterval(loadPositions, 60000);  // Every 60 seconds
+    setInterval(loadClosedPositions, 90000);  // Every 90 seconds
 });
 
 function displayPositions(positions) {
@@ -564,7 +562,7 @@ function refreshPositions() {
     loadPositions();
 }
 
-document.addEventListener('DOMContentLoaded', loadPositions);
+//document.addEventListener('DOMContentLoaded', loadPositions);
 
 // Auto-refresh every 5 seconds
 setInterval(loadPositions, 60000);
