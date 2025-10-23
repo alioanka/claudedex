@@ -333,27 +333,14 @@ class DashboardEndpoints:
             
             trades = await self.db.get_recent_trades(limit=limit)
             
-            # ✅ Enrich trades with token symbols and ensure network is correct
+            # Simple enrichment - use what's already in the trade record
             enriched_trades = []
             for trade in trades:
-                # Get token symbol from market_data if not present
-                token_symbol = trade.get('token_symbol', 'UNKNOWN')
-                if token_symbol == 'UNKNOWN' and self.db:
-                    try:
-                        async with self.db.pool.acquire() as conn:
-                            row = await conn.fetchrow("""
-                                SELECT token_symbol FROM market_data
-                                WHERE token_address = $1 AND chain = $2
-                                ORDER BY time DESC LIMIT 1
-                            """, trade['token_address'], trade['chain'])
-                            if row and row['token_symbol']:
-                                token_symbol = row['token_symbol']
-                    except:
-                        pass
-                
                 enriched_trade = dict(trade)
-                enriched_trade['token_symbol'] = token_symbol
-                enriched_trade['network'] = trade['chain']  # ✅ Ensure network = chain
+                # Use token_symbol from trade, default to UNKNOWN if missing
+                enriched_trade['token_symbol'] = trade.get('token_symbol', 'UNKNOWN')
+                # Ensure network field exists
+                enriched_trade['network'] = trade.get('chain', 'unknown')
                 enriched_trades.append(enriched_trade)
             
             return web.json_response({
@@ -639,6 +626,8 @@ class DashboardEndpoints:
                     'total_pnl': 0.0,
                     'win_rate': 0.0,
                     'total_trades': 0,
+                    'winning_trades': 0,
+                    'losing_trades': 0,
                     'avg_win': 0.0,
                     'avg_loss': 0.0
                 }
@@ -654,6 +643,8 @@ class DashboardEndpoints:
                             metrics['historical']['total_pnl'] = float(perf.get('total_pnl', 0))
                             metrics['historical']['win_rate'] = float(perf.get('win_rate', 0))
                             metrics['historical']['total_trades'] = int(perf.get('total_trades', 0))
+                            metrics['historical']['winning_trades'] = int(perf.get('winning_trades', 0))  # ✅ ADD
+                            metrics['historical']['losing_trades'] = int(perf.get('losing_trades', 0))    # ✅ ADD
                             metrics['historical']['avg_win'] = float(perf.get('avg_win', 0))
                             metrics['historical']['avg_loss'] = float(perf.get('avg_loss', 0))
                 except Exception as db_error:
@@ -673,6 +664,8 @@ class DashboardEndpoints:
                         'total_pnl': 0.0,
                         'win_rate': 0.0,
                         'total_trades': 0,
+                        'winning_trades': 0,
+                        'losing_trades': 0,
                         'avg_win': 0.0,
                         'avg_loss': 0.0
                     }
