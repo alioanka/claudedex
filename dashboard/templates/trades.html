@@ -335,6 +335,12 @@ function viewTradeDetails(tradeId) {
     document.body.appendChild(modal);
 }
 
+function formatDateTime(timestamp) {
+    if (!timestamp) return 'N/A';
+    const date = new Date(timestamp);
+    return date.toLocaleString();
+}
+
 function closeTradeModal() {
     const modal = document.getElementById('tradeDetailsModal');
     const overlay = document.getElementById('modalOverlay');
