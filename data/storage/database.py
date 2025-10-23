@@ -629,6 +629,29 @@ class DatabaseManager:
                 """, limit)
             
             return [dict(row) for row in rows]
+
+    async def get_closed_trades(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get closed trades (positions that have been exited)."""
+        async with self.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT 
+                    t.*,
+                    COALESCE(m.token_symbol, 'UNKNOWN') as token_symbol
+                FROM trades t
+                LEFT JOIN (
+                    SELECT DISTINCT ON (token_address, chain) 
+                        token_address, chain, token_symbol
+                    FROM market_data
+                    ORDER BY token_address, chain, time DESC
+                ) m ON t.token_address = m.token_address AND t.chain = m.chain
+                WHERE t.status = 'closed' 
+                AND t.side = 'buy'
+                AND t.exit_timestamp IS NOT NULL
+                ORDER BY t.exit_timestamp DESC
+                LIMIT $1
+            """, limit)
+            
+            return [dict(row) for row in rows]
     
     async def save_token_analysis(self, analysis: Dict[str, Any]) -> None:
         """Save token analysis results."""

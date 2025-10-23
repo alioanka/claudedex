@@ -9,7 +9,8 @@ const dashboardState = {
 
 // Initialize dashboard-specific features
 function initDashboard() {
-//    loadHistoricalStats(); // Load historical data ONCE
+    loadHistoricalStats(); // Load historical data ONCE
+    loadRiskMetrics(); // ✅ Load risk metrics
     setupDashboardRefresh();
     setupQuickActions();
     setupActivityFeed();
@@ -21,7 +22,7 @@ function setupDashboardRefresh() {
     // Refresh every 2 seconds
     dashboardState.refreshInterval = setInterval(() => {
         refreshDashboardData();
-    }, 2000);
+    }, 10000); // ✅ Changed from 2000 to 10000
 }
 
 // Refresh dashboard data
@@ -38,30 +39,40 @@ async function refreshDashboardData() {
     }
 }
 
+async function loadRiskMetrics() {
+    try {
+        const response = await apiGet('/api/risk/metrics');
+        
+        if (response.success && response.data) {
+            const metrics = response.data;
+            
+            const sharpeRatio = document.getElementById('sharpeRatio');
+            if (sharpeRatio) sharpeRatio.textContent = metrics.sharpe_ratio.toFixed(2);
+            
+            const maxDrawdown = document.getElementById('maxDrawdown');
+            if (maxDrawdown) maxDrawdown.textContent = `${metrics.max_drawdown.toFixed(2)}%`;
+            
+            const var95 = document.getElementById('var95');
+            if (var95) var95.textContent = formatCurrency(metrics.var_95);
+            
+            const portfolioBeta = document.getElementById('portfolioBeta');
+            if (portfolioBeta) portfolioBeta.textContent = metrics.portfolio_beta.toFixed(2);
+        }
+    } catch (error) {
+        console.error('Error loading risk metrics:', error);
+    }
+}
+
 // Update dashboard metrics
 function updateDashboardMetrics(data) {
-    // Update portfolio value
-    const portfolioValueStat = document.getElementById('portfolioValueStat');
-    if (portfolioValueStat) {
-        portfolioValueStat.textContent = formatCurrency(data.total_value || 10000);
-    }
+    // ❌ DON'T update portfolio value - historical
+    // ❌ DON'T update total P&L - historical
+    // ❌ DON'T update win rate - historical
     
-    // Update total P&L
-    const totalPnlStat = document.getElementById('totalPnlStat');
-    if (totalPnlStat) {
-        totalPnlStat.textContent = formatCurrency(data.net_profit || 0);
-    }
-    
-    // Update open positions
+    // ✅ ONLY update open positions count (real-time)
     const openPositionsStat = document.getElementById('openPositionsStat');
-    if (openPositionsStat) {
-        openPositionsStat.textContent = data.open_positions || 0;
-    }
-    
-    // Update win rate
-    const winRateStat = document.getElementById('winRateStat');
-    if (winRateStat) {
-        winRateStat.textContent = `${(data.win_rate || 0).toFixed(1)}%`;
+    if (openPositionsStat && data.open_positions !== undefined) {
+        openPositionsStat.textContent = data.open_positions;
     }
 }
 

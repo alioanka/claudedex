@@ -196,7 +196,7 @@ function displayClosedPositions(positions) {
     if (!tbody) return;
     
     if (positions.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" style="text-center">No closed positions</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center">No closed positions</td></tr>';
         return;
     }
     
@@ -245,10 +245,13 @@ function displayPositions(positions) {
         const currentPrice = parseFloat(pos.current_price || pos.entry_price);
         const value = parseFloat(pos.amount) * currentPrice;
         
-        // ✅ FIX: Calculate proper duration
-        const duration = pos.entry_timestamp || pos.entry_time || pos.opened_at || pos.created_at;
-        const durationText = duration ? timeAgo(duration) : 'Unknown';
-        
+        // ✅ FIX: Calculate proper duration using entry_timestamp
+        let durationText = 'Unknown';
+        if (pos.entry_timestamp || pos.entry_time) {
+            const entryTime = pos.entry_timestamp || pos.entry_time;
+            durationText = timeAgo(entryTime);
+        }
+                
         // ✅ FIX: Calculate ROI if missing
         const entryValue = parseFloat(pos.entry_value || (pos.entry_price * pos.amount));
         const calculatedRoi = entryValue > 0 ? ((pnl / entryValue) * 100) : 0;
@@ -415,10 +418,90 @@ function closePositionModal() {
 
 async function modifyPosition(positionId) {
     const position = currentPositions.find(p => p.id === positionId);
-    if (!position) return;
+    if (!position) {
+        showToast('error', 'Position not found');
+        return;
+    }
     
-    // This would open a modal with edit fields
-    showToast('info', 'Position modification interface coming soon');
+    // Create modify modal
+    const modalHtml = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Modify Position: ${position.token_symbol}</h3>
+                <button class="btn btn-icon" onclick="closeModifyModal()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Stop Loss</label>
+                    <input type="number" id="modifyStopLoss" class="form-control" 
+                           value="${position.stop_loss || ''}" 
+                           placeholder="Enter stop loss price"
+                           step="0.00000001">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Take Profit</label>
+                    <input type="number" id="modifyTakeProfit" class="form-control" 
+                           value="${position.take_profit || ''}" 
+                           placeholder="Enter take profit price"
+                           step="0.00000001">
+                </div>
+                <div class="info-box">
+                    <strong>Current Price:</strong> ${formatCurrency(position.current_price || position.entry_price)}<br>
+                    <strong>Entry Price:</strong> ${formatCurrency(position.entry_price)}<br>
+                    <strong>Amount:</strong> ${formatNumber(position.amount, 4)}
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModifyModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="savePositionModification('${positionId}')">
+                    Save Changes
+                </button>
+            </div>
+        </div>
+    `;
+    
+    const modal = document.createElement('div');
+    modal.id = 'modifyPositionModal';
+    modal.className = 'modal active';
+    modal.innerHTML = modalHtml;
+    
+    const overlay = document.getElementById('modalOverlay');
+    overlay.classList.add('active');
+    document.body.appendChild(modal);
+}
+
+function closeModifyModal() {
+    const modal = document.getElementById('modifyPositionModal');
+    const overlay = document.getElementById('modalOverlay');
+    
+    if (modal) modal.remove();
+    if (overlay) overlay.classList.remove('active');
+}
+
+async function savePositionModification(positionId) {
+    const stopLoss = parseFloat(document.getElementById('modifyStopLoss').value) || null;
+    const takeProfit = parseFloat(document.getElementById('modifyTakeProfit').value) || null;
+    
+    try {
+        const result = await apiPost('/api/position/modify', {
+            position_id: positionId,
+            stop_loss: stopLoss,
+            take_profit: takeProfit
+        });
+        
+        if (result.success) {
+            showToast('success', 'Position modified successfully');
+            closeModifyModal();
+            loadPositions(); // Refresh positions
+        } else {
+            showToast('error', result.error || 'Failed to modify position');
+        }
+    } catch (error) {
+        console.error('Error modifying position:', error);
+        showToast('error', 'Failed to modify position');
+    }
 }
 
 async function modifyCurrentPosition() {

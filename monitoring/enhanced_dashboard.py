@@ -109,6 +109,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/performance/metrics', self.api_performance_metrics)
         self.app.router.add_get('/api/performance/charts', self.api_performance_charts)
         self.app.router.add_get('/api/alerts/recent', self.api_recent_alerts)
+        self.app.router.add_get('/api/risk/metrics', self.api_risk_metrics)
         
         # API - Bot control
         self.app.router.add_post('/api/bot/start', self.api_bot_start)
@@ -276,13 +277,13 @@ class DashboardEndpoints:
                     'cash_balance': float(portfolio_summary.get('cash_balance', 10000)),
                     'positions_value': float(portfolio_summary.get('positions_value', 0)),
                     'daily_pnl': float(portfolio_summary.get('daily_pnl', 0)),
-                    'win_rate': float(portfolio_summary.get('win_rate', 0)),
                     'sharpe_ratio': float(portfolio_summary.get('sharpe_ratio', 0)),
                     'max_drawdown': float(portfolio_summary.get('max_drawdown', 0)),
                 }
             
-            # ✅ Get ACTUAL cumulative P&L and position count from database/engine
+            # ✅ Get ACTUAL cumulative P&L and metrics from database
             total_pnl = 0
+            win_rate = 0
             open_positions_count = 0
             
             if self.db:
@@ -290,6 +291,7 @@ class DashboardEndpoints:
                     perf_data = await self.db.get_performance_summary()
                     if perf_data and 'total_pnl' in perf_data:
                         total_pnl = float(perf_data.get('total_pnl', 0))
+                        win_rate = float(perf_data.get('win_rate', 0))
                 except Exception as e:
                     logger.error(f"Error getting performance data: {e}")
             
@@ -305,7 +307,10 @@ class DashboardEndpoints:
             summary.update({
                 'portfolio_value': portfolio_value,
                 'total_pnl': total_pnl,
+                'total_value': portfolio_value,
+                'net_profit': total_pnl,
                 'open_positions': open_positions_count,
+                'win_rate': win_rate,  # ✅ Now includes actual win rate
                 'pending_orders': len(self.orders.active_orders) if self.orders else 0,
                 'active_alerts': len(self.alerts.alerts_queue._queue) if self.alerts else 0
             })
@@ -319,7 +324,7 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_recent_trades(self, request):
-        """Get recent trades"""
+        """Get recent trades with token symbol and network"""
         try:
             limit = int(request.query.get('limit', 50))
             
@@ -328,10 +333,33 @@ class DashboardEndpoints:
             
             trades = await self.db.get_recent_trades(limit=limit)
             
+            # ✅ Enrich trades with token symbols and ensure network is correct
+            enriched_trades = []
+            for trade in trades:
+                # Get token symbol from market_data if not present
+                token_symbol = trade.get('token_symbol', 'UNKNOWN')
+                if token_symbol == 'UNKNOWN' and self.db:
+                    try:
+                        async with self.db.pool.acquire() as conn:
+                            row = await conn.fetchrow("""
+                                SELECT token_symbol FROM market_data
+                                WHERE token_address = $1 AND chain = $2
+                                ORDER BY time DESC LIMIT 1
+                            """, trade['token_address'], trade['chain'])
+                            if row and row['token_symbol']:
+                                token_symbol = row['token_symbol']
+                    except:
+                        pass
+                
+                enriched_trade = dict(trade)
+                enriched_trade['token_symbol'] = token_symbol
+                enriched_trade['network'] = trade['chain']  # ✅ Ensure network = chain
+                enriched_trades.append(enriched_trade)
+            
             return web.json_response({
                 'success': True,
-                'data': self._serialize_decimals(trades),  # ✅ Convert here
-                'count': len(trades)
+                'data': self._serialize_decimals(enriched_trades),
+                'count': len(enriched_trades)
             })
         except Exception as e:
             logger.error(f"Error getting recent trades: {e}")
@@ -435,7 +463,9 @@ class DashboardEndpoints:
                         'take_profit': position.get('take_profit'),
                         'entry_timestamp': entry_timestamp.isoformat() if isinstance(entry_timestamp, datetime) else entry_timestamp,
                         'duration': duration_str,
-                        'status': position.get('status', 'open')
+                        'status': position.get('status', 'open'),
+                        'chain': position.get('chain', 'unknown'),
+                        'network': position.get('chain', 'unknown')
                     })
             
             logger.info(f"Returning {len(positions)} open positions")
@@ -515,6 +545,71 @@ class DashboardEndpoints:
                 'data': [],
                 'count': 0
             }, status=200)
+
+    async def api_risk_metrics(self, request):
+        """Calculate risk metrics from trade history"""
+        try:
+            if not self.db:
+                return web.json_response({'error': 'Database not available'}, status=503)
+            
+            trades = await self.db.get_recent_trades(limit=1000)
+            closed_trades = [t for t in trades if t.get('status') == 'closed' and t.get('profit_loss') is not None]
+            
+            if len(closed_trades) < 2:
+                return web.json_response({
+                    'success': True,
+                    'data': {
+                        'sharpe_ratio': 0.0,
+                        'max_drawdown': 0.0,
+                        'var_95': 0.0,
+                        'portfolio_beta': 0.0
+                    }
+                })
+            
+            returns = [float(t.get('profit_loss', 0)) for t in closed_trades]
+            
+            import statistics
+            mean_return = statistics.mean(returns)
+            std_return = statistics.stdev(returns) if len(returns) > 1 else 1
+            sharpe_ratio = (mean_return / std_return * (252 ** 0.5)) if std_return != 0 else 0
+            
+            cumulative = []
+            cum_sum = 0
+            for ret in returns:
+                cum_sum += ret
+                cumulative.append(cum_sum)
+            
+            max_drawdown = 0
+            peak = cumulative[0]
+            for value in cumulative:
+                if value > peak:
+                    peak = value
+                drawdown = (peak - value) / abs(peak) if peak != 0 else 0
+                max_drawdown = max(max_drawdown, drawdown)
+            
+            losses = [r for r in returns if r < 0]
+            var_95 = abs(statistics.quantiles(losses, n=20)[0]) if len(losses) > 10 else 0
+            
+            return web.json_response({
+                'success': True,
+                'data': {
+                    'sharpe_ratio': round(sharpe_ratio, 2),
+                    'max_drawdown': round(max_drawdown * 100, 2),
+                    'var_95': round(var_95, 2),
+                    'portfolio_beta': 0.0
+                }
+            })
+        except Exception as e:
+            logger.error(f"Error calculating risk metrics: {e}")
+            return web.json_response({
+                'success': True,
+                'data': {
+                    'sharpe_ratio': 0.0,
+                    'max_drawdown': 0.0,
+                    'var_95': 0.0,
+                    'portfolio_beta': 0.0
+                }
+            })
 
     def _calculate_duration(self, start, end):
         """Calculate duration between two timestamps"""
