@@ -333,13 +333,29 @@ class DashboardEndpoints:
             
             trades = await self.db.get_recent_trades(limit=limit)
             
-            # Simple enrichment - use what's already in the trade record
+            # Enrich trades with token symbols from metadata
             enriched_trades = []
             for trade in trades:
                 enriched_trade = dict(trade)
-                # Use token_symbol from trade, default to UNKNOWN if missing
-                enriched_trade['token_symbol'] = trade.get('token_symbol', 'UNKNOWN')
-                # Ensure network field exists
+                
+                # Extract token_symbol from metadata JSON if present
+                token_symbol = trade.get('token_symbol', 'UNKNOWN')
+                
+                if token_symbol == 'UNKNOWN' and trade.get('metadata'):
+                    try:
+                        import json
+                        metadata = trade.get('metadata')
+                        
+                        # If metadata is string, parse it
+                        if isinstance(metadata, str):
+                            metadata = json.loads(metadata)
+                        
+                        # Extract token_symbol from metadata
+                        token_symbol = metadata.get('token_symbol', 'UNKNOWN')
+                    except:
+                        pass
+                
+                enriched_trade['token_symbol'] = token_symbol
                 enriched_trade['network'] = trade.get('chain', 'unknown')
                 enriched_trades.append(enriched_trade)
             

@@ -182,8 +182,10 @@ async function loadPositions() {
 async function loadClosedPositions() {
     try {
         const response = await apiGet('/api/positions/history?limit=50');
+        console.log('Closed positions response:', response); // ✅ Add this
         
         if (response.success && response.data) {
+            console.log('Closed positions count:', response.data.length); // ✅ Add this
             displayClosedPositions(response.data);
         }
     } catch (error) {
@@ -220,14 +222,14 @@ function displayClosedPositions(positions) {
 // Call on page load
 document.addEventListener('DOMContentLoaded', function() {
     loadClosedPositions();
-    setInterval(loadClosedPositions, 30000); // Refresh every 30 seconds
+    setInterval(loadClosedPositions, 90000); // Refresh every 30 seconds
 });
 
 // Call it on page load
 document.addEventListener('DOMContentLoaded', function() {
     loadPositions();
     loadClosedPositions();  // ✅ Add this
-    setInterval(loadPositions, 5000);
+    setInterval(loadPositions, 60000);
 });
 
 function displayPositions(positions) {
@@ -246,6 +248,7 @@ function displayPositions(positions) {
         const value = parseFloat(pos.amount) * currentPrice;
         
         // Duration - try multiple field names
+        // Before building the row, add these lines:
         let durationText = 'Unknown';
         const entryTime = pos.entry_time || pos.entry_timestamp || pos.opened_at || pos.created_at;
         if (entryTime) {
@@ -253,7 +256,6 @@ function displayPositions(positions) {
                 durationText = timeAgo(entryTime);
             } catch (e) {
                 console.error('Error calculating duration:', e);
-                durationText = 'Unknown';
             }
         }
                 
@@ -548,6 +550,6 @@ function refreshPositions() {
 document.addEventListener('DOMContentLoaded', loadPositions);
 
 // Auto-refresh every 5 seconds
-setInterval(loadPositions, 5000);
+setInterval(loadPositions, 60000);
 </script>
 {% endblock %}

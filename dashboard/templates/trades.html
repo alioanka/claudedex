@@ -272,8 +272,15 @@ function exportTrades() {
 }
 
 function viewTradeDetails(tradeId) {
-    const trade = allTrades.find(t => t.id === tradeId || t.trade_id === tradeId);
+    const trade = allTrades.find(t => 
+    t.id === tradeId || 
+    t.trade_id === tradeId ||
+    String(t.id) === String(tradeId) ||
+    String(t.trade_id) === String(tradeId)
+);
     if (!trade) {
+        console.error('Trade not found:', tradeId);
+        console.log('First 3 trades:', allTrades.slice(0, 3).map(t => ({id: t.id, trade_id: t.trade_id})));
         showToast('error', 'Trade not found');
         return;
     }
@@ -340,6 +347,6 @@ function closeTradeModal() {
 document.addEventListener('DOMContentLoaded', loadTrades);
 
 // Refresh every 10 seconds
-setInterval(loadTrades, 10000);
+setInterval(loadTrades, 300000);
 </script>
 {% endblock %}
