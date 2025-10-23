@@ -208,7 +208,6 @@ function updateDashboardUIMinimal(data) {
     }
 }
 
-// ✅ NEW: Load top bar data ONCE from performance metrics
 async function loadTopBarData() {
     try {
         const response = await apiGet('/api/performance/metrics');
@@ -216,15 +215,36 @@ async function loadTopBarData() {
         if (response.success && response.data && response.data.historical) {
             const hist = response.data.historical;
             
-            // Calculate portfolio value
-            const totalPnl = hist.total_pnl || 0;
+            // Get realized P&L from closed trades
             const startingBalance = 10000;
-            const portfolioValue = startingBalance + totalPnl;
+            const realizedPnl = hist.total_pnl || 0;
+            
+            // Get unrealized P&L from open positions
+            let unrealizedPnl = 0;
+            try {
+                const posResponse = await apiGet('/api/positions/open');
+                if (posResponse.success && posResponse.data) {
+                    unrealizedPnl = posResponse.data.reduce((sum, pos) => 
+                        sum + parseFloat(pos.unrealized_pnl || 0), 0
+                    );
+                }
+            } catch (e) {
+                console.error('Error getting open positions P&L:', e);
+            }
+            
+            // Calculate total portfolio value
+            const portfolioValue = startingBalance + realizedPnl + unrealizedPnl;
             
             // Update top bar portfolio value
             const portfolioValueEl = document.querySelector('#portfolioValue .value');
             if (portfolioValueEl) {
                 portfolioValueEl.textContent = formatCurrency(portfolioValue);
+            }
+            
+            // Update dashboard stat card if exists
+            const portfolioValueStat = document.getElementById('portfolioValueStat');
+            if (portfolioValueStat) {
+                portfolioValueStat.textContent = formatCurrency(portfolioValue);
             }
             
             // Calculate 24h P&L
@@ -242,12 +262,11 @@ async function loadTopBarData() {
                     sum + parseFloat(t.profit_loss || 0), 0
                 );
                 
-                // Update top bar 24h P&L
+                // Update 24h P&L in top bar
                 const pnlValueEl = document.querySelector('#pnlIndicator .value');
                 if (pnlValueEl) {
                     pnlValueEl.textContent = formatCurrency(dailyPnl);
                     
-                    // Update indicator color
                     const pnlIndicator = document.getElementById('pnlIndicator');
                     if (pnlIndicator) {
                         pnlIndicator.classList.remove('positive', 'negative');
@@ -262,7 +281,6 @@ async function loadTopBarData() {
         console.error('Error loading top bar data:', error);
     }
 }
-
 // Update dashboard UI (legacy - kept for compatibility)
 function updateDashboardUI(data) {
     updateDashboardUIMinimal(data);
