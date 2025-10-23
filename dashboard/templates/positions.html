@@ -182,11 +182,15 @@ async function loadPositions() {
 async function loadClosedPositions() {
     try {
         const response = await apiGet('/api/positions/history?limit=50');
-        console.log('Closed positions response:', response); // ✅ Add this
+        console.log('Closed positions response:', response);
         
         if (response.success && response.data) {
-            console.log('Closed positions count:', response.data.length); // ✅ Add this
-            displayClosedPositions(response.data);
+            console.log('Closed positions count:', response.data.length);
+            
+            // ✅ Wait for DOM to be ready
+            setTimeout(() => {
+                displayClosedPositions(response.data);
+            }, 100);
         }
     } catch (error) {
         console.error('Error loading closed positions:', error);
@@ -194,11 +198,19 @@ async function loadClosedPositions() {
 }
 
 function displayClosedPositions(positions) {
-    const tbody = document.getElementById('closedPositionsBody'); // ✅ Use correct ID
+    console.log('displayClosedPositions called with', positions.length, 'positions');
+    
+    const tbody = document.getElementById('closedPositionsBody');
+    console.log('tbody element:', tbody); // ✅ Add this
+    
     if (!tbody) {
         console.error('Closed positions table body not found');
+        console.log('All elements with ID:', document.querySelectorAll('[id*="closed"]')); // ✅ Debug
         return;
     }
+    
+    // ... rest of function
+
     
     if (!positions || positions.length === 0) {
         tbody.innerHTML = '<tr><td colspan="8" class="text-center">No closed positions</td></tr>';
