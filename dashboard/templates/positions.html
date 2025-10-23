@@ -245,11 +245,16 @@ function displayPositions(positions) {
         const currentPrice = parseFloat(pos.current_price || pos.entry_price);
         const value = parseFloat(pos.amount) * currentPrice;
         
-        // ✅ FIX: Calculate proper duration using entry_timestamp
+        // Duration - try multiple field names
         let durationText = 'Unknown';
-        if (pos.entry_timestamp || pos.entry_time) {
-            const entryTime = pos.entry_timestamp || pos.entry_time;
-            durationText = timeAgo(entryTime);
+        const entryTime = pos.entry_time || pos.entry_timestamp || pos.opened_at || pos.created_at;
+        if (entryTime) {
+            try {
+                durationText = timeAgo(entryTime);
+            } catch (e) {
+                console.error('Error calculating duration:', e);
+                durationText = 'Unknown';
+            }
         }
                 
         // ✅ FIX: Calculate ROI if missing
@@ -274,8 +279,8 @@ function displayPositions(positions) {
                 <td class="${pnlClass}">
                     <strong>${displayRoi.toFixed(2)}%</strong>
                 </td>
-                <td>${pos.stop_loss ? formatCurrency(pos.stop_loss) : '-'}</td>
-                <td>${pos.take_profit ? formatCurrency(pos.take_profit) : '-'}</td>
+                <td>${pos.stop_loss || pos.metadata?.stop_loss ? formatCurrency(pos.stop_loss || pos.metadata?.stop_loss) : '-'}</td>
+                <td>${pos.take_profit || pos.metadata?.take_profit ? formatCurrency(pos.take_profit || pos.metadata?.take_profit) : '-'}</td>
                 <td>${durationText}</td>
                 <td>
                     <button class="btn btn-sm btn-icon btn-secondary" onclick="viewPositionDetails('${pos.id}')" title="View Details">
@@ -386,11 +391,11 @@ async function viewPositionDetails(positionId) {
                 </div>
                 <div class="metric-row">
                     <span class="metric-label">Stop Loss</span>
-                    <span class="metric-value">${position.stop_loss ? formatCurrency(position.stop_loss) : 'Not set'}</span>
+                    <span class="metric-value">${position.stop_loss || position.metadata?.stop_loss ? formatCurrency(position.stop_loss || position.metadata?.stop_loss) : 'Not set'}</span>
                 </div>
                 <div class="metric-row">
                     <span class="metric-label">Take Profit</span>
-                    <span class="metric-value">${position.take_profit ? formatCurrency(position.take_profit) : 'Not set'}</span>
+                    <span class="metric-value">${position.take_profit || position.metadata?.take_profit ? formatCurrency(position.take_profit || position.metadata?.take_profit) : 'Not set'}</span>
                 </div>
                 <div class="metric-row">
                     <span class="metric-label">Opened</span>

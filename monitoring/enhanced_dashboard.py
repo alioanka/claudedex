@@ -504,6 +504,10 @@ class DashboardEndpoints:
                         except:
                             pass
                     
+                    # Convert timestamps to ISO string
+                    entry_ts = trade.get('entry_timestamp')
+                    exit_ts = trade.get('exit_timestamp')
+
                     closed_positions.append({
                         'id': trade.get('id'),
                         'token_symbol': trade.get('token_symbol', 'UNKNOWN'),
@@ -513,8 +517,8 @@ class DashboardEndpoints:
                         'amount': float(trade.get('amount', 0)),
                         'profit_loss': float(trade.get('profit_loss', 0)),
                         'roi': float(trade.get('roi', 0)),
-                        'entry_timestamp': trade.get('entry_timestamp'),
-                        'exit_timestamp': trade.get('exit_timestamp'),
+                        'entry_timestamp': entry_ts.isoformat() if entry_ts else None,  # ✅ Convert to string
+                        'exit_timestamp': exit_ts.isoformat() if exit_ts else None,      # ✅ Convert to string
                         'duration': duration,
                         'exit_reason': trade.get('exit_reason', 'manual')
                     })
