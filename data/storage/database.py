@@ -607,47 +607,34 @@ class DatabaseManager:
             
             return [dict(row) for row in rows]
     
-    async def get_recent_trades(
-        self,
-        limit: int = 100,
-        status: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
-        """Get recent trades with optional status filter."""
-        async with self.acquire() as conn:
-            if status:
-                rows = await conn.fetch("""
-                    SELECT * FROM trades
-                    WHERE status = $1
-                    ORDER BY entry_timestamp DESC
-                    LIMIT $2
-                """, status, limit)
-            else:
-                rows = await conn.fetch("""
-                    SELECT * FROM trades
-                    ORDER BY entry_timestamp DESC
-                    LIMIT $1
-                """, limit)
+    async def get_recent_trades(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get recent trades."""
+        if not self.pool or not self.is_connected:
+            return []
+        
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT *
+                FROM trades
+                ORDER BY entry_timestamp DESC
+                LIMIT $1
+            """, limit)
             
             return [dict(row) for row in rows]
 
     async def get_closed_trades(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Get closed trades (positions that have been exited)."""
-        async with self.acquire() as conn:
+        if not self.pool or not self.is_connected:
+            return []
+        
+        async with self.pool.acquire() as conn:
             rows = await conn.fetch("""
-                SELECT 
-                    t.*,
-                    COALESCE(m.token_symbol, 'UNKNOWN') as token_symbol
-                FROM trades t
-                LEFT JOIN (
-                    SELECT DISTINCT ON (token_address, chain) 
-                        token_address, chain, token_symbol
-                    FROM market_data
-                    ORDER BY token_address, chain, time DESC
-                ) m ON t.token_address = m.token_address AND t.chain = m.chain
-                WHERE t.status = 'closed' 
-                AND t.side = 'buy'
-                AND t.exit_timestamp IS NOT NULL
-                ORDER BY t.exit_timestamp DESC
+                SELECT *
+                FROM trades
+                WHERE status = 'closed' 
+                AND side = 'buy'
+                AND exit_timestamp IS NOT NULL
+                ORDER BY exit_timestamp DESC
                 LIMIT $1
             """, limit)
             
