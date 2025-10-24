@@ -518,6 +518,14 @@ class JupiterExecutor(BaseExecutor):
                 'confirmed': confirmed,
                 'gas_used': 0.0005  # Estimate, actual from transaction details
             }
+
+        # ✅ ADD THESE LINES:
+        except Exception as e:
+            logger.error(f"Error executing swap: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
     
     async def _wait_for_confirmation(
         self,
