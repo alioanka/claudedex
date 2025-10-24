@@ -1106,71 +1106,6 @@ class TradingBotEngine:
                 )
                 await asyncio.sleep(30)
 
-    async def _execute_position_exit(
-        self,
-        position: Dict,
-        reason: str,
-        current_price: float
-    ) -> bool:
-        """
-        Execute exit for a position
-        
-        Args:
-            position: Position dictionary
-            reason: Exit reason
-            current_price: Current token price
-            
-        Returns:
-            bool: True if exit successful
-        """
-        try:
-            position_id = position.get('id') or position.get('position_id')
-            token_address = position.get('token_address')
-            symbol = position.get('symbol', 'UNKNOWN')
-            chain = position.get('chain', 'unknown')
-            
-            logger.info(
-                f"\ud83d\udee0\ufe0f Executing exit for {symbol} on {chain}",
-                extra={
-                    'position_id': position_id,
-                    'token_address': token_address,
-                    'reason': reason,
-                    'price': current_price
-                }
-            )
-            
-            # Close position via order manager
-            success = await self.order_manager.close_position(
-                position_id=position_id,
-                reason=reason,
-                current_price=current_price
-            )
-            
-            if success:
-                logger.info(
-                    f"\u2705 Successfully closed position {symbol}",
-                    extra={
-                        'position_id': position_id,
-                        'reason': reason
-                    }
-                )
-            else:
-                logger.error(
-                    f"\u274c Failed to close position {symbol}",
-                    extra={
-                        'position_id': position_id,
-                        'reason': reason
-                    }
-                )
-            
-            return success
-            
-        except Exception as e:
-            logger.error(
-                f"Error executing exit for position {position_id}: {e}",
-                extra={'position_id': position_id, 'error': str(e)}
-            )
-            return False
 
     async def _calculate_position_size(
         self,
@@ -1187,10 +1122,10 @@ class TradingBotEngine:
         """
         try:
             # Get config values
-            from config.config_manager import PortfolioConfig, RiskConfig
+            from config.config_manager import PortfolioConfig, RiskManagementConfig
             
             portfolio_config = PortfolioConfig()
-            risk_config = RiskConfig()
+            risk_config = RiskManagementConfig()
             
             # Base calculation: portfolio / max_positions
             portfolio_balance = portfolio_config.initial_balance
@@ -1297,16 +1232,20 @@ class TradingBotEngine:
 
     async def _close_position(self, position: Dict, reason: str):
         """Close a trading position and add to cooldown"""
-        # ✅ Add None check
-        position = self.active_positions.get(token_address)
-        if not position:
-            self.logger.error(f"❌ Cannot close position - not found: {token_address}")
+        # ✅ FIX: Get token_address from position parameter FIRST
+        token_address = position.get('token_address')
+        token_symbol = position.get('token_symbol', 'UNKNOWN')
+        
+        if not token_address:
+            logger.error(f"❌ Cannot close position - missing token_address")
             return False
-
+        
+        # ✅ Verify position exists in active_positions
+        if token_address not in self.active_positions:
+            logger.error(f"❌ Cannot close position - not in active positions: {token_symbol}")
+            return False
+        
         try:
-            token_address = position['token_address']
-            token_symbol = position.get('token_symbol', 'UNKNOWN')
-            
             logger.info(f"💰 CLOSING POSITION: {token_symbol} ({token_address[:10]}...)")
             logger.info(f"   Reason: {reason}")
             
@@ -1338,16 +1277,13 @@ class TradingBotEngine:
                     self.stats['failed_trades'] += 1
                 
                 # ✅ UPDATE DATABASE
-                # ✅ CRITICAL: Update trade in database
                 try:
                     trade_id = position.get('trade_id')
                     if not trade_id:
                         # Try to find trade by token address
-                        #trade_id = await self.db.find_trade_by_token(token_address)
-                        # Get position from in-memory tracking
-                        position = self.open_positions.get(token_address)
-                        if position:
-                            trade_id = position.get('trade_id')
+                        position_obj = self.open_positions.get(token_address) if hasattr(self, 'open_positions') else None
+                        if position_obj:
+                            trade_id = position_obj.get('trade_id')
                         else:
                             # Fallback: query database directly
                             query = "SELECT id FROM trades WHERE token_address = $1 ORDER BY created_at DESC LIMIT 1"
@@ -1383,21 +1319,15 @@ class TradingBotEngine:
                     logger.error(traceback.format_exc())
                 
                 # ✅ ADD TO COOLDOWN TRACKING
-                # ✅ Add to cooldown tracking
                 self.recently_closed[token_address] = ClosedPositionRecord(
                     token_address=token_address,
                     closed_at=datetime.now(),
                     reason=reason,
-                    pnl=float(final_pnl) if not is_dry_run else float(final_pnl)
+                    pnl=float(final_pnl)
                 )
                 logger.info(f"🕐❄️ {token_symbol} added to cooldown for {self.cooldown_minutes} minutes")
-
-                # Update stats
-                if final_pnl > 0:
-                    self.stats['total_profit'] += float(final_pnl)
-                    
+                
                 logger.info(f"📊 Total profit so far: ${self.stats.get('total_profit', 0):.2f}")
-#                logger.info(f"❄️ Added {token_symbol} to cooldown ({self.cooldown_minutes} min)")
                 
                 # Remove from active positions
                 del self.active_positions[token_address]
@@ -1415,9 +1345,7 @@ class TradingBotEngine:
                 )
                 
                 logger.info(f"✅ DRY RUN position closed and added to cooldown")
-                return
-            
-            # REAL EXECUTION continues with existing code...
+                return True
             
             # REAL EXECUTION
             from trading.executors.base_executor import TradeOrder
@@ -1474,6 +1402,7 @@ class TradingBotEngine:
                 )
                 
                 logger.info(f"✅ Successfully closed position: {token_symbol}")
+                return True
                 
             else:
                 logger.error(f"❌ Failed to close position: {result.error}")
@@ -1482,10 +1411,12 @@ class TradingBotEngine:
                     f"Error: {result.error}\n"
                     f"Will retry..."
                 )
+                return False
                 
         except Exception as e:
-            logger.error(f"Error closing position: {e}", exc_info=True)
+            logger.error(f"Error closing position {token_symbol}: {e}", exc_info=True)
             await self.alert_manager.send_critical(f"Critical error closing position: {e}")
+            return False
 
     async def _monitor_mempool(self):
         """Monitor mempool for relevant transactions"""

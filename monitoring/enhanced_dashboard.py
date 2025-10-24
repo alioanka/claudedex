@@ -274,7 +274,7 @@ class DashboardEndpoints:
             # Get portfolio data if available
             if self.portfolio:
                 # Get portfolio summary
-                portfolio_summary = await self.engine.portfolio_manager.get_summary()
+                portfolio_summary = self.engine.portfolio_manager.get_summary()
                 
                 # Get config with fallback
                 try:
