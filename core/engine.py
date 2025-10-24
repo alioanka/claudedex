@@ -1112,24 +1112,15 @@ class TradingBotEngine:
         risk_score: Optional[float] = None,
         opportunity_score: float = 0.7
     ) -> float:
-        """
-        Calculate position size based on portfolio and risk
-        
-        Returns position size in USD based on:
-        - Portfolio balance from config
-        - Max positions from config
-        - Optional risk adjustment
-        """
         try:
             # Get config values
-            from config.config_manager import PortfolioConfig, RiskManagementConfig
+            from config.config_manager import PortfolioConfig
             
             portfolio_config = PortfolioConfig()
-            risk_config = RiskManagementConfig()
             
-            # Base calculation: portfolio / max_positions
+            # ✅ Get both values from PortfolioConfig
             portfolio_balance = portfolio_config.initial_balance
-            max_positions = risk_config.max_positions
+            max_positions = portfolio_config.max_positions  # ✅ NOW FROM PORTFOLIO CONFIG!
             base_position_size = portfolio_balance / max_positions
             
             logger.debug(
@@ -1232,7 +1223,7 @@ class TradingBotEngine:
 
     async def _close_position(self, position: Dict, reason: str):
         """Close a trading position and add to cooldown"""
-        # ✅ FIX: Get token_address from position parameter FIRST
+        # ✅ Get token_address from position parameter FIRST
         token_address = position.get('token_address')
         token_symbol = position.get('token_symbol', 'UNKNOWN')
         
@@ -1276,42 +1267,61 @@ class TradingBotEngine:
                 else:
                     self.stats['failed_trades'] += 1
                 
-                # ✅ UPDATE DATABASE
+                # ✅ UPDATE DATABASE - FIXED VERSION
                 try:
                     trade_id = position.get('trade_id')
+                    
                     if not trade_id:
-                        # Try to find trade by token address
-                        position_obj = self.open_positions.get(token_address) if hasattr(self, 'open_positions') else None
-                        if position_obj:
-                            trade_id = position_obj.get('trade_id')
-                        else:
-                            # Fallback: query database directly
-                            query = "SELECT id FROM trades WHERE token_address = $1 ORDER BY created_at DESC LIMIT 1"
-                            trade_id = await self.db.pool.fetchval(query, token_address)
+                        # Try to find trade by token address and open status
+                        query = """
+                        SELECT id FROM trades 
+                        WHERE token_address = $1 
+                        AND status = 'open'
+                        ORDER BY entry_timestamp DESC 
+                        LIMIT 1
+                        """
+                        trade_id = await self.db.pool.fetchval(query, token_address)
 
                     if trade_id:
+                        # ✅ Build metadata with close_reason
+                        updated_metadata = {
+                            **position.get('metadata', {}),
+                            'close_reason': reason,  # ✅ Store in metadata
+                            'holding_time_minutes': holding_time,
+                            'close_details': {
+                                'entry_price': float(entry_price),
+                                'exit_price': float(current_price),
+                                'amount': float(amount),
+                                'final_pnl': float(final_pnl),
+                                'pnl_percentage': float(pnl_percentage)
+                            }
+                        }
+                        
+                        # ✅ Update trade - NO close_reason column!
                         await self.db.update_trade(trade_id, {
                             'exit_price': float(current_price),
                             'exit_timestamp': datetime.now(),
                             'profit_loss': float(final_pnl),
                             'profit_loss_percentage': float(pnl_percentage),
-                            'status': 'closed',
-                            'close_reason': reason,
-                            'holding_time_minutes': holding_time,
-                            'metadata': {
-                                **position.get('metadata', {}),
-                                'close_details': {
-                                    'entry_price': float(entry_price),
-                                    'exit_price': float(current_price),
-                                    'amount': float(amount),
-                                    'final_pnl': float(final_pnl),
-                                    'pnl_percentage': float(pnl_percentage)
-                                }
-                            }
+                            'status': 'closed',  # ✅ CRITICAL!
+                            'metadata': updated_metadata
                         })
-                        logger.info(f"✅ Trade {trade_id} closed in database")
+                        
+                        logger.info(f"✅ Trade {trade_id} closed in database with status='closed'")
+                        
+                        # ✅ Verify update worked
+                        verify_query = "SELECT status, exit_price, profit_loss FROM trades WHERE id = $1"
+                        verify = await self.db.pool.fetchrow(verify_query, trade_id)
+                        if verify:
+                            logger.info(
+                                f"   ✅ Verified: status={verify['status']}, "
+                                f"exit_price={verify['exit_price']}, "
+                                f"profit_loss={verify['profit_loss']}"
+                            )
+                        else:
+                            logger.error(f"   ❌ Could not verify trade {trade_id} update")
                     else:
-                        logger.warning(f"⚠️  Could not find trade_id for {token_symbol}")
+                        logger.warning(f"⚠️  Could not find open trade_id for {token_symbol} ({token_address})")
                         
                 except Exception as e:
                     logger.error(f"❌ Failed to update trade in database: {e}")
@@ -1347,15 +1357,14 @@ class TradingBotEngine:
                 logger.info(f"✅ DRY RUN position closed and added to cooldown")
                 return True
             
-            # REAL EXECUTION
+            # REAL EXECUTION (unchanged)
             from trading.executors.base_executor import TradeOrder
             
-            # Prepare sell order
             order = TradeOrder(
                 token_address=token_address,
                 side='sell',
                 amount=position['amount'],
-                slippage=0.05,  # 5% slippage for exit
+                slippage=0.05,
                 deadline=300,
                 gas_price_multiplier=1.5 if 'rug' in reason else 1.2,
                 use_mev_protection=True,
@@ -1367,30 +1376,24 @@ class TradingBotEngine:
                 }
             )
             
-            # Execute trade
             result = await self.trade_executor.execute(order)
             
             if result.success:
-                # Calculate final P&L
                 exit_price = result.execution_price
                 final_pnl = (exit_price - position['entry_price']) * position['amount']
                 pnl_percentage = ((exit_price - position['entry_price']) / position['entry_price']) * 100
                 
-                # Update stats
                 self.stats['total_profit'] += final_pnl
                 if final_pnl > 0:
                     self.stats['successful_trades'] += 1
                 else:
                     self.stats['failed_trades'] += 1
                 
-                # Update position tracker
                 if hasattr(self, 'position_tracker') and position.get('tracker_id'):
                     await self.position_tracker.close_position(position['tracker_id'])
                 
-                # Remove from active positions
                 del self.active_positions[token_address]
                 
-                # Send success alert
                 emoji = "💰" if final_pnl > 0 else "💸"
                 await self.alert_manager.send_trade_alert(
                     f"{emoji} Position Closed: {token_symbol}\n"
@@ -1403,7 +1406,6 @@ class TradingBotEngine:
                 
                 logger.info(f"✅ Successfully closed position: {token_symbol}")
                 return True
-                
             else:
                 logger.error(f"❌ Failed to close position: {result.error}")
                 await self.alert_manager.send_warning(

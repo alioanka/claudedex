@@ -232,11 +232,12 @@ class PortfolioConfig(BaseModel):
     """Portfolio configuration schema"""
     # ✅ CHANGE THESE VALUES:
     initial_balance: float = 400.0              # Was 10000, now 400
-    max_positions: int = 8                      # Was 10, now 8
+    max_positions: int = 40                      # Was 10, now 8
     max_position_size_pct: float = 0.10         # Keep 10%
     max_risk_per_trade: float = 0.10            # Was 0.05, now 0.10
     max_portfolio_risk: float = 0.25            # Keep 25%
     min_position_size: float = 5.0              # Was 100.0, now 5.0
+    max_position_size: float = 15.0
     allocation_strategy: str = "DYNAMIC"        # Keep
     daily_loss_limit: float = 0.10              # Was 0.15, now 0.10
     consecutive_losses_limit: int = 5           # Keep
