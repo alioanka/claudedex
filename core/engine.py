@@ -215,6 +215,8 @@ class TradingBotEngine:
         # Position tracking
         self.open_positions: Dict[str, Dict] = {}
         self.position_history: List[Dict] = []
+        self.positions_lock = asyncio.Lock()
+        self.active_trades: Dict[str, Dict] = {}
 
         # Cooldown tracking
         self.recently_closed: Dict[str, ClosedPositionRecord] = {}  # token_address -> record

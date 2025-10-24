@@ -833,7 +833,7 @@ class DatabaseManager:
 
     async def find_trade_by_token(self, token_address: str) -> Optional[int]:
         """
-        Find trade ID by token address
+        Find most recent trade ID by token address
         
         Args:
             token_address: Token contract address
@@ -849,7 +849,44 @@ class DatabaseManager:
                 LIMIT 1
             """
             result = await self.pool.fetchval(query, token_address)
+            
+            if result:
+                logger.debug(f"Found trade {result} for token {token_address}")
+            else:
+                logger.warning(f"No trade found for token {token_address}")
+                
             return result
+            
         except Exception as e:
-            logger.error(f"Error finding trade by token: {e}")
+            logger.error(f"Error finding trade by token {token_address}: {e}")
+            return None
+
+    async def find_position_by_token(self, token_address: str) -> Optional[int]:
+        """
+        Find most recent position ID by token address
+        
+        Args:
+            token_address: Token contract address
+            
+        Returns:
+            Position ID if found, None otherwise
+        """
+        try:
+            query = """
+                SELECT id FROM positions 
+                WHERE token_address = $1 
+                ORDER BY created_at DESC 
+                LIMIT 1
+            """
+            result = await self.pool.fetchval(query, token_address)
+            
+            if result:
+                logger.debug(f"Found position {result} for token {token_address}")
+            else:
+                logger.warning(f"No position found for token {token_address}")
+                
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error finding position by token {token_address}: {e}")
             return None
