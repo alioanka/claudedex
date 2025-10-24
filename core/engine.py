@@ -1125,6 +1125,12 @@ class TradingBotEngine:
 
     async def _close_position(self, position: Dict, reason: str):
         """Close a trading position and add to cooldown"""
+        # ✅ Add None check
+        position = self.active_positions.get(token_address)
+        if not position:
+            self.logger.error(f"❌ Cannot close position - not found: {token_address}")
+            return False
+
         try:
             token_address = position['token_address']
             token_symbol = position.get('token_symbol', 'UNKNOWN')

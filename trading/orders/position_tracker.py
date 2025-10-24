@@ -15,6 +15,7 @@ from enum import Enum
 import json
 import statistics
 from collections import defaultdict, deque
+from config.config_manager import PortfolioConfig
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +202,7 @@ class PositionTracker:
         self.config = config or self._default_config()
         self.positions: Dict[str, Position] = {}
         self.closed_positions: List[Position] = []
-        self.portfolio_history: deque = deque(maxlen=10000)
+        self.portfolio_history: deque = deque(maxlen=1000)
         
         # Portfolio state
         self.total_portfolio_value = Decimal("0")
@@ -1026,7 +1027,9 @@ class PositionTracker:
             ) - metrics.total_fees
             
             # Calculate ROI
-            initial_balance = Decimal("10000")  # From config
+            #initial_balance = Decimal("10000")  # From config
+            config = PortfolioConfig()
+            initial_balance = Decimal(str(config.initial_balance))
             metrics.roi = float(metrics.net_profit / initial_balance)
             
             # Calculate Sharpe ratio

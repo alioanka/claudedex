@@ -273,8 +273,9 @@ class DashboardEndpoints:
             # Get portfolio data if available
             if self.portfolio:
                 portfolio_summary = self.portfolio.get_portfolio_summary()
+                config = PortfolioConfig()
                 summary = {
-                    'cash_balance': float(portfolio_summary.get('cash_balance', 10000)),
+                    'cash_balance': float(portfolio_summary.get('cash_balance', config.initial_balance)),
                     'positions_value': float(portfolio_summary.get('positions_value', 0)),
                     'daily_pnl': float(portfolio_summary.get('daily_pnl', 0)),
                     'sharpe_ratio': float(portfolio_summary.get('sharpe_ratio', 0)),
@@ -300,7 +301,8 @@ class DashboardEndpoints:
                 open_positions_count = len(self.engine.active_positions)
             
             # Calculate portfolio value: starting balance + cumulative P&L
-            starting_balance = 10000
+            config = PortfolioConfig()
+            starting_balance = config.initial_balance
             portfolio_value = starting_balance + total_pnl
             
             # Update summary with calculated values
@@ -827,7 +829,8 @@ class DashboardEndpoints:
             from collections import defaultdict
             daily_pnl = defaultdict(float)
             
-            starting_value = 10000
+            config = PortfolioConfig()
+            starting_balance = config.initial_balance
             cumulative_pnl = cumulative_pnl_before
             
             for trade in filtered_trades:

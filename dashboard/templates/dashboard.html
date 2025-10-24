@@ -557,7 +557,7 @@ async function loadHistoricalStats() {
             
             // ✅ Update Portfolio Value and Total P&L with percentages
             const totalPnl = hist.total_pnl || 0;
-            const startingBalance = 10000;
+            const startingBalance = 400;
             const portfolioValue = startingBalance + totalPnl;
             const pnlPercent = (totalPnl / startingBalance) * 100;
             

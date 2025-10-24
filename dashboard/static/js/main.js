@@ -216,7 +216,7 @@ async function loadTopBarData() {
             const hist = response.data.historical;
             
             // Get realized P&L from closed trades
-            const startingBalance = 10000;
+            const startingBalance = 400;
             const realizedPnl = hist.total_pnl || 0;
             
             // Get unrealized P&L from open positions
