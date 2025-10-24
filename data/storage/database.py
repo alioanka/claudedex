@@ -341,7 +341,7 @@ class DatabaseManager:
             logger.info(f"Saved trade: {result['trade_id']}")
             return result['trade_id']
     
-    async def update_trade(self, trade_id: str, updates: Dict[str, Any]) -> bool:
+    async def update_trade(self, trade_id: Union[str, int], updates: Dict[str, Any]) -> bool:
         """Update an existing trade record."""
         async with self.acquire() as conn:
             # Build update query dynamically
@@ -355,12 +355,25 @@ class DatabaseManager:
                     set_clauses.append(f"{key} = ${i}")
                     values.append(value)
             
-            values.append(trade_id)
-            query = f"""
-                UPDATE trades 
-                SET {', '.join(set_clauses)}, updated_at = NOW()
-                WHERE trade_id = ${len(values)}
-            """
+            # ✅ Convert trade_id to appropriate type based on what we're matching
+            # If trade_id is an integer, we're matching against 'id' column
+            # If it's a string, we're matching against 'trade_id' column
+            if isinstance(trade_id, int):
+                # Match by integer id column
+                values.append(trade_id)
+                query = f"""
+                    UPDATE trades 
+                    SET {', '.join(set_clauses)}, updated_at = NOW()
+                    WHERE id = ${len(values)}
+                """
+            else:
+                # Match by text trade_id column
+                values.append(str(trade_id))
+                query = f"""
+                    UPDATE trades 
+                    SET {', '.join(set_clauses)}, updated_at = NOW()
+                    WHERE trade_id = ${len(values)}
+                """
             
             result = await conn.execute(query, *values)
             return result != "UPDATE 0"

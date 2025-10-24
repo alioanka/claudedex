@@ -419,7 +419,10 @@ class DashboardEndpoints:
             positions = []
             
             if self.engine and hasattr(self.engine, 'active_positions'):
-                for token_address, position in self.engine.active_positions.items():
+                # ✅ Create a snapshot copy to avoid "dictionary changed size" error
+                active_positions_snapshot = dict(self.engine.active_positions.items())
+                
+                for token_address, position in active_positions_snapshot.items():
                     # Extract and calculate all required fields
                     entry_price = float(position.get('entry_price', 0))
                     current_price = float(position.get('current_price', entry_price))
