@@ -1159,8 +1159,16 @@ class TradingBotEngine:
                     trade_id = position.get('trade_id')
                     if not trade_id:
                         # Try to find trade by token address
-                        trade_id = await self.db.find_trade_by_token(token_address)
-                    
+                        #trade_id = await self.db.find_trade_by_token(token_address)
+                        # Get position from in-memory tracking
+                        position = self.open_positions.get(token_address)
+                        if position:
+                            trade_id = position.get('trade_id')
+                        else:
+                            # Fallback: query database directly
+                            query = "SELECT id FROM trades WHERE token_address = $1 ORDER BY created_at DESC LIMIT 1"
+                            trade_id = await self.db.pool.fetchval(query, token_address)
+
                     if trade_id:
                         await self.db.update_trade(trade_id, {
                             'exit_price': float(current_price),

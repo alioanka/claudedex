@@ -830,3 +830,26 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error getting performance summary: {e}")
             return {'error': str(e)}
+
+    async def find_trade_by_token(self, token_address: str) -> Optional[int]:
+        """
+        Find trade ID by token address
+        
+        Args:
+            token_address: Token contract address
+            
+        Returns:
+            Trade ID if found, None otherwise
+        """
+        try:
+            query = """
+                SELECT id FROM trades 
+                WHERE token_address = $1 
+                ORDER BY created_at DESC 
+                LIMIT 1
+            """
+            result = await self.pool.fetchval(query, token_address)
+            return result
+        except Exception as e:
+            logger.error(f"Error finding trade by token: {e}")
+            return None
