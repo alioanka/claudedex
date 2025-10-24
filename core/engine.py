@@ -622,7 +622,13 @@ class TradingBotEngine:
             
             # If we get here, score is good enough!
             logger.info(f"   ✅ PASSED: Score {score:.4f} >= {min_score}")
-            
+
+            # ✅ Calculate position size from config
+            position_size = await self._calculate_position_size(
+                risk_score=risk_score,
+                opportunity_score=score
+            )
+
             # Create opportunity
             opportunity = TradingOpportunity(
                 token_address=pair.get('token_address', ''),
@@ -636,7 +642,7 @@ class TradingBotEngine:
                 pump_probability=score * 0.8,
                 rug_probability=0.2,
                 expected_return=score * 100,
-                recommended_position_size=1000,
+                recommended_position_size=position_size,  # ✅ FROM CONFIG!
                 entry_strategy='momentum',
                 metadata={
                     'pair': pair,
@@ -765,11 +771,16 @@ class TradingBotEngine:
                 logger.info(f"   Score: {opportunity.score:.3f}")
                 
                 # Create simulated position (same as before)
+                # ✅ Create simulated position with calculated size
                 from decimal import Decimal
                 import uuid
                 
-                simulated_amount = 1000 / opportunity.price
+                # Use the recommended_position_size from opportunity (already calculated)
+                position_value = Decimal(str(opportunity.recommended_position_size))
+                simulated_amount = position_value / Decimal(str(opportunity.price))
                 trade_id = str(uuid.uuid4())
+                
+                logger.info(f"   Position Size: ${position_value} ({simulated_amount:.4f} tokens)")
                 
                 position = {
                     'id': trade_id,
@@ -778,7 +789,7 @@ class TradingBotEngine:
                     'token_symbol': token_symbol,
                     'entry_price': Decimal(str(opportunity.price)),
                     'amount': Decimal(str(simulated_amount)),
-                    'entry_value': Decimal('1000'),
+                    'entry_value': position_value,  # ✅ FROM CALCULATED SIZE!
                     'entry_time': datetime.now(),
                     'chain': opportunity.chain,
                     'strategy': {'name': opportunity.entry_strategy},
@@ -983,6 +994,10 @@ class TradingBotEngine:
         logger.info("📊 Starting position monitoring loop...")
         
         while self.state == BotState.RUNNING:
+            # ✅ FIX: Initialize at outer scope
+            token_address = None
+            position = None
+            
             try:
                 if not self.active_positions:
                     await asyncio.sleep(5)
@@ -991,18 +1006,27 @@ class TradingBotEngine:
                 logger.info(f"📊 Monitoring {len(self.active_positions)} active positions...")
                 
                 for token_address, position in list(self.active_positions.items()):
+                    # ✅ FIX: Initialize position-specific variables at loop scope
+                    current_price = None
+                    chain = None
+                    token_symbol = None
+                    
                     try:
-                        # Get current price from DexScreener
+                        # Get position details
                         chain = position.get('chain', 'ethereum')
+                        token_symbol = position.get('token_symbol', 'UNKNOWN')
                         
-                        # ✅ FIX: Call with correct signature
+                        # Get current price from DexScreener
                         current_price = await self.dex_collector.get_token_price(
-                            token_address=token_address,  # ✅ Named parameter
-                            chain=chain                    # ✅ Named parameter
+                            token_address=token_address,
+                            chain=chain
                         )
                         
                         if not current_price:
-                            logger.warning(f"⚠️ Could not get price for {token_address[:10]}... on {chain}")
+                            logger.warning(
+                                f"⚠️ Could not get price for {token_symbol} "
+                                f"({token_address[:10]}...) on {chain}"
+                            )
                             continue
                         
                         # Update position with current price
@@ -1017,10 +1041,10 @@ class TradingBotEngine:
                         position['pnl_percentage'] = float((current_value - entry_value) / entry_value * 100)
                         
                         # Calculate holding time
-                        holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60  # minutes
+                        holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
                         
                         logger.info(
-                            f"  📈 {position.get('token_symbol', 'TOKEN')} - "
+                            f"  📈 {token_symbol} - "
                             f"Entry: ${position['entry_price']:.8f}, Current: ${current_price:.8f}, "
                             f"P&L: {position['pnl_percentage']:.2f}% (${position['pnl']:.2f}), "
                             f"Time: {holding_time:.1f}min"
@@ -1030,7 +1054,14 @@ class TradingBotEngine:
                         should_exit, reason = await self._check_exit_conditions(position)
                         
                         if should_exit:
-                            logger.info(f"  🚪 EXIT SIGNAL for {position.get('token_symbol')}: {reason}")
+                            logger.info(
+                                f"  🚪 EXIT SIGNAL for {token_symbol}: {reason}",
+                                extra={
+                                    'token_address': token_address,
+                                    'symbol': token_symbol,
+                                    'reason': reason
+                                }
+                            )
                             await self._close_position(position, reason)
                         else:
                             # Update position in tracker
@@ -1041,22 +1072,163 @@ class TradingBotEngine:
                                 )
                         
                     except Exception as e:
-                        logger.error(f"Error monitoring position {token_address[:10]}: {e}")
+                        # ✅ FIX: Now all variables are guaranteed to be defined
+                        logger.error(
+                            f"Error monitoring position {token_address[:10] if token_address else 'unknown'} "
+                            f"({token_symbol or 'UNKNOWN'}): {e}",
+                            extra={
+                                'token_address': token_address,
+                                'symbol': token_symbol,
+                                'chain': chain,
+                                'error': str(e)
+                            },
+                            exc_info=True
+                        )
                         continue
                 
                 # Log portfolio summary
                 total_value = sum(p.get('current_value', 0) for p in self.active_positions.values())
                 total_pnl = sum(p.get('pnl', 0) for p in self.active_positions.values())
-                logger.info(f"💼 Portfolio: {len(self.active_positions)} positions, Value: ${total_value:.2f}, P&L: ${total_pnl:.2f}")
+                logger.info(
+                    f"💼 Portfolio: {len(self.active_positions)} positions, "
+                    f"Value: ${total_value:.2f}, P&L: ${total_pnl:.2f}"
+                )
                 
-                # ✅ Get interval from config or use default
+                # Get interval from config
                 update_interval = self.config.get('position_update_interval_seconds', 10)
                 await asyncio.sleep(update_interval)
                 
             except Exception as e:
-                logger.error(f"Error in position monitoring loop: {e}", exc_info=True)
+                # ✅ FIX: Safe variable access in outer exception
+                logger.error(
+                    f"Error in position monitoring loop for {token_address[:10] if token_address else 'unknown'}: {e}",
+                    exc_info=True
+                )
                 await asyncio.sleep(30)
 
+    async def _execute_position_exit(
+        self,
+        position: Dict,
+        reason: str,
+        current_price: float
+    ) -> bool:
+        """
+        Execute exit for a position
+        
+        Args:
+            position: Position dictionary
+            reason: Exit reason
+            current_price: Current token price
+            
+        Returns:
+            bool: True if exit successful
+        """
+        try:
+            position_id = position.get('id') or position.get('position_id')
+            token_address = position.get('token_address')
+            symbol = position.get('symbol', 'UNKNOWN')
+            chain = position.get('chain', 'unknown')
+            
+            logger.info(
+                f"\ud83d\udee0\ufe0f Executing exit for {symbol} on {chain}",
+                extra={
+                    'position_id': position_id,
+                    'token_address': token_address,
+                    'reason': reason,
+                    'price': current_price
+                }
+            )
+            
+            # Close position via order manager
+            success = await self.order_manager.close_position(
+                position_id=position_id,
+                reason=reason,
+                current_price=current_price
+            )
+            
+            if success:
+                logger.info(
+                    f"\u2705 Successfully closed position {symbol}",
+                    extra={
+                        'position_id': position_id,
+                        'reason': reason
+                    }
+                )
+            else:
+                logger.error(
+                    f"\u274c Failed to close position {symbol}",
+                    extra={
+                        'position_id': position_id,
+                        'reason': reason
+                    }
+                )
+            
+            return success
+            
+        except Exception as e:
+            logger.error(
+                f"Error executing exit for position {position_id}: {e}",
+                extra={'position_id': position_id, 'error': str(e)}
+            )
+            return False
+
+    async def _calculate_position_size(
+        self,
+        risk_score: Optional[float] = None,
+        opportunity_score: float = 0.7
+    ) -> float:
+        """
+        Calculate position size based on portfolio and risk
+        
+        Returns position size in USD based on:
+        - Portfolio balance from config
+        - Max positions from config
+        - Optional risk adjustment
+        """
+        try:
+            # Get config values
+            from config.config_manager import PortfolioConfig, RiskConfig
+            
+            portfolio_config = PortfolioConfig()
+            risk_config = RiskConfig()
+            
+            # Base calculation: portfolio / max_positions
+            portfolio_balance = portfolio_config.initial_balance
+            max_positions = risk_config.max_positions
+            base_position_size = portfolio_balance / max_positions
+            
+            logger.debug(
+                f"📊 Position sizing: Portfolio=${portfolio_balance}, "
+                f"Max positions={max_positions}, Base=${base_position_size}"
+            )
+            
+            # Apply risk adjustment if provided
+            if risk_score and hasattr(risk_score, 'overall_risk'):
+                # Reduce size for high risk (max 30% reduction)
+                risk_multiplier = 1.0 - (risk_score.overall_risk * 0.3)
+                adjusted_size = base_position_size * risk_multiplier
+                
+                logger.debug(
+                    f"   Risk: {risk_score.overall_risk:.2f}, "
+                    f"Multiplier: {risk_multiplier:.2f}, "
+                    f"Adjusted: ${adjusted_size:.2f}"
+                )
+            else:
+                adjusted_size = base_position_size
+            
+            # Ensure within bounds
+            min_size = portfolio_config.min_position_size or 5
+            max_size = base_position_size * 1.5  # Allow up to 1.5x for great opportunities
+            
+            final_size = max(min_size, min(adjusted_size, max_size))
+            
+            logger.info(f"💰 Calculated position size: ${final_size:.2f}")
+            
+            return float(final_size)
+            
+        except Exception as e:
+            logger.error(f"Error calculating position size: {e}")
+            return 10.0  # Safe fallback
                 
     # ============================================================================
     # FIX 2: engine.py - Fix _check_exit_conditions method (around line 820)

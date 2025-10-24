@@ -16,7 +16,7 @@ def init_config():
     
     # Trading configuration
     trading_config = {
-        "max_position_size": 1000,
+        "max_position_size": 10,
         "max_slippage": 0.05,
         "min_liquidity": 50000,
         "max_daily_trades": 20,

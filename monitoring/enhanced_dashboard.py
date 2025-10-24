@@ -19,6 +19,7 @@ import socketio
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 import pandas as pd
 import csv
+from config.config_manager import PortfolioConfig
 
 logger = logging.getLogger(__name__)
 
@@ -272,10 +273,20 @@ class DashboardEndpoints:
             
             # Get portfolio data if available
             if self.portfolio:
-                portfolio_summary = self.portfolio.get_portfolio_summary()
-                config = PortfolioConfig()
+                # Get portfolio summary
+                portfolio_summary = await self.engine.portfolio_manager.get_summary()
+                
+                # Get config with fallback
+                try:
+                    from config.config_manager import PortfolioConfig
+                    config = PortfolioConfig()
+                    default_balance = config.initial_balance
+                except Exception as e:
+                    logger.warning(f"Could not load PortfolioConfig: {e}, using default 400")
+                    default_balance = 400
+                
                 summary = {
-                    'cash_balance': float(portfolio_summary.get('cash_balance', config.initial_balance)),
+                    'cash_balance': float(portfolio_summary.get('cash_balance', default_balance)),
                     'positions_value': float(portfolio_summary.get('positions_value', 0)),
                     'daily_pnl': float(portfolio_summary.get('daily_pnl', 0)),
                     'sharpe_ratio': float(portfolio_summary.get('sharpe_ratio', 0)),
@@ -301,8 +312,11 @@ class DashboardEndpoints:
                 open_positions_count = len(self.engine.active_positions)
             
             # Calculate portfolio value: starting balance + cumulative P&L
-            config = PortfolioConfig()
-            starting_balance = config.initial_balance
+            try:
+                config = PortfolioConfig()
+                starting_balance = config.initial_balance
+            except Exception:
+                starting_balance = 400
             portfolio_value = starting_balance + total_pnl
             
             # Update summary with calculated values
@@ -829,8 +843,13 @@ class DashboardEndpoints:
             from collections import defaultdict
             daily_pnl = defaultdict(float)
             
-            config = PortfolioConfig()
-            starting_balance = config.initial_balance
+            # Calculate performance metrics
+            try:
+                from config.config_manager import PortfolioConfig
+                config = PortfolioConfig()
+                starting_value = config.initial_balance
+            except Exception:
+                starting_value = 400  # Fallback
             cumulative_pnl = cumulative_pnl_before
             
             for trade in filtered_trades:

@@ -216,7 +216,8 @@ document.addEventListener('DOMContentLoaded', async function() {
             // Populate trading settings
             if (response.data.trading) {
                 document.getElementById('tradingEnabled').checked = response.data.trading.enabled || false;
-                document.getElementById('maxPositionSize').value = response.data.trading.max_position_size || 1000;
+                const defaultPositionSize = 10;  // ✅ 400 / 40 = 10
+                document.getElementById('maxPositionSize').value = response.data.trading.max_position_size || defaultPositionSize;
                 document.getElementById('maxOpenPositions').value = response.data.trading.max_open_positions || 5;
                 document.getElementById('defaultStopLoss').value = response.data.trading.default_stop_loss || 5;
                 document.getElementById('defaultTakeProfit').value = response.data.trading.default_take_profit || 10;
@@ -254,7 +255,8 @@ document.addEventListener('DOMContentLoaded', async function() {
         } else {
             // ✅ If API fails, populate with default values
             document.getElementById('tradingEnabled').checked = true;
-            document.getElementById('maxPositionSize').value = 1000;
+            const defaultPositionSize = 10;
+            document.getElementById('maxPositionSize').value = defaultPositionSize;
             document.getElementById('maxOpenPositions').value = 5;
             document.getElementById('defaultStopLoss').value = 5;
             document.getElementById('defaultTakeProfit').value = 10;
@@ -271,7 +273,8 @@ document.addEventListener('DOMContentLoaded', async function() {
         console.error('Error loading settings:', error);
         // ✅ Populate with defaults on error
         document.getElementById('tradingEnabled').checked = true;
-        document.getElementById('maxPositionSize').value = 1000;
+        const defaultPositionSize = 10;
+        document.getElementById('maxPositionSize').value = defaultPositionSize;
         document.getElementById('maxOpenPositions').value = 5;
         document.getElementById('defaultStopLoss').value = 5;
         document.getElementById('defaultTakeProfit').value = 10;
