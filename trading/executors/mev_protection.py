@@ -79,6 +79,17 @@ class MEVProtectionLayer(BaseExecutor):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         
+        from trading.orders.order_manager import OrderStatus
+        self.active_orders = {}
+        
+        # ✅ ADD THIS LINE
+        self.dry_run = config.get('dry_run', True)
+        
+        # Protection configuration
+        self.protection_level = MEVProtectionLevel[
+            config.get('protection_level', 'ADVANCED').upper()
+        ]
+        
         from ..orders.order_manager import OrderStatus  # Import at top of file
         self.active_orders = {}  # Track active orders
 
@@ -647,6 +658,19 @@ class MEVProtectionLayer(BaseExecutor):
     async def execute_protected_trade(self, order: Order) -> Dict[str, Any]:
         """Execute trade with MEV protection"""
         try:
+            # ✅ CRITICAL: Respect dry run mode
+            if self.dry_run:
+                logger.info(f"🔒 MEV Protection - DRY RUN MODE for {order.token_out}")
+                return {
+                    'success': True,
+                    'dry_run': True,
+                    'token_amount': float(order.amount),
+                    'execution_price': 0.0,
+                    'total_cost': 0.0,
+                    'gas_fee': 0.0,
+                    'message': 'Dry run - no real execution',
+                    'timestamp': datetime.now().isoformat()
+                }
             # Build base transaction
             transaction = await self._build_transaction(order)
             
@@ -797,26 +821,31 @@ class MEVProtectionLayer(BaseExecutor):
         return await self.execute_protected_trade(order)
 
     async def validate_order(self, order: Order) -> bool:
-        """
-        Validate order for MEV-protected execution
-        
-        Args:
-            order: Order to validate
-            
-        Returns:
-            True if order is valid
-        """
+        """Validate order for MEV-protected execution"""
         try:
             # Basic validation
             if not order.token_in or not order.token_out:
+                logger.error("Missing token addresses")
                 return False
                 
             if order.amount <= 0:
+                logger.error("Invalid order amount")
+                return False
+            
+            # ✅ ADD: Slippage check
+            if order.slippage > 0.5:  # 50% max
+                logger.error(f"Excessive slippage: {order.slippage}")
                 return False
                 
             # Check if protection level is appropriate for order size
             if order.amount > Decimal('10000') and self.protection_level < MEVProtectionLevel.ADVANCED:
                 logger.warning("Large order should use ADVANCED or MAXIMUM protection")
+                
+            # ✅ ADD: Chain validation
+            supported_chains = ['ethereum', 'bsc', 'base', 'arbitrum', 'polygon']
+            if order.chain.lower() not in supported_chains:
+                logger.error(f"Unsupported chain: {order.chain}")
+                return False
                 
             # Check Web3 connection
             if not self.w3 or not self.w3.isConnected():

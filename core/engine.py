@@ -867,7 +867,53 @@ class TradingBotEngine:
                 }
             )
             
-            # Execute trade using appropriate executor
+            # ✅ CRITICAL: Final safety checks before real execution
+            if not is_dry_run:
+                logger.info(f"🔍 FINAL SAFETY CHECKS for {token_symbol}...")
+                
+                # 1. Verify balance
+                try:
+                    balance = await executor.get_balance(order.token_in)
+                    required = order.amount * Decimal('1.1')  # Need 10% buffer for gas
+                    
+                    if balance < required:
+                        logger.error(f"❌ INSUFFICIENT BALANCE: Have {balance}, need {required}")
+                        await self.alert_manager.send_error(
+                            f"Trade cancelled - Insufficient balance\n"
+                            f"Token: {token_symbol}\n"
+                            f"Have: {balance:.4f}\n"
+                            f"Need: {required:.4f}"
+                        )
+                        return
+                    logger.info(f"  ✅ Balance check passed: {balance:.4f} >= {required:.4f}")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Balance check failed: {e}")
+                    return
+                
+                # 2. Verify position size against risk limits
+                max_position = self.portfolio_manager.get_max_position_size(opportunity.chain)
+                if opportunity.recommended_position_size > max_position:
+                    logger.error(
+                        f"❌ POSITION SIZE EXCEEDS LIMIT: "
+                        f"${opportunity.recommended_position_size:.2f} > ${max_position:.2f}"
+                    )
+                    await self.alert_manager.send_error(
+                        f"Trade cancelled - Position size too large\n"
+                        f"Token: {token_symbol}\n"
+                        f"Requested: ${opportunity.recommended_position_size:.2f}\n"
+                        f"Max allowed: ${max_position:.2f}"
+                    )
+                    return
+                logger.info(f"  ✅ Position size check passed")
+                
+                # 3. Final confirmation prompt (optional - remove in production)
+                logger.warning(f"⚠️  ABOUT TO EXECUTE REAL TRADE")
+                logger.warning(f"   Token: {token_symbol}")
+                logger.warning(f"   Amount: ${opportunity.recommended_position_size:.2f}")
+                logger.warning(f"   Chain: {chain}")
+                
+            # Now execute the trade
             result = await executor.execute_trade(order)
             
             if result['success']:
@@ -1108,35 +1154,58 @@ class TradingBotEngine:
                     self.stats['failed_trades'] += 1
                 
                 # ✅ UPDATE DATABASE
+                # ✅ CRITICAL: Update trade in database
                 try:
-                    trade_id = position.get('id')
+                    trade_id = position.get('trade_id')
+                    if not trade_id:
+                        # Try to find trade by token address
+                        trade_id = await self.db.find_trade_by_token(token_address)
+                    
                     if trade_id:
-                        updates = {
+                        await self.db.update_trade(trade_id, {
                             'exit_price': float(current_price),
                             'exit_timestamp': datetime.now(),
                             'profit_loss': float(final_pnl),
                             'profit_loss_percentage': float(pnl_percentage),
                             'status': 'closed',
+                            'close_reason': reason,
+                            'holding_time_minutes': holding_time,
                             'metadata': {
                                 **position.get('metadata', {}),
-                                'exit_reason': reason,
-                                'holding_time_minutes': holding_time
+                                'close_details': {
+                                    'entry_price': float(entry_price),
+                                    'exit_price': float(current_price),
+                                    'amount': float(amount),
+                                    'final_pnl': float(final_pnl),
+                                    'pnl_percentage': float(pnl_percentage)
+                                }
                             }
-                        }
-                        await self.db.update_trade(trade_id, updates)
-                        logger.info(f"✅ Trade updated in database: {trade_id}")
+                        })
+                        logger.info(f"✅ Trade {trade_id} closed in database")
+                    else:
+                        logger.warning(f"⚠️  Could not find trade_id for {token_symbol}")
+                        
                 except Exception as e:
                     logger.error(f"❌ Failed to update trade in database: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
                 
                 # ✅ ADD TO COOLDOWN TRACKING
-                cooldown_record = ClosedPositionRecord(
+                # ✅ Add to cooldown tracking
+                self.recently_closed[token_address] = ClosedPositionRecord(
                     token_address=token_address,
                     closed_at=datetime.now(),
                     reason=reason,
-                    pnl=float(final_pnl)
+                    pnl=float(final_pnl) if not is_dry_run else float(final_pnl)
                 )
-                self.recently_closed[token_address] = cooldown_record
-                logger.info(f"❄️ Added {token_symbol} to cooldown ({self.cooldown_minutes} min)")
+                logger.info(f"🕐❄️ {token_symbol} added to cooldown for {self.cooldown_minutes} minutes")
+
+                # Update stats
+                if final_pnl > 0:
+                    self.stats['total_profit'] += float(final_pnl)
+                    
+                logger.info(f"📊 Total profit so far: ${self.stats.get('total_profit', 0):.2f}")
+#                logger.info(f"❄️ Added {token_symbol} to cooldown ({self.cooldown_minutes} min)")
                 
                 # Remove from active positions
                 del self.active_positions[token_address]

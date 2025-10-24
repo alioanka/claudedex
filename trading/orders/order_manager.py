@@ -90,6 +90,10 @@ class Order:
     # Transaction details
     tx_hash: Optional[str] = None
     block_number: Optional[int] = None
+    # Wallet information
+    wallet_address: Optional[str] = None  # ✅ ADD THIS LINE
+    
+
     confirmations: int = 0
     
     # 🆕 ADD THESE SOLANA-SPECIFIC FIELDS:
@@ -201,6 +205,15 @@ class OrderManager:
     def __init__(self, config: Optional[Dict] = None):
         """Initialize order manager"""
         self.config = config or self._default_config()
+        
+        # ✅ CRITICAL: Add dry run mode check
+        self.dry_run = self.config.get('dry_run', True)
+        if self.dry_run:
+            logger.warning("🔶 ORDER MANAGER IN DRY RUN MODE - NO REAL ORDERS 🔶")
+        else:
+            logger.critical("🔥 ORDER MANAGER IN LIVE MODE - REAL MONEY AT RISK 🔥")
+        
+        # Continue with rest of init...
         self.orders: Dict[str, Order] = {}
         self.active_orders: Set[str] = set()
         self.order_history: List[Order] = []
@@ -311,13 +324,49 @@ class OrderManager:
         Returns:
             Order ID string
         """
-        # Store the order directly
+        # ✅ VALIDATE ORDER FIRST
+        # Check amount
+        if order.amount <= 0:
+            raise ValueError(f"Order amount must be positive: {order.amount}")
+        
+        # Check tokens
+        if not order.token_out and not order.token_address:
+            raise ValueError("Missing token address")
+        
+        # Check slippage
+        if order.slippage_tolerance > 0.5:  # 50% max
+            raise ValueError(f"Excessive slippage: {order.slippage_tolerance * 100}%")
+        
+        # Check chain
+        if order.chain:
+            valid_chains = ['ethereum', 'bsc', 'base', 'arbitrum', 'polygon', 'solana']
+            if order.chain.lower() not in valid_chains:
+                raise ValueError(f"Unsupported chain: {order.chain}")
+        
+        # Check for duplicate active orders on same token
+        token_addr = order.token_out or order.token_address
+        active_for_token = [
+            oid for oid in self.active_orders 
+            if self.orders.get(oid) and 
+            (self.orders[oid].token_out == token_addr or 
+            self.orders[oid].token_address == token_addr) and
+            self.orders[oid].status in [OrderStatus.PENDING, OrderStatus.SUBMITTED]
+        ]
+        if active_for_token:
+            existing_order = self.orders[active_for_token[0]]
+            raise ValueError(
+                f"Active order already exists for token {token_addr[:10]}...\n"
+                f"Existing order: {active_for_token[0]}\n"
+                f"Status: {existing_order.status.value}"
+            )
+        
+        # Store the order
         self.orders[order.order_id] = order
         self.active_orders.add(order.order_id)
         self.metrics["total_orders"] += 1
         
         # Log order creation
-        logger.info(f"Created order {order.order_id}")
+        logger.info(f"✅ Created order {order.order_id} for {token_addr[:10] if token_addr else 'unknown'}")
         
         return order.order_id
 
@@ -431,6 +480,33 @@ class OrderManager:
             Submission result
         """
         try:
+
+            # ✅ CRITICAL: Check dry run mode FIRST
+            if self.dry_run:
+                logger.info(f"📝 DRY RUN - Order {order_id} simulated, not executed")
+                order = self.orders.get(order_id)
+                if order:
+                    # Simulate successful fill
+                    order.status = OrderStatus.FILLED
+                    order.filled_amount = order.amount
+                    order.average_fill_price = order.price or Decimal('100.0')
+                    order.updated_at = datetime.utcnow()
+                    order.metadata['simulated'] = True
+                    self.metrics["successful_orders"] += 1
+                    
+                    # Move to history
+                    self.active_orders.discard(order_id)
+                    self.order_history.append(order)
+                
+                return {
+                    'success': True,
+                    'dry_run': True,
+                    'order_id': order_id,
+                    'filled_amount': float(order.amount) if order else 0,
+                    'average_price': float(order.price) if order and order.price else 100.0,
+                    'message': 'Dry run - no real execution'
+                }
+
             order = self.orders.get(order_id)
             if not order:
                 raise ValueError(f"Order {order_id} not found")
@@ -1210,31 +1286,62 @@ class OrderManager:
                 await asyncio.sleep(10)
     
     async def _cleanup_expired_orders(self):
-        """Background task to cleanup old orders"""
+        """Cleanup expired and stale orders"""
         while True:
             try:
-                await asyncio.sleep(self.config.get("cleanup_interval", 300))
+                timeout_seconds = self.config.get('order_timeout', 300)  # 5 minutes
+                now = datetime.utcnow()
+                cleaned = 0
                 
-                current_time = datetime.utcnow()
-                expired_count = 0
-                
-                for order_id in list(self.orders.keys()):
-                    order = self.orders[order_id]
+                # Check all active orders
+                for order_id in list(self.active_orders):
+                    order = self.orders.get(order_id)
+                    if not order:
+                        # Orphaned order ID, remove it
+                        self.active_orders.discard(order_id)
+                        continue
                     
-                    # Remove old completed orders from memory
-                    if order.status in [OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.FAILED]:
-                        age = (current_time - order.updated_at).total_seconds()
-                        if age > 3600:  # 1 hour old
-                            self.order_history.append(order)
-                            del self.orders[order_id]
-                            self.active_orders.discard(order_id)
-                            expired_count += 1
+                    # Calculate order age
+                    age_seconds = (now - order.created_at).total_seconds()
+                    
+                    # Check if order has expired
+                    if order.status == OrderStatus.PENDING and age_seconds > timeout_seconds:
+                        logger.warning(
+                            f"⏰ Order {order_id} expired after {age_seconds:.0f}s\n"
+                            f"   Token: {order.token_address[:10] if order.token_address else 'unknown'}\n"
+                            f"   Amount: {order.amount}"
+                        )
+                        
+                        # Update order status
+                        order.status = OrderStatus.EXPIRED
+                        order.updated_at = now
+                        order.metadata['expiry_reason'] = f'Timeout after {age_seconds:.0f}s'
+                        
+                        # Remove from active orders
+                        self.active_orders.discard(order_id)
+                        
+                        # Add to history
+                        self.order_history.append(order)
+                        
+                        # Update metrics
+                        self.metrics["failed_orders"] += 1
+                        cleaned += 1
+                    
+                    # Also clean up completed orders that are still marked active
+                    elif order.status in [OrderStatus.FILLED, OrderStatus.CANCELLED, 
+                                        OrderStatus.FAILED, OrderStatus.EXPIRED]:
+                        self.active_orders.discard(order_id)
                 
-                if expired_count > 0:
-                    logger.info(f"Cleaned up {expired_count} old orders")
+                if cleaned > 0:
+                    logger.info(f"🧹 Cleaned up {cleaned} expired orders")
+                
+                # Sleep until next cleanup
+                cleanup_interval = self.config.get('cleanup_interval', 300)
+                await asyncio.sleep(cleanup_interval)
                 
             except Exception as e:
-                logger.error(f"Error in cleanup task: {e}")
+                logger.error(f"Error in order cleanup: {e}")
+                await asyncio.sleep(60)  # Retry after 1 minute on error
     
     def get_metrics(self) -> Dict:
         """Get order manager metrics"""
@@ -1441,6 +1548,7 @@ def create_solana_order(
     input_mint: str,
     output_mint: str,
     amount_in: int,
+    wallet_address: str,  # ✅ ADD THIS PARAMETER
     symbol_in: str = "SOL",
     symbol_out: str = "USDC",
     entry_price: Optional[Decimal] = None,
@@ -1456,6 +1564,7 @@ def create_solana_order(
         input_mint: Input token mint address
         output_mint: Output token mint address
         amount_in: Amount in smallest unit (lamports for SOL, token decimals for SPL)
+        wallet_address: Wallet public key as string  # ✅ ADD TO DOCSTRING
         symbol_in: Input token symbol
         symbol_out: Output token symbol
         entry_price: Entry price (optional)
@@ -1468,7 +1577,7 @@ def create_solana_order(
     return Order(
         order_id=str(uuid.uuid4()),
         token_address=token_address,
-        side=OrderSide.BUY,  # Default to BUY
+        side=OrderSide.BUY,
         order_type=OrderType.MARKET,
         amount=Decimal(str(amount_in)),
         price=entry_price,
@@ -1477,7 +1586,7 @@ def create_solana_order(
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
         execution_strategy=ExecutionStrategy.IMMEDIATE,
-        slippage_tolerance=max_slippage_bps / 10000,  # Convert bps to decimal
+        slippage_tolerance=max_slippage_bps / 10000,
         gas_price=Decimal('0'),
         gas_limit=0,
         deadline=None,
@@ -1488,6 +1597,7 @@ def create_solana_order(
         signal_id=kwargs.get('signal_id'),
         parent_order_id=kwargs.get('parent_order_id'),
         metadata=kwargs.get('metadata', {}),
+        wallet_address=wallet_address,  # ✅ ADD THIS LINE
         # Solana-specific fields
         chain='solana',
         token_in=input_mint,
@@ -1507,6 +1617,7 @@ def create_evm_order(
     input_token: str,
     output_token: str,
     amount_in: int,
+    wallet_address: str,  # ✅ ADD THIS PARAMETER
     symbol_in: str = "ETH",
     symbol_out: str = "USDC",
     entry_price: Optional[Decimal] = None,
@@ -1523,6 +1634,7 @@ def create_evm_order(
         input_token: Input token address
         output_token: Output token address
         amount_in: Amount in wei
+        wallet_address: Wallet address (0x...)  # ✅ ADD TO DOCSTRING
         symbol_in: Input token symbol
         symbol_out: Output token symbol
         entry_price: Entry price (optional)
@@ -1555,6 +1667,7 @@ def create_evm_order(
         signal_id=kwargs.get('signal_id'),
         parent_order_id=kwargs.get('parent_order_id'),
         metadata=kwargs.get('metadata', {}),
+        wallet_address=wallet_address,  # ✅ ADD THIS LINE
         # Multi-chain fields
         chain=chain.lower(),
         token_in=input_token,

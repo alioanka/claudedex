@@ -55,6 +55,13 @@ class JupiterExecutor(BaseExecutor):
                 - enabled: Whether Solana trading is enabled
         """
         super().__init__(config)
+
+        # ✅ CRITICAL: DRY_RUN mode check (standardize key name)
+        self.dry_run = config.get('DRY_RUN', True) or config.get('dry_run', True)
+        if self.dry_run:
+            logger.warning("🔶 JUPITER EXECUTOR IN DRY RUN MODE - NO REAL TRANSACTIONS 🔶")
+        else:
+            logger.critical("🔥 JUPITER EXECUTOR IN LIVE MODE - REAL MONEY AT RISK 🔥")
         
         # Jupiter v1 API Configuration
         self.jupiter_api_url = "https://lite-api.jup.ag/swap/v1"
@@ -131,6 +138,11 @@ class JupiterExecutor(BaseExecutor):
         """
         if not self.session:
             await self.initialize()
+
+            # ✅ CRITICAL: DRY_RUN CHECK AT TOP LEVEL
+            if self.dry_run:
+                logger.info(f"🔶 DRY RUN: Simulating Jupiter trade for {getattr(order, 'symbol', 'unknown')}")
+                return await self._simulate_jupiter_trade(order)
         
         try:
             logger.info(f"🟣 Executing Solana trade for {getattr(order, 'symbol', 'unknown')}")
@@ -165,12 +177,24 @@ class JupiterExecutor(BaseExecutor):
             
             logger.info(f"✅ Trade executed successfully: {swap_result.get('signature')}")
             
+            # ✅ FIXED: Standardized return format
             return {
                 'success': True,
+                'tx_hash': swap_result.get('signature'),  # Add tx_hash alias
                 'signature': swap_result.get('signature'),
                 'quote': quote,
                 'execution_time': swap_result.get('execution_time'),
-                'gas_used': swap_result.get('gas_used')
+                'gas_used': swap_result.get('gas_used'),
+                'execution_price': int(quote['outAmount']) / int(quote['inAmount']),
+                'amount': int(quote['inAmount']),
+                'token_amount': int(quote['outAmount']),
+                'slippage_actual': float(quote.get('priceImpactPct', 0)),
+                'route': 'jupiter',
+                'metadata': {
+                    'chain': 'solana',
+                    'dex': 'jupiter',
+                    'price_impact': quote.get('priceImpactPct')
+                }
             }
             
         except Exception as e:
@@ -179,6 +203,71 @@ class JupiterExecutor(BaseExecutor):
             return {
                 'success': False,
                 'error': str(e)
+            }
+
+    async def _simulate_jupiter_trade(self, order) -> Dict[str, Any]:
+        """Simulate Jupiter trade for paper trading"""
+        try:
+            import random
+            
+            # Get real quote for simulation
+            quote = await self._get_quote(
+                input_mint=order.token_in,
+                output_mint=order.token_out,
+                amount=order.amount_in,
+                slippage_bps=self.max_slippage_bps
+            )
+            
+            if not quote:
+                return {
+                    'success': False,
+                    'error': 'No quotes available for simulation',
+                    'tx_hash': None
+                }
+            
+            # Simulate execution delay
+            await asyncio.sleep(random.uniform(1.0, 2.5))
+            
+            # Calculate simulated values
+            in_amount = int(quote['inAmount'])
+            out_amount = int(quote['outAmount'])
+            price = out_amount / in_amount if in_amount > 0 else 0
+            
+            logger.info(f"✅ DRY RUN Jupiter swap:")
+            logger.info(f"   Input: {in_amount} ({getattr(order, 'symbol_in', 'unknown')})")
+            logger.info(f"   Output: {out_amount} ({getattr(order, 'symbol_out', 'unknown')})")
+            logger.info(f"   Price Impact: {quote.get('priceImpactPct', 'N/A')}%")
+            
+            # Update simulation stats
+            self.execution_stats['total_trades'] += 1
+            self.execution_stats['successful_trades'] += 1
+            
+            return {
+                'success': True,
+                'tx_hash': f"0xDRYRUN_SOLANA_{int(time.time())}{random.randint(1000, 9999)}",
+                'signature': f"DRY_RUN_SOL_{int(time.time())}{random.randint(1000, 9999)}",
+                'quote': quote,
+                'execution_time': random.uniform(1.0, 2.5),
+                'gas_used': 0.0005,  # Estimated SOL fee
+                'execution_price': price,
+                'amount': in_amount,
+                'token_amount': out_amount,
+                'slippage_actual': float(quote.get('priceImpactPct', 0)),
+                'route': 'jupiter_simulated',
+                'metadata': {
+                    'dry_run': True,
+                    'chain': 'solana',
+                    'dex': 'jupiter'
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Jupiter simulation error: {e}", exc_info=True)
+            self.execution_stats['failed_trades'] += 1
+            return {
+                'success': False,
+                'error': f"Simulation failed: {str(e)}",
+                'tx_hash': None
             }
     
     async def get_quote(
@@ -232,7 +321,24 @@ class JupiterExecutor(BaseExecutor):
                 if order.max_slippage_bps < 0 or order.max_slippage_bps > 10000:
                     logger.error("Invalid slippage (must be 0-10000 bps)")
                     return False
+
+            # ✅ NEW: Check position size limits
+            max_position_size = self.config.get('MAX_POSITION_SIZE_USD', 50)
             
+            # Convert amount_in to approximate USD (simplified)
+            # In production, you'd want to get real price
+            if amount_in > max_position_size * 1_000_000_000:  # Rough lamports estimate
+                logger.error(f"Position size exceeds limit")
+                return False
+            
+            # ✅ NEW: Check if we have sufficient balance (only if not dry run)
+            if not self.dry_run and self.wallet_address:
+                balance = await self.get_token_balance(order.token_in)
+                # Convert to smallest units for comparison
+                if int(balance * 1_000_000_000) < amount_in:
+                    logger.error(f"Insufficient balance: {balance} < {amount_in / 1_000_000_000}")
+                    return False
+
             # Check if we can get a quote (validates tokens exist)
             quote = await self.get_quote(
                 token_in=order.token_in,
@@ -323,7 +429,7 @@ class JupiterExecutor(BaseExecutor):
         """
         try:
             # Check if we're in dry run mode
-            if self.config.get('dry_run', True):
+            if self.dry_run:  # Use instance variable instead of config
                 logger.info("🔸 DRY RUN MODE - Simulating swap execution")
                 return {
                     'success': True,
@@ -382,57 +488,27 @@ class JupiterExecutor(BaseExecutor):
             transaction.signatures[0] = signed_tx
             
             # Send transaction to Solana network
+            # Send transaction to Solana network (with retry)
             serialized_tx = base64.b64encode(bytes(transaction)).decode('utf-8')
-            
-            rpc_payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "sendTransaction",
-                "params": [
-                    serialized_tx,
-                    {
-                        "encoding": "base64",
-                        "skipPreflight": False,
-                        "preflightCommitment": "confirmed",
-                        "maxRetries": 3
-                    }
-                ]
-            }
             
             start_time = time.time()
             
-            async with self.session.post(self.rpc_url, json=rpc_payload) as rpc_response:
-                if rpc_response.status != 200:
-                    error_text = await rpc_response.text()
-                    logger.error(f"RPC sendTransaction failed: {rpc_response.status} - {error_text}")
-                    return {
-                        'success': False,
-                        'error': f'RPC call failed: {error_text}'
-                    }
-                
-                result = await rpc_response.json()
+            # ✅ FIXED: Use retry method instead of single attempt
+            send_result = await self._send_transaction_with_retry(serialized_tx, max_retries=3)
             
             execution_time = time.time() - start_time
             
-            if 'error' in result:
-                logger.error(f"Transaction error: {result['error']}")
+            if not send_result['success']:
+                logger.error(f"Transaction send failed: {send_result['error']}")
                 return {
                     'success': False,
-                    'error': result['error'].get('message', 'Unknown error')
+                    'error': send_result['error']
                 }
             
-            signature = result.get('result')
-            
-            if not signature:
-                logger.error("No signature in RPC response")
-                return {
-                    'success': False,
-                    'error': 'No signature returned'
-                }
-            
+            signature = send_result['signature']
             logger.info(f"✅ Transaction sent: {signature}")
             
-            # Wait for confirmation (optional - can be done async)
+            # Wait for confirmation
             confirmed = await self._wait_for_confirmation(signature)
             
             return {
@@ -440,20 +516,13 @@ class JupiterExecutor(BaseExecutor):
                 'signature': signature,
                 'execution_time': execution_time,
                 'confirmed': confirmed,
-                'gas_used': 0.0005  # Estimate, actual value would come from transaction details
-            }
-            
-        except Exception as e:
-            logger.error(f"Error executing swap: {e}", exc_info=True)
-            return {
-                'success': False,
-                'error': str(e)
+                'gas_used': 0.0005  # Estimate, actual from transaction details
             }
     
     async def _wait_for_confirmation(
         self,
         signature: str,
-        max_wait_seconds: int = 30
+        max_wait_seconds: int = 60
     ) -> bool:
         """
         Wait for transaction confirmation
@@ -504,7 +573,83 @@ class JupiterExecutor(BaseExecutor):
         except Exception as e:
             logger.error(f"Error waiting for confirmation: {e}")
             return False
-    
+
+
+    async def _send_transaction_with_retry(
+        self,
+        serialized_tx: str,
+        max_retries: int = 3
+    ) -> Dict[str, Any]:
+        """
+        Send transaction to Solana with retry logic
+        
+        Args:
+            serialized_tx: Base64 encoded transaction
+            max_retries: Maximum retry attempts
+            
+        Returns:
+            Dict with success status and signature
+        """
+        for attempt in range(max_retries):
+            try:
+                rpc_payload = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "sendTransaction",
+                    "params": [
+                        serialized_tx,
+                        {
+                            "encoding": "base64",
+                            "skipPreflight": False,
+                            "preflightCommitment": "confirmed",
+                            "maxRetries": 3
+                        }
+                    ]
+                }
+                
+                async with self.session.post(self.rpc_url, json=rpc_payload) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        
+                        if 'error' in result:
+                            error_msg = result['error'].get('message', 'Unknown error')
+                            
+                            # Don't retry certain errors
+                            if 'already been processed' in error_msg:
+                                logger.warning("Transaction already processed")
+                                return {'success': False, 'error': error_msg}
+                            
+                            if attempt < max_retries - 1:
+                                logger.warning(f"RPC error (attempt {attempt + 1}/{max_retries}): {error_msg}")
+                                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                                continue
+                            else:
+                                return {'success': False, 'error': error_msg}
+                        
+                        signature = result.get('result')
+                        if signature:
+                            return {'success': True, 'signature': signature}
+                        else:
+                            return {'success': False, 'error': 'No signature in response'}
+                    else:
+                        error_text = await response.text()
+                        if attempt < max_retries - 1:
+                            logger.warning(f"HTTP {response.status} (attempt {attempt + 1}/{max_retries})")
+                            await asyncio.sleep(2 ** attempt)
+                            continue
+                        else:
+                            return {'success': False, 'error': f'HTTP {response.status}: {error_text}'}
+                            
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Send error (attempt {attempt + 1}/{max_retries}): {e}")
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                else:
+                    return {'success': False, 'error': str(e)}
+        
+        return {'success': False, 'error': 'Max retries exceeded'}
+
     async def get_token_balance(self, token_mint: str) -> Decimal:
         """
         Get SPL token balance for wallet

@@ -57,6 +57,13 @@ class DirectDEXExecutor(BaseExecutor):
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
+
+        # ✅ CRITICAL: DRY_RUN mode check
+        self.dry_run = config.get('DRY_RUN', True)
+        if self.dry_run:
+            logger.warning("🔶 DIRECT DEX IN DRY RUN MODE - NO REAL TRANSACTIONS 🔶")
+        else:
+            logger.critical("🔥 DIRECT DEX IN LIVE MODE - REAL MONEY AT RISK 🔥")
         
         # Web3 connections for each chain
         self.w3_connections: Dict[str, Web3] = {}
@@ -171,12 +178,12 @@ class DirectDEXExecutor(BaseExecutor):
                 return None
             
             # Find the best quote based on output amount
-            best_quote = max(quotes, key=lambda q: q.output_amount)
+            best_quote = max(quotes, key=lambda q: q.amount_out)
             
             logger.info(
-                f"Best quote from {best_quote.dex}: "
-                f"{format_token_amount(amount, 18)} {token_in} -> "
-                f"{format_token_amount(best_quote.output_amount, 18)} {token_out}"
+                f"Best quote from {best_quote.dex.value}: "
+                f"{amount} {token_in} -> "
+                f"{best_quote.amount_out} {token_out}"
             )
             
             return best_quote
@@ -199,16 +206,22 @@ class DirectDEXExecutor(BaseExecutor):
                 logger.debug(f"Aggregated {len(quotes)} quotes from DEXes")
             
     @measure_time
-    async def execute_trade(self, order: Order) -> Dict[str, Any]:
+    async def execute_trade(self, order: Order, quote=None) -> Dict[str, Any]:
         """Execute trade directly on DEX"""
         try:
-            # Get best quote
-            quote = await self.get_best_quote(
-                order.token_in,
-                order.token_out,
-                order.amount,
-                order.chain
-            )
+            # ✅ CRITICAL: DRY_RUN CHECK
+            if self.dry_run:
+                logger.info(f"🔶 DRY RUN: Simulating DEX trade for {order.token_in} -> {order.token_out}")
+                return await self._simulate_dex_trade(order)
+            
+            # Get best quote if not provided
+            if not quote:
+                quote = await self.get_best_quote(
+                    order.token_in,
+                    order.token_out,
+                    order.amount,
+                    order.chain
+                )
             
             if not quote:
                 return {
@@ -217,11 +230,26 @@ class DirectDEXExecutor(BaseExecutor):
                 }
                 
             # Validate slippage
-            if quote.price_impact > float(order.slippage or self.max_slippage):
+            max_slippage = float(order.slippage) if order.slippage else 0.05
+            if quote.price_impact > max_slippage:
                 return {
                     'success': False,
                     'error': f'Price impact too high: {quote.price_impact:.2%}'
                 }
+            
+            # ✅ NEW: Approve tokens if needed (for token -> token swaps)
+            if order.token_in != self._get_native_token_address(order.chain):
+                approved = await self._approve_token_if_needed(
+                    order.token_in,
+                    self.dex_contracts[order.chain][quote.dex.value].address,
+                    order.amount,
+                    order.chain
+                )
+                if not approved:
+                    return {
+                        'success': False,
+                        'error': 'Token approval failed'
+                    }
                 
             # Build transaction
             tx = await self._build_swap_transaction(order, quote)
@@ -232,10 +260,14 @@ class DirectDEXExecutor(BaseExecutor):
                 
             if self.randomize_gas:
                 tx = self._randomize_gas_price(tx)
-                
-            # Sign and send
+            
+            # ✅ FIXED: Get account from config, not from order
             w3 = self.w3_connections[order.chain]
-            signed_tx = w3.eth.account.sign_transaction(tx, order.private_key)
+            
+            # Sign transaction with wallet from config
+            from eth_account import Account
+            account = Account.from_key(self.config.get('private_key'))
+            signed_tx = account.sign_transaction(tx)
             
             # Send with retry logic
             tx_hash = await self._send_transaction_with_retry(
@@ -243,25 +275,216 @@ class DirectDEXExecutor(BaseExecutor):
                 order.chain
             )
             
-            # Wait for confirmation
-            receipt = await self._wait_for_confirmation(tx_hash, order.chain)
+            # ✅ FIXED: Increased timeout to 300s
+            receipt = await self._wait_for_confirmation(tx_hash, order.chain, timeout=300)
             
             return {
                 'success': receipt['status'] == 1,
-                'transactionHash': tx_hash.hex(),
+                'tx_hash': tx_hash.hex(),
                 'gasUsed': receipt['gasUsed'],
                 'blockNumber': receipt['blockNumber'],
-                'amountOut': quote.amount_out,
-                'dex': quote.dex.value
+                'execution_price': float(quote.amount_out) / float(order.amount),
+                'amount': float(order.amount),
+                'token_amount': float(quote.amount_out),
+                'dex': quote.dex.value,
+                'slippage_actual': quote.price_impact,
+                'route': str(quote.path)
             }
             
         except Exception as e:
-            logger.error(f"Direct DEX execution failed: {e}")
+            logger.error(f"Direct DEX execution failed: {e}", exc_info=True)
             return {
                 'success': False,
-                'error': str(e)
+                'error': str(e),
+                'tx_hash': None
+            }
+
+    async def _simulate_dex_trade(self, order: Order) -> Dict[str, Any]:
+        """Simulate DEX trade for paper trading"""
+        try:
+            import random
+            import time
+            
+            # Get real quote
+            quote = await self.get_best_quote(
+                order.token_in,
+                order.token_out,
+                order.amount,
+                order.chain
+            )
+            
+            if not quote:
+                return {
+                    'success': False,
+                    'error': 'No quotes available for simulation'
+                }
+            
+            # Simulate delay
+            await asyncio.sleep(random.uniform(1.0, 3.0))
+            
+            # Simulate gas
+            simulated_gas = quote.gas_estimate
+            w3 = self.w3_connections.get(order.chain)
+            simulated_gas_price = w3.eth.gas_price if w3 else 50 * 10**9
+            
+            logger.info(f"✅ DRY RUN: Would swap {order.amount} on {quote.dex.value}")
+            logger.info(f"   Output: {quote.amount_out} tokens")
+            logger.info(f"   Price Impact: {quote.price_impact:.2%}")
+            
+            return {
+                'success': True,
+                'tx_hash': f"0xDRYRUN{int(time.time())}{random.randint(1000, 9999)}",
+                'gasUsed': simulated_gas,
+                'blockNumber': 0,
+                'execution_price': float(quote.amount_out) / float(order.amount),
+                'amount': float(order.amount),
+                'token_amount': float(quote.amount_out),
+                'dex': quote.dex.value,
+                'slippage_actual': quote.price_impact,
+                'route': str(quote.path),
+                'metadata': {'dry_run': True}
             }
             
+        except Exception as e:
+            logger.error(f"Simulation error: {e}")
+            return {
+                'success': False,
+                'error': f"Simulation failed: {str(e)}"
+            }
+
+    async def _approve_token_if_needed(
+        self,
+        token_address: str,
+        spender: str,
+        amount: Decimal,
+        chain: str
+    ) -> bool:
+        """Approve token spending if needed"""
+        try:
+            w3 = self.w3_connections[chain]
+            
+            # Load ERC20 ABI (minimal)
+            erc20_abi = [
+                {
+                    "constant": True,
+                    "inputs": [
+                        {"name": "owner", "type": "address"},
+                        {"name": "spender", "type": "address"}
+                    ],
+                    "name": "allowance",
+                    "outputs": [{"name": "", "type": "uint256"}],
+                    "type": "function"
+                },
+                {
+                    "constant": False,
+                    "inputs": [
+                        {"name": "spender", "type": "address"},
+                        {"name": "amount", "type": "uint256"}
+                    ],
+                    "name": "approve",
+                    "outputs": [{"name": "", "type": "bool"}],
+                    "type": "function"
+                }
+            ]
+            
+            token = w3.eth.contract(
+                address=Web3.toChecksumAddress(token_address),
+                abi=erc20_abi
+            )
+            
+            # Get wallet address
+            from eth_account import Account
+            account = Account.from_key(self.config.get('private_key'))
+            wallet = account.address
+            
+            # Check current allowance
+            amount_wei = ether_to_wei(amount)
+            current_allowance = token.functions.allowance(wallet, spender).call()
+            
+            if current_allowance >= amount_wei:
+                logger.info(f"✅ Token already approved")
+                return True
+            
+            logger.info(f"🔄 Approving token {token_address} for {spender}")
+            
+            # Build approval tx
+            approve_tx = token.functions.approve(
+                spender,
+                amount_wei
+            ).build_transaction({
+                'from': wallet,
+                'gas': 100000,
+                'gasPrice': w3.eth.gas_price,
+                'nonce': w3.eth.get_transaction_count(wallet),
+                'chainId': w3.eth.chain_id
+            })
+            
+            # Sign and send
+            signed = account.sign_transaction(approve_tx)
+            tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
+            
+            # Wait for confirmation
+            logger.info(f"⏳ Waiting for approval: {tx_hash.hex()}")
+            receipt = await self._wait_for_confirmation(tx_hash, chain, timeout=300)
+            
+            if receipt['status'] == 1:
+                logger.info(f"✅ Token approved successfully")
+                return True
+            else:
+                logger.error(f"❌ Token approval failed")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Token approval error: {e}", exc_info=True)
+            return False
+
+    async def get_quote(self, token_in: str, token_out: str, amount: float, chain: str = 'ethereum'):
+        """
+        Get quote for a trade (BaseExecutor interface)
+        
+        Args:
+            token_in: Input token address
+            token_out: Output token address
+            amount: Amount to trade
+            chain: Chain name
+            
+        Returns:
+            Quote dictionary
+        """
+        quote = await self.get_best_quote(token_in, token_out, Decimal(str(amount)), chain)
+        
+        if not quote:
+            return {
+                'input_token': token_in,
+                'output_token': token_out,
+                'input_amount': amount,
+                'output_amount': 0,
+                'route': 'no_route_found'
+            }
+        
+        return {
+            'input_token': token_in,
+            'output_token': token_out,
+            'input_amount': amount,
+            'output_amount': float(quote.amount_out),
+            'route': quote.dex.value,
+            'price': float(quote.price),
+            'price_impact': quote.price_impact,
+            'gas_estimate': quote.gas_estimate
+        }
+
+    def _get_native_token_address(self, chain: str) -> str:
+        """Get native token address for chain"""
+        native_tokens = {
+            'ethereum': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',  # WETH
+            'bsc': '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',  # WBNB
+            'polygon': '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',  # WMATIC
+            'arbitrum': '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',  # WETH
+            'base': '0x4200000000000000000000000000000000000006'  # WETH
+        }
+        return native_tokens.get(chain.lower(), native_tokens['ethereum'])
+
+
     async def _build_swap_transaction(
         self,
         order: Order,
@@ -460,7 +683,7 @@ class DirectDEXExecutor(BaseExecutor):
         self,
         tx_hash: str,
         chain: str,
-        timeout: int = 120
+        timeout: int = 300
     ) -> Dict:
         """Wait for transaction confirmation"""
         w3 = self.w3_connections[chain]
@@ -700,39 +923,47 @@ class DirectDEXExecutor(BaseExecutor):
             True if order is valid
         """
         try:
-            # Check required fields
-            if not order.token_in or not order.token_out:
-                logger.error("Missing token addresses")
-                return False
-                
-            if order.amount <= 0:
-                logger.error("Invalid amount")
-                return False
-                
-            if not order.wallet_address:
-                logger.error("Missing wallet address")
-                return False
-                
-            # Check token addresses are valid
-            if not Web3.isAddress(order.token_in) or not Web3.isAddress(order.token_out):
-                logger.error("Invalid token addresses")
-                return False
-                
             # Check chain is supported
-            if order.chain not in self.w3_connections:  # For DirectDEX
-            # if order.chain not in ['ethereum', 'bsc', 'polygon']:  # For ToxiSol
-                logger.error(f"Unsupported chain: {order.chain}")
+            if order.chain not in self.w3_connections:
+                logger.error(f"Chain {order.chain} not supported")
+                return False
+            
+            # Check token addresses
+            if not Web3.isAddress(order.token_in):
+                logger.error(f"Invalid token_in address: {order.token_in}")
                 return False
                 
-            # Validate slippage
+            if not Web3.isAddress(order.token_out):
+                logger.error(f"Invalid token_out address: {order.token_out}")
+                return False
+            
+            # Check amount
+            if order.amount <= 0:
+                logger.error(f"Invalid amount: {order.amount}")
+                return False
+            
+            # Check slippage
             if order.slippage and (order.slippage < 0 or order.slippage > 1):
                 logger.error(f"Invalid slippage: {order.slippage}")
                 return False
+            
+            # Check wallet balance (only if not dry run)
+            if not self.dry_run:
+                w3 = self.w3_connections[order.chain]
+                from eth_account import Account
+                account = Account.from_key(self.config.get('private_key'))
                 
+                balance = w3.eth.get_balance(account.address)
+                required = ether_to_wei(order.amount)
+                
+                if balance < required:
+                    logger.error(f"Insufficient balance: {wei_to_ether(balance)} < {order.amount}")
+                    return False
+            
             return True
             
         except Exception as e:
-            logger.error(f"Order validation error: {e}")
+            logger.error(f"Order validation error: {e}", exc_info=True)
             return False
 
     async def get_order_status(self, order_id: str) -> OrderStatus:

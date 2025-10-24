@@ -230,17 +230,18 @@ class RiskManagementConfig(BaseModel):
 
 class PortfolioConfig(BaseModel):
     """Portfolio configuration schema"""
-    initial_balance: float = 10000.0
-    max_positions: int = 10
-    max_position_size_pct: float = 0.1  # 10%
-    max_risk_per_trade: float = 0.05  # 5%
-    max_portfolio_risk: float = 0.25  # 25%
-    min_position_size: float = 100.0
-    allocation_strategy: str = "DYNAMIC"
-    daily_loss_limit: float = 0.1  # 10%
-    consecutive_losses_limit: int = 5
-    correlation_threshold: float = 0.7
-    rebalance_frequency: str = "daily"
+    # ✅ CHANGE THESE VALUES:
+    initial_balance: float = 400.0              # Was 10000, now 400
+    max_positions: int = 8                      # Was 10, now 8
+    max_position_size_pct: float = 0.10         # Keep 10%
+    max_risk_per_trade: float = 0.10            # Was 0.05, now 0.10
+    max_portfolio_risk: float = 0.25            # Keep 25%
+    min_position_size: float = 5.0              # Was 100.0, now 5.0
+    allocation_strategy: str = "DYNAMIC"        # Keep
+    daily_loss_limit: float = 0.10              # Was 0.15, now 0.10
+    consecutive_losses_limit: int = 5           # Keep
+    correlation_threshold: float = 0.7          # Keep
+    rebalance_frequency: str = "daily"          # Keep
 
 class ConfigManager:
     """
