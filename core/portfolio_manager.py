@@ -94,7 +94,7 @@ class PortfolioManager:
         self.max_position_size_pct = config.get('max_position_size_pct', 0.1)  # 10% max
         self.max_risk_per_trade = config.get('max_risk_per_trade', 0.05)  # 5% max
         self.max_portfolio_risk = config.get('max_portfolio_risk', 0.25)  # 25% max
-        self.min_position_size = config.get('min_position_size', 100)  # $100 min
+        self.min_position_size = config.get('min_position_size', 5)  # $100 min
         
         # Allocation strategy
         self.allocation_strategy = AllocationStrategy[
@@ -103,7 +103,7 @@ class PortfolioManager:
         
         # Portfolio state
         self.positions: Dict[str, Position] = {}
-        self.balance = config.get('initial_balance', 10000)
+        self.balance = config.get('initial_balance', 400)
         self.initial_balance = self.balance
         
         # Performance tracking

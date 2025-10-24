@@ -212,6 +212,10 @@ class TradingBotEngine:
         self.blacklisted_tokens: set = set()
         self.blacklisted_devs: set = set()
 
+        # Position tracking
+        self.open_positions: Dict[str, Dict] = {}
+        self.position_history: List[Dict] = []
+
         # Cooldown tracking
         self.recently_closed: Dict[str, ClosedPositionRecord] = {}  # token_address -> record
         self.cooldown_minutes = config.get('trading', {}).get('position_cooldown_minutes', 60)

@@ -205,7 +205,9 @@ class PositionTracker:
         
         # Portfolio state
         self.total_portfolio_value = Decimal("0")
-        self.cash_balance = Decimal("10000")  # Starting balance
+        initial_balance = self.config.get('initial_balance', 400)
+        self.cash_balance = Decimal(str(initial_balance))
+        logger.info(f"Position tracker initialized with balance: ${initial_balance}")
         self.positions_value = Decimal("0")
         
         # Risk tracking
