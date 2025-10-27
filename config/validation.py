@@ -671,7 +671,209 @@ class ConfigValidator:
             return False, None, f"Invalid YAML: {str(e)}"
         except Exception as e:
             return False, None, f"Error parsing configuration: {str(e)}"
-    
+
+
+    def validate_startup_config(self, config_manager) -> bool:
+        """
+        Validate critical configuration at bot startup
+        This is the new method for fail-fast validation
+        
+        Args:
+            config_manager: ConfigManager instance
+            
+        Returns:
+            True if all validations pass
+            
+        Raises:
+            ValueError if critical config is missing
+        """
+        logger.info("=" * 80)
+        logger.info("Starting ClaudeDex Configuration Validation")
+        logger.info("=" * 80)
+        
+        errors = []
+        warnings = []
+        
+        # ========================================================================
+        # CRITICAL REQUIRED KEYS
+        # ========================================================================
+        
+        critical_keys = {
+            "TRADING_MODE": "Trading mode (paper/live)",
+            "DRY_RUN": "Dry run flag",
+            "WALLET_ADDRESS": "Trading wallet address",
+            "PRIVATE_KEY": "Wallet private key"
+        }
+        
+        logger.info("Checking critical keys...")
+        for key, description in critical_keys.items():
+            value = config_manager.get(key)
+            if value in (None, "", "null", "None", False):
+                errors.append(f"Missing required config: {key} ({description})")
+            else:
+                logger.info(f"  ✓ {key}: {'*' * 8} (configured)")
+        
+        # ========================================================================
+        # CHAIN CONFIGURATIONS
+        # ========================================================================
+        
+        logger.info("\nChecking chain configurations...")
+        enabled_chains = config_manager.get("enabled_chains", [])
+        
+        if not enabled_chains:
+            warnings.append("No chains enabled - bot will not trade")
+        else:
+            logger.info(f"  Enabled chains: {', '.join(enabled_chains)}")
+            
+            for chain in enabled_chains:
+                chain_key = chain.upper()
+                
+                # Check RPC URL
+                rpc_url = config_manager.get(f"{chain_key}_RPC_URL")
+                if not rpc_url or rpc_url in ("null", "None"):
+                    errors.append(f"Missing RPC URL for chain: {chain}")
+                else:
+                    logger.info(f"  ✓ {chain} RPC configured")
+                
+                # Check Chain ID
+                chain_id = config_manager.get(f"{chain_key}_CHAIN_ID")
+                if not chain_id:
+                    errors.append(f"Missing Chain ID for chain: {chain}")
+                
+                # Check minimum liquidity
+                min_liquidity = config_manager.get(f"{chain_key}_MIN_LIQUIDITY")
+                if min_liquidity is None:
+                    warnings.append(f"No minimum liquidity set for {chain} - using default")
+        
+        # ========================================================================
+        # TRADING PARAMETERS
+        # ========================================================================
+        
+        logger.info("\nChecking trading parameters...")
+        
+        # Position sizing
+        max_position_size = config_manager.get("max_position_size")
+        if not max_position_size or float(max_position_size) <= 0:
+            errors.append("Invalid max_position_size - must be > 0")
+        else:
+            logger.info(f"  ✓ Max position size: {max_position_size}")
+        
+        # Stop loss
+        stop_loss = config_manager.get("stop_loss_pct")
+        if not stop_loss or float(stop_loss) <= 0 or float(stop_loss) > 50:
+            errors.append("Invalid stop_loss_pct - must be between 0 and 50")
+        else:
+            logger.info(f"  ✓ Stop loss: {stop_loss}%")
+        
+        # Take profit
+        take_profit = config_manager.get("take_profit_pct")
+        if not take_profit or float(take_profit) <= 0:
+            errors.append("Invalid take_profit_pct - must be > 0")
+        else:
+            logger.info(f"  ✓ Take profit: {take_profit}%")
+        
+        # Slippage
+        max_slippage = config_manager.get("max_slippage_bps", 50)
+        if float(max_slippage) < 10 or float(max_slippage) > 1000:
+            warnings.append(f"Unusual max_slippage_bps: {max_slippage} (typical: 50-200)")
+        else:
+            logger.info(f"  ✓ Max slippage: {max_slippage} bps")
+        
+        # Max positions
+        max_positions = config_manager.get("max_positions", 8)
+        if int(max_positions) < 1 or int(max_positions) > 50:
+            warnings.append(f"Unusual max_positions: {max_positions} (typical: 5-20)")
+        else:
+            logger.info(f"  ✓ Max positions: {max_positions}")
+        
+        # ========================================================================
+        # RISK MANAGEMENT
+        # ========================================================================
+        
+        logger.info("\nChecking risk management...")
+        
+        # Daily loss limit
+        daily_loss = config_manager.get("max_daily_loss_pct")
+        if daily_loss:
+            if float(daily_loss) > 50:
+                warnings.append(f"High daily loss limit: {daily_loss}% - consider reducing")
+            logger.info(f"  ✓ Daily loss limit: {daily_loss}%")
+        
+        # Maximum drawdown
+        max_drawdown = config_manager.get("max_drawdown_pct")
+        if max_drawdown:
+            if float(max_drawdown) > 80:
+                warnings.append(f"High drawdown limit: {max_drawdown}% - very risky")
+            logger.info(f"  ✓ Max drawdown: {max_drawdown}%")
+        
+        # ========================================================================
+        # DATABASE
+        # ========================================================================
+        
+        logger.info("\nChecking database configuration...")
+        db_url = config_manager.get("DB_URL")
+        if not db_url or db_url in ("null", "None"):
+            errors.append("Missing DB_URL - database connection required")
+        elif not db_url.startswith("postgresql://"):
+            warnings.append("DB_URL doesn't look like PostgreSQL connection string")
+        else:
+            logger.info(f"  ✓ Database URL configured")
+        
+        # ========================================================================
+        # APIS
+        # ========================================================================
+        
+        logger.info("\nChecking API configurations...")
+        
+        # DexScreener (critical)
+        dex_api = config_manager.get("DEXSCREENER_API_URL")
+        if not dex_api:
+            warnings.append("No DexScreener API URL configured")
+        else:
+            logger.info(f"  ✓ DexScreener API configured")
+        
+        # GoPlus (important for security)
+        goplus_api = config_manager.get("GOPLUS_API_KEY")
+        if not goplus_api:
+            warnings.append("No GoPlus API key - honeypot detection may be limited")
+        else:
+            logger.info(f"  ✓ GoPlus API configured")
+        
+        # Telegram (optional but recommended)
+        telegram_token = config_manager.get("TELEGRAM_BOT_TOKEN")
+        telegram_chat = config_manager.get("TELEGRAM_CHAT_ID")
+        if not telegram_token or not telegram_chat:
+            warnings.append("Telegram not configured - no alert notifications")
+        else:
+            logger.info(f"  ✓ Telegram alerts configured")
+        
+        # ========================================================================
+        # REPORT RESULTS
+        # ========================================================================
+        
+        logger.info("\n" + "=" * 80)
+        
+        if errors:
+            logger.error("❌ CONFIGURATION VALIDATION FAILED")
+            logger.error("=" * 80)
+            for error in errors:
+                logger.error(f"  ERROR: {error}")
+            raise ValueError(f"Configuration validation failed:\n" + "\n".join(f"  - {e}" for e in errors))
+        
+        if warnings:
+            logger.warning("⚠️  CONFIGURATION WARNINGS")
+            logger.warning("=" * 80)
+            for warning in warnings:
+                logger.warning(f"  WARNING: {warning}")
+            logger.info("=" * 80)
+        
+        logger.info("✅ CONFIGURATION VALIDATION PASSED")
+        logger.info("=" * 80)
+        
+        return True
+
+
+
     def generate_validation_report(self, configs: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
         """Generate comprehensive validation report for all configurations"""
         report = {
@@ -776,3 +978,31 @@ def validate_security_config(config: Dict) -> bool:
 
 # Note: The existing validate_api_keys and check_required_fields are already
 # properly defined as standalone methods in the ConfigValidator class
+
+# ============================================================================
+# ADD THIS CONVENIENCE FUNCTION at module level (after all class definitions)
+# ============================================================================
+
+def validate_config_at_startup(config_manager) -> bool:
+    """
+    Convenience function to validate configuration at bot startup
+    
+    Args:
+        config_manager: ConfigManager instance
+        
+    Returns:
+        True if validation passes
+        
+    Raises:
+        ValueError if critical config is missing
+        
+    Example:
+        from config.validation import validate_config_at_startup
+        from config.config_manager import ConfigManager
+        
+        config = ConfigManager()
+        validate_config_at_startup(config)  # Raises ValueError if invalid
+    """
+    validator = ConfigValidator()
+    return validator.validate_startup_config(config_manager)
+

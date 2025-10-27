@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from core.engine import TradingBotEngine
 from monitoring.logger import StructuredLogger  # Changed from setup_logger
 from config.config_manager import ConfigManager  # Changed import
+from config.validation import validate_config_at_startup
 from data.storage.database import DatabaseManager
 from security.encryption import EncryptionManager  # Changed from SecurityManager
 from monitoring.enhanced_dashboard import DashboardEndpoints
@@ -825,7 +826,30 @@ async def main():
         from scripts.train_models import train_all_models
         await train_all_models()
         return
+
+    # ========================================================================
+    # NEW: VALIDATE CONFIGURATION BEFORE STARTING BOT
+    # ========================================================================
+    from config.validation import validate_config_at_startup
+    from config.config_manager import ConfigManager
+    
+    try:
+        # Load configuration
+        config = ConfigManager(config_path=args.config)
         
+        # Validate configuration (will raise ValueError if invalid)
+        validate_config_at_startup(config)
+        
+    except ValueError as e:
+        print(f"❌ Configuration validation failed:")
+        print(f"   {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ Error validating configuration: {e}")
+        sys.exit(1)
+    # ========================================================================
+    
+
     # Create and run application
     app = TradingBotApplication(
         config_path=args.config,

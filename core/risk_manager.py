@@ -15,6 +15,10 @@ import json
 from data.collectors.chain_data import ChainDataCollector
 from data.collectors.honeypot_checker import HoneypotChecker
 from security.wallet_security import WalletSecurityManager
+from utils.errors import CircuitBreakerTripped, RiskLimitError
+from monitoring.logger import get_logger
+
+log = get_logger(__name__)
 
 class RiskLevel(Enum):
     """Risk level classifications"""
@@ -135,6 +139,16 @@ class RiskScore:
 # Add these class definitions at the beginning of risk_manager.py after the existing imports and dataclasses
 
 @dataclass
+class CircuitBreakerMetrics:
+    """Metrics for circuit breaker logic"""
+    error_rate_pct: float = 0.0
+    realized_slippage_bps: float = 0.0
+    consecutive_losses: int = 0
+    drawdown_pct: float = 0.0
+    daily_loss_pct: float = 0.0
+    timestamp: datetime = field(default_factory=datetime.now)
+
+@dataclass
 class TradingOpportunity:
     """Trading opportunity for evaluation"""
     token_address: str
@@ -216,7 +230,113 @@ class RiskManager:
         self.consecutive_losses = 0
         self.returns_history = []
         self.max_positions = self.config.get('max_positions', 10)
+
+                # Circuit breaker tracking
+        self.error_count = 0
+        self.avg_slippage_bps = 0
+        self.daily_start_balance = self.balance
+        self.alert_manager = None  # Set by engine if available
+
+
+    def check_circuit_breakers(self, metrics: CircuitBreakerMetrics) -> Tuple[bool, Optional[str]]:
+        """
+        Check if any circuit breakers should trip
         
+        Args:
+            metrics: Current trading metrics
+            
+        Returns:
+            Tuple of (breaker_ok, reason)
+            - breaker_ok: True if all breakers are OK, False if tripped
+            - reason: Description of which breaker tripped (None if OK)
+        """
+        # Get thresholds from config (with safe defaults)
+        max_error_rate = self.config.get("breaker.error_rate_max", 20)  # %
+        max_slippage = self.config.get("breaker.slippage_realized_bps_max", 120)  # bps
+        max_consecutive_losses = self.config.get("breaker.max_consecutive_losses", 5)
+        max_drawdown = self.config.get("breaker.max_drawdown_pct", 15)  # %
+        max_daily_loss = self.config.get("breaker.max_daily_loss_pct", 10)  # %
+        
+        # Check error rate
+        if metrics.error_rate_pct > max_error_rate:
+            reason = f"Error rate too high: {metrics.error_rate_pct:.1f}% > {max_error_rate}%"
+            log.error(f"🔴 CIRCUIT BREAKER: {reason}")
+            return False, reason
+        
+        # Check realized slippage
+        if metrics.realized_slippage_bps > max_slippage:
+            reason = f"Slippage too high: {metrics.realized_slippage_bps:.0f}bps > {max_slippage}bps"
+            log.error(f"🔴 CIRCUIT BREAKER: {reason}")
+            return False, reason
+        
+        # Check consecutive losses
+        if metrics.consecutive_losses >= max_consecutive_losses:
+            reason = f"Too many consecutive losses: {metrics.consecutive_losses} >= {max_consecutive_losses}"
+            log.error(f"🔴 CIRCUIT BREAKER: {reason}")
+            return False, reason
+        
+        # Check drawdown
+        if metrics.drawdown_pct > max_drawdown:
+            reason = f"Drawdown too high: {metrics.drawdown_pct:.1f}% > {max_drawdown}%"
+            log.error(f"🔴 CIRCUIT BREAKER: {reason}")
+            return False, reason
+        
+        # Check daily loss
+        if metrics.daily_loss_pct > max_daily_loss:
+            reason = f"Daily loss limit exceeded: {metrics.daily_loss_pct:.1f}% > {max_daily_loss}%"
+            log.error(f"🔴 CIRCUIT BREAKER: {reason}")
+            return False, reason
+        
+        # All breakers OK
+        log.debug("✅ All circuit breakers OK")
+        return True, None
+
+
+
+    def update_trade_metrics(self, trade_result: Dict):
+        """
+        Update circuit breaker metrics after trade execution
+        
+        Args:
+            trade_result: Dictionary with trade outcome data
+        """
+        try:
+            # Update error count
+            if not trade_result.get('success', False):
+                self.error_count += 1
+            
+            # Update slippage tracking
+            if 'slippage_bps' in trade_result:
+                # Rolling average of last 20 trades
+                recent_slippages = getattr(self, '_slippage_history', [])
+                recent_slippages.append(trade_result['slippage_bps'])
+                recent_slippages = recent_slippages[-20:]  # Keep last 20
+                self._slippage_history = recent_slippages
+                self.avg_slippage_bps = sum(recent_slippages) / len(recent_slippages)
+            
+            # Update consecutive losses
+            if trade_result.get('profit', 0) < 0:
+                self.consecutive_losses += 1
+            else:
+                self.consecutive_losses = 0  # Reset on win
+            
+            # Update balance and peak tracking
+            if hasattr(self, 'balance'):
+                new_balance = self.balance + Decimal(str(trade_result.get('profit', 0)))
+                self.balance = new_balance
+                if new_balance > self.peak_balance:
+                    self.peak_balance = new_balance
+            
+            # Reset daily tracking if new day
+            current_date = datetime.now().date()
+            if not hasattr(self, '_last_reset_date') or self._last_reset_date != current_date:
+                self.daily_start_balance = self.balance
+                self._last_reset_date = current_date
+                
+        except Exception as e:
+            log.warning(f"Error updating trade metrics: {e}")
+
+
     async def analyze_token(self, token_address: str, force_refresh: bool = False) -> RiskScore:
         """
         Comprehensive risk analysis of a token
@@ -833,6 +953,30 @@ class RiskManager:
             Tuple of (is_valid, reason)
         """
         try:
+            # ====================================================================
+            # STEP 1: CHECK CIRCUIT BREAKERS FIRST (NEW)
+            # ====================================================================
+            metrics = await self._get_current_metrics()
+            breaker_ok, breaker_reason = self.check_circuit_breakers(metrics)
+            
+            if not breaker_ok:
+                log.error(f"🚨 Circuit breaker tripped: {breaker_reason}")
+                
+                # Send alert if available
+                if hasattr(self, 'alert_manager') and self.alert_manager:
+                    try:
+                        await self.alert_manager.send_critical(
+                            f"🚨 CIRCUIT BREAKER TRIPPED\n\n{breaker_reason}"
+                        )
+                    except Exception as alert_error:
+                        log.warning(f"Failed to send breaker alert: {alert_error}")
+                
+                return False, f"Circuit breaker: {breaker_reason}"
+            
+            # ====================================================================
+            # STEP 2: PROCEED WITH NORMAL VALIDATION
+            # ====================================================================
+            
             # Get fresh risk assessment
             risk_score = await self.analyze_token(token_address, force_refresh=True)
             
@@ -863,6 +1007,51 @@ class RiskManager:
             
         except Exception as e:
             return False, f"Validation error: {str(e)}"
+
+    async def _get_current_metrics(self) -> CircuitBreakerMetrics:
+        """
+        Get current trading metrics for circuit breaker evaluation
+        
+        Returns:
+            CircuitBreakerMetrics with current system state
+        """
+        try:
+            # Calculate metrics from recent trading history
+            total_trades = len(self.returns_history) if hasattr(self, 'returns_history') else 0
+            
+            # Error rate (from failed trades)
+            error_count = getattr(self, 'error_count', 0)
+            error_rate_pct = (error_count / max(total_trades, 1)) * 100 if total_trades > 0 else 0
+            
+            # Realized slippage (average from recent trades)
+            realized_slippage_bps = getattr(self, 'avg_slippage_bps', 0)
+            
+            # Consecutive losses
+            consecutive_losses = getattr(self, 'consecutive_losses', 0)
+            
+            # Drawdown calculation
+            current_balance = getattr(self, 'balance', Decimal("1.0"))
+            peak_balance = getattr(self, 'peak_balance', current_balance)
+            drawdown_pct = float((peak_balance - current_balance) / peak_balance * 100) if peak_balance > 0 else 0
+            
+            # Daily loss (requires tracking daily start balance)
+            daily_start_balance = getattr(self, 'daily_start_balance', current_balance)
+            daily_loss_pct = float((daily_start_balance - current_balance) / daily_start_balance * 100) if daily_start_balance > 0 else 0
+            
+            return CircuitBreakerMetrics(
+                error_rate_pct=error_rate_pct,
+                realized_slippage_bps=realized_slippage_bps,
+                consecutive_losses=consecutive_losses,
+                drawdown_pct=drawdown_pct,
+                daily_loss_pct=daily_loss_pct,
+                timestamp=datetime.now()
+            )
+            
+        except Exception as e:
+            log.warning(f"Error calculating metrics, using safe defaults: {e}")
+            # Return safe default metrics that won't trip breakers
+            return CircuitBreakerMetrics()
+
 
     # Add these methods to existing RiskManager class
     

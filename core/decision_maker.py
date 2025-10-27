@@ -9,6 +9,9 @@ from datetime import datetime, timedelta
 from enum import Enum
 import asyncio
 from decimal import Decimal
+from monitoring.logger import get_logger
+
+log = get_logger(__name__)
 
 @dataclass
 class TradingDecision:
@@ -197,7 +200,7 @@ class DecisionMaker:
             return decision
             
         except Exception as e:
-            print(f"Decision making error: {e}")
+            log.exception(f"Decision making error in make_decision: {e}")
             return TradingDecision(
                 should_trade=False,
                 action='hold',
@@ -284,7 +287,7 @@ class DecisionMaker:
             return min(score, 1.0)
             
         except Exception as e:
-            print(f"Scalping evaluation error: {e}")
+            log.error(f"Scalping evaluation error: {e}")
             return 0.0
             
     async def _evaluate_momentum(self, data: Dict) -> float:
@@ -325,7 +328,7 @@ class DecisionMaker:
             return min(score, 1.0)
             
         except Exception as e:
-            print(f"Momentum evaluation error: {e}")
+            log.error(f"Momentum evaluation error: {e}")
             return 0.0
             
     async def _evaluate_mean_reversion(self, data: Dict) -> float:
@@ -371,7 +374,7 @@ class DecisionMaker:
             return min(score, 1.0)
             
         except Exception as e:
-            print(f"Mean reversion evaluation error: {e}")
+            log.error(f"Mean reversion evaluation error: {e}")
             return 0.0
             
     async def _evaluate_breakout(self, data: Dict) -> float:
@@ -418,7 +421,7 @@ class DecisionMaker:
             return min(score, 1.0)
             
         except Exception as e:
-            print(f"Breakout evaluation error: {e}")
+            log.error(f"Breakout evaluation error: {e}")
             return 0.0
             
     async def _evaluate_swing(self, data: Dict) -> float:
@@ -465,7 +468,7 @@ class DecisionMaker:
             return min(score, 1.0)
             
         except Exception as e:
-            print(f"Swing evaluation error: {e}")
+            log.error(f"Swing evaluation error: {e}")
             return 0.0
             
     async def _evaluate_ai_hybrid(self, data: Dict) -> float:
@@ -517,7 +520,7 @@ class DecisionMaker:
             return min(score, 1.0)
             
         except Exception as e:
-            print(f"AI hybrid evaluation error: {e}")
+            log.error(f"AI hybrid evaluation error: {e}")
             return 0.0
             
     def _select_best_strategy(self, scores: Dict[StrategyType, float]) -> StrategyType:
@@ -574,7 +577,7 @@ class DecisionMaker:
             return min(max(confidence, 0), 1)
             
         except Exception as e:
-            print(f"Confidence calculation error: {e}")
+            log.error(f"Confidence calculation error: {e}")
             return 0.0
             
     async def _should_trade(self, confidence: float, risk_score, ml_predictions, liquidity) -> bool:
@@ -603,7 +606,7 @@ class DecisionMaker:
             return True
             
         except Exception as e:
-            print(f"Trade decision error: {e}")
+            log.error(f"Trade decision error: {e}")
             return False
             
     async def _calculate_position_parameters(self, data: Dict, strategy: StrategyType, 
@@ -682,7 +685,7 @@ class DecisionMaker:
             }
             
         except Exception as e:
-            print(f"Position calculation error: {e}")
+            log.error(f"Position calculation error: {e}")
             return {
                 'position_size': 0,
                 'entry_price': 0,
@@ -724,7 +727,7 @@ class DecisionMaker:
             return max(position_size, min_position)
             
         except Exception as e:
-            print(f"Kelly calculation error: {e}")
+            log.error(f"Kelly calculation error: {e}")
             return balance * 0.01  # Default 1%
             
     def _generate_reasoning(self, data: Dict, strategy: StrategyType, 
@@ -783,7 +786,7 @@ class DecisionMaker:
             return reasoning
             
         except Exception as e:
-            print(f"Reasoning generation error: {e}")
+            log.error(f"Reasoning generation error: {e}")
             return ["Error generating reasoning"]
             
     async def _classify_market_conditions(self, market_data: Dict):
@@ -810,7 +813,7 @@ class DecisionMaker:
                 self.market_conditions['stable'] = True
                 
         except Exception as e:
-            print(f"Market classification error: {e}")
+            log.error(f"Market classification error: {e}")
             
     async def update_performance(self, decision_id: str, outcome: Dict):
         """Update performance tracking for learning"""
@@ -829,7 +832,7 @@ class DecisionMaker:
             await self._adjust_strategy_weights()
             
         except Exception as e:
-            print(f"Performance update error: {e}")
+            log.error(f"Performance update error: {e}")
             
     async def _adjust_strategy_weights(self):
         """Dynamically adjust strategy weights based on performance"""
@@ -850,7 +853,7 @@ class DecisionMaker:
             # This would be implemented with actual performance tracking
             
         except Exception as e:
-            print(f"Weight adjustment error: {e}")
+            log.error(f"Weight adjustment error: {e}")
     
     # API-required methods
     
@@ -881,7 +884,7 @@ class DecisionMaker:
             return True
             
         except Exception as e:
-            print(f"Opportunity evaluation error: {e}")
+            log.error(f"Opportunity evaluation error: {e}")
             return False
     
     def calculate_confidence_score(self, signals: Dict) -> float:
@@ -904,7 +907,7 @@ class DecisionMaker:
             return min(confidence, 1.0)
             
         except Exception as e:
-            print(f"Confidence calculation error: {e}")
+            log.error(f"Confidence calculation error: {e}")
             return 0.0
     
     def determine_action(self, scores: Dict) -> str:
@@ -930,7 +933,7 @@ class DecisionMaker:
                 return 'hold'
                 
         except Exception as e:
-            print(f"Action determination error: {e}")
+            log.error(f"Action determination error: {e}")
             return 'hold'
     
     async def validate_decision(self, decision: TradingDecision) -> bool:
@@ -964,5 +967,5 @@ class DecisionMaker:
             return True
             
         except Exception as e:
-            print(f"Decision validation error: {e}")
+            log.error(f"Decision validation error: {e}")
             return False

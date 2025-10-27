@@ -744,6 +744,40 @@ class TradingBotEngine:
             if len(self.active_positions) >= max_positions:
                 logger.warning(f"⚠️ Max positions reached ({len(self.active_positions)}) - SKIPPING")
                 return
+
+            # ✅ CHECK 4: CIRCUIT BREAKERS
+            try:
+                metrics = await self.risk_manager._get_current_metrics()
+                breaker_ok, breaker_reason = self.risk_manager.check_circuit_breakers(metrics)
+                
+                if not breaker_ok:
+                    logger.error(f"🚨 CIRCUIT BREAKER TRIPPED: {breaker_reason}")
+                    logger.error(f"   Token: {token_symbol}")
+                    logger.error(f"   All trading HALTED until conditions improve")
+                    
+                    await self.alert_manager.send_critical(
+                        f"🚨 CIRCUIT BREAKER TRIPPED\n\n"
+                        f"Reason: {breaker_reason}\n"
+                        f"Token blocked: {token_symbol}\n\n"
+                        f"All trading has been HALTED.\n"
+                        f"Metrics:\n"
+                        f"  • Error rate: {metrics.error_rate_pct:.1f}%\n"
+                        f"  • Slippage: {metrics.realized_slippage_bps:.0f} bps\n"
+                        f"  • Consecutive losses: {metrics.consecutive_losses}\n"
+                        f"  • Drawdown: {metrics.drawdown_pct:.1f}%\n"
+                        f"  • Daily loss: {metrics.daily_loss_pct:.1f}%"
+                    )
+                    
+                    self.stats['circuit_breaker_trips'] = self.stats.get('circuit_breaker_trips', 0) + 1
+                    return
+                
+                logger.debug(f"✅ Circuit breakers OK - proceeding with trade")
+                
+            except Exception as e:
+                logger.error(f"❌ Circuit breaker check failed: {e}")
+                logger.warning(f"⚠️  Aborting trade due to circuit breaker check failure")
+                return
+            
             
             # ✅ NEW: Chain-specific executor routing
             chain = opportunity.chain.lower()
@@ -841,6 +875,14 @@ class TradingBotEngine:
                 # Update stats
                 self.stats['total_trades'] += 1
                 self.stats['successful_trades'] += 1
+
+                # Update circuit breaker metrics for successful real trade
+                actual_slippage = result.get('slippage_bps', 0)
+                self.risk_manager.update_trade_metrics({
+                    'success': True,
+                    'profit': 0,  # Entry only, no P&L yet
+                    'slippage_bps': actual_slippage
+                })
                 
                 # Send alert
                 executor_emoji = "🔷" if chain == 'solana' else "🔶"
@@ -857,6 +899,12 @@ class TradingBotEngine:
                 )
                 
                 logger.info(f"✅ DRY RUN position added to tracking: {token_symbol}")
+                # Update circuit breaker metrics for successful entry
+                self.risk_manager.update_trade_metrics({
+                    'success': True,
+                    'profit': 0,  # Entry only, no P&L yet
+                    'slippage_bps': 0  # Simulated, no real slippage
+                })
                 return
             
             # REAL EXECUTION
@@ -957,6 +1005,14 @@ class TradingBotEngine:
                 self.active_positions[opportunity.token_address] = position
                 self.stats['total_trades'] += 1
                 self.stats['successful_trades'] += 1
+
+                # Update circuit breaker metrics for successful real trade
+                actual_slippage = result.get('slippage_bps', 0)
+                self.risk_manager.update_trade_metrics({
+                    'success': True,
+                    'profit': 0,  # Entry only, no P&L yet
+                    'slippage_bps': actual_slippage
+                })
                 
                 # Send success alert
                 tx_link = result.get('explorer_url', f"Transaction: {result.get('signature' or 'transactionHash', 'N/A')[:10]}...")
@@ -979,6 +1035,13 @@ class TradingBotEngine:
                     f"Chain: {chain.upper()}\n"
                     f"Error: {result.get('error', 'Unknown error')}"
                 )
+
+                # Update circuit breaker metrics for failed trade
+                self.risk_manager.update_trade_metrics({
+                    'success': False,
+                    'profit': 0,
+                    'slippage_bps': 0
+                })
                 
         except Exception as e:
             logger.error(f"Error executing opportunity: {e}", exc_info=True)
@@ -1264,8 +1327,23 @@ class TradingBotEngine:
                 self.stats['total_profit'] += float(final_pnl)
                 if final_pnl > 0:
                     self.stats['successful_trades'] += 1
+
+                        # Update circuit breaker metrics for successful real trade
+                    actual_slippage = result.get('slippage_bps', 0)
+                    self.risk_manager.update_trade_metrics({
+                        'success': True,
+                        'profit': 0,  # Entry only, no P&L yet
+                        'slippage_bps': actual_slippage
+                    })
                 else:
                     self.stats['failed_trades'] += 1
+
+                        # Update circuit breaker metrics for failed trade
+                    self.risk_manager.update_trade_metrics({
+                        'success': False,
+                        'profit': 0,
+                        'slippage_bps': 0
+                    })
                 
                 # ✅ UPDATE DATABASE - FIXED VERSION
                 try:
@@ -1327,6 +1405,13 @@ class TradingBotEngine:
                     logger.error(f"❌ Failed to update trade in database: {e}")
                     import traceback
                     logger.error(traceback.format_exc())
+
+                    # Update circuit breaker metrics with trade result
+                self.risk_manager.update_trade_metrics({
+                    'success': True,  # Position closed successfully
+                    'profit': float(final_pnl),  # Actual P&L
+                    'slippage_bps': 0  # Simulated, no real slippage in dry run
+                })
                 
                 # ✅ ADD TO COOLDOWN TRACKING
                 self.recently_closed[token_address] = ClosedPositionRecord(
@@ -1386,8 +1471,23 @@ class TradingBotEngine:
                 self.stats['total_profit'] += final_pnl
                 if final_pnl > 0:
                     self.stats['successful_trades'] += 1
+
+                        # Update circuit breaker metrics for successful real trade
+                    actual_slippage = result.get('slippage_bps', 0)
+                    self.risk_manager.update_trade_metrics({
+                        'success': True,
+                        'profit': 0,  # Entry only, no P&L yet
+                        'slippage_bps': actual_slippage
+                    })
                 else:
                     self.stats['failed_trades'] += 1
+
+                        # Update circuit breaker metrics for failed trade
+                    self.risk_manager.update_trade_metrics({
+                        'success': False,
+                        'profit': 0,
+                        'slippage_bps': 0
+                    })
                 
                 if hasattr(self, 'position_tracker') and position.get('tracker_id'):
                     await self.position_tracker.close_position(position['tracker_id'])

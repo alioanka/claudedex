@@ -14,6 +14,7 @@ from core.event_bus import EventBus
 from data.storage.database import DatabaseManager
 from data.storage.cache import CacheManager
 from monitoring.alerts import AlertsSystem
+from config.config_manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -243,10 +244,14 @@ class LiquidityMonitor:
             reserve_out = Decimal(str(liquidity_data.get('reserve_token1', 0)))
             
             if reserve_in == 0 or reserve_out == 0:
-                return Decimal('0.99')  # Max slippage if no liquidity
+                max_slippage_bps = self.config.get('trading.max_slippage_bps', 100)  # Default 1%
+                return Decimal(str(max_slippage_bps / 10_000))  # Convert bps to decimal
             
             # AMM formula with fee (constant product)
-            amount_with_fee = amount * Decimal('0.997')  # 0.3% fee
+            #amount_with_fee = amount * Decimal('0.997')  # 0.3% fee
+            dex_fee_bps = self.config.get('trading.dex_fee_bps', 30)  # Default 0.3%
+            fee_multiplier = Decimal(str(1 - (dex_fee_bps / 10_000)))
+            amount_with_fee = amount * fee_multiplier
             amount_out = (amount_with_fee * reserve_out) / (reserve_in + amount_with_fee)
             
             # Calculate slippage
@@ -259,7 +264,8 @@ class LiquidityMonitor:
             
         except Exception as e:
             logger.error(f"Error calculating slippage: {e}")
-            return Decimal('0.99')  # Return max slippage on error
+            max_slippage_bps = self.config.get('trading.max_slippage_bps', 100)  # Default 1%
+            return Decimal(str(max_slippage_bps / 10_000))  # Convert bps to decimal
 
 
     # Keep the async version with different name for internal use:
@@ -311,10 +317,13 @@ class LiquidityMonitor:
                 liquidity_data['depth']
             )
             
+
+            max_slippage_bps = self.config.get('trading.max_slippage_bps', 100)
+            max_slippage_decimal = max_slippage_bps / 10_000
             return SlippageEstimate(
                 token=token,
                 amount_in=amount,
-                expected_slippage=slippage_data['expected_slippage'],
+                expected_slippage=max_slippage_decimal,
                 max_slippage=slippage_data['max_slippage'],
                 price_impact=price_impact,
                 effective_price=slippage_data['effective_price'],
@@ -325,12 +334,14 @@ class LiquidityMonitor:
             
         except Exception as e:
             logger.error(f"Error calculating slippage for {token}: {e}")
+            max_slippage_bps = self.config.get('trading.max_slippage_bps', 100)
+            max_slippage_decimal = max_slippage_bps / 10_000
             return SlippageEstimate(
                 token=token,
                 amount_in=amount,
-                expected_slippage=0.99,
-                max_slippage=0.99,
-                price_impact=0.99,
+                expected_slippage=max_slippage_decimal,
+                max_slippage=max_slippage_decimal,
+                price_impact=max_slippage_decimal,
                 effective_price=Decimal('0'),
                 liquidity_depth=Decimal('0'),
                 recommendation="Unable to calculate - avoid trade",
@@ -466,7 +477,10 @@ class LiquidityMonitor:
             reserve_out = Decimal(str(liquidity_data['reserve_token1' if is_buy else 'reserve_token0']))
             
             # Calculate output amount
-            amount_with_fee = amount * Decimal('0.997')  # 0.3% fee
+            #amount_with_fee = amount * Decimal('0.997')  # 0.3% fee
+            dex_fee_bps = self.config.get('trading.dex_fee_bps', 30)  # Default 0.3%
+            fee_multiplier = Decimal(str(1 - (dex_fee_bps / 10_000)))
+            amount_with_fee = amount * fee_multiplier
             amount_out = (amount_with_fee * reserve_out) / (reserve_in + amount_with_fee)
             
             # Calculate price impact
@@ -477,7 +491,10 @@ class LiquidityMonitor:
             
             # Calculate max slippage (for 2x the amount)
             amount_2x = amount * 2
-            amount_with_fee_2x = amount_2x * Decimal('0.997')
+            #amount_with_fee_2x = amount_2x * Decimal('0.997')
+            dex_fee_bps = self.config.get('trading.dex_fee_bps', 30)  # Default 0.3%
+            fee_multiplier = Decimal(str(1 - (dex_fee_bps / 10_000)))
+            amount_with_fee_2x = amount_2x * fee_multiplier
             amount_out_2x = (amount_with_fee_2x * reserve_out) / (reserve_in + amount_with_fee_2x)
             effective_price_2x = amount_2x / amount_out_2x if amount_out_2x > 0 else Decimal('0')
             max_slippage = float(abs(effective_price_2x - spot_price) / spot_price) if spot_price > 0 else 0
@@ -491,9 +508,11 @@ class LiquidityMonitor:
             
         except Exception as e:
             logger.error(f"Error calculating AMM slippage: {e}")
+            max_slippage_bps = self.config.get('trading.max_slippage_bps', 100)
+            max_slippage_decimal = max_slippage_bps / 10_000
             return {
-                'expected_slippage': 0.99,
-                'max_slippage': 0.99,
+                'expected_slippage': max_slippage_decimal,
+                'max_slippage': max_slippage_decimal,
                 'effective_price': Decimal('0'),
                 'amount_out': Decimal('0')
             }
@@ -928,22 +947,33 @@ class LiquidityMonitor:
 
     async def _calculate_orderbook_slippage(self, liquidity_data: Dict, amount: Decimal, is_buy: bool) -> Dict:
         """Calculate slippage for orderbook"""
+        # Get configured slippage values
+        expected_slippage_bps = self.config.get('trading.expected_slippage_bps', 10)  # 0.1%
+        max_slippage_bps = self.config.get('trading.max_slippage_bps', 50)  # 0.5%
+
+        expected_slippage = expected_slippage_bps / 10_000
+        max_slippage = max_slippage_bps / 10_000
         # Simplified calculation
         return {
-            'expected_slippage': 0.01,
-            'max_slippage': 0.05,
+            'expected_slippage': expected_slippage,
+            'max_slippage': max_slippage,
             'effective_price': Decimal('1'),
-            'amount_out': amount * Decimal('0.99')
+            'amount_out': amount * Decimal(str(1 - max_slippage))
         }
 
     async def _calculate_price_impact(self, liquidity_data: Dict, amount: Decimal, is_buy: bool) -> float:
         """Calculate price impact"""
         depth = liquidity_data.get('depth', Decimal('1'))
+
+        # Get max price impact from config
+        max_price_impact_bps = self.config.get('trading.max_price_impact_bps', 100)  # 1%
+        max_price_impact = max_price_impact_bps / 10_000
+
         if depth == 0:
-            return 0.99
+            return max_price_impact
         
         impact = float(amount / depth)
-        return min(0.99, impact)
+        return min(max_price_impact, impact)
 
     async def _check_lock_platform(self, token: str, chain: str, platform: str) -> Dict:
         """Check specific lock platform"""

@@ -29,6 +29,7 @@ from loguru import logger
 
 from utils.helpers import retry_async, measure_time
 from utils.constants import CHAIN_RPC_URLS, BLOCK_EXPLORERS
+from utils.errors import NetworkError, ABIError, DecodeError, ContractError
 
 
 class VulnerabilityLevel(Enum):
@@ -400,7 +401,8 @@ class SmartContractAnalyzer:
                         impl_address = w3.eth.get_storage_at(address, impl_slot)
                         if impl_address != b'\x00' * 32:
                             return True, Web3.to_checksum_address(impl_address[-20:])
-                    except:
+                    except (NetworkError, ABIError, DecodeError, ValueError, Exception) as e:
+                        logger.debug(f"Error reading proxy storage slot {impl_slot}: {e}")
                         pass
         
         # Check ABI for proxy functions
@@ -440,7 +442,8 @@ class SmartContractAnalyzer:
                         owner = getattr(contract.functions, func_name)().call()
                         if owner and owner != "0x0000000000000000000000000000000000000000":
                             return owner
-                    except:
+                    except (NetworkError, ABIError, AttributeError, Exception) as e:
+                        logger.debug(f"Error calling {func_name}() on contract: {e}")
                         pass
         
         return None
@@ -620,7 +623,8 @@ class SmartContractAnalyzer:
                         # Extract fee name from pattern
                         fee_name = re.search(r'(\w+)(?:Fee|Tax)', pattern).group(1)
                         fees[fee_name.lower()] = fee_value
-                except:
+                except (NetworkError, ContractError, Exception) as e:
+                    logger.debug(f"Extract fee value error: {e}")
                     pass
         
         # Check for fee limits
@@ -630,7 +634,8 @@ class SmartContractAnalyzer:
             try:
                 max_fee = max(Decimal(f) for f in max_fees) / Decimal(100)
                 fees["max_fee"] = max_fee
-            except:
+            except (NetworkError, ABIError, DecodeError) as e:
+                logger.warning(f"Check max fee error: {e}")
                 pass
         
         return fees

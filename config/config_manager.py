@@ -67,8 +67,19 @@ class TradingConfig(BaseModel):
     take_profit_percentage: float = 0.15  # 15%
     min_liquidity_threshold: float = 50000  # $50k
     max_gas_price: int = 100  # Gwei
+    max_slippage_bps: int = 50  # Max slippage tolerance (50 bps = 0.5%)
+    expected_slippage_bps: int = 10  # Expected slippage (10 bps = 0.1%)
+    max_price_impact_bps: int = 100  # Max price impact (100 bps = 1%)
+    dex_fee_bps: int = 30  # DEX trading fee (30 bps = 0.3%)
 
     min_opportunity_score: float = 0.05  # Minimum score to consider an opportunity
+
+    # Circuit Breaker Thresholds
+    BREAKER_ERROR_RATE_MAX=20              # Max error rate percentage
+    BREAKER_SLIPPAGE_REALIZED_BPS_MAX=120  # Max realized slippage in basis points
+    BREAKER_MAX_CONSECUTIVE_LOSSES=5       # Max consecutive losing trades
+    BREAKER_MAX_DRAWDOWN_PCT=15            # Max portfolio drawdown percentage
+    BREAKER_MAX_DAILY_LOSS_PCT=10          # Max daily loss percentage
 
     # ADD THIS:
     strategies: Dict[str, Dict[str, Any]] = {

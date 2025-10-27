@@ -46,6 +46,23 @@ class Settings:
     LOGS_DIR = BASE_DIR / "logs"
     MODELS_DIR = BASE_DIR / "models"
     BACKUPS_DIR = BASE_DIR / "backups"
+
+    # Slippage and Fee Configuration
+    TRADING_MAX_SLIPPAGE_BPS=50           # Max slippage tolerance (50 bps = 0.5%)
+    TRADING_EXPECTED_SLIPPAGE_BPS=10      # Expected slippage (10 bps = 0.1%)
+    TRADING_MAX_PRICE_IMPACT_BPS=100      # Max price impact (100 bps = 1%)
+    TRADING_DEX_FEE_BPS=30                # DEX trading fee (30 bps = 0.3%)
+
+    # Note: bps = basis points (1 bps = 0.01%)
+    # 50 bps = 0.5% = 0.005
+    # 100 bps = 1% = 0.01
+
+    # Circuit Breaker Thresholds
+    BREAKER_ERROR_RATE_MAX=20              # Max error rate percentage
+    BREAKER_SLIPPAGE_REALIZED_BPS_MAX=120  # Max realized slippage in basis points
+    BREAKER_MAX_CONSECUTIVE_LOSSES=5       # Max consecutive losing trades
+    BREAKER_MAX_DRAWDOWN_PCT=15            # Max portfolio drawdown percentage
+    BREAKER_MAX_DAILY_LOSS_PCT=10          # Max daily loss percentage
     
     # Create directories if they don't exist
     for directory in [CONFIG_DIR, DATA_DIR, LOGS_DIR, MODELS_DIR, BACKUPS_DIR]:
