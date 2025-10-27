@@ -1023,3 +1023,28 @@ class TradeFormatter(logging.Formatter):
         return super().format(record)
 
 #there is only one file provided as Performance Tracker & Logger System
+
+def get_logger(name: str) -> logging.Logger:
+    """Get or create a logger instance"""
+    logger = logging.getLogger(name)
+    
+    if not logger.handlers:
+        logger.setLevel(logging.INFO)
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(logging.DEBUG)
+        
+        try:
+            formatter = ColoredFormatter(
+                '%(asctime)s | %(levelname)-8s | %(name)s | %(message)s',
+                datefmt='%Y-%m-%d %H:%M:%S'
+            )
+        except:
+            formatter = logging.Formatter(
+                '%(asctime)s | %(levelname)-8s | %(name)s | %(message)s',
+                datefmt='%Y-%m-%d %H:%M:%S'
+            )
+        
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+    
+    return logger
