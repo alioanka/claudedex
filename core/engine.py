@@ -849,7 +849,7 @@ class TradingBotEngine:
                         'entry_price': float(opportunity.price),
                         'exit_price': None,
                         'amount': float(simulated_amount),
-                        'usd_value': 1000.0,
+                        'usd_value': float(position_value),
                         'gas_fee': 0.0,
                         'slippage': 0.0,
                         'profit_loss': None,
@@ -892,7 +892,7 @@ class TradingBotEngine:
                     f"Executor: {'Jupiter' if chain == 'solana' else 'EVM DEX'}\n"
                     f"Entry: ${opportunity.price:.8f}\n"
                     f"Amount: {simulated_amount:.2f} tokens\n"
-                    f"Value: $1000 (simulated)\n"
+                    f"Value: ${position_value:.2f}\n"
                     f"Score: {opportunity.score:.3f}\n"
                     f"Stop Loss: -10% | Take Profit: +30%\n"
                     f"Max Hold: 60 minutes"
@@ -933,6 +933,7 @@ class TradingBotEngine:
             )
             
             # ✅ CRITICAL: Final safety checks before real execution
+            is_dry_run = self.config.get('dry_run', True)           # ✅ DEFINE IT!
             if not is_dry_run:
                 logger.info(f"🔍 FINAL SAFETY CHECKS for {token_symbol}...")
                 
@@ -1013,17 +1014,98 @@ class TradingBotEngine:
                     'profit': 0,  # Entry only, no P&L yet
                     'slippage_bps': actual_slippage
                 })
+
+                # ✅ ADD COMPREHENSIVE LOGGING (NEW)
+                execution_price = result.get('execution_price', opportunity.price)
+                token_amount = result.get('token_amount', order.amount)
+                actual_value = float(execution_price * token_amount)
+                slippage_pct = ((execution_price - opportunity.price) / opportunity.price * 100) if opportunity.price > 0 else 0
+                
+                logger.info(f"✅ REAL TRADE EXECUTED SUCCESSFULLY:")
+                logger.info(f"   Token: {token_symbol}")
+                logger.info(f"   Chain: {chain.upper()}")
+                logger.info(f"   Executor: {'Jupiter' if chain == 'solana' else 'EVM DEX'}")
+                logger.info(f"   Expected Price: ${opportunity.price:.8f}")
+                logger.info(f"   Execution Price: ${execution_price:.8f}")
+                logger.info(f"   Slippage: {slippage_pct:+.2f}%")
+                logger.info(f"   Amount: {token_amount:.4f} tokens")
+                logger.info(f"   Target Value: ${opportunity.recommended_position_size:.2f}")
+                logger.info(f"   Actual Value: ${actual_value:.2f}")
+                logger.info(f"   TX Hash: {result.get('signature' if chain == 'solana' else 'transactionHash', 'N/A')}")
+                logger.info(f"   Gas Used: ${result.get('gas_fee', 0):.4f}")
+                
+                # Send success alert
+
+                # ✅ LOG REAL TRADE TO DATABASE (NEW)
+                try:
+                    trade_id = str(uuid.uuid4())
+                    execution_price = result.get('execution_price', opportunity.price)
+                    token_amount = result.get('token_amount', order.amount)
+                    actual_value = float(execution_price * token_amount)
+                    
+                    trade_data = {
+                        'trade_id': trade_id,
+                        'token_address': token_address,
+                        'chain': opportunity.chain,
+                        'side': 'buy',
+                        'entry_price': float(execution_price),
+                        'exit_price': None,
+                        'amount': float(token_amount),
+                        'usd_value': actual_value,
+                        'gas_fee': float(result.get('gas_fee', 0)),
+                        'slippage': float(result.get('slippage_bps', 0)) / 10000,  # Convert bps to decimal
+                        'profit_loss': None,
+                        'profit_loss_percentage': None,
+                        'strategy': opportunity.entry_strategy,
+                        'risk_score': float(opportunity.risk_score.overall_risk) if opportunity.risk_score else None,
+                        'ml_confidence': float(opportunity.ml_confidence),
+                        'entry_timestamp': datetime.now(),
+                        'exit_timestamp': None,
+                        'status': 'open',
+                        'metadata': {
+                            'token_symbol': token_symbol,
+                            'is_dry_run': False,  # ✅ REAL TRADE
+                            'opportunity_score': float(opportunity.score),
+                            'executor_type': 'Jupiter' if chain == 'solana' else 'EVM',
+                            'tx_hash': result.get('signature' if chain == 'solana' else 'transactionHash'),
+                            'expected_price': float(opportunity.price),
+                            'execution_price': float(execution_price),
+                            'slippage_bps': result.get('slippage_bps', 0)
+                        }
+                    }
+                    
+                    # Add trade_id to position for later reference
+                    position['trade_id'] = trade_id
+                    
+                    await self.db.save_trade(trade_data)
+                    logger.info(f"✅ Real trade logged to database: {trade_id}")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Failed to log real trade to database: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
                 
                 # Send success alert
                 tx_link = result.get('explorer_url', f"Transaction: {result.get('signature' or 'transactionHash', 'N/A')[:10]}...")
                 
+                # Build better alert with actual values
+                execution_price = result.get('execution_price', opportunity.price)
+                token_amount = result.get('token_amount', order.amount)
+                actual_value = float(execution_price * token_amount)
+                slippage_pct = ((execution_price - opportunity.price) / opportunity.price * 100) if opportunity.price > 0 else 0
+                
                 await self.alert_manager.send_trade_alert(
-                    f"✅ OPENED POSITION: {token_symbol}\n"
+                    f"✅ OPENED REAL POSITION: {token_symbol}\n"
                     f"Chain: {chain.upper()}\n"
                     f"Executor: {'Jupiter 🔷' if chain == 'solana' else 'EVM DEX 🔶'}\n"
-                    f"Entry: ${result.get('execution_price', opportunity.price):.8f}\n"
-                    f"Amount: {result.get('token_amount', order.amount):.4f}\n"
-                    f"Value: ${opportunity.recommended_position_size:.2f}\n"
+                    f"Expected: ${opportunity.price:.8f}\n"
+                    f"Executed: ${execution_price:.8f}\n"
+                    f"Slippage: {slippage_pct:+.2f}%\n"
+                    f"Amount: {token_amount:.4f} tokens\n"
+                    f"Target: ${opportunity.recommended_position_size:.2f}\n"
+                    f"Actual: ${actual_value:.2f}\n"
+                    f"Gas: ${result.get('gas_fee', 0):.4f}\n"
+                    f"Score: {opportunity.score:.3f}\n"
                     f"Tx: {tx_link}"
                 )
                 
