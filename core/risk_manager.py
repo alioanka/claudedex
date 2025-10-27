@@ -1038,7 +1038,7 @@ class RiskManager:
             # ✅ FIXED: Get ACTUAL portfolio value from portfolio manager
             if hasattr(self, 'portfolio_manager') and self.portfolio_manager:
                 try:
-                    current_balance = await self.portfolio_manager.get_total_value()
+                    current_balance = await self.portfolio_manager.get_portfolio_value()
                     current_balance = Decimal(str(current_balance))
                 except Exception as e:
                     log.warning(f"Could not get portfolio value: {e}")

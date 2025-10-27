@@ -880,11 +880,11 @@ class TradingBotEngine:
                 self.stats['successful_trades'] += 1
 
                 # Update circuit breaker metrics for successful real trade
-                actual_slippage = result.get('slippage_bps', 0)
+                # Update circuit breaker metrics for simulated trade
                 self.risk_manager.update_trade_metrics({
                     'success': True,
                     'profit': 0,  # Entry only, no P&L yet
-                    'slippage_bps': actual_slippage
+                    'slippage_bps': 0  # Simulated, no real slippage in dry run
                 })
                 
                 # Send alert
