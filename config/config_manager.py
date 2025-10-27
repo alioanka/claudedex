@@ -309,6 +309,12 @@ class ConfigManager:
         self.auto_reload_enabled = True
         self.reload_check_interval = 5  # seconds
         self._reload_task = None
+
+        # Add this before the final logger.info
+        self._raw_config = {}
+        self._env_config = self._load_environment_config()
+        self._raw_config.update(self._env_config)  # Merge env vars into raw config
+    
         
         logger.info("ConfigManager initialized")
 
@@ -323,15 +329,190 @@ class ConfigManager:
             # Load all configurations
             await self._load_all_configs()
             
+            # ✅ NEW: Store loaded configs in _raw_config for .get() access
+            for config_type, config_obj in self.configs.items():
+                config_key = config_type.value  # e.g., 'trading', 'security'
+                if hasattr(config_obj, 'dict'):
+                    # Pydantic v2
+                    self._raw_config[config_key] = config_obj.model_dump()
+                elif hasattr(config_obj, 'dict'):
+                    # Pydantic v1
+                    self._raw_config[config_key] = config_obj.dict()
+                else:
+                    # Already a dict
+                    self._raw_config[config_key] = config_obj
+            
+            # Re-merge env vars (they take priority)
+            self._raw_config.update(self._env_config)
+            
             # Start auto-reload if enabled
             if self.auto_reload_enabled:
                 await self._start_auto_reload()
-            
+
             logger.info("Configuration manager initialized successfully")
             
         except Exception as e:
             logger.error(f"Failed to initialize configuration manager: {e}")
             raise
+
+    def _load_environment_config(self) -> Dict[str, Any]:
+        """
+        Load configuration from environment variables
+        This provides fallback values for .get() method
+        """
+        env_config = {}
+        
+        # Common environment variables
+        env_vars = [
+            'PRIVATE_KEY',
+            'ENCRYPTION_KEY',
+            'DB_URL',
+            'DATABASE_URL',
+            'REDIS_URL',
+            'WALLET_ADDRESS',
+            'TRADING_MODE',
+            'DRY_RUN',
+            'DEXSCREENER_API_URL',
+            'DEXSCREENER_API_KEY',
+            'GOPLUS_API_KEY',
+            'TELEGRAM_BOT_TOKEN',
+            'TELEGRAM_CHAT_ID',
+            'ETHEREUM_RPC_URL',
+            'BSC_RPC_URL',
+            'BASE_RPC_URL',
+            'ARBITRUM_RPC_URL',
+            'POLYGON_RPC_URL',
+            'SOLANA_RPC_URL',
+        ]
+        
+        for var in env_vars:
+            value = os.getenv(var)
+            if value and value not in ('null', 'None', ''):
+                env_config[var] = value
+        
+        return env_config
+
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """
+        Dictionary-style get method for backward compatibility
+        Supports both flat keys (e.g., 'PRIVATE_KEY') and nested keys (e.g., 'security.private_key')
+        
+        Args:
+            key: Configuration key (flat or dotted notation)
+            default: Default value if key not found
+            
+        Returns:
+            Configuration value or default
+        """
+        try:
+            # First check environment variables (uppercase)
+            env_key = key.upper().replace('.', '_')
+            env_value = os.getenv(env_key)
+            if env_value is not None and env_value not in ('', 'null', 'None'):
+                return env_value
+            
+            # Check raw_config dict if available
+            if hasattr(self, '_raw_config') and self._raw_config:
+                # Handle nested keys like 'security.private_key'
+                if '.' in key:
+                    parts = key.split('.')
+                    value = self._raw_config
+                    for part in parts:
+                        if isinstance(value, dict) and part in value:
+                            value = value[part]
+                        else:
+                            value = None
+                            break
+                    if value is not None:
+                        return value
+                # Handle flat keys
+                elif key in self._raw_config:
+                    return self._raw_config[key]
+            
+            # Try to get from Pydantic models
+            key_lower = key.lower()
+            
+            # Security keys
+            if key_lower in ['private_key', 'encryption_key', 'jwt_secret']:
+                if ConfigType.SECURITY in self.configs:
+                    security_config = self.configs[ConfigType.SECURITY]
+                    if hasattr(security_config, key_lower):
+                        return getattr(security_config, key_lower)
+            
+            # Database keys
+            elif key_lower in ['db_url', 'database_url', 'host', 'port', 'database']:
+                if ConfigType.DATABASE in self.configs:
+                    db_config = self.configs[ConfigType.DATABASE]
+                    if key_lower in ['db_url', 'database_url']:
+                        # Construct DB URL from parts
+                        if hasattr(db_config, 'host'):
+                            return f"postgresql://{db_config.username}:{db_config.password}@{db_config.host}:{db_config.port}/{db_config.database}"
+                    elif hasattr(db_config, key_lower):
+                        return getattr(db_config, key_lower)
+            
+            # API keys
+            elif key_lower in ['dexscreener_api_url', 'dexscreener_api_key', 'goplus_api_key']:
+                if ConfigType.API in self.configs:
+                    api_config = self.configs[ConfigType.API]
+                    if hasattr(api_config, key_lower):
+                        return getattr(api_config, key_lower)
+            
+            # Monitoring/Telegram keys
+            elif key_lower in ['telegram_bot_token', 'telegram_chat_id']:
+                if ConfigType.MONITORING in self.configs:
+                    monitoring_config = self.configs[ConfigType.MONITORING]
+                    if hasattr(monitoring_config, key_lower):
+                        return getattr(monitoring_config, key_lower)
+            
+            # Not found, return default
+            return default
+            
+        except Exception as e:
+            logger.debug(f"Error getting config key '{key}': {e}")
+            return default
+
+
+    def __getitem__(self, key: str) -> Any:
+        """
+        Allow dict-style access: config['key']
+        Called when you do: value = config['PRIVATE_KEY']
+        """
+        result = self.get(key)
+        if result is None:
+            raise KeyError(f"Configuration key '{key}' not found")
+        return result
+
+
+    def __setitem__(self, key: str, value: Any):
+        """
+        Allow dict-style setting: config['key'] = value
+        Called when you do: config['NEW_KEY'] = 'value'
+        """
+        if not hasattr(self, '_raw_config'):
+            self._raw_config = {}
+        self._raw_config[key] = value
+
+
+    def __contains__(self, key: str) -> bool:
+        """
+        Allow 'in' operator: if 'key' in config
+        Called when you do: if 'PRIVATE_KEY' in config:
+        """
+        return self.get(key) is not None
+
+
+    def keys(self) -> List[str]:
+        """
+        Return all available keys
+        Called when you do: config.keys()
+        """
+        keys_set = set()
+        if hasattr(self, '_raw_config') and self._raw_config:
+            keys_set.update(self._raw_config.keys())
+        if hasattr(self, '_env_config') and self._env_config:
+            keys_set.update(self._env_config.keys())
+        return list(keys_set)
 
     async def _load_all_configs(self) -> None:
         """Load all configuration types"""
