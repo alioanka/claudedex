@@ -266,8 +266,22 @@ class ConfigManager:
     - Multi-source configuration merging
     """
 
-    def __init__(self, config_dir: str = "./config"):
-        self.config_dir = Path(config_dir)
+    def __init__(self, config_dir: str = "./config", config_path: Optional[str] = None):
+        """
+        Initialize ConfigManager
+        
+        Args:
+            config_dir: Directory containing config files
+            config_path: Optional path to specific config file (for compatibility)
+        """
+        # Use config_path if provided, otherwise use config_dir
+        if config_path:
+            self.config_dir = Path(config_path).parent
+            self.config_file = Path(config_path)
+        else:
+            self.config_dir = Path(config_dir)
+            self.config_file = None
+        
         self.config_dir.mkdir(parents=True, exist_ok=True)
         
         # Configuration storage
