@@ -75,11 +75,11 @@ class TradingConfig(BaseModel):
     min_opportunity_score: float = 0.05  # Minimum score to consider an opportunity
 
     # Circuit Breaker Thresholds
-    BREAKER_ERROR_RATE_MAX=20              # Max error rate percentage
-    BREAKER_SLIPPAGE_REALIZED_BPS_MAX=120  # Max realized slippage in basis points
-    BREAKER_MAX_CONSECUTIVE_LOSSES=5       # Max consecutive losing trades
-    BREAKER_MAX_DRAWDOWN_PCT=15            # Max portfolio drawdown percentage
-    BREAKER_MAX_DAILY_LOSS_PCT=10          # Max daily loss percentage
+    BREAKER_ERROR_RATE_MAX= int = 20             # Max error rate percentage
+    BREAKER_SLIPPAGE_REALIZED_BPS_MAX= int = 120  # Max realized slippage in basis points
+    BREAKER_MAX_CONSECUTIVE_LOSSES= int = 5       # Max consecutive losing trades
+    BREAKER_MAX_DRAWDOWN_PCT= int = 15            # Max portfolio drawdown percentage
+    BREAKER_MAX_DAILY_LOSS_PCT= int = 10          # Max daily loss percentage
 
     # ADD THIS:
     strategies: Dict[str, Dict[str, Any]] = {
