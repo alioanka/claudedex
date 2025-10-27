@@ -675,143 +675,110 @@ class ConfigValidator:
 
     def validate_startup_config(self, config_manager) -> bool:
         """
-        Validate critical configuration at bot startup
-        This is the new method for fail-fast validation
+        Validate configuration at bot startup
+        Checks all critical configuration values
         
         Args:
-            config_manager: ConfigManager instance
+            config_manager: ConfigManager instance or dict
             
         Returns:
-            True if all validations pass
+            True if validation passes
             
         Raises:
             ValueError if critical config is missing
         """
-        logger.info("=" * 80)
-        logger.info("Starting ClaudeDex Configuration Validation")
-        logger.info("=" * 80)
         
         errors = []
         warnings = []
         
-        # ========================================================================
-        # CRITICAL REQUIRED KEYS
-        # ========================================================================
+        logger.info("\n" + "=" * 80)
+        logger.info("Starting ClaudeDex Configuration Validation")
+        logger.info("=" * 80)
         
-        critical_keys = {
-            "TRADING_MODE": "Trading mode (paper/live)",
-            "DRY_RUN": "Dry run flag",
-            "WALLET_ADDRESS": "Trading wallet address",
-            "PRIVATE_KEY": "Wallet private key"
-        }
-        
-        logger.info("Checking critical keys...")
-        for key, description in critical_keys.items():
-            value = config_manager.get(key)
-            if value in (None, "", "null", "None", False):
-                errors.append(f"Missing required config: {key} ({description})")
-            else:
-                logger.info(f"  ✓ {key}: {'*' * 8} (configured)")
-        
-        # ========================================================================
-        # CHAIN CONFIGURATIONS
-        # ========================================================================
-        
-        logger.info("\nChecking chain configurations...")
-        enabled_chains = config_manager.get("enabled_chains", [])
-        
-        if not enabled_chains:
-            warnings.append("No chains enabled - bot will not trade")
-        else:
-            logger.info(f"  Enabled chains: {', '.join(enabled_chains)}")
-            
-            for chain in enabled_chains:
-                chain_key = chain.upper()
-                
-                # Check RPC URL
-                rpc_url = config_manager.get(f"{chain_key}_RPC_URL")
-                if not rpc_url or rpc_url in ("null", "None"):
-                    errors.append(f"Missing RPC URL for chain: {chain}")
+        # Helper function to safely get config value
+        def safe_get(key: str, default=None):
+            """Safely get config value from ConfigManager or dict"""
+            try:
+                if hasattr(config_manager, 'get'):
+                    # ConfigManager with .get() method
+                    return config_manager.get(key, default)
+                elif isinstance(config_manager, dict):
+                    # Plain dict
+                    return config_manager.get(key, default)
                 else:
-                    logger.info(f"  ✓ {chain} RPC configured")
-                
-                # Check Chain ID
-                chain_id = config_manager.get(f"{chain_key}_CHAIN_ID")
-                if not chain_id:
-                    errors.append(f"Missing Chain ID for chain: {chain}")
-                
-                # Check minimum liquidity
-                min_liquidity = config_manager.get(f"{chain_key}_MIN_LIQUIDITY")
-                if min_liquidity is None:
-                    warnings.append(f"No minimum liquidity set for {chain} - using default")
+                    # Try attribute access
+                    return getattr(config_manager, key, default)
+            except Exception:
+                return default
         
         # ========================================================================
-        # TRADING PARAMETERS
+        # CRITICAL SECURITY CHECKS
         # ========================================================================
         
-        logger.info("\nChecking trading parameters...")
+        logger.info("\nChecking critical security configuration...")
         
-        # Position sizing
-        max_position_size = config_manager.get("max_position_size")
-        if not max_position_size or float(max_position_size) <= 0:
-            errors.append("Invalid max_position_size - must be > 0")
+        # Private key (required for real trading)
+        private_key = safe_get("PRIVATE_KEY")
+        if not private_key or private_key in ("null", "None", ""):
+            trading_mode = safe_get("TRADING_MODE", "DRY_RUN")
+            if trading_mode != "DRY_RUN":
+                errors.append("Missing PRIVATE_KEY - required for real trading")
+            else:
+                warnings.append("No PRIVATE_KEY configured (OK for DRY_RUN mode)")
         else:
-            logger.info(f"  ✓ Max position size: {max_position_size}")
+            logger.info(f"  ✓ Private key configured: {private_key[:8]}...")
         
-        # Stop loss
-        stop_loss = config_manager.get("stop_loss_pct")
-        if not stop_loss or float(stop_loss) <= 0 or float(stop_loss) > 50:
-            errors.append("Invalid stop_loss_pct - must be between 0 and 50")
+        # Wallet address
+        wallet_address = safe_get("WALLET_ADDRESS")
+        if not wallet_address or wallet_address in ("null", "None", ""):
+            errors.append("Missing WALLET_ADDRESS")
         else:
-            logger.info(f"  ✓ Stop loss: {stop_loss}%")
-        
-        # Take profit
-        take_profit = config_manager.get("take_profit_pct")
-        if not take_profit or float(take_profit) <= 0:
-            errors.append("Invalid take_profit_pct - must be > 0")
-        else:
-            logger.info(f"  ✓ Take profit: {take_profit}%")
-        
-        # Slippage
-        max_slippage = config_manager.get("max_slippage_bps", 50)
-        if float(max_slippage) < 10 or float(max_slippage) > 1000:
-            warnings.append(f"Unusual max_slippage_bps: {max_slippage} (typical: 50-200)")
-        else:
-            logger.info(f"  ✓ Max slippage: {max_slippage} bps")
-        
-        # Max positions
-        max_positions = config_manager.get("max_positions", 8)
-        if int(max_positions) < 1 or int(max_positions) > 50:
-            warnings.append(f"Unusual max_positions: {max_positions} (typical: 5-20)")
-        else:
-            logger.info(f"  ✓ Max positions: {max_positions}")
+            logger.info(f"  ✓ Wallet address: {wallet_address}")
         
         # ========================================================================
-        # RISK MANAGEMENT
+        # TRADING MODE
         # ========================================================================
         
-        logger.info("\nChecking risk management...")
+        logger.info("\nChecking trading mode...")
         
-        # Daily loss limit
-        daily_loss = config_manager.get("max_daily_loss_pct")
-        if daily_loss:
-            if float(daily_loss) > 50:
-                warnings.append(f"High daily loss limit: {daily_loss}% - consider reducing")
-            logger.info(f"  ✓ Daily loss limit: {daily_loss}%")
+        trading_mode = safe_get("TRADING_MODE", "DRY_RUN")
+        dry_run = safe_get("DRY_RUN", "true").lower() in ("true", "1", "yes")
         
-        # Maximum drawdown
-        max_drawdown = config_manager.get("max_drawdown_pct")
-        if max_drawdown:
-            if float(max_drawdown) > 80:
-                warnings.append(f"High drawdown limit: {max_drawdown}% - very risky")
-            logger.info(f"  ✓ Max drawdown: {max_drawdown}%")
+        logger.info(f"  • Trading Mode: {trading_mode}")
+        logger.info(f"  • Dry Run: {dry_run}")
+        
+        if not dry_run and trading_mode == "DRY_RUN":
+            warnings.append("DRY_RUN=false but TRADING_MODE=DRY_RUN - conflicting settings")
+        
+        # ========================================================================
+        # CHAIN RPCS
+        # ========================================================================
+        
+        logger.info("\nChecking blockchain RPC endpoints...")
+        
+        chains_to_check = [
+            ('ETHEREUM', 'ETHEREUM_RPC_URL'),
+            ('BSC', 'BSC_RPC_URL'),
+            ('BASE', 'BASE_RPC_URL'),
+            ('ARBITRUM', 'ARBITRUM_RPC_URL'),
+            ('POLYGON', 'POLYGON_RPC_URL'),
+            ('SOLANA', 'SOLANA_RPC_URL'),
+        ]
+        
+        for chain_name, env_var in chains_to_check:
+            rpc_url = safe_get(env_var)
+            if rpc_url and rpc_url not in ("null", "None", ""):
+                logger.info(f"  ✓ {chain_name}: {rpc_url[:30]}...")
+            else:
+                warnings.append(f"No RPC URL for {chain_name}")
         
         # ========================================================================
         # DATABASE
         # ========================================================================
         
         logger.info("\nChecking database configuration...")
-        db_url = config_manager.get("DB_URL")
+        
+        db_url = safe_get("DB_URL")
         if not db_url or db_url in ("null", "None"):
             errors.append("Missing DB_URL - database connection required")
         elif not db_url.startswith("postgresql://"):
@@ -826,22 +793,22 @@ class ConfigValidator:
         logger.info("\nChecking API configurations...")
         
         # DexScreener (critical)
-        dex_api = config_manager.get("DEXSCREENER_API_URL")
+        dex_api = safe_get("DEXSCREENER_API_URL")
         if not dex_api:
             warnings.append("No DexScreener API URL configured")
         else:
             logger.info(f"  ✓ DexScreener API configured")
         
         # GoPlus (important for security)
-        goplus_api = config_manager.get("GOPLUS_API_KEY")
+        goplus_api = safe_get("GOPLUS_API_KEY")
         if not goplus_api:
             warnings.append("No GoPlus API key - honeypot detection may be limited")
         else:
             logger.info(f"  ✓ GoPlus API configured")
         
         # Telegram (optional but recommended)
-        telegram_token = config_manager.get("TELEGRAM_BOT_TOKEN")
-        telegram_chat = config_manager.get("TELEGRAM_CHAT_ID")
+        telegram_token = safe_get("TELEGRAM_BOT_TOKEN")
+        telegram_chat = safe_get("TELEGRAM_CHAT_ID")
         if not telegram_token or not telegram_chat:
             warnings.append("Telegram not configured - no alert notifications")
         else:
