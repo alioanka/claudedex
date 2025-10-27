@@ -4,13 +4,16 @@ Multi-layer risk assessment and position sizing
 """
 
 import asyncio
-from typing import Dict, List, Optional, Tuple, Any
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from decimal import Decimal
 import numpy as np
 from enum import Enum
 import json
+
+if TYPE_CHECKING:
+    from core.portfolio_manager import PortfolioManager
 
 from data.collectors.chain_data import ChainDataCollector
 from data.collectors.honeypot_checker import HoneypotChecker
@@ -184,7 +187,7 @@ class Position:
 class RiskManager:
     """Advanced risk management system"""
     
-    def __init__(self, config: Dict):
+    def __init__(self, config: Dict, portfolio_manager=None):
         """
         Initialize risk manager
         
@@ -192,6 +195,7 @@ class RiskManager:
             config: Risk management configuration
         """
         self.config = config
+        self.portfolio_manager = portfolio_manager
         self.chain_collector = ChainDataCollector(config.get('web3', {}))
         self.honeypot_checker = HoneypotChecker()
         self.wallet_manager = WalletSecurityManager(config.get('security', {}))
@@ -213,6 +217,11 @@ class RiskManager:
         # Cache for risk assessments
         self.risk_cache: Dict[str, RiskScore] = {}
         self.cache_duration = 300  # 5 minutes
+
+        # ✅ Initialize tracking variables HERE (not in initialize())
+        self._real_peak_balance = None
+        self._daily_start_balance = None
+        self._daily_start_date = None
         
     async def initialize(self):
         """Initialize risk manager components"""
@@ -225,8 +234,6 @@ class RiskManager:
         
         # Initialize internal state
         self.positions = {}
-        self.balance = Decimal("1.0")  # Default starting balance
-        self.peak_balance = self.balance
         self.consecutive_losses = 0
         self.returns_history = []
         self.max_positions = self.config.get('max_positions', 10)
@@ -234,7 +241,6 @@ class RiskManager:
                 # Circuit breaker tracking
         self.error_count = 0
         self.avg_slippage_bps = 0
-        self.daily_start_balance = self.balance
         self.alert_manager = None  # Set by engine if available
 
 
@@ -321,16 +327,16 @@ class RiskManager:
                 self.consecutive_losses = 0  # Reset on win
             
             # Update balance and peak tracking
-            if hasattr(self, 'balance'):
-                new_balance = self.balance + Decimal(str(trade_result.get('profit', 0)))
-                self.balance = new_balance
-                if new_balance > self.peak_balance:
-                    self.peak_balance = new_balance
+#            if hasattr(self, 'balance'):
+#                new_balance = self.balance + Decimal(str(trade_result.get('profit', 0)))
+#                self.balance = new_balance
+#                if new_balance > self.peak_balance:
+#                    self.peak_balance = new_balance
             
             # Reset daily tracking if new day
             current_date = datetime.now().date()
             if not hasattr(self, '_last_reset_date') or self._last_reset_date != current_date:
-                self.daily_start_balance = self.balance
+#                self.daily_start_balance = self.balance
                 self._last_reset_date = current_date
                 
         except Exception as e:
@@ -1029,14 +1035,68 @@ class RiskManager:
             # Consecutive losses
             consecutive_losses = getattr(self, 'consecutive_losses', 0)
             
-            # Drawdown calculation
-            current_balance = getattr(self, 'balance', Decimal("1.0"))
-            peak_balance = getattr(self, 'peak_balance', current_balance)
-            drawdown_pct = float((peak_balance - current_balance) / peak_balance * 100) if peak_balance > 0 else 0
+            # ✅ FIXED: Get ACTUAL portfolio value from portfolio manager
+            if hasattr(self, 'portfolio_manager') and self.portfolio_manager:
+                try:
+                    current_balance = await self.portfolio_manager.get_total_value()
+                    current_balance = Decimal(str(current_balance))
+                except Exception as e:
+                    log.warning(f"Could not get portfolio value: {e}")
+                    # Fallback to config initial balance
+                    current_balance = Decimal(str(self.config.get('portfolio', {}).get('initial_balance', 400.0)))
+            else:
+                # Fallback to config initial balance
+                current_balance = Decimal(str(self.config.get('portfolio', {}).get('initial_balance', 400.0)))
             
-            # Daily loss (requires tracking daily start balance)
-            daily_start_balance = getattr(self, 'daily_start_balance', current_balance)
-            daily_loss_pct = float((daily_start_balance - current_balance) / daily_start_balance * 100) if daily_start_balance > 0 else 0
+            # ✅ FIXED: Track REAL peak balance (initialize if needed)
+            if not hasattr(self, '_real_peak_balance') or self._real_peak_balance is None:
+                # Initialize with current balance or config initial balance
+                initial_balance = Decimal(str(self.config.get('portfolio', {}).get('initial_balance', 400.0)))
+                self._real_peak_balance = max(current_balance, initial_balance)
+                log.info(f"📊 Initialized peak balance: ${self._real_peak_balance:.2f}")
+            
+            # Update peak if current is higher
+            if current_balance > self._real_peak_balance:
+                log.info(f"📈 New peak balance: ${current_balance:.2f} (was ${self._real_peak_balance:.2f})")
+                self._real_peak_balance = current_balance
+            
+            # ✅ FIXED: Calculate drawdown with safety checks
+            drawdown_pct = 0.0
+            if self._real_peak_balance > 0:
+                drawdown_amount = self._real_peak_balance - current_balance
+                drawdown_pct = float(drawdown_amount / self._real_peak_balance * 100)
+                
+                # ✅ CRITICAL: Cap between 0-100% (can't lose more than 100%!)
+                drawdown_pct = max(0.0, min(100.0, drawdown_pct))
+            
+            # ✅ FIXED: Daily loss tracking with date reset
+            today = datetime.now().date()
+            
+            # Initialize daily tracking if needed or reset on new day
+            if not hasattr(self, '_daily_start_balance') or not hasattr(self, '_daily_start_date') or self._daily_start_date != today:
+                self._daily_start_balance = current_balance
+                self._daily_start_date = today
+                log.info(f"🌅 New day - Starting balance: ${self._daily_start_balance:.2f}")
+            
+            # Calculate daily P&L
+            daily_pnl = current_balance - self._daily_start_balance
+            daily_loss_pct = 0.0
+            
+            if self._daily_start_balance > 0:
+                if daily_pnl < 0:  # Only count losses
+                    daily_loss_pct = float(abs(daily_pnl) / self._daily_start_balance * 100)
+                    daily_loss_pct = min(100.0, daily_loss_pct)  # Cap at 100%
+            
+            # ✅ Log metrics for debugging
+            log.debug(
+                f"📊 Risk Metrics: "
+                f"DD={drawdown_pct:.1f}% "
+                f"(${current_balance:.2f}/${self._real_peak_balance:.2f}), "
+                f"Daily={daily_loss_pct:.1f}% "
+                f"(P&L=${daily_pnl:.2f}), "
+                f"Errors={error_rate_pct:.1f}%, "
+                f"Losses={consecutive_losses}"
+            )
             
             return CircuitBreakerMetrics(
                 error_rate_pct=error_rate_pct,
@@ -1049,8 +1109,19 @@ class RiskManager:
             
         except Exception as e:
             log.warning(f"Error calculating metrics, using safe defaults: {e}")
+            import traceback
+            log.debug(traceback.format_exc())
+            
             # Return safe default metrics that won't trip breakers
-            return CircuitBreakerMetrics()
+            return CircuitBreakerMetrics(
+                error_rate_pct=0.0,
+                realized_slippage_bps=0.0,
+                consecutive_losses=0,
+                drawdown_pct=0.0,
+                daily_loss_pct=0.0,
+                timestamp=datetime.now()
+            )
+
 
 
     # Add these methods to existing RiskManager class

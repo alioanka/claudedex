@@ -114,10 +114,13 @@ class TradingBotEngine:
         
         # Core components
         self.event_bus = EventBus()
-        self.risk_manager = RiskManager(config['risk_management'])
+        self.portfolio_manager = PortfolioManager(config.get('portfolio', {}))
+        self.risk_manager = RiskManager(
+            config['risk_management'], 
+            portfolio_manager=self.portfolio_manager
+        )
         self.pattern_analyzer = PatternAnalyzer()
         self.decision_maker = DecisionMaker(config)
-        self.portfolio_manager = PortfolioManager(config['portfolio'])
         
         # Data collectors
         # Use:
@@ -1409,30 +1412,14 @@ class TradingBotEngine:
                 self.stats['total_profit'] += float(final_pnl)
                 if final_pnl > 0:
                     self.stats['successful_trades'] += 1
-
-                        # Update circuit breaker metrics for successful real trade
-                    actual_slippage = result.get('slippage_bps', 0)
-                    self.risk_manager.update_trade_metrics({
-                        'success': True,
-                        'profit': 0,  # Entry only, no P&L yet
-                        'slippage_bps': actual_slippage
-                    })
                 else:
                     self.stats['failed_trades'] += 1
-
-                        # Update circuit breaker metrics for failed trade
-                    self.risk_manager.update_trade_metrics({
-                        'success': False,
-                        'profit': 0,
-                        'slippage_bps': 0
-                    })
                 
                 # ✅ UPDATE DATABASE - FIXED VERSION
                 try:
                     trade_id = position.get('trade_id')
                     
                     if not trade_id:
-                        # Try to find trade by token address and open status
                         query = """
                         SELECT id FROM trades 
                         WHERE token_address = $1 
@@ -1443,10 +1430,9 @@ class TradingBotEngine:
                         trade_id = await self.db.pool.fetchval(query, token_address)
 
                     if trade_id:
-                        # ✅ Build metadata with close_reason
                         updated_metadata = {
                             **position.get('metadata', {}),
-                            'close_reason': reason,  # ✅ Store in metadata
+                            'close_reason': reason,
                             'holding_time_minutes': holding_time,
                             'close_details': {
                                 'entry_price': float(entry_price),
@@ -1457,42 +1443,29 @@ class TradingBotEngine:
                             }
                         }
                         
-                        # ✅ Update trade - NO close_reason column!
                         await self.db.update_trade(trade_id, {
                             'exit_price': float(current_price),
                             'exit_timestamp': datetime.now(),
                             'profit_loss': float(final_pnl),
                             'profit_loss_percentage': float(pnl_percentage),
-                            'status': 'closed',  # ✅ CRITICAL!
+                            'status': 'closed',
                             'metadata': updated_metadata
                         })
                         
-                        logger.info(f"✅ Trade {trade_id} closed in database with status='closed'")
-                        
-                        # ✅ Verify update worked
-                        verify_query = "SELECT status, exit_price, profit_loss FROM trades WHERE id = $1"
-                        verify = await self.db.pool.fetchrow(verify_query, trade_id)
-                        if verify:
-                            logger.info(
-                                f"   ✅ Verified: status={verify['status']}, "
-                                f"exit_price={verify['exit_price']}, "
-                                f"profit_loss={verify['profit_loss']}"
-                            )
-                        else:
-                            logger.error(f"   ❌ Could not verify trade {trade_id} update")
+                        logger.info(f"✅ Trade {trade_id} closed in database")
                     else:
-                        logger.warning(f"⚠️  Could not find open trade_id for {token_symbol} ({token_address})")
+                        logger.warning(f"⚠️  Could not find open trade_id for {token_symbol}")
                         
                 except Exception as e:
                     logger.error(f"❌ Failed to update trade in database: {e}")
                     import traceback
                     logger.error(traceback.format_exc())
 
-                    # Update circuit breaker metrics with trade result
+                # ✅ Update circuit breaker metrics ONCE at the end
                 self.risk_manager.update_trade_metrics({
-                    'success': True,  # Position closed successfully
-                    'profit': float(final_pnl),  # Actual P&L
-                    'slippage_bps': 0  # Simulated, no real slippage in dry run
+                    'success': True,
+                    'profit': float(final_pnl),
+                    'slippage_bps': 0
                 })
                 
                 # ✅ ADD TO COOLDOWN TRACKING
@@ -1524,7 +1497,7 @@ class TradingBotEngine:
                 logger.info(f"✅ DRY RUN position closed and added to cooldown")
                 return True
             
-            # REAL EXECUTION (unchanged)
+            # REAL EXECUTION
             from trading.executors.base_executor import TradeOrder
             
             order = TradeOrder(
@@ -1553,23 +1526,24 @@ class TradingBotEngine:
                 self.stats['total_profit'] += final_pnl
                 if final_pnl > 0:
                     self.stats['successful_trades'] += 1
-
-                        # Update circuit breaker metrics for successful real trade
-                    actual_slippage = result.get('slippage_bps', 0)
-                    self.risk_manager.update_trade_metrics({
-                        'success': True,
-                        'profit': 0,  # Entry only, no P&L yet
-                        'slippage_bps': actual_slippage
-                    })
                 else:
                     self.stats['failed_trades'] += 1
-
-                        # Update circuit breaker metrics for failed trade
-                    self.risk_manager.update_trade_metrics({
-                        'success': False,
-                        'profit': 0,
-                        'slippage_bps': 0
-                    })
+                
+                # ✅ Update circuit breaker metrics for real trade
+                actual_slippage = getattr(result, 'slippage_bps', 0)
+                self.risk_manager.update_trade_metrics({
+                    'success': True,
+                    'profit': float(final_pnl),
+                    'slippage_bps': actual_slippage
+                })
+                
+                # Add to cooldown
+                self.recently_closed[token_address] = ClosedPositionRecord(
+                    token_address=token_address,
+                    closed_at=datetime.now(),
+                    reason=reason,
+                    pnl=float(final_pnl)
+                )
                 
                 if hasattr(self, 'position_tracker') and position.get('tracker_id'):
                     await self.position_tracker.close_position(position['tracker_id'])
@@ -1590,12 +1564,21 @@ class TradingBotEngine:
                 return True
             else:
                 logger.error(f"❌ Failed to close position: {result.error}")
+                
+                # Update circuit breaker for failed trade
+                self.risk_manager.update_trade_metrics({
+                    'success': False,
+                    'profit': 0,
+                    'slippage_bps': 0
+                })
+                
                 await self.alert_manager.send_warning(
                     f"⚠️ Failed to close {token_symbol}\n"
                     f"Error: {result.error}\n"
                     f"Will retry..."
                 )
                 return False
+                
                 
         except Exception as e:
             logger.error(f"Error closing position {token_symbol}: {e}", exc_info=True)
