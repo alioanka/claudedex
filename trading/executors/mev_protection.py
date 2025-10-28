@@ -1000,7 +1000,7 @@ class MEVProtectionLayer(BaseExecutor):
             'data': '0x',  # Would be actual swap data
             'gas': 300000,  # Estimate
             'gasPrice': self.w3.eth.gas_price if hasattr(self, 'w3') else 50 * 10**9,
-            'nonce': self.w3.eth.get_transaction_count(order.wallet_address) if hasattr(self, 'w3') else 0,
+            'nonce': await self._get_next_nonce() if hasattr(self, 'w3') else 0,
             'chainId': 1  # Would get from order.chain
         }
 

@@ -28,6 +28,7 @@ import secrets
 import base64
 
 from security.encryption import EncryptionManager
+from trading.executors.base_executor import BaseExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -447,7 +448,7 @@ class WalletSecurityManager:
         
         # Build transaction
         transaction = {
-            'nonce': w3.eth.get_transaction_count(account.address),
+            'nonce': await self._get_next_nonce(),
             'gasPrice': w3.eth.gas_price,
             'gas': transaction_data.get('gas', 21000),
             'to': transaction_data['to'],

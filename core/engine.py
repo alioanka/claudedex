@@ -187,8 +187,10 @@ class TradingBotEngine:
                     solana_config = {
                         'enabled': config.get('solana_enabled', False),
                         'rpc_url': config.get('solana_rpc_url'),
-                        'private_key': config.get('solana_private_key'),
+                        'solana_private_key': config.get('solana_private_key'),
+                        'encryption_key': config.get('encryption_key'),
                         'max_slippage_bps': config.get('jupiter_max_slippage_bps', 500),
+                        'dry_run': config.get('dry_run', True),
                     }
                     self.solana_executor = JupiterExecutor(solana_config)
                 
@@ -335,7 +337,9 @@ class TradingBotEngine:
                 asyncio.create_task(self._retrain_models()),
                 asyncio.create_task(self._update_blacklists()),
                 asyncio.create_task(self._monitor_performance()),
-                asyncio.create_task(self._health_check())
+                asyncio.create_task(self._health_check()),
+                asyncio.create_task(self._monitor_wallet_balances()),
+                
             ]
             
             # Wait for tasks
@@ -559,6 +563,78 @@ class TradingBotEngine:
     # Find the _analyze_opportunity method in core/engine.py (around line 402)
     # Replace the scoring section with this enhanced version:
 
+
+
+    async def _monitor_wallet_balances(self):
+        """Monitor wallet balances and alert if low"""
+        while self.state == BotState.RUNNING:
+            try:
+                for chain in ['ethereum', 'bsc', 'base', 'arbitrum', 'polygon']:
+                    if not self.config.get(f'{chain}_enabled', False):
+                        continue
+                    
+                    # Check balance
+                    balance = await self._get_chain_balance(chain)
+                    min_balance = 0.05  # 0.05 ETH/BNB minimum
+                    
+                    if balance < min_balance:
+                        await self.alert_manager.send_warning(
+                            f"⚠️ LOW BALANCE WARNING\n"
+                            f"Chain: {chain.upper()}\n"
+                            f"Balance: {balance:.4f}\n"
+                            f"Minimum: {min_balance}\n"
+                            f"Please top up wallet!"
+                        )
+                
+                # Check Solana
+                if self.config.get('solana_enabled'):
+                    sol_balance = await self.solana_executor.get_balance()
+                    if sol_balance < 0.1:
+                        await self.alert_manager.send_warning(
+                            f"⚠️ LOW SOLANA BALANCE\n"
+                            f"Balance: {sol_balance:.4f} SOL\n"
+                            f"Please top up wallet!"
+                        )
+                
+                await asyncio.sleep(3600)  # Check hourly
+                
+            except Exception as e:
+                logger.error(f"Balance monitoring error: {e}")
+                await asyncio.sleep(3600)
+
+    async def _get_chain_balance(self, chain: str) -> float:
+        """
+        Get native token balance for a chain
+        
+        Args:
+            chain: Chain name ('ethereum', 'bsc', 'base', etc.)
+            
+        Returns:
+            Balance in native token (ETH, BNB, etc.)
+        """
+        try:
+            # Get the appropriate executor for the chain
+            if chain == 'solana':
+                if self.solana_executor:
+                    return await self.solana_executor.get_balance()
+                return 0.0
+            
+            # For EVM chains, use the trade_executor's web3 instance
+            wallet_address = self.config.get('wallet_address')
+            if not wallet_address:
+                logger.warning(f"No wallet address configured for {chain}")
+                return 0.0
+            
+            # Get balance from web3
+            balance_wei = self.trade_executor.w3.eth.get_balance(wallet_address)
+            balance_eth = self.trade_executor.w3.from_wei(balance_wei, 'ether')
+            
+            return float(balance_eth)
+            
+        except Exception as e:
+            logger.error(f"Error getting {chain} balance: {e}")
+            return 0.0
+
     async def _analyze_opportunity(self, pair: Dict) -> Optional[TradingOpportunity]:
         """
         Comprehensive analysis of a trading opportunity
@@ -781,6 +857,25 @@ class TradingBotEngine:
                 logger.warning(f"⚠️  Aborting trade due to circuit breaker check failure")
                 return
             
+            # Check wallet balance before trading
+            if chain == 'solana':
+                balance = await self.solana_executor.get_balance()
+                required = position_value + 0.01  # Position + fees
+            else:
+                w3 = self.trade_executor.w3
+                balance_wei = w3.eth.get_balance(self.config['wallet_address'])
+                balance = float(w3.from_wei(balance_wei, 'ether'))
+                required = position_value / eth_price + 0.01  # Convert to ETH + gas
+
+            if balance < required:
+                logger.error(f"❌ Insufficient balance: {balance} < {required}")
+                await self.alert_manager.send_critical(
+                    f"⚠️ INSUFFICIENT FUNDS\n"
+                    f"Chain: {chain}\n"
+                    f"Required: ${required:.2f}\n"
+                    f"Available: ${balance:.2f}"
+                )
+                return
             
             # ✅ NEW: Chain-specific executor routing
             chain = opportunity.chain.lower()
@@ -985,6 +1080,40 @@ class TradingBotEngine:
             # Now execute the trade
             result = await executor.execute_trade(order)
             
+            # Wait for transaction confirmation
+            if not self.config.get('dry_run', True):
+                try:
+                    if chain == 'solana':
+                        # Solana confirmation
+                        confirmation = await self.solana_executor.wait_for_confirmation(
+                            result.tx_hash,
+                            max_wait=30
+                        )
+                        if not confirmation or confirmation.get('err'):
+                            logger.error(f"❌ Solana transaction FAILED: {result.tx_hash}")
+                            await self.db.update_trade(trade_id, {'status': 'failed'})
+                            return
+                    else:
+                        # EVM confirmation
+                        w3 = self.trade_executor.w3
+                        receipt = w3.eth.wait_for_transaction_receipt(
+                            result.tx_hash,
+                            timeout=120
+                        )
+                        
+                        if receipt.status != 1:
+                            logger.error(f"❌ Transaction FAILED: {result.tx_hash}")
+                            # Update database with failed status
+                            await self.db.update_trade(trade_id, {'status': 'failed'})
+                            return
+                        
+                        logger.info(f"✅ Transaction CONFIRMED: {result.tx_hash}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Transaction confirmation failed: {e}")
+                    return
+
+
             if result['success']:
                 # Track position
                 position = {
@@ -1517,6 +1646,37 @@ class TradingBotEngine:
             )
             
             result = await self.trade_executor.execute(order)
+
+
+            # Wait for transaction confirmation
+            if not self.config.get('dry_run', True):
+                try:
+                    if chain == 'solana':
+                        # Solana confirmation
+                        confirmation = await self.solana_executor.wait_for_confirmation(
+                            result.tx_hash,
+                            max_wait=30
+                        )
+                    else:
+                        # EVM confirmation
+                        w3 = self.trade_executor.w3
+                        receipt = w3.eth.wait_for_transaction_receipt(
+                            result.tx_hash,
+                            timeout=120
+                        )
+                        
+                        if receipt.status != 1:
+                            logger.error(f"❌ Transaction FAILED: {result.tx_hash}")
+                            # Update database with failed status
+                            await self.db.update_trade(trade_id, {'status': 'failed'})
+                            return
+                        
+                        logger.info(f"✅ Transaction CONFIRMED: {result.tx_hash}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Transaction confirmation failed: {e}")
+                    return
+
             
             if result.success:
                 exit_price = result.execution_price

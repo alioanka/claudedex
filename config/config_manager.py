@@ -383,6 +383,7 @@ class ConfigManager:
             'ARBITRUM_RPC_URL',
             'POLYGON_RPC_URL',
             'SOLANA_RPC_URL',
+            'SOLANA_PRIVATE_KEY',
         ]
         
         for var in env_vars:

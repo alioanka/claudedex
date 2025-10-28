@@ -71,29 +71,93 @@ class JupiterExecutor(BaseExecutor):
         self.max_slippage_bps = int(config.get('max_slippage_bps', 500))  # 5% default
         
         # Initialize keypair from private key
-        private_key = config.get('private_key') or config.get('solana_private_key')
+        private_key = config.get('solana_private_key') or config.get('private_key')
+        # ✅ ADD DECRYPTION LOGIC:
+        if private_key and private_key.startswith('gAAAAA'):  # Encrypted format
+            try:
+                from cryptography.fernet import Fernet
+                encryption_key = config.get('encryption_key') or os.getenv('ENCRYPTION_KEY')
+                if encryption_key:
+                    cipher = Fernet(encryption_key.encode())
+                    private_key = cipher.decrypt(private_key.encode()).decode()
+                    logger.info("✅ Solana private key decrypted")
+            except Exception as e:
+                logger.error(f"Failed to decrypt Solana private key: {e}")
+                raise
+
         if private_key and Keypair:
             try:
-                # Handle base58 encoded private key
+                # ✅ IMPROVED: Validate and handle multiple formats
                 if isinstance(private_key, str):
-                    private_key_bytes = base58.b58decode(private_key)
-                    self.keypair = Keypair.from_bytes(private_key_bytes)
-                else:
-                    self.keypair = Keypair.from_bytes(bytes(private_key))
+                    # Try base58 format first (most common, 88 chars)
+                    if len(private_key) == 88:
+                        try:
+                            private_key_bytes = base58.b58decode(private_key)
+                            if len(private_key_bytes) != 64:
+                                raise ValueError(f"Invalid key length: {len(private_key_bytes)}, expected 64")
+                            self.keypair = Keypair.from_bytes(private_key_bytes)
+                            logger.info("✅ Loaded Solana keypair from base58 string")
+                        
+                        except Exception as e:
+                            raise ValueError(f"Invalid base58 Solana private key: {e}")
                     
+                    # Try hex format (128 chars)
+                    elif len(private_key) == 128:
+                        try:
+                            private_key_bytes = bytes.fromhex(private_key)
+                            self.keypair = Keypair.from_bytes(private_key_bytes)
+                            logger.info("✅ Loaded Solana keypair from hex string")
+                        except Exception as e:
+                            raise ValueError(f"Invalid hex Solana private key: {e}")
+                    
+                    # Try JSON array format [1,2,3,...]
+                    elif private_key.startswith('['):
+                        try:
+                            import json
+                            key_array = json.loads(private_key)
+                            private_key_bytes = bytes(key_array)
+                            if len(private_key_bytes) != 64:
+                                raise ValueError(f"Invalid key length: {len(private_key_bytes)}")
+                            self.keypair = Keypair.from_bytes(private_key_bytes)
+                            logger.info("✅ Loaded Solana keypair from JSON array")
+                        except Exception as e:
+                            raise ValueError(f"Invalid JSON array Solana private key: {e}")
+                    
+                    else:
+                        raise ValueError(
+                            f"Unsupported Solana private key format. "
+                            f"Expected base58 (88 chars), hex (128 chars), or JSON array. "
+                            f"Got length: {len(private_key)}"
+                        )
+                
+                # Byte array format
+                elif isinstance(private_key, (list, bytes, bytearray)):
+                    private_key_bytes = bytes(private_key)
+                    if len(private_key_bytes) != 64:
+                        raise ValueError(f"Invalid key length: {len(private_key_bytes)}, expected 64")
+                    self.keypair = Keypair.from_bytes(private_key_bytes)
+                    logger.info("✅ Loaded Solana keypair from bytes")
+                
+                else:
+                    raise ValueError(f"Invalid private key type: {type(private_key)}")
+                
+                # Validate keypair was created successfully
+                if not self.keypair:
+                    raise ValueError("Keypair creation failed")
+                
                 self.wallet_address = str(self.keypair.pubkey())
                 logger.info(f"🟣 Jupiter executor initialized for wallet: {self.wallet_address[:8]}...")
+                
             except Exception as e:
-                logger.error(f"Failed to initialize Solana keypair: {e}")
-                self.keypair = None
-                self.wallet_address = None
+                logger.error(f"❌ Failed to initialize Solana keypair: {e}")
+                raise  # ✅ CRITICAL: Raise instead of silently continuing
+                
         else:
             if not Keypair:
-                logger.warning("solders library not available - limited functionality")
+                logger.error("❌ solders library not available - cannot initialize Solana trading")
             if not private_key:
-                logger.warning("No Solana private key provided - executor will not be able to sign transactions")
-            self.keypair = None
-            self.wallet_address = None
+                logger.error("❌ No Solana private key provided")
+            raise ValueError("Cannot initialize Jupiter executor without valid private key")
         
         # HTTP session for API calls
         self.session: Optional[aiohttp.ClientSession] = None

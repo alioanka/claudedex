@@ -415,7 +415,7 @@ class DirectDEXExecutor(BaseExecutor):
                 'from': wallet,
                 'gas': 100000,
                 'gasPrice': w3.eth.gas_price,
-                'nonce': w3.eth.get_transaction_count(wallet),
+                'nonce': await self._get_next_nonce(),
                 'chainId': w3.eth.chain_id
             })
             
@@ -539,7 +539,7 @@ class DirectDEXExecutor(BaseExecutor):
                 'data': tx_data,
                 'gas': int(quote.gas_estimate * self.gas_buffer),
                 'gasPrice': gas_price,
-                'nonce': w3.eth.get_transaction_count(order.wallet_address),
+                'nonce': await self._get_next_nonce(),
                 'chainId': w3.eth.chain_id
             }
             
@@ -1180,7 +1180,7 @@ class DirectDEXExecutor(BaseExecutor):
             'data': '0x',  # Would be actual swap data
             'gas': 300000,  # Estimate
             'gasPrice': self.w3.eth.gas_price if hasattr(self, 'w3') else 50 * 10**9,
-            'nonce': self.w3.eth.get_transaction_count(order.wallet_address) if hasattr(self, 'w3') else 0,
+            'nonce': await self._get_next_nonce() if hasattr(self, 'w3') else 0,
             'chainId': 1  # Would get from order.chain
         }
 

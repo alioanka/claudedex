@@ -134,6 +134,24 @@ class TradeExecutor(BaseExecutor):
             raise ValueError("PRIVATE_KEY not found in configuration")
         self.account = Account.from_key(private_key)
         self.wallet_address = self.account.address
+
+        # ✅ PATCH: Validate wallet address
+        if not Web3.is_address(self.wallet_address):
+            raise ValueError(f"Invalid wallet address derived from private key: {self.wallet_address}")
+
+        # Verify wallet matches WALLET_ADDRESS in config (if provided)
+        expected_wallet = config.get('wallet_address') or config.get('WALLET_ADDRESS')
+        if expected_wallet:
+            if self.wallet_address.lower() != expected_wallet.lower():
+                raise ValueError(
+                    f"❌ WALLET MISMATCH!\n"
+                    f"Expected: {expected_wallet}\n"
+                    f"Got: {self.wallet_address}\n"
+                    f"Private key may not match configured wallet"
+                )
+            logger.info(f"✅ Wallet address verified: {self.wallet_address}")
+        else:
+            logger.info(f"ℹ️ Wallet initialized: {self.wallet_address}")
         
         # Chain configuration
         self.chain_id = config.get('chain_id', 1)
@@ -290,7 +308,17 @@ class TradeExecutor(BaseExecutor):
             # Apply MEV protection if needed
             if order.use_mev_protection:
                 order = await self._apply_mev_protection(order)
-                
+
+            w3 = self.w3  # ✅ ADD THIS LINE
+            current_gas_price = w3.eth.gas_price
+            max_gas_gwei = w3.to_wei(self.config.get('max_gas_price', 500), 'gwei')
+
+            if current_gas_price > max_gas_gwei:
+                raise Exception(
+                    f"Gas price too high: {w3.from_wei(current_gas_price, 'gwei')} > "
+                    f"{self.config.get('max_gas_price', 500)} Gwei"
+                )
+
             # Execute trade
             result = await self._execute_with_retry(order, best_route)
             
@@ -315,6 +343,9 @@ class TradeExecutor(BaseExecutor):
             
         except Exception as e:
             logger.error(f"Trade execution error: {e}", exc_info=True)
+            # Reset nonce on errors to recover from failed transactions
+            if "nonce" in str(e).lower() or "replacement transaction underpriced" in str(e).lower():
+                await self._reset_nonce()
             return ExecutionResult(
                 success=False,
                 tx_hash=None,
@@ -328,7 +359,16 @@ class TradeExecutor(BaseExecutor):
                 route='',
                 error=str(e)
             )
-    
+
+    async def _reset_nonce(self):
+        """Reset nonce to current on-chain value (use after errors)"""
+        async with self.nonce_lock:
+            self.current_nonce = self.w3.eth.get_transaction_count(
+                self.wallet_address,
+                'pending'  # Include pending transactions
+            )
+            logger.info(f"🔄 Nonce reset to {self.current_nonce}")
+
     # ✅ FIXED: NEW METHOD - Simulate execution for paper trading
     async def _simulate_execution(self, order: TradeOrder, start_time: float) -> ExecutionResult:
         """Simulate trade execution for paper trading"""
