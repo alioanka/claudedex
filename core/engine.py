@@ -856,7 +856,12 @@ class TradingBotEngine:
                 logger.error(f"❌ Circuit breaker check failed: {e}")
                 logger.warning(f"⚠️  Aborting trade due to circuit breaker check failure")
                 return
-            chain = opportunity.chain.lower() 
+            #chain = opportunity.chain.lower() 
+            # ✅ Define all variables at the beginning
+            chain = opportunity.chain.lower()
+            position_value = opportunity.recommended_position_size
+            eth_price = 4000.0  # Rough estimate for gas calculation
+            
             # Check wallet balance before trading
             if chain == 'solana':
                 balance = await self.solana_executor.get_balance()
@@ -866,7 +871,7 @@ class TradingBotEngine:
                 balance_wei = w3.eth.get_balance(self.trade_executor.wallet_address)
                 balance = float(w3.from_wei(balance_wei, 'ether'))
                 required = position_value / eth_price + 0.01  # Convert to ETH + gas
-
+            
             if balance < required:
                 logger.error(f"❌ Insufficient balance: {balance} < {required}")
                 await self.alert_manager.send_critical(
