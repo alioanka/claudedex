@@ -856,7 +856,7 @@ class TradingBotEngine:
                 logger.error(f"❌ Circuit breaker check failed: {e}")
                 logger.warning(f"⚠️  Aborting trade due to circuit breaker check failure")
                 return
-            
+            chain = opportunity.chain.lower() 
             # Check wallet balance before trading
             if chain == 'solana':
                 balance = await self.solana_executor.get_balance()
@@ -878,7 +878,7 @@ class TradingBotEngine:
                 return
             
             # ✅ NEW: Chain-specific executor routing
-            chain = opportunity.chain.lower()
+            #chain = opportunity.chain.lower()
             
             # Select appropriate executor
             if chain == 'solana':

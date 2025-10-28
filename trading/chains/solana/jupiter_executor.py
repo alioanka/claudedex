@@ -269,6 +269,88 @@ class JupiterExecutor(BaseExecutor):
                 'error': str(e)
             }
 
+    async def get_balance(self, token_mint: Optional[str] = None) -> float:
+            """
+            Get SOL or token balance for the wallet
+            
+            Args:
+                token_mint: Optional token mint address. If None, returns SOL balance
+                
+            Returns:
+                Balance as float (in SOL or token units)
+            """
+            if not self.session:
+                await self.initialize()
+            
+            try:
+                if not self.keypair or not self.wallet_address:
+                    logger.error("❌ Wallet not initialized")
+                    return 0.0
+                
+                # Get SOL balance by default
+                if token_mint is None or token_mint == 'So11111111111111111111111111111111111111112':
+                    # Query Solana RPC for SOL balance
+                    async with self.session.post(
+                        self.rpc_url,
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "getBalance",
+                            "params": [self.wallet_address]
+                        },
+                        headers={"Content-Type": "application/json"}
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            if 'result' in data and 'value' in data['result']:
+                                # Convert lamports to SOL (1 SOL = 1e9 lamports)
+                                lamports = data['result']['value']
+                                sol_balance = lamports / 1e9
+                                logger.debug(f"SOL balance: {sol_balance:.4f} SOL")
+                                return sol_balance
+                            else:
+                                logger.error(f"Unexpected RPC response: {data}")
+                                return 0.0
+                        else:
+                            logger.error(f"RPC request failed with status {response.status}")
+                            return 0.0
+                
+                # Get token balance
+                else:
+                    async with self.session.post(
+                        self.rpc_url,
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "getTokenAccountsByOwner",
+                            "params": [
+                                self.wallet_address,
+                                {"mint": token_mint},
+                                {"encoding": "jsonParsed"}
+                            ]
+                        },
+                        headers={"Content-Type": "application/json"}
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            if 'result' in data and 'value' in data['result'] and data['result']['value']:
+                                # Get token balance from first account
+                                account_data = data['result']['value'][0]['account']['data']['parsed']['info']
+                                token_amount = float(account_data['tokenAmount']['uiAmount'])
+                                logger.debug(f"Token balance: {token_amount}")
+                                return token_amount
+                            else:
+                                # No token account found - balance is 0
+                                return 0.0
+                        else:
+                            logger.error(f"RPC request failed with status {response.status}")
+                            return 0.0
+            
+            except Exception as e:
+                logger.error(f"Error getting Solana balance: {e}", exc_info=True)
+                return 0.0
+
+
     async def _simulate_jupiter_trade(self, order) -> Dict[str, Any]:
         """Simulate Jupiter trade for paper trading"""
         try:
