@@ -863,7 +863,7 @@ class TradingBotEngine:
                 required = position_value + 0.01  # Position + fees
             else:
                 w3 = self.trade_executor.w3
-                balance_wei = w3.eth.get_balance(self.config['wallet_address'])
+                balance_wei = w3.eth.get_balance(self.config.get('wallet_address'))
                 balance = float(w3.from_wei(balance_wei, 'ether'))
                 required = position_value / eth_price + 0.01  # Convert to ETH + gas
 
