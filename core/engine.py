@@ -862,28 +862,30 @@ class TradingBotEngine:
             position_value = opportunity.recommended_position_size
             eth_price = 4000.0  # Rough estimate for gas calculation
             
-            # Check wallet balance before trading
-            if chain == 'solana':
-                balance = await self.solana_executor.get_balance()
-                required = position_value + 0.01  # Position + fees
+            
+            # Check wallet balance before trading (skip in DRY_RUN mode)
+            if not self.config.get('dry_run', True):  # ✅ Only check balance in LIVE trading
+                if chain == 'solana':
+                    balance = await self.solana_executor.get_balance()
+                    required = position_value + 0.01  # Position + fees
+                else:
+                    w3 = self.trade_executor.w3
+                    balance_wei = w3.eth.get_balance(self.trade_executor.wallet_address)
+                    balance = float(w3.from_wei(balance_wei, 'ether'))
+                    required = position_value / eth_price + 0.01  # Convert to ETH + gas
+                
+                if balance < required:
+                    logger.error(f"❌ Insufficient balance: {balance} < {required}")
+                    await self.alert_manager.send_critical(
+                        f"⚠️ INSUFFICIENT FUNDS\n"
+                        f"Chain: {chain}\n"
+                        f"Required: ${required:.2f}\n"
+                        f"Available: ${balance:.2f}"
+                    )
+                    return
             else:
-                w3 = self.trade_executor.w3
-                balance_wei = w3.eth.get_balance(self.trade_executor.wallet_address)
-                balance = float(w3.from_wei(balance_wei, 'ether'))
-                required = position_value / eth_price + 0.01  # Convert to ETH + gas
-            
-            if balance < required:
-                logger.error(f"❌ Insufficient balance: {balance} < {required}")
-                await self.alert_manager.send_critical(
-                    f"⚠️ INSUFFICIENT FUNDS\n"
-                    f"Chain: {chain}\n"
-                    f"Required: ${required:.2f}\n"
-                    f"Available: ${balance:.2f}"
-                )
-                return
-            
-            # ✅ NEW: Chain-specific executor routing
-            #chain = opportunity.chain.lower()
+                # ✅ DRY_RUN mode - log but don't block
+                logger.info(f"🎯 DRY_RUN: Skipping balance check (would need ${position_value:.2f})")
             
             # Select appropriate executor
             if chain == 'solana':
