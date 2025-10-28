@@ -16,6 +16,7 @@ import json
 import statistics
 from collections import defaultdict, deque
 from config.config_manager import PortfolioConfig
+from monitoring.logger import log_trade_exit
 
 logger = logging.getLogger(__name__)
 
@@ -661,6 +662,26 @@ class PositionTracker:
                     f"P&L: {realized_pnl:.2f} ({position.roi:.2%})"
                     f"{f' Reason: {reason}' if reason else ''}"
                 )
+
+                # 🆕 PATCH: Structured trade exit logging
+                try:
+                    hold_time = (position.exit_time - position.entry_time).total_seconds() / 60
+                    pnl_pct = float(position.roi * 100)
+                    
+                    log_trade_exit(
+                        chain=position.chain if hasattr(position, 'chain') else 'unknown',
+                        symbol=position.symbol,
+                        trade_id=position.trade_id if hasattr(position, 'trade_id') else position_id,
+                        entry_price=float(position.entry_price),
+                        exit_price=float(exit_price),
+                        profit_loss=float(realized_pnl),
+                        pnl_pct=pnl_pct,
+                        reason=reason if reason else 'manual_close',
+                        hold_time_minutes=int(hold_time)
+                    )
+                except Exception as log_err:
+                    logger.warning(f"Failed to log trade exit: {log_err}")
+
                 
                 position.status = PositionStatus.CLOSED
                 

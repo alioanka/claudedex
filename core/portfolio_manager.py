@@ -11,6 +11,7 @@ from decimal import Decimal
 from enum import Enum
 import asyncio
 from collections import defaultdict
+from monitoring.logger import log_portfolio_update
 
 @dataclass
 class Position:
@@ -325,6 +326,9 @@ class PortfolioManager:
                         # Partial close
                         position.size -= trade['amount']
                         self.balance += trade['proceeds']
+
+                        # 🆕 PATCH: Log portfolio performance
+                        self.log_current_performance()
                         
             # Update trade history
             self.trade_history.append(trade)
@@ -678,3 +682,19 @@ class PortfolioManager:
                 
         except Exception as e:
             print(f"Error updating performance metrics: {e}")
+
+    def log_current_performance(self):
+        """Log current portfolio performance"""
+        try:
+            stats = self.get_statistics()
+            
+            log_portfolio_update(
+                balance_before=float(self.initial_balance),
+                balance_after=float(self.balance),
+                trades_executed=stats.get('total_trades', 0),
+                wins=stats.get('winning_trades', 0),
+                losses=stats.get('losing_trades', 0),
+                total_pnl=float(self.balance - self.initial_balance)
+            )
+        except Exception as e:
+            logger.warning(f"Failed to log portfolio update: {e}")

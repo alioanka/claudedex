@@ -1,5 +1,5 @@
 // DexScreener Trading Bot - Main JavaScript - FIXED VERSION
-
+//dashboard/static/js/main.js
 // Global state
 const state = {
     ws: null,

@@ -15,6 +15,8 @@ import logging
 import base58
 import base64
 
+from monitoring.logger import log_trade_entry
+
 try:
     from solders.keypair import Keypair
     from solders.pubkey import Pubkey
@@ -240,6 +242,22 @@ class JupiterExecutor(BaseExecutor):
             self.execution_stats['successful_trades'] += 1
             
             logger.info(f"✅ Trade executed successfully: {swap_result.get('signature')}")
+
+            # 🆕 PATCH: Structured Solana trade logging
+            try:
+                log_trade_entry(
+                    chain='SOLANA',
+                    symbol=getattr(order, 'symbol_out', 'UNKNOWN'),
+                    token_address=order.token_out,
+                    trade_id=swap_result.get('signature', 'no_sig'),
+                    entry_price=float(quote['outAmount']) / float(quote['inAmount']),
+                    amount=float(quote['outAmount']) / 1e9,  # Convert from lamports
+                    size_usd=float(quote['inAmount']) / 1e9,  # Convert from lamports
+                    reason="jupiter_swap"
+                )
+            except Exception as log_err:
+                logger.warning(f"Failed to log Solana trade entry: {log_err}")
+
             
             # ✅ FIXED: Standardized return format
             return {

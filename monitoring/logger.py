@@ -1048,3 +1048,206 @@ def get_logger(name: str) -> logging.Logger:
         logger.addHandler(handler)
     
     return logger
+
+
+def log_trade_entry(
+    chain: str,
+    symbol: str,
+    token_address: str,
+    trade_id: str,
+    entry_price: float,
+    amount: float,
+    size_usd: float,
+    reason: str = "opportunity_signal"
+) -> None:
+    """
+    Log trade entry event to trades log file
+    
+    Args:
+        chain: Blockchain network (e.g., 'BASE', 'ETHEREUM', 'BSC', 'SOLANA')
+        symbol: Token symbol
+        token_address: Contract address
+        trade_id: Unique trade identifier
+        entry_price: Entry price in USD
+        amount: Token amount purchased
+        size_usd: Position size in USD
+        reason: Reason for entry (default: "opportunity_signal")
+    """
+    from pathlib import Path
+    
+    # Get or create trades logger
+    trades_logger = logging.getLogger('TradingBot_trades')
+    
+    # Ensure handler exists
+    if not trades_logger.handlers:
+        log_file = Path("logs/TradingBot_trades.log")
+        log_file.parent.mkdir(exist_ok=True)
+        
+        handler = logging.FileHandler(log_file)
+        handler.setFormatter(logging.Formatter('%(message)s'))
+        trades_logger.addHandler(handler)
+        trades_logger.setLevel(logging.INFO)
+        trades_logger.propagate = False
+    
+    # Human-readable log
+    trades_logger.info(
+        f"🟢 TRADE_ENTRY | {chain.upper()} | {symbol} ({token_address[:8]}...) | "
+        f"Entry: ${entry_price:.4f} | Amount: {amount:.2f} | Size: ${size_usd:.2f}"
+    )
+    
+    # Structured JSON log
+    log_data = {
+        "timestamp": datetime.now().isoformat(),
+        "type": "TRADE_ENTRY",
+        "chain": chain.upper(),
+        "symbol": symbol,
+        "token_address": token_address,
+        "trade_id": str(trade_id),
+        "entry_price": float(entry_price),
+        "amount": float(amount),
+        "size_usd": float(size_usd),
+        "reason": reason
+    }
+    
+    trades_logger.info(json.dumps(log_data))
+
+
+def log_trade_exit(
+    chain: str,
+    symbol: str,
+    trade_id: str,
+    entry_price: float,
+    exit_price: float,
+    profit_loss: float,
+    pnl_pct: float,
+    reason: str,
+    hold_time_minutes: int = 0
+) -> None:
+    """
+    Log trade exit event to trades log file
+    
+    Args:
+        chain: Blockchain network (e.g., 'BASE', 'ETHEREUM', 'BSC', 'SOLANA')
+        symbol: Token symbol
+        trade_id: Unique trade identifier
+        entry_price: Entry price in USD
+        exit_price: Exit price in USD
+        profit_loss: Profit or loss in USD
+        pnl_pct: Profit or loss percentage
+        reason: Exit reason (e.g., 'take_profit', 'stop_loss', 'manual_close')
+        hold_time_minutes: How long position was held (minutes)
+    """
+    from pathlib import Path
+    
+    # Get or create trades logger
+    trades_logger = logging.getLogger('TradingBot_trades')
+    
+    # Ensure handler exists
+    if not trades_logger.handlers:
+        log_file = Path("logs/TradingBot_trades.log")
+        log_file.parent.mkdir(exist_ok=True)
+        
+        handler = logging.FileHandler(log_file)
+        handler.setFormatter(logging.Formatter('%(message)s'))
+        trades_logger.addHandler(handler)
+        trades_logger.setLevel(logging.INFO)
+        trades_logger.propagate = False
+    
+    # Format P&L with sign
+    pnl_sign = "+" if profit_loss >= 0 else ""
+    emoji = "🟢" if profit_loss >= 0 else "🔴"
+    
+    # Human-readable log
+    trades_logger.info(
+        f"{emoji} TRADE_EXIT | {chain.upper()} | {symbol} | "
+        f"Entry: ${entry_price:.4f} → Exit: ${exit_price:.4f} | "
+        f"P&L: ${pnl_sign}{profit_loss:.2f} ({pnl_sign}{pnl_pct:.1f}%) | "
+        f"Reason: {reason}"
+    )
+    
+    # Structured JSON log
+    log_data = {
+        "timestamp": datetime.now().isoformat(),
+        "type": "TRADE_EXIT",
+        "chain": chain.upper(),
+        "symbol": symbol,
+        "trade_id": str(trade_id),
+        "entry_price": float(entry_price),
+        "exit_price": float(exit_price),
+        "pnl_usd": float(profit_loss),
+        "pnl_pct": float(pnl_pct),
+        "reason": reason,
+        "hold_time_minutes": hold_time_minutes
+    }
+    
+    trades_logger.info(json.dumps(log_data))
+
+
+def log_portfolio_update(
+    balance_before: float,
+    balance_after: float,
+    trades_executed: int,
+    wins: int,
+    losses: int,
+    total_pnl: float
+) -> None:
+    """
+    Log portfolio performance update
+    
+    Args:
+        balance_before: Balance before trade
+        balance_after: Balance after trade
+        trades_executed: Total number of trades executed
+        wins: Number of winning trades
+        losses: Number of losing trades
+        total_pnl: Total profit/loss in USD
+    """
+    from pathlib import Path
+    
+    # Get or create trades logger
+    trades_logger = logging.getLogger('TradingBot_trades')
+    
+    # Ensure handler exists
+    if not trades_logger.handlers:
+        log_file = Path("logs/TradingBot_trades.log")
+        log_file.parent.mkdir(exist_ok=True)
+        
+        handler = logging.FileHandler(log_file)
+        handler.setFormatter(logging.Formatter('%(message)s'))
+        trades_logger.addHandler(handler)
+        trades_logger.setLevel(logging.INFO)
+        trades_logger.propagate = False
+    
+    # Calculate metrics
+    change = balance_after - balance_before
+    win_rate = (wins / trades_executed * 100) if trades_executed > 0 else 0
+    total_pnl_pct = (total_pnl / balance_before * 100) if balance_before > 0 else 0
+    
+    # Format with signs
+    change_sign = "+" if change >= 0 else ""
+    pnl_sign = "+" if total_pnl >= 0 else ""
+    
+    # Human-readable log
+    trades_logger.info(
+        f"💰 PORTFOLIO_UPDATE | "
+        f"Balance: ${balance_before:.2f} → ${balance_after:.2f} | "
+        f"Trades: {trades_executed} | Wins: {wins} ({win_rate:.1f}%) | "
+        f"Total P&L: ${pnl_sign}{total_pnl:.2f} ({pnl_sign}{total_pnl_pct:.2f}%)"
+    )
+    
+    # Structured JSON log
+    log_data = {
+        "timestamp": datetime.now().isoformat(),
+        "type": "PORTFOLIO_UPDATE",
+        "balance_before": float(balance_before),
+        "balance_after": float(balance_after),
+        "change": float(change),
+        "trades_executed": trades_executed,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": float(win_rate),
+        "total_pnl": float(total_pnl),
+        "total_pnl_pct": float(total_pnl_pct)
+    }
+    
+    trades_logger.info(json.dumps(log_data))

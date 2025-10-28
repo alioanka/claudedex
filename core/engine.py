@@ -40,6 +40,7 @@ from trading.orders.position_tracker import PositionTracker
 from monitoring.alerts import AlertManager
 from monitoring.performance import PerformanceTracker
 from monitoring.logger import StructuredLogger  # Add import at top
+from monitoring.logger import log_trade_entry, log_trade_exit
 
 from security.wallet_security import WalletSecurityManager
 
@@ -974,6 +975,23 @@ class TradingBotEngine:
                     }
                     await self.db.save_trade(trade_data)
                     logger.info(f"✅ Trade logged to database: {trade_id}")
+
+                    # 🆕 PATCH: Structured trade entry logging
+                    try:
+                        chain = opportunity.chain if hasattr(opportunity, 'chain') else 'unknown'
+                        log_trade_entry(
+                            chain=chain,
+                            symbol=token_symbol,
+                            token_address=opportunity.token_address,
+                            trade_id=trade_id,
+                            entry_price=float(opportunity.price),
+                            amount=float(simulated_amount),
+                            size_usd=float(position_value),
+                            reason="opportunity_signal"
+                        )
+                    except Exception as log_err:
+                        logger.warning(f"Failed to log trade entry: {log_err}")
+
                 except Exception as e:
                     logger.error(f"❌ Failed to log trade to database: {e}")
                 
@@ -1589,6 +1607,24 @@ class TradingBotEngine:
                         })
                         
                         logger.info(f"✅ Trade {trade_id} closed in database")
+
+                        # 🆕 PATCH: Structured trade exit logging
+                        try:
+                            chain = position.get('chain', 'unknown')
+                            log_trade_exit(
+                                chain=chain,
+                                symbol=token_symbol,
+                                trade_id=str(trade_id),
+                                entry_price=float(entry_price),
+                                exit_price=float(current_price),
+                                profit_loss=float(final_pnl),
+                                pnl_pct=float(pnl_percentage),
+                                reason=reason,
+                                hold_time_minutes=int(holding_time)
+                            )
+                        except Exception as log_err:
+                            logger.warning(f"Failed to log trade exit: {log_err}")
+
                     else:
                         logger.warning(f"⚠️  Could not find open trade_id for {token_symbol}")
                         
