@@ -34,6 +34,37 @@ SAFE_SOLANA_TOKENS = {
     "7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj": "stSOL (Lido)",
 }
 
+def is_valid_solana_address(address: str) -> bool:
+    """
+    Validate Solana address format
+    
+    Solana addresses are base58 encoded and typically 32-44 characters
+    Must not contain confusing characters (0, O, I, l)
+    
+    Args:
+        address: Token address to validate
+        
+    Returns:
+        True if valid Solana address format
+    """
+    import re
+    
+    if not address or not isinstance(address, str):
+        return False
+    
+    # Solana addresses are base58 encoded, 32-44 chars typical
+    if len(address) < 32 or len(address) > 44:
+        return False
+    
+    # Base58 alphabet (no 0, O, I, l to avoid confusion)
+    base58_pattern = r'^[1-9A-HJ-NP-Za-km-z]+$'
+    
+    if not re.match(base58_pattern, address):
+        return False
+    
+    return True
+
+
 class HoneypotChecker:
     """Advanced multi-API honeypot detection system"""
 
@@ -151,37 +182,49 @@ class HoneypotChecker:
     async def _check_solana_token(self, address: str) -> Dict:
         """
         Comprehensive Solana token verification using RugCheck.xyz v1 API
-        Uses /report/summary endpoint for fast, lightweight checks
         
-        Rate Limit: 15 requests per minute (based on response headers)
+        Args:
+            address: Solana token address (mint address)
+            
+        Returns:
+            Dict with honeypot analysis:
+            {
+                "is_honeypot": bool,
+                "confidence": float (0-1),
+                "risk_level": str ("safe", "low", "medium", "high", "critical"),
+                "reason": str,
+                "checks": dict
+            }
         """
         try:
-            # Validate Solana address format (base58, ~32-44 chars)
-            try:
-                Pubkey.from_string(address)
-            except Exception as e:
-                logger.warning(f"Invalid Solana address format: {address[:10]}... - {e}")
+            # ✅ PATCH: Validate address format first
+            if not address or not isinstance(address, str):
+                logger.warning(f"⚠️ Invalid token address type: {type(address)}")
                 return {
                     "is_honeypot": True,
-                    "confidence": 0.95,
-                    "risk_level": "high",
-                    "reason": "Invalid Solana address format",
-                    "checks": {"address_validation": "failed"}
-                }
-
-            # Check whitelist (skip API call for known safe tokens)
-            if address in SAFE_SOLANA_TOKENS:
-                logger.info(f"✅ Whitelisted token: {SAFE_SOLANA_TOKENS[address]}")
-                return {
-                    "is_honeypot": False,
                     "confidence": 1.0,
-                    "risk_level": "minimal",
-                    "reason": f"Whitelisted established token: {SAFE_SOLANA_TOKENS[address]}",
-                    "checks": {"whitelist": True}
+                    "risk_level": "critical",
+                    "reason": "Invalid token address",
+                    "checks": {"error": "Invalid address type"}
                 }
-            # Check blacklist first (fast local check)
+            
+            # Strip whitespace
+            address = address.strip()
+            
+            # ✅ PATCH: Validate Solana address format
+            if not is_valid_solana_address(address):
+                logger.warning(f"⚠️ Invalid Solana address format: {address[:16]}...")
+                return {
+                    "is_honeypot": True,
+                    "confidence": 1.0,
+                    "risk_level": "critical",
+                    "reason": "Invalid Solana address format",
+                    "checks": {"validation": "Failed Solana address format check"}
+                }
+            
+            # Check blacklist first (fast fail)
             if self._is_blacklisted(address):
-                logger.warning(f"🚫 Solana token {address[:8]}... is blacklisted")
+                logger.warning(f"⚠️ Blacklisted Solana token: {address[:8]}...")
                 return {
                     "is_honeypot": True,
                     "confidence": 1.0,
@@ -210,7 +253,7 @@ class HoneypotChecker:
             return result
             
         except Exception as e:
-            logger.error(f"Solana token check failed for {address}: {e}")
+            logger.error(f"Solana token check failed for {address[:16]}...: {e}", exc_info=True)
             # ✅ On error, allow through with unknown risk (don't block trading)
             return {
                 "is_honeypot": False,
@@ -222,32 +265,45 @@ class HoneypotChecker:
 
 
 
-    @retry_async(max_retries=2, delay=1.0)  # Lower retries for speed
-    @rate_limit(calls=12, period=60.0)  # Stay under 15/min limit with buffer
+    @retry_async(max_retries=2, delay=1.0)
+    @rate_limit(calls=12, period=60.0)
     async def _check_rugcheck_summary(self, address: str) -> Dict:
         """
         Check token using RugCheck.xyz v1 summary API
-        Endpoint: GET /v1/tokens/{id}/report/summary
         
+        Args:
+            address: Solana token address (base58 encoded)
+            
         Returns:
+            Dict with status and RugCheck data
+            
+        Example response structure:
         {
-        "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-        "tokenType": "",
-        "risks": [
-            {
-            "name": "Mutable metadata",
-            "value": "",
-            "description": "Token metadata can be changed by the owner",
-            "score": 100,
-            "level": "warn"
-            }
-        ],
-        "score": 101,
-        "score_normalised": 7,
-        "lpLockedPct": 2.9768640982543357
+            "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "tokenType": "Fungible",
+            "risks": [
+                {
+                "name": "Mutable Metadata",
+                "description": "Token metadata can be changed by the owner",
+                "score": 100,
+                "level": "warn"
+                }
+            ],
+            "score": 101,
+            "score_normalised": 7,
+            "lpLockedPct": 2.9768640982543357
         }
         """
         try:
+            # ✅ PATCH: Validate Solana address format BEFORE API call
+            if not is_valid_solana_address(address):
+                logger.warning(f"⚠️ Invalid Solana address format: {address[:16]}...")
+                return {
+                    "status": "error",
+                    "error": "Invalid Solana address format",
+                    "address": address[:16] + "..."
+                }
+            
             url = f"https://api.rugcheck.xyz/v1/tokens/{address}/report/summary"
             
             async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
@@ -278,6 +334,21 @@ class HoneypotChecker:
                         "reason": "Token not indexed by RugCheck (may be very new)"
                     }
                     
+                elif response.status == 400:
+                    # ✅ PATCH: Enhanced 400 error logging with actual address
+                    error_text = await response.text()
+                    logger.error(
+                        f"RugCheck API 400 Bad Request for {address[:16]}...\n"
+                        f"  Full address: {address}\n"
+                        f"  Response: {error_text[:200]}"
+                    )
+                    return {
+                        "status": "error",
+                        "error": f"Bad request - invalid address format",
+                        "http_status": 400,
+                        "address": address[:16] + "..."
+                    }
+                    
                 elif response.status == 429:
                     # Rate limited
                     logger.error(f"🚫 RugCheck rate limit exceeded")
@@ -287,10 +358,16 @@ class HoneypotChecker:
                     }
                     
                 else:
-                    logger.error(f"RugCheck API error: HTTP {response.status}")
+                    # ✅ PATCH: Log response text for other errors
+                    error_text = await response.text()
+                    logger.error(
+                        f"RugCheck API error: HTTP {response.status} for {address[:16]}...\n"
+                        f"  Response: {error_text[:200]}"
+                    )
                     return {
                         "status": "error",
-                        "error": f"API returned {response.status}"
+                        "error": f"API returned {response.status}",
+                        "http_status": response.status
                     }
                     
         except asyncio.TimeoutError:
@@ -300,12 +377,11 @@ class HoneypotChecker:
                 "error": "API request timed out"
             }
         except Exception as e:
-            logger.error(f"RugCheck check failed for {address[:8]}...: {e}")
+            logger.error(f"RugCheck check failed for {address[:8]}...: {e}", exc_info=True)
             return {
                 "status": "error",
                 "error": str(e)
             }
-
 
     # ==============================================================================
     # 6. ADD NEW METHOD - Calculate Verdict from RugCheck Data

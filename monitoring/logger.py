@@ -32,6 +32,72 @@ logging.addLevelName(LOSS_LOG, "LOSS")
 
 logger = logging.getLogger(__name__)
 
+
+# ==============================================================================
+# PATCH 1: Add Port Scanner Filter Class
+# Location: Add after imports, before setup_logging() function
+# ==============================================================================
+
+class IgnorePortScannersFilter(logging.Filter):
+    """
+    Filter to ignore harmless port scanner errors from aiohttp
+    
+    These errors occur when bots/scanners try non-HTTP protocols
+    on your HTTP port (SSL, SSH, SOCKS, etc.)
+    
+    They are completely harmless and just noise in the logs.
+    """
+    
+    # Patterns to ignore
+    IGNORED_PATTERNS = [
+        'BadStatusLine',          # Generic bad HTTP
+        'Invalid method encountered',  # Non-HTTP protocol attempts
+        'Error handling request', # Generic aiohttp error wrapper
+    ]
+    
+    # Byte patterns from port scanners (hex representation)
+    SCANNER_BYTES = [
+        '\\x16\\x03\\x01',  # SSL/TLS handshake
+        '\\x04\\x01',       # SOCKS4 request
+        '\\x05\\x01',       # SOCKS5 request
+        'SSH-2.0',          # SSH scanner
+        'GET / HTTP',       # Sometimes legitimate but often scanners
+    ]
+    
+    def filter(self, record: logging.LogRecord) -> bool:
+        """
+        Return False to filter out (not log) the record
+        Return True to allow the record to be logged
+        
+        Args:
+            record: Log record to evaluate
+            
+        Returns:
+            False if record should be filtered, True otherwise
+        """
+        # Only filter aiohttp.server logger
+        if 'aiohttp.server' not in record.name:
+            return True  # Allow all non-aiohttp logs
+        
+        # Get the log message
+        message = record.getMessage() if hasattr(record, 'getMessage') else str(record.msg)
+        
+        # Check if it's a port scanner error
+        for pattern in self.IGNORED_PATTERNS:
+            if pattern in message:
+                # Check if any scanner byte pattern is in the message
+                for scanner_byte in self.SCANNER_BYTES:
+                    if scanner_byte in message:
+                        # This is a port scanner - filter it out
+                        return False
+                        
+                # Also filter if it mentions "Invalid method" with byte sequences
+                if 'Invalid method' in message and ("b'" in message or 'b"' in message):
+                    return False
+        
+        # Allow all other aiohttp errors through
+        return True
+
 class MetricType(Enum):
     """Types of performance metrics"""
     RETURN = "return"
@@ -889,6 +955,7 @@ class StructuredLogger:
         if "console" in self.config["outputs"]:
             console_handler = logging.StreamHandler(sys.stdout)
             console_handler.setFormatter(self._get_formatter("console"))
+            console_handler.addFilter(IgnorePortScannersFilter())
             logger.addHandler(console_handler)
         
         # File handler
@@ -912,6 +979,7 @@ class StructuredLogger:
                 )
                 error_handler.setLevel(logging.ERROR)
                 error_handler.setFormatter(self._get_formatter("file"))
+                error_handler.addFilter(IgnorePortScannersFilter())
                 logger.addHandler(error_handler)
             
             # Separate trade log
