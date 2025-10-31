@@ -701,10 +701,14 @@ class DashboardEndpoints:
 
     async def api_wallet_balances(self, request):
         """Get wallet balances for all chains"""
-        # Broadcast wallet balance updates
         try:
+            balances = {}
+            total_value = 0
+            total_pnl = 0
+            
+            # Get positions from engine.active_positions (portfolio.positions is empty)
             if self.engine and self.engine.active_positions:
-                # Calculate balances from engine.active_positions
+                # Aggregate positions by chain
                 positions_by_chain = {}
                 for pos_id, position in self.engine.active_positions.items():
                     chain = position.get('chain', 'unknown').upper()
@@ -712,12 +716,13 @@ class DashboardEndpoints:
                         positions_by_chain[chain] = []
                     positions_by_chain[chain].append(position)
                 
-                balances = {}
+                # Calculate metrics for each chain
                 for chain, positions in positions_by_chain.items():
                     chain_value = 0
                     chain_cost = 0
                     
                     for pos in positions:
+                        # Get position value and cost
                         entry_price = float(pos.get('entry_price', 0))
                         current_price = float(pos.get('current_price', entry_price))
                         position_size = float(pos.get('position_size', 0))
@@ -735,24 +740,40 @@ class DashboardEndpoints:
                         'balance': float(chain_value),
                         'pnl': float(chain_pnl),
                         'pnl_pct': float(chain_pnl_pct),
-                        'positions': len(positions)
+                        'positions': len(positions),
+                        'available': float(chain_value),
+                        'locked': 0.0
                     }
+                    
+                    total_value += chain_value
+                    total_pnl += chain_pnl
                 
-                # Add chains with no positions
-                for chain in ['ETHEREUM', 'BSC', 'BASE', 'SOLANA']:
-                    if chain not in balances:
-                        balances[chain] = {
-                            'balance': 100.0,
-                            'pnl': 0.0,
-                            'pnl_pct': 0.0,
-                            'positions': 0
-                        }
+                # Calculate overall stats
+                overall_pnl_pct = (total_pnl / (total_value - total_pnl) * 100) if (total_value - total_pnl) > 0 else 0
                 
-                # Broadcast wallet update
-                await self.sio.emit('wallet_update', {
-                    'balances': balances,
-                    'timestamp': datetime.utcnow().isoformat()
-                })
+                # Add overall total
+                balances['TOTAL'] = {
+                    'balance': float(total_value),
+                    'pnl': float(total_pnl),
+                    'pnl_pct': float(overall_pnl_pct),
+                    'positions': len(self.engine.active_positions)
+                }
+            else:
+                # No positions - show initial balances
+                initial_per_chain = 100.0
+                balances = {
+                    'ETHEREUM': {'balance': initial_per_chain, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
+                    'BSC': {'balance': initial_per_chain, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
+                    'BASE': {'balance': initial_per_chain, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
+                    'SOLANA': {'balance': initial_per_chain, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
+                    'TOTAL': {'balance': 400.0, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0}
+                }
+            
+            return web.json_response({
+                'status': 'success',
+                'balances': balances,
+                'timestamp': datetime.now().isoformat()
+            })
             
         except Exception as e:
             logger.error(f"Error getting wallet balances: {e}", exc_info=True)
@@ -1676,16 +1697,74 @@ class DashboardEndpoints:
                             except Exception:
                                 starting_balance = 400
                             portfolio_value = starting_balance + total_pnl
+                    except Exception as e:
+                        logger.debug(f"Error getting performance data for broadcast: {e}")
 
                 # Broadcast the update
-                await self.sio.emit('dashboard_update', {
-                    'portfolio_value': float(portfolio_value),
-                    'daily_pnl': float(total_pnl),
-                    'open_positions': open_positions,
-                    'timestamp': datetime.utcnow().isoformat()
-                })
-                    except Exception as e:
-                        logger.debug(f"Error broadcasting portfolio update: {e}")
+                try:
+                    await self.sio.emit('dashboard_update', {
+                        'portfolio_value': float(portfolio_value),
+                        'daily_pnl': float(total_pnl),
+                        'open_positions': open_positions,
+                        'timestamp': datetime.utcnow().isoformat()
+                    })
+                except Exception as e:
+                    logger.debug(f"Error broadcasting dashboard update: {e}")
+                
+                # Broadcast wallet balance updates
+                try:
+                    if self.engine and self.engine.active_positions:
+                        # Calculate balances from engine.active_positions
+                        positions_by_chain = {}
+                        for pos_id, position in self.engine.active_positions.items():
+                            chain = position.get('chain', 'unknown').upper()
+                            if chain not in positions_by_chain:
+                                positions_by_chain[chain] = []
+                            positions_by_chain[chain].append(position)
+                        
+                        balances = {}
+                        for chain, positions in positions_by_chain.items():
+                            chain_value = 0
+                            chain_cost = 0
+                            
+                            for pos in positions:
+                                entry_price = float(pos.get('entry_price', 0))
+                                current_price = float(pos.get('current_price', entry_price))
+                                position_size = float(pos.get('position_size', 0))
+                                
+                                pos_cost = entry_price * position_size
+                                pos_value = current_price * position_size
+                                
+                                chain_value += pos_value
+                                chain_cost += pos_cost
+                            
+                            chain_pnl = chain_value - chain_cost
+                            chain_pnl_pct = (chain_pnl / chain_cost * 100) if chain_cost > 0 else 0
+                            
+                            balances[chain] = {
+                                'balance': float(chain_value),
+                                'pnl': float(chain_pnl),
+                                'pnl_pct': float(chain_pnl_pct),
+                                'positions': len(positions)
+                            }
+                        
+                        # Add chains with no positions
+                        for chain in ['ETHEREUM', 'BSC', 'BASE', 'SOLANA']:
+                            if chain not in balances:
+                                balances[chain] = {
+                                    'balance': 100.0,
+                                    'pnl': 0.0,
+                                    'pnl_pct': 0.0,
+                                    'positions': 0
+                                }
+                        
+                        # Broadcast wallet update
+                        await self.sio.emit('wallet_update', {
+                            'balances': balances,
+                            'timestamp': datetime.utcnow().isoformat()
+                        })
+                except Exception as e:
+                    logger.debug(f"Error broadcasting wallet update: {e}")
                 
                 # ✅ FIX: Add await for async method
 #                if self.db:
