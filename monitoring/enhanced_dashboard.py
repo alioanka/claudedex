@@ -722,13 +722,14 @@ class DashboardEndpoints:
                     chain_cost = 0
                     
                     for pos in positions:
-                        # Get position value and cost
+                        # Use correct field names from engine.py
                         entry_price = float(pos.get('entry_price', 0))
                         current_price = float(pos.get('current_price', entry_price))
-                        position_size = float(pos.get('position_size', 0))
+                        # Field is 'amount', not 'position_size'
+                        amount = float(pos.get('amount', 0))
                         
-                        pos_cost = entry_price * position_size
-                        pos_value = current_price * position_size
+                        pos_cost = entry_price * amount
+                        pos_value = current_price * amount
                         
                         chain_value += pos_value
                         chain_cost += pos_cost
@@ -1728,12 +1729,15 @@ class DashboardEndpoints:
                             chain_cost = 0
                             
                             for pos in positions:
+                                # Use correct field names from engine.py
                                 entry_price = float(pos.get('entry_price', 0))
+                                # current_price may not exist yet if monitor hasn't run
                                 current_price = float(pos.get('current_price', entry_price))
-                                position_size = float(pos.get('position_size', 0))
+                                # Field is 'amount', not 'position_size'
+                                amount = float(pos.get('amount', 0))
                                 
-                                pos_cost = entry_price * position_size
-                                pos_value = current_price * position_size
+                                pos_cost = entry_price * amount
+                                pos_value = current_price * amount
                                 
                                 chain_value += pos_value
                                 chain_cost += pos_cost
