@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import Enum
 import asyncio
+import uuid
 from collections import defaultdict
 from monitoring.logger import log_portfolio_update
 
@@ -323,7 +324,7 @@ class PortfolioManager:
     async def update_portfolio(self, trade: Dict) -> None:
         """Update portfolio with new trade"""
         try:
-            token = trade['token_address']
+            token = trade['token_address'].lower()
             
             if trade['side'] == 'buy':
                 # Add or update position
@@ -707,7 +708,7 @@ class PortfolioManager:
                     return position
         
         if token_address:
-            return self.positions.get(token_address)
+            return self.positions.get(token_address.lower())
         
         return None
 
