@@ -694,52 +694,62 @@ class DashboardEndpoints:
                 }
             })
 
+    # ============================================================================
+    # FIND the api_wallet_balances method you added (around line 650-750)
+    # REPLACE THE ENTIRE METHOD with this corrected version:
+    # ============================================================================
+
     async def api_wallet_balances(self, request):
         """Get wallet balances for all chains"""
         try:
             balances = {}
-            total_usd = 0
+            total_value = 0
+            total_pnl = 0
             
             # Get portfolio manager data
-            if self.portfolio:
-                portfolio_stats = self.portfolio.get_statistics()
-                
-                # Get per-chain metrics
-                chain_metrics = portfolio_stats.get('per_chain_metrics', {})
+            if self.portfolio and self.portfolio.positions:
+                # Use get_per_chain_metrics() which actually exists
+                chain_metrics = self.portfolio.get_per_chain_metrics()
                 
                 for chain, metrics in chain_metrics.items():
                     chain_upper = chain.upper()
                     
-                    # Calculate balance for this chain
-                    chain_value = metrics.get('total_value', 0)
-                    chain_pnl = metrics.get('total_pnl', 0)
-                    positions_count = metrics.get('positions_count', 0)
+                    # Get data from metrics
+                    chain_value = metrics.get('value', 0)
+                    chain_cost = metrics.get('cost', 0)
+                    chain_pnl = chain_value - chain_cost
+                    positions_count = metrics.get('positions', 0)
                     
                     balances[chain_upper] = {
                         'balance': float(chain_value),
                         'pnl': float(chain_pnl),
-                        'pnl_pct': float(metrics.get('avg_pnl_pct', 0)),
+                        'pnl_pct': float(metrics.get('roi', 0)),
                         'positions': int(positions_count),
-                        'available': float(chain_value),  # Available = total in DRY_RUN
-                        'locked': 0.0  # Would be non-zero in live trading
+                        'available': float(chain_value),
+                        'locked': 0.0
                     }
                     
-                    total_usd += chain_value
+                    total_value += chain_value
+                    total_pnl += chain_pnl
+                
+                # Calculate overall stats
+                overall_pnl_pct = (total_pnl / (total_value - total_pnl) * 100) if (total_value - total_pnl) > 0 else 0
                 
                 # Add overall total
                 balances['TOTAL'] = {
-                    'balance': float(total_usd),
-                    'pnl': float(portfolio_stats.get('total_pnl', 0)),
-                    'pnl_pct': float(portfolio_stats.get('total_pnl_pct', 0)),
-                    'positions': len(self.portfolio.positions) if self.portfolio.positions else 0
+                    'balance': float(total_value),
+                    'pnl': float(total_pnl),
+                    'pnl_pct': float(overall_pnl_pct),
+                    'positions': len(self.portfolio.positions)
                 }
             else:
-                # Fallback if portfolio manager not available
+                # No positions - show initial balances
+                initial_per_chain = 100.0
                 balances = {
-                    'ETHEREUM': {'balance': 100.0, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
-                    'BSC': {'balance': 100.0, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
-                    'BASE': {'balance': 100.0, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
-                    'SOLANA': {'balance': 100.0, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
+                    'ETHEREUM': {'balance': initial_per_chain, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
+                    'BSC': {'balance': initial_per_chain, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
+                    'BASE': {'balance': initial_per_chain, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
+                    'SOLANA': {'balance': initial_per_chain, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
                     'TOTAL': {'balance': 400.0, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0}
                 }
             
@@ -750,11 +760,12 @@ class DashboardEndpoints:
             })
             
         except Exception as e:
-            logger.error(f"Error getting wallet balances: {e}")
+            logger.error(f"Error getting wallet balances: {e}", exc_info=True)
             return web.json_response({
                 'status': 'error',
                 'error': str(e)
             }, status=500)
+
 
     def _calculate_duration(self, start, end):
         """Calculate duration between two timestamps"""
