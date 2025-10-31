@@ -111,6 +111,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/performance/charts', self.api_performance_charts)
         self.app.router.add_get('/api/alerts/recent', self.api_recent_alerts)
         self.app.router.add_get('/api/risk/metrics', self.api_risk_metrics)
+        self.app.router.add_get('/api/wallets/balances', self.api_wallet_balances)
         
         # API - Bot control
         self.app.router.add_post('/api/bot/start', self.api_bot_start)
@@ -692,6 +693,68 @@ class DashboardEndpoints:
                     'portfolio_beta': 0.0
                 }
             })
+
+    async def api_wallet_balances(self, request):
+        """Get wallet balances for all chains"""
+        try:
+            balances = {}
+            total_usd = 0
+            
+            # Get portfolio manager data
+            if self.portfolio:
+                portfolio_stats = self.portfolio.get_statistics()
+                
+                # Get per-chain metrics
+                chain_metrics = portfolio_stats.get('per_chain_metrics', {})
+                
+                for chain, metrics in chain_metrics.items():
+                    chain_upper = chain.upper()
+                    
+                    # Calculate balance for this chain
+                    chain_value = metrics.get('total_value', 0)
+                    chain_pnl = metrics.get('total_pnl', 0)
+                    positions_count = metrics.get('positions_count', 0)
+                    
+                    balances[chain_upper] = {
+                        'balance': float(chain_value),
+                        'pnl': float(chain_pnl),
+                        'pnl_pct': float(metrics.get('avg_pnl_pct', 0)),
+                        'positions': int(positions_count),
+                        'available': float(chain_value),  # Available = total in DRY_RUN
+                        'locked': 0.0  # Would be non-zero in live trading
+                    }
+                    
+                    total_usd += chain_value
+                
+                # Add overall total
+                balances['TOTAL'] = {
+                    'balance': float(total_usd),
+                    'pnl': float(portfolio_stats.get('total_pnl', 0)),
+                    'pnl_pct': float(portfolio_stats.get('total_pnl_pct', 0)),
+                    'positions': len(self.portfolio.positions) if self.portfolio.positions else 0
+                }
+            else:
+                # Fallback if portfolio manager not available
+                balances = {
+                    'ETHEREUM': {'balance': 100.0, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
+                    'BSC': {'balance': 100.0, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
+                    'BASE': {'balance': 100.0, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
+                    'SOLANA': {'balance': 100.0, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
+                    'TOTAL': {'balance': 400.0, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0}
+                }
+            
+            return web.json_response({
+                'status': 'success',
+                'balances': balances,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+        except Exception as e:
+            logger.error(f"Error getting wallet balances: {e}")
+            return web.json_response({
+                'status': 'error',
+                'error': str(e)
+            }, status=500)
 
     def _calculate_duration(self, start, end):
         """Calculate duration between two timestamps"""

@@ -54,6 +54,109 @@
     </div>
 </div>
 
+
+<!-- Multi-Wallet Balances -->
+<div class="card">
+    <div class="card-header">
+        <h3 class="card-title">
+            <i class="fas fa-coins"></i>
+            Wallet Balances by Chain
+        </h3>
+        <div class="card-actions">
+            <button class="btn btn-sm btn-secondary" onclick="refreshBalances()">
+                <i class="fas fa-sync"></i> Refresh
+            </button>
+        </div>
+    </div>
+    <div class="card-body">
+        <div class="grid grid-4" id="chainBalances">
+            <!-- Ethereum -->
+            <div class="balance-card">
+                <div class="balance-header">
+                    <span class="chain-icon">
+                        <i class="fab fa-ethereum"></i>
+                    </span>
+                    <span class="chain-name">Ethereum</span>
+                </div>
+                <div class="balance-value" id="eth-balance">$0.00</div>
+                <div class="balance-stats">
+                    <div class="balance-stat">
+                        <span class="label">P&L:</span>
+                        <span class="value" id="eth-pnl">$0.00</span>
+                    </div>
+                    <div class="balance-stat">
+                        <span class="label">Positions:</span>
+                        <span class="value" id="eth-positions">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- BSC -->
+            <div class="balance-card">
+                <div class="balance-header">
+                    <span class="chain-icon" style="background: #F3BA2F;">
+                        <i class="fas fa-coins"></i>
+                    </span>
+                    <span class="chain-name">BSC</span>
+                </div>
+                <div class="balance-value" id="bsc-balance">$0.00</div>
+                <div class="balance-stats">
+                    <div class="balance-stat">
+                        <span class="label">P&L:</span>
+                        <span class="value" id="bsc-pnl">$0.00</span>
+                    </div>
+                    <div class="balance-stat">
+                        <span class="label">Positions:</span>
+                        <span class="value" id="bsc-positions">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Base -->
+            <div class="balance-card">
+                <div class="balance-header">
+                    <span class="chain-icon" style="background: #0052FF;">
+                        <i class="fas fa-layer-group"></i>
+                    </span>
+                    <span class="chain-name">Base</span>
+                </div>
+                <div class="balance-value" id="base-balance">$0.00</div>
+                <div class="balance-stats">
+                    <div class="balance-stat">
+                        <span class="label">P&L:</span>
+                        <span class="value" id="base-pnl">$0.00</span>
+                    </div>
+                    <div class="balance-stat">
+                        <span class="label">Positions:</span>
+                        <span class="value" id="base-positions">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Solana -->
+            <div class="balance-card">
+                <div class="balance-header">
+                    <span class="chain-icon" style="background: linear-gradient(90deg, #9945FF, #14F195);">
+                        <i class="fas fa-bolt"></i>
+                    </span>
+                    <span class="chain-name">Solana</span>
+                </div>
+                <div class="balance-value" id="solana-balance">$0.00</div>
+                <div class="balance-stats">
+                    <div class="balance-stat">
+                        <span class="label">P&L:</span>
+                        <span class="value" id="solana-pnl">$0.00</span>
+                    </div>
+                    <div class="balance-stat">
+                        <span class="label">Positions:</span>
+                        <span class="value" id="solana-positions">0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Charts Row -->
 <div class="grid grid-2">
     <!-- Portfolio Value Chart -->
@@ -739,6 +842,82 @@ async function closePosition(positionId) {
 }
 
 window.closePosition = closePosition;
+
+
+// ========================================
+// WALLET BALANCES
+// ========================================
+
+async function loadWalletBalances() {
+    try {
+        const response = await fetch('/api/wallets/balances');
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            updateBalanceDisplay(data.balances);
+        }
+    } catch (error) {
+        console.error('Error loading wallet balances:', error);
+    }
+}
+
+function updateBalanceDisplay(balances) {
+    // Update individual chains
+    const chains = ['ETHEREUM', 'BSC', 'BASE', 'SOLANA'];
+    
+    chains.forEach(chain => {
+        const chainData = balances[chain];
+        if (!chainData) return;
+        
+        const chainKey = chain.toLowerCase().replace('ethereum', 'eth');
+        
+        // Update balance
+        const balanceEl = document.getElementById(`${chainKey}-balance`);
+        if (balanceEl) {
+            balanceEl.textContent = `$${chainData.balance.toFixed(2)}`;
+        }
+        
+        // Update P&L
+        const pnlEl = document.getElementById(`${chainKey}-pnl`);
+        if (pnlEl) {
+            const pnl = chainData.pnl || 0;
+            pnlEl.textContent = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
+            pnlEl.className = `value ${pnl >= 0 ? 'positive' : 'negative'}`;
+        }
+        
+        // Update positions count
+        const posEl = document.getElementById(`${chainKey}-positions`);
+        if (posEl) {
+            posEl.textContent = chainData.positions || 0;
+        }
+    });
+    
+    // Update total portfolio value (top stat card)
+    if (balances.TOTAL) {
+        const portfolioEl = document.getElementById('portfolioValueStat');
+        if (portfolioEl) {
+            portfolioEl.textContent = `$${balances.TOTAL.balance.toFixed(2)}`;
+        }
+        
+        const pnlEl = document.getElementById('totalPnlStat');
+        if (pnlEl) {
+            const pnl = balances.TOTAL.pnl || 0;
+            pnlEl.textContent = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
+        }
+    }
+}
+
+function refreshBalances() {
+    loadWalletBalances();
+}
+
+// Auto-refresh balances every 10 seconds
+setInterval(loadWalletBalances, 10000);
+
+// Load on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadWalletBalances();
+});
 
 // Update orders table  
 function updateOrdersTable(orders) {
