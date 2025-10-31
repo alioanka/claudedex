@@ -706,25 +706,41 @@ class DashboardEndpoints:
             total_value = 0
             total_pnl = 0
             
-            # Get portfolio manager data
-            if self.portfolio and self.portfolio.positions:
-                # Use get_per_chain_metrics() which actually exists
-                chain_metrics = self.portfolio.get_per_chain_metrics()
+            # Get positions from engine.active_positions (portfolio.positions is empty)
+            if self.engine and self.engine.active_positions:
+                # Aggregate positions by chain
+                positions_by_chain = {}
+                for pos_id, position in self.engine.active_positions.items():
+                    chain = position.get('chain', 'unknown').upper()
+                    if chain not in positions_by_chain:
+                        positions_by_chain[chain] = []
+                    positions_by_chain[chain].append(position)
                 
-                for chain, metrics in chain_metrics.items():
-                    chain_upper = chain.upper()
+                # Calculate metrics for each chain
+                for chain, positions in positions_by_chain.items():
+                    chain_value = 0
+                    chain_cost = 0
                     
-                    # Get data from metrics
-                    chain_value = metrics.get('value', 0)
-                    chain_cost = metrics.get('cost', 0)
+                    for pos in positions:
+                        # Get position value and cost
+                        entry_price = float(pos.get('entry_price', 0))
+                        current_price = float(pos.get('current_price', entry_price))
+                        position_size = float(pos.get('position_size', 0))
+                        
+                        pos_cost = entry_price * position_size
+                        pos_value = current_price * position_size
+                        
+                        chain_value += pos_value
+                        chain_cost += pos_cost
+                    
                     chain_pnl = chain_value - chain_cost
-                    positions_count = metrics.get('positions', 0)
+                    chain_pnl_pct = (chain_pnl / chain_cost * 100) if chain_cost > 0 else 0
                     
-                    balances[chain_upper] = {
+                    balances[chain] = {
                         'balance': float(chain_value),
                         'pnl': float(chain_pnl),
-                        'pnl_pct': float(metrics.get('roi', 0)),
-                        'positions': int(positions_count),
+                        'pnl_pct': float(chain_pnl_pct),
+                        'positions': len(positions),
                         'available': float(chain_value),
                         'locked': 0.0
                     }
@@ -740,7 +756,7 @@ class DashboardEndpoints:
                     'balance': float(total_value),
                     'pnl': float(total_pnl),
                     'pnl_pct': float(overall_pnl_pct),
-                    'positions': len(self.portfolio.positions)
+                    'positions': len(self.engine.active_positions)
                 }
             else:
                 # No positions - show initial balances
