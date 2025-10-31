@@ -801,6 +801,7 @@ class PortfolioManager:
             return {
                 'success': False,
                 'error': str(e)
+            }
 
     def update_position(self, position_id: str, modifications: Dict) -> Dict:
         """Update position parameters"""
