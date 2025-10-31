@@ -166,6 +166,10 @@ class TradingBotEngine:
             'paraswap_api_key': config.get('api', {}).get('paraswap_api_key'),
         }
 
+        # Database connection for logging
+        from data.storage.database import DatabaseManager
+        self.db = DatabaseManager(config.get('database', {}))  
+
         self.strategy_manager = StrategyManager(config['trading']['strategies'])
         self.order_manager = OrderManager(config, db_manager=self.db)  # 🆕 ADD db_manager
         self.position_tracker = PositionTracker()
@@ -250,9 +254,7 @@ class TradingBotEngine:
         self.recently_closed: Dict[str, ClosedPositionRecord] = {}  # token_address -> record
         self.cooldown_minutes = config.get('trading', {}).get('position_cooldown_minutes', 60)
         
-        # Database connection for logging
-        from data.storage.database import DatabaseManager
-        self.db = DatabaseManager(config.get('database', {}))        
+      
         
         # Statistics
         self.stats = {
