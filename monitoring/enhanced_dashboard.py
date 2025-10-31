@@ -701,14 +701,10 @@ class DashboardEndpoints:
 
     async def api_wallet_balances(self, request):
         """Get wallet balances for all chains"""
+        # Broadcast wallet balance updates
         try:
-            balances = {}
-            total_value = 0
-            total_pnl = 0
-            
-            # Get positions from engine.active_positions (portfolio.positions is empty)
             if self.engine and self.engine.active_positions:
-                # Aggregate positions by chain
+                # Calculate balances from engine.active_positions
                 positions_by_chain = {}
                 for pos_id, position in self.engine.active_positions.items():
                     chain = position.get('chain', 'unknown').upper()
@@ -716,13 +712,12 @@ class DashboardEndpoints:
                         positions_by_chain[chain] = []
                     positions_by_chain[chain].append(position)
                 
-                # Calculate metrics for each chain
+                balances = {}
                 for chain, positions in positions_by_chain.items():
                     chain_value = 0
                     chain_cost = 0
                     
                     for pos in positions:
-                        # Get position value and cost
                         entry_price = float(pos.get('entry_price', 0))
                         current_price = float(pos.get('current_price', entry_price))
                         position_size = float(pos.get('position_size', 0))
@@ -740,40 +735,24 @@ class DashboardEndpoints:
                         'balance': float(chain_value),
                         'pnl': float(chain_pnl),
                         'pnl_pct': float(chain_pnl_pct),
-                        'positions': len(positions),
-                        'available': float(chain_value),
-                        'locked': 0.0
+                        'positions': len(positions)
                     }
-                    
-                    total_value += chain_value
-                    total_pnl += chain_pnl
                 
-                # Calculate overall stats
-                overall_pnl_pct = (total_pnl / (total_value - total_pnl) * 100) if (total_value - total_pnl) > 0 else 0
+                # Add chains with no positions
+                for chain in ['ETHEREUM', 'BSC', 'BASE', 'SOLANA']:
+                    if chain not in balances:
+                        balances[chain] = {
+                            'balance': 100.0,
+                            'pnl': 0.0,
+                            'pnl_pct': 0.0,
+                            'positions': 0
+                        }
                 
-                # Add overall total
-                balances['TOTAL'] = {
-                    'balance': float(total_value),
-                    'pnl': float(total_pnl),
-                    'pnl_pct': float(overall_pnl_pct),
-                    'positions': len(self.engine.active_positions)
-                }
-            else:
-                # No positions - show initial balances
-                initial_per_chain = 100.0
-                balances = {
-                    'ETHEREUM': {'balance': initial_per_chain, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
-                    'BSC': {'balance': initial_per_chain, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
-                    'BASE': {'balance': initial_per_chain, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
-                    'SOLANA': {'balance': initial_per_chain, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
-                    'TOTAL': {'balance': 400.0, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0}
-                }
-            
-            return web.json_response({
-                'status': 'success',
-                'balances': balances,
-                'timestamp': datetime.now().isoformat()
-            })
+                # Broadcast wallet update
+                await self.sio.emit('wallet_update', {
+                    'balances': balances,
+                    'timestamp': datetime.utcnow().isoformat()
+                })
             
         except Exception as e:
             logger.error(f"Error getting wallet balances: {e}", exc_info=True)
@@ -1674,15 +1653,37 @@ class DashboardEndpoints:
                     continue
                 
                 # Broadcast dashboard updates
-                if self.portfolio:
+                # Get open positions count from engine
+                open_positions = 0
+                if self.engine and hasattr(self.engine, 'active_positions'):
+                    open_positions = len(self.engine.active_positions)
+
+                # Get P&L and portfolio value from database
+                total_pnl = 0
+                portfolio_value = 400  # Default initial balance
+
+                if self.db:
                     try:
-                        summary = self.portfolio.get_portfolio_summary()
-                        await self.sio.emit('dashboard_update', {
-                            'portfolio_value': float(summary.get('total_value', 0)),
-                            'daily_pnl': float(summary.get('daily_pnl', 0)),
-                            'open_positions': summary.get('open_positions', 0),
-                            'timestamp': datetime.utcnow().isoformat()
-                        })
+                        perf_data = await self.db.get_performance_summary()
+                        if perf_data and 'total_pnl' in perf_data:
+                            total_pnl = float(perf_data.get('total_pnl', 0))
+                            
+                            # Calculate portfolio value: starting balance + cumulative P&L
+                            try:
+                                from config.config_manager import PortfolioConfig
+                                config = PortfolioConfig()
+                                starting_balance = config.initial_balance
+                            except Exception:
+                                starting_balance = 400
+                            portfolio_value = starting_balance + total_pnl
+
+                # Broadcast the update
+                await self.sio.emit('dashboard_update', {
+                    'portfolio_value': float(portfolio_value),
+                    'daily_pnl': float(total_pnl),
+                    'open_positions': open_positions,
+                    'timestamp': datetime.utcnow().isoformat()
+                })
                     except Exception as e:
                         logger.debug(f"Error broadcasting portfolio update: {e}")
                 
