@@ -352,7 +352,8 @@ class PortfolioManager:
                         stop_loss=trade.get('stop_loss', 0),
                         take_profits=trade.get('take_profits', []),
                         tp_hit=[False] * len(trade.get('take_profits', [])),
-                        strategy=trade.get('strategy', 'unknown')
+                        strategy=trade.get('strategy', 'unknown'),
+                        metadata={'symbol': trade.get('symbol', 'UNKNOWN')}  # ✅ STORE SYMBOL
                     )
                 
                 # Update balance
@@ -771,21 +772,21 @@ class PortfolioManager:
                     del self.positions[token]
                     
                     # Log the trade exit
-                    try:
-                        from monitoring.logger import log_trade_exit
-                        log_trade_exit(
-                            chain=position.chain,
-                            symbol=position.metadata.get('symbol', 'UNKNOWN'),
-                            trade_id=position.id,
-                            entry_price=position.entry_price,
-                            exit_price=position.current_price,
-                            profit_loss=realized_pnl,
-                            pnl_pct=pnl_percentage,
-                            reason='manual_close',
-                            hold_time_minutes=int((datetime.now() - position.entry_time).total_seconds() / 60)
-                        )
-                    except Exception as log_error:
-                        print(f"Warning: Could not log trade exit: {log_error}")
+                    #try:
+                    #    from monitoring.logger import log_trade_exit
+                    #    log_trade_exit(
+                    #        chain=position.chain,
+                    #        symbol=position.metadata.get('symbol', 'UNKNOWN'),
+                    #        trade_id=position.id,
+                    #        entry_price=position.entry_price,
+                    #        exit_price=position.current_price,
+                    #        profit_loss=realized_pnl,
+                    #        pnl_pct=pnl_percentage,
+                    #        reason='manual_close',
+                    #        hold_time_minutes=int((datetime.now() - position.entry_time).total_seconds() / 60)
+                    #    )
+                    #except Exception as log_error:
+                    #    print(f"Warning: Could not log trade exit: {log_error}")
                     
                     return {
                         'success': True,
