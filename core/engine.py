@@ -990,7 +990,7 @@ class TradingBotEngine:
                             'take_profits': [take_profit_price],  # ✅ FIXED
                             'strategy': opportunity.entry_strategy,  # ✅ FIXED
                             'id': position['position_id'],  # ✅ FIXED
-                            'symbol': opportunity.token_symbol  # ✅ ADD SYMBOL
+                            'symbol': opportunity.symbol  # ✅ CORRECT: use .symbol not .token_symbol
                         })
                         logger.debug(f"✅ Position added to portfolio manager")
                     except Exception as e:
