@@ -1625,9 +1625,32 @@ class DashboardEndpoints:
         """Send initial data to newly connected client"""
         try:
             # Get portfolio summary
-            portfolio_data = {}
-            if self.portfolio:
-                portfolio_data = self.portfolio.get_portfolio_summary()
+            # Calculate real P&L from database
+            initial_balance = 400.0
+            cumulative_pnl = 0.0
+
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    result = await conn.fetchrow("""
+                        SELECT COALESCE(SUM(CASE 
+                            WHEN status = 'closed' 
+                            THEN (exit_price - entry_price) * amount 
+                            ELSE 0 
+                        END), 0) as total_pnl
+                        FROM trades
+                    """)
+                    if result:
+                        cumulative_pnl = float(result['total_pnl'])
+
+            portfolio_value = initial_balance + cumulative_pnl
+
+            portfolio_data = {
+                'total_value': portfolio_value,
+                'cash_balance': initial_balance,
+                'realized_pnl': cumulative_pnl,
+                'daily_pnl': cumulative_pnl,
+                'open_positions': len(self.engine.active_positions) if self.engine else 0
+            }
             
             # ✅ FIX: Get ACTUAL positions from engine
             positions_data = []
@@ -1681,23 +1704,27 @@ class DashboardEndpoints:
                     open_positions = len(self.engine.active_positions)
 
                 # Get P&L and portfolio value from database
+                # Get P&L and portfolio value from database
                 total_pnl = 0
                 portfolio_value = 400  # Default initial balance
+                starting_balance = 400
 
                 if self.db:
                     try:
-                        perf_data = await self.db.get_performance_summary()
-                        if perf_data and 'total_pnl' in perf_data:
-                            total_pnl = float(perf_data.get('total_pnl', 0))
-                            
-                            # Calculate portfolio value: starting balance + cumulative P&L
-                            try:
-                                from config.config_manager import PortfolioConfig
-                                config = PortfolioConfig()
-                                starting_balance = config.initial_balance
-                            except Exception:
-                                starting_balance = 400
-                            portfolio_value = starting_balance + total_pnl
+                        # Query database directly for accurate P&L
+                        async with self.db.pool.acquire() as conn:
+                            result = await conn.fetchrow("""
+                                SELECT 
+                                    COALESCE(SUM(CASE 
+                                        WHEN status = 'closed' 
+                                        THEN (exit_price - entry_price) * amount 
+                                        ELSE 0 
+                                    END), 0) as total_pnl
+                                FROM trades
+                            """)
+                            if result:
+                                total_pnl = float(result['total_pnl'])
+                                portfolio_value = starting_balance + total_pnl
                     except Exception as e:
                         logger.debug(f"Error getting performance data for broadcast: {e}")
 
