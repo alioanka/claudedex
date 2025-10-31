@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 import logging
 import base58
 import base64
+import os
 
 from monitoring.logger import log_trade_entry
 
