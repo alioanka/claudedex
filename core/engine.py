@@ -974,23 +974,26 @@ class TradingBotEngine:
                 # ✅ NEW: Add to portfolio manager
                 if hasattr(self, 'portfolio_manager') and self.portfolio_manager:
                     try:
+                        # Calculate stop loss and take profit levels
+                        stop_loss_price = float(opportunity.price) * (1 - position.get('stop_loss_percentage', 0.1))
+                        take_profit_price = float(opportunity.price) * (1 + position.get('take_profit_percentage', 0.3))
+                        
                         await self.portfolio_manager.update_portfolio({
                             'token_address': token_address,
-                            'pair_address': pair_address,
+                            'pair_address': opportunity.pair_address if hasattr(opportunity, 'pair_address') else token_address,  # ✅ FIXED
                             'chain': chain,
                             'side': 'buy',
-                            'price': entry_price,
-                            'amount': amount,
-                            'cost': cost,
-                            'stop_loss': stop_loss,
-                            'take_profits': take_profits,
-                            'strategy': strategy,
-                            'id': position_id
+                            'price': float(opportunity.price),  # ✅ FIXED
+                            'amount': float(simulated_amount),  # ✅ FIXED
+                            'cost': float(position_value),  # ✅ FIXED
+                            'stop_loss': stop_loss_price,  # ✅ FIXED
+                            'take_profits': [take_profit_price],  # ✅ FIXED
+                            'strategy': opportunity.entry_strategy,  # ✅ FIXED
+                            'id': position['position_id']  # ✅ FIXED
                         })
                         logger.debug(f"✅ Position added to portfolio manager")
                     except Exception as e:
                         logger.error(f"Error adding position to portfolio manager: {e}")
-
                 
                 # ✅ LOG TO DATABASE
                 try:
