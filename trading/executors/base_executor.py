@@ -37,7 +37,8 @@ class BaseExecutor(ABC):
             db_manager: Optional database manager for order persistence
         """
         self.config = config
-        super().__init__(config, db_manager)
+        #super().__init__(config, db_manager)
+        self.db_manager = db_manager
         self.stats = {'total_trades': 0, 'successful_trades': 0, 'failed_trades': 0}
     
     @abstractmethod
