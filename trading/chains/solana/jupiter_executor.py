@@ -45,7 +45,7 @@ class JupiterExecutor(BaseExecutor):
     - Automatic retry with fallback RPCs
     """
     
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], db_manager=None):
         """
         Initialize Jupiter executor
         
@@ -56,7 +56,7 @@ class JupiterExecutor(BaseExecutor):
                 - max_slippage_bps: Maximum slippage in basis points (default: 500 = 5%)
                 - enabled: Whether Solana trading is enabled
         """
-        super().__init__(config)
+        super().__init__(config, db_manager)
 
         # ✅ CRITICAL: DRY_RUN mode check (standardize key name)
         self.dry_run = config.get('DRY_RUN', True) or config.get('dry_run', True)

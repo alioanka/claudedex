@@ -26,8 +26,18 @@ logger = logging.getLogger(__name__)
 
 class BaseExecutor(ABC):
     """Abstract base for all executors"""
-    def __init__(self, config: Dict):
+    SUPPORTED_CHAINS = ['ethereum', 'bsc', 'base', 'arbitrum', 'polygon', 'solana']
+
+    def __init__(self, config: Dict, db_manager=None):
+        """
+        Initialize base executor
+        
+        Args:
+            config: Configuration dictionary
+            db_manager: Optional database manager for order persistence
+        """
         self.config = config
+        super().__init__(config, db_manager)
         self.stats = {'total_trades': 0, 'successful_trades': 0, 'failed_trades': 0}
     
     @abstractmethod
@@ -105,15 +115,17 @@ class ExecutionRoute(Enum):
 
 class TradeExecutor(BaseExecutor):
     """EVM trade executor with multiple routes"""
+    SUPPORTED_CHAINS = ['ethereum', 'bsc', 'base', 'arbitrum', 'polygon', 'solana']
     
-    def __init__(self, config: Dict):
+    def __init__(self, config: Dict, db_manager=None):
         """
         Initialize trade executor
         
         Args:
             config: Configuration dictionary
+            db_manager: Optional database manager for order persistence
         """
-        super().__init__(config)
+        super().__init__(config, db_manager)  # 🆕 Pass db_manager to parent
         self.config = config
         
         # ✅ FIXED: Check DRY_RUN mode
@@ -1306,41 +1318,82 @@ class TradeExecutor(BaseExecutor):
             'metadata': result.metadata
         }
 
-    async def cancel_order(self, order_id: str) -> bool:
+    async def cancel_order(self, order_id: str, reason: str = "User cancelled") -> bool:
         """
-        Cancel a pending order
+        Cancel a pending order with database persistence
         
         Args:
             order_id: ID of order to cancel
+            reason: Reason for cancellation
             
         Returns:
             True if cancellation successful
         """
         try:
-            # Check if order exists and is pending
-            if order_id not in self.active_orders:
-                logger.warning(f"Order {order_id} not found")
-                return False
+            # Check in-memory first
+            order_found_in_memory = False
+            if order_id in self.active_orders:
+                order = self.active_orders[order_id]
                 
-            order = self.active_orders[order_id]
-            
-            # For market orders, cancellation might not be possible if already executing
-            if order.get('status') == 'executing':
-                logger.warning(f"Order {order_id} is already executing and cannot be cancelled")
-                return False
+                # For market orders, cancellation might not be possible if already executing
+                if order.get('status') == 'executing':
+                    logger.warning(f"Order {order_id} is already executing and cannot be cancelled")
+                    return False
                 
-            # Remove from active orders
-            del self.active_orders[order_id]
+                # Remove from active orders
+                del self.active_orders[order_id]
+                order_found_in_memory = True
+                
+                # Log cancellation in history
+                self.execution_history.append({
+                    'order_id': order_id,
+                    'action': 'cancelled',
+                    'reason': reason,
+                    'timestamp': datetime.now()
+                })
+            else:
+                logger.warning(f"Order {order_id} not found in memory, checking database...")
             
-            # Log cancellation
-            self.execution_history.append({
-                'order_id': order_id,
-                'action': 'cancelled',
-                'timestamp': datetime.now()
-            })
-            
-            logger.info(f"Order {order_id} cancelled successfully")
-            return True
+            # 🆕 ADD DATABASE PERSISTENCE
+            if hasattr(self, 'db_manager') and self.db_manager:
+                try:
+                    query = """
+                        UPDATE orders 
+                        SET status = 'cancelled', 
+                            error = $1,
+                            updated_at = NOW()
+                        WHERE order_id = $2
+                        RETURNING order_id
+                    """
+                    async with self.db_manager.pool.acquire() as conn:
+                        result = await conn.fetchrow(query, reason, order_id)
+                        
+                        if result:
+                            logger.info(f"✅ Order {order_id} cancelled in database: {reason}")
+                            return True
+                        elif not order_found_in_memory:
+                            logger.warning(f"Order {order_id} not found in database either")
+                            return False
+                        else:
+                            # Found in memory but not in DB (paper trading scenario)
+                            logger.info(f"✅ Order {order_id} cancelled in memory (no DB record)")
+                            return True
+                            
+                except Exception as db_error:
+                    logger.error(f"Database error cancelling order {order_id}: {db_error}")
+                    # If DB fails but memory succeeded, still return True
+                    if order_found_in_memory:
+                        logger.warning(f"Order {order_id} cancelled in memory but DB update failed")
+                        return True
+                    return False
+            else:
+                # No DB manager (paper trading mode)
+                if order_found_in_memory:
+                    logger.info(f"✅ Order {order_id} cancelled (no database persistence)")
+                    return True
+                else:
+                    logger.warning(f"Order {order_id} not found and no database available")
+                    return False
             
         except Exception as e:
             logger.error(f"Error cancelling order {order_id}: {e}")
@@ -1514,7 +1567,242 @@ class TradeExecutor(BaseExecutor):
                 'status': 'error',
                 'error': str(e)
             }
+
+# ========================================
+    # ORDER MANAGEMENT METHODS (from PATCH 6)
+    # ========================================
+    
+    async def get_pending_orders(self, chain: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get all pending orders, optionally filtered by chain.
         
+        Args:
+            chain: Optional chain to filter by
+            
+        Returns:
+            List of pending order dictionaries
+        """
+        try:
+            if not hasattr(self, 'db_manager') or not self.db_manager:
+                logger.warning("No database manager available for get_pending_orders")
+                return []
+            
+            query = "SELECT * FROM orders WHERE status = 'pending'"
+            params = []
+            
+            if chain:
+                query += " AND chain = $1"
+                params.append(chain)
+            
+            query += " ORDER BY created_at ASC"
+            
+            async with self.db_manager.pool.acquire() as conn:
+                if params:
+                    rows = await conn.fetch(query, *params)
+                else:
+                    rows = await conn.fetch(query)
+                
+                return [dict(row) for row in rows]
+                
+        except Exception as e:
+            logger.error(f"Error getting pending orders: {e}")
+            return []
+
+    async def update_order_status(
+        self,
+        order_id: str,
+        status: str,
+        tx_hash: Optional[str] = None,
+        error: Optional[str] = None
+    ) -> bool:
+        """
+        Update order status in database.
+        
+        Args:
+            order_id: Order ID to update
+            status: New status
+            tx_hash: Optional transaction hash
+            error: Optional error message
+            
+        Returns:
+            True if update successful
+        """
+        try:
+            if not hasattr(self, 'db_manager') or not self.db_manager:
+                logger.warning("No database manager available for update_order_status")
+                return False
+            
+            query = """
+                UPDATE orders 
+                SET status = $1, 
+                    tx_hash = COALESCE($2, tx_hash),
+                    error = $3,
+                    updated_at = NOW()
+                WHERE order_id = $4
+            """
+            
+            async with self.db_manager.pool.acquire() as conn:
+                result = await conn.execute(query, status, tx_hash, error, order_id)
+                
+                # Check if any row was updated
+                rows_affected = int(result.split()[-1]) if result else 0
+                
+                if rows_affected > 0:
+                    logger.info(f"Updated order {order_id} to status {status}")
+                    return True
+                else:
+                    logger.warning(f"No order found with ID {order_id}")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"Error updating order status: {e}")
+            return False
+
+    async def get_order_by_id(self, order_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get order details by order ID.
+        
+        Args:
+            order_id: Order ID to retrieve
+            
+        Returns:
+            Order dictionary or None if not found
+        """
+        try:
+            if not hasattr(self, 'db_manager') or not self.db_manager:
+                logger.warning("No database manager available for get_order_by_id")
+                return None
+            
+            query = "SELECT * FROM orders WHERE order_id = $1"
+            
+            async with self.db_manager.pool.acquire() as conn:
+                row = await conn.fetchrow(query, order_id)
+                
+                if row:
+                    return dict(row)
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error getting order by ID: {e}")
+            return None
+
+    async def _release_reserved_balance(self, order: Dict[str, Any]) -> None:
+        """
+        Release reserved balance from a cancelled order.
+        
+        Args:
+            order: Order dictionary with amount and chain info
+        """
+        try:
+            logger.info(
+                f"Releasing reserved balance for cancelled order: "
+                f"{order.get('amount')} on {order.get('chain')}"
+            )
+            
+            # If you have portfolio_manager integration:
+            # if hasattr(self, 'portfolio_manager') and self.portfolio_manager:
+            #     await self.portfolio_manager.release_reserved_amount(
+            #         chain=order['chain'],
+            #         amount=order['amount']
+            #     )
+            
+        except Exception as e:
+            logger.error(f"Error releasing reserved balance: {e}")
+
+    async def get_order_history(
+        self,
+        chain: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Get order history with optional filters.
+        
+        Args:
+            chain: Optional chain filter
+            status: Optional status filter
+            limit: Maximum number of orders to return
+            
+        Returns:
+            List of order dictionaries
+        """
+        try:
+            if not hasattr(self, 'db_manager') or not self.db_manager:
+                logger.warning("No database manager available for get_order_history")
+                return []
+            
+            query = "SELECT * FROM orders WHERE 1=1"
+            params = []
+            param_count = 0
+            
+            if chain:
+                param_count += 1
+                query += f" AND chain = ${param_count}"
+                params.append(chain)
+            
+            if status:
+                param_count += 1
+                query += f" AND status = ${param_count}"
+                params.append(status)
+            
+            param_count += 1
+            query += f" ORDER BY created_at DESC LIMIT ${param_count}"
+            params.append(limit)
+            
+            async with self.db_manager.pool.acquire() as conn:
+                rows = await conn.fetch(query, *params)
+                return [dict(row) for row in rows]
+                
+        except Exception as e:
+            logger.error(f"Error getting order history: {e}")
+            return []
+
+    def validate_order_params(self, order: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+        """
+        Validate order parameters before execution.
+        
+        Args:
+            order: Order dictionary to validate
+            
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        try:
+            # Check required fields
+            required_fields = ['chain', 'token_address', 'side', 'amount']
+            for field in required_fields:
+                if field not in order:
+                    return False, f"Missing required field: {field}"
+            
+            # Validate chain (use class constant)
+            if order['chain'] not in self.SUPPORTED_CHAINS:
+                return False, f"Unsupported chain: {order['chain']}"
+            
+            # Validate side
+            if order['side'] not in ['buy', 'sell']:
+                return False, f"Invalid side: {order['side']}"
+            
+            # Validate amount
+            amount = float(order['amount'])
+            if amount <= 0:
+                return False, f"Invalid amount: {amount}"
+            
+            # Validate token address format
+            token_address = order['token_address']
+            if order['chain'] == 'solana':
+                # Solana address validation (base58, ~44 chars)
+                if not (32 <= len(token_address) <= 44):
+                    return False, f"Invalid Solana token address format"
+            else:
+                # EVM address validation (0x + 40 hex chars)
+                if not (token_address.startswith('0x') and len(token_address) == 42):
+                    return False, f"Invalid EVM token address format"
+            
+            return True, None
+            
+        except Exception as e:
+            return False, f"Validation error: {str(e)}"
+
 async def test_web3_connection():
     """Test Web3 connectivity"""
     try:

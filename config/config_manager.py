@@ -60,7 +60,8 @@ class ConfigChange:
 
 class TradingConfig(BaseModel):
     """Trading configuration schema"""
-    max_position_size: float = 0.05  # 5% of portfolio
+    max_position_size: float = 0.1  # from 5% of portfolio
+    max_position_size_usd: float = 10.0  # Max trade size in USD
     max_daily_trades: int = 100
     max_slippage: float = 0.02  # 2%
     stop_loss_percentage: float = 0.05  # 5%
@@ -248,7 +249,8 @@ class PortfolioConfig(BaseModel):
     max_risk_per_trade: float = 0.10            # Was 0.05, now 0.10
     max_portfolio_risk: float = 0.25            # Keep 25%
     min_position_size: float = 5.0              # Was 100.0, now 5.0
-    max_position_size: float = 15.0
+    max_position_size: float = 10.0
+    max_position_size_usd: float = 10.0  # Max trade size in USD
     allocation_strategy: str = "DYNAMIC"        # Keep
     daily_loss_limit: float = 0.10              # Was 0.15, now 0.10
     consecutive_losses_limit: int = 5           # Keep

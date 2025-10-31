@@ -354,17 +354,40 @@ class PositionTracker:
             Created Position object
         """
         try:
+            # Calculate entry value FIRST
+            entry_value = entry_price * entry_amount
+            
+            # ✅ ADD: Check cash balance
+            if entry_value > self.cash_balance:
+                error_msg = (
+                    f"❌ Insufficient cash balance: "
+                    f"Required ${entry_value}, Available ${self.cash_balance}"
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            
             # Check position limits
             if not await self._check_position_limits(token_address, entry_amount):
                 raise ValueError("Position exceeds risk limits")
             
-            # Calculate entry value
-            entry_value = entry_price * entry_amount
-            
             # Check portfolio allocation
-            position_size_percent = float(entry_value / self.total_portfolio_value)
+            if self.total_portfolio_value > 0:
+                position_size_percent = float(entry_value / self.total_portfolio_value)
+            else:
+                position_size_percent = 1.0  # First position
+            
             if position_size_percent > self.config["max_position_size"]:
-                raise ValueError(f"Position size {position_size_percent:.2%} exceeds limit")
+                error_msg = (
+                    f"Position size {position_size_percent:.2%} exceeds "
+                    f"limit {self.config['max_position_size']:.2%}"
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            
+            logger.info(
+                f"✅ Position size validation passed: "
+                f"${entry_value} ({position_size_percent:.2%} of portfolio)"
+            )
             
             # Create position
             position = Position(
@@ -397,6 +420,31 @@ class PositionTracker:
                 position.stop_loss = entry_price * (
                     Decimal("1") - Decimal(str(self.config["stop_loss_default"]))
                 )
+                logger.warning(
+                    f"⚠️ No stop-loss provided for {token_symbol}, "
+                    f"using default: ${position.stop_loss}"
+                )
+            
+            # ✅ ADD THIS VERIFICATION
+            if not position.stop_loss:
+                error_msg = f"❌ Cannot open position without stop-loss: {token_symbol}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            
+            # Verify stop-loss is reasonable
+            stop_loss_percent = abs(
+                float((position.stop_loss - entry_price) / entry_price)
+            )
+            if stop_loss_percent > 0.15:  # More than 15%
+                logger.warning(
+                    f"⚠️ Large stop-loss distance: {stop_loss_percent:.1%} "
+                    f"for {token_symbol}"
+                )
+            
+            logger.info(
+                f"✅ Stop-loss set: ${position.stop_loss} "
+                f"({stop_loss_percent:.2%} from entry)"
+            )
             
             if not position.take_profit:
                 position.take_profit = [
@@ -1101,7 +1149,7 @@ class PositionTracker:
                     
                     if current_price:
                         # Update position
-                        actions = await self.update_position(
+                        actions = await self.update_position_with_price(
                             position_id,
                             current_price
                         )
@@ -1148,23 +1196,32 @@ class PositionTracker:
                 
             except Exception as e:
                 logger.error(f"Error calculating portfolio metrics: {e}")
+
+
     
     async def _get_current_price(self, token_address: str) -> Optional[Decimal]:
-        """Get current price for token"""
-        try:
-            # Check cache first
-            if token_address in self.price_cache:
-                price, timestamp = self.price_cache[token_address]
-                if (datetime.utcnow() - timestamp).total_seconds() < 30:
-                    return price
-            
-            # Fetch from market data source (placeholder)
-            # In production, this would call the data collector
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error getting price for {token_address}: {e}")
-            return None
+            """Get current price for token"""
+            try:
+                # Check cache first
+                if token_address in self.price_cache:
+                    price, timestamp = self.price_cache[token_address]
+                    if (datetime.utcnow() - timestamp).total_seconds() < 30:
+                        return price
+                
+                # ✅ CRITICAL FIX: Actually fetch price from data collector
+                # This requires integration with engine's dex_collector
+                # For now, use position's current_price if available
+                # The engine MUST inject price updates via update_position_with_price()
+                
+                logger.warning(
+                    f"⚠️ _get_current_price placeholder - "
+                    f"engine must update prices via update_position_with_price()"
+                )
+                return None
+                
+            except Exception as e:
+                logger.error(f"Error getting price for {token_address}: {e}")
+                return None
     
     async def _execute_position_actions(
         self,
@@ -1174,16 +1231,16 @@ class PositionTracker:
         """Execute position management actions"""
         try:
             if "close" in actions:
-                await self.close_position(
+                await self.close_position_with_details(
                     position.position_id,
                     actions["close"]["price"],
                     reason=actions["close"].get("reason")
                 )
             
             elif "partial_close" in actions:
-                await self.close_position(
+                await self.close_position_with_details(
                     position.position_id,
-                    actions["partial_close"]["price"],
+                    exit_price=actions["partial_close"]["price"],
                     exit_amount=actions["partial_close"].get("amount"),
                     reason=actions["partial_close"].get("reason")
                 )

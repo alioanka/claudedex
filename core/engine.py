@@ -37,6 +37,16 @@ from trading.strategies import StrategyManager
 from trading.orders.order_manager import OrderManager
 from trading.orders.position_tracker import PositionTracker
 
+# ✅ PATCH 8: Import order helper functions and enums
+from trading.orders.order_manager import (
+    build_order,
+    OrderSide,
+    OrderType,
+    OrderStatus,
+    ExecutionStrategy
+)
+from decimal import Decimal
+
 from monitoring.alerts import AlertManager
 from monitoring.performance import PerformanceTracker
 from monitoring.logger import StructuredLogger  # Add import at top
@@ -157,9 +167,21 @@ class TradingBotEngine:
         }
 
         self.strategy_manager = StrategyManager(config['trading']['strategies'])
-        self.order_manager = OrderManager(config)
+        self.order_manager = OrderManager(config, db_manager=self.db)  # 🆕 ADD db_manager
         self.position_tracker = PositionTracker()
-        self.trade_executor = TradeExecutor(executor_config)
+        self.trade_executor = TradeExecutor(executor_config, db_manager=self.db)  # 🆕 ADD db_manager
+        
+
+        # ✅ PATCH 1: Connect OrderManager to actual execution engine
+        logger.info("🔗 Connecting OrderManager to TradeExecutor...")
+        self.order_manager.execution_engine = self.trade_executor
+
+        # ✅ PATCH 1B: Inject position tracker into risk monitor
+        logger.info("🔗 Connecting OrderManager to PositionTracker...")
+        self.order_manager.risk_monitor.position_tracker = self.position_tracker
+        self.order_manager.risk_monitor.portfolio_manager = self.portfolio_manager
+
+        logger.info("✅ OrderManager integrations complete")
 
         # Find this section in __init__:
         # self.trade_executor = DirectDEXExecutor(config)
@@ -340,6 +362,8 @@ class TradingBotEngine:
                 asyncio.create_task(self._monitor_performance()),
                 asyncio.create_task(self._health_check()),
                 asyncio.create_task(self._monitor_wallet_balances()),
+                asyncio.create_task(self._monitor_positions_with_engine()),
+
                 
             ]
             
@@ -944,6 +968,27 @@ class TradingBotEngine:
                 
                 # Add to active positions
                 self.active_positions[token_address] = position
+
+                # ✅ NEW: Add to portfolio manager
+                if hasattr(self, 'portfolio_manager') and self.portfolio_manager:
+                    try:
+                        await self.portfolio_manager.update_portfolio({
+                            'token_address': token_address,
+                            'pair_address': pair_address,
+                            'chain': chain,
+                            'side': 'buy',
+                            'price': entry_price,
+                            'amount': amount,
+                            'cost': cost,
+                            'stop_loss': stop_loss,
+                            'take_profits': take_profits,
+                            'strategy': strategy,
+                            'id': position_id
+                        })
+                        logger.debug(f"✅ Position added to portfolio manager")
+                    except Exception as e:
+                        logger.error(f"Error adding position to portfolio manager: {e}")
+
                 
                 # ✅ LOG TO DATABASE
                 try:
@@ -1307,14 +1352,10 @@ class TradingBotEngine:
                 
                 logger.info(f"📊 Monitoring {len(self.active_positions)} active positions...")
                 
+                # ✅ STEP 1: Collect all prices first
+                price_data = {}
                 for token_address, position in list(self.active_positions.items()):
-                    # ✅ FIX: Initialize position-specific variables at loop scope
-                    current_price = None
-                    chain = None
-                    token_symbol = None
-                    
                     try:
-                        # Get position details
                         chain = position.get('chain', 'ethereum')
                         token_symbol = position.get('token_symbol', 'UNKNOWN')
                         
@@ -1324,54 +1365,71 @@ class TradingBotEngine:
                             chain=chain
                         )
                         
-                        if not current_price:
+                        if current_price:
+                            price_data[token_address] = float(current_price)
+                        else:
                             logger.warning(
                                 f"⚠️ Could not get price for {token_symbol} "
                                 f"({token_address[:10]}...) on {chain}"
                             )
-                            continue
-                        
-                        # Update position with current price
-                        from decimal import Decimal
-                        position['current_price'] = Decimal(str(current_price))
-                        position['current_value'] = Decimal(str(current_price)) * position['amount']
-                        
-                        # Calculate P&L
-                        entry_value = position['entry_price'] * position['amount']
-                        current_value = position['current_value']
-                        position['pnl'] = current_value - entry_value
-                        position['pnl_percentage'] = float((current_value - entry_value) / entry_value * 100)
-                        
-                        # Calculate holding time
-                        holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
-                        
-                        logger.info(
-                            f"  📈 {token_symbol} - "
-                            f"Entry: ${position['entry_price']:.8f}, Current: ${current_price:.8f}, "
-                            f"P&L: {position['pnl_percentage']:.2f}% (${position['pnl']:.2f}), "
-                            f"Time: {holding_time:.1f}min"
-                        )
-                        
-                        # Check exit conditions
-                        should_exit, reason = await self._check_exit_conditions(position)
-                        
-                        if should_exit:
+                    except Exception as e:
+                        logger.error(f"Error fetching price for {token_address}: {e}")
+                        continue
+                
+                # ✅ STEP 2: Bulk update portfolio manager
+                if price_data and hasattr(self, 'portfolio_manager') and self.portfolio_manager:
+                    try:
+                        updated_count = await self.portfolio_manager.update_all_positions(price_data)
+                        logger.debug(f"📊 Updated {updated_count} positions in portfolio manager")
+                    except Exception as e:
+                        logger.error(f"Error updating portfolio positions: {e}")
+                
+                # ✅ STEP 3: Update active_positions dict (for backward compatibility)
+                for token_address, position in list(self.active_positions.items()):
+                    try:
+                        if token_address in price_data:
+                            current_price = price_data[token_address]
+                            
+                            from decimal import Decimal
+                            position['current_price'] = Decimal(str(current_price))
+                            position['current_value'] = Decimal(str(current_price)) * position['amount']
+                            
+                            # Calculate P&L
+                            entry_value = position['entry_price'] * position['amount']
+                            current_value = position['current_value']
+                            position['pnl'] = current_value - entry_value
+                            position['pnl_percentage'] = float((current_value - entry_value) / entry_value * 100)
+                            
+                            # Calculate holding time
+                            holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
+                            
                             logger.info(
-                                f"  🚪 EXIT SIGNAL for {token_symbol}: {reason}",
-                                extra={
-                                    'token_address': token_address,
-                                    'symbol': token_symbol,
-                                    'reason': reason
-                                }
+                                f"  📈 {token_symbol} - "
+                                f"Entry: ${position['entry_price']:.8f}, Current: ${current_price:.8f}, "
+                                f"P&L: {position['pnl_percentage']:.2f}% (${position['pnl']:.2f}), "
+                                f"Time: {holding_time:.1f}min"
                             )
-                            await self._close_position(position, reason)
-                        else:
-                            # Update position in tracker
-                            if hasattr(self, 'position_tracker') and self.position_tracker:
-                                await self.position_tracker.update_position(
-                                    position.get('tracker_id', ''),
-                                    {'current_price': current_price}
+                            
+                            # Check exit conditions
+                            should_exit, reason = await self._check_exit_conditions(position)
+                            
+                            if should_exit:
+                                logger.info(
+                                    f"  🚪 EXIT SIGNAL for {token_symbol}: {reason}",
+                                    extra={
+                                        'token_address': token_address,
+                                        'symbol': token_symbol,
+                                        'reason': reason
+                                    }
                                 )
+                                await self._close_position(position, reason)
+                            else:
+                                # Update position in tracker
+                                if hasattr(self, 'position_tracker') and self.position_tracker:
+                                    await self.position_tracker.update_position(
+                                        position.get('tracker_id', ''),
+                                        {'current_price': current_price}
+                                    )
                         
                     except Exception as e:
                         # ✅ FIX: Now all variables are guaranteed to be defined
@@ -1391,9 +1449,26 @@ class TradingBotEngine:
                 # Log portfolio summary
                 total_value = sum(p.get('current_value', 0) for p in self.active_positions.values())
                 total_pnl = sum(p.get('pnl', 0) for p in self.active_positions.values())
+                
+                # ✅ NEW: Get per-chain breakdown
+                chain_summary = ""
+                if hasattr(self, 'portfolio_manager') and self.portfolio_manager:
+                    try:
+                        chain_metrics = self.portfolio_manager.get_chain_metrics()
+                        if chain_metrics:
+                            chain_details = []
+                            for chain, metrics in chain_metrics.items():
+                                chain_details.append(
+                                    f"{chain.upper()}: {metrics['positions']} pos, "
+                                    f"${metrics['value']:.2f} ({metrics['roi']:.1f}%)"
+                                )
+                            chain_summary = " | " + " | ".join(chain_details)
+                    except Exception as e:
+                        logger.debug(f"Could not get chain metrics: {e}")
+                
                 logger.info(
                     f"💼 Portfolio: {len(self.active_positions)} positions, "
-                    f"Value: ${total_value:.2f}, P&L: ${total_pnl:.2f}"
+                    f"Value: ${total_value:.2f}, P&L: ${total_pnl:.2f}{chain_summary}"
                 )
                 
                 # Get interval from config
@@ -1653,7 +1728,27 @@ class TradingBotEngine:
                 
                 # Remove from active positions
                 del self.active_positions[token_address]
-                
+
+                # ✅ NEW: Update portfolio manager
+                if hasattr(self, 'portfolio_manager') and self.portfolio_manager:
+                    try:
+                        # Find position by token address in portfolio manager
+                        pm_position = self.portfolio_manager.get_position(token_address=token_address)
+                        if pm_position:
+                            result = self.portfolio_manager.close_position(pm_position.id)
+                            if result.get('success'):
+                                logger.info(
+                                    f"✅ Portfolio manager updated: "
+                                    f"P&L ${result.get('pnl', 0):.2f}"
+                                )
+                            else:
+                                logger.warning(f"⚠️ Portfolio manager close failed: {result.get('error')}")
+                        else:
+                            logger.warning(f"⚠️ Position not found in portfolio manager: {token_address}")
+                    except Exception as e:
+                        logger.error(f"Error updating portfolio manager on close: {e}")
+
+
                 # Send alert
                 emoji = "💰" if final_pnl > 0 else "💸"
                 await self.alert_manager.send_trade_alert(
@@ -2503,6 +2598,267 @@ class TradingBotEngine:
             return 'HIGH'
         else:
             return 'CRITICAL'
+
+
+    async def _monitor_positions_with_engine(self):
+        """
+        Monitor positions and update with real prices from data collectors
+        This runs in the engine to provide position_tracker with market data
+        """
+        try:
+            while self.state == BotState.RUNNING:
+                # Get all open positions
+                if not self.position_tracker.positions:
+                    await asyncio.sleep(30)
+                    continue
+                
+                logger.debug(
+                    f"Monitoring {len(self.position_tracker.positions)} positions"
+                )
+                
+                # Update each position with current price
+                for position_id, position in list(
+                    self.position_tracker.positions.items()
+                ):
+                    try:
+                        # Get chain from position metadata
+                        chain = position.metadata.get('chain', 'ethereum')
+                        
+                        # Fetch current price from DexScreener
+                        pair_data = await self.dex_collector.get_pair_data(
+                            position.token_address
+                        )
+                        
+                        if pair_data and 'price_usd' in pair_data:
+                            current_price = Decimal(str(pair_data['price_usd']))
+                            
+                            # Update position with current price
+                            actions = await self.position_tracker.update_position_with_price(
+                                position_id=position_id,
+                                current_price=current_price
+                            )
+                            
+                            # Handle any required actions
+                            if actions and "close" in actions:
+                                reason = actions["close"].get("reason", "unknown")
+                                logger.warning(
+                                    f"⚠️ Stop-loss/Take-profit hit for {position.token_symbol}: "
+                                    f"{reason}"
+                                )
+                                
+                                # Execute close through order manager
+                                await self._execute_position_close(
+                                    position_id=position_id,
+                                    reason=reason,
+                                    current_price=current_price
+                                )
+                            
+                            elif actions and "partial_close" in actions:
+                                reason = actions["partial_close"].get("reason", "partial_tp")
+                                logger.info(
+                                    f"📊 Partial take-profit for {position.token_symbol}"
+                                )
+                                # Handle partial close
+                                await self._execute_partial_close(
+                                    position_id=position_id,
+                                    action=actions["partial_close"]
+                                )
+                        
+                        else:
+                            logger.warning(
+                                f"⚠️ Could not fetch price for {position.token_symbol} "
+                                f"({position.token_address})"
+                            )
+                    
+                    except Exception as e:
+                        logger.error(
+                            f"Error monitoring position {position_id}: {e}",
+                            exc_info=True
+                        )
+                
+                # Sleep before next check
+                await asyncio.sleep(30)  # Check every 30 seconds
+                
+        except Exception as e:
+            logger.error(f"Error in position monitoring: {e}", exc_info=True)
+
+    async def _execute_position_close(
+        self,
+        position_id: str,
+        reason: str,
+        current_price: Decimal
+    ):
+        """Execute position close due to stop-loss or take-profit"""
+        try:
+            position = self.position_tracker.positions.get(position_id)
+            if not position:
+                logger.error(f"Position {position_id} not found")
+                return
+            
+            logger.info(
+                f"🔴 CLOSING POSITION: {position.token_symbol} "
+                f"Reason: {reason} | Price: ${current_price} | "
+                f"P&L: ${position.unrealized_pnl}"
+            )
+            
+            # Get chain info
+            chain = position.metadata.get('chain', 'ethereum')
+            
+            # ✅ PATCH 4: Build Order object first
+            from trading.orders.order_manager import build_order, OrderSide, OrderType
+            from decimal import Decimal
+
+            logger.info(
+                f"🔴 Creating SELL order to close position {position.token_symbol}"
+            )
+
+            # Build the order object with correct signature
+            order_obj = build_order(
+                token_address=position.token_address,
+                side=OrderSide.SELL,
+                amount=Decimal(str(position.entry_amount)),
+                order_type=OrderType.MARKET,
+                chain=chain,
+                slippage_tolerance=0.02,  # 2% slippage for exits
+                gas_limit=500000,
+                metadata={
+                    'reason': reason,
+                    'position_id': position_id,
+                    'auto_close': True,
+                    'urgent': reason in ['stop_loss_hit', 'rug_pull_detected']
+                }
+            )
+
+            logger.info(
+                f"📝 Order created: {order_obj.order_id}\n"
+                f"   Amount: {order_obj.amount}\n"
+                f"   Slippage: {order_obj.slippage_tolerance:.1%}"
+            )
+
+            # Create order using API-compliant signature
+            order_id = await self.order_manager.create_order(order_obj)
+
+            logger.info(f"✅ Order {order_id} submitted to order manager")
+
+            # Execute the order
+            success = await self.order_manager.execute_order(order_id)
+
+            if success:
+                # Get order details for result
+                sell_order = self.order_manager.orders.get(order_id)
+                logger.info(f"✅ Order execution started successfully")
+            else:
+                logger.error(f"❌ Order execution failed")
+                sell_order = None
+            
+            if sell_order:
+                # Close position in tracker
+                result = await self.position_tracker.close_position_with_details(
+                    position_id=position_id,
+                    exit_price=current_price,
+                    order_ids=[sell_order.order_id],
+                    reason=reason
+                )
+                
+                if result:
+                    logger.info(
+                        f"✅ Position closed successfully: {position.token_symbol} | "
+                        f"Realized P&L: ${result.realized_pnl}"
+                    )
+                    
+                    # Send alert
+                    await self.alert_manager.send_trade_alert({
+                        'action': 'CLOSE',
+                        'symbol': position.token_symbol,
+                        'reason': reason,
+                        'pnl': str(result.realized_pnl),
+                        'roi': f"{result.roi:.2%}"
+                    })
+            else:
+                logger.error(
+                    f"❌ Failed to create sell order for {position.token_symbol}"
+                )
+        
+        except Exception as e:
+            logger.error(
+                f"Error executing position close for {position_id}: {e}",
+                exc_info=True
+            )
+
+    async def _execute_partial_close(
+        self,
+        position_id: str,
+        action: Dict
+    ):
+        """Execute partial position close for take-profit"""
+        try:
+            position = self.position_tracker.positions.get(position_id)
+            if not position:
+                return
+            
+            exit_amount = action.get('amount', position.entry_amount / 3)
+            
+            logger.info(
+                f"📊 Partial close: {position.token_symbol} | "
+                f"Amount: {exit_amount}"
+            )
+            
+            # Create partial sell order
+            chain = position.metadata.get('chain', 'ethereum')
+            
+            # ✅ PATCH 5: Build Order object for partial close
+            from trading.orders.order_manager import build_order, OrderSide, OrderType
+            from decimal import Decimal
+
+            logger.info(
+                f"📊 Creating partial SELL order for {position.token_symbol}\n"
+                f"   Amount: {exit_amount}"
+            )
+
+            # Build the order object
+            order_obj = build_order(
+                token_address=position.token_address,
+                side=OrderSide.SELL,
+                amount=Decimal(str(exit_amount)),
+                order_type=OrderType.MARKET,
+                chain=chain,
+                slippage_tolerance=0.015,  # 1.5% for partial exits
+                metadata={
+                    'reason': action.get('reason', 'partial_tp'),
+                    'position_id': position_id,
+                    'partial': True,
+                    'partial_close': True,
+                    'take_profit_level': action.get('take_profit_level')
+                }
+            )
+
+            # Create and execute order
+            order_id = await self.order_manager.create_order(order_obj)
+            success = await self.order_manager.execute_order(order_id)
+
+            if success:
+                sell_order = self.order_manager.orders.get(order_id)
+                logger.info(f"✅ Partial close order executing")
+            else:
+                logger.error(f"❌ Partial close order failed")
+                sell_order = None
+            
+            if sell_order:
+                # Partial close in tracker
+                await self.position_tracker.close_position_with_details(
+                    position_id=position_id,
+                    exit_price=action['price'],
+                    exit_amount=exit_amount,
+                    order_ids=[sell_order.order_id],
+                    reason=action.get('reason')
+                )
+                
+                logger.info(
+                    f"✅ Partial close executed: {position.token_symbol}"
+                )
+        
+        except Exception as e:
+            logger.error(f"Error in partial close: {e}", exc_info=True)
 
     # ============================================================================
     # FINAL FIX: core/engine.py - Fix liquidity key in _calculate_opportunity_score

@@ -95,7 +95,7 @@ class PortfolioManager:
         self.max_position_size_pct = config.get('max_position_size_pct', 0.1)  # 10% max
         self.max_risk_per_trade = config.get('max_risk_per_trade', 0.05)  # 5% max
         self.max_portfolio_risk = config.get('max_portfolio_risk', 0.25)  # 25% max
-        self.min_position_size = config.get('min_position_size', 5)  # $100 min
+        self.min_position_size = config.get('min_position_size', 5.0)  # $100 min
         
         # Allocation strategy
         self.allocation_strategy = AllocationStrategy[
@@ -125,6 +125,7 @@ class PortfolioManager:
         # Rebalancing
         self.rebalance_frequency = config.get('rebalance_frequency', 'daily')
         self.last_rebalance = datetime.now()
+        self.max_position_size_usd = config.get('max_position_size_usd', 10.0)  # $10 max per trade
         
     def can_open_position(self) -> bool:
         """Check if new position can be opened"""
@@ -167,11 +168,53 @@ class PortfolioManager:
             # Reserve for fees and slippage
             reserve = self.balance * 0.05  # 5% reserve
             
-            return max(0, available - reserve)
+            available = max(0, available - reserve)
+            
+            # ✅ ENFORCE: Never return more than max_position_size_usd
+            # This caps each trade at $10 max
+            return min(available, self.max_position_size_usd)
+
             
         except Exception as e:
             print(f"Balance calculation error: {e}")
             return 0
+
+    def get_max_position_size(self, chain: str = None) -> float:
+        """
+        Get maximum position size for a trade
+        
+        Args:
+            chain: Blockchain (optional, for chain-specific limits)
+            
+        Returns:
+            Maximum position size in USD
+        """
+        try:
+            # Get base max position size
+            max_size = self.max_position_size_usd if hasattr(self, 'max_position_size_usd') else 10.0
+            
+            # Could implement chain-specific limits here
+            if chain:
+                # Example: Different limits per chain
+                chain_limits = {
+                    'ethereum': max_size,
+                    'base': max_size,
+                    'bsc': max_size,
+                    'arbitrum': max_size,
+                    'polygon': max_size,
+                    'solana': max_size
+                }
+                max_size = chain_limits.get(chain.lower(), max_size)
+            
+            # Never exceed available balance
+            available = self.get_available_balance()
+            
+            return min(max_size, available)
+            
+        except Exception as e:
+            print(f"Error getting max position size: {e}")
+            return 10.0  # Safe default
+
             
     async def allocate_capital(self, opportunities: List[Dict]) -> Dict[str, float]:
         """
@@ -462,6 +505,85 @@ class PortfolioManager:
         except Exception as e:
             print(f"Metrics calculation error: {e}")
             return {}
+
+    def get_chain_metrics(self) -> Dict[str, Dict]:
+        """
+        Get portfolio metrics broken down by chain
+        
+        Returns:
+            Dictionary with per-chain metrics:
+            {
+                'ethereum': {
+                    'positions': 2,
+                    'value': 150.0,
+                    'cost': 140.0,
+                    'unrealized_pnl': 10.0,
+                    'allocation': 0.375,
+                    'roi': 7.14
+                },
+                'base': {...},
+                'bsc': {...},
+                'solana': {...}
+            }
+        """
+        try:
+            chain_data = defaultdict(lambda: {
+                'positions': 0,
+                'value': 0.0,
+                'cost': 0.0,
+                'unrealized_pnl': 0.0
+            })
+            
+            # Aggregate positions by chain
+            for position in self.positions.values():
+                chain = position.chain.lower()
+                chain_data[chain]['positions'] += 1
+                chain_data[chain]['value'] += position.value
+                chain_data[chain]['cost'] += position.cost
+                chain_data[chain]['unrealized_pnl'] += position.unrealized_pnl
+            
+            # Calculate total portfolio value
+            total_value = self.balance + sum(p.value for p in self.positions.values())
+            
+            # Calculate derived metrics for each chain
+            result = {}
+            for chain, data in chain_data.items():
+                # Allocation percentage
+                data['allocation'] = data['value'] / total_value if total_value > 0 else 0.0
+                
+                # ROI percentage
+                data['roi'] = ((data['value'] - data['cost']) / data['cost'] * 100 
+                              if data['cost'] > 0 else 0.0)
+                
+                result[chain] = data
+            
+            return result
+            
+        except Exception as e:
+            print(f"Error calculating chain metrics: {e}")
+            return {}
+    
+    def get_chain_balance(self, chain: str) -> float:
+        """
+        Get allocated balance for a specific chain
+        
+        Args:
+            chain: Chain name (ethereum, bsc, base, solana, etc.)
+            
+        Returns:
+            Total value of positions on that chain
+        """
+        try:
+            chain = chain.lower()
+            chain_value = sum(
+                p.value for p in self.positions.values() 
+                if p.chain.lower() == chain
+            )
+            return float(chain_value)
+            
+        except Exception as e:
+            print(f"Error calculating chain balance: {e}")
+            return 0.0
     
     async def check_diversification(self) -> bool:
         """Check if portfolio is properly diversified"""
@@ -567,25 +689,107 @@ class PortfolioManager:
             print(f"Error getting open positions: {e}")
             return []
 
+    def get_position(self, position_id: str = None, 
+                    token_address: str = None) -> Optional[Position]:
+        """
+        Get a position by ID or token address
+        
+        Args:
+            position_id: Position ID to search for
+            token_address: Token address to search for
+            
+        Returns:
+            Position object or None if not found
+        """
+        if position_id:
+            for position in self.positions.values():
+                if position.id == position_id:
+                    return position
+        
+        if token_address:
+            return self.positions.get(token_address)
+        
+        return None
+
     def get_performance_report(self) -> Dict:
         """Get performance report"""
         return self.get_portfolio_metrics()
 
     def close_position(self, position_id: str) -> Dict:
-        """Close a specific position"""
+        """Close a specific position with proper P&L tracking"""
         try:
             # Find position by ID
             for token, position in list(self.positions.items()):
                 if position.id == position_id:
-                    # Close the position
-                    del self.positions[token]
-                    # Update balance (simplified)
+                    # ✅ FIXED: Proper P&L tracking
+                    
+                    # Calculate realized P&L
+                    realized_pnl = position.value - position.cost
+                    pnl_percentage = ((position.value - position.cost) / position.cost * 100 
+                                     if position.cost > 0 else 0)
+                    
+                    # Create trade record
+                    trade = {
+                        'id': position.id,
+                        'token_address': token,
+                        'pair_address': position.pair_address,
+                        'chain': position.chain,
+                        'side': 'sell',
+                        'price': position.current_price,
+                        'amount': position.size,
+                        'cost': position.cost,
+                        'proceeds': position.value,
+                        'pnl': realized_pnl,
+                        'pnl_percentage': pnl_percentage,
+                        'strategy': position.strategy,
+                        'timestamp': datetime.now(),
+                        'entry_time': position.entry_time,
+                        'exit_reason': 'manual_close'
+                    }
+                    
+                    # Add to trade history
+                    self.trade_history.append(trade)
+                    
+                    # Update consecutive losses tracking
+                    if realized_pnl < 0:
+                        self.consecutive_losses += 1
+                    else:
+                        self.consecutive_losses = 0
+                    
+                    # Update balance
                     self.balance += position.value
+                    
+                    # Update peak/valley
+                    current_value = self.balance + sum(p.value for p in self.positions.values() if p.id != position_id)
+                    if current_value > self.peak_balance:
+                        self.peak_balance = current_value
+                    if current_value < self.valley_balance:
+                        self.valley_balance = current_value
+                    
+                    # Remove position
+                    del self.positions[token]
+                    
+                    # Log the trade exit
+                    try:
+                        from monitoring.logger import log_trade_exit
+                        log_trade_exit(
+                            token_address=token,
+                            chain=position.chain,
+                            exit_price=position.current_price,
+                            amount=position.size,
+                            pnl=realized_pnl,
+                            reason='manual_close'
+                        )
+                    except Exception as log_error:
+                        print(f"Warning: Could not log trade exit: {log_error}")
                     
                     return {
                         'success': True,
                         'position_id': position_id,
-                        'message': 'Position closed successfully'
+                        'message': 'Position closed successfully',
+                        'pnl': realized_pnl,
+                        'pnl_percentage': pnl_percentage,
+                        'proceeds': position.value
                     }
             
             return {
@@ -597,7 +801,6 @@ class PortfolioManager:
             return {
                 'success': False,
                 'error': str(e)
-            }
 
     def update_position(self, position_id: str, modifications: Dict) -> Dict:
         """Update position parameters"""
@@ -605,10 +808,27 @@ class PortfolioManager:
             # Find and update position
             for token, position in self.positions.items():
                 if position.id == position_id:
+                    # Update stop loss
                     if 'stop_loss' in modifications:
                         position.stop_loss = modifications['stop_loss']
+                    
+                    # Update take profits
                     if 'take_profits' in modifications:
                         position.take_profits = modifications['take_profits']
+                    
+                    # ✅ UPDATE: Current price and P&L
+                    if 'current_price' in modifications:
+                        position.current_price = float(modifications['current_price'])
+                        # Recalculate P&L
+                        position.pnl = ((position.current_price - position.entry_price) 
+                                       * position.size)
+                        if position.entry_price > 0:
+                            position.pnl_percentage = ((position.current_price - 
+                                                       position.entry_price) / 
+                                                      position.entry_price * 100)
+                    
+                    # Update timestamp
+                    position.last_updated = datetime.now()
                     
                     return {
                         'success': True,
@@ -616,16 +836,48 @@ class PortfolioManager:
                         'message': 'Position updated successfully'
                     }
             
-            return {
-                'success': False,
-                'error': 'Position not found'
-            }
-            
         except Exception as e:
             return {
                 'success': False,
                 'error': str(e)
             }
+
+    async def update_all_positions(self, price_data: Dict[str, float]) -> int:
+        """
+        Update all open positions with current prices
+        
+        Args:
+            price_data: Dictionary mapping token_address to current_price
+                       {token_address: current_price, ...}
+            
+        Returns:
+            Number of positions updated
+        """
+        updated_count = 0
+        
+        try:
+            for token_address, position in self.positions.items():
+                if token_address in price_data:
+                    new_price = float(price_data[token_address])
+                    
+                    # Skip if price hasn't changed (within 0.1%)
+                    if abs(new_price - position.current_price) / position.current_price < 0.001:
+                        continue
+                    
+                    # Update position using update_position method
+                    result = self.update_position(
+                        position.id,
+                        {'current_price': new_price}
+                    )
+                    
+                    if result.get('success'):
+                        updated_count += 1
+            
+            return updated_count
+            
+        except Exception as e:
+            print(f"Error updating positions: {e}")
+            return updated_count
 
     def _calculate_avg_win(self) -> float:
         """Calculate average winning trade"""

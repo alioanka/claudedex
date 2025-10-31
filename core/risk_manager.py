@@ -210,7 +210,8 @@ class RiskManager:
         })
         
         # Position sizing parameters
-        self.max_position_size_percent = config.get('max_position_size_percent', 5)
+        self.max_position_size_percent = config.get('max_position_size_pct', 10)
+        self.max_position_size_usd = config.get('max_position_size_usd', 10.0)
         self.max_portfolio_risk_percent = config.get('max_portfolio_risk_percent', 20)
         self.kelly_fraction = config.get('kelly_fraction', 0.25)  # Conservative Kelly
         
@@ -873,7 +874,11 @@ class RiskManager:
             min_position = available_balance * 0.001  # 0.1% minimum
             if position_size < min_position:
                 return Decimal("0")
-                
+
+            # ✅ ENFORCE: Cap at max_position_size_usd ($10 max)
+            if position_size > self.max_position_size_usd:
+                position_size = self.max_position_size_usd
+
             return Decimal(str(round(position_size, 2)))
             
         except Exception as e:

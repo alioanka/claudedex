@@ -55,8 +55,8 @@ class DirectDEXExecutor(BaseExecutor):
     - Gas optimization
     """
     
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
+    def __init__(self, config: Dict[str, Any], db_manager=None):
+        super().__init__(config, db_manager)
 
         # ✅ CRITICAL: DRY_RUN mode check
         self.dry_run = config.get('DRY_RUN', True)

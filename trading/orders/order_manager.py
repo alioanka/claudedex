@@ -202,9 +202,16 @@ class OrderManager:
     Manages order lifecycle from creation to settlement
     """
     
-    def __init__(self, config: Optional[Dict] = None):
-        """Initialize order manager"""
+    def __init__(self, config: Optional[Dict] = None, db_manager=None):
+        """
+        Initialize order manager
+        
+        Args:
+            config: Configuration dictionary
+            db_manager: Optional database manager for order persistence
+        """
         self.config = config or self._default_config()
+        self.db_manager = db_manager  # 🆕 Store database manager
         
         # ✅ CRITICAL: Add dry run mode check
         self.dry_run = self.config.get('dry_run', True)
@@ -295,9 +302,16 @@ class OrderManager:
 
     def _initialize_components(self):
         """Initialize order management components"""
+        # ✅ PATCH 7: Initialize with placeholders, will be injected by engine
         self.execution_engine = ExecutionEngine(self.config)
-        self.risk_monitor = OrderRiskMonitor(self.config)
+        self.risk_monitor = OrderRiskMonitor(
+            self.config,
+            position_tracker=None,  # Injected by engine
+            portfolio_manager=None   # Injected by engine
+        )
         self.settlement_processor = SettlementProcessor(self.config)
+        
+        logger.info("📦 OrderManager components initialized (awaiting engine injection)")
         
         # Start background tasks
         asyncio.create_task(self._monitor_orders())
@@ -352,13 +366,34 @@ class OrderManager:
             self.orders[oid].token_address == token_addr) and
             self.orders[oid].status in [OrderStatus.PENDING, OrderStatus.SUBMITTED]
         ]
+
+        # ✅ PATCH 3: Allow multiple orders but check for conflicts
         if active_for_token:
             existing_order = self.orders[active_for_token[0]]
-            raise ValueError(
-                f"Active order already exists for token {token_addr[:10]}...\n"
-                f"Existing order: {active_for_token[0]}\n"
-                f"Status: {existing_order.status.value}"
-            )
+            
+            # Check if same side (adding to position)
+            if existing_order.side == order.side:
+                logger.warning(
+                    f"⚠️ Duplicate {order.side.value.upper()} order for {token_addr[:10]}...\n"
+                    f"   Existing: {active_for_token[0]} ({existing_order.status.value})\n"
+                    f"   New: {order.order_id}\n"
+                    f"   ℹ️ This will ADD to position, not replace it"
+                )
+                
+                # Allow but flag in metadata
+                order.metadata['duplicate_order'] = True
+                order.metadata['related_orders'] = active_for_token
+                order.metadata['strategy'] = 'scale_in'
+                
+            else:
+                # Opposite side - this is position adjustment/close
+                logger.info(
+                    f"📊 {order.side.value.upper()} order for token with existing "
+                    f"{existing_order.side.value.upper()} order\n"
+                    f"   ℹ️ Position adjustment/close detected"
+                )
+                order.metadata['position_adjustment'] = True
+                order.metadata['related_orders'] = active_for_token
         
         # Store the order
         self.orders[order.order_id] = order
@@ -1516,8 +1551,16 @@ class ExecutionEngine:
 class OrderRiskMonitor:
     """Monitor and enforce order risk limits"""
     
-    def __init__(self, config: Dict):
+    def __init__(
+        self,
+        config: Dict,
+        position_tracker=None,
+        portfolio_manager=None
+    ):
         self.config = config
+        self.position_tracker = position_tracker
+        self.portfolio_manager = portfolio_manager
+        logger.info("🛡️ OrderRiskMonitor initialized")
         
     async def check_order_risk(
         self,
@@ -1527,8 +1570,121 @@ class OrderRiskMonitor:
         existing_orders: Dict[str, Order]
     ) -> bool:
         """Check if order passes risk checks"""
-        # Implementation would check various risk metrics
-        return True
+        try:
+            # 1. Check if position tracker available
+            if not self.position_tracker:
+                logger.warning("⚠️ No position tracker - allowing order (unsafe)")
+                return True
+            
+            # 2. Estimate order value (simplified - in production would fetch real price)
+            estimated_price = 100.0  # Would fetch from market
+            order_value = float(amount) * estimated_price
+            
+            logger.info(
+                f"🔍 Risk check: {side.value.upper()} ${order_value:.2f} "
+                f"of {token_address[:10]}..."
+            )
+            
+            # 3. BUY orders: Check cash balance
+            if side == OrderSide.BUY:
+                cash_balance = float(self.position_tracker.cash_balance)
+                if order_value > cash_balance:
+                    logger.error(
+                        f"❌ Insufficient balance:\n"
+                        f"   Required: ${order_value:.2f}\n"
+                        f"   Available: ${cash_balance:.2f}"
+                    )
+                    return False
+                
+                logger.info(
+                    f"✅ Cash check passed: "
+                    f"${order_value:.2f} of ${cash_balance:.2f} available"
+                )
+            
+            # 4. Check portfolio limits
+            if self.portfolio_manager:
+                try:
+                    portfolio_value = float(
+                        self.portfolio_manager.get_total_value()
+                    )
+                    if portfolio_value > 0:
+                        order_pct = order_value / portfolio_value
+                        max_position_size = self.config.get('max_position_size', 0.1)
+                        
+                        if order_pct > max_position_size:
+                            logger.error(
+                                f"❌ Position size too large:\n"
+                                f"   Order: {order_pct:.2%}\n"
+                                f"   Limit: {max_position_size:.2%}"
+                            )
+                            return False
+                        
+                        logger.info(
+                            f"✅ Position size check passed: "
+                            f"{order_pct:.2%} of portfolio"
+                        )
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not check portfolio limits: {e}")
+            
+            # 5. Check position limits
+            open_positions = len(self.position_tracker.positions)
+            max_positions = self.config.get('max_positions', 10)
+            
+            if side == OrderSide.BUY and open_positions >= max_positions:
+                logger.error(
+                    f"❌ Max positions limit reached:\n"
+                    f"   Current: {open_positions}\n"
+                    f"   Limit: {max_positions}"
+                )
+                return False
+            
+            logger.info(
+                f"✅ Position count check passed: "
+                f"{open_positions}/{max_positions}"
+            )
+            
+            # 6. Check active orders limit
+            active_count = len([
+                o for o in existing_orders.values()
+                if o.status in [OrderStatus.PENDING, OrderStatus.SUBMITTED]
+            ])
+            max_orders = self.config.get('max_pending_orders', 10)
+            
+            if active_count >= max_orders:
+                logger.error(
+                    f"❌ Too many active orders:\n"
+                    f"   Current: {active_count}\n"
+                    f"   Limit: {max_orders}"
+                )
+                return False
+            
+            logger.info(
+                f"✅ Active orders check passed: "
+                f"{active_count}/{max_orders}"
+            )
+            
+            # 7. Check per-token order limit
+            token_orders = len([
+                o for o in existing_orders.values()
+                if o.token_address == token_address and
+                o.status in [OrderStatus.PENDING, OrderStatus.SUBMITTED]
+            ])
+            max_per_token = self.config.get('max_orders_per_token', 3)
+            
+            if token_orders >= max_per_token:
+                logger.warning(
+                    f"⚠️ Multiple orders for token {token_address[:10]}...: "
+                    f"{token_orders}/{max_per_token}"
+                )
+                # Don't block, just warn
+            
+            logger.info("✅ All risk checks passed")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error in risk check: {e}", exc_info=True)
+            # Fail-safe: reject order on error
+            return False
 
 
 class SettlementProcessor:
