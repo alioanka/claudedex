@@ -1395,6 +1395,9 @@ class TradingBotEngine:
                         if token_address in price_data:
                             current_price = price_data[token_address]
                             
+                            # ✅ FIX: Get token_symbol for THIS position (not reused from outer loop)
+                            position_symbol = position.get('token_symbol', 'UNKNOWN')
+                            
                             from decimal import Decimal
                             position['current_price'] = Decimal(str(current_price))
                             position['current_value'] = Decimal(str(current_price)) * position['amount']
@@ -1409,7 +1412,7 @@ class TradingBotEngine:
                             holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
                             
                             logger.info(
-                                f"  📈 {token_symbol} - "
+                                f"  📈 {position_symbol} - "
                                 f"Entry: ${position['entry_price']:.8f}, Current: ${current_price:.8f}, "
                                 f"P&L: {position['pnl_percentage']:.2f}% (${position['pnl']:.2f}), "
                                 f"Time: {holding_time:.1f}min"
