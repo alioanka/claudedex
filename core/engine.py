@@ -8,6 +8,7 @@ import logging  # ADD THIS LINE
 from typing import Dict, List, Optional, Any, Tuple
 from collections import defaultdict
 from datetime import datetime, timedelta
+import time
 from dataclasses import dataclass, field
 import json
 from enum import Enum
@@ -132,7 +133,7 @@ class TradingBotEngine:
         )
         self.pattern_analyzer = PatternAnalyzer()
         self.decision_maker = DecisionMaker(config)
-        
+
         # Data collectors
         # Use:
         self.dex_collector = DexScreenerCollector(
@@ -286,6 +287,11 @@ class TradingBotEngine:
             if hasattr(self.db, 'connect'):
                 await self.db.connect()
                 logger.info("✅ Database connected")
+
+            # Set portfolio manager dependencies (AFTER db is connected)
+            self.portfolio_manager.set_dependencies(self.db, self.alert_manager)
+            await self.portfolio_manager.load_block_state()
+            logger.info("✅ Portfolio manager block state loaded")
             
             if hasattr(self.risk_manager, 'initialize'):
                 await self.risk_manager.initialize()
@@ -792,7 +798,14 @@ class TradingBotEngine:
                     logger.info(f"   Can open position? {can_open}")
                     
                     if not can_open:
-                        logger.warning("❌ Portfolio manager says NO to new positions")
+                        # Rate limit this warning to once per minute
+                        if not hasattr(self, '_last_no_positions_warning'):
+                            self._last_no_positions_warning = 0
+
+                        now = time.time()
+                        if now - self._last_no_positions_warning > 60:  # Once per minute
+                            logger.warning("❌ Portfolio manager says NO to new positions")
+                            self._last_no_positions_warning = now
                         break
                         
                     # Final checks before execution
