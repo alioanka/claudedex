@@ -1740,60 +1740,81 @@ class DashboardEndpoints:
                     logger.debug(f"Error broadcasting dashboard update: {e}")
                 
                 # Broadcast wallet balance updates
+                # Broadcast wallet balance updates
                 try:
+                    # Get cumulative P&L from database (same as dashboard_update)
+                    cumulative_pnl = 0
+                    if self.db:
+                        try:
+                            async with self.db.pool.acquire() as conn:
+                                result = await conn.fetchrow("""
+                                    SELECT 
+                                        COALESCE(SUM(CASE 
+                                            WHEN status = 'closed' 
+                                            THEN (exit_price - entry_price) * amount 
+                                            ELSE 0 
+                                        END), 0) as total_pnl
+                                    FROM trades
+                                """)
+                                if result:
+                                    cumulative_pnl = float(result['total_pnl'])
+                        except Exception as e:
+                            logger.debug(f"Error getting cumulative PnL: {e}")
+                    
+                    # Calculate total portfolio value
+                    starting_balance = 400.0
+                    total_portfolio_value = starting_balance + cumulative_pnl
+                    
+                    # Calculate position values by chain
+                    positions_by_chain = {}
                     if self.engine and self.engine.active_positions:
-                        # Calculate balances from engine.active_positions
-                        positions_by_chain = {}
                         for pos_id, position in self.engine.active_positions.items():
                             chain = position.get('chain', 'unknown').upper()
                             if chain not in positions_by_chain:
                                 positions_by_chain[chain] = []
                             positions_by_chain[chain].append(position)
+                    
+                    balances = {}
+                    for chain in ['ETHEREUM', 'BSC', 'BASE', 'SOLANA']:
+                        chain_positions = positions_by_chain.get(chain, [])
                         
-                        balances = {}
-                        for chain, positions in positions_by_chain.items():
-                            chain_value = 0
-                            chain_cost = 0
-                            
-                            for pos in positions:
-                                # Use correct field names from engine.py
-                                entry_price = float(pos.get('entry_price', 0))
-                                # current_price may not exist yet if monitor hasn't run
-                                current_price = float(pos.get('current_price', entry_price))
-                                # Field is 'amount', not 'position_size'
-                                amount = float(pos.get('amount', 0))
-                                
-                                pos_cost = entry_price * amount
-                                pos_value = current_price * amount
-                                
-                                chain_value += pos_value
-                                chain_cost += pos_cost
-                            
-                            chain_pnl = chain_value - chain_cost
-                            chain_pnl_pct = (chain_pnl / chain_cost * 100) if chain_cost > 0 else 0
-                            
-                            balances[chain] = {
-                                'balance': float(chain_value),
-                                'pnl': float(chain_pnl),
-                                'pnl_pct': float(chain_pnl_pct),
-                                'positions': len(positions)
-                            }
+                        # Calculate position value for this chain
+                        chain_position_value = 0
+                        chain_position_cost = 0
                         
-                        # Add chains with no positions
-                        for chain in ['ETHEREUM', 'BSC', 'BASE', 'SOLANA']:
-                            if chain not in balances:
-                                balances[chain] = {
-                                    'balance': 100.0,
-                                    'pnl': 0.0,
-                                    'pnl_pct': 0.0,
-                                    'positions': 0
-                                }
+                        for pos in chain_positions:
+                            entry_price = float(pos.get('entry_price', 0))
+                            current_price = float(pos.get('current_price', entry_price))
+                            amount = float(pos.get('amount', 0))
+                            
+                            pos_cost = entry_price * amount
+                            pos_value = current_price * amount
+                            
+                            chain_position_value += pos_value
+                            chain_position_cost += pos_cost
                         
-                        # Broadcast wallet update
-                        await self.sio.emit('wallet_update', {
-                            'balances': balances,
-                            'timestamp': datetime.utcnow().isoformat()
-                        })
+                        # Calculate unrealized P&L for this chain
+                        chain_unrealized_pnl = chain_position_value - chain_position_cost
+                        chain_pnl_pct = (chain_unrealized_pnl / chain_position_cost * 100) if chain_position_cost > 0 else 0
+                        
+                        # Each chain gets equal allocation of total portfolio
+                        chain_allocated = total_portfolio_value / 4.0
+                        
+                        balances[chain] = {
+                            'balance': float(chain_allocated),  # Total allocated to this chain
+                            'in_positions': float(chain_position_value),
+                            'available': float(chain_allocated - chain_position_value) if chain_position_value < chain_allocated else 0,
+                            'pnl': float(chain_unrealized_pnl),
+                            'pnl_pct': float(chain_pnl_pct),
+                            'positions': len(chain_positions)
+                        }
+                    
+                    # Broadcast wallet update
+                    await self.sio.emit('wallet_update', {
+                        'balances': balances,
+                        'total_portfolio': float(total_portfolio_value),
+                        'timestamp': datetime.utcnow().isoformat()
+                    })
                 except Exception as e:
                     logger.debug(f"Error broadcasting wallet update: {e}")
                 
