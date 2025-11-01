@@ -749,7 +749,7 @@ class PortfolioManager:
         """Get performance report"""
         return self.get_portfolio_metrics()
 
-    def close_position(self, position_id: str) -> Dict:
+    async def close_position(self, position_id: str) -> Dict:
         """Close a specific position with proper P&L tracking"""
         try:
             # Find position by ID
