@@ -1740,7 +1740,7 @@ class DashboardEndpoints:
                     logger.debug(f"Error broadcasting dashboard update: {e}")
                 
                 # Broadcast wallet balance updates
-                # Broadcast wallet balance updates
+                # Broadcast wallet balance updates check differences
                 try:
                     # Get cumulative P&L from database (same as dashboard_update)
                     cumulative_pnl = 0
