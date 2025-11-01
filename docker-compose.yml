@@ -11,7 +11,7 @@ services:
       POSTGRES_PASSWORD: bot_password
     volumes:
       - postgres-data:/var/lib/postgresql/data
-#      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
       - "127.0.0.1:5432:5432"  # CHANGE THIS LINE - Add 127.0.0.1:
     networks:
