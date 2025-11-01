@@ -1595,16 +1595,33 @@ class DashboardEndpoints:
                         await asyncio.sleep(10)  # Changed from 2 to 10
                         
                         # Send updates
-                        if self.portfolio:
-                            summary = self.portfolio.get_portfolio_summary()
-                            await resp.send(json.dumps({
-                                'type': 'portfolio_update',
-                                'data': {
-                                    'value': float(summary.get('total_value', 0)),
-                                    'pnl': float(summary.get('daily_pnl', 0)),
-                                    'timestamp': datetime.utcnow().isoformat()
-                                }
-                            }))
+                        # Send updates
+                        if self.db:
+                            try:
+                                async with self.db.pool.acquire() as conn:
+                                    result = await conn.fetchrow("""
+                                        SELECT 
+                                            COALESCE(SUM(CASE 
+                                                WHEN status = 'closed' 
+                                                THEN (exit_price - entry_price) * amount 
+                                                ELSE 0 
+                                            END), 0) as total_pnl
+                                        FROM trades
+                                    """)
+                                    if result:
+                                        total_pnl = float(result['total_pnl'])
+                                        portfolio_value = 400 + total_pnl
+                                        
+                                        await resp.send(json.dumps({
+                                            'type': 'portfolio_update',
+                                            'data': {
+                                                'value': portfolio_value,
+                                                'pnl': total_pnl,
+                                                'timestamp': datetime.utcnow().isoformat()
+                                            }
+                                        }))
+                            except Exception as e:
+                                logger.debug(f"Error getting portfolio update: {e}")
                         
                     except asyncio.CancelledError:
                         logger.debug("SSE connection cancelled")

@@ -1757,7 +1757,7 @@ class TradingBotEngine:
                         # Find position by token address in portfolio manager
                         pm_position = self.portfolio_manager.get_position(token_address=token_address)
                         if pm_position:
-                            result = self.portfolio_manager.close_position(pm_position.id)
+                            result = await self.portfolio_manager.close_position(pm_position.id)
                             if result.get('success'):
                                 logger.info(
                                     f"✅ Portfolio manager updated: "
