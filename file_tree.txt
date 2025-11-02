@@ -1,40 +1,17 @@
 ClaudeDex/
-├── build.trading-bot.log
-├── count_loc.py
-├── create_tree.py
-├── debug_solana_init.sh
-├── diagnose_dashboard.sh
-├── docker-compose copy.yml.example
 ├── docker-compose.yml
 ├── Dockerfile
-├── ExDockerfile_copy.txt
-├── file_tree.md
-├── file_tree2.md
+├── file_tree.txt
 ├── generate_file_tree.py
-├── jup_text.py
 ├── main.py
+├── main_log_analyzer.py
 ├── pytest.ini
 ├── README.md
-├── ref_report.json
-├── ref_report.md
-├── ref_report2.md
 ├── requirements.txt
-├── scaffold.py
 ├── setup.py
 ├── setup_env_keys.py
-├── symbol_db.json
-├── symbol_db.md
-├── symbol_db2.md
-├── test-requirements.txt
-├── test_dexscreener_solana.py
-├── test_solana.py
-├── verifier_report.json
-├── verifier_report.md
+├── trade_analyzer.py
 ├── verify_references.py
-├── xref_report copy.md
-├── xref_report.json
-├── xref_report.md
-├── xref_report2.md
 ├── xref_symbol_db.py
 ├── analysis/
 │   ├── __init__.py
@@ -48,18 +25,20 @@ ClaudeDex/
 ├── config/
 │   ├── __init__.py
 │   ├── config_manager.py
+│   ├── consecutive_losses_config.py
 │   ├── settings.py
 │   └── validation.py
 ├── core/
 │   ├── __init__.py
 │   ├── decision_maker.py
 │   ├── engine.py
-│   ├── engine.py.backup
-│   ├── engine_preSOL.py.backup
 │   ├── event_bus.py
 │   ├── pattern_analyzer.py
 │   ├── portfolio_manager.py
-│   └── risk_manager.py
+│   ├── risk_manager.py
+│   └── __pycache__/
+│       ├── __init__.cpython-313.pyc
+│       └── engine.cpython-313.pyc
 ├── dashboard/
 │   ├── Dockerfile
 │   ├── static/
@@ -91,10 +70,7 @@ ClaudeDex/
 │   │   ├── __init__.py
 │   │   ├── chain_data.py
 │   │   ├── dexscreener.py
-│   │   ├── dexscreener.py.backup
 │   │   ├── honeypot_checker.py
-│   │   ├── honeypot_checker.py.backup
-│   │   ├── honeypot_checker_beforeRugcheck.py.backup
 │   │   ├── mempool_monitor.py
 │   │   ├── social_data.py
 │   │   ├── token_sniffer.py
@@ -129,6 +105,7 @@ ClaudeDex/
 │   ├── rugcheck_integration.md
 │   ├── solana_integration_guide.md
 │   ├── solana_roadmap.md
+│   ├── tips.md
 │   ├── User_Guide.md
 │   ├── wallet_encrption.md
 │   └── review/
@@ -136,6 +113,7 @@ ClaudeDex/
 │       ├── static_issues_report.md
 │       ├── symbol_db_generated.csv
 │       └── symbol_db_generated.json
+├── gpt_analysis/
 ├── kubernetes/
 │   ├── configmap.yaml
 │   ├── deployment.yaml
@@ -143,9 +121,6 @@ ClaudeDex/
 │   ├── secret.yaml
 │   └── service.yaml
 ├── logs/
-│   ├── TradingBot.log
-│   ├── TradingBot_errors.log
-│   └── TradingBot_trades.log
 ├── ml/
 │   ├── __init__.py
 │   ├── models/
@@ -188,6 +163,7 @@ ClaudeDex/
 │   ├── health_check.py
 │   ├── init.sql
 │   ├── init_config.py
+│   ├── migrate_consecutive_losses.sql
 │   ├── migrate_database.py
 │   ├── optimize_db.py
 │   ├── overnight_summary.py
@@ -245,10 +221,11 @@ ClaudeDex/
 │   │   └── __init__.cpython-313.pyc
 │   ├── chains/
 │   │   ├── __init__.py
+│   │   ├── __pycache__/
+│   │   │   └── __init__.cpython-313.pyc
 │   │   └── solana/
 │   │       ├── __init__.py
 │   │       ├── jupiter_executor.py
-│   │       ├── jupiter_executor.py.backup
 │   │       ├── solana_client.py
 │   │       ├── spl_token_handler.py
 │   │       └── __pycache__/
@@ -274,4 +251,5 @@ ClaudeDex/
 └── utils/
     ├── __init__.py
     ├── constants.py
+    ├── errors.py
     └── helpers.py
