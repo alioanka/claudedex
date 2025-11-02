@@ -78,6 +78,6 @@ def analyze_main_log(log_file):
 
 
 if __name__ == "__main__":
-    analyze_main_log("TradingBot.log")
-    analyze_main_log("TradingBot.log.1")
-    analyze_main_log("TradingBot.log.2")
+    analyze_main_log("logs/TradingBot.log")
+    analyze_main_log("logs/TradingBot.log.1")
+    analyze_main_log("logs/TradingBot.log.2")
