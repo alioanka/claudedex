@@ -892,7 +892,8 @@ function updateBalanceDisplay(balances) {
         }
     });
     
-    // Update total portfolio value (top stat card)
+    // Update total portfolio value (top stat card) - DISABLED TO PREVENT OVERWRITING
+    /*
     if (balances.TOTAL) {
         const portfolioEl = document.getElementById('portfolioValueStat');
         if (portfolioEl) {
@@ -905,6 +906,7 @@ function updateBalanceDisplay(balances) {
             pnlEl.textContent = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
         }
     }
+    */
 }
 
 function refreshBalances() {
