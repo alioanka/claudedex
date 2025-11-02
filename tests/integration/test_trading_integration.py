@@ -93,12 +93,12 @@ class TestTradingIntegration:
         # Generate signal
         signal = await momentum.analyze(market_data)
         
-        if signal["action"] == "buy":
+        if signal and signal.signal_type == SignalType.BUY:
             # Create order from signal
             order = {
                 "token": market_data["token"],
                 "type": "buy",
-                "amount": signal["suggested_amount"],
+                "amount": signal.position_size or Decimal("100"), # Use a default for testing
                 "price": market_data["price"]
             }
             
