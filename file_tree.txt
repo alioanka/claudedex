@@ -246,7 +246,6 @@ ClaudeDex/
 │       ├── ai_strategy.py
 │       ├── base_strategy.py
 │       ├── momentum.py
-│       ├── scalping copy.py
 │       └── scalping.py
 └── utils/
     ├── __init__.py

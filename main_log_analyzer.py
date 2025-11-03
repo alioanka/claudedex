@@ -81,3 +81,4 @@ if __name__ == "__main__":
     analyze_main_log("logs/TradingBot.log")
     analyze_main_log("logs/TradingBot.log.1")
     analyze_main_log("logs/TradingBot.log.2")
+    analyze_main_log("logs/TradingBot.log.3")
