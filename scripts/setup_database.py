@@ -33,87 +33,110 @@ async def setup_database():
         await conn.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
         await conn.execute("CREATE EXTENSION IF NOT EXISTS uuid-ossp;")
         
+        await conn.execute("""
+            CREATE SCHEMA IF NOT EXISTS trading;
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS trading.position_manager_state (
+                id INT PRIMARY KEY,
+                consecutive_losses INT NOT NULL DEFAULT 0,
+                consecutive_losses_blocked_at TIMESTAMPTZ,
+                consecutive_losses_block_count INT NOT NULL DEFAULT 0,
+                last_reset_at TIMESTAMPTZ,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        """)
+
         # Create tables
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS trades (
-                id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-                token VARCHAR(42) NOT NULL,
-                chain VARCHAR(20) NOT NULL,
-                type VARCHAR(10) NOT NULL,
-                amount DECIMAL(30, 18) NOT NULL,
-                price DECIMAL(30, 18) NOT NULL,
-                total DECIMAL(30, 18) NOT NULL,
-                gas_price BIGINT,
-                gas_used BIGINT,
-                tx_hash VARCHAR(66),
+                id SERIAL PRIMARY KEY,
+                trade_id UUID UNIQUE NOT NULL,
+                token_address VARCHAR(128) NOT NULL,
+                chain VARCHAR(30) NOT NULL,
+                side VARCHAR(10) NOT NULL,
+                entry_price NUMERIC(40, 18),
+                exit_price NUMERIC(40, 18),
+                amount NUMERIC(40, 18),
+                usd_value NUMERIC(40, 18),
+                gas_fee NUMERIC(40, 18),
+                slippage NUMERIC(10, 4),
+                profit_loss NUMERIC(40, 18),
+                profit_loss_percentage NUMERIC(10, 4),
+                strategy VARCHAR(100),
+                risk_score NUMERIC(10, 4),
+                ml_confidence NUMERIC(10, 4),
+                entry_timestamp TIMESTAMPTZ NOT NULL,
+                exit_timestamp TIMESTAMPTZ,
                 status VARCHAR(20) NOT NULL,
-                error_message TEXT,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                metadata JSONB,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
             );
         """)
         
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS positions (
                 id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-                token VARCHAR(42) NOT NULL,
-                chain VARCHAR(20) NOT NULL,
-                entry_price DECIMAL(30, 18) NOT NULL,
-                current_price DECIMAL(30, 18),
-                quantity DECIMAL(30, 18) NOT NULL,
-                stop_loss DECIMAL(30, 18),
-                take_profit DECIMAL(30, 18),
-                pnl DECIMAL(30, 18),
-                pnl_percentage DECIMAL(10, 2),
+                token VARCHAR(128) NOT NULL,
+                chain VARCHAR(30) NOT NULL,
+                entry_price NUMERIC(40, 18) NOT NULL,
+                current_price NUMERIC(40, 18),
+                quantity NUMERIC(40, 18) NOT NULL,
+                stop_loss NUMERIC(40, 18),
+                take_profit NUMERIC(40, 18),
+                pnl NUMERIC(40, 18),
+                pnl_percentage NUMERIC(10, 4),
                 status VARCHAR(20) NOT NULL,
-                entry_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                exit_time TIMESTAMP WITH TIME ZONE,
+                entry_time TIMESTAMPTZ DEFAULT NOW(),
+                exit_time TIMESTAMPTZ,
                 exit_reason VARCHAR(50),
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
             );
         """)
         
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS market_data (
                 id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-                token VARCHAR(42) NOT NULL,
-                chain VARCHAR(20) NOT NULL,
-                price DECIMAL(30, 18) NOT NULL,
-                volume DECIMAL(30, 18),
-                liquidity DECIMAL(30, 18),
-                market_cap DECIMAL(30, 18),
+                token VARCHAR(128) NOT NULL,
+                chain VARCHAR(30) NOT NULL,
+                price NUMERIC(40, 18) NOT NULL,
+                volume NUMERIC(40, 18),
+                liquidity NUMERIC(40, 18),
+                market_cap NUMERIC(40, 18),
                 holders INTEGER,
-                timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                timestamp TIMESTAMPTZ NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW()
             );
         """)
         
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS token_analysis (
                 id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-                token VARCHAR(42) NOT NULL,
-                chain VARCHAR(20) NOT NULL,
+                token VARCHAR(128) NOT NULL,
+                chain VARCHAR(30) NOT NULL,
                 analysis_type VARCHAR(50) NOT NULL,
-                score DECIMAL(5, 2),
-                confidence DECIMAL(5, 2),
+                score NUMERIC(10, 4),
+                confidence NUMERIC(10, 4),
                 details JSONB,
-                timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                timestamp TIMESTAMPTZ DEFAULT NOW(),
+                created_at TIMESTAMPTZ DEFAULT NOW()
             );
         """)
         
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS whale_activities (
                 id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-                wallet VARCHAR(42) NOT NULL,
-                token VARCHAR(42) NOT NULL,
-                chain VARCHAR(20) NOT NULL,
+                wallet VARCHAR(128) NOT NULL,
+                token VARCHAR(128) NOT NULL,
+                chain VARCHAR(30) NOT NULL,
                 type VARCHAR(20) NOT NULL,
-                amount DECIMAL(30, 18) NOT NULL,
-                value_usd DECIMAL(30, 2),
-                timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                amount NUMERIC(40, 18) NOT NULL,
+                value_usd NUMERIC(40, 18),
+                timestamp TIMESTAMPTZ NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW()
             );
         """)
         
@@ -128,7 +151,7 @@ async def setup_database():
                 user_id VARCHAR(50),
                 details JSONB,
                 checksum VARCHAR(64) NOT NULL,
-                timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                timestamp TIMESTAMPTZ DEFAULT NOW()
             );
         """)
         
@@ -146,7 +169,8 @@ async def setup_database():
         """)
         
         # Create indexes
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_token ON trades(token, created_at DESC);")
+        await conn.execute("CREATE INDEX IF NOT EXISTS trades_trade_id_idx ON trades(trade_id);")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_token ON trades(token_address, created_at DESC);")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_positions_token ON positions(token, status);")

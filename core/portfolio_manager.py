@@ -650,7 +650,7 @@ class PortfolioManager:
 
     # Add this method to the PortfolioManager class in portfolio_manager.py
 
-    def get_portfolio_summary(self) -> Dict:
+    def get_summary(self) -> Dict:
         """
         Get comprehensive portfolio summary
         
