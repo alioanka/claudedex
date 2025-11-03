@@ -70,7 +70,10 @@ class JupiterExecutor(BaseExecutor):
         self.jupiter_api_url = "https://lite-api.jup.ag/swap/v1"
         
         # Solana Configuration
-        self.rpc_url = config.get('rpc_url') or config.get('solana_rpc_url', 'https://api.mainnet-beta.solana.com')
+        self.rpc_urls = config.get_rpc_urls('solana')
+        if not self.rpc_urls:
+            raise ValueError("No Solana RPC URLs configured.")
+        self.rpc_url = self.rpc_urls[0]
         self.max_slippage_bps = int(config.get('max_slippage_bps', 500))  # 5% default
         
         # Initialize keypair from private key
@@ -288,6 +291,11 @@ class JupiterExecutor(BaseExecutor):
                 'error': str(e)
             }
 
+    async def _get_rpc_url(self):
+        # Simple round-robin for now. Could be extended with health checks.
+        self.rpc_urls.append(self.rpc_urls.pop(0))
+        return self.rpc_urls[0]
+
     async def get_balance(self, token_mint: Optional[str] = None) -> float:
             """
             Get SOL or token balance for the wallet
@@ -308,9 +316,10 @@ class JupiterExecutor(BaseExecutor):
                 
                 # Get SOL balance by default
                 if token_mint is None or token_mint == 'So11111111111111111111111111111111111111112':
+                    rpc_url = await self._get_rpc_url()
                     # Query Solana RPC for SOL balance
                     async with self.session.post(
-                        self.rpc_url,
+                        rpc_url,
                         json={
                             "jsonrpc": "2.0",
                             "id": 1,
@@ -336,8 +345,9 @@ class JupiterExecutor(BaseExecutor):
                 
                 # Get token balance
                 else:
+                    rpc_url = await self._get_rpc_url()
                     async with self.session.post(
-                        self.rpc_url,
+                        rpc_url,
                         json={
                             "jsonrpc": "2.0",
                             "id": 1,
@@ -718,7 +728,8 @@ class JupiterExecutor(BaseExecutor):
             start_time = time.time()
             
             while time.time() - start_time < max_wait_seconds:
-                async with self.session.post(self.rpc_url, json=rpc_payload) as response:
+                rpc_url = await self._get_rpc_url()
+                async with self.session.post(rpc_url, json=rpc_payload) as response:
                     if response.status == 200:
                         result = await response.json()
                         
@@ -780,7 +791,8 @@ class JupiterExecutor(BaseExecutor):
                     ]
                 }
                 
-                async with self.session.post(self.rpc_url, json=rpc_payload) as response:
+                rpc_url = await self._get_rpc_url()
+                async with self.session.post(rpc_url, json=rpc_payload) as response:
                     if response.status == 200:
                         result = await response.json()
                         
@@ -853,7 +865,8 @@ class JupiterExecutor(BaseExecutor):
                 ]
             }
             
-            async with self.session.post(self.rpc_url, json=rpc_payload) as response:
+            rpc_url = await self._get_rpc_url()
+            async with self.session.post(rpc_url, json=rpc_payload) as response:
                 if response.status != 200:
                     return Decimal('0')
                 
@@ -881,7 +894,8 @@ class JupiterExecutor(BaseExecutor):
                 "params": [self.wallet_address]
             }
             
-            async with self.session.post(self.rpc_url, json=rpc_payload) as response:
+            rpc_url = await self._get_rpc_url()
+            async with self.session.post(rpc_url, json=rpc_payload) as response:
                 if response.status != 200:
                     return Decimal('0')
                 

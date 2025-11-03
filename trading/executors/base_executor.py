@@ -137,13 +137,7 @@ class TradeExecutor(BaseExecutor):
             logger.critical("🔥 EXECUTOR IN LIVE MODE - REAL MONEY AT RISK 🔥")
         
         # Web3 setup
-        provider_url = config.get('web3_provider_url') or config.get('web3', {}).get('provider_url')
-        if not provider_url:
-            raise ValueError("WEB3_PROVIDER_URL not found in configuration")
-        
-        backup_providers = config.get('web3_backup_providers', [])
-        self.web3_providers = [provider_url] + backup_providers
-        self.w3 = self._get_web3_provider()
+        self.w3 = None
 
         private_key = config.get('private_key') or config.get('security', {}).get('private_key')
         if not private_key:
@@ -232,9 +226,10 @@ class TradeExecutor(BaseExecutor):
 
     async def initialize(self):
         """Initialize EVM executor"""
-        # Test Web3 connection
+        # Test Web3 connection for default chain
+        self.w3 = self._get_web3_instance(self.config.get('DEFAULT_CHAIN', 'ethereum'))
         if not self.w3.is_connected():
-            raise ConnectionError("Web3 connection failed")
+            raise ConnectionError("Web3 connection failed for default chain.")
         
         # ✅ FIXED: Initialize nonce
         self.current_nonce = self.w3.eth.get_transaction_count(self.wallet_address)
@@ -287,8 +282,12 @@ class TradeExecutor(BaseExecutor):
             return await self._simulate_execution(order, start_time)
         
         try:
+            # Get chain-specific Web3 instance
+            chain = order.metadata.get('chain', self.config.get('DEFAULT_CHAIN', 'ethereum'))
+            w3 = self._get_web3_instance(chain)
+
             # Pre-execution checks
-            if not await self._pre_execution_checks(order):
+            if not await self._pre_execution_checks(order, w3):
                 return ExecutionResult(
                     success=False,
                     tx_hash=None,
@@ -385,17 +384,22 @@ class TradeExecutor(BaseExecutor):
             )
             logger.info(f"🔄 Nonce reset to {self.current_nonce}")
 
-    def _get_web3_provider(self):
-        """Get a working Web3 provider from the list of available providers."""
-        for provider_url in self.web3_providers:
+    def _get_web3_instance(self, chain: str):
+        """Get a working Web3 instance for a specific chain."""
+        rpc_urls = self.config.get_rpc_urls(chain)
+        if not rpc_urls:
+            raise ValueError(f"No RPC URLs configured for chain: {chain}")
+
+        for rpc_url in rpc_urls:
             try:
-                w3 = Web3(Web3.HTTPProvider(provider_url))
+                w3 = Web3(Web3.HTTPProvider(rpc_url))
                 if w3.is_connected():
-                    logger.info(f"✅ Web3 provider connected: {provider_url}")
+                    logger.info(f"✅ Web3 provider connected for {chain}: {rpc_url}")
                     return w3
             except Exception as e:
-                logger.warning(f"⚠️ Web3 provider connection failed: {provider_url} ({e})")
-        raise ConnectionError("All Web3 providers failed to connect.")
+                logger.warning(f"⚠️ Web3 provider connection failed for {chain}: {rpc_url} ({e})")
+
+        raise ConnectionError(f"All Web3 providers for chain {chain} failed to connect.")
 
     # ✅ FIXED: NEW METHOD - Simulate execution for paper trading
     async def _simulate_execution(self, order: TradeOrder, start_time: float) -> ExecutionResult:
@@ -468,7 +472,7 @@ class TradeExecutor(BaseExecutor):
                 metadata={'dry_run': True}
             )
             
-    async def _pre_execution_checks(self, order: TradeOrder) -> bool:
+    async def _pre_execution_checks(self, order: TradeOrder, w3: Web3) -> bool:
         """Perform pre-execution checks"""
         try:
             # ✅ FIXED: Check if token is blacklisted
@@ -495,7 +499,7 @@ class TradeExecutor(BaseExecutor):
             
             # Check wallet balance
             if order.side == 'buy':
-                balance = self.w3.eth.get_balance(self.wallet_address)
+                balance = w3.eth.get_balance(self.wallet_address)
                 required = Web3.to_wei(order.amount, 'ether')
                 
                 if balance < required:
@@ -504,13 +508,13 @@ class TradeExecutor(BaseExecutor):
                     
             else:  # sell
                 # Check token balance
-                token_balance = await self._get_token_balance(order.token_address)
+                token_balance = await self._get_token_balance(order.token_address, w3)
                 if token_balance < order.token_amount:
                     logger.error(f"❌ Insufficient token balance: {token_balance} < {order.token_amount}")
                     return False
                     
             # Check gas price
-            gas_price = self.w3.eth.gas_price
+            gas_price = w3.eth.gas_price
             max_gas_wei = Web3.to_wei(self.max_gas_price, 'gwei')
             
             if gas_price > max_gas_wei:
@@ -518,7 +522,7 @@ class TradeExecutor(BaseExecutor):
                 return False
                 
             # Check token contract
-            if not await self._verify_token_contract(order.token_address):
+            if not await self._verify_token_contract(order.token_address, w3):
                 logger.error(f"❌ Token contract verification failed: {order.token_address}")
                 return False
             
@@ -530,18 +534,18 @@ class TradeExecutor(BaseExecutor):
             return False
     
     # ✅ FIXED: NEW METHOD - Get and manage nonce safely
-    async def _get_next_nonce(self) -> int:
+    async def _get_next_nonce(self, w3: Web3) -> int:
         """Get next nonce with thread-safe locking"""
         async with self.nonce_lock:
             if self.current_nonce is None:
-                self.current_nonce = self.w3.eth.get_transaction_count(self.wallet_address)
+                self.current_nonce = w3.eth.get_transaction_count(self.wallet_address)
             
             nonce = self.current_nonce
             self.current_nonce += 1
             return nonce
     
     # ✅ FIXED: NEW METHOD - Token approval for sell orders
-    async def _approve_token(self, token_address: str, spender: str, amount: int) -> bool:
+    async def _approve_token(self, token_address: str, spender: str, amount: int, w3: Web3) -> bool:
         """
         Approve token spending
         
@@ -556,7 +560,7 @@ class TradeExecutor(BaseExecutor):
         try:
             # Load token contract
             token_abi = self._load_abi('erc20')
-            token = self.w3.eth.contract(address=token_address, abi=token_abi)
+            token = w3.eth.contract(address=token_address, abi=token_abi)
             
             # Check current allowance
             current_allowance = token.functions.allowance(
@@ -578,17 +582,17 @@ class TradeExecutor(BaseExecutor):
             ).build_transaction({
                 'from': self.wallet_address,
                 'gas': 100000,
-                'gasPrice': self.w3.eth.gas_price,
-                'nonce': await self._get_next_nonce()
+                'gasPrice': w3.eth.gas_price,
+                'nonce': await self._get_next_nonce(w3)
             })
             
             # Sign and send
             signed_tx = self.account.sign_transaction(approve_tx)
-            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+            tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
             
             # Wait for confirmation with longer timeout (5 minutes)
             logger.info(f"⏳ Waiting for approval confirmation: {tx_hash.hex()}")
-            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+            receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
             
             if receipt['status'] == 1:
                 logger.info(f"✅ Token approved successfully")
@@ -629,7 +633,7 @@ class TradeExecutor(BaseExecutor):
             logger.error(f"Route selection error: {e}", exc_info=True)
             return ExecutionRoute.UNISWAP_V2  # Default fallback
             
-    async def _get_all_quotes(self, order: TradeOrder) -> List[Dict]:
+    async def _get_all_quotes(self, order: TradeOrder, w3: Web3) -> List[Dict]:
         """Get quotes from all available routes"""
         quotes = []
         
@@ -637,10 +641,10 @@ class TradeExecutor(BaseExecutor):
         tasks = []
         
         if self.routers.get('uniswap_v2'):
-            tasks.append(self._get_uniswap_v2_quote(order))
+            tasks.append(self._get_uniswap_v2_quote(order, w3))
             
         if self.routers.get('uniswap_v3'):
-            tasks.append(self._get_uniswap_v3_quote(order))
+            tasks.append(self._get_uniswap_v3_quote(order, w3))
             
         if self.aggregator_apis.get('1inch'):
             tasks.append(self._get_1inch_quote(order))
@@ -659,12 +663,12 @@ class TradeExecutor(BaseExecutor):
                 
         return quotes
         
-    async def _get_uniswap_v2_quote(self, order: TradeOrder) -> Dict:
+    async def _get_uniswap_v2_quote(self, order: TradeOrder, w3: Web3) -> Dict:
         """Get Uniswap V2 quote"""
         try:
             # Load router contract
             router_abi = self._load_abi('uniswap_v2_router')
-            router = self.w3.eth.contract(
+            router = w3.eth.contract(
                 address=self.routers['uniswap_v2'],
                 abi=router_abi
             )
@@ -678,7 +682,7 @@ class TradeExecutor(BaseExecutor):
             
             # Estimate gas
             gas_estimate = 150000  # Approximate
-            gas_price = self.w3.eth.gas_price
+            gas_price = w3.eth.gas_price
             gas_cost = gas_estimate * gas_price
             
             return {
@@ -727,7 +731,7 @@ class TradeExecutor(BaseExecutor):
             logger.debug(f"1inch quote error: {e}")
             return {}
     
-    async def _get_uniswap_v3_quote(self, order: TradeOrder) -> Dict:
+    async def _get_uniswap_v3_quote(self, order: TradeOrder, w3: Web3) -> Dict:
         """Get Uniswap V3 quote - placeholder"""
         # TODO: Implement Uniswap V3 integration
         return {}
@@ -742,16 +746,16 @@ class TradeExecutor(BaseExecutor):
         # TODO: Implement ToxiSol integration
         return {}
             
-    async def _execute_with_retry(self, order: TradeOrder, route: ExecutionRoute) -> ExecutionResult:
+    async def _execute_with_retry(self, order: TradeOrder, route: ExecutionRoute, w3: Web3) -> ExecutionResult:
         """Execute trade with retry logic"""
         for attempt in range(self.max_retries):
             try:
                 if route == ExecutionRoute.UNISWAP_V2:
-                    result = await self._execute_uniswap_v2(order)
+                    result = await self._execute_uniswap_v2(order, w3)
                 elif route == ExecutionRoute.UNISWAP_V3:
-                    result = await self._execute_uniswap_v3(order)
+                    result = await self._execute_uniswap_v3(order, w3)
                 elif route == ExecutionRoute.ONE_INCH:
-                    result = await self._execute_1inch(order)
+                    result = await self._execute_1inch(order, w3)
                 elif route == ExecutionRoute.PARASWAP:
                     result = await self._execute_paraswap(order)
                 elif route == ExecutionRoute.TOXISOL:
@@ -807,11 +811,11 @@ class TradeExecutor(BaseExecutor):
             error='Max retries exceeded'
         )
         
-    async def _execute_uniswap_v2(self, order: TradeOrder) -> ExecutionResult:
+    async def _execute_uniswap_v2(self, order: TradeOrder, w3: Web3) -> ExecutionResult:
         """Execute trade on Uniswap V2"""
         try:
             router_abi = self._load_abi('uniswap_v2_router')
-            router = self.w3.eth.contract(
+            router = w3.eth.contract(
                 address=self.routers['uniswap_v2'],
                 abi=router_abi
             )
@@ -840,8 +844,8 @@ class TradeExecutor(BaseExecutor):
                     'from': self.wallet_address,
                     'value': amount_in,
                     'gas': order.metadata.get('gas_limit', self.gas_limit),
-                    'gasPrice': int(self.w3.eth.gas_price * order.gas_price_multiplier),
-                    'nonce': await self._get_next_nonce()  # ✅ FIXED: Use safe nonce
+                    'gasPrice': int(w3.eth.gas_price * order.gas_price_multiplier),
+                    'nonce': await self._get_next_nonce(w3)
                 })
                 
             else:  # sell
@@ -852,7 +856,8 @@ class TradeExecutor(BaseExecutor):
                 approval_success = await self._approve_token(
                     order.token_address,
                     self.routers['uniswap_v2'],
-                    amount_in
+                    amount_in,
+                    w3
                 )
                 
                 if not approval_success:
@@ -886,18 +891,18 @@ class TradeExecutor(BaseExecutor):
                 ).build_transaction({
                     'from': self.wallet_address,
                     'gas': order.metadata.get('gas_limit', self.gas_limit),
-                    'gasPrice': int(self.w3.eth.gas_price * order.gas_price_multiplier),
-                    'nonce': await self._get_next_nonce()  # ✅ FIXED: Use safe nonce
+                    'gasPrice': int(w3.eth.gas_price * order.gas_price_multiplier),
+                    'nonce': await self._get_next_nonce(w3)
                 })
                 
             # Sign and send transaction
             logger.info(f"📤 Sending transaction...")
             signed_tx = self.account.sign_transaction(tx)
-            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+            tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
             
             # ✅ FIXED: Wait for confirmation with increased timeout (5 minutes)
             logger.info(f"⏳ Waiting for confirmation: {tx_hash.hex()}")
-            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+            receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
             
             if receipt['status'] == 1:
                 # Parse execution details
@@ -951,7 +956,7 @@ class TradeExecutor(BaseExecutor):
                 error=str(e)
             )
     
-    async def _execute_uniswap_v3(self, order: TradeOrder) -> ExecutionResult:
+    async def _execute_uniswap_v3(self, order: TradeOrder, w3: Web3) -> ExecutionResult:
         """Execute trade via Uniswap V3 - placeholder"""
         # TODO: Implement Uniswap V3 execution
         return ExecutionResult(
@@ -968,7 +973,7 @@ class TradeExecutor(BaseExecutor):
             error='Uniswap V3 not implemented'
         )
             
-    async def _execute_1inch(self, order: TradeOrder) -> ExecutionResult:
+    async def _execute_1inch(self, order: TradeOrder, w3: Web3) -> ExecutionResult:
         """Execute trade via 1inch aggregator"""
         try:
             base_url = "https://api.1inch.exchange/v5.0"
@@ -999,15 +1004,15 @@ class TradeExecutor(BaseExecutor):
                     
                 # Extract transaction data
                 tx_data = swap_data['tx']
-                tx_data['nonce'] = await self._get_next_nonce()  # ✅ FIXED: Use safe nonce
-                tx_data['gasPrice'] = int(self.w3.eth.gas_price * order.gas_price_multiplier)
+                tx_data['nonce'] = await self._get_next_nonce(w3)
+                tx_data['gasPrice'] = int(w3.eth.gas_price * order.gas_price_multiplier)
                 
                 # Sign and send transaction
                 signed_tx = self.account.sign_transaction(tx_data)
-                tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+                tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
                 
                 # ✅ FIXED: Wait for confirmation with increased timeout
-                receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+                receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
                 
                 if receipt['status'] == 1:
                     return ExecutionResult(
@@ -1141,17 +1146,17 @@ class TradeExecutor(BaseExecutor):
         # Fallback to public mempool
         return self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
             
-    async def _get_token_balance(self, token_address: str) -> float:
+    async def _get_token_balance(self, token_address: str, w3: Web3) -> float:
         """Get token balance for wallet"""
         token_abi = self._load_abi('erc20')
-        token = self.w3.eth.contract(address=token_address, abi=token_abi)
+        token = w3.eth.contract(address=token_address, abi=token_abi)
         
         balance = token.functions.balanceOf(self.wallet_address).call()
         decimals = token.functions.decimals().call()
         
         return balance / (10 ** decimals)
         
-    async def _verify_token_contract(self, token_address: str) -> bool:
+    async def _verify_token_contract(self, token_address: str, w3: Web3) -> bool:
         """Verify token contract is valid"""
         try:
             # Check if address is valid
@@ -1159,13 +1164,13 @@ class TradeExecutor(BaseExecutor):
                 return False
                 
             # Check if contract exists
-            code = self.w3.eth.get_code(token_address)
+            code = w3.eth.get_code(token_address)
             if code == b'':
                 return False
                 
             # Try to get basic token info
             token_abi = self._load_abi('erc20')
-            token = self.w3.eth.contract(address=token_address, abi=token_abi)
+            token = w3.eth.contract(address=token_address, abi=token_abi)
             
             # These calls should work for any ERC20 token
             token.functions.totalSupply().call()
