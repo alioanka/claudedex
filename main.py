@@ -262,7 +262,7 @@ class TradingBotApplication:
             if 'portfolio' not in self.config:
                 self.config['portfolio'] = {
                     'initial_balance': float(os.getenv('BACKTEST_INITIAL_BALANCE', '1.0')),
-                    'max_positions': 10,
+                    'max_positions': 40,
                     'max_position_size_pct': 0.1,
                     'max_risk_per_trade': 0.05,
                     'max_portfolio_risk': 0.25,

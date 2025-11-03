@@ -202,7 +202,7 @@ RISK_PARAMETERS = {
         "max_slippage": Decimal("0.03"),  # 3%
         "max_gas_price": 200,  # gwei
         "min_liquidity": 25000,  # USD
-        "max_positions": 10
+        "max_positions": 40
     }
 }
 

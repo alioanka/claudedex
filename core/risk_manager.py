@@ -237,7 +237,7 @@ class RiskManager:
         self.positions = {}
         self.consecutive_losses = 0
         self.returns_history = []
-        self.max_positions = self.config.get('max_positions', 10)
+        self.max_positions = self.config.get('max_positions', 40)
 
                 # Circuit breaker tracking
         self.error_count = 0

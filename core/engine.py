@@ -859,7 +859,7 @@ class TradingBotEngine:
                     del self.recently_closed[token_address]
             
             # ✅ CHECK 3: Portfolio limits
-            max_positions = self.config.get('trading', {}).get('max_positions', 10)
+            max_positions = self.config.get('trading', {}).get('max_positions', 40)
             if len(self.active_positions) >= max_positions:
                 logger.warning(f"⚠️ Max positions reached ({len(self.active_positions)}) - SKIPPING")
                 return

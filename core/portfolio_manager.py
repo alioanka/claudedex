@@ -96,7 +96,7 @@ class PortfolioManager:
         self.alerts = None  # Will be set by engine
         
         # Portfolio parameters
-        self.max_positions = config.get('max_positions', 10)
+        self.max_positions = config.get('max_positions', 40)
         self.max_position_size_pct = config.get('max_position_size_pct', 0.1)  # 10% max
         self.max_risk_per_trade = config.get('max_risk_per_trade', 0.05)  # 5% max
         self.max_portfolio_risk = config.get('max_portfolio_risk', 0.25)  # 25% max
