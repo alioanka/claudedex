@@ -104,7 +104,7 @@ class ClosedPositionRecord:
     reason: str
     pnl: float
     
-    def is_cooled_down(self, cooldown_minutes: int = 60) -> bool:
+    def is_cooled_down(self, cooldown_minutes: int = 30) -> bool:
         """Check if cooldown period has elapsed"""
         elapsed = (datetime.now() - self.closed_at).total_seconds() / 60
         return elapsed >= cooldown_minutes
@@ -253,7 +253,7 @@ class TradingBotEngine:
 
         # Cooldown tracking
         self.recently_closed: Dict[str, ClosedPositionRecord] = {}  # token_address -> record
-        self.cooldown_minutes = config.get('trading', {}).get('position_cooldown_minutes', 60)
+        self.cooldown_minutes = config.get('trading', {}).get('position_cooldown_minutes', 30)
         
       
         

@@ -72,6 +72,7 @@ class TradingConfig(BaseModel):
     expected_slippage_bps: int = 10  # Expected slippage (10 bps = 0.1%)
     max_price_impact_bps: int = 100  # Max price impact (100 bps = 1%)
     dex_fee_bps: int = 30  # DEX trading fee (30 bps = 0.3%)
+    position_cooldown_minutes: int = 30
 
     min_opportunity_score: float = 0.05  # Minimum score to consider an opportunity
 
@@ -610,6 +611,8 @@ class ConfigManager:
                 env_data['max_position_size'] = float(os.getenv('MAX_POSITION_SIZE_PERCENT')) / 100
             if os.getenv('MAX_SLIPPAGE'):
                 env_data['max_slippage'] = float(os.getenv('MAX_SLIPPAGE'))
+            if os.getenv('POSITION_COOLDOWN_MINUTES'):
+                env_data['position_cooldown_minutes'] = int(os.getenv('POSITION_COOLDOWN_MINUTES'))
         
         # ✅ ADD THIS: Parse ENABLED_CHAINS from .env
         if config_type == ConfigType.API:  # Store chains config here temporarily
