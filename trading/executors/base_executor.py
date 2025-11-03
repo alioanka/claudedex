@@ -140,8 +140,11 @@ class TradeExecutor(BaseExecutor):
         provider_url = config.get('web3_provider_url') or config.get('web3', {}).get('provider_url')
         if not provider_url:
             raise ValueError("WEB3_PROVIDER_URL not found in configuration")
-        self.w3 = Web3(Web3.HTTPProvider(provider_url))
         
+        backup_providers = config.get('web3_backup_providers', [])
+        self.web3_providers = [provider_url] + backup_providers
+        self.w3 = self._get_web3_provider()
+
         private_key = config.get('private_key') or config.get('security', {}).get('private_key')
         if not private_key:
             raise ValueError("PRIVATE_KEY not found in configuration")
@@ -381,6 +384,18 @@ class TradeExecutor(BaseExecutor):
                 'pending'  # Include pending transactions
             )
             logger.info(f"🔄 Nonce reset to {self.current_nonce}")
+
+    def _get_web3_provider(self):
+        """Get a working Web3 provider from the list of available providers."""
+        for provider_url in self.web3_providers:
+            try:
+                w3 = Web3(Web3.HTTPProvider(provider_url))
+                if w3.is_connected():
+                    logger.info(f"✅ Web3 provider connected: {provider_url}")
+                    return w3
+            except Exception as e:
+                logger.warning(f"⚠️ Web3 provider connection failed: {provider_url} ({e})")
+        raise ConnectionError("All Web3 providers failed to connect.")
 
     # ✅ FIXED: NEW METHOD - Simulate execution for paper trading
     async def _simulate_execution(self, order: TradeOrder, start_time: float) -> ExecutionResult:
@@ -1289,7 +1304,7 @@ class TradeExecutor(BaseExecutor):
         """Get executor statistics"""
         return self.stats.copy()
 
-    async def execute_trade(self, order: TradeOrder, quote=None) -> Dict:
+    async def execute_trade(self, order: TradeOrder, is_dry_run: bool = False, quote=None) -> Dict:
         """
         Execute trade (wrapper for execute method)
         

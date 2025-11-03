@@ -844,11 +844,11 @@ class AlertsSystem:
                         return True
                     else:
                         error_text = await response.text()
-                        logger.error(f"Telegram API error: {error_text}")
+                        logger.error(f"Telegram API error: {response.status} - {error_text}")
                         return False
                         
         except Exception as e:
-            logger.error(f"Telegram send error: {e}")
+            logger.error(f"Telegram send error: {e}", exc_info=True)
             return False
     
     async def _send_discord(self, alert: Alert) -> bool:

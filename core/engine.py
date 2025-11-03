@@ -4,6 +4,7 @@ Core Trading Engine - Orchestrates all bot operations
 
 import asyncio
 import uuid
+import uuid
 import logging  # ADD THIS LINE
 from typing import Dict, List, Optional, Any, Tuple
 from collections import defaultdict
@@ -961,7 +962,6 @@ class TradingBotEngine:
                 # Create simulated position (same as before)
                 # ✅ Create simulated position with calculated size
                 from decimal import Decimal
-                import uuid
                 
                 # Use the recommended_position_size from opportunity (already calculated)
                 position_value = Decimal(str(opportunity.recommended_position_size))
