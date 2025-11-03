@@ -637,7 +637,10 @@ class ConfigManager:
             if key.startswith(prefix):
                 config_key = key[len(prefix):].lower()
                 # Parse value type
-                if value.lower() in ('true', 'false'):
+                # Parse value type - ensure value is string first
+                if not isinstance(value, str):
+                    env_data[config_key] = value
+                elif value.lower() in ('true', 'false'):
                     env_data[config_key] = value.lower() == 'true'
                 elif value.isdigit():
                     env_data[config_key] = int(value)
