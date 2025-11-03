@@ -396,6 +396,23 @@ class ConfigManager:
         
         return env_config
 
+    def _parse_bool(self, value: Any) -> Any:
+            """
+            Convert string boolean values to actual booleans
+            
+            Args:
+                value: Value to parse
+                
+            Returns:
+                Parsed boolean or original value
+            """
+            if isinstance(value, str):
+                value_lower = value.lower().strip()
+                if value_lower in ('true', '1', 'yes', 'on'):
+                    return True
+                elif value_lower in ('false', '0', 'no', 'off'):
+                    return False
+            return value
 
     def get(self, key: str, default: Any = None) -> Any:
         """
@@ -414,7 +431,7 @@ class ConfigManager:
             env_key = key.upper().replace('.', '_')
             env_value = os.getenv(env_key)
             if env_value is not None and env_value not in ('', 'null', 'None'):
-                return env_value
+                return self._parse_bool(env_value)  # ← CHANGE TO THIS
             
             # Check raw_config dict if available
             if hasattr(self, '_raw_config') and self._raw_config:
