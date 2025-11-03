@@ -603,6 +603,9 @@ class ConfigManager:
         if config_type == ConfigType.TRADING:
             if os.getenv('MIN_OPPORTUNITY_SCORE'):
                 env_data['min_opportunity_score'] = float(os.getenv('MIN_OPPORTUNITY_SCORE'))
+            # ✅ ADD THIS for Solana-specific:
+            if os.getenv('SOLANA_MIN_OPPORTUNITY_SCORE'):
+                env_data['solana_min_opportunity_score'] = float(os.getenv('SOLANA_MIN_OPPORTUNITY_SCORE'))
             if os.getenv('MAX_POSITION_SIZE_PERCENT'):
                 env_data['max_position_size'] = float(os.getenv('MAX_POSITION_SIZE_PERCENT')) / 100
             if os.getenv('MAX_SLIPPAGE'):

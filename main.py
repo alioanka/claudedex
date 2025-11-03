@@ -331,7 +331,7 @@ class TradingBotApplication:
                         'scalping': {'enabled': True, 'profit_target': 0.02},
                         'ai_strategy': {'enabled': False}
                     },
-                    'min_opportunity_score': 0.05,  # TEMPORARILY LOWERED FROM 0.7
+                    'min_opportunity_score': float(os.getenv('MIN_OPPORTUNITY_SCORE', '0.25')),  # ✅ From .env
                     'max_slippage': float(os.getenv('MAX_SLIPPAGE', '2')) / 100,
                     'max_gas_price': int(os.getenv('MAX_GAS_PRICE', '500'))
                 }

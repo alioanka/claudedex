@@ -513,7 +513,9 @@ class TradingBotEngine:
                                     opportunity = await self._analyze_opportunity(pair)
                                     
                                     if opportunity:
-                                        min_score = self.config.get('trading', {}).get('min_opportunity_score', 0.7)
+                                        # ✅ Get from config with proper fallback
+                                        min_score = float(self.config.get('trading', {}).get('min_opportunity_score', 0.25))
+                                        logger.debug(f"  Using min score threshold: {min_score}")
                                         logger.debug(f"  Score: {opportunity.score:.3f} (min: {min_score})")
                                         
                                         if opportunity.score > min_score:
@@ -531,7 +533,8 @@ class TradingBotEngine:
                                             logger.info(f"  ❌ Score too low: {opportunity.score:.3f} < {min_score}")
                                             
                                 except Exception as e:
-                                    logger.debug(f"Error analyzing pair on {chain}: {e}")
+                                    logger.error(f"❌ Error analyzing pair {pair.get('token_symbol', 'UNKNOWN')} on {chain}: {e}")
+                                    logger.error(f"   Pair data: {pair}")
                                     continue
                         else:
                             logger.warning(f"    ⚠️  No pairs found on {chain.upper()}")
@@ -724,8 +727,14 @@ class TradingBotEngine:
             )
             
             # ADD THIS DETAILED LOG
-            min_score = self.config.get('trading', {}).get('min_opportunity_score', 0.7)
-            logger.info(f"   📊 Score: {score:.4f} (min required: {min_score})")
+            # ✅ Chain-specific threshold
+            chain = pair.get('chain', '').lower()
+            if chain == 'solana':
+                min_score = float(self.config.get('solana_min_opportunity_score', 0.20))
+            else:
+                min_score = float(self.config.get('trading', {}).get('min_opportunity_score', 0.25))
+
+            logger.info(f"   📊 {token_symbol} ({chain.upper()}) Score: {score:.4f} (threshold: {min_score})")
             
             if score < min_score:
                 # ADD THIS LOG TO SEE WHY IT FAILED
