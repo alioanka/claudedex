@@ -412,6 +412,11 @@ class TradingBotApplication:
             if 'web3' in self.config:
                 flat_config.update(self.config['web3'])
 
+            # Correctly parse DRY_RUN from environment, defaulting to True for safety
+            dry_run_str = os.getenv('DRY_RUN', 'true')
+            flat_config['dry_run'] = dry_run_str.lower() in ('true', '1', 't')
+            self.logger.info(f"DRY_RUN mode is {'ENABLED' if flat_config['dry_run'] else 'DISABLED'}")
+
             # ADD THIS - explicitly set it again to be safe:
             flat_config['private_key'] = self.config.get('security', {}).get('private_key')
             flat_config['encryption_key'] = self.config.get('security', {}).get('encryption_key')
