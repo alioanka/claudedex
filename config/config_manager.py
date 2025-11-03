@@ -396,17 +396,6 @@ class ConfigManager:
         
         return env_config
 
-    def _parse_bool(self, value: Any) -> Any:
-        """Convert string boolean values to actual booleans"""
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            value_lower = value.lower().strip()
-            if value_lower in ('true', '1', 'yes', 'on'):
-                return True
-            elif value_lower in ('false', '0', 'no', 'off'):
-                return False
-        return value
 
     def get(self, key: str, default: Any = None) -> Any:
         """
@@ -425,7 +414,7 @@ class ConfigManager:
             env_key = key.upper().replace('.', '_')
             env_value = os.getenv(env_key)
             if env_value is not None and env_value not in ('', 'null', 'None'):
-                return self._parse_bool(env_value)  # ← CHANGE TO THIS
+                return env_value
             
             # Check raw_config dict if available
             if hasattr(self, '_raw_config') and self._raw_config:
@@ -622,8 +611,6 @@ class ConfigManager:
                 env_data['max_position_size'] = float(os.getenv('MAX_POSITION_SIZE_PERCENT')) / 100
             if os.getenv('MAX_SLIPPAGE'):
                 env_data['max_slippage'] = float(os.getenv('MAX_SLIPPAGE'))
-            if os.getenv('POSITION_COOLDOWN_MINUTES'):
-                env_data['position_cooldown_minutes'] = int(os.getenv('POSITION_COOLDOWN_MINUTES'))
         
         # ✅ ADD THIS: Parse ENABLED_CHAINS from .env
         if config_type == ConfigType.API:  # Store chains config here temporarily
@@ -637,10 +624,7 @@ class ConfigManager:
             if key.startswith(prefix):
                 config_key = key[len(prefix):].lower()
                 # Parse value type
-                # Parse value type - ensure value is string first
-                if not isinstance(value, str):
-                    env_data[config_key] = value
-                elif value.lower() in ('true', 'false'):
+                if value.lower() in ('true', 'false'):
                     env_data[config_key] = value.lower() == 'true'
                 elif value.isdigit():
                     env_data[config_key] = int(value)
