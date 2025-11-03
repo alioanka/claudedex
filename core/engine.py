@@ -2908,7 +2908,7 @@ class TradingBotEngine:
             # Volume score (30% weight)
             volume_24h = pair.get('volume_24h', 0)
             if volume_24h > 0:
-                volume_score = min(volume_24h / 100000, 1.0)
+                volume_score = min(volume_24h / 20000, 1.0)
                 score += volume_score * 0.3
                 weights += 0.3
                 score_breakdown['volume'] = {
@@ -2927,7 +2927,7 @@ class TradingBotEngine:
             
             if liquidity_usd > 0:
                 # Lowered threshold: $10k = max (was $50k)
-                liq_score = min(liquidity_usd / 10000, 1.0)
+                liq_score = min(liquidity_usd / 3000, 1.0)
                 score += liq_score * 0.25
                 weights += 0.25
                 score_breakdown['liquidity'] = {
@@ -2965,7 +2965,7 @@ class TradingBotEngine:
             # Age bonus (10% weight)
             age_hours = pair.get('age_hours', 999)
             if age_hours < 24:  # Keep at 24h for now
-                age_score = 1.0 - (age_hours / 24)
+                age_score = 1.0 - (age_hours / 72)
                 score += age_score * 0.1
                 weights += 0.1
                 score_breakdown['age'] = {
