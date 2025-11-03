@@ -397,29 +397,16 @@ class ConfigManager:
         return env_config
 
     def _parse_bool(self, value: Any) -> Any:
-            """
-            Convert string boolean values to actual booleans
-            
-            Args:
-                value: Value to parse
-                
-            Returns:
-                Parsed boolean or original value
-            """
-            # If already a boolean, return as-is
-            if isinstance(value, bool):
-                return value
-                
-            # If string, try to parse
-            if isinstance(value, str):
-                value_lower = value.lower().strip()
-                if value_lower in ('true', '1', 'yes', 'on'):
-                    return True
-                elif value_lower in ('false', '0', 'no', 'off'):
-                    return False
-            
-            # For any other type (int, float, None, etc.), return as-is
+        """Convert string boolean values to actual booleans"""
+        if isinstance(value, bool):
             return value
+        if isinstance(value, str):
+            value_lower = value.lower().strip()
+            if value_lower in ('true', '1', 'yes', 'on'):
+                return True
+            elif value_lower in ('false', '0', 'no', 'off'):
+                return False
+        return value
 
     def get(self, key: str, default: Any = None) -> Any:
         """
