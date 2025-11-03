@@ -261,8 +261,7 @@ class PortfolioConfig(BaseModel):
 
 class Web3Config(BaseModel):
     """Web3 provider configuration"""
-    provider_url: str
-    backup_providers: List[str] = []
+    rpc_urls: Dict[str, List[str]] = {}
 
 class ConfigManager:
     """
@@ -629,12 +628,13 @@ class ConfigManager:
                 env_data['enabled_chains'] = enabled_chains_str
 
         if config_type == ConfigType.WEB3:
-            env_data['provider_url'] = os.getenv('WEB3_PROVIDER_URL')
-            backup_providers = [
-                os.getenv('WEB3_BACKUP_PROVIDER_1'),
-                os.getenv('WEB3_BACKUP_PROVIDER_2'),
-            ]
-            env_data['backup_providers'] = [p for p in backup_providers if p]
+            rpc_urls = {}
+            for chain_name in ['ETHEREUM', 'BSC', 'POLYGON', 'ARBITRUM', 'BASE', 'SOLANA']:
+                env_var = f"{chain_name}_RPC_URLS"
+                urls_str = os.getenv(env_var)
+                if urls_str:
+                    rpc_urls[chain_name.lower()] = [url.strip() for url in urls_str.split(',')]
+            env_data['rpc_urls'] = rpc_urls
         
         # Generic prefix-based loading (existing code continues)
         prefix = f"BOT_{config_type.value.upper()}_"
@@ -1022,6 +1022,13 @@ class ConfigManager:
     def get_risk_management_config(self) -> RiskManagementConfig:
         """Get risk management configuration"""
         return self.configs.get(ConfigType.RISK_MANAGEMENT, RiskManagementConfig())
+
+    def get_rpc_urls(self, chain: str) -> List[str]:
+        """Get RPC URLs for a specific chain."""
+        web3_config = self.configs.get(ConfigType.WEB3)
+        if web3_config and chain.lower() in web3_config.rpc_urls:
+            return web3_config.rpc_urls[chain.lower()]
+        return []
 
     async def update_config_internal(self, 
                           config_type: ConfigType, 
