@@ -37,6 +37,7 @@ class ConfigType(Enum):
     ML_MODELS = "ml_models"
     RISK_MANAGEMENT = "risk_management"
     PORTFOLIO = "portfolio"  # Add this
+    WEB3 = "web3"
 
 class ConfigSource(Enum):
     """Configuration sources"""
@@ -258,6 +259,11 @@ class PortfolioConfig(BaseModel):
     correlation_threshold: float = 0.7          # Keep
     rebalance_frequency: str = "daily"          # Keep
 
+class Web3Config(BaseModel):
+    """Web3 provider configuration"""
+    provider_url: str
+    backup_providers: List[str] = []
+
 class ConfigManager:
     """
     Centralized configuration management system with:
@@ -297,7 +303,8 @@ class ConfigManager:
             ConfigType.MONITORING: MonitoringConfig,
             ConfigType.ML_MODELS: MLModelsConfig,
             ConfigType.RISK_MANAGEMENT: RiskManagementConfig,
-            ConfigType.PORTFOLIO: PortfolioConfig  # Add this
+            ConfigType.PORTFOLIO: PortfolioConfig,  # Add this
+            ConfigType.WEB3: Web3Config,
         }
         
         # Configuration change tracking
@@ -387,6 +394,9 @@ class ConfigManager:
             'POLYGON_RPC_URL',
             'SOLANA_RPC_URL',
             'SOLANA_PRIVATE_KEY',
+            'WEB3_PROVIDER_URL',
+            'WEB3_BACKUP_PROVIDER_1',
+            'WEB3_BACKUP_PROVIDER_2',
         ]
         
         for var in env_vars:
@@ -617,6 +627,14 @@ class ConfigManager:
             enabled_chains_str = os.getenv('ENABLED_CHAINS')
             if enabled_chains_str:
                 env_data['enabled_chains'] = enabled_chains_str
+
+        if config_type == ConfigType.WEB3:
+            env_data['provider_url'] = os.getenv('WEB3_PROVIDER_URL')
+            backup_providers = [
+                os.getenv('WEB3_BACKUP_PROVIDER_1'),
+                os.getenv('WEB3_BACKUP_PROVIDER_2'),
+            ]
+            env_data['backup_providers'] = [p for p in backup_providers if p]
         
         # Generic prefix-based loading (existing code continues)
         prefix = f"BOT_{config_type.value.upper()}_"
