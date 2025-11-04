@@ -188,13 +188,13 @@ class TradingBotEngine:
             logger.info("ℹ️ Solana trading disabled")
         
         # Monitoring
-        self.alert_manager = AlertManager(self.config['notifications'])
+        self.alert_manager = AlertManager(self.config.get('notifications', {}))
         self.performance_tracker = PerformanceTracker()
 
         self.structured_logger = StructuredLogger("TradingBot", self.config.get('logging', {}))
         
         # Security
-        self.wallet_manager = WalletSecurityManager(self.config['security'])
+        self.wallet_manager = WalletSecurityManager(self.config.get('security', {}))
         
         # Internal state
         self.active_positions: Dict[str, Any] = {}
