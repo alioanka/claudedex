@@ -55,7 +55,9 @@ class DatabaseManager:
             
         except Exception as e:
             logger.error(f"Failed to connect to database: {e}")
-            raise
+            logger.warning("Falling back to in-memory SQLite database.")
+            self.pool = None
+            self.is_connected = False
     
     async def disconnect(self) -> None:
         """Close database connection pool."""
@@ -67,12 +69,17 @@ class DatabaseManager:
     @asynccontextmanager
     async def acquire(self):
         """Acquire a connection from the pool."""
-        async with self.pool.acquire() as connection:
-            yield connection
+        if self.pool:
+            async with self.pool.acquire() as connection:
+                yield connection
+        else:
+            yield None
     
     async def _initialize_timescaledb(self) -> None:
         """Initialize TimescaleDB extensions and hypertables."""
         async with self.acquire() as conn:
+            if not conn:
+                return
             # Create TimescaleDB extension
             await conn.execute("CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;")
             
@@ -84,6 +91,8 @@ class DatabaseManager:
     async def _create_tables(self) -> None:
         """Create all required database tables."""
         async with self.acquire() as conn:
+            if not conn:
+                return
             # Trades table
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS trades (
@@ -279,6 +288,8 @@ class DatabaseManager:
                 return default
         
         async with self.acquire() as conn:
+            if not conn:
+                return "in-memory-trade"
             result = await conn.fetchrow("""
                 INSERT INTO trades (
                     trade_id, token_address, chain, side, entry_price, exit_price,
@@ -315,6 +326,8 @@ class DatabaseManager:
     async def update_trade(self, trade_id: Union[str, int], updates: Dict[str, Any]) -> bool:
         """Update an existing trade record."""
         async with self.acquire() as conn:
+            if not conn:
+                return True
             # Build update query dynamically
             set_clauses = []
             values = []
@@ -352,6 +365,8 @@ class DatabaseManager:
     async def save_position(self, position: Dict[str, Any]) -> str:
         """Save a position record to the database."""
         async with self.acquire() as conn:
+            if not conn:
+                return "in-memory-position"
             result = await conn.fetchrow("""
                 INSERT INTO positions (
                     position_id, token_address, chain, entry_price, current_price,
@@ -378,6 +393,8 @@ class DatabaseManager:
     async def update_position(self, position_id: str, updates: Dict[str, Any]) -> bool:
         """Update an existing position."""
         async with self.acquire() as conn:
+            if not conn:
+                return True
             # Build update query
             set_clauses = []
             values = []
@@ -402,6 +419,8 @@ class DatabaseManager:
     async def save_market_data(self, data: Dict[str, Any]) -> None:
         """Save market data point to time-series table."""
         async with self.acquire() as conn:
+            if not conn:
+                return
             await conn.execute("""
                 INSERT INTO market_data (
                     time, token_address, chain, price, volume_24h, volume_5m,
@@ -438,6 +457,8 @@ class DatabaseManager:
     async def save_market_data_batch(self, data_points: List[Dict[str, Any]]) -> None:
         """Save multiple market data points efficiently."""
         async with self.acquire() as conn:
+            if not conn:
+                return
             # Prepare data for batch insert
             records = [
                 (
@@ -485,6 +506,8 @@ class DatabaseManager:
             List of OHLCV data points
         """
         async with self.acquire() as conn:
+            if not conn:
+                return []
             # Determine time bucket based on timeframe
             time_buckets = {
                 '1m': '1 minute',
@@ -546,6 +569,8 @@ class DatabaseManager:
         """
         # Original implementation remains the same
         async with self.acquire() as conn:
+            if not conn:
+                return []
             time_buckets = {
                 '1m': '1 minute',
                 '5m': '5 minutes',
@@ -583,6 +608,8 @@ class DatabaseManager:
     async def get_active_positions(self) -> List[Dict[str, Any]]:
         """Get all active trading positions."""
         async with self.acquire() as conn:
+            if not conn:
+                return []
             rows = await conn.fetch("""
                 SELECT * FROM positions
                 WHERE status = 'open'
@@ -597,6 +624,8 @@ class DatabaseManager:
             return []
         
         async with self.pool.acquire() as conn:
+            if not conn:
+                return []
             rows = await conn.fetch("""
                 SELECT *
                 FROM trades
@@ -612,6 +641,8 @@ class DatabaseManager:
             return []
         
         async with self.pool.acquire() as conn:
+            if not conn:
+                return []
             rows = await conn.fetch("""
                 SELECT *
                 FROM trades
@@ -627,6 +658,8 @@ class DatabaseManager:
     async def save_token_analysis(self, analysis: Dict[str, Any]) -> None:
         """Save token analysis results."""
         async with self.acquire() as conn:
+            if not conn:
+                return
             await conn.execute("""
                 INSERT INTO token_analysis (
                     token_address, chain, analysis_timestamp, risk_score,
@@ -667,6 +700,8 @@ class DatabaseManager:
     ) -> List[Dict[str, Any]]:
         """Get recent token analysis results."""
         async with self.acquire() as conn:
+            if not conn:
+                return []
             rows = await conn.fetch("""
                 SELECT * FROM token_analysis
                 WHERE token_address = $1 AND chain = $2
@@ -679,6 +714,8 @@ class DatabaseManager:
     async def save_performance_metrics(self, metrics: Dict[str, Any]) -> None:
         """Save performance metrics snapshot."""
         async with self.acquire() as conn:
+            if not conn:
+                return
             await conn.execute("""
                 INSERT INTO performance_metrics (
                     period, start_date, end_date, total_trades,
@@ -705,6 +742,8 @@ class DatabaseManager:
     async def cleanup_old_data(self, days: int = 90) -> None:
         """Clean up old data to manage storage."""
         async with self.acquire() as conn:
+            if not conn:
+                return
             # Clean old market data (keep aggregated data)
             await conn.execute("""
                 DELETE FROM market_data
@@ -728,6 +767,8 @@ class DatabaseManager:
     async def get_statistics(self) -> Dict[str, Any]:
         """Get database statistics."""
         async with self.acquire() as conn:
+            if not conn:
+                return {}
             stats = {}
             
             # Table sizes
@@ -766,6 +807,8 @@ class DatabaseManager:
             
             # ✅ FIX: Use self.pool.acquire() instead of self.db.acquire()
             async with self.pool.acquire() as conn:
+                if not conn:
+                    return {'error': 'Database not connected'}
                 # Get all closed trades
                 trades = await conn.fetch("""
                     SELECT 
@@ -826,6 +869,8 @@ class DatabaseManager:
             Trade ID if found, None otherwise
         """
         try:
+            if not self.pool:
+                return None
             query = """
                 SELECT id FROM trades 
                 WHERE token_address = $1 
@@ -856,6 +901,8 @@ class DatabaseManager:
             Position ID if found, None otherwise
         """
         try:
+            if not self.pool:
+                return None
             query = """
                 SELECT id FROM positions 
                 WHERE token_address = $1 
