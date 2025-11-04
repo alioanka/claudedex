@@ -405,10 +405,14 @@ class TradingBotEngine:
                         logger.info(f"  🔗 Scanning {chain.upper()}... (min liquidity: ${min_liquidity:,.0f})")
                         
                         # ✅ CRITICAL: Pass chain parameter to get_new_pairs
-                        pairs = await self.dex_collector.get_new_pairs(
-                            chain=chain, 
-                            limit=max_pairs_per_chain
-                        )
+                        try:
+                            pairs = await self.dex_collector.get_new_pairs(
+                                chain=chain,
+                                limit=max_pairs_per_chain
+                            )
+                        except Exception as e:
+                            logger.error(f"Error fetching new pairs for {chain.upper()}: {e}")
+                            pairs = None
                         
                         if pairs:
                             logger.info(f"    ✅ Found {len(pairs)} pairs on {chain.upper()}")
@@ -1322,7 +1326,7 @@ class TradingBotEngine:
 
     async def _monitor_existing_positions(self):
         """Monitor and manage existing positions"""
-        logger.info("📊 Starting position monitoring loop...")
+        logger.info("📊 Starting chain-agnostic position monitoring loop...")
         
         while self.state == BotState.RUNNING:
             # ✅ FIX: Initialize at outer scope
