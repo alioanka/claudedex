@@ -265,7 +265,7 @@ class HoneypotChecker:
 
 
 
-    @retry_async(max_retries=3, delay=2.0, backoff=2)
+    @retry_async(max_retries=3, delay=2.0, exponential_backoff=True)
     @rate_limit(calls=12, period=60.0)
     async def _check_rugcheck_summary(self, address: str) -> Dict:
         """
