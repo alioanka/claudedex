@@ -509,7 +509,12 @@ class TradingBotApplication:
                 flat_config['solana'] = self.config.get('solana', {})
                 self.logger.info(f"   ✅ Solana config merged: {list(flat_config.get('solana', {}).keys())}")
 
-            self.engine = TradingBotEngine(self.config, mode=self.mode)
+            # Make sure all configs are in self.config before passing to engine
+            api_config = self.config_manager.load_config_file('api.yaml')
+            if 'data_sources' in api_config:
+                self.config['data_sources'] = api_config['data_sources']
+
+            self.engine = TradingBotEngine(self.config_manager, mode=self.mode)
             await self.engine.initialize()
             
             # Initialize dashboard

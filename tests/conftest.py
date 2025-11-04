@@ -4,7 +4,6 @@ Global pytest configuration and fixtures
 """
 import asyncio
 import pytest
-import aioredis
 import asyncpg
 from datetime import datetime, timedelta
 from decimal import Decimal
