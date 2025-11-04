@@ -31,15 +31,31 @@ async def migrate_database():
 
         # Alter 'positions' table
         print("Updating 'positions' table...")
-        await conn.execute("""
+        # Check if 'pnl' column exists before altering
+        pnl_exists = await conn.fetchval("""
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = 'positions' AND column_name = 'pnl'
+            );
+        """)
+
+        alter_positions_query = """
             ALTER TABLE positions
             ALTER COLUMN entry_price TYPE NUMERIC(40, 18) USING entry_price::numeric(40,18),
             ALTER COLUMN current_price TYPE NUMERIC(40, 18) USING current_price::numeric(40,18),
             ALTER COLUMN amount TYPE NUMERIC(40, 18) USING amount::numeric(40,18),
             ALTER COLUMN stop_loss TYPE NUMERIC(40, 18) USING stop_loss::numeric(40,18),
-            ALTER COLUMN take_profit TYPE NUMERIC(40, 18) USING take_profit::numeric(40,18),
-            ALTER COLUMN pnl TYPE NUMERIC(40, 18) USING pnl::numeric(40,18);
-        """)
+            ALTER COLUMN take_profit TYPE NUMERIC(40, 18) USING take_profit::numeric(40,18)
+        """
+
+        if pnl_exists:
+            alter_positions_query += ", ALTER COLUMN pnl TYPE NUMERIC(40, 18) USING pnl::numeric(40,18);"
+        else:
+            alter_positions_query += ";"
+            print("ℹ️ 'pnl' column not found in 'positions' table, skipping alteration.")
+
+        await conn.execute(alter_positions_query)
 
         # Alter 'market_data' table
         print("Updating 'market_data' table...")
