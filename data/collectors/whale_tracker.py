@@ -17,7 +17,7 @@ from utils.helpers import (
     format_token_amount, calculate_percentage_change, TTLCache
 )
 from utils.constants import (
-    Chain, CHAIN_RPC_URLS, BLOCK_EXPLORERS,
+    Chain, BLOCK_EXPLORERS,
     WRAPPED_NATIVE_TOKENS, STABLECOINS
 )
 
@@ -61,10 +61,19 @@ class WhaleTracker:
     async def _setup_web3_connections(self):
         """Setup Web3 connections for each chain"""
         for chain in Chain:
-            if chain in CHAIN_RPC_URLS:
-                rpc_urls = CHAIN_RPC_URLS[chain]
+            if hasattr(self.config, 'get_rpc_urls'):
+                rpc_urls = self.config.get_rpc_urls(chain.name.lower())
                 if rpc_urls:
-                    self.web3_connections[chain] = Web3(Web3.HTTPProvider(rpc_urls[0]))
+                    # Try to connect to the first available RPC URL
+                    for rpc_url in rpc_urls:
+                        try:
+                            w3 = Web3(Web3.HTTPProvider(rpc_url))
+                            if w3.is_connected():
+                                self.web3_connections[chain] = w3
+                                logger.info(f"✅ WhaleTracker connected to {chain.name}: {rpc_url[:50]}...")
+                                break
+                        except Exception as e:
+                            logger.warning(f"⚠️ WhaleTracker failed to connect to {rpc_url} for {chain.name}: {e}")
                     
     async def _load_known_whales(self):
         """Load known whale addresses from various sources"""

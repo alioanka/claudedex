@@ -143,7 +143,7 @@ class TradingBotEngine:
         self.chain_collector = ChainDataCollector(config['web3'])
         self.social_collector = SocialDataCollector(config['data_sources']['social'])
         self.mempool_monitor = MempoolMonitor(config['web3'])
-        self.whale_tracker = WhaleTracker(config['web3'])
+        self.whale_tracker = WhaleTracker(config)
 
         # ✅ ADD THIS LINE - Initialize honeypot checker
         self.honeypot_checker = HoneypotChecker(config.get('security', {}))

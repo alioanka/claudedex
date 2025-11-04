@@ -28,7 +28,7 @@ import aiohttp
 from loguru import logger
 
 from utils.helpers import retry_async, measure_time
-from utils.constants import CHAIN_RPC_URLS, BLOCK_EXPLORERS
+from utils.constants import BLOCK_EXPLORERS
 from utils.errors import NetworkError, ABIError, DecodeError, ContractError
 
 
@@ -105,13 +105,20 @@ class SmartContractAnalyzer:
         logger.info("Initializing Smart Contract Analyzer...")
         
         # Setup Web3 connections
-        for chain, rpc_url in CHAIN_RPC_URLS.items():
-            try:
-                self.web3_connections[chain] = Web3(Web3.HTTPProvider(rpc_url))
-                logger.info(f"Connected to {chain} RPC")
-            except Exception as e:
-                logger.error(f"Failed to connect to {chain}: {e}")
-        
+        if hasattr(self.config, 'get_rpc_urls'):
+            for chain_name in self.config.get('chains', {}).get('enabled', []):
+                rpc_urls = self.config.get_rpc_urls(chain_name)
+                if rpc_urls:
+                    for rpc_url in rpc_urls:
+                        try:
+                            w3 = Web3(Web3.HTTPProvider(rpc_url))
+                            if w3.is_connected():
+                                self.web3_connections[chain_name] = w3
+                                logger.info(f"SmartContractAnalyzer connected to {chain_name}: {rpc_url[:50]}...")
+                                break
+                        except Exception as e:
+                            logger.warning(f"SmartContractAnalyzer failed to connect to {rpc_url} for {chain_name}: {e}")
+
         # Load Etherscan API keys
         self.etherscan_apis = self.config.get("etherscan_apis", {})
         
