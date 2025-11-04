@@ -22,7 +22,7 @@ from eth_abi import encode_abi
 from trading.orders.order_manager import Order, OrderType, OrderStatus
 from trading.executors.base_executor import BaseExecutor
 from utils.helpers import retry_async, measure_time, wei_to_ether, ether_to_wei
-from utils.constants import DEX, DEX_ROUTERS, CHAIN_RPC_URLS
+from utils.constants import DEX, DEX_ROUTERS
 
 logger = logging.getLogger(__name__)
 
@@ -103,21 +103,29 @@ class DirectDEXExecutor(BaseExecutor):
         """Initialize Web3 connections and contracts"""
         try:
             # Initialize Web3 for each chain
-            for chain, rpc_url in CHAIN_RPC_URLS.items():
-                w3 = Web3(Web3.HTTPProvider(rpc_url))
-                
-                # Add middleware for PoA chains
-                if chain in ['bsc', 'polygon']:
-                    w3.middleware_onion.inject(geth_poa_middleware, layer=0)
-                    
-                if w3.isConnected():
-                    self.w3_connections[chain] = w3
-                    logger.info(f"Connected to {chain} at block {w3.eth.block_number}")
-                    
-                    # Initialize DEX contracts for this chain
-                    await self._initialize_dex_contracts(chain, w3)
-                else:
-                    logger.warning(f"Failed to connect to {chain}")
+            if hasattr(self.config, 'get_rpc_urls'):
+                for chain_name in self.config.get('chains', {}).get('enabled', []):
+                    rpc_urls = self.config.get_rpc_urls(chain_name)
+                    if rpc_urls:
+                        for rpc_url in rpc_urls:
+                            try:
+                                w3 = Web3(Web3.HTTPProvider(rpc_url))
+
+                                # Add middleware for PoA chains
+                                if chain_name in ['bsc', 'polygon']:
+                                    w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+
+                                if w3.isConnected():
+                                    self.w3_connections[chain_name] = w3
+                                    logger.info(f"DirectDEXExecutor connected to {chain_name} at block {w3.eth.block_number}")
+
+                                    # Initialize DEX contracts for this chain
+                                    await self._initialize_dex_contracts(chain_name, w3)
+                                    break
+                                else:
+                                    logger.warning(f"Failed to connect to {chain_name} with {rpc_url}")
+                            except Exception as e:
+                                logger.warning(f"DirectDEXExecutor failed to connect to {rpc_url} for {chain_name}: {e}")
                     
         except Exception as e:
             logger.error(f"Failed to initialize Direct DEX Executor: {e}")
