@@ -4,7 +4,7 @@ Chain Data Collector - On-chain data analysis via Web3
 
 import asyncio
 from web3 import Web3, AsyncWeb3
-from web3.middleware import ExtraDataToPOAMiddleware
+from web3.middleware.geth_poa import geth_poa_middleware
 from eth_account import Account
 import json
 from typing import Dict, List, Optional, Tuple, Any
@@ -150,14 +150,14 @@ class ChainDataCollector:
             # BSC
             if 'bsc_rpc' in self.config:
                 w3 = Web3(Web3.HTTPProvider(self.config['bsc_rpc']))
-                w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+                w3.middleware_onion.inject(geth_poa_middleware, layer=0)
                 if w3.is_connected():
                     self.w3_connections['bsc'] = w3
                     
             # Polygon
             if 'polygon_rpc' in self.config:
                 w3 = Web3(Web3.HTTPProvider(self.config['polygon_rpc']))
-                w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+                w3.middleware_onion.inject(geth_poa_middleware, layer=0)
                 if w3.is_connected():
                     self.w3_connections['polygon'] = w3
                     
