@@ -83,7 +83,7 @@ async def setup_database():
                 chain VARCHAR(30) NOT NULL,
                 entry_price NUMERIC(40, 18) NOT NULL,
                 current_price NUMERIC(40, 18),
-                quantity NUMERIC(40, 18) NOT NULL,
+                amount NUMERIC(40, 18) NOT NULL,
                 stop_loss NUMERIC(40, 18),
                 take_profit NUMERIC(40, 18),
                 pnl NUMERIC(40, 18),

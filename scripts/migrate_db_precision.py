@@ -35,7 +35,7 @@ async def migrate_database():
             ALTER TABLE positions
             ALTER COLUMN entry_price TYPE NUMERIC(40, 18),
             ALTER COLUMN current_price TYPE NUMERIC(40, 18),
-            ALTER COLUMN quantity TYPE NUMERIC(40, 18),
+            ALTER COLUMN amount TYPE NUMERIC(40, 18),
             ALTER COLUMN stop_loss TYPE NUMERIC(40, 18),
             ALTER COLUMN take_profit TYPE NUMERIC(40, 18),
             ALTER COLUMN pnl TYPE NUMERIC(40, 18);
