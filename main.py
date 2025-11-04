@@ -509,7 +509,7 @@ class TradingBotApplication:
                 flat_config['solana'] = self.config.get('solana', {})
                 self.logger.info(f"   ✅ Solana config merged: {list(flat_config.get('solana', {}).keys())}")
 
-            self.engine = TradingBotEngine(self.config_manager, mode=self.mode)
+            self.engine = TradingBotEngine(self.config, mode=self.mode)
             await self.engine.initialize()
             
             # Initialize dashboard
