@@ -176,7 +176,7 @@ class TradingBotEngine:
 
         # Initialize Solana executor if enabled
         self.solana_executor = None
-        if self.config_manager.get_specific_config('solana').get('enabled'):
+        if self.config_manager.get('solana') and self.config_manager.get('solana').get('enabled'):
             try:
                 self.solana_executor = JupiterExecutor(self.config_manager)
                 logger.info("✅ Solana Jupiter Executor initialized")
