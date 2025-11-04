@@ -736,43 +736,6 @@ class ConfigValidator:
             logger.info(f"  ✓ Wallet address: {wallet_address}")
         
         # ========================================================================
-        # TRADING MODE
-        # ========================================================================
-        
-        logger.info("\nChecking trading mode...")
-        
-        trading_mode = safe_get("TRADING_MODE", "DRY_RUN")
-        dry_run = safe_get("DRY_RUN", "true").lower() in ("true", "1", "yes")
-        
-        logger.info(f"  • Trading Mode: {trading_mode}")
-        logger.info(f"  • Dry Run: {dry_run}")
-        
-        if not dry_run and trading_mode == "DRY_RUN":
-            warnings.append("DRY_RUN=false but TRADING_MODE=DRY_RUN - conflicting settings")
-        
-        # ========================================================================
-        # CHAIN RPCS
-        # ========================================================================
-        
-        logger.info("\nChecking blockchain RPC endpoints...")
-        
-        chains_to_check = [
-            ('ETHEREUM', 'ETHEREUM_RPC_URL'),
-            ('BSC', 'BSC_RPC_URL'),
-            ('BASE', 'BASE_RPC_URL'),
-            ('ARBITRUM', 'ARBITRUM_RPC_URL'),
-            ('POLYGON', 'POLYGON_RPC_URL'),
-            ('SOLANA', 'SOLANA_RPC_URL'),
-        ]
-        
-        for chain_name, env_var in chains_to_check:
-            rpc_url = safe_get(env_var)
-            if rpc_url and rpc_url not in ("null", "None", ""):
-                logger.info(f"  ✓ {chain_name}: {rpc_url[:30]}...")
-            else:
-                warnings.append(f"No RPC URL for {chain_name}")
-        
-        # ========================================================================
         # DATABASE
         # ========================================================================
         

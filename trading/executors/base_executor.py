@@ -28,16 +28,16 @@ class BaseExecutor(ABC):
     """Abstract base for all executors"""
     SUPPORTED_CHAINS = ['ethereum', 'bsc', 'base', 'arbitrum', 'polygon', 'solana']
 
-    def __init__(self, config: Dict, db_manager=None):
+    def __init__(self, config_manager, db_manager=None):
         """
         Initialize base executor
         
         Args:
-            config: Configuration dictionary
+            config_manager: The main ConfigManager instance
             db_manager: Optional database manager for order persistence
         """
-        self.config = config
-        #super().__init__(config, db_manager)
+        self.config_manager = config_manager
+        self.config = config_manager.get_all_configs()
         self.db_manager = db_manager
         self.stats = {'total_trades': 0, 'successful_trades': 0, 'failed_trades': 0}
     
@@ -394,7 +394,7 @@ class TradeExecutor(BaseExecutor):
 
     def _get_web3_instance(self, chain: str):
         """Get a working Web3 instance for a specific chain."""
-        rpc_urls = self.config.get_rpc_urls(chain)
+        rpc_urls = self.config_manager.get_rpc_urls(chain)
         if not rpc_urls:
             raise ValueError(f"No RPC URLs configured for chain: {chain}")
 

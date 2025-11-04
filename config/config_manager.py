@@ -23,6 +23,7 @@ from pydantic.types import SecretStr
 from jsonschema import validate, ValidationError as JsonValidationError
 
 from security.encryption import EncryptionManager
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -321,6 +322,7 @@ class ConfigManager:
 
         # Add this before the final logger.info
         self._raw_config = {}
+        load_dotenv()  # Load .env file
         self._env_config = self._load_environment_config()
         self._raw_config.update(self._env_config)  # Merge env vars into raw config
     
@@ -696,9 +698,9 @@ class ConfigManager:
     def validate_environment(self) -> List[str]:
         """Validate required environment variables are set"""
         required_vars = [
-            'ALCHEMY_API_KEY',
+            'WALLET_ADDRESS',
             'PRIVATE_KEY',
-            'DATABASE_URL'
+            'DB_URL'
         ]
         
         missing = []
@@ -986,6 +988,9 @@ class ConfigManager:
 
     # Rename the existing update_config to update_config_internal to avoid conflict
 
+    def get_all_configs(self) -> Dict:
+        """Returns the entire raw config dictionary."""
+        return self._raw_config
 
     def get_portfolio_config(self) -> PortfolioConfig:
         """Get portfolio configuration"""

@@ -187,21 +187,26 @@ class Position:
 class RiskManager:
     """Advanced risk management system"""
     
-    def __init__(self, config: Dict, portfolio_manager=None):
+    def __init__(self, config_manager: 'ConfigManager', portfolio_manager=None):
         """
         Initialize risk manager
         
         Args:
-            config: Risk management configuration
+            config_manager: The configuration manager instance
         """
-        self.config = config
+        self.config_manager = config_manager
+        self.config = config_manager.get_all_configs()  # Get the raw config dict
         self.portfolio_manager = portfolio_manager
-        self.chain_collector = ChainDataCollector(config.get('web3', {}))
-        self.honeypot_checker = HoneypotChecker(config)
-        self.wallet_manager = WalletSecurityManager(config.get('security', {}))
+
+        # Pass the full config_manager instance to components that need it for RPC URLs etc.
+        self.chain_collector = ChainDataCollector(self.config_manager)
+        self.honeypot_checker = HoneypotChecker(self.config_manager)
+
+        # Components that only need a subsection of the config can still use the dict
+        self.wallet_manager = WalletSecurityManager(self.config.get('security', {}))
         
         # Risk thresholds
-        self.thresholds = config.get('risk_levels', {
+        self.thresholds = self.config.get('risk_levels', {
             'ultra_safe': {'max_risk': 0.2, 'position_multiplier': 1.5},
             'safe': {'max_risk': 0.4, 'position_multiplier': 1.0},
             'moderate': {'max_risk': 0.6, 'position_multiplier': 0.7},
@@ -210,10 +215,10 @@ class RiskManager:
         })
         
         # Position sizing parameters
-        self.max_position_size_percent = config.get('max_position_size_pct', 10)
-        self.max_position_size_usd = config.get('max_position_size_usd', 10.0)
-        self.max_portfolio_risk_percent = config.get('max_portfolio_risk_percent', 20)
-        self.kelly_fraction = config.get('kelly_fraction', 0.25)  # Conservative Kelly
+        self.max_position_size_percent = self.config.get('max_position_size_pct', 10)
+        self.max_position_size_usd = self.config.get('max_position_size_usd', 10.0)
+        self.max_portfolio_risk_percent = self.config.get('max_portfolio_risk_percent', 20)
+        self.kelly_fraction = self.config.get('kelly_fraction', 0.25)  # Conservative Kelly
         
         # Cache for risk assessments
         self.risk_cache: Dict[str, RiskScore] = {}

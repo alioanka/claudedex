@@ -46,18 +46,17 @@ class JupiterExecutor(BaseExecutor):
     - Automatic retry with fallback RPCs
     """
     
-    def __init__(self, config: Dict[str, Any], db_manager=None):
+    def __init__(self, config_manager, db_manager=None):
         """
         Initialize Jupiter executor
         
         Args:
-            config: Flat config dict with keys like:
-                - rpc_url: Solana RPC endpoint
-                - private_key: Base58 encoded private key
-                - max_slippage_bps: Maximum slippage in basis points (default: 500 = 5%)
-                - enabled: Whether Solana trading is enabled
+            config_manager: The main ConfigManager instance
         """
-        super().__init__(config, db_manager)
+        super().__init__(config_manager, db_manager)
+
+        # Get flat config dict for easier access
+        config = config_manager.get_all_configs()
 
         # ✅ CRITICAL: DRY_RUN mode check (standardize key name)
         self.dry_run = config.get('DRY_RUN', True) or config.get('dry_run', True)
@@ -70,7 +69,7 @@ class JupiterExecutor(BaseExecutor):
         self.jupiter_api_url = "https://lite-api.jup.ag/swap/v1"
         
         # Solana Configuration
-        self.rpc_urls = config.get_rpc_urls('solana')
+        self.rpc_urls = self.config_manager.get_rpc_urls('solana')
         if not self.rpc_urls:
             raise ValueError("No Solana RPC URLs configured.")
         self.rpc_url = self.rpc_urls[0]

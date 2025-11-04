@@ -245,10 +245,10 @@ class TradingBotApplication:
             self.cache_manager = CacheManager({
                 'REDIS_URL': os.getenv('REDIS_URL', 'redis://redis:6379/0')
             })
-            self.portfolio_manager = PortfolioManager(self.config)
-            self.order_manager = OrderManager(self.config)
-            self.risk_manager = RiskManager(self.config)
-            self.alerts_system = AlertsSystem(self.config)
+            self.portfolio_manager = PortfolioManager(self.config.get('portfolio', {}))
+            self.order_manager = OrderManager(self.config_manager)
+            self.risk_manager = RiskManager(self.config_manager)
+            self.alerts_system = AlertsSystem(self.config.get('notifications', {}))
             
             # Initialize security using EncryptionManager
             self.logger.info("Initializing security manager...")
@@ -509,7 +509,7 @@ class TradingBotApplication:
                 flat_config['solana'] = self.config.get('solana', {})
                 self.logger.info(f"   ✅ Solana config merged: {list(flat_config.get('solana', {}).keys())}")
 
-            self.engine = TradingBotEngine(flat_config, mode=self.mode)
+            self.engine = TradingBotEngine(self.config_manager, mode=self.mode)
             await self.engine.initialize()
             
             # Initialize dashboard
@@ -544,11 +544,11 @@ class TradingBotApplication:
     def _validate_environment(self):
         """Validate required environment variables"""
         required_vars = [
-            'DATABASE_URL',
+            'DB_URL',
             'REDIS_URL',
-            # 'DEXSCREENER_API_KEY',  # REMOVED - optional for DexScreener
             'WEB3_PROVIDER_URL',
-            'PRIVATE_KEY',  # Should be encrypted
+            'PRIVATE_KEY',
+            'WALLET_ADDRESS',
             'TELEGRAM_BOT_TOKEN',
             'TELEGRAM_CHAT_ID'
         ]
