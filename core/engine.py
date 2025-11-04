@@ -113,40 +113,39 @@ class ClosedPositionRecord:
 class TradingBotEngine:
     """Main orchestration engine for the trading bot"""
     
-    def __init__(self, config: Dict, mode: str = "production"):
+    def __init__(self, config_manager, mode: str = "production"):
         """
         Initialize the trading engine
         
         Args:
-            config: Configuration dictionary
+            config_manager: The main ConfigManager instance
             mode: Operating mode
         """
-        self.config = config
+        self.config_manager = config_manager
+        self.config = config_manager.get_all_configs() # Keep a dict representation for compatibility
         self.mode = mode
         self.state = BotState.INITIALIZING
         
         # Core components
         self.event_bus = EventBus()
-        self.portfolio_manager = PortfolioManager(config.get('portfolio', {}))
+        self.portfolio_manager = PortfolioManager(self.config.get('portfolio', {}))
         self.risk_manager = RiskManager(
-            config['risk_management'], 
+            self.config_manager,
             portfolio_manager=self.portfolio_manager
         )
         self.pattern_analyzer = PatternAnalyzer()
-        self.decision_maker = DecisionMaker(config)
+        self.decision_maker = DecisionMaker(self.config)
 
         # Data collectors
-        # Use:
         self.dex_collector = DexScreenerCollector(
-            config.get('data_sources', {}).get('dexscreener', {})
+            self.config.get('data_sources', {}).get('dexscreener', {})
         )
-        self.chain_collector = ChainDataCollector(config['web3'])
-        self.social_collector = SocialDataCollector(config['data_sources']['social'])
-        self.mempool_monitor = MempoolMonitor(config['web3'])
-        self.whale_tracker = WhaleTracker(config)
+        self.chain_collector = ChainDataCollector(self.config['web3'])
+        self.social_collector = SocialDataCollector(self.config['data_sources']['social'])
+        self.mempool_monitor = MempoolMonitor(self.config['web3'])
+        self.whale_tracker = WhaleTracker(self.config_manager)
 
-        # ✅ ADD THIS LINE - Initialize honeypot checker
-        self.honeypot_checker = HoneypotChecker(config.get('security', {}))
+        self.honeypot_checker = HoneypotChecker(self.config_manager)
         
         # ML components
         self.ensemble_predictor = EnsemblePredictor()
@@ -154,28 +153,14 @@ class TradingBotEngine:
         self.rl_optimizer = RLOptimizer()
         
         # Trading components
-
-        executor_config = {
-            'web3_provider_url': config.get('web3', {}).get('provider_url'),
-            'private_key': config.get('security', {}).get('private_key'),
-            'chain_id': config.get('web3', {}).get('chain_id', 1),
-            'max_gas_price': config.get('web3', {}).get('max_gas_price', 500),
-            'gas_limit': config.get('web3', {}).get('gas_limit', 500000),
-            'max_retries': 3,
-            'retry_delay': 1,
-            'uniswap_v2_router': '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',  # Mainnet router
-            '1inch_api_key': config.get('api', {}).get('1inch_api_key'),
-            'paraswap_api_key': config.get('api', {}).get('paraswap_api_key'),
-        }
-
         # Database connection for logging
         from data.storage.database import DatabaseManager
-        self.db = DatabaseManager(config.get('database', {}))  
+        self.db = DatabaseManager(self.config.get('database', {}))
 
-        self.strategy_manager = StrategyManager(config['trading']['strategies'])
-        self.order_manager = OrderManager(config, db_manager=self.db)  # 🆕 ADD db_manager
+        self.strategy_manager = StrategyManager(self.config['trading']['strategies'])
+        self.order_manager = OrderManager(self.config_manager, db_manager=self.db)
         self.position_tracker = PositionTracker()
-        self.trade_executor = TradeExecutor(executor_config, db_manager=self.db)  # 🆕 ADD db_manager
+        self.trade_executor = TradeExecutor(self.config_manager, db_manager=self.db)
         
 
         # ✅ PATCH 1: Connect OrderManager to actual execution engine
@@ -189,40 +174,11 @@ class TradingBotEngine:
 
         logger.info("✅ OrderManager integrations complete")
 
-        # Find this section in __init__:
-        # self.trade_executor = DirectDEXExecutor(config)
-        # OR
-        # self.trade_executor = ToxiSolAPIExecutor(config)
-
-        # Add AFTER the existing executor initialization:
-
         # Initialize Solana executor if enabled
         self.solana_executor = None
-
-        # ✅ FIXED: Check both nested and flat config structures
-        solana_config = config.get('solana', {})
-        solana_enabled = (
-            solana_config.get('enabled', False) or 
-            config.get('solana_enabled', False)
-        )
-
-        if solana_enabled:
+        if self.config_manager.get_specific_config('solana').get('enabled'):
             try:
-                # Try nested config first, fallback to flat
-                if solana_config:
-                    self.solana_executor = JupiterExecutor(solana_config)
-                else:
-                    # Build config from flat structure
-                    solana_config = {
-                        'enabled': config.get('solana_enabled', False),
-                        'rpc_url': config.get('solana_rpc_url'),
-                        'solana_private_key': config.get('solana_private_key'),
-                        'encryption_key': config.get('encryption_key'),
-                        'max_slippage_bps': config.get('jupiter_max_slippage_bps', 500),
-                        'dry_run': config.get('dry_run', True),
-                    }
-                    self.solana_executor = JupiterExecutor(solana_config)
-                
+                self.solana_executor = JupiterExecutor(self.config_manager)
                 logger.info("✅ Solana Jupiter Executor initialized")
             except Exception as e:
                 logger.error(f"❌ Failed to initialize Solana executor: {e}")
