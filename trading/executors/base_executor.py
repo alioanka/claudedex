@@ -140,18 +140,26 @@ class TradeExecutor(BaseExecutor):
         self.w3 = None
 
         private_key = config.get('private_key') or config.get('security', {}).get('private_key')
-        if not private_key:
-            raise ValueError("PRIVATE_KEY not found in configuration")
-        self.account = Account.from_key(private_key)
-        self.wallet_address = self.account.address
+
+        # ✅ It's okay if private_key is missing in some scenarios (e.g., data analysis)
+        if private_key:
+            self.account = Account.from_key(private_key)
+        else:
+            logger.warning("PRIVATE_KEY not found; wallet functions will be disabled.")
+            self.account = None
+
+        if self.account:
+             self.wallet_address = self.account.address
+        else:
+             self.wallet_address = None
 
         # ✅ PATCH: Validate wallet address
-        if not Web3.is_address(self.wallet_address):
+        if self.wallet_address and not Web3.is_address(self.wallet_address):
             raise ValueError(f"Invalid wallet address derived from private key: {self.wallet_address}")
 
         # Verify wallet matches WALLET_ADDRESS in config (if provided)
         expected_wallet = config.get('wallet_address') or config.get('WALLET_ADDRESS')
-        if expected_wallet:
+        if expected_wallet and self.wallet_address:
             if self.wallet_address.lower() != expected_wallet.lower():
                 raise ValueError(
                     f"❌ WALLET MISMATCH!\n"
@@ -160,7 +168,7 @@ class TradeExecutor(BaseExecutor):
                     f"Private key may not match configured wallet"
                 )
             logger.info(f"✅ Wallet address verified: {self.wallet_address}")
-        else:
+        elif self.wallet_address:
             logger.info(f"ℹ️ Wallet initialized: {self.wallet_address}")
         
         # Chain configuration
