@@ -188,13 +188,13 @@ class TradingBotEngine:
             logger.info("ℹ️ Solana trading disabled")
         
         # Monitoring
-        self.alert_manager = AlertManager(config['notifications'])
+        self.alert_manager = AlertManager(self.config['notifications'])
         self.performance_tracker = PerformanceTracker()
 
-        self.structured_logger = StructuredLogger("TradingBot", config.get('logging', {}))
+        self.structured_logger = StructuredLogger("TradingBot", self.config.get('logging', {}))
         
         # Security
-        self.wallet_manager = WalletSecurityManager(config['security'])
+        self.wallet_manager = WalletSecurityManager(self.config['security'])
         
         # Internal state
         self.active_positions: Dict[str, Any] = {}
@@ -210,7 +210,7 @@ class TradingBotEngine:
 
         # Cooldown tracking
         self.recently_closed: Dict[str, ClosedPositionRecord] = {}  # token_address -> record
-        self.cooldown_minutes = config.get('trading', {}).get('position_cooldown_minutes', 30)
+        self.cooldown_minutes = self.config.get('trading', {}).get('position_cooldown_minutes', 30)
         
       
         
