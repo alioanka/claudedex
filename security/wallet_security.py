@@ -20,7 +20,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.backends import default_backend
 from web3 import Web3
-from web3.middleware import ExtraDataToPOAMiddleware
+from web3.middleware.geth_poa import geth_poa_middleware
 from eth_account import Account
 from hdwallet import HDWallet
 from hdwallet.symbols import ETH as ETH_SYMBOL
@@ -152,7 +152,7 @@ class WalletSecurityManager:
                     
                     # Add PoA middleware if needed
                     if chain_config.get('is_poa', False):
-                        w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+                        w3.middleware_onion.inject(geth_poa_middleware, layer=0)
                     
                     if w3.is_connected():
                         self.web3_connections[chain_name] = w3
