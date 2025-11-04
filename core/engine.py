@@ -435,55 +435,49 @@ class TradingBotEngine:
                             # ============================================================================
 
                             # FIND THIS CODE (around line 300):
-                            for pair in pairs:
+                            for i, pair in enumerate(pairs):
                                 try:
                                     self.stats['tokens_analyzed'] += 1
+                                    token_symbol = pair.get('token_symbol', 'UNKNOWN')
                                     
+                                    # Log progress
+                                    logger.info(f"    🔎 Analyzing pair {i+1}/{len(pairs)}: {token_symbol}...")
+
                                     # Normalize token address
                                     token_address = pair.get('token_address', '').lower()
                                     
                                     # Check blacklist
                                     if token_address in self.blacklisted_tokens:
-                                        logger.debug(f"⛔ Token {pair.get('token_symbol')} is blacklisted - SKIPPING")
+                                        logger.debug(f"    ⛔ Token {token_symbol} is blacklisted - SKIPPING")
                                         continue
                                     
                                     # Quick filter checks
                                     if self._is_blacklisted(pair):
-                                        logger.debug(f"⛔ Pair {pair.get('pair_address', 'unknown')} is blacklisted")
+                                        logger.debug(f"    ⛔ Pair {pair.get('pair_address', 'unknown')} is blacklisted")
                                         continue
-                                    
-                                    # REPLACE THIS SECTION:
-                                    # OLD (BROKEN):
-                                    # if pair.get('liquidity_usd', 0) < min_liquidity:
-                                    #     continue
                                     
                                     # NEW (FIXED) - Check both possible key names:
                                     liquidity = pair.get('liquidity_usd') or pair.get('liquidity') or 0
-                                    
-                                    # ADD DEBUG LOG
-                                    logger.info(f"  🔍 Checking {pair.get('token_symbol', 'UNKNOWN')}: liq=${liquidity:,.0f}, min=${min_liquidity:,.0f}")
                                     
                                     if liquidity < min_liquidity:
                                         logger.debug(f"    ❌ Rejected: Liquidity ${liquidity:,.0f} < ${min_liquidity:,.0f}")
                                         continue
                                     
-                                    logger.info(f"  ✅ Passed liquidity filter: {pair.get('token_symbol', 'UNKNOWN')}")
+                                    logger.info(f"    ✅ Passed liquidity filter: {token_symbol}")
                                     
                                     # Analyze opportunity
-                                    logger.debug(f"Analyzing pair: {pair.get('token_symbol', 'UNKNOWN')} on {chain}")
+                                    logger.debug(f"    🔬 In-depth analysis for {token_symbol} on {chain}...")
                                     opportunity = await self._analyze_opportunity(pair)
                                     
                                     if opportunity:
-                                        # ✅ Get from config with proper fallback
+                                        # Get from config with proper fallback
                                         min_score = float(self.config.get('trading', {}).get('min_opportunity_score', 0.25))
-                                        logger.debug(f"  Using min score threshold: {min_score}")
-                                        logger.debug(f"  Score: {opportunity.score:.3f} (min: {min_score})")
                                         
                                         if opportunity.score > min_score:
                                             opportunity.chain = chain
                                             all_opportunities.append(opportunity)
                                             self.stats['opportunities_found'] += 1
-                                            logger.info(f"🎯 OPPORTUNITY: {pair.get('token_symbol')} on {chain.upper()} - Score: {opportunity.score:.3f}")
+                                            logger.info(f"    🎯 OPPORTUNITY FOUND: {token_symbol} on {chain.upper()} - Score: {opportunity.score:.3f}")
                                             
                                             # Emit event
                                             await self.event_bus.emit(Event(
@@ -491,10 +485,10 @@ class TradingBotEngine:
                                                 data=opportunity
                                             ))
                                         else:
-                                            logger.info(f"  ❌ Score too low: {opportunity.score:.3f} < {min_score}")
+                                            logger.info(f"    ❌ Score too low: {opportunity.score:.3f} < {min_score}")
                                             
                                 except Exception as e:
-                                    logger.error(f"❌ Error analyzing pair {pair.get('token_symbol', 'UNKNOWN')} on {chain}: {e}")
+                                    logger.error(f"❌ Error analyzing pair {token_symbol} on {chain}: {e}")
                                     logger.error(f"   Pair data: {pair}")
                                     continue
                         else:
