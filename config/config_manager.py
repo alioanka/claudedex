@@ -421,12 +421,6 @@ class ConfigManager:
             Configuration value or default
         """
         try:
-            # First check environment variables (uppercase)
-            env_key = key.upper().replace('.', '_')
-            env_value = os.getenv(env_key)
-            if env_value is not None and env_value not in ('', 'null', 'None'):
-                return env_value
-            
             # Check raw_config dict if available
             if hasattr(self, '_raw_config') and self._raw_config:
                 # Handle nested keys like 'security.private_key'
