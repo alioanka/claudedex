@@ -312,6 +312,10 @@ class TradingBotApplication:
                 # ✅ ADD THIS: Store chains config at top level too
                 self.config['chains'] = chains_config
 
+                # Propagate the default config back to the config_manager
+                self.config_manager['data_sources'] = self.config['data_sources']
+                self.config_manager['chains'] = self.config['chains']
+
             if 'web3' not in self.config:
                 self.config['web3'] = {
                     'provider_url': os.getenv('WEB3_PROVIDER_URL'),
