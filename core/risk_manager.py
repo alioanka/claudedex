@@ -197,7 +197,7 @@ class RiskManager:
         self.config = config
         self.portfolio_manager = portfolio_manager
         self.chain_collector = ChainDataCollector(config.get('web3', {}))
-        self.honeypot_checker = HoneypotChecker()
+        self.honeypot_checker = HoneypotChecker(config)
         self.wallet_manager = WalletSecurityManager(config.get('security', {}))
         
         # Risk thresholds

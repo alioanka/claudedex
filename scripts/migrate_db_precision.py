@@ -1,15 +1,41 @@
 """
 Database Migration Script
 Updates the precision of numeric columns in the database to prevent overflow errors.
+This script is designed to be resilient to schema differences and will only
+alter columns that exist in the target database.
 """
 import asyncio
 import asyncpg
 import os
+from typing import List, Optional
+
+async def build_alter_query(conn: asyncpg.Connection, table_name: str, columns: List[str]) -> Optional[str]:
+    """
+    Builds a resilient ALTER TABLE query that only includes columns that exist.
+    """
+    alter_parts = []
+    for column in columns:
+        column_exists = await conn.fetchval("""
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = $1 AND column_name = $2
+            );
+        """, table_name, column)
+
+        if column_exists:
+            alter_parts.append(f"ALTER COLUMN {column} TYPE NUMERIC(40, 18) USING {column}::numeric(40,18)")
+        else:
+            print(f"ℹ️  '{column}' column not found in '{table_name}' table, skipping alteration.")
+
+    if not alter_parts:
+        return None
+
+    return f"ALTER TABLE {table_name} " + ",\n".join(alter_parts) + ";"
 
 async def migrate_database():
     """Applies database schema migrations."""
 
-    # Database configuration from environment variables
     db_url = os.getenv("DATABASE_URL", "postgresql://bot_user:bot_password@postgres:5432/tradingbot")
 
     conn = await asyncpg.connect(db_url)
@@ -17,65 +43,24 @@ async def migrate_database():
     try:
         print("🚀 Starting database migration...")
 
-        # Alter 'trades' table
-        print("Updating 'trades' table...")
-        await conn.execute("""
-            ALTER TABLE trades
-            ALTER COLUMN entry_price TYPE NUMERIC(40, 18) USING entry_price::numeric(40,18),
-            ALTER COLUMN exit_price TYPE NUMERIC(40, 18) USING exit_price::numeric(40,18),
-            ALTER COLUMN amount TYPE NUMERIC(40, 18) USING amount::numeric(40,18),
-            ALTER COLUMN usd_value TYPE NUMERIC(40, 18) USING usd_value::numeric(40,18),
-            ALTER COLUMN gas_fee TYPE NUMERIC(40, 18) USING gas_fee::numeric(40,18),
-            ALTER COLUMN profit_loss TYPE NUMERIC(40, 18) USING profit_loss::numeric(40,18);
-        """)
+        # Define tables and columns to migrate
+        tables_to_migrate = {
+            "trades": ["entry_price", "exit_price", "amount", "usd_value", "gas_fee", "profit_loss"],
+            "positions": ["entry_price", "current_price", "amount", "stop_loss", "take_profit", "pnl"],
+            "market_data": ["price", "volume", "liquidity", "market_cap"],
+            "whale_activities": ["amount", "value_usd"]
+        }
 
-        # Alter 'positions' table
-        print("Updating 'positions' table...")
-        # Check if 'pnl' column exists before altering
-        pnl_exists = await conn.fetchval("""
-            SELECT EXISTS (
-                SELECT 1
-                FROM information_schema.columns
-                WHERE table_name = 'positions' AND column_name = 'pnl'
-            );
-        """)
+        for table, columns in tables_to_migrate.items():
+            print(f"\nChecking '{table}' table...")
+            alter_query = await build_alter_query(conn, table, columns)
+            if alter_query:
+                print(f"Updating '{table}' table...")
+                await conn.execute(alter_query)
+            else:
+                print(f"No columns to update in '{table}' table.")
 
-        alter_positions_query = """
-            ALTER TABLE positions
-            ALTER COLUMN entry_price TYPE NUMERIC(40, 18) USING entry_price::numeric(40,18),
-            ALTER COLUMN current_price TYPE NUMERIC(40, 18) USING current_price::numeric(40,18),
-            ALTER COLUMN amount TYPE NUMERIC(40, 18) USING amount::numeric(40,18),
-            ALTER COLUMN stop_loss TYPE NUMERIC(40, 18) USING stop_loss::numeric(40,18),
-            ALTER COLUMN take_profit TYPE NUMERIC(40, 18) USING take_profit::numeric(40,18)
-        """
-
-        if pnl_exists:
-            alter_positions_query += ", ALTER COLUMN pnl TYPE NUMERIC(40, 18) USING pnl::numeric(40,18);"
-        else:
-            alter_positions_query += ";"
-            print("ℹ️ 'pnl' column not found in 'positions' table, skipping alteration.")
-
-        await conn.execute(alter_positions_query)
-
-        # Alter 'market_data' table
-        print("Updating 'market_data' table...")
-        await conn.execute("""
-            ALTER TABLE market_data
-            ALTER COLUMN price TYPE NUMERIC(40, 18) USING price::numeric(40,18),
-            ALTER COLUMN volume TYPE NUMERIC(40, 18) USING volume::numeric(40,18),
-            ALTER COLUMN liquidity TYPE NUMERIC(40, 18) USING liquidity::numeric(40,18),
-            ALTER COLUMN market_cap TYPE NUMERIC(40, 18) USING market_cap::numeric(40,18);
-        """)
-
-        # Alter 'whale_activities' table
-        print("Updating 'whale_activities' table...")
-        await conn.execute("""
-            ALTER TABLE whale_activities
-            ALTER COLUMN amount TYPE NUMERIC(40, 18) USING amount::numeric(40,18),
-            ALTER COLUMN value_usd TYPE NUMERIC(40, 18) USING value_usd::numeric(40,18);
-        """)
-
-        print("✅ Database migration completed successfully!")
+        print("\n✅ Database migration completed successfully!")
 
     except Exception as e:
         print(f"❌ Database migration failed: {e}")

@@ -16,7 +16,7 @@ from solders.pubkey import Pubkey  # For Solana address validation
 
 from utils.helpers import retry_async, rate_limit, is_valid_address, format_token_amount
 from utils.constants import (
-    HONEYPOT_CHECKS, HONEYPOT_THRESHOLDS, Chain, CHAIN_RPC_URLS,
+    HONEYPOT_CHECKS, HONEYPOT_THRESHOLDS, Chain,
     BLACKLISTED_TOKENS, BLACKLISTED_CONTRACTS, BLACKLISTED_WALLETS
 )
 
@@ -92,16 +92,20 @@ class HoneypotChecker:
     async def _setup_web3_connections(self):
         """Setup Web3 connections for each chain"""
         for chain in Chain:
-            if chain in CHAIN_RPC_URLS:
-                rpc_urls = CHAIN_RPC_URLS[chain]
+            # The get_rpc_urls method should be part of the config manager passed in
+            if hasattr(self.config, 'get_rpc_urls'):
+                rpc_urls = self.config.get_rpc_urls(chain.name.lower())
                 if rpc_urls:
-                    # ✅ Make sure the URL includes the API key!
-                    rpc_url = rpc_urls[0]
-                    
-                    # ✅ ADD THIS CHECK
-           
-                    self.web3_connections[chain] = Web3(Web3.HTTPProvider(rpc_url))
-                    logger.info(f"✅ Connected to {chain.name}: {rpc_url[:50]}...")
+                    # Try to connect to the first available RPC URL
+                    for rpc_url in rpc_urls:
+                        try:
+                            w3 = Web3(Web3.HTTPProvider(rpc_url))
+                            if w3.is_connected():
+                                self.web3_connections[chain] = w3
+                                logger.info(f"✅ Connected to {chain.name}: {rpc_url[:50]}...")
+                                break  # Move to the next chain once connected
+                        except Exception as e:
+                            logger.warning(f"⚠️ Failed to connect to {rpc_url} for {chain.name}: {e}")
 
     async def close(self):
         """Clean up resources"""
