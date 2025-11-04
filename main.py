@@ -403,12 +403,22 @@ class TradingBotApplication:
                     raise ValueError("Cannot decrypt PRIVATE_KEY - check ENCRYPTION_KEY")
 
             # Override or create security config
+            if decrypted_key and not decrypted_key.startswith('0x'):
+                decrypted_key = '0x' + decrypted_key
+
             self.config['security'] = {
                 'encryption_key': encryption_key,
                 'private_key': decrypted_key
             }
             self.logger.info(f"DEBUG: Set security config with private_key: {decrypted_key[:10] if decrypted_key else 'None'}...")
-                        
+
+            # ADD THIS BLOCK to ensure the decrypted key is used everywhere
+            if decrypted_key:
+                self.config_manager['private_key'] = decrypted_key
+                self.config_manager['security']['private_key'] = decrypted_key
+                # Also update the flat_config that will be created next
+                self.config['private_key'] = decrypted_key
+
             # Before creating engine, flatten security and web3 config:
             flat_config = self.config.copy()
             if 'security' in self.config:
@@ -463,10 +473,23 @@ class TradingBotApplication:
             if solana_enabled:
                 self.logger.info("🟣 Configuring Solana integration...")
                 
+                # Decrypt Solana private key if needed
+                solana_pk_encrypted = os.getenv('SOLANA_PRIVATE_KEY')
+                solana_pk_decrypted = solana_pk_encrypted
+                if solana_pk_encrypted and solana_pk_encrypted.startswith('gAAAAAB') and encryption_key:
+                    try:
+                        from cryptography.fernet import Fernet
+                        f = Fernet(encryption_key.encode())
+                        solana_pk_decrypted = f.decrypt(solana_pk_encrypted.encode()).decode()
+                        self.logger.info("✅ Successfully decrypted Solana private key")
+                    except Exception as e:
+                        self.logger.error(f"Failed to decrypt Solana private key: {e}")
+                        # Continue with encrypted key, might fail later but won't crash here
+
                 # Add Solana to flat config for TradingEngine
                 self.config['solana_enabled'] = True
                 self.config['solana_rpc_url'] = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
-                self.config['solana_private_key'] = os.getenv('SOLANA_PRIVATE_KEY')
+                self.config['solana_private_key'] = solana_pk_decrypted
                 self.config['jupiter_max_slippage_bps'] = int(os.getenv('JUPITER_MAX_SLIPPAGE_BPS', '500'))
                 self.config['solana_min_liquidity'] = float(os.getenv('SOLANA_MIN_LIQUIDITY', '5000'))
                 
@@ -506,11 +529,15 @@ class TradingBotApplication:
             # ✅ CRITICAL: Merge Solana config into flat_config BEFORE creating engine
             if self.config.get('solana_enabled'):
                 self.logger.info("🔧 Merging Solana config into flat_config...")
-                flat_config['solana_enabled'] = self.config['solana_enabled']
-                flat_config['solana_rpc_url'] = self.config['solana_rpc_url']
-                flat_config['solana_private_key'] = self.config['solana_private_key']
-                flat_config['jupiter_max_slippage_bps'] = self.config.get('jupiter_max_slippage_bps', 500)
-                flat_config['solana'] = self.config.get('solana', {})
+                solana_config = {
+                    'solana_enabled': self.config['solana_enabled'],
+                    'solana_rpc_url': self.config['solana_rpc_url'],
+                    'solana_private_key': self.config['solana_private_key'],
+                    'jupiter_max_slippage_bps': self.config.get('jupiter_max_slippage_bps', 500),
+                    'solana': self.config.get('solana', {})
+                }
+                flat_config.update(solana_config)
+                self.config_manager.configs.update(solana_config)
                 self.logger.info(f"   ✅ Solana config merged: {list(flat_config.get('solana', {}).keys())}")
 
             self.engine = TradingBotEngine(self.config_manager, mode=self.mode)
