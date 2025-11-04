@@ -631,11 +631,29 @@ class ConfigManager:
 
         if config_type == ConfigType.WEB3:
             rpc_urls = {}
+            # Handle multi-chain RPC URLs (plural)
             for chain_name in ['ETHEREUM', 'BSC', 'POLYGON', 'ARBITRUM', 'BASE', 'SOLANA']:
-                env_var = f"{chain_name}_RPC_URLS"
+                env_var = f"{chain_name.upper()}_RPC_URLS"
                 urls_str = os.getenv(env_var)
                 if urls_str:
-                    rpc_urls[chain_name.lower()] = [url.strip() for url in urls_str.split(',')]
+                    rpc_urls[chain_name.lower()] = [url.strip() for url in urls_str.split(',') if url.strip()]
+
+            # Handle single RPC URL for backward compatibility (singular)
+            if not rpc_urls:
+                main_rpc = os.getenv('WEB3_PROVIDER_URL')
+                if main_rpc:
+                    # Assume it's for the default chain if not otherwise specified
+                    default_chain = os.getenv('DEFAULT_CHAIN', 'ethereum').lower()
+                    rpc_urls[default_chain] = [main_rpc]
+
+                    # Also populate backup providers if they exist
+                    backup1 = os.getenv('WEB3_BACKUP_PROVIDER_1')
+                    if backup1:
+                        rpc_urls[default_chain].append(backup1)
+                    backup2 = os.getenv('WEB3_BACKUP_PROVIDER_2')
+                    if backup2:
+                        rpc_urls[default_chain].append(backup2)
+
             env_data['rpc_urls'] = rpc_urls
         
         # Generic prefix-based loading (existing code continues)

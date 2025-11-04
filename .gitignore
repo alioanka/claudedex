@@ -52,7 +52,7 @@ seed_phrase.txt
 .env.production
 .env.development
 .env.test
-.env.*
+.encryption
 !.env.example
 
 # Database
