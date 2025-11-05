@@ -404,14 +404,21 @@ class TradingBotEngine:
                         
                         logger.info(f"  🔗 Scanning {chain.upper()}... (min liquidity: ${min_liquidity:,.0f})")
                         
-                        # ✅ CRITICAL: Pass chain parameter to get_new_pairs
+                        
+                        # ✅ CRITICAL: Pass chain parameter to get_new_pairs WITH TIMEOUT
                         try:
-                            pairs = await self.dex_collector.get_new_pairs(
-                                chain=chain,
-                                limit=max_pairs_per_chain
+                            pairs = await asyncio.wait_for(
+                                self.dex_collector.get_new_pairs(
+                                    chain=chain,
+                                    limit=max_pairs_per_chain
+                                ),
+                                timeout=30.0  # 30 second timeout per chain
                             )
+                        except asyncio.TimeoutError:
+                            logger.warning(f"⏰ Timeout fetching pairs for {chain.upper()} - skipping this chain")
+                            pairs = None
                         except Exception as e:
-                            logger.error(f"Error fetching new pairs for {chain.upper()}: {e}")
+                            logger.error(f"❌ Error fetching new pairs for {chain.upper()}: {e}")
                             pairs = None
                         
                         if pairs:
