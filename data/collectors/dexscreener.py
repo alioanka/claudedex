@@ -171,6 +171,14 @@ class DexScreenerCollector:
         Returns:
             Response data or None
         """
+        # ✅ CRITICAL FIX: Ensure session is initialized
+        if not self.session:
+            logger.error("[DexScreener] Session not initialized! Call initialize() first.")
+            await self.initialize()
+            if not self.session:
+                logger.error("[DexScreener] Failed to initialize session")
+                return None
+        
         await self._rate_limit()
         
         # Remove any leading slashes from endpoint
@@ -184,26 +192,34 @@ class DexScreenerCollector:
             
         try:
             self.stats['total_requests'] += 1
-            response = await self.client.get(url, params=params, headers=headers)
+            timeout = aiohttp.ClientTimeout(total=20)
+            async with self.session.get(url, params=params, headers=headers, timeout=timeout) as response:
 
-            if response.status_code == 200:
-                self.stats['successful_requests'] += 1
-                return response.json()
-            else:
-                self.stats['failed_requests'] += 1
-                print(f"API request failed: {response.status_code} - URL: {url}")
-                logger.debug(f"[DexScreener] request failed {response.status_code} url={url}")
-                return None
+                if response.status == 200:
+                    self.stats['successful_requests'] += 1
+                    data = await response.json()
+                    return data
+                else:
+                    self.stats['failed_requests'] += 1
+                    print(f"API request failed: {response.status} - URL: {url}")
+                    logger.debug(f"[DexScreener] request failed {response.status} url={url}")
+                    return None
                     
-        except httpx.TimeoutException:
+        except asyncio.TimeoutError:
             self.stats['failed_requests'] += 1
-            print("Request timeout")
-            logger.debug("[DexScreener] request timeout")
+            logger.warning(f"[DexScreener] Request timeout for {endpoint}")
+            return None
+        except AttributeError as e:
+            self.stats['failed_requests'] += 1
+            logger.error(f"[DexScreener] Session not initialized: {e}")
             return None
         except Exception as e:
             self.stats['failed_requests'] += 1
-            print(f"Request error: {e}")
+            logger.error(f"[DexScreener] Request error for {endpoint}: {e}", exc_info=True)
             return None
+        except asyncio.CancelledError:
+            logger.warning("[DexScreener] Request cancelled")
+            raise
             
     # 1. Fix get_new_pairs signature (line ~165)
     # REPLACE the existing method signature and update the implementation:
@@ -413,8 +429,11 @@ class DexScreenerCollector:
             return final_pairs
             
         except Exception as e:
-            print(f"❌ Error in get_new_pairs for {chain}: {e}")
+            logger.error(f"❌ Error in get_new_pairs for {chain}: {e}")
+            logger.error(f"❌ Exception type: {type(e).__name__}")
             import traceback
+            logger.error(f"❌ Traceback: {traceback.format_exc()}")
+            print(f"❌ Error in get_new_pairs for {chain}: {e}")
             traceback.print_exc()
             return []
         
