@@ -830,11 +830,41 @@ def parse_arguments():
 
 async def test_dex_collector(logger_instance):
     """Test DexScreener connectivity"""
-    from data.collectors.dexscreener import test_api_connection
-    
+    from data.collectors.dexscreener import DexScreenerCollector
+    import os
+
     logger_instance.info("Testing DexScreener API connection...")
-    success = await test_api_connection()
+
+    # Read enabled chains from environment, default to 'ethereum'
+    enabled_chains_str = os.getenv('ENABLED_CHAINS', 'ethereum')
+    enabled_chains = [c.strip() for c in enabled_chains_str.split(',')]
+    test_chain = enabled_chains[0] if enabled_chains else 'ethereum'
+
+    logger_instance.info(f"Using chain '{test_chain}' for DexScreener test...")
+
+    collector = DexScreenerCollector({'api_key': '', 'chains': [test_chain]})
+    await collector.initialize()
     
+    success = False
+    try:
+        # Try to fetch some data from the specified chain
+        pairs = await collector.get_new_pairs(chain=test_chain, limit=1)
+        if pairs:
+            logger_instance.info("DexScreener API connection successful, data received.")
+            success = True
+        else:
+            # This is not necessarily a failure, could be no new pairs.
+            # We consider it a success if the call completes without error.
+            logger_instance.info("DexScreener API call successful, but no new pairs returned for this chain.")
+            success = True
+
+    except Exception as e:
+        logger_instance.error(f"Error during DexScreener API test: {e}", exc_info=True)
+        success = False
+
+    finally:
+        await collector.close()
+
     if not success:
         logger_instance.warning("⚠️ DexScreener API connection failed - bot will not find new pairs!")
     else:
