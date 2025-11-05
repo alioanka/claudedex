@@ -18,10 +18,11 @@ async def test_apis():
         print("🔍 Testing DexScreener API...")
         try:
             headers = {"X-API-KEY": os.getenv("DEXSCREENER_API_KEY", "")}
-            async with session.get(
-                "https://api.dexscreener.com/latest/dex/tokens/0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
-                headers=headers
-            ) as resp:
+            chain = os.getenv("TEST_CHAIN", "ethereum")
+            token = os.getenv("TEST_TOKEN", "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
+
+            url = f"https://api.dexscreener.com/tokens/v1/{chain}/{token}"
+            async with session.get(url, headers=headers) as resp:
                 if resp.status == 200:
                     results["DexScreener"] = "✅ Connected"
                 else:

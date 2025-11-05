@@ -294,7 +294,7 @@ class TradingBotApplication:
                 self.config['data_sources'] = {
                     'dexscreener': {
                         'api_key': os.getenv('DEXSCREENER_API_KEY', ''),
-                        'base_url': 'https://api.dexscreener.com/latest',
+                        'base_url': 'https://api.dexscreener.com',
                         'rate_limit': 300,
                         'chains': chains_config['enabled'],  # ✅ ADD THIS
                         'min_liquidity': 10000,

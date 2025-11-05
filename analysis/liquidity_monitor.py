@@ -76,7 +76,7 @@ class LiquidityMonitor:
         self.removal_patterns: Dict[str, List] = {}
         
         # API endpoints
-        self.dexscreener_api = "https://api.dexscreener.com/latest/dex"
+        self.dexscreener_api = "https://api.dexscreener.com"
         self.defined_api = "https://api.defined.fi"
         
         # Running tasks
