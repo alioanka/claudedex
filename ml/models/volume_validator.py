@@ -11,11 +11,16 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 import pickle
 import joblib
-from sklearn.ensemble import RandomForestClassifier, IsolationForest
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split, cross_val_score
-import xgboost as xgb
-import lightgbm as lgb
+# Conditionally import ML libraries
+try:
+    from sklearn.ensemble import RandomForestClassifier, IsolationForest
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.model_selection import train_test_split, cross_val_score
+    import xgboost as xgb
+    import lightgbm as lgb
+    ML_LIBS_AVAILABLE = True
+except ImportError:
+    ML_LIBS_AVAILABLE = False
 from loguru import logger
 import warnings
 warnings.filterwarnings('ignore')
@@ -43,6 +48,7 @@ class VolumeValidatorML:
     
     def __init__(self, config: Optional[Dict] = None):
         self.config = config or {}
+        self.ml_enabled = self.config.get('ml_enabled', False) and ML_LIBS_AVAILABLE
         
         # Model parameters
         self.confidence_threshold = self.config.get("confidence_threshold", 0.7)
@@ -202,6 +208,9 @@ class VolumeValidatorML:
         Returns:
             Dictionary with training metrics
         """
+        if not self.ml_enabled:
+            logger.warning("ML is disabled. Skipping volume validator training.")
+            return {}
         try:
             logger.info(f"Training volume validator on {len(training_data)} samples")
             
@@ -310,6 +319,18 @@ class VolumeValidatorML:
         Returns:
             VolumeValidationResult with predictions
         """
+        if not self.ml_enabled:
+            return VolumeValidationResult(
+                token_address=volume_data.get('token_address', ''),
+                is_genuine=False,
+                confidence=0.0,
+                volume_score=0.0,
+                anomaly_score=-1.0,
+                predicted_real_volume=Decimal('0'),
+                features_importance={},
+                risk_factors=['ML is disabled'],
+                recommendation='Unable to validate - treat as suspicious'
+            )
         try:
             # Extract features
             features = self.extract_features(volume_data)

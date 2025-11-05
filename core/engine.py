@@ -3,7 +3,8 @@ Core Trading Engine - Orchestrates all bot operations
 """
 
 import asyncio
-import uuid
+import gc
+import heapq
 import uuid
 import logging  # ADD THIS LINE
 from typing import Dict, List, Optional, Any, Tuple
@@ -97,6 +98,9 @@ class TradingOpportunity:
             min(self.expected_return / 100, 1) * 0.2
         )
 
+    def __lt__(self, other):
+        return self.score < other.score
+
 @dataclass
 class ClosedPositionRecord:
     """Track recently closed positions for cooldown"""
@@ -148,9 +152,15 @@ class TradingBotEngine:
         self.honeypot_checker = HoneypotChecker(self.config_manager)
         
         # ML components
-        self.ensemble_predictor = EnsemblePredictor()
-        self.hyperparam_optimizer = HyperparameterOptimizer()
-        self.rl_optimizer = RLOptimizer()
+        self.ml_enabled = self.config.get('ml_models', {}).get('ml_enabled', False)
+        if self.ml_enabled:
+            self.ensemble_predictor = EnsemblePredictor(self.config.get('ml_models', {}))
+            self.hyperparam_optimizer = HyperparameterOptimizer()
+            self.rl_optimizer = RLOptimizer()
+        else:
+            self.ensemble_predictor = None
+            self.hyperparam_optimizer = None
+            self.rl_optimizer = None
         
         # Trading components
         # Database connection for logging
@@ -387,7 +397,7 @@ class TradingBotEngine:
         while self.state == BotState.RUNNING:
             try:
                 discovery_count += 1
-                all_opportunities = []
+                top_opportunities = []  # This will be our min-heap
                 chain_stats = {}
                 
                 logger.info(f"🌐 Discovery cycle #{discovery_count} across {len(enabled_chains)} chains...")
@@ -484,7 +494,11 @@ class TradingBotEngine:
                                         
                                         if opportunity.score > min_score:
                                             opportunity.chain = chain
-                                            all_opportunities.append(opportunity)
+                                            if len(top_opportunities) < 10:
+                                                heapq.heappush(top_opportunities, opportunity)
+                                            else:
+                                                heapq.heappushpop(top_opportunities, opportunity)
+
                                             self.stats['opportunities_found'] += 1
                                             logger.info(f"    🎯 OPPORTUNITY FOUND: {token_symbol} on {chain.upper()} - Score: {opportunity.score:.3f}")
                                             
@@ -499,7 +513,8 @@ class TradingBotEngine:
                                 except Exception as e:
                                     logger.error(f"❌ Error analyzing pair {token_symbol} on {chain}: {e}")
                                     logger.error(f"   Pair data: {pair}")
-                                    continue
+                                finally:
+                                    gc.collect()
                         else:
                             logger.warning(f"    ⚠️  No pairs found on {chain.upper()}")
                         
@@ -507,7 +522,7 @@ class TradingBotEngine:
                         chain_elapsed = asyncio.get_event_loop().time() - chain_start
                         chain_stats[chain] = {
                             'pairs_found': len(pairs) if pairs else 0,
-                            'opportunities': len([o for o in all_opportunities if o.chain == chain]),
+                            'opportunities': len([o for o in top_opportunities if o.chain == chain]),
                             'scan_time': chain_elapsed
                         }
                         
@@ -522,7 +537,7 @@ class TradingBotEngine:
                 # Log summary
                 cycle_elapsed = asyncio.get_event_loop().time() - cycle_start
                 total_pairs = sum(s.get('pairs_found', 0) for s in chain_stats.values())
-                total_opps = len(all_opportunities)
+                total_opps = self.stats['opportunities_found']
                 
                 logger.info(f"📊 Discovery #{discovery_count} Complete ({cycle_elapsed:.1f}s):")
                 logger.info(f"   • Total pairs scanned: {total_pairs}")
@@ -533,14 +548,14 @@ class TradingBotEngine:
                             f"({stats.get('scan_time', 0):.1f}s)")
                 
                 # Add opportunities to pending queue
-                if all_opportunities:
+                if top_opportunities:
                     # Sort by score
-                    all_opportunities.sort(key=lambda x: x.score, reverse=True)
+                    sorted_opportunities = sorted(top_opportunities, key=lambda x: x.score, reverse=True)
                     
                     # Add to pending
-                    self.pending_opportunities.extend(all_opportunities[:10])  # Top 10
+                    self.pending_opportunities.extend(sorted_opportunities)
                     
-                    logger.info(f"📋 Added {min(len(all_opportunities), 10)} opportunities to pending queue")
+                    logger.info(f"📋 Added {len(sorted_opportunities)} opportunities to pending queue")
                 else:
                     logger.info("⏸️  No qualifying opportunities in this cycle")
                 
@@ -653,7 +668,7 @@ class TradingBotEngine:
             
             # Sequential analysis to reduce memory pressure
             risk_score, patterns, token_info, dev_reputation, liquidity_depth, contract_safety, holder_dist = [None] * 7
-            
+
             try:
                 risk_score = await self.risk_manager.analyze_token(pair.get('token_address', ''))
             except Exception as e:
@@ -678,7 +693,7 @@ class TradingBotEngine:
                 liquidity_depth = await self._analyze_liquidity_depth(pair)
             except Exception as e:
                 logger.debug(f"Liquidity depth analysis failed: {e}")
-            
+
             try:
                 contract_safety = await self._check_smart_contract(pair.get('token_address', ''))
             except Exception as e:
@@ -700,6 +715,18 @@ class TradingBotEngine:
                 liquidity=liquidity_depth,
                 contract_safety=contract_safety
             )
+
+            ml_confidence = 0.5
+            pump_probability = 0.5
+            rug_probability = 0.5
+            expected_return = 0.0
+
+            if self.ml_enabled and self.ensemble_predictor:
+                ml_prediction = await self.ensemble_predictor.predict(token=token_address, chain=pair.get('chain', 'ethereum'))
+                ml_confidence = ml_prediction.get('confidence', 0.5)
+                pump_probability = ml_prediction.get('pump_probability', 0.5)
+                rug_probability = ml_prediction.get('rug_probability', 0.5)
+                expected_return = ml_prediction.get('expected_return', 0.0)
             
             # ADD THIS DETAILED LOG
             # ✅ Chain-specific threshold
@@ -734,10 +761,10 @@ class TradingBotEngine:
                 liquidity=pair.get('liquidity_usd', 0),
                 volume_24h=pair.get('volume_24h', 0),
                 risk_score=risk_score if risk_score else RiskScore(overall_risk=0.5),
-                ml_confidence=score,
-                pump_probability=score * 0.8,
-                rug_probability=0.2,
-                expected_return=score * 100,
+                ml_confidence=ml_confidence,
+                pump_probability=pump_probability,
+                rug_probability=rug_probability,
+                expected_return=expected_return,
                 recommended_position_size=position_size,  # ✅ FROM CONFIG!
                 entry_strategy='momentum',
                 metadata={
@@ -1956,6 +1983,9 @@ class TradingBotEngine:
 
     async def _optimize_strategies(self):
         """Continuously optimize trading strategies"""
+        if not self.ml_enabled:
+            logger.info("ML is disabled. Skipping strategy optimization.")
+            return
         while self.state == BotState.RUNNING:
             try:
                 # Wait for enough data
@@ -2013,6 +2043,9 @@ class TradingBotEngine:
                 
     async def _retrain_models(self):
         """Periodically retrain ML models"""
+        if not self.ml_enabled:
+            logger.info("ML is disabled. Skipping model retraining.")
+            return
         while self.state == BotState.RUNNING:
             try:
                 # Wait for retrain interval

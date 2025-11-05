@@ -32,7 +32,7 @@ redis==5.0.1
 # Machine Learning
 
 pandas==2.1.4
-scikit-learn==1.4.0
+# scikit-learn==1.4.0
 
 # Data Processing
 scipy==1.11.4
@@ -86,7 +86,7 @@ eth_utils
 
 jsonschema
 
-lightgbm
+# lightgbm
 
 memory_profiler
 
@@ -100,10 +100,10 @@ scripts
 
 setuptools
 
-tensorflow
+# tensorflow
 
 textblob
 
-torch
+# torch
 
-xgboost
+# xgboost

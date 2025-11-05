@@ -16,13 +16,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, IsolationForest
-from sklearn.preprocessing import StandardScaler, RobustScaler
-from sklearn.model_selection import cross_val_score, TimeSeriesSplit
-import xgboost as xgb
-import lightgbm as lgb
-
 from dataclasses import dataclass
+# Conditionally import ML libraries to allow running without them
+try:
+    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, IsolationForest
+    from sklearn.preprocessing import StandardScaler, RobustScaler
+    from sklearn.model_selection import cross_val_score, TimeSeriesSplit
+    import xgboost as xgb
+    import lightgbm as lgb
+    ML_LIBS_AVAILABLE = True
+except ImportError:
+    ML_LIBS_AVAILABLE = False
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
@@ -152,13 +156,16 @@ class TransformerPredictor(nn.Module):
 class EnsemblePredictor:
     """Main ensemble prediction system"""
     
-    def __init__(self, model_dir: str = "models/"):
+    def __init__(self, config: Dict[str, Any], model_dir: str = "models/"):
         """
         Initialize ensemble predictor
         
         Args:
+            config: Configuration dictionary
             model_dir: Directory containing trained models
         """
+        self.config = config
+        self.ml_enabled = self.config.get('ml_enabled', False) and ML_LIBS_AVAILABLE
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(parents=True, exist_ok=True)
         
@@ -200,6 +207,9 @@ class EnsemblePredictor:
         
     async def load_models(self):
         """Load all trained models"""
+        if not self.ml_enabled:
+            print("ML is disabled. Skipping model loading.")
+            return
         try:
             # XGBoost models
             xgb_rug_path = self.model_dir / "xgboost_rug.pkl"
@@ -521,6 +531,21 @@ class EnsemblePredictor:
         Returns:
             Dictionary with prediction results
         """
+        if not self.ml_enabled:
+            return {
+                'token': token,
+                'chain': chain,
+                'pump_probability': 0.5,
+                'rug_probability': 0.5,
+                'expected_return': 0.0,
+                'confidence': 0.1,
+                'time_to_pump': None,
+                'risk_adjusted_score': 0.0,
+                'model_agreements': {},
+                'feature_importance': {},
+                'timestamp': datetime.now().isoformat(),
+                'error': 'ML is disabled in the configuration.'
+            }
         try:
             # Import at runtime to avoid circular dependency
             import sys
@@ -785,6 +810,9 @@ class EnsemblePredictor:
         Returns:
             Dictionary of new trained models
         """
+        if not self.ml_enabled:
+            print("ML is disabled. Skipping model retraining.")
+            return {}
         try:
             # Prepare data
             X = training_data.drop(['label', 'pump_label', 'rug_label'], axis=1, errors='ignore')
