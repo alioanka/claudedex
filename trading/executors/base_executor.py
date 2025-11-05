@@ -393,22 +393,40 @@ class TradeExecutor(BaseExecutor):
             logger.info(f"🔄 Nonce reset to {self.current_nonce}")
 
     def _get_web3_instance(self, chain: str):
-        """Get a working Web3 instance for a specific chain."""
+        """Get a working Web3 instance for a specific chain with connection reuse."""
+        # ✅ Cache Web3 instances per chain
+        if not hasattr(self, '_web3_cache'):
+            self._web3_cache = {}
+        
+        # Return cached connection if still valid
+        if chain in self._web3_cache:
+            w3 = self._web3_cache[chain]
+            if w3.is_connected():
+                return w3
+            else:
+                # Connection lost, remove from cache
+                del self._web3_cache[chain]
+        
+        # Create new connection
         rpc_urls = self.config_manager.get_rpc_urls(chain)
         if not rpc_urls:
             raise ValueError(f"No RPC URLs configured for chain: {chain}")
 
         for rpc_url in rpc_urls:
             try:
-                w3 = Web3(Web3.HTTPProvider(rpc_url))
+                w3 = Web3(Web3.HTTPProvider(
+                    rpc_url,
+                    request_kwargs={'timeout': 30}  # ✅ Add timeout
+                ))
                 if w3.is_connected():
+                    self._web3_cache[chain] = w3  # ✅ Cache it
                     logger.info(f"✅ Web3 provider connected for {chain}: {rpc_url}")
                     return w3
             except Exception as e:
                 logger.warning(f"⚠️ Web3 provider connection failed for {chain}: {rpc_url} ({e})")
 
         raise ConnectionError(f"All Web3 providers for chain {chain} failed to connect.")
-
+        
     # ✅ FIXED: NEW METHOD - Simulate execution for paper trading
     async def _simulate_execution(self, order: TradeOrder, start_time: float) -> ExecutionResult:
         """Simulate trade execution for paper trading"""

@@ -30,7 +30,8 @@ class WhaleTracker:
         """Initialize whale tracker with configuration"""
         self.config = config or {}
         self.session = None
-        self.web3_connections = {}
+        self._web3_cache = {}
+        self._web3_locks = {}
         self.cache = TTLCache(ttl=300)  # 5 minute cache
         
         # Whale thresholds by chain (in USD)
@@ -54,27 +55,54 @@ class WhaleTracker:
     async def initialize(self):
         """Initialize connections and resources"""
         self.session = aiohttp.ClientSession()
-        await self._setup_web3_connections()
+        # ✅ Web3 connections lazy-loaded on demand
+        self._web3_cache = {}
+        self._web3_locks = {}
         await self._load_known_whales()
         logger.info("WhaleTracker initialized successfully")
         
-    async def _setup_web3_connections(self):
-        """Setup Web3 connections for each chain"""
-        for chain in Chain:
+    def _chain_id_to_name(self, chain_id: int) -> str:
+        """Convert chain ID to name"""
+        chain_map = {
+            1: 'ethereum',
+            56: 'bsc',
+            137: 'polygon',
+            42161: 'arbitrum',
+            8453: 'base',
+        }
+        return chain_map.get(chain_id, 'ethereum')
+
+    async def _get_web3_for_chain(self, chain: str):
+        """Lazy-load Web3 connection for chain"""
+        if chain in self._web3_cache:
+            w3 = self._web3_cache[chain]
+            if w3.is_connected():
+                return w3
+            else:
+                del self._web3_cache[chain]
+        
+        if chain not in self._web3_locks:
+            self._web3_locks[chain] = asyncio.Lock()
+        
+        async with self._web3_locks[chain]:
+            if chain in self._web3_cache:
+                return self._web3_cache[chain]
+            
             if hasattr(self.config, 'get_rpc_urls'):
-                rpc_urls = self.config.get_rpc_urls(chain.name.lower())
+                rpc_urls = self.config.get_rpc_urls(chain)
                 if rpc_urls:
-                    # Try to connect to the first available RPC URL
                     for rpc_url in rpc_urls:
                         try:
-                            w3 = Web3(Web3.HTTPProvider(rpc_url))
+                            w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 10}))
                             if w3.is_connected():
-                                self.web3_connections[chain] = w3
-                                logger.info(f"✅ WhaleTracker connected to {chain.name}: {rpc_url[:50]}...")
-                                break
+                                self._web3_cache[chain] = w3
+                                logger.info(f"✅ WhaleTracker lazy-loaded {chain}")
+                                return w3
                         except Exception as e:
-                            logger.warning(f"⚠️ WhaleTracker failed to connect to {rpc_url} for {chain.name}: {e}")
-                    
+                            logger.warning(f"Failed to connect to {rpc_url}: {e}")
+            
+            return None
+
     async def _load_known_whales(self):
         """Load known whale addresses from various sources"""
         # Add some known whale addresses
@@ -164,10 +192,10 @@ class WhaleTracker:
             # This would integrate with blockchain explorers or indexing services
             # For now, using a simplified approach
             
-            if chain_id not in self.web3_connections:
+            chain_name = self._chain_id_to_name(chain_id)
+            w3 = await self._get_web3_for_chain(chain_name)
+            if not w3:
                 return []
-                
-            w3 = self.web3_connections[chain_id]
             
             # Get token contract
             erc20_abi = self._get_erc20_abi()
@@ -226,10 +254,10 @@ class WhaleTracker:
                                     chain_id: int) -> List[Dict]:
         """Track recent transfers from whale wallets"""
         try:
-            if chain_id not in self.web3_connections:
+            chain_name = self._chain_id_to_name(chain_id)
+            w3 = await self._get_web3_for_chain(chain_name)
+            if not w3:
                 return []
-                
-            w3 = self.web3_connections[chain_id]
             
             # Get token contract
             erc20_abi = self._get_erc20_abi()

@@ -437,9 +437,12 @@ class DexScreenerCollector:
                 return cached_data
         
         try:
-            # ✅ Use CORRECT DexScreener endpoint with chain
             endpoint = f"latest/dex/tokens/{token_address}"
-            data = await self._make_request(endpoint)
+            # ✅ Add timeout wrapper
+            data = await asyncio.wait_for(
+                self._make_request(endpoint),
+                timeout=5.0  # 5 second timeout for price requests
+            )
             
             if data and 'pairs' in data and len(data['pairs']) > 0:
                 # Filter pairs for the correct chain

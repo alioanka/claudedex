@@ -98,7 +98,8 @@ class WalletSecurityManager:
         self.daily_volumes = {}
         
         # Web3 connections
-        self.web3_connections: Dict[str, Web3] = {}
+        self._web3_cache: Dict[str, Web3] = {}
+        self._web3_locks: Dict[str, asyncio.Lock] = {}
         
         logger.info("WalletSecurityManager initialized")
 
@@ -141,27 +142,51 @@ class WalletSecurityManager:
             raise
 
     async def _initialize_web3_connections(self) -> None:
-        """Initialize Web3 connections for different chains"""
-        try:
-            chain_configs = self.config.get('chains', {})
+        """Initialize Web3 connection cache (lazy-loaded)"""
+        self._web3_cache = {}
+        self._web3_locks = {}
+        logger.info("Web3 connections will be lazy-loaded when needed")
+
+    async def _get_web3_for_chain(self, chain: str):
+        """Lazy-load Web3 connection for chain"""
+        if chain in self._web3_cache:
+            w3 = self._web3_cache[chain]
+            if w3.is_connected():
+                return w3
+            else:
+                del self._web3_cache[chain]
+        
+        if chain not in self._web3_locks:
+            self._web3_locks[chain] = asyncio.Lock()
+        
+        async with self._web3_locks[chain]:
+            if chain in self._web3_cache:
+                return self._web3_cache[chain]
             
-            for chain_name, chain_config in chain_configs.items():
-                rpc_url = chain_config.get('rpc_url')
-                if rpc_url:
-                    w3 = Web3(Web3.HTTPProvider(rpc_url))
+            chain_configs = self.config.get('chains', {})
+            chain_config = chain_configs.get(chain)
+            
+            if not chain_config:
+                return None
+            
+            rpc_url = chain_config.get('rpc_url')
+            if rpc_url:
+                try:
+                    w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 30}))
                     
                     # Add PoA middleware if needed
                     if chain_config.get('is_poa', False):
+                        from web3.middleware import geth_poa_middleware
                         w3.middleware_onion.inject(geth_poa_middleware, layer=0)
                     
                     if w3.is_connected():
-                        self.web3_connections[chain_name] = w3
-                        logger.info(f"Connected to {chain_name} blockchain")
-                    else:
-                        logger.warning(f"Failed to connect to {chain_name} blockchain")
-                        
-        except Exception as e:
-            logger.error(f"Failed to initialize Web3 connections: {e}")
+                        self._web3_cache[chain] = w3
+                        logger.info(f"✅ WalletSecurity lazy-loaded {chain}")
+                        return w3
+                except Exception as e:
+                    logger.warning(f"Failed to connect to {chain}: {e}")
+            
+            return None
 
     async def _load_security_policies(self) -> None:
         """Load security policies and rules"""
@@ -339,7 +364,8 @@ class WalletSecurityManager:
             await self._check_transaction_limits(wallet_id, transaction_data)
             
             # Get Web3 connection
-            w3 = self.web3_connections.get(chain)
+            # Get Web3 connection (lazy-loaded)
+            w3 = await self._get_web3_for_chain(chain)
             if not w3:
                 raise ValueError(f"No connection to {chain} blockchain")
             
