@@ -4,7 +4,7 @@ Real-time DEX data collection and monitoring
 """
 
 import asyncio
-import aiohttp
+import httpx
 from typing import Dict, List, Optional, Any, AsyncGenerator
 from datetime import datetime, timedelta
 import json
@@ -86,8 +86,8 @@ class DexScreenerCollector:
         self.max_age_hours = config.get('max_age_hours', 24)
         self.chains = config.get('chains', ['ethereum', 'bsc', 'polygon', 'arbitrum', 'base', 'solana'])
         
-        # Session
-        self.session: Optional[aiohttp.ClientSession] = None
+        # httpx client
+        self.client: Optional[httpx.AsyncClient] = None
         
         # Statistics
         self.stats = {
@@ -135,18 +135,14 @@ class DexScreenerCollector:
 
     async def initialize(self):
         """Initialize the collector"""
-        if not self.session:
-            # Bound concurrency to avoid long in-flight tails
-            timeout = aiohttp.ClientTimeout(total=20)
-            connector = aiohttp.TCPConnector(limit=10)  # <= cap open conns
-            self.session = aiohttp.ClientSession(timeout=timeout, connector=connector)
-            logger.debug("DexScreener session initialized")
+        if not self.client:
+            self.client = httpx.AsyncClient(timeout=20.0, limits=httpx.Limits(max_connections=10))
+            logger.debug("DexScreener client initialized")
 
-            
     async def close(self):
         """Close the collector"""
-        if self.session:
-            await self.session.close()
+        if self.client:
+            await self.client.aclose()
             
     async def _rate_limit(self):
         """Implement rate limiting"""
@@ -354,10 +350,6 @@ class DexScreenerCollector:
                             
                             if len(new_pairs) >= limit:
                                 break
-                except asyncio.CancelledError:
-                    print(f"  Token profiles strategy failed: {e}")
-                    logger.warning("[DexScreener] get_new_pairs cancelled during profiles")
-                    raise
                 except Exception as e:
                     logger.warning(f"[DexScreener] profiles strategy failed: {e}")
             

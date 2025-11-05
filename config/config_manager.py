@@ -191,6 +191,7 @@ class MLModelsConfig(BaseModel):
     """ML Models configuration schema"""
 
     model_config = {'protected_namespaces': ()}  # Add this line
+    ml_enabled: bool = True
     # Model settings
     enable_ensemble: bool = True
     model_update_frequency: int = 24  # hours
@@ -650,6 +651,10 @@ class ConfigManager:
 
             env_data['rpc_urls'] = rpc_urls
         
+        if config_type == ConfigType.ML_MODELS:
+            if os.getenv('ML_ENABLED') is not None:
+                env_data['ml_enabled'] = os.getenv('ML_ENABLED').lower() in ('true', '1', 'yes')
+
         # Generic prefix-based loading (existing code continues)
         prefix = f"BOT_{config_type.value.upper()}_"
         for key, value in os.environ.items():

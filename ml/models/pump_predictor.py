@@ -10,16 +10,21 @@ from pathlib import Path
 import pickle
 import joblib
 
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from sklearn.model_selection import train_test_split, TimeSeriesSplit
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-import xgboost as xgb
-import lightgbm as lgb
-from tensorflow.keras.models import Sequential, load_model
-from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+# Conditionally import ML libraries
+try:
+    from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+    from sklearn.preprocessing import StandardScaler, MinMaxScaler
+    from sklearn.model_selection import train_test_split, TimeSeriesSplit
+    from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+    import xgboost as xgb
+    import lightgbm as lgb
+    from tensorflow.keras.models import Sequential, load_model
+    from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization
+    from tensorflow.keras.optimizers import Adam
+    from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+    ML_LIBS_AVAILABLE = True
+except ImportError:
+    ML_LIBS_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +37,7 @@ class PumpPredictor:
     
     def __init__(self, config: Dict[str, Any]):
         self.config = config
+        self.ml_enabled = self.config.get('ml_enabled', False) and ML_LIBS_AVAILABLE
         self.models = {}
         self.scalers = {}
         self.sequence_length = 20  # Look back period for LSTM
@@ -75,6 +81,8 @@ class PumpPredictor:
     
     def _initialize_models(self):
         """Initialize ensemble of prediction models."""
+        if not self.ml_enabled:
+            return
         
         # LSTM model for time-series prediction
         self.models['lstm'] = self._build_lstm_model()
@@ -340,6 +348,9 @@ class PumpPredictor:
         pump_labels: Optional[np.ndarray] = None
     ) -> Dict[str, Any]:
         """Train pump prediction models."""
+        if not self.ml_enabled:
+            logger.warning("ML is disabled. Skipping pump predictor training.")
+            return {}
         logger.info("Starting pump predictor training...")
         
         # Prepare LSTM sequences
@@ -433,6 +444,8 @@ class PumpPredictor:
         Returns:
             Pump probability (0-1)
         """
+        if not self.ml_enabled:
+            return 0.5
         predictions = {}
         
         # LSTM prediction if we have sequence data
