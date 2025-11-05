@@ -403,6 +403,7 @@ class TradingBotEngine:
                         min_liquidity = chain_config.get('min_liquidity', 10000)
                         
                         logger.info(f"  🔗 Scanning {chain.upper()}... (min liquidity: ${min_liquidity:,.0f})")
+                        logger.debug(f"  [engine] calling get_new_pairs(chain={chain}, limit={max_pairs_per_chain})")
                         
                         
                         # ✅ CRITICAL: Pass chain parameter to get_new_pairs WITH TIMEOUT
@@ -414,11 +415,12 @@ class TradingBotEngine:
                                 ),
                                 timeout=30.0  # 30 second timeout per chain
                             )
+                            logger.debug(f"  [engine] get_new_pairs returned {len(pairs) if pairs else 0} pairs")
                         except asyncio.TimeoutError:
                             logger.warning(f"⏰ Timeout fetching pairs for {chain.upper()} - skipping this chain")
                             pairs = None
                         except Exception as e:
-                            logger.error(f"❌ Error fetching new pairs for {chain.upper()}: {e}")
+                            logger.exception(f"❌ Error fetching new pairs for {chain.upper()}: {e}")
                             pairs = None
                         
                         if pairs:

@@ -9,9 +9,12 @@ from typing import Dict, List, Optional, Any, AsyncGenerator
 from datetime import datetime, timedelta
 import json
 from dataclasses import dataclass, field
+import logging
 import time
 from collections import deque
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class TokenPair:
@@ -133,8 +136,12 @@ class DexScreenerCollector:
     async def initialize(self):
         """Initialize the collector"""
         if not self.session:
-            timeout = aiohttp.ClientTimeout(total=30)
-            self.session = aiohttp.ClientSession(timeout=timeout)
+            # Bound concurrency to avoid long in-flight tails
+            timeout = aiohttp.ClientTimeout(total=20)
+            connector = aiohttp.TCPConnector(limit=10)  # <= cap open conns
+            self.session = aiohttp.ClientSession(timeout=timeout, connector=connector)
+            logger.debug("DexScreener session initialized")
+
             
     async def close(self):
         """Close the collector"""
@@ -191,24 +198,32 @@ class DexScreenerCollector:
                 else:
                     self.stats['failed_requests'] += 1
                     print(f"API request failed: {response.status} - URL: {url}")
+                    logger.debug(f"[DexScreener] request failed {response.status} url={url}")
                     return None
                     
         except asyncio.TimeoutError:
             self.stats['failed_requests'] += 1
             print("Request timeout")
+            logger.debug("[DexScreener] request timeout")
             return None
         except Exception as e:
             self.stats['failed_requests'] += 1
             print(f"Request error: {e}")
             return None
+
+        except asyncio.CancelledError:
+            logger.warning("[DexScreener] request cancelled")
+            raise
                     
         except asyncio.TimeoutError:
             self.stats['failed_requests'] += 1
             print("Request timeout")
+            logger.debug("[DexScreener] request timeout")
             return None
         except Exception as e:
             self.stats['failed_requests'] += 1
             print(f"Request error: {e}")
+            logger.debug(f"[DexScreener] request error: {e}")
             return None
             
     # 1. Fix get_new_pairs signature (line ~165)
@@ -233,8 +248,12 @@ class DexScreenerCollector:
         # ✅ CRITICAL: Normalize chain name for DexScreener
         chain = self._normalize_chain(chain)
         
-        new_pairs = []
+        new_pairs: List[Dict] = []
         seen_addresses = set()
+        start = time.monotonic()
+        # Hard overall time budget for this call (must be < engine wait_for)
+        MAX_SECS = 25.0
+        logger.info(f"[DexScreener] get_new_pairs start chain={chain} limit={limit}")
         
         # Check cache
         cache_key = f"new_pairs_{chain}"
@@ -253,6 +272,7 @@ class DexScreenerCollector:
                 
                 if boosted_data:
                     print(f"  Found {len(boosted_data) if isinstance(boosted_data, list) else 1} boosted tokens")
+                    logger.debug(f"[DexScreener] boosted tokens fetched")
                     
                     tokens_list = boosted_data if isinstance(boosted_data, list) else [boosted_data]
                     
@@ -335,10 +355,21 @@ class DexScreenerCollector:
                             
                             if len(new_pairs) >= limit:
                                 break
-                except Exception as e:
+                except asyncio.CancelledError:
                     print(f"  Token profiles strategy failed: {e}")
+                    logger.warning("[DexScreener] get_new_pairs cancelled during profiles")
+                    raise
+                except Exception as e:
+                    logger.warning(f"[DexScreener] profiles strategy failed: {e}")
             
             print(f"  Strategy 2 (Profiles): {len(new_pairs)} pairs")
+
+            logger.debug(f"[DexScreener] profiles result so far: {len(new_pairs)}")
+
+            # ✅ Check overall time budget frequently
+            if time.monotonic() - start > MAX_SECS:
+                logger.warning("[DexScreener] time budget exceeded; returning partial results")
+                return new_pairs
             
             # ✅ STRATEGY 3: Search common quote tokens (CORRECT endpoint)
             # ============================================
