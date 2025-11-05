@@ -437,8 +437,11 @@ class DexScreenerCollector:
             return final_pairs
             
         except Exception as e:
-            print(f"❌ Error in get_new_pairs for {chain}: {e}")
+            logger.error(f"❌ Error in get_new_pairs for {chain}: {e}")
+            logger.error(f"❌ Exception type: {type(e).__name__}")
             import traceback
+            logger.error(f"❌ Traceback: {traceback.format_exc()}")
+            print(f"❌ Error in get_new_pairs for {chain}: {e}")
             traceback.print_exc()
             return []
         
