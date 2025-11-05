@@ -121,6 +121,8 @@ class TradingBotEngine:
             config_manager: The main ConfigManager instance
             mode: Operating mode
         """
+        self.session = None
+        self._init_task = None
         self.config_manager = config_manager
         self.config = config_manager.get_all_configs() # Keep a dict representation for compatibility
         self.mode = mode
@@ -406,15 +408,15 @@ class TradingBotEngine:
                         logger.debug(f"  [engine] calling get_new_pairs(chain={chain}, limit={max_pairs_per_chain})")
                         
                         # ✅ CRITICAL FIX: Ensure DexScreener collector is initialized before use
-                        if not hasattr(self.dex_collector, 'session') or self.dex_collector.session is None:
-                            logger.warning(f"⚠️ DexScreener session not initialized, initializing now...")
-                            try:
-                                await self.dex_collector.initialize()
-                                logger.info("✅ DexScreener session initialized")
-                            except Exception as init_err:
-                                logger.error(f"❌ Failed to initialize DexScreener: {init_err}")
-                                pairs = None
-                                continue
+#                        if not hasattr(self.dex_collector, 'session') or self.dex_collector.session is None:
+#                            logger.warning(f"⚠️ DexScreener session not initialized, initializing now...")
+#                            try:
+#                                await self.dex_collector.initialize()
+#                                logger.info("✅ DexScreener session initialized")
+#                            except Exception as init_err:
+#                                logger.error(f"❌ Failed to initialize DexScreener: {init_err}")
+#                                pairs = None
+#                                continue
                         
                         # ✅ CRITICAL: Pass chain parameter to get_new_pairs WITH TIMEOUT
                         try:
