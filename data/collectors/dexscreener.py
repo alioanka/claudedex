@@ -469,7 +469,7 @@ class DexScreenerCollector:
                 return cached_data
         
         try:
-            endpoint = f"latest/dex/tokens/{token_address}"
+            endpoint = f"/tokens/v1/{chain}/{token_address}"
             # ✅ Add timeout wrapper
             data = await asyncio.wait_for(
                 self._make_request(endpoint),
@@ -508,7 +508,7 @@ class DexScreenerCollector:
             print(f"Error getting token price for {token_address} on {chain}: {e}")
             return None
         
-    async def get_pair_data(self, pair_address: str) -> Optional[Dict]:
+    async def get_pair_data(self, pair_address: str, chain: str) -> Optional[Dict]:
         """
         Get detailed pair data
         
@@ -526,7 +526,7 @@ class DexScreenerCollector:
                 return cached_data
                 
         # Fetch pair data
-        endpoint = f"pairs/{pair_address}"
+        endpoint = f"/latest/dex/pairs/{chain}/{pair_address}"
         data = await self._make_request(endpoint)
         
         if data and 'pair' in data:
@@ -570,7 +570,7 @@ class DexScreenerCollector:
         Returns:
             List of matching pairs
         """
-        endpoint = "search"
+        endpoint = "/latest/dex/search"
         params = {'q': query}
         data = await self._make_request(endpoint, params)
         
@@ -593,14 +593,15 @@ class DexScreenerCollector:
         trending = []
         
         for chain in self.chains:
-            endpoint = f"gainers/{chain}"
+            endpoint = "/token-boosts/top/v1"
             data = await self._make_request(endpoint)
             
             if data and 'pairs' in data:
                 for pair_data in data['pairs']:
-                    pair = self._parse_pair(pair_data)
-                    if pair and self._filter_pair(pair):
-                        trending.append(self._pair_to_dict(pair))
+                    if pair_data.get('chainId') == chain:
+                        pair = self._parse_pair(pair_data)
+                        if pair and self._filter_pair(pair):
+                            trending.append(self._pair_to_dict(pair))
                         
         # Sort by volume
         trending.sort(key=lambda x: x['volume_24h'], reverse=True)
@@ -614,7 +615,7 @@ class DexScreenerCollector:
         Returns:
             List of boosted pairs
         """
-        endpoint = "boosts/active"
+        endpoint = "/token-boosts/latest/v1"
         data = await self._make_request(endpoint)
         
         boosted = []

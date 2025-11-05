@@ -2636,7 +2636,7 @@ class TradingBotEngine:
                         
                         # Fetch current price from DexScreener
                         pair_data = await self.dex_collector.get_pair_data(
-                            position.token_address
+                            position.token_address, chain=chain
                         )
                         
                         if pair_data and 'price_usd' in pair_data:
