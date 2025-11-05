@@ -651,34 +651,45 @@ class TradingBotEngine:
             logger.info(f"   Volume 24h: ${pair.get('volume_24h', 0):,.2f}")
             logger.info(f"   Age: {pair.get('age_hours', 999):.1f}h")
             
-            # Parallel analysis tasks
-            results = await asyncio.gather(
-                self.risk_manager.analyze_token(pair.get('token_address', '')),
-                self.pattern_analyzer.analyze_patterns(pair),
-                self.chain_collector.get_token_info(pair.get('token_address', '')),
-                self._check_developer_reputation(pair.get('creator_address', '')),
-                self._analyze_liquidity_depth(pair),
-                self._check_smart_contract(pair.get('token_address', '')),
-                self._analyze_holder_distribution(pair.get('token_address', '')),
-                return_exceptions=True
-            )
+            # Sequential analysis to reduce memory pressure
+            risk_score, patterns, token_info, dev_reputation, liquidity_depth, contract_safety, holder_dist = [None] * 7
             
-            # Unpack results
-            risk_score, patterns, token_info, dev_reputation, \
-            liquidity_depth, contract_safety, holder_dist = results
+            try:
+                risk_score = await self.risk_manager.analyze_token(pair.get('token_address', ''))
+            except Exception as e:
+                logger.debug(f"Risk analysis failed: {e}")
             
+            try:
+                patterns = await self.pattern_analyzer.analyze_patterns(pair)
+            except Exception as e:
+                logger.debug(f"Pattern analysis failed: {e}")
+
+            try:
+                token_info = await self.chain_collector.get_token_info(pair.get('token_address', ''))
+            except Exception as e:
+                logger.debug(f"Token info failed: {e}")
+
+            try:
+                dev_reputation = await self._check_developer_reputation(pair.get('creator_address', ''))
+            except Exception as e:
+                logger.debug(f"Dev reputation check failed: {e}")
+
+            try:
+                liquidity_depth = await self._analyze_liquidity_depth(pair)
+            except Exception as e:
+                logger.debug(f"Liquidity depth analysis failed: {e}")
+            
+            try:
+                contract_safety = await self._check_smart_contract(pair.get('token_address', ''))
+            except Exception as e:
+                logger.debug(f"Smart contract check failed: {e}")
+
+            try:
+                holder_dist = await self._analyze_holder_distribution(pair.get('token_address', ''))
+            except Exception as e:
+                logger.debug(f"Holder distribution analysis failed: {e}")
+
             sentiment = None
-            
-            # Handle exceptions
-            if isinstance(risk_score, Exception):
-                logger.debug(f"Risk analysis failed: {risk_score}")
-                risk_score = None
-            if isinstance(patterns, Exception):
-                logger.debug(f"Pattern analysis failed: {patterns}")
-                patterns = None
-            if isinstance(token_info, Exception):
-                logger.debug(f"Token info failed: {token_info}")
-                token_info = None
             
             # Calculate overall score
             score = self._calculate_opportunity_score(
