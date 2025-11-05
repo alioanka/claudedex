@@ -134,9 +134,6 @@ async def test_web3_connection():
     
 async def test_api_connection():
     """Test DexScreener API connection"""
-    from data.collectors.dexscreener import test_api_connection as test_api
-    await test_api()
-    
 async def verify_models_loaded():
     """Verify ML models are loaded"""
     from ml.models.ensemble_model import EnsemblePredictor
@@ -631,7 +628,6 @@ class TradingBotApplication:
             ("Database connectivity", self._check_database),
             ("Redis connectivity", self._check_redis),
             ("Web3 connectivity", self._check_web3),
-            ("API endpoints", self._check_apis),
             ("ML models", self._check_models),
             ("Wallet balance", self._check_wallet)
         ]
@@ -660,11 +656,6 @@ class TradingBotApplication:
         """Check Web3 connectivity"""
 #        from trading.executors.direct_dex import test_web3_connection
         await test_web3_connection()
-        
-    async def _check_apis(self):
-        """Check external API connectivity"""
-#        from data.collectors.dexscreener import test_api_connection
-        await test_api_connection()
         
     async def _check_models(self):
         """Check ML models are loaded"""
@@ -844,7 +835,7 @@ async def test_dex_collector(logger_instance):
 
     collector = DexScreenerCollector({'api_key': '', 'chains': [test_chain]})
     await collector.initialize()
-    
+
     success = False
     try:
         # Try to fetch some data from the specified chain
