@@ -92,7 +92,8 @@ class SmartContractAnalyzer:
     
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        self.web3_connections: Dict[str, Web3] = {}
+        self._web3_cache: Dict[str, Web3] = {}
+        self._web3_locks: Dict[str, asyncio.Lock] = {}
         self.etherscan_apis: Dict[str, str] = {}
         self.vulnerability_patterns: Dict[str, Dict] = self._load_vulnerability_patterns()
         self.known_signatures: Dict[str, str] = self._load_function_signatures()
@@ -102,23 +103,11 @@ class SmartContractAnalyzer:
         
     async def initialize(self) -> None:
         """Initialize analyzer components"""
-        logger.info("Initializing Smart Contract Analyzer...")
+        logger.info("Initializing Smart Contract Analyzer with lazy-loading...")
         
-        # Setup Web3 connections
-        if hasattr(self.config, 'get_rpc_urls'):
-            for chain_name in self.config.get('chains', {}).get('enabled', []):
-                rpc_urls = self.config.get_rpc_urls(chain_name)
-                if rpc_urls:
-                    for rpc_url in rpc_urls:
-                        try:
-                            w3 = Web3(Web3.HTTPProvider(rpc_url))
-                            if w3.is_connected():
-                                self.web3_connections[chain_name] = w3
-                                logger.info(f"SmartContractAnalyzer connected to {chain_name}: {rpc_url[:50]}...")
-                                break
-                        except Exception as e:
-                            logger.warning(f"SmartContractAnalyzer failed to connect to {rpc_url} for {chain_name}: {e}")
-
+        # ✅ Web3 connections lazy-loaded on demand
+        self._web3_cache = {}
+        self._web3_locks = {}
         # Load Etherscan API keys
         self.etherscan_apis = self.config.get("etherscan_apis", {})
         
@@ -126,6 +115,37 @@ class SmartContractAnalyzer:
         await self._load_malicious_contracts()
         
         logger.info("Smart Contract Analyzer initialized")
+
+    async def _get_web3_for_chain(self, chain: str):
+        """Lazy-load Web3 connection for chain"""
+        if chain in self._web3_cache:
+            w3 = self._web3_cache[chain]
+            if w3.is_connected():
+                return w3
+            else:
+                del self._web3_cache[chain]
+        
+        if chain not in self._web3_locks:
+            self._web3_locks[chain] = asyncio.Lock()
+        
+        async with self._web3_locks[chain]:
+            if chain in self._web3_cache:
+                return self._web3_cache[chain]
+            
+            if hasattr(self.config, 'get_rpc_urls'):
+                rpc_urls = self.config.get_rpc_urls(chain)
+                if rpc_urls:
+                    for rpc_url in rpc_urls:
+                        try:
+                            w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 10}))
+                            if w3.is_connected():
+                                self._web3_cache[chain] = w3
+                                logger.info(f"✅ SmartContractAnalyzer lazy-loaded {chain}")
+                                return w3
+                        except Exception as e:
+                            logger.warning(f"Failed to connect to {rpc_url}: {e}")
+            
+            return None
     
     @retry_async(max_retries=3, delay=1.0)
     @measure_time
@@ -274,7 +294,7 @@ class SmartContractAnalyzer:
         data = {}
         
         # Get bytecode from blockchain
-        w3 = self.web3_connections.get(chain)
+        w3 = await self._get_web3_for_chain(chain)
         if w3:
             code = w3.eth.get_code(address)
             data["bytecode"] = code.hex() if code else ""
@@ -401,7 +421,7 @@ class SmartContractAnalyzer:
         for pattern in proxy_patterns:
             if pattern in bytecode:
                 # Get implementation address
-                w3 = self.web3_connections.get(chain)
+                w3 = await self._get_web3_for_chain(chain)
                 if w3:
                     try:
                         impl_slot = "0x" + pattern
@@ -429,7 +449,7 @@ class SmartContractAnalyzer:
         chain: str
     ) -> Optional[str]:
         """Get contract owner if exists"""
-        w3 = self.web3_connections.get(chain)
+        w3 = await self._get_web3_for_chain(chain)
         if not w3:
             return None
         
@@ -1071,7 +1091,7 @@ class SmartContractAnalyzer:
         """Get contract creation information"""
         info = {}
         
-        w3 = self.web3_connections.get(chain)
+        w3 = await self._get_web3_for_chain(chain)
         if not w3:
             return info
         
@@ -1106,7 +1126,7 @@ class SmartContractAnalyzer:
         params: List[Any]
     ) -> Optional[int]:
         """Estimate gas usage for contract function"""
-        w3 = self.web3_connections.get(chain)
+        w3 = await self._get_web3_for_chain(chain)
         if not w3:
             return None
         

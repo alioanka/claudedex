@@ -1329,7 +1329,8 @@ class TradingBotEngine:
             
             try:
                 if not self.active_positions:
-                    await asyncio.sleep(5)
+                    logger.debug("📊 No active positions, sleeping for 10s...")
+                    await asyncio.sleep(10)
                     continue
                 
                 logger.info(f"📊 Monitoring {len(self.active_positions)} active positions...")
@@ -1341,11 +1342,21 @@ class TradingBotEngine:
                         chain = position.get('chain', 'ethereum')
                         token_symbol = position.get('token_symbol', 'UNKNOWN')
                         
-                        # Get current price from DexScreener
-                        current_price = await self.dex_collector.get_token_price(
-                            token_address=token_address,
-                            chain=chain
-                        )
+                        # Get current price from DexScreener WITH TIMEOUT
+                        try:
+                            current_price = await asyncio.wait_for(
+                                self.dex_collector.get_token_price(
+                                    token_address=token_address,
+                                    chain=chain
+                                ),
+                                timeout=10.0  # 10 second timeout per token
+                            )
+                        except asyncio.TimeoutError:
+                            logger.warning(
+                                f"⏰ Timeout getting price for {token_symbol} "
+                                f"({token_address[:10]}...) on {chain}"
+                            )
+                            current_price = None
                         
                         if current_price:
                             price_data[token_address] = float(current_price)

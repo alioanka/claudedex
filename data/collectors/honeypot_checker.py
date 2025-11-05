@@ -73,7 +73,8 @@ class HoneypotChecker:
         """Initialize honeypot checker with configuration"""
         self.config = config or {}
         self.session = None
-        self.web3_connections = {}
+        self._web3_instances = {}
+        self._connection_locks = {}
         self.api_keys = {
             "honeypot_is": self.config.get("honeypot_is_api_key", ""),
             "tokensniffer": self.config.get("tokensniffer_api_key", ""),
@@ -84,28 +85,84 @@ class HoneypotChecker:
         
     async def initialize(self):
         """Initialize connections and resources"""
-        timeout = aiohttp.ClientTimeout(total=30)  # Increase timeout for Solana
+        timeout = aiohttp.ClientTimeout(total=30)
         self.session = aiohttp.ClientSession(timeout=timeout)
-        await self._setup_web3_connections()
-        logger.info("✅ HoneypotChecker initialized (EVM + Solana support)")
+        # ✅ DON'T setup Web3 connections yet - lazy load them
+        self._web3_instances = {}
+        self._connection_locks = {}  # Thread-safe lazy init
+        logger.info("✅ HoneypotChecker initialized (EVM + Solana support, lazy loading)")
         
-    async def _setup_web3_connections(self):
-        """Setup Web3 connections for each chain"""
-        for chain in Chain:
-            # The get_rpc_urls method should be part of the config manager passed in
-            if hasattr(self.config, 'get_rpc_urls'):
-                rpc_urls = self.config.get_rpc_urls(chain.name.lower())
-                if rpc_urls:
-                    # Try to connect to the first available RPC URL
-                    for rpc_url in rpc_urls:
-                        try:
-                            w3 = Web3(Web3.HTTPProvider(rpc_url))
-                            if w3.is_connected():
-                                self.web3_connections[chain] = w3
-                                logger.info(f"✅ Connected to {chain.name}: {rpc_url[:50]}...")
-                                break  # Move to the next chain once connected
-                        except Exception as e:
-                            logger.warning(f"⚠️ Failed to connect to {rpc_url} for {chain.name}: {e}")
+    async def _get_web3_for_chain(self, chain: str):
+            """
+            Lazy-load Web3 connection only when needed
+            Thread-safe with asyncio locks
+            """
+            from utils.constants import Chain
+            
+            # Normalize chain to Chain enum
+            chain_map = {
+                'ethereum': Chain.ETHEREUM,
+                'bsc': Chain.BSC,
+                'polygon': Chain.POLYGON,
+                'arbitrum': Chain.ARBITRUM,
+                'base': Chain.BASE,
+            }
+            
+            # Handle both string and Chain enum
+            if isinstance(chain, str):
+                chain_enum = chain_map.get(chain.lower(), Chain.ETHEREUM)
+            else:
+                chain_enum = chain
+            
+            # Return cached connection if available
+            if chain_enum in self._web3_instances:
+                w3 = self._web3_instances[chain_enum]
+                if w3.is_connected():
+                    return w3
+                else:
+                    # Connection lost, remove from cache
+                    del self._web3_instances[chain_enum]
+            
+            # Create lock for this chain if doesn't exist
+            if chain_enum not in self._connection_locks:
+                self._connection_locks[chain_enum] = asyncio.Lock()
+            
+            # Use lock to ensure only one coroutine creates the connection
+            async with self._connection_locks[chain_enum]:
+                # Double-check after acquiring lock
+                if chain_enum in self._web3_instances:
+                    return self._web3_instances[chain_enum]
+                
+                # Create new connection
+                if hasattr(self.config, 'get_rpc_urls'):
+                    rpc_urls = self.config.get_rpc_urls(chain if isinstance(chain, str) else chain.name.lower())
+                    if rpc_urls:
+                        for rpc_url in rpc_urls:
+                            try:
+                                w3 = Web3(Web3.HTTPProvider(
+                                    rpc_url,
+                                    request_kwargs={'timeout': 10}
+                                ))
+                                if w3.is_connected():
+                                    self._web3_instances[chain_enum] = w3
+                                    logger.info(f"✅ HoneypotChecker lazy-loaded {chain}")
+                                    return w3
+                            except Exception as e:
+                                logger.warning(f"⚠️ Failed to connect to {rpc_url}: {e}")
+                
+                logger.warning(f"⚠️ Could not establish Web3 connection for {chain}")
+                return None
+
+    def _normalize_chain_to_enum(self, chain: str) -> Chain:
+        """Convert chain string to Chain enum"""
+        chain_map = {
+            'ethereum': Chain.ETHEREUM,
+            'bsc': Chain.BSC,
+            'polygon': Chain.POLYGON,
+            'arbitrum': Chain.ARBITRUM,
+            'base': Chain.BASE,
+        }
+        return chain_map.get(chain.lower(), Chain.ETHEREUM)
 
     async def close(self):
         """Clean up resources"""
@@ -656,17 +713,12 @@ class HoneypotChecker:
     async def analyze_contract_code(self, address: str, chain: str) -> Dict:
         """Analyze smart contract code for honeypot patterns"""
         try:
-            chain_id = self._get_chain_id(chain)
-            if chain_id not in self.web3_connections:
-                logger.warning(f"Chain {chain_id} not in web3_connections")
+            # ✅ Lazy-load connection
+            w3 = await self._get_web3_for_chain(chain)
+            
+            if not w3 or not w3.is_connected():
+                logger.warning(f"Could not get Web3 connection for {chain}")
                 return {"error": "Chain not supported", "skip": True}
-            
-            w3 = self.web3_connections[chain_id]
-            
-            # ✅ ADD THIS CHECK:
-            if not w3.is_connected():
-                logger.error(f"Web3 not connected for chain {chain_id}")
-                return {"error": "Web3 not connected", "skip": True}
             
             # ... rest of method
             
