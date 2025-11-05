@@ -39,8 +39,16 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: trading-bot
-    # restart: unless-stopped
-    restart: "no"  # Changed to prevent restart loop
+    restart: unless-stopped  # ✅ CHANGE THIS from "no" to "unless-stopped"
+    
+    # ✅ ADD THESE 7 LINES (after restart line):
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+        reservations:
+          memory: 1.5G
+    
     ports:
       - "8080:8080"
     environment:

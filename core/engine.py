@@ -1320,31 +1320,6 @@ class TradingBotEngine:
 
     async def _monitor_existing_positions(self):
         """Monitor and manage existing positions"""
-        
-        # ✅ DIAGNOSTIC: Log memory and let event loop process
-        try:
-            import psutil
-            import gc
-            
-            # Force garbage collection
-            gc.collect()
-            
-            # Get current memory
-            process = psutil.Process()
-            memory_mb = process.memory_info().rss / 1024 / 1024
-            
-            logger.info(f"💾 Memory before position monitoring: {memory_mb:.1f}MB")
-            logger.info(f"🔢 Active positions count: {len(self.active_positions)}")
-            logger.info(f"🔗 DB connected: {hasattr(self, 'db') and self.db is not None}")
-            
-            # Let event loop breathe
-            await asyncio.sleep(0.5)
-            
-        except Exception as e:
-            logger.warning(f"Could not get diagnostics: {e}")
-        
-        # ... rest of your code
-        """Monitor and manage existing positions"""
         logger.info("📊 Starting chain-agnostic position monitoring loop...")
         
         while self.state == BotState.RUNNING:
