@@ -181,8 +181,9 @@ class DexScreenerCollector:
             
         try:
             self.stats['total_requests'] += 1
-            
-            async with self.session.get(url, params=params, headers=headers) as response:
+            timeout = aiohttp.ClientTimeout(total=20)
+            async with self.session.get(url, params=params, headers=headers, timeout=timeout) as response:
+
                 if response.status == 200:
                     self.stats['successful_requests'] += 1
                     data = await response.json()
