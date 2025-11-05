@@ -175,6 +175,14 @@ class DexScreenerCollector:
         Returns:
             Response data or None
         """
+        # ✅ CRITICAL FIX: Ensure session is initialized
+        if not self.session:
+            logger.error("[DexScreener] Session not initialized! Call initialize() first.")
+            await self.initialize()
+            if not self.session:
+                logger.error("[DexScreener] Failed to initialize session")
+                return None
+        
         await self._rate_limit()
         
         # Remove any leading slashes from endpoint
@@ -203,28 +211,19 @@ class DexScreenerCollector:
                     
         except asyncio.TimeoutError:
             self.stats['failed_requests'] += 1
-            print("Request timeout")
-            logger.debug("[DexScreener] request timeout")
+            logger.warning(f"[DexScreener] Request timeout for {endpoint}")
+            return None
+        except AttributeError as e:
+            self.stats['failed_requests'] += 1
+            logger.error(f"[DexScreener] Session not initialized: {e}")
             return None
         except Exception as e:
             self.stats['failed_requests'] += 1
-            print(f"Request error: {e}")
+            logger.error(f"[DexScreener] Request error for {endpoint}: {e}", exc_info=True)
             return None
-
         except asyncio.CancelledError:
-            logger.warning("[DexScreener] request cancelled")
+            logger.warning("[DexScreener] Request cancelled")
             raise
-                    
-        except asyncio.TimeoutError:
-            self.stats['failed_requests'] += 1
-            print("Request timeout")
-            logger.debug("[DexScreener] request timeout")
-            return None
-        except Exception as e:
-            self.stats['failed_requests'] += 1
-            print(f"Request error: {e}")
-            logger.debug(f"[DexScreener] request error: {e}")
-            return None
             
     # 1. Fix get_new_pairs signature (line ~165)
     # REPLACE the existing method signature and update the implementation:
