@@ -125,7 +125,6 @@ class TradingBotEngine:
             config_manager: The main ConfigManager instance
             mode: Operating mode
         """
-
         self.config_manager = config_manager
         self.config = config_manager.get_all_configs() # Keep a dict representation for compatibility
         self.mode = mode
@@ -416,16 +415,6 @@ class TradingBotEngine:
                         logger.info(f"  🔗 Scanning {chain.upper()}... (min liquidity: ${min_liquidity:,.0f})")
                         logger.debug(f"  [engine] calling get_new_pairs(chain={chain}, limit={max_pairs_per_chain})")
                         
-                        # ✅ CRITICAL FIX: Ensure DexScreener collector is initialized before use
-                        if not hasattr(self.dex_collector, 'session') or self.dex_collector.session is None:
-                            logger.warning(f"⚠️ DexScreener session not initialized, initializing now...")
-                            try:
-                                await self.dex_collector.initialize()
-                                logger.info("✅ DexScreener session initialized")
-                            except Exception as init_err:
-                                logger.error(f"❌ Failed to initialize DexScreener: {init_err}")
-                                pairs = None
-                                continue
                         
                         # ✅ CRITICAL: Pass chain parameter to get_new_pairs WITH TIMEOUT
                         try:
@@ -441,7 +430,7 @@ class TradingBotEngine:
                             logger.warning(f"⏰ Timeout fetching pairs for {chain.upper()} - skipping this chain")
                             pairs = None
                         except Exception as e:
-                            logger.error(f"❌ Error fetching new pairs for {chain.upper()}: {e}", exc_info=True)
+                            logger.exception(f"❌ Error fetching new pairs for {chain.upper()}: {e}")
                             pairs = None
                         
                         if pairs:
@@ -1384,8 +1373,6 @@ class TradingBotEngine:
             # ✅ FIX: Initialize at outer scope
             token_address = None
             position = None
-            chain = None
-            token_symbol = None
             
             try:
                 if not self.active_positions:
@@ -1471,10 +1458,10 @@ class TradingBotEngine:
                             
                             if should_exit:
                                 logger.info(
-                                    f"  🚪 EXIT SIGNAL for {position_symbol}: {reason}",
+                                    f"  🚪 EXIT SIGNAL for {token_symbol}: {reason}",
                                     extra={
                                         'token_address': token_address,
-                                        'symbol': position_symbol,
+                                        'symbol': token_symbol,
                                         'reason': reason
                                     }
                                 )
@@ -1488,15 +1475,13 @@ class TradingBotEngine:
                                     )
                         
                     except Exception as e:
-                        # ✅ FIX: Use position_symbol which is defined in this loop
-                        position_symbol = position.get('token_symbol', 'UNKNOWN') if position else 'UNKNOWN'
-                        chain = position.get('chain', 'ethereum') if position else 'unknown'
+                        # ✅ FIX: Now all variables are guaranteed to be defined
                         logger.error(
                             f"Error monitoring position {token_address[:10] if token_address else 'unknown'} "
-                            f"({position_symbol}): {e}",
+                            f"({token_symbol or 'UNKNOWN'}): {e}",
                             extra={
                                 'token_address': token_address,
-                                'symbol': position_symbol,
+                                'symbol': token_symbol,
                                 'chain': chain,
                                 'error': str(e)
                             },
