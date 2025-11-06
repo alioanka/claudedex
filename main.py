@@ -628,10 +628,12 @@ class TradingBotApplication:
             ("Database connectivity", self._check_database),
             ("Redis connectivity", self._check_redis),
             ("Web3 connectivity", self._check_web3),
-            ("ML models", self._check_models),
             ("Wallet balance", self._check_wallet)
         ]
         
+        if os.getenv('ML_ENABLED', 'false').lower() == 'true':
+            checks.append(("ML models", self._check_models))
+
         for check_name, check_func in checks:
             try:
                 self.logger.info(f"Checking {check_name}...")
