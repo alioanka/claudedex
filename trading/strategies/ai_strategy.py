@@ -414,7 +414,6 @@ class AIStrategy(BaseStrategy):
             chain=market_data.get("chain", ""),
             entry_price=Decimal(str(market_data.get("price", 0))),
             confidence=confidence,
-            timeframe=self.timeframe,
             indicators={
                 "pump_probability": pump_prob,
                 "rug_probability": rug_probability,
