@@ -31,10 +31,6 @@ from data.collectors.mempool_monitor import MempoolMonitor
 from data.collectors.whale_tracker import WhaleTracker
 from data.collectors.honeypot_checker import HoneypotChecker
 
-from ml.models.ensemble_model import EnsemblePredictor
-from ml.optimization.hyperparameter import HyperparameterOptimizer
-from ml.optimization.reinforcement import RLOptimizer
-
 from trading.executors.base_executor import TradeExecutor
 from trading.strategies import StrategyManager
 from trading.orders.order_manager import OrderManager
@@ -154,6 +150,9 @@ class TradingBotEngine:
         # ML components
         self.ml_enabled = self.config.get('ml_models', {}).get('ml_enabled', False)
         if self.ml_enabled:
+            from ml.models.ensemble_model import EnsemblePredictor
+            from ml.optimization.hyperparameter import HyperparameterOptimizer
+            from ml.optimization.reinforcement import RLOptimizer
             self.ensemble_predictor = EnsemblePredictor(self.config.get('ml_models', {}))
             self.hyperparam_optimizer = HyperparameterOptimizer()
             self.rl_optimizer = RLOptimizer()
