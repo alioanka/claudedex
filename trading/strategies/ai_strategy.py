@@ -10,8 +10,20 @@ from decimal import Decimal
 from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
 from loguru import logger
+
+# Conditionally import scikit-learn
+try:
+    from sklearn.preprocessing import StandardScaler
+    ML_LIBS_AVAILABLE = True
+except ImportError:
+    ML_LIBS_AVAILABLE = False
+    # Mock StandardScaler if scikit-learn is not installed
+    class StandardScaler:
+        def fit_transform(self, data):
+            return data
+        def transform(self, data):
+            return data
 
 from .base_strategy import (
     BaseStrategy, 

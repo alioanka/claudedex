@@ -10,8 +10,20 @@ from datetime import datetime, timedelta
 from enum import Enum
 import talib
 from scipy import signal
-from sklearn.preprocessing import StandardScaler
 import asyncio
+
+# Conditionally import scikit-learn
+try:
+    from sklearn.preprocessing import StandardScaler
+    ML_LIBS_AVAILABLE = True
+except ImportError:
+    ML_LIBS_AVAILABLE = False
+    # Mock StandardScaler if scikit-learn is not installed
+    class StandardScaler:
+        def fit_transform(self, data):
+            return data
+        def transform(self, data):
+            return data
 
 class PatternType(Enum):
     """Types of patterns detected"""
