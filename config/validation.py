@@ -742,7 +742,7 @@ class ConfigValidator:
         logger.info("\nChecking trading mode...")
         
         trading_mode = safe_get("TRADING_MODE", "DRY_RUN")
-        dry_run = safe_get("DRY_RUN", "true").lower() in ("true", "1", "yes")
+        dry_run = safe_get("DRY_RUN", "true").strip().lower() in ("true", "1", "yes")
         
         logger.info(f"  • Trading Mode: {trading_mode}")
         logger.info(f"  • Dry Run: {dry_run}")
