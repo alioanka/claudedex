@@ -141,6 +141,7 @@ class SecurityConfig(BaseModel):
     # Wallet security
     hardware_wallet_required: bool = False
     multisig_threshold: int = 2
+    private_key: Optional[SecretStr] = None
     
     @validator('api_rate_limit')
     def validate_rate_limit(cls, v):
