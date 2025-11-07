@@ -54,6 +54,8 @@ from monitoring.logger import StructuredLogger  # Add import at top
 from monitoring.logger import log_trade_entry, log_trade_exit
 
 from security.wallet_security import WalletSecurityManager
+from config.config_manager import ConfigManager # ADD THIS
+
 
 class BotState(Enum):
     """Bot operational states"""
@@ -112,40 +114,46 @@ class ClosedPositionRecord:
 class TradingBotEngine:
     """Main orchestration engine for the trading bot"""
     
-    def __init__(self, config: Dict, mode: str = "production"):
+    def __init__(self, config_manager: ConfigManager, mode: str = "production"):
         """
         Initialize the trading engine
         
         Args:
-            config: Configuration dictionary
+            config_manager: The central configuration manager instance.
             mode: Operating mode
         """
-        self.config = config
+        self.config_manager = config_manager
         self.mode = mode
         self.state = BotState.INITIALIZING
         
+        # --- Get typed configuration models from the manager ---
+        portfolio_config = self.config_manager.get_portfolio_config()
+        risk_config = self.config_manager.get_risk_management_config()
+        data_sources_config = self.config_manager.get_data_sources_config()
+        web3_config = self.config_manager.get_web3_config()
+        security_config = self.config_manager.get_security_config()
+        trading_config = self.config_manager.get_trading_config()
+        solana_config = self.config_manager.get_solana_config()
+        db_config = self.config_manager.get_database_config()
+        monitoring_config = self.config_manager.get_monitoring_config()
+
         # Core components
         self.event_bus = EventBus()
-        self.portfolio_manager = PortfolioManager(config.get('portfolio', {}))
+        self.portfolio_manager = PortfolioManager(portfolio_config.dict())
         self.risk_manager = RiskManager(
-            config['risk_management'], 
+            risk_config.dict(),
             portfolio_manager=self.portfolio_manager
         )
         self.pattern_analyzer = PatternAnalyzer()
-        self.decision_maker = DecisionMaker(config)
+        self.decision_maker = DecisionMaker(self.config_manager) # Pass the manager
 
         # Data collectors
-        # Use:
-        self.dex_collector = DexScreenerCollector(
-            config.get('data_sources', {}).get('dexscreener', {})
-        )
-        self.chain_collector = ChainDataCollector(config['web3'])
-        self.social_collector = SocialDataCollector(config['data_sources']['social'])
-        self.mempool_monitor = MempoolMonitor(config['web3'])
-        self.whale_tracker = WhaleTracker(config['web3'])
-
-        # ✅ ADD THIS LINE - Initialize honeypot checker
-        self.honeypot_checker = HoneypotChecker(config.get('security', {}))
+        self.dex_collector = DexScreenerCollector(data_sources_config.dexscreener.dict())
+        self.chain_collector = ChainDataCollector(web3_config.dict())
+        self.social_collector = SocialDataCollector(data_sources_config.social.dict())
+        self.mempool_monitor = MempoolMonitor(web3_config.dict())
+        self.whale_tracker = WhaleTracker(web3_config.dict())
+        self.honeypot_checker = HoneypotChecker(security_config.dict())
         
         # ML components
         self.ensemble_predictor = EnsemblePredictor()
@@ -153,91 +161,62 @@ class TradingBotEngine:
         self.rl_optimizer = RLOptimizer()
         
         # Trading components
-
         executor_config = {
-            'web3_provider_url': config.get('web3', {}).get('provider_url'),
-            'private_key': config.get('security', {}).get('private_key'),
-            'chain_id': config.get('web3', {}).get('chain_id', 1),
-            'max_gas_price': config.get('web3', {}).get('max_gas_price', 500),
-            'gas_limit': config.get('web3', {}).get('gas_limit', 500000),
+            'web3_provider_url': web3_config.provider_url,
+            'private_key': security_config.private_key.get_secret_value() if security_config.private_key else None,
+            'chain_id': web3_config.chain_id,
+            'max_gas_price': web3_config.max_gas_price,
+            'gas_limit': 500000, # Default value
             'max_retries': 3,
             'retry_delay': 1,
-            'uniswap_v2_router': '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',  # Mainnet router
-            '1inch_api_key': config.get('api', {}).get('1inch_api_key'),
-            'paraswap_api_key': config.get('api', {}).get('paraswap_api_key'),
+            'uniswap_v2_router': '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',
+            '1inch_api_key': self.config_manager.get('1INCH_API_KEY'),
+            'paraswap_api_key': self.config_manager.get('PARASWAP_API_KEY'),
         }
 
         # Database connection for logging
         from data.storage.database import DatabaseManager
-        self.db = DatabaseManager(config.get('database', {}))  
+        self.db = DatabaseManager(db_config.dict())
 
-        self.strategy_manager = StrategyManager(config['trading']['strategies'])
-        self.order_manager = OrderManager(config, db_manager=self.db)  # 🆕 ADD db_manager
+        self.strategy_manager = StrategyManager(trading_config.strategies)
+        self.order_manager = OrderManager(self.config_manager, db_manager=self.db)
         self.position_tracker = PositionTracker()
-        self.trade_executor = TradeExecutor(executor_config, db_manager=self.db)  # 🆕 ADD db_manager
+        self.trade_executor = TradeExecutor(executor_config, db_manager=self.db)
         
-
-        # ✅ PATCH 1: Connect OrderManager to actual execution engine
         logger.info("🔗 Connecting OrderManager to TradeExecutor...")
         self.order_manager.execution_engine = self.trade_executor
-
-        # ✅ PATCH 1B: Inject position tracker into risk monitor
         logger.info("🔗 Connecting OrderManager to PositionTracker...")
         self.order_manager.risk_monitor.position_tracker = self.position_tracker
         self.order_manager.risk_monitor.portfolio_manager = self.portfolio_manager
-
         logger.info("✅ OrderManager integrations complete")
-
-        # Find this section in __init__:
-        # self.trade_executor = DirectDEXExecutor(config)
-        # OR
-        # self.trade_executor = ToxiSolAPIExecutor(config)
-
-        # Add AFTER the existing executor initialization:
 
         # Initialize Solana executor if enabled
         self.solana_executor = None
-
-        # ✅ FIXED: Check both nested and flat config structures
-        solana_config = config.get('solana', {})
-        solana_enabled = (
-            solana_config.get('enabled', False) or 
-            config.get('solana_enabled', False)
-        )
+        solana_enabled = 'solana' in self.config_manager.get_chains_config().enabled_chains
 
         if solana_enabled:
             try:
-                # Try nested config first, fallback to flat
-                if solana_config:
-                    self.solana_executor = JupiterExecutor(solana_config)
-                else:
-                    # Build config from flat structure
-                    solana_config = {
-                        'enabled': config.get('solana_enabled', False),
-                        'rpc_url': config.get('solana_rpc_url'),
-                        'solana_private_key': config.get('solana_private_key'),
-                        'encryption_key': config.get('encryption_key'),
-                        'max_slippage_bps': config.get('jupiter_max_slippage_bps', 500),
-                        'dry_run': config.get('dry_run', True),
-                    }
-                    self.solana_executor = JupiterExecutor(solana_config)
+                solana_config_dict = solana_config.dict()
+                solana_config_dict['dry_run'] = self.config_manager.get('DRY_RUN', True)
+                # Ensure private key is unwrapped
+                if solana_config.private_key:
+                    solana_config_dict['private_key'] = solana_config.private_key.get_secret_value()
                 
+                self.solana_executor = JupiterExecutor(solana_config_dict)
                 logger.info("✅ Solana Jupiter Executor initialized")
             except Exception as e:
-                logger.error(f"❌ Failed to initialize Solana executor: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
+                logger.error(f"❌ Failed to initialize Solana executor: {e}", exc_info=True)
         else:
             logger.info("ℹ️ Solana trading disabled")
         
         # Monitoring
-        self.alert_manager = AlertManager(config['notifications'])
+        self.alert_manager = AlertManager(monitoring_config.dict())
         self.performance_tracker = PerformanceTracker()
 
-        self.structured_logger = StructuredLogger("TradingBot", config.get('logging', {}))
+        self.structured_logger = StructuredLogger("TradingBot", {'log_level': monitoring_config.log_level})
         
         # Security
-        self.wallet_manager = WalletSecurityManager(config['security'])
+        self.wallet_manager = WalletSecurityManager(security_config.dict())
         
         # Internal state
         self.active_positions: Dict[str, Any] = {}
@@ -253,7 +232,7 @@ class TradingBotEngine:
 
         # Cooldown tracking
         self.recently_closed: Dict[str, ClosedPositionRecord] = {}  # token_address -> record
-        self.cooldown_minutes = config.get('trading', {}).get('position_cooldown_minutes', 60)
+        self.cooldown_minutes = self.config_manager.get_trading_config().position_cooldown_minutes
         
       
         
@@ -391,34 +370,14 @@ class TradingBotEngine:
         """Continuously monitor for new trading pairs"""
         logger.info("🔍 Starting new pairs monitoring loop...")
         
-        # ✅ FIX: Simplified chain configuration reading
-        # Try multiple config paths
-        enabled_chains = None
-        
-        # Method 1: Direct from config
-        if 'enabled_chains' in self.config:
-            chains_str = self.config['enabled_chains']
-            if isinstance(chains_str, str):
-                enabled_chains = [c.strip() for c in chains_str.split(',') if c.strip()]
-            elif isinstance(chains_str, list):
-                enabled_chains = chains_str
-        
-        # Method 2: From chains.enabled
-        if not enabled_chains and 'chains' in self.config:
-            enabled_chains = self.config['chains'].get('enabled')
-        
-        # Method 3: From data_sources.dexscreener.chains
-        if not enabled_chains and 'data_sources' in self.config:
-            enabled_chains = self.config.get('data_sources', {}).get('dexscreener', {}).get('chains')
-        
-        # Default fallback
-        if not enabled_chains:
-            enabled_chains = ['ethereum', 'bsc', 'base', 'arbitrum', 'polygon']
-            logger.warning(f"⚠️ Using default chains: {enabled_chains}")
+        # Get chain configuration from the manager
+        chains_config = self.config_manager.get_chains_config()
+        enabled_chains = chains_config.enabled_chains
         
         # Get other settings
-        max_pairs_per_chain = self.config.get('chains', {}).get('max_pairs_per_chain', 50)
-        discovery_interval = self.config.get('chains', {}).get('discovery_interval', 300)
+        trading_config = self.config_manager.get_trading_config()
+        max_pairs_per_chain = trading_config.max_pairs_per_chain
+        discovery_interval = trading_config.discovery_interval_seconds
         
         logger.info(f"🌐 Multi-chain mode: {len(enabled_chains)} chains enabled")
         logger.info(f"  Chains: {', '.join(enabled_chains)}")
@@ -513,7 +472,7 @@ class TradingBotEngine:
                                     opportunity = await self._analyze_opportunity(pair)
                                     
                                     if opportunity:
-                                        min_score = self.config.get('trading', {}).get('min_opportunity_score', 0.7)
+                                        min_score = self.config_manager.get_trading_config().min_opportunity_score
                                         logger.debug(f"  Score: {opportunity.score:.3f} (min: {min_score})")
                                         
                                         if opportunity.score > min_score:
@@ -845,9 +804,10 @@ class TradingBotEngine:
             # ✅ CHECK 2: Position on cooldown?
             if token_address in self.recently_closed:
                 record = self.recently_closed[token_address]
-                if not record.is_cooled_down(self.cooldown_minutes):
+                cooldown_minutes = self.config_manager.get_trading_config().position_cooldown_minutes
+                if not record.is_cooled_down(cooldown_minutes):
                     elapsed = (datetime.now() - record.closed_at).total_seconds() / 60
-                    remaining = self.cooldown_minutes - elapsed
+                    remaining = cooldown_minutes - elapsed
                     logger.warning(
                         f"❄️ COOLDOWN ACTIVE for {token_symbol}: "
                         f"closed {elapsed:.1f}min ago (reason: {record.reason}), "
@@ -859,7 +819,7 @@ class TradingBotEngine:
                     del self.recently_closed[token_address]
             
             # ✅ CHECK 3: Portfolio limits
-            max_positions = self.config.get('trading', {}).get('max_positions', 10)
+            max_positions = self.config_manager.get_trading_config().max_positions
             if len(self.active_positions) >= max_positions:
                 logger.warning(f"⚠️ Max positions reached ({len(self.active_positions)}) - SKIPPING")
                 return

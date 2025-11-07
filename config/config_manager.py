@@ -36,7 +36,11 @@ class ConfigType(Enum):
     MONITORING = "monitoring"
     ML_MODELS = "ml_models"
     RISK_MANAGEMENT = "risk_management"
-    PORTFOLIO = "portfolio"  # Add this
+    PORTFOLIO = "portfolio"
+    CHAINS = "chains"
+    SOLANA = "solana"
+    DATA_SOURCES = "data_sources"
+    WEB3 = "web3"
 
 class ConfigSource(Enum):
     """Configuration sources"""
@@ -88,6 +92,21 @@ class TradingConfig(BaseModel):
         'scalping': {'enabled': True, 'profit_target': 0.02},
         'ai_strategy': {'enabled': False}
     }
+    stop_loss_pct: float = 0.07
+    take_profit_pct: float = 0.15
+    position_cooldown_minutes: int = 30
+    max_positions: int = 40
+    max_pairs_per_chain: int = 50
+    discovery_interval_seconds: int = 300
+    default_stop_loss_percent: int = 7
+    default_take_profit_percent: int = 15
+    max_hold_time_minutes: int = 60
+    trailing_stop_enabled: bool = True
+    trailing_stop_percent: int = 5
+    trailing_stop_activation: int = 10
+    trailing_stop_distance: int = 5
+    use_ml_exits: bool = False
+    exit_check_interval_seconds: int = 10
     
     # Strategy settings
     enable_momentum_strategy: bool = True
@@ -242,20 +261,84 @@ class RiskManagementConfig(BaseModel):
 
 class PortfolioConfig(BaseModel):
     """Portfolio configuration schema"""
-    # ✅ CHANGE THESE VALUES:
-    initial_balance: float = 400.0              # Was 10000, now 400
-    max_positions: int = 40                      # Was 10, now 8
-    max_position_size_pct: float = 0.10         # Keep 10%
-    max_risk_per_trade: float = 0.10            # Was 0.05, now 0.10
-    max_portfolio_risk: float = 0.25            # Keep 25%
-    min_position_size: float = 5.0              # Was 100.0, now 5.0
-    max_position_size: float = 10.0
-    max_position_size_usd: float = 10.0  # Max trade size in USD
-    allocation_strategy: str = "DYNAMIC"        # Keep
-    daily_loss_limit: float = 0.10              # Was 0.15, now 0.10
-    consecutive_losses_limit: int = 5           # Keep
-    correlation_threshold: float = 0.7          # Keep
-    rebalance_frequency: str = "daily"          # Keep
+    initial_balance: float = 400.0
+    initial_balance_per_chain: float = 100.0
+    max_position_size_usd: float = 10.0
+    min_position_size_usd: float = 5.0
+    max_position_size_pct: float = 0.10
+    max_risk_per_trade: float = 0.10
+    max_portfolio_risk: float = 0.25
+    daily_loss_limit_usd: float = 40.0
+    daily_loss_limit_pct: float = 0.10
+    max_positions: int = 40
+    max_positions_per_chain: int = 10
+    max_concurrent_positions: int = 4
+
+class ChainSpecificConfig(BaseModel):
+    min_liquidity: float = 10000.0
+    min_volume: float = 5000.0
+    max_age_hours: int = 24
+
+class ChainsConfig(BaseModel):
+    """Configuration schema for multi-chain support"""
+    enabled_chains: List[str] = ['ethereum', 'bsc', 'base', 'arbitrum', 'solana']
+    default_chain: str = "ethereum"
+    chain_rpc_urls: Dict[str, List[str]] = {}
+    chain_settings: Dict[str, ChainSpecificConfig] = {
+        "ethereum": ChainSpecificConfig(min_liquidity=3000),
+        "bsc": ChainSpecificConfig(min_liquidity=500),
+        "base": ChainSpecificConfig(min_liquidity=2000),
+        "arbitrum": ChainSpecificConfig(min_liquidity=3000),
+        "polygon": ChainSpecificConfig(min_liquidity=500),
+    }
+
+    @validator('enabled_chains', pre=True, always=True)
+    def validate_enabled_chains(cls, v):
+        if isinstance(v, str):
+            return [chain.strip() for chain in v.split(',') if chain.strip()]
+        return v
+
+class DexScreenerConfig(BaseModel):
+    enabled: bool = True
+    api_key: Optional[str] = None
+    base_url: str = "https://api.dexscreener.com/latest"
+    rate_limit: int = 300
+    cache_duration: int = 60
+
+class GoPlusConfig(BaseModel):
+    enabled: bool = True
+    api_key: Optional[str] = None
+
+class SocialConfig(BaseModel):
+    enabled: bool = False
+    twitter_api_key: Optional[SecretStr] = None
+    twitter_api_secret: Optional[SecretStr] = None
+
+class DataSourcesConfig(BaseModel):
+    dexscreener: DexScreenerConfig = DexScreenerConfig()
+    goplus: GoPlusConfig = GoPlusConfig()
+    social: SocialConfig = SocialConfig()
+
+class Web3Config(BaseModel):
+    provider_url: Optional[str] = None
+    backup_providers: List[str] = []
+    chain_id: int = 1
+    gas_multiplier: float = 1.2
+    max_gas_price: int = 500
+
+class SolanaConfig(BaseModel):
+    """Configuration for Solana-specific settings"""
+    private_key: Optional[SecretStr] = None
+    wallet_address: Optional[str] = None
+    rpc_urls: List[str] = []
+    priority_fee: int = 5000
+    compute_unit_price: int = 1000
+    compute_unit_limit: int = 200000
+    min_liquidity: int = 2000
+    max_position_size_sol: float = 5.0
+    min_trade_size_sol: float = 0.1
+    min_opportunity_score: float = 0.20
+
 
 class ConfigManager:
     """
@@ -296,7 +379,11 @@ class ConfigManager:
             ConfigType.MONITORING: MonitoringConfig,
             ConfigType.ML_MODELS: MLModelsConfig,
             ConfigType.RISK_MANAGEMENT: RiskManagementConfig,
-            ConfigType.PORTFOLIO: PortfolioConfig  # Add this
+            ConfigType.PORTFOLIO: PortfolioConfig,
+            ConfigType.CHAINS: ChainsConfig,
+            ConfigType.SOLANA: SolanaConfig,
+            ConfigType.DATA_SOURCES: DataSourcesConfig,
+            ConfigType.WEB3: Web3Config,
         }
         
         # Configuration change tracking
@@ -308,7 +395,7 @@ class ConfigManager:
         self.encryption_manager = None
         
         # Hot-reload settings
-        self.auto_reload_enabled = True
+        self.auto_reload_enabled = False
         self.reload_check_interval = 5  # seconds
         self._reload_task = None
 
@@ -323,30 +410,68 @@ class ConfigManager:
     async def initialize(self, encryption_key: Optional[str] = None) -> None:
         """Initialize configuration manager"""
         try:
+            # Get encryption key from environment if not provided
+            if not encryption_key:
+                encryption_key = os.getenv('ENCRYPTION_KEY')
+
             # Initialize encryption for sensitive data
             if encryption_key:
                 encryption_config = {'encryption_key': encryption_key}
                 self.encryption_manager = EncryptionManager(encryption_config)
             
-            # Load all configurations
+            # Load all configurations from files and environment
             await self._load_all_configs()
+
+            # Decrypt keys if encryption manager is available and update models
+            if self.encryption_manager:
+                # Decrypt EVM private key
+                security_config = self.configs.get(ConfigType.SECURITY)
+                if security_config and security_config.private_key:
+                    try:
+                        encrypted_pk = security_config.private_key.get_secret_value()
+                        decrypted_pk = self.encryption_manager.decrypt_private_key(encrypted_pk)
+                        if not decrypted_pk.startswith('0x'):
+                            decrypted_pk = '0x' + decrypted_pk
+
+                        current_dict = security_config.dict()
+                        current_dict['private_key'] = SecretStr(decrypted_pk)
+                        self.configs[ConfigType.SECURITY] = SecurityConfig(**current_dict)
+                        self._raw_config['PRIVATE_KEY'] = decrypted_pk # For legacy access
+                        logger.info("Successfully decrypted EVM private key.")
+                    except Exception as e:
+                        logger.error(f"Failed to decrypt EVM private key: {e}")
+
+                # Decrypt Solana private key
+                solana_config = self.configs.get(ConfigType.SOLANA)
+                if solana_config and solana_config.private_key:
+                    try:
+                        encrypted_pk = solana_config.private_key.get_secret_value()
+                        decrypted_pk = self.encryption_manager.decrypt_private_key(encrypted_pk)
+
+                        current_dict = solana_config.dict()
+                        current_dict['private_key'] = SecretStr(decrypted_pk)
+                        self.configs[ConfigType.SOLANA] = SolanaConfig(**current_dict)
+                        self._raw_config['SOLANA_PRIVATE_KEY'] = decrypted_pk # For legacy access
+                        logger.info("Successfully decrypted Solana private key.")
+                    except Exception as e:
+                        logger.error(f"Failed to decrypt Solana private key: {e}")
             
-            # ✅ NEW: Store loaded configs in _raw_config for .get() access
+            # Populate _raw_config from the (potentially updated) Pydantic models
             for config_type, config_obj in self.configs.items():
-                config_key = config_type.value  # e.g., 'trading', 'security'
-                if hasattr(config_obj, 'dict'):
-                    # Pydantic v2
-                    self._raw_config[config_key] = config_obj.model_dump()
-                elif hasattr(config_obj, 'dict'):
-                    # Pydantic v1
-                    self._raw_config[config_key] = config_obj.dict()
+                config_key = config_type.value
+                if hasattr(config_obj, 'dict'): # Works for Pydantic v1 and v2
+                    data = config_obj.dict()
+                    # Unwrap SecretStr values for raw access
+                    for field, value in data.items():
+                        if isinstance(value, SecretStr):
+                            data[field] = value.get_secret_value()
+                    self._raw_config[config_key] = data
                 else:
-                    # Already a dict
                     self._raw_config[config_key] = config_obj
             
-            # Re-merge env vars (they take priority)
+            # Re-merge env vars (they take priority over file/model defaults)
             self._raw_config.update(self._env_config)
-            
+
             # Start auto-reload if enabled
             if self.auto_reload_enabled:
                 await self._start_auto_reload()
@@ -596,38 +721,97 @@ class ConfigManager:
             return None
 
     def _load_config_from_env(self, config_type: ConfigType) -> Dict:
-        """Load configuration from environment variables"""
+        """Load configuration from environment variables."""
         env_data = {}
-        
-        # ✅ SPECIAL HANDLING FOR TRADING CONFIG
-        if config_type == ConfigType.TRADING:
-            if os.getenv('MIN_OPPORTUNITY_SCORE'):
-                env_data['min_opportunity_score'] = float(os.getenv('MIN_OPPORTUNITY_SCORE'))
-            if os.getenv('MAX_POSITION_SIZE_PERCENT'):
-                env_data['max_position_size'] = float(os.getenv('MAX_POSITION_SIZE_PERCENT')) / 100
-            if os.getenv('MAX_SLIPPAGE'):
-                env_data['max_slippage'] = float(os.getenv('MAX_SLIPPAGE'))
-        
-        # ✅ ADD THIS: Parse ENABLED_CHAINS from .env
-        if config_type == ConfigType.API:  # Store chains config here temporarily
-            enabled_chains_str = os.getenv('ENABLED_CHAINS')
-            if enabled_chains_str:
-                env_data['enabled_chains'] = enabled_chains_str
-        
-        # Generic prefix-based loading (existing code continues)
+
+        def parse_list(env_var: str) -> List[str]:
+            value = os.getenv(env_var)
+            if value:
+                return [item.strip() for item in value.split(',') if item.strip()]
+            return []
+
+        if config_type == ConfigType.SECURITY:
+            if os.getenv('PRIVATE_KEY'):
+                env_data['private_key'] = SecretStr(os.getenv('PRIVATE_KEY'))
+            if os.getenv('ENCRYPTION_KEY'):
+                # Note: This is used by the manager, but not a direct part of the model
+                pass
+
+        elif config_type == ConfigType.CHAINS:
+            enabled_chains = parse_list('ENABLED_CHAINS')
+            if enabled_chains:
+                env_data['enabled_chains'] = enabled_chains
+
+            chain_rpc_urls = {}
+            # Use the already parsed chains from env_data or parse them again if not present
+            chains_to_check = env_data.get('enabled_chains', parse_list('ENABLED_CHAINS'))
+
+            for chain in chains_to_check:
+                if chain.lower() == 'solana':
+                    continue  # Solana is handled in its own config
+
+                urls = parse_list(f"{chain.upper()}_RPC_URLS")
+                if urls:
+                    chain_rpc_urls[chain] = urls
+
+            # Legacy fallback for Ethereum
+            if 'ethereum' in chains_to_check and not chain_rpc_urls.get('ethereum'):
+                legacy_url = os.getenv('WEB3_PROVIDER_URL')
+                if legacy_url:
+                    chain_rpc_urls['ethereum'] = [legacy_url]
+
+            if chain_rpc_urls:
+                env_data['chain_rpc_urls'] = chain_rpc_urls
+
+        elif config_type == ConfigType.SOLANA:
+            if os.getenv('SOLANA_PRIVATE_KEY'):
+                env_data['private_key'] = SecretStr(os.getenv('SOLANA_PRIVATE_KEY'))
+            if os.getenv('SOLANA_WALLET'):
+                env_data['wallet_address'] = os.getenv('SOLANA_WALLET')
+
+            rpc_urls = parse_list('SOLANA_RPC_URLS')
+            if not rpc_urls:
+                singular_url = os.getenv('SOLANA_RPC_URL')
+                if singular_url:
+                    rpc_urls.append(singular_url)
+
+            if rpc_urls:
+                env_data['rpc_urls'] = rpc_urls
+
+            # Load other Solana-specific integer/float values
+            solana_vars = {
+                'priority_fee': int,
+                'compute_unit_price': int,
+                'compute_unit_limit': int,
+                'min_liquidity': int,
+                'max_position_size_sol': float,
+                'min_trade_size_sol': float,
+                'min_opportunity_score': float,
+            }
+            for key, type_caster in solana_vars.items():
+                env_var = f"SOLANA_{key.upper()}"
+                value = os.getenv(env_var)
+                if value:
+                    try:
+                        env_data[key] = type_caster(value)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Could not parse environment variable {env_var} as {type_caster.__name__}")
+
+        # Generic prefix-based loading as a fallback
         prefix = f"BOT_{config_type.value.upper()}_"
         for key, value in os.environ.items():
             if key.startswith(prefix):
                 config_key = key[len(prefix):].lower()
-                # Parse value type
-                if value.lower() in ('true', 'false'):
-                    env_data[config_key] = value.lower() == 'true'
-                elif value.isdigit():
-                    env_data[config_key] = int(value)
-                elif self._is_float(value):
-                    env_data[config_key] = float(value)
-                else:
-                    env_data[config_key] = value
+                if config_key not in env_data:  # Avoid overwriting specific logic
+                    # Simple type parsing
+                    if value.lower().strip() in ('true', 'false'):
+                        env_data[config_key] = value.lower().strip() == 'true'
+                    elif value.isdigit():
+                        env_data[config_key] = int(value)
+                    elif self._is_float(value):
+                        env_data[config_key] = float(value)
+                    else:
+                        env_data[config_key] = value
         
         return env_data
 
@@ -1000,6 +1184,22 @@ class ConfigManager:
     def get_risk_management_config(self) -> RiskManagementConfig:
         """Get risk management configuration"""
         return self.configs.get(ConfigType.RISK_MANAGEMENT, RiskManagementConfig())
+
+    def get_chains_config(self) -> ChainsConfig:
+        """Get chains configuration"""
+        return self.configs.get(ConfigType.CHAINS, ChainsConfig())
+
+    def get_solana_config(self) -> SolanaConfig:
+        """Get Solana configuration"""
+        return self.configs.get(ConfigType.SOLANA, SolanaConfig())
+
+    def get_data_sources_config(self) -> DataSourcesConfig:
+        """Get DataSources configuration"""
+        return self.configs.get(ConfigType.DATA_SOURCES, DataSourcesConfig())
+
+    def get_web3_config(self) -> Web3Config:
+        """Get Web3 configuration"""
+        return self.configs.get(ConfigType.WEB3, Web3Config())
 
     async def update_config_internal(self, 
                           config_type: ConfigType, 
