@@ -253,7 +253,7 @@ class TradingBotEngine:
 
         # Cooldown tracking
         self.recently_closed: Dict[str, ClosedPositionRecord] = {}  # token_address -> record
-        self.cooldown_minutes = config.get('trading', {}).get('position_cooldown_minutes', 60)
+        self.cooldown_minutes = config.get('risk_management', {}).get('position_cooldown_minutes', 60)
         
       
         
@@ -417,8 +417,9 @@ class TradingBotEngine:
             logger.warning(f"⚠️ Using default chains: {enabled_chains}")
         
         # Get other settings
-        max_pairs_per_chain = self.config.get('chains', {}).get('max_pairs_per_chain', 50)
-        discovery_interval = self.config.get('chains', {}).get('discovery_interval', 300)
+        chain_config = self.config.get('chain', {})
+        max_pairs_per_chain = chain_config.get('max_pairs_per_chain', 50)
+        discovery_interval = chain_config.get('discovery_interval_seconds', 300)
         
         logger.info(f"🌐 Multi-chain mode: {len(enabled_chains)} chains enabled")
         logger.info(f"  Chains: {', '.join(enabled_chains)}")
@@ -442,8 +443,8 @@ class TradingBotEngine:
                         chain_start = asyncio.get_event_loop().time()
                         
                         # Get chain-specific settings
-                        chain_config = self.config.get('chains', {}).get(chain, {})
-                        min_liquidity = chain_config.get('min_liquidity', 10000)
+                        chain_config = self.config.get('chain', {})
+                        min_liquidity = chain_config.get(f'{chain}_min_liquidity', 10000)
                         
                         logger.info(f"  🔗 Scanning {chain.upper()}... (min liquidity: ${min_liquidity:,.0f})")
                         
@@ -513,7 +514,7 @@ class TradingBotEngine:
                                     opportunity = await self._analyze_opportunity(pair)
                                     
                                     if opportunity:
-                                        min_score = self.config.get('trading', {}).get('min_opportunity_score', 0.7)
+                                        min_score = self.config.get('trading', {}).get('min_opportunity_score', 0.25)
                                         logger.debug(f"  Score: {opportunity.score:.3f} (min: {min_score})")
                                         
                                         if opportunity.score > min_score:
@@ -724,7 +725,7 @@ class TradingBotEngine:
             )
             
             # ADD THIS DETAILED LOG
-            min_score = self.config.get('trading', {}).get('min_opportunity_score', 0.7)
+            min_score = self.config.get('trading', {}).get('min_opportunity_score', 0.25)
             logger.info(f"   📊 Score: {score:.4f} (min required: {min_score})")
             
             if score < min_score:
@@ -859,7 +860,7 @@ class TradingBotEngine:
                     del self.recently_closed[token_address]
             
             # ✅ CHECK 3: Portfolio limits
-            max_positions = self.config.get('trading', {}).get('max_positions', 10)
+            max_positions = self.config.get('portfolio', {}).get('max_positions', 40)
             if len(self.active_positions) >= max_positions:
                 logger.warning(f"⚠️ Max positions reached ({len(self.active_positions)}) - SKIPPING")
                 return
@@ -1604,7 +1605,7 @@ class TradingBotEngine:
             position['last_price'] = position.get('current_price', position['entry_price'])
             
             # 6. ML-based exit signal (if available)
-            if self.config.get('use_ml_exits', False):
+            if self.config.get('position_management', {}).get('use_ml_exits', False):
                 exit_signal = await self._check_ml_exit_signal(position)
                 if exit_signal['should_exit']:
                     return True, f"ml_signal_{exit_signal['reason']}"
@@ -2017,7 +2018,7 @@ class TradingBotEngine:
         while self.state == BotState.RUNNING:
             try:
                 # Wait for retrain interval
-                await asyncio.sleep(self.config['ml']['retrain_interval_hours'] * 3600)
+                await asyncio.sleep(self.config.get('ml_models', {}).get('ml_retrain_interval_hours', 24) * 3600)
                 
                 # Collect training data
                 training_data = await self._collect_training_data()
@@ -2284,10 +2285,9 @@ class TradingBotEngine:
             # 2. Verify liquidity is still sufficient
             logger.info(f"   Checking liquidity...")
             current_liquidity = opportunity.liquidity
- #           min_liquidity = self.config.get('trading', {}).get('min_liquidity_threshold', 50000)
             chain_name = opportunity.chain.lower() if hasattr(opportunity, 'chain') else 'ethereum'
-            chain_config = self.config.get('chains', {}).get(chain_name, {})
-            min_liquidity = chain_config.get('min_liquidity', 50000)          
+            chain_config = self.config.get('chain', {})
+            min_liquidity = chain_config.get(f'{chain_name}_min_liquidity', 50000)
             logger.info(f"   Current liquidity: ${current_liquidity:,.2f}, Min required: ${min_liquidity:,.2f}")
             
             if current_liquidity < min_liquidity:
