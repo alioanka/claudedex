@@ -216,6 +216,19 @@ class TradingBotApplication:
             nested_config['security']['private_key'] = decrypted_key
             nested_config['security']['encryption_key'] = encryption_key
 
+            # Manually construct the web3 config for now
+            if 'web3' not in nested_config:
+                nested_config['web3'] = {
+                    'provider_url': os.getenv('WEB3_PROVIDER_URL'),
+                    'backup_providers': [
+                        os.getenv('WEB3_BACKUP_PROVIDER_1'),
+                        os.getenv('WEB3_BACKUP_PROVIDER_2')
+                    ],
+                    'chain_id': int(os.getenv('CHAIN_ID', '1')),
+                    'gas_multiplier': float(self.config.get_config(ConfigType.GAS_PRICE).priority_gas_multiplier),
+                    'max_gas_price': int(self.config.get_config(ConfigType.GAS_PRICE).max_gas_price)
+                }
+
             self.logger.info("Initializing trading engine...")
             self.engine = TradingBotEngine(nested_config, mode=self.mode)
             await self.engine.initialize()
