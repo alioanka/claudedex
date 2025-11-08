@@ -201,25 +201,21 @@ class TradingBotEngine:
         # Correctly check if Solana is enabled from the chain configuration
         chain_config = config.get('chain', {})
         solana_enabled = chain_config.get('solana_enabled', False)
-        solana_config = config.get('solana', {})
 
         if solana_enabled:
             try:
-                # Try nested config first, fallback to flat
-                if solana_config:
-                    self.solana_executor = JupiterExecutor(solana_config)
-                else:
-                    # Build config from flat structure
-                    solana_config = {
-                        'enabled': config.get('solana_enabled', False),
-                        'rpc_url': config.get('solana_rpc_url'),
-                        'solana_private_key': config.get('solana_private_key'),
-                        'encryption_key': config.get('encryption_key'),
-                        'max_slippage_bps': config.get('jupiter_max_slippage_bps', 500),
-                        'dry_run': config.get('dry_run', True),
-                    }
-                    self.solana_executor = JupiterExecutor(solana_config)
-                
+                solana_config = config.get('solana', {})
+                security_config = config.get('security', {})
+
+                # Assemble the config for JupiterExecutor by combining solana and security configs
+                executor_solana_config = {
+                    **solana_config,
+                    'solana_private_key': security_config.get('solana_private_key'),
+                    'encryption_key': security_config.get('encryption_key'),
+                    'dry_run': config.get('trading', {}).get('dry_run', True)
+                }
+
+                self.solana_executor = JupiterExecutor(executor_solana_config)
                 logger.info("✅ Solana Jupiter Executor initialized")
             except Exception as e:
                 logger.error(f"❌ Failed to initialize Solana executor: {e}")
