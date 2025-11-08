@@ -229,6 +229,57 @@ class TradingBotApplication:
                     'max_gas_price': int(self.config.get_config(ConfigType.GAS_PRICE).max_gas_price)
                 }
 
+            if 'data_sources' not in nested_config:
+                nested_config['data_sources'] = {
+                    'dexscreener': {
+                        'api_key': os.getenv('DEXSCREENER_API_KEY', ''),
+                        'base_url': 'https://api.dexscreener.com/latest',
+                        'rate_limit': 300,
+                        'chains': self.config.get_config(ConfigType.CHAIN).enabled_chains.split(','),
+                        'min_liquidity': 10000,
+                        'min_volume': 5000,
+                        'max_age_hours': 24,
+                        'cache_duration': 60
+                    },
+                    'social': {
+                        'twitter_api_key': os.getenv('TWITTER_API_KEY', ''),
+                        'twitter_api_secret': os.getenv('TWITTER_API_SECRET', ''),
+                        'enabled': bool(os.getenv('TWITTER_API_KEY'))
+                    }
+                }
+
+            if 'notifications' not in nested_config:
+                from monitoring.alerts import AlertPriority, NotificationChannel
+
+                nested_config['notifications'] = {
+                    'telegram': {
+                        'bot_token': os.getenv('TELEGRAM_BOT_TOKEN', ''),
+                        'chat_id': os.getenv('TELEGRAM_CHAT_ID', ''),
+                        'enabled': bool(os.getenv('TELEGRAM_BOT_TOKEN'))
+                    },
+                    'discord': {
+                        'webhook_url': os.getenv('DISCORD_WEBHOOK_URL', ''),
+                        'enabled': bool(os.getenv('DISCORD_WEBHOOK_URL'))
+                    },
+                    'channel_priorities': {
+                        AlertPriority.LOW: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else [],
+                        AlertPriority.MEDIUM: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else [],
+                        AlertPriority.HIGH: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else [],
+                        AlertPriority.CRITICAL: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else []
+                    },
+                    'priority_cooldowns': {
+                        AlertPriority.LOW: 300,
+                        AlertPriority.MEDIUM: 60,
+                        AlertPriority.HIGH: 10,
+                        AlertPriority.CRITICAL: 0
+                    },
+                    'enabled': True,
+                    'max_retries': 3,
+                    'retry_delay': 30,
+                    'aggregation_enabled': True,
+                    'aggregation_window': 60
+                }
+
             self.logger.info("Initializing trading engine...")
             self.engine = TradingBotEngine(nested_config, mode=self.mode)
             await self.engine.initialize()
