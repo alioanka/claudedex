@@ -178,20 +178,17 @@ class TradingBotApplication:
             self.db_manager = DatabaseManager(self.config.get_config(ConfigType.DATABASE).dict())
             self.cache_manager = CacheManager({'REDIS_URL': os.getenv('REDIS_URL', 'redis://redis:6379/0')})
 
-            flat_config = {}
+            # Create a nested config dictionary from the config manager
+            nested_config = {}
             for config_type in ConfigType:
                 config_model = self.config.get_config(config_type)
                 if config_model:
-                    flat_config.update(config_model.dict())
+                    nested_config[config_type.value] = config_model.dict()
 
-            # Add sensitive keys from environment
-            sensitive_keys = self.config_manager._load_environment_config()
-            flat_config.update(sensitive_keys)
-            
-            self.portfolio_manager = PortfolioManager(flat_config)
-            self.order_manager = OrderManager(flat_config)
-            self.risk_manager = RiskManager(flat_config)
-            self.alerts_system = AlertsSystem(flat_config)
+            self.portfolio_manager = PortfolioManager(nested_config)
+            self.order_manager = OrderManager(nested_config)
+            self.risk_manager = RiskManager(nested_config)
+            self.alerts_system = AlertsSystem(nested_config)
             
             self.logger.info("Initializing security manager...")
             security_manager = EncryptionManager({})
@@ -213,17 +210,20 @@ class TradingBotApplication:
                     self.logger.error(f"Failed to decrypt private key: {e}")
                     raise ValueError("Cannot decrypt PRIVATE_KEY - check ENCRYPTION_KEY")
 
-            flat_config['private_key'] = decrypted_key
-            flat_config['encryption_key'] = encryption_key
+            # Add sensitive info to the nested config
+            if 'security' not in nested_config:
+                nested_config['security'] = {}
+            nested_config['security']['private_key'] = decrypted_key
+            nested_config['security']['encryption_key'] = encryption_key
 
             self.logger.info("Initializing trading engine...")
-            self.engine = TradingBotEngine(flat_config, mode=self.mode)
+            self.engine = TradingBotEngine(nested_config, mode=self.mode)
             await self.engine.initialize()
             
             self.dashboard = DashboardEndpoints(
                 host="0.0.0.0",
                 port=8080,
-                config=flat_config,
+                config=nested_config,
                 trading_engine=self.engine,
                 portfolio_manager=self.portfolio_manager,
                 order_manager=self.order_manager,

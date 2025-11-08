@@ -591,7 +591,11 @@ class ConfigManager:
         """Validate required environment variables are set"""
         required_vars = [
             'PRIVATE_KEY',
-            'DATABASE_URL'
+            'DATABASE_URL',
+            'REDIS_URL',
+            'WEB3_PROVIDER_URL',
+            'TELEGRAM_BOT_TOKEN',
+            'TELEGRAM_CHAT_ID'
         ]
         
         missing = []
