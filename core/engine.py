@@ -198,12 +198,10 @@ class TradingBotEngine:
         # Initialize Solana executor if enabled
         self.solana_executor = None
 
-        # ✅ FIXED: Check both nested and flat config structures
+        # Correctly check if Solana is enabled from the chain configuration
+        chain_config = config.get('chain', {})
+        solana_enabled = chain_config.get('solana_enabled', False)
         solana_config = config.get('solana', {})
-        solana_enabled = (
-            solana_config.get('enabled', False) or 
-            config.get('solana_enabled', False)
-        )
 
         if solana_enabled:
             try:
