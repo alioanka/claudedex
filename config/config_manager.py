@@ -112,6 +112,11 @@ class TradingConfig(BaseModel):
     dex_fee_bps: int = 30
     min_opportunity_score: float = 0.25
     solana_min_opportunity_score: float = 0.20
+    strategies: Dict[str, Dict[str, Any]] = {
+        'momentum': {'enabled': True, 'lookback_period': 20},
+        'scalping': {'enabled': True, 'profit_target': 0.02},
+        'ai_strategy': {'enabled': False}
+    }
 
 class ChainConfig(BaseModel):
     enabled_chains: str = "ethereum,bsc,base,arbitrum,solana"
