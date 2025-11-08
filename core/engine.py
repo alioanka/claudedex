@@ -1509,18 +1509,14 @@ class TradingBotEngine:
 
     async def _calculate_position_size(
         self,
-        risk_score: Optional[float] = None,
+        risk_score: Optional[RiskScore] = None,
         opportunity_score: float = 0.7
     ) -> float:
         try:
-            # Get config values
-            from config.config_manager import PortfolioConfig
+            portfolio_config = self.config.get('portfolio', {})
             
-            portfolio_config = PortfolioConfig()
-            
-            # ✅ Get both values from PortfolioConfig
-            portfolio_balance = portfolio_config.initial_balance
-            max_positions = portfolio_config.max_positions  # ✅ NOW FROM PORTFOLIO CONFIG!
+            portfolio_balance = portfolio_config.get('initial_balance', 400.0)
+            max_positions = portfolio_config.get('max_positions', 40)
             base_position_size = portfolio_balance / max_positions
             
             logger.debug(
@@ -1528,9 +1524,7 @@ class TradingBotEngine:
                 f"Max positions={max_positions}, Base=${base_position_size}"
             )
             
-            # Apply risk adjustment if provided
             if risk_score and hasattr(risk_score, 'overall_risk'):
-                # Reduce size for high risk (max 30% reduction)
                 risk_multiplier = 1.0 - (risk_score.overall_risk * 0.3)
                 adjusted_size = base_position_size * risk_multiplier
                 
@@ -1542,9 +1536,8 @@ class TradingBotEngine:
             else:
                 adjusted_size = base_position_size
             
-            # Ensure within bounds
-            min_size = portfolio_config.min_position_size or 5
-            max_size = base_position_size * 1.5  # Allow up to 1.5x for great opportunities
+            min_size = portfolio_config.get('min_position_size_usd', 5.0)
+            max_size = portfolio_config.get('max_position_size_usd', 10.0)
             
             final_size = max(min_size, min(adjusted_size, max_size))
             
@@ -2287,7 +2280,7 @@ class TradingBotEngine:
             current_liquidity = opportunity.liquidity
             chain_name = opportunity.chain.lower() if hasattr(opportunity, 'chain') else 'ethereum'
             chain_config = self.config.get('chain', {})
-            min_liquidity = chain_config.get(f'{chain_name}_min_liquidity', 50000)
+            min_liquidity = chain_config.get(f'{chain_name}_min_liquidity', 10000)
             logger.info(f"   Current liquidity: ${current_liquidity:,.2f}, Min required: ${min_liquidity:,.2f}")
             
             if current_liquidity < min_liquidity:
