@@ -218,6 +218,10 @@ class DashboardConfig(BaseModel):
 
 class SecurityConfig(BaseModel):
     """Security configuration schema"""
+    private_key: Optional[str] = None
+    solana_private_key: Optional[str] = None
+    encryption_key: Optional[str] = None
+    flashbots_signing_key: Optional[str] = None
     api_rate_limit: int = 1000  # requests per hour
     max_login_attempts: int = 5
     session_timeout: int = 3600  # seconds
