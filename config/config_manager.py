@@ -135,6 +135,7 @@ class ChainConfig(BaseModel):
     base_min_liquidity: int = 2000
     arbitrum_min_liquidity: int = 3000
     polygon_min_liquidity: int = 500
+    solana_min_liquidity: int = 2000
 
 class PositionManagementConfig(BaseModel):
     default_stop_loss_percent: int = 7
