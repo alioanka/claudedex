@@ -950,6 +950,9 @@ class StructuredLogger:
         
         # Remove existing handlers
         logger.handlers = []
+
+        # Set higher level for noisy loggers
+        logging.getLogger("aiohttp.server").setLevel(logging.CRITICAL)
         
         # Console handler
         if "console" in self.config["outputs"]:
