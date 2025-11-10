@@ -1506,42 +1506,58 @@ class TradingBotEngine:
         risk_score: Optional[RiskScore] = None,
         opportunity_score: float = 0.7
     ) -> float:
+        """
+        Calculates a dynamic position size based on portfolio value, risk, and opportunity.
+        """
         try:
             portfolio_config = self.config.get('portfolio', {})
+            risk_config = self.config.get('risk_management', {})
+
+            # Get current total portfolio value
+            portfolio_balance = float(await self.portfolio_manager.get_portfolio_value())
             
-            portfolio_balance = portfolio_config.get('initial_balance', 400.0)
-            max_positions = portfolio_config.get('max_positions', 40)
-            base_position_size = portfolio_balance / max_positions
+            # Get risk parameters from config
+            risk_per_trade_pct = risk_config.get('risk_per_trade_pct', 0.02)  # Risk 2% of portfolio by default
+            stop_loss_pct = risk_config.get('stop_loss_pct', 0.12) # Use the tuned stop-loss
+
+            # Calculate the total capital to risk on this trade
+            capital_at_risk = portfolio_balance * risk_per_trade_pct
+
+            # Adjust capital at risk based on opportunity score (higher score = slightly more risk)
+            # A score of 0.5 uses the base risk, 1.0 uses 120% of base risk
+            opportunity_multiplier = 0.8 + (opportunity_score * 0.4) # Range [0.8, 1.2]
+            adjusted_capital_at_risk = capital_at_risk * opportunity_multiplier
             
-            logger.debug(
-                f"📊 Position sizing: Portfolio=${portfolio_balance}, "
-                f"Max positions={max_positions}, Base=${base_position_size}"
-            )
-            
-            if risk_score and hasattr(risk_score, 'overall_risk'):
-                risk_multiplier = 1.0 - (risk_score.overall_risk * 0.3)
-                adjusted_size = base_position_size * risk_multiplier
+            # Calculate position size based on stop-loss
+            # Position Size = Capital at Risk / Stop-Loss Percentage
+            if stop_loss_pct <= 0:
+                logger.warning("Stop loss percentage is zero or negative. Using a safe default of 10%.")
+                stop_loss_pct = 0.10
                 
-                logger.debug(
-                    f"   Risk: {risk_score.overall_risk:.2f}, "
-                    f"Multiplier: {risk_multiplier:.2f}, "
-                    f"Adjusted: ${adjusted_size:.2f}"
-                )
-            else:
-                adjusted_size = base_position_size
-            
+            position_size = adjusted_capital_at_risk / stop_loss_pct
+
+            # Get min/max position size limits from config
             min_size = portfolio_config.get('min_position_size_usd', 5.0)
-            max_size = portfolio_config.get('max_position_size_usd', 10.0)
+            max_size = portfolio_config.get('max_position_size_usd', 100.0) # Increased max cap
             
-            final_size = max(min_size, min(adjusted_size, max_size))
-            
-            logger.info(f"💰 Calculated position size: ${final_size:.2f}")
-            
+            # Enforce absolute min/max limits
+            final_size = max(min_size, min(position_size, max_size))
+
+            logger.info(f"💰 Dynamic Position Sizing:")
+            logger.info(f"   Portfolio Value: ${portfolio_balance:,.2f}")
+            logger.info(f"   Base Capital at Risk ({risk_per_trade_pct:.1%}): ${capital_at_risk:,.2f}")
+            logger.info(f"   Opportunity Score: {opportunity_score:.2f} (Multiplier: {opportunity_multiplier:.2f})")
+            logger.info(f"   Adjusted Capital at Risk: ${adjusted_capital_at_risk:,.2f}")
+            logger.info(f"   Stop-Loss Pct: {stop_loss_pct:.1%}")
+            logger.info(f"   Calculated Size (Risk/SL): ${position_size:,.2f}")
+            logger.info(f"   Clamped Size (Min: ${min_size}, Max: ${max_size}): ${final_size:,.2f}")
+
             return float(final_size)
             
         except Exception as e:
-            logger.error(f"Error calculating position size: {e}")
-            return 10.0  # Safe fallback
+            logger.error(f"Error in dynamic position size calculation: {e}", exc_info=True)
+            # Fallback to a safe, fixed position size on error
+            return portfolio_config.get('min_position_size_usd', 10.0)
                 
     # ============================================================================
     # FIX 2: engine.py - Fix _check_exit_conditions method (around line 820)
@@ -2892,74 +2908,54 @@ class TradingBotEngine:
             weights = 0.0
             score_breakdown = {}
             
-            # Volume score (30% weight)
+            # Volume score (30% weight) - Max score at $250k volume
             volume_24h = pair.get('volume_24h', 0)
             if volume_24h > 0:
-                volume_score = min(volume_24h / 100000, 1.0)
-                score += volume_score * 0.3
-                weights += 0.3
+                volume_score = min(volume_24h / 250000, 1.0)
+                score += volume_score * 0.30
+                weights += 0.30
                 score_breakdown['volume'] = {
-                    'score': volume_score,
-                    'weight': 0.3,
-                    'contribution': volume_score * 0.3,
-                    'raw_value': volume_24h
+                    'score': volume_score, 'weight': 0.30, 'contribution': volume_score * 0.30, 'raw_value': volume_24h
                 }
             
-            # Liquidity score (25% weight) - FIX THIS SECTION:
-            # OLD (BROKEN):
-            # liquidity_usd = pair.get('liquidity_usd', 0)
-            
-            # NEW (FIXED) - Check both possible keys:
+            # Liquidity score (35% weight) - Increased weight, max score at $50k
             liquidity_usd = pair.get('liquidity_usd') or pair.get('liquidity') or 0
-            
             if liquidity_usd > 0:
-                # Lowered threshold: $10k = max (was $50k)
-                liq_score = min(liquidity_usd / 10000, 1.0)
-                score += liq_score * 0.25
-                weights += 0.25
+                liq_score = min(liquidity_usd / 50000, 1.0)
+                score += liq_score * 0.35
+                weights += 0.35
                 score_breakdown['liquidity'] = {
-                    'score': liq_score,
-                    'weight': 0.25,
-                    'contribution': liq_score * 0.25,
-                    'raw_value': liquidity_usd
+                    'score': liq_score, 'weight': 0.35, 'contribution': liq_score * 0.35, 'raw_value': liquidity_usd
                 }
             
-            # Price change score (20% weight)
+            # Price change score (10% weight) - Reduced weight, less emphasis on initial pump
             price_change_5m = pair.get('price_change_5m', 0)
-            if price_change_5m or price_change_5m == 0:
-                price_score = min(max(price_change_5m / 10, 0), 1.0)
-                score += price_score * 0.2
-                weights += 0.2
+            if price_change_5m is not None:
+                # Normalize score: a 10% change gives a full score, cap at 20%
+                price_score = min(max(price_change_5m / 10, 0), 2.0) / 2.0
+                score += price_score * 0.10
+                weights += 0.10
                 score_breakdown['price_change'] = {
-                    'score': price_score,
-                    'weight': 0.2,
-                    'contribution': price_score * 0.2,
-                    'raw_value': price_change_5m
+                    'score': price_score, 'weight': 0.10, 'contribution': price_score * 0.10, 'raw_value': price_change_5m
                 }
             
-            # Risk score (15% weight)
+            # Risk score (20% weight) - Increased weight
             if risk_score and hasattr(risk_score, 'overall_risk'):
                 risk_component = 1.0 - risk_score.overall_risk
-                score += risk_component * 0.15
-                weights += 0.15
+                score += risk_component * 0.20
+                weights += 0.20
                 score_breakdown['risk'] = {
-                    'score': risk_component,
-                    'weight': 0.15,
-                    'contribution': risk_component * 0.15,
-                    'raw_value': risk_score.overall_risk
+                    'score': risk_component, 'weight': 0.20, 'contribution': risk_component * 0.20, 'raw_value': risk_score.overall_risk
                 }
             
-            # Age bonus (10% weight)
+            # Age bonus (5% weight) - Reduced weight
             age_hours = pair.get('age_hours', 999)
-            if age_hours < 24:  # Keep at 24h for now
+            if age_hours < 24:
                 age_score = 1.0 - (age_hours / 24)
-                score += age_score * 0.1
-                weights += 0.1
+                score += age_score * 0.05
+                weights += 0.05
                 score_breakdown['age'] = {
-                    'score': age_score,
-                    'weight': 0.1,
-                    'contribution': age_score * 0.1,
-                    'raw_value': age_hours
+                    'score': age_score, 'weight': 0.05, 'contribution': age_score * 0.05, 'raw_value': age_hours
                 }
             
             # Normalize by total weights used

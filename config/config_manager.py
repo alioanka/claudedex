@@ -93,8 +93,9 @@ class RiskManagementConfig(BaseModel):
     max_portfolio_risk: float = 0.25
     daily_loss_limit_usd: float = 40.0
     daily_loss_limit_pct: float = 0.10
-    stop_loss_pct: float = 0.07
-    take_profit_pct: float = 0.15
+    risk_per_trade_pct: float = 0.02
+    stop_loss_pct: float = 0.12
+    take_profit_pct: float = 0.24
     position_cooldown_minutes: int = 30
     breaker_error_rate_max: int = 20
     breaker_slippage_realized_bps_max: int = 120
@@ -138,11 +139,11 @@ class ChainConfig(BaseModel):
     solana_min_liquidity: int = 2000
 
 class PositionManagementConfig(BaseModel):
-    default_stop_loss_percent: int = 7
-    default_take_profit_percent: int = 15
+    default_stop_loss_percent: int = 12
+    default_take_profit_percent: int = 24
     max_hold_time_minutes: int = 60
     trailing_stop_enabled: bool = True
-    trailing_stop_percent: int = 5
+    trailing_stop_percent: int = 6
     trailing_stop_activation: int = 10
     trailing_stop_distance: int = 5
     position_update_interval_seconds: int = 10
