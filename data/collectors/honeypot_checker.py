@@ -265,7 +265,7 @@ class HoneypotChecker:
 
 
 
-    @retry_async(max_retries=2, delay=1.0)
+    @retry_async(max_retries=3, delay=2.0, exponential_backoff=True)
     @rate_limit(calls=12, period=60.0)
     async def _check_rugcheck_summary(self, address: str) -> Dict:
         """
@@ -371,7 +371,7 @@ class HoneypotChecker:
                     }
                     
         except asyncio.TimeoutError:
-            logger.error(f"RugCheck API timeout for {address[:8]}...")
+            logger.warning(f"RugCheck API timeout for {address[:8]}...")
             return {
                 "status": "timeout",
                 "error": "API request timed out"
@@ -649,6 +649,7 @@ class HoneypotChecker:
             return {"error": "Check failed"}
             
     # ✅ ADD THIS to analyze_contract_code around line 280:
+    @retry_async(max_retries=3, delay=1.0, exponential_backoff=True)
     async def analyze_contract_code(self, address: str, chain: str) -> Dict:
         """Analyze smart contract code for honeypot patterns"""
         try:

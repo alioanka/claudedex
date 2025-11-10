@@ -847,8 +847,11 @@ class AlertsSystem:
                         logger.error(f"Telegram API error: {error_text}")
                         return False
                         
+        except aiohttp.ClientError as e:
+            logger.error(f"Telegram send error (network issue): {e}", exc_info=True)
+            return False
         except Exception as e:
-            logger.error(f"Telegram send error: {e}")
+            logger.error(f"Telegram send error (unexpected): {e}", exc_info=True)
             return False
     
     async def _send_discord(self, alert: Alert) -> bool:
