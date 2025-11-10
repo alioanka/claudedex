@@ -47,4 +47,4 @@ def analyze_trades(log_file):
     }
 
 if __name__ == "__main__":
-    analyze_trades("TradingBot_trades.log")
+    analyze_trades("logs/TradingBot_trades.log")
