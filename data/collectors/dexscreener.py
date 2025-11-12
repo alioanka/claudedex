@@ -417,91 +417,55 @@ class DexScreenerCollector:
 
     async def get_token_price(self, token_address: str, chain: str = 'ethereum') -> Optional[float]:
         """
-        Get current token price
-        
-        Args:
-            token_address: Token contract address
-            chain: Blockchain network (ethereum, bsc, polygon, solana, etc.)
-            
-        Returns:
-            Current price in USD or None
+        Get current token price using the correct /tokens/v1/{chainId}/{tokenAddress} endpoint.
         """
-        # ✅ Normalize chain name
         chain = self._normalize_chain(chain)
-        
-        # Check cache
         cache_key = f"price_{chain}_{token_address}"
         if cache_key in self.cache:
             cached_data, cached_time = self.cache[cache_key]
-            if time.time() - cached_time < 10:  # 10 second cache for prices
+            if time.time() - cached_time < 10:
                 return cached_data
-        
+
         try:
-            # ✅ Use CORRECT DexScreener endpoint with chain
-            endpoint = f"latest/dex/tokens/{token_address}"
+            endpoint = f"/tokens/v1/{chain}/{token_address}"
             data = await self._make_request(endpoint)
-            
-            if data and 'pairs' in data and len(data['pairs']) > 0:
-                # Filter pairs for the correct chain
-                chain_pairs = [
-                    p for p in data['pairs'] 
-                    if self._normalize_chain(p.get('chainId', '')) == chain
-                ]
-                
-                if not chain_pairs:
-                    # If no exact chain match, use any pair
-                    chain_pairs = data['pairs']
-                
-                # Get price from most liquid pair
-                pairs = sorted(
-                    chain_pairs, 
-                    key=lambda x: x.get('liquidity', {}).get('usd', 0), 
-                    reverse=True
-                )
-                
-                if pairs:
-                    price_str = pairs[0].get('priceUsd')
-                    
-                    if price_str:
-                        price = float(price_str)
-                        self.cache[cache_key] = (price, time.time())
-                        return price
-            
+
+            if data and data.get('pairs'):
+                # Sort by liquidity and get the top pair
+                most_liquid_pair = sorted(data['pairs'], key=lambda p: p.get('liquidity', {}).get('usd', 0), reverse=True)[0]
+                price = float(most_liquid_pair.get('priceUsd'))
+                self.cache[cache_key] = (price, time.time())
+                return price
             return None
-            
-        except Exception as e:
+        except (Exception, asyncio.TimeoutError) as e:
             print(f"Error getting token price for {token_address} on {chain}: {e}")
             return None
         
-    async def get_pair_data(self, pair_address: str) -> Optional[Dict]:
+    async def get_pair_data(self, pair_address: str, chain: str) -> Optional[Dict]:
         """
-        Get detailed pair data
-        
-        Args:
-            pair_address: Pair contract address
-            
-        Returns:
-            Pair data dictionary or None
+        Get detailed pair data using the correct /latest/dex/pairs/{chainId}/{pairId} endpoint.
         """
-        # Check cache
-        cache_key = f"pair_{pair_address}"
+        chain = self._normalize_chain(chain)
+        cache_key = f"pair_{chain}_{pair_address}"
         if cache_key in self.cache:
             cached_data, cached_time = self.cache[cache_key]
             if time.time() - cached_time < self.cache_duration:
                 return cached_data
-                
-        # Fetch pair data
-        endpoint = f"pairs/{pair_address}"
-        data = await self._make_request(endpoint)
-        
-        if data and 'pair' in data:
-            pair = self._parse_pair(data['pair'])
-            if pair:
-                pair_dict = self._pair_to_dict(pair)
-                self.cache[cache_key] = (pair_dict, time.time())
-                return pair_dict
-                
-        return None
+
+        try:
+            endpoint = f"/latest/dex/pairs/{chain}/{pair_address}"
+            data = await self._make_request(endpoint)
+
+            if data and data.get('pair'):
+                pair = self._parse_pair(data['pair'])
+                if pair:
+                    pair_dict = self._pair_to_dict(pair)
+                    self.cache[cache_key] = (pair_dict, time.time())
+                    return pair_dict
+            return None
+        except (Exception, asyncio.TimeoutError) as e:
+            print(f"Error getting pair data for {pair_address} on {chain}: {e}")
+            return None
         
     async def get_token_pairs(self, token_address: str) -> List[Dict]:
         """
@@ -535,7 +499,7 @@ class DexScreenerCollector:
         Returns:
             List of matching pairs
         """
-        endpoint = "search"
+        endpoint = "/latest/dex/search"
         params = {'q': query}
         data = await self._make_request(endpoint, params)
         
@@ -548,42 +512,42 @@ class DexScreenerCollector:
                     
         return pairs
         
-    async def get_trending_pairs(self) -> List[Dict]:
+    async def get_trending_pairs(self, chain: str) -> List[Dict]:
         """
-        Get trending pairs across all chains
-        
-        Returns:
-            List of trending pairs
+        Get trending pairs for a specific chain using the /token-boosts/top/v1 endpoint.
         """
-        trending = []
-        
-        for chain in self.chains:
-            endpoint = f"gainers/{chain}"
+        chain = self._normalize_chain(chain)
+        try:
+            endpoint = "/token-boosts/top/v1"
             data = await self._make_request(endpoint)
-            
-            if data and 'pairs' in data:
-                for pair_data in data['pairs']:
-                    pair = self._parse_pair(pair_data)
+
+            if not data or not isinstance(data, list):
+                return []
+
+            trending_pairs = []
+            for item in data:
+                if self._normalize_chain(item.get('chainId', '')) == chain and item.get('pair'):
+                    pair = self._parse_pair(item['pair'])
                     if pair and self._filter_pair(pair):
-                        trending.append(self._pair_to_dict(pair))
-                        
-        # Sort by volume
-        trending.sort(key=lambda x: x['volume_24h'], reverse=True)
-        
-        return trending[:100]  # Top 100
+                        trending_pairs.append(self._pair_to_dict(pair))
+
+            return trending_pairs
+        except (Exception, asyncio.TimeoutError) as e:
+            print(f"Error getting trending pairs for {chain}: {e}")
+            return []
         
     async def get_boosts(self) -> List[Dict]:
         """
-        Get boosted pairs (paid promotions)
-        
-        Returns:
-            List of boosted pairs
+        Get boosted pairs (paid promotions) using the correct /token-boosts/latest/v1 endpoint.
         """
-        endpoint = "boosts/active"
-        data = await self._make_request(endpoint)
-        
-        boosted = []
-        if data:
+        try:
+            endpoint = "/token-boosts/latest/v1"
+            data = await self._make_request(endpoint)
+
+            if not data or not isinstance(data, list):
+                return []
+
+            boosted = []
             for boost_data in data:
                 if 'pair' in boost_data:
                     pair = self._parse_pair(boost_data['pair'])
@@ -591,8 +555,10 @@ class DexScreenerCollector:
                         pair_dict = self._pair_to_dict(pair)
                         pair_dict['boost_amount'] = boost_data.get('amount', 0)
                         boosted.append(pair_dict)
-                        
-        return boosted
+            return boosted
+        except (Exception, asyncio.TimeoutError) as e:
+            print(f"Error getting boosts: {e}")
+            return []
 
     # 3. Fix monitor_pair to accept address and chain (line ~371)
     # ADD this new method that matches the API signature:

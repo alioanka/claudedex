@@ -233,7 +233,7 @@ class TradingBotApplication:
                 nested_config['data_sources'] = {
                     'dexscreener': {
                         'api_key': os.getenv('DEXSCREENER_API_KEY', ''),
-                        'base_url': 'https://api.dexscreener.com/latest',
+                        'base_url': 'https://api.dexscreener.com',
                         'rate_limit': 300,
                         'chains': self.config.get_config(ConfigType.CHAIN).enabled_chains.split(','),
                         'min_liquidity': 10000,
@@ -513,17 +513,42 @@ def parse_arguments():
     return parser.parse_args()
 
 async def test_dex_collector(logger_instance):
-    """Test DexScreener connectivity"""
-    from data.collectors.dexscreener import test_api_connection
+    """Test DexScreener connectivity using a direct, up-to-date endpoint."""
+    from data.collectors.dexscreener import DexScreenerCollector
     
     logger_instance.info("Testing DexScreener API connection...")
-    success = await test_api_connection()
     
-    if not success:
-        logger_instance.warning("⚠️ DexScreener API connection failed - bot will not find new pairs!")
-    else:
-        logger_instance.info("✅ DexScreener API connection successful")
+    # Use a default, known-good pair for the startup check
+    chain = "ethereum"
+    # WETH/USDC on Ethereum
+    pair_address = "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640"
     
+    collector = None
+    success = False
+    try:
+        # We don't need a full config, just enough to make a request
+        collector = DexScreenerCollector({})
+        await collector.initialize()
+
+        pair_data = await collector.get_pair_data(pair_address=pair_address, chain=chain)
+
+        if pair_data and 'pair_address' in pair_data:
+            success = True
+            logger_instance.info("✅ DexScreener API connection successful")
+        else:
+            logger_instance.warning(
+                "⚠️ DexScreener API connection failed - response OK, but no pair data. "
+                "Bot may not find new pairs!"
+            )
+
+    except Exception as e:
+        logger_instance.warning(
+            f"⚠️ DexScreener API connection failed: {e} - Bot will not find new pairs!"
+        )
+    finally:
+        if collector:
+            await collector.close()
+
     return success
 
 async def main():
