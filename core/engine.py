@@ -2996,13 +2996,15 @@ class TradingBotEngine:
             
             # Age bonus (5% weight) - Remains the same
             age_hours = pair.get('age_hours', 999)
+            age_score = 0.0
             if age_hours < 24:
                 age_score = 1.0 - (age_hours / 24)
-                score += age_score * 0.05
-                weights += 0.05
-                score_breakdown['age'] = {
-                    'score': age_score, 'weight': 0.05, 'contribution': age_score * 0.05, 'raw_value': age_hours
-                }
+
+            score += age_score * 0.05
+            weights += 0.05
+            score_breakdown['age'] = {
+                'score': age_score, 'weight': 0.05, 'contribution': age_score * 0.05, 'raw_value': age_hours
+            }
             
             # Normalize by total weights used
             if weights > 0:

@@ -998,7 +998,7 @@ class PortfolioManager:
         if not self.db:
             return
         try:
-            async with self.db.get_connection() as conn:
+            async with self.db.acquire() as conn:
                 result = await conn.fetchrow("""
                     SELECT consecutive_losses, consecutive_losses_blocked_at,
                            consecutive_losses_block_count, last_reset_at
@@ -1021,7 +1021,7 @@ class PortfolioManager:
         if not self.db:
             return
         try:
-            async with self.db.get_connection() as conn:
+            async with self.db.acquire() as conn:
                 await conn.execute("""
                     INSERT INTO trading.position_manager_state 
                     (id, consecutive_losses, consecutive_losses_blocked_at,
