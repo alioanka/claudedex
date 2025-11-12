@@ -1576,11 +1576,16 @@ class TradingBotEngine:
                 logger.info(f"  ✅ Take profit hit: {pnl_percentage:.2f}% >= {take_profit:.2f}%")
                 return True, "take_profit"
             
-            # 2. Stop loss hit (default -10%)
-            stop_loss = -position.get('stop_loss_percentage', 0.1) * 100
-            if pnl_percentage <= stop_loss:
-                logger.info(f"  🛑 Stop loss hit: {pnl_percentage:.2f}% <= {stop_loss:.2f}%")
-                return True, "stop_loss"
+            # 2. Stop loss hit
+            if 'stop_loss_price' in position:
+                if position['current_price'] <= position['stop_loss_price']:
+                    logger.info(f"  🛑 Custom stop loss hit: ${position['current_price']:.8f} <= ${position['stop_loss_price']:.8f}")
+                    return True, "stop_loss"
+            else:
+                stop_loss_pct = -position.get('stop_loss_percentage', 0.12) * 100
+                if pnl_percentage <= stop_loss_pct:
+                    logger.info(f"  🛑 Percentage stop loss hit: {pnl_percentage:.2f}% <= {stop_loss_pct:.2f}%")
+                    return True, "stop_loss"
             
             # 3. Time-based exit (default 60 minutes for scalping)
             max_hold_time = position.get('max_hold_time', 60)  # minutes
@@ -1588,14 +1593,31 @@ class TradingBotEngine:
                 logger.info(f"  ⏰ Max hold time reached: {holding_time:.1f}min > {max_hold_time}min")
                 return True, "time_limit"
             
-            # 4. Trailing stop (if profit > 10%, exit if drops back to 5%)
-            if pnl_percentage > 10:
+            # 4. Break-even stop-loss
+            if pnl_percentage >= 10 and not position.get('is_break_even', False):
+                position['stop_loss_price'] = position['entry_price']
+                position['is_break_even'] = True
+                logger.info(f"  🛡️ Break-even stop-loss activated for {position.get('token_symbol', 'UNKNOWN')} at ${position['entry_price']:.8f}")
+
+            # 5. Progressive Trailing Stop
+            if pnl_percentage > 10: # Activates after 10% profit
                 max_profit = position.get('max_profit', pnl_percentage)
                 position['max_profit'] = max(max_profit, pnl_percentage)
+
+                trailing_stop_pct = 0
+                if max_profit >= 30:
+                    trailing_stop_pct = 2 # Tighten to 2% trail
+                elif max_profit >= 20:
+                    trailing_stop_pct = 4 # Tighten to 4% trail
+                else: # 10% <= max_profit < 20%
+                    trailing_stop_pct = 6 # Start with 6% trail
                 
-                # If dropped more than 50% from peak
-                if pnl_percentage < (position['max_profit'] * 0.5):
-                    logger.info(f"  📉 Trailing stop: dropped from {position['max_profit']:.2f}% to {pnl_percentage:.2f}%")
+                # Calculate the trailing stop price
+                trailing_stop_price = position['entry_price'] * (1 + (max_profit - trailing_stop_pct) / 100)
+
+                if position['current_price'] < trailing_stop_price:
+                    logger.info(f"  📉 Progressive Trailing Stop Hit: Price ${position['current_price']:.8f} < Trail ${trailing_stop_price:.8f}")
+                    logger.info(f"     (Max Profit: {max_profit:.2f}%, Trail: {trailing_stop_pct}%)")
                     return True, "trailing_stop"
             
             # 5. Volatility exit (sudden price movement)
@@ -2904,6 +2926,11 @@ class TradingBotEngine:
         Returns: Score between 0 and 1
         """
         try:
+            age_minutes = pair.get('age_minutes', 9999)
+            if age_minutes < 15:
+                logger.info(f"   ❌ REJECTED: Token is too new ({age_minutes} minutes old)")
+                return 0.0
+
             score = 0.0
             weights = 0.0
             score_breakdown = {}
@@ -2921,6 +2948,11 @@ class TradingBotEngine:
             # Liquidity score (35% weight) - Increased weight, max score at $50k
             liquidity_usd = pair.get('liquidity_usd') or pair.get('liquidity') or 0
             if liquidity_usd > 0:
+                volume_to_liq_ratio = volume_24h / liquidity_usd if liquidity_usd > 0 else 0
+                if volume_to_liq_ratio < 2.0:
+                    logger.info(f"   ❌ REJECTED: Low volume/liquidity ratio ({volume_to_liq_ratio:.1f}x)")
+                    return 0.0
+
                 liq_score = min(liquidity_usd / 50000, 1.0)
                 score += liq_score * 0.35
                 weights += 0.35
@@ -2939,16 +2971,16 @@ class TradingBotEngine:
                     'score': price_score, 'weight': 0.10, 'contribution': price_score * 0.10, 'raw_value': price_change_5m
                 }
             
-            # Risk score (20% weight) - Increased weight
+            # Risk score (25% weight) - Further increased weight
             if risk_score and hasattr(risk_score, 'overall_risk'):
                 risk_component = 1.0 - risk_score.overall_risk
-                score += risk_component * 0.20
-                weights += 0.20
+                score += risk_component * 0.25
+                weights += 0.25
                 score_breakdown['risk'] = {
-                    'score': risk_component, 'weight': 0.20, 'contribution': risk_component * 0.20, 'raw_value': risk_score.overall_risk
+                    'score': risk_component, 'weight': 0.25, 'contribution': risk_component * 0.25, 'raw_value': risk_score.overall_risk
                 }
             
-            # Age bonus (5% weight) - Reduced weight
+            # Age bonus (5% weight) - Remains the same
             age_hours = pair.get('age_hours', 999)
             if age_hours < 24:
                 age_score = 1.0 - (age_hours / 24)
