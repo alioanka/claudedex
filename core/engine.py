@@ -1366,28 +1366,41 @@ class TradingBotEngine:
                 
                 logger.info(f"📊 Monitoring {len(self.active_positions)} active positions...")
                 
-                # ✅ STEP 1: Collect all prices first
+                # ✅ STEP 1: Collect all prices first (REFACTORED FOR RELIABILITY)
                 price_data = {}
                 for token_address, position in list(self.active_positions.items()):
                     try:
                         chain = position.get('chain', 'ethereum')
                         token_symbol = position.get('token_symbol', 'UNKNOWN')
                         
-                        # Get current price from DexScreener
-                        current_price = await self.dex_collector.get_token_price(
-                            token_address=token_address,
+                        # Ensure the pair address from the original opportunity is available
+                        pair_address = position.get('metadata', {}).get('pair', {}).get('pair_address')
+
+                        if not pair_address:
+                            logger.warning(f"⚠️ Missing pair_address in metadata for {token_symbol}. Falling back to token address lookup.")
+                            # Fallback to the less reliable method if pair_address is missing
+                            current_price = await self.dex_collector.get_token_price(token_address=token_address, chain=chain)
+                            if current_price:
+                                price_data[token_address] = float(current_price)
+                            else:
+                                logger.warning(f"⚠️ Could not get price for {token_symbol} using fallback.")
+                            continue
+
+                        # Use the more reliable get_pair_data method
+                        pair_data = await self.dex_collector.get_pair_data(
+                            pair_address=pair_address,
                             chain=chain
                         )
                         
-                        if current_price:
-                            price_data[token_address] = float(current_price)
+                        if pair_data and 'price' in pair_data:
+                            price_data[token_address] = float(pair_data['price'])
                         else:
                             logger.warning(
                                 f"⚠️ Could not get price for {token_symbol} "
-                                f"({token_address[:10]}...) on {chain}"
+                                f"(Pair: {pair_address[:10]}...) on {chain}"
                             )
                     except Exception as e:
-                        logger.error(f"Error fetching price for {token_address}: {e}")
+                        logger.error(f"Error fetching price for {token_address}: {e}", exc_info=True)
                         continue
                 
                 # ✅ STEP 2: Bulk update portfolio manager
