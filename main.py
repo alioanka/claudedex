@@ -554,9 +554,15 @@ async def test_dex_collector(logger_instance):
 async def main():
     """Main entry point"""
     args = parse_arguments()
-    
+
+    # Load DRY_RUN from .env file first, then override with command-line arg if present
+    dry_run_env = os.getenv('DRY_RUN', 'true').strip().lower()
+    is_dry_run = dry_run_env in ('true', '1', 'yes')
+
     if args.dry_run:
-        os.environ['DRY_RUN'] = 'true'
+        is_dry_run = True
+
+    os.environ['DRY_RUN'] = 'true' if is_dry_run else 'false'
         
     if args.debug:
         os.environ['LOG_LEVEL'] = 'DEBUG'
