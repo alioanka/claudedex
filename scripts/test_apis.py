@@ -17,13 +17,22 @@ async def test_apis():
         # Test DexScreener API
         print("🔍 Testing DexScreener API...")
         try:
-            headers = {"X-API-KEY": os.getenv("DEXSCREENER_API_KEY", "")}
-            async with session.get(
-                "https://api.dexscreener.com/latest/dex/tokens/0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
-                headers=headers
-            ) as resp:
+            # Use environment variables for flexibility, with sensible defaults
+            chain = os.getenv("TEST_CHAIN", "ethereum")
+            pair_address = os.getenv("TEST_PAIR_ADDRESS", "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640") # WETH/USDC on Ethereum
+
+            # Use the correct, updated endpoint structure
+            url = f"https://api.dexscreener.com/latest/dex/pairs/{chain}/{pair_address}"
+
+            print(f"   Querying URL: {url}")
+
+            async with session.get(url) as resp:
                 if resp.status == 200:
-                    results["DexScreener"] = "✅ Connected"
+                    data = await resp.json()
+                    if data.get('pair'):
+                        results["DexScreener"] = f"✅ Connected (Pair: {data['pair']['baseToken']['symbol']}/{data['pair']['quoteToken']['symbol']})"
+                    else:
+                        results["DexScreener"] = f"❌ Error: Response OK, but no pair data found."
                 else:
                     results["DexScreener"] = f"❌ Error: {resp.status}"
         except Exception as e:
@@ -54,7 +63,8 @@ async def test_apis():
         
         # Test RPC endpoints
         print("🔍 Testing RPC endpoints...")
-        rpc_url = os.getenv("ETH_RPC_URL")
+        # Use a generic name for the RPC URL to test any chain
+        rpc_url = os.getenv("TEST_RPC_URL", os.getenv("ETHEREUM_RPC_URLS", "").split(',')[0])
         if rpc_url:
             try:
                 payload = {
@@ -65,27 +75,33 @@ async def test_apis():
                 }
                 async with session.post(rpc_url, json=payload) as resp:
                     if resp.status == 200:
-                        results["Ethereum RPC"] = "✅ Connected"
+                        results["RPC Endpoint"] = "✅ Connected"
                     else:
-                        results["Ethereum RPC"] = f"❌ Error: {resp.status}"
+                        results["RPC Endpoint"] = f"❌ Error: {resp.status}"
             except Exception as e:
-                results["Ethereum RPC"] = f"❌ Failed: {str(e)}"
+                results["RPC Endpoint"] = f"❌ Failed: {str(e)}"
         
         # Test GoPlus API
         print("🔍 Testing GoPlus Security API...")
         try:
-            headers = {"Authorization": f"Bearer {os.getenv('GOPLUS_API_KEY', '')}"}
-            async with session.get(
-                "https://api.gopluslabs.io/api/v1/token_security/1",
-                params={"contract_addresses": "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984"},
-                headers=headers
-            ) as resp:
-                if resp.status == 200:
-                    results["GoPlus"] = "✅ Connected"
-                else:
-                    results["GoPlus"] = f"❌ Error: {resp.status}"
+            # Note: GoPlus API requires an Authorization token, not a simple key.
+            # Assuming the key is the token for this test.
+            auth_token = os.getenv('GOPLUS_API_KEY', '')
+            if auth_token:
+                headers = {"Authorization": f"Bearer {auth_token}"}
+                # Using a valid chain ID (1 for Ethereum) and a token address (UNI)
+                goplus_url = "https://api.gopluslabs.io/api/v1/token_security/1?contract_addresses=0x1f9840a85d5af5bf1d1762f925bdaddc4201f984"
+                async with session.get(goplus_url, headers=headers) as resp:
+                    if resp.status == 200:
+                        results["GoPlus"] = "✅ Connected"
+                    else:
+                        data = await resp.text()
+                        results["GoPlus"] = f"❌ Error: {resp.status} - {data}"
+            else:
+                results["GoPlus"] = "⚠️  Skipped (GOPLUS_API_KEY not set)"
         except Exception as e:
             results["GoPlus"] = f"❌ Failed: {str(e)}"
+
     
     # Print results
     print("\n" + "="*50)
@@ -95,7 +111,7 @@ async def test_apis():
         print(f"{api}: {status}")
     
     # Check if all critical APIs are working
-    critical_apis = ["DexScreener", "Ethereum RPC"]
+    critical_apis = ["DexScreener", "RPC Endpoint"]
     critical_ok = all("✅" in results.get(api, "") for api in critical_apis)
     
     if critical_ok:
@@ -107,4 +123,12 @@ async def test_apis():
     return True
 
 if __name__ == "__main__":
+    # Load .env file for local testing
+    try:
+        from dotenv import load_dotenv
+        print("Loading .env file for local testing...")
+        load_dotenv()
+    except ImportError:
+        print("dotenv not installed, skipping .env load. Make sure environment variables are set.")
+
     asyncio.run(test_apis())

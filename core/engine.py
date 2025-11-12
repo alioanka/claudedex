@@ -1613,7 +1613,7 @@ class TradingBotEngine:
                     trailing_stop_pct = 6 # Start with 6% trail
                 
                 # Calculate the trailing stop price
-                trailing_stop_price = position['entry_price'] * (1 + (max_profit - trailing_stop_pct) / 100)
+                trailing_stop_price = position['entry_price'] * (Decimal(1) + (Decimal(str(max_profit)) - Decimal(str(trailing_stop_pct))) / Decimal(100))
 
                 if position['current_price'] < trailing_stop_price:
                     logger.info(f"  📉 Progressive Trailing Stop Hit: Price ${position['current_price']:.8f} < Trail ${trailing_stop_price:.8f}")
@@ -2673,7 +2673,8 @@ class TradingBotEngine:
                         
                         # Fetch current price from DexScreener
                         pair_data = await self.dex_collector.get_pair_data(
-                            position.token_address
+                            position.token_address,
+                            chain=chain
                         )
                         
                         if pair_data and 'price_usd' in pair_data:
@@ -2971,13 +2972,13 @@ class TradingBotEngine:
                     'score': price_score, 'weight': 0.10, 'contribution': price_score * 0.10, 'raw_value': price_change_5m
                 }
             
-            # Risk score (25% weight) - Further increased weight
+            # Risk score (20% weight) - Adjusted to balance weights
             if risk_score and hasattr(risk_score, 'overall_risk'):
                 risk_component = 1.0 - risk_score.overall_risk
-                score += risk_component * 0.25
-                weights += 0.25
+                score += risk_component * 0.20
+                weights += 0.20
                 score_breakdown['risk'] = {
-                    'score': risk_component, 'weight': 0.25, 'contribution': risk_component * 0.25, 'raw_value': risk_score.overall_risk
+                    'score': risk_component, 'weight': 0.20, 'contribution': risk_component * 0.20, 'raw_value': risk_score.overall_risk
                 }
             
             # Age bonus (5% weight) - Remains the same
