@@ -11,10 +11,29 @@ const dashboardState = {
 function initDashboard() {
     loadHistoricalStats(); // Load historical data ONCE
     loadRiskMetrics(); // ✅ Load risk metrics
+    loadInsights(); // ✅ Load performance insights
     setupDashboardRefresh();
     setupQuickActions();
     setupActivityFeed();
     initializeDashboardCharts();
+}
+
+async function loadInsights() {
+    try {
+        const response = await apiGet('/api/insights');
+        if (response.success && response.data) {
+            const insightsList = document.getElementById('insightsList');
+            if (insightsList) {
+                if (response.data.length > 0) {
+                    insightsList.innerHTML = response.data.map(insight => `<li>${insight}</li>`).join('');
+                } else {
+                    insightsList.innerHTML = '<li>No performance insights available yet.</li>';
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error loading insights:', error);
+    }
 }
 
 // Setup auto-refresh
@@ -248,8 +267,8 @@ async function loadPortfolioChart() {
     try {
         const response = await apiGet(`/api/performance/charts?timeframe=${timeframe}`);
 
-        if (response.success && response.data.portfolio_history && response.data.portfolio_history.length > 0) {
-            const data = response.data.portfolio_history;
+        if (response.success && response.data.equity_curve && response.data.equity_curve.length > 0) {
+            const data = response.data.equity_curve;
 
             // ✅ Format labels based on timeframe
             const formatLabel = (timestamp) => {
@@ -298,18 +317,20 @@ async function loadPnLChart() {
     try {
         const response = await apiGet(`/api/performance/charts?timeframe=${timeframe}`);
 
-        if (response.success && response.data.pnl_history && response.data.pnl_history.length > 0) {
-            const data = response.data.pnl_history;
+        if (response.success && response.data.cumulative_pnl && response.data.cumulative_pnl.length > 0) {
+            const data = response.data.cumulative_pnl;
 
             createChart('pnlChart', {
-                type: 'bar',
+                type: 'line',
                 data: {
                     labels: data.map(d => formatDate(d.timestamp)),
                     datasets: [{
-                        label: 'P&L',
-                        data: data.map(d => d.value),
-                        backgroundColor: data.map(d => d.value >= 0 ?
-                            'rgba(16, 185, 129, 0.8)' : 'rgba(239, 68, 68, 0.8)')
+                        label: 'Cumulative P&L',
+                        data: data.map(d => d.cumulative_pnl),
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        fill: true,
+                        tension: 0.4
                     }]
                 },
                 options: {

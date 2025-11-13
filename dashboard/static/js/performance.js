@@ -50,6 +50,9 @@ function updatePerformanceMetrics(data) {
     // Risk metrics
     document.getElementById('sharpeRatioDetail').textContent = formatNumber(metrics.sharpe_ratio || 0, 2);
     document.getElementById('sortinoRatio').textContent = formatNumber(metrics.sortino_ratio || 0, 2);
+    document.getElementById('calmarRatio').textContent = formatNumber(metrics.calmar_ratio || 0, 2);
+    document.getElementById('dailyVol').textContent = formatPercent(metrics.daily_volatility || 0);
+    document.getElementById('annualVol').textContent = formatPercent(metrics.annual_volatility || 0);
     document.getElementById('maxDrawdownDetail').textContent = formatPercent(metrics.max_drawdown || 0);
 }
 

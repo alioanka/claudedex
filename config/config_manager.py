@@ -763,6 +763,10 @@ class ConfigManager:
         """Get logging configuration"""
         return self.configs.get(ConfigType.LOGGING, LoggingConfig())
 
+    def get_general_config(self) -> GeneralConfig:
+        """Get general configuration"""
+        return self.configs.get(ConfigType.GENERAL, GeneralConfig())
+
     async def update_config(self,
                           config_type: ConfigType, 
                           updates: Dict[str, Any],
