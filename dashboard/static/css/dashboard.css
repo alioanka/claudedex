@@ -685,6 +685,11 @@
 
 /* Responsive Adjustments */
 @media (max-width: 1024px) {
+    .modal-content {
+        max-height: 80vh;
+        overflow-y: auto;
+    }
+
     .position-cards {
         grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
     }

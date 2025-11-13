@@ -589,7 +589,6 @@ class DashboardEndpoints:
                                     # Extract stop_loss/take_profit from metadata
                                     if trade['metadata']:
                                         try:
-                                            import json
                                             metadata = trade['metadata']
                                             if isinstance(metadata, str):
                                                 metadata = json.loads(metadata)
@@ -598,7 +597,7 @@ class DashboardEndpoints:
                                                 stop_loss = metadata.get('stop_loss')
                                             if not take_profit:
                                                 take_profit = metadata.get('take_profit')
-                                        except:
+                                        except (json.JSONDecodeError, AttributeError):
                                             pass
                         except Exception as e:
                             logger.error(f"Error enriching position from DB: {e}")
@@ -1022,18 +1021,31 @@ class DashboardEndpoints:
             if not self.db:
                 return web.json_response({'error': 'Database not available'}, status=503)
 
-            query = "SELECT exit_timestamp, profit_loss FROM trades WHERE status = 'closed' ORDER BY exit_timestamp ASC;"
+            query = "SELECT exit_timestamp, profit_loss, metadata FROM trades WHERE status = 'closed' ORDER BY exit_timestamp ASC;"
             trades = await self.db.pool.fetch(query)
 
             if not trades:
                 return web.json_response({'success': True, 'data': {
                     'equity_curve': [],
                     'cumulative_pnl': [],
+                    'strategy_performance': [],
+                    'win_loss': {'wins': 0, 'losses': 0},
+                    'monthly': [],
                 }})
 
             df = pd.DataFrame([dict(trade) for trade in trades])
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
             df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
+
+            def get_strategy(metadata):
+                if isinstance(metadata, str):
+                    try:
+                        metadata = json.loads(metadata)
+                    except json.JSONDecodeError:
+                        return 'unknown'
+                return metadata.get('strategy', 'unknown') if metadata else 'unknown'
+
+            df['strategy'] = df['metadata'].apply(get_strategy)
             
             # Filter by timeframe
             if timeframe != 'all':

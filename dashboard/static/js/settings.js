@@ -66,22 +66,17 @@ class SettingsManager {
     }
 
     populateForm(data) {
-        for (const category in data) {
-            if (data.hasOwnProperty(category)) {
-                for (const key in data[category]) {
-                    if (data[category].hasOwnProperty(key)) {
-                        const element = document.getElementById(key);
-                        if (element) {
-                            if (element.type === 'checkbox') {
-                                element.checked = data[category][key];
-                            } else {
-                                element.value = data[category][key];
-                            }
-                        }
-                    }
+        document.querySelectorAll('.settings-input').forEach(input => {
+            const category = input.closest('[data-category]').dataset.category;
+            const key = input.id;
+            if (data[category] && data[category].hasOwnProperty(key)) {
+                if (input.type === 'checkbox') {
+                    input.checked = data[category][key];
+                } else {
+                    input.value = data[category][key];
                 }
             }
-        }
+        });
     }
 
     async saveAllSettings() {
@@ -117,11 +112,11 @@ class SettingsManager {
         }
 
         if (allUpdatesSucceeded) {
-            console.log('All settings saved successfully!');
+            showToast('success', 'All settings saved successfully!');
             // Optionally, reload settings to confirm they've been applied
             this.loadSettings();
         } else {
-            console.error('One or more settings categories failed to save.');
+            showToast('error', 'One or more settings categories failed to save.');
         }
     }
 
@@ -148,11 +143,11 @@ class SettingsManager {
                 console.log(`Settings for '${category}' updated successfully.`);
                 return true;
             } else {
-                console.error(`Failed to update settings for '${category}':`, result.error);
+                showToast('error', `Failed to update settings for '${category}': ${result.error}`);
                 return false;
             }
         } catch (error) {
-            console.error(`Error saving settings for '${category}':`, error);
+            showToast('error', `Error saving settings for '${category}': ${error.message}`);
             return false;
         }
     }
