@@ -293,21 +293,42 @@ class DashboardEndpoints:
         )
     
     async def api_get_logs(self, request):
-        """Get recent log entries"""
+        """Get recent log entries from all available log files."""
         try:
-            log_file = self.config_mgr.get_logging_config().log_file
-            lines = []
-            with open(log_file, 'r') as f:
-                for line in f:
-                    try:
-                        log_entry = json.loads(line)
-                        lines.append(log_entry)
-                    except json.JSONDecodeError:
-                        # Ignore lines that aren't valid JSON
-                        pass
-            return web.json_response({'success': True, 'data': lines[-200:]}) # Return last 200 log lines
+            log_dir = "/app/logs"
+            log_files = [
+                "TradingBot.log",
+                "TradingBot_errors.log",
+                "TradingBot_trades.log"
+            ]
+            # Add rotated logs
+            for i in range(1, 11):
+                log_files.append(f"TradingBot.log.{i}")
+
+            all_lines = []
+            for lf in log_files:
+                try:
+                    full_path = f"{log_dir}/{lf}"
+                    with open(full_path, 'r') as f:
+                        for line in f:
+                            try:
+                                log_entry = json.loads(line)
+                                # Ensure timestamp exists for sorting
+                                if 'timestamp' in log_entry:
+                                    all_lines.append(log_entry)
+                            except (json.JSONDecodeError, TypeError):
+                                pass
+                except FileNotFoundError:
+                    # It's normal for some rotated files not to exist
+                    continue
+
+            # Sort all log entries by timestamp
+            all_lines.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+
+            # Return last 500 log lines
+            return web.json_response({'success': True, 'data': all_lines[:500]})
         except Exception as e:
-            logger.error(f"Error reading log file: {e}")
+            logger.error(f"Error reading log files: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
 
     async def api_get_analysis(self, request):
@@ -330,14 +351,32 @@ class DashboardEndpoints:
             df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
 
             # Performance by strategy
-            # This assumes strategy is stored in metadata
             def get_strategy(metadata):
+                """Recursively search for a 'strategy' key in the metadata."""
+                if not metadata:
+                    return 'Unspecified'
+
                 if isinstance(metadata, str):
                     try:
                         metadata = json.loads(metadata)
                     except json.JSONDecodeError:
-                        return 'unknown'
-                return metadata.get('strategy', 'unknown') if metadata else 'unknown'
+                        return 'Unspecified'
+
+                if not isinstance(metadata, dict):
+                    return 'Unspecified'
+
+                # Check top level
+                if 'strategy' in metadata:
+                    return metadata['strategy']
+
+                # Recursively check nested dicts
+                for key, value in metadata.items():
+                    if isinstance(value, dict):
+                        strategy = get_strategy(value)
+                        if strategy != 'Unspecified':
+                            return strategy
+
+                return 'Unspecified'
 
             df['strategy'] = df['metadata'].apply(get_strategy)
             strategy_performance = df.groupby('strategy')['profit_loss'].sum().reset_index()
@@ -564,13 +603,12 @@ class DashboardEndpoints:
                     # Calculate ROI
                     roi = ((current_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
                     
-                    # ✅ Get entry_timestamp and stop_loss/take_profit from database
+                    # ✅ Always enrich from database for definitive SL/TP values
                     entry_timestamp = position.get('entry_timestamp') or position.get('opened_at') or position.get('timestamp')
-                    stop_loss = position.get('stop_loss')
-                    take_profit = position.get('take_profit')
-                    
-                    # ✅ Try to enrich from database if fields are missing
-                    if (not entry_timestamp or not stop_loss or not take_profit) and self.db:
+                    stop_loss = None
+                    take_profit = None
+
+                    if self.db:
                         try:
                             async with self.db.pool.acquire() as conn:
                                 trade = await conn.fetchrow("""
@@ -586,21 +624,22 @@ class DashboardEndpoints:
                                     if not entry_timestamp and trade['entry_timestamp']:
                                         entry_timestamp = trade['entry_timestamp']
                                     
-                                    # Extract stop_loss/take_profit from metadata
                                     if trade['metadata']:
-                                        try:
-                                            metadata = trade['metadata']
-                                            if isinstance(metadata, str):
-                                                metadata = json.loads(metadata)
-                                            
-                                            if not stop_loss:
-                                                stop_loss = metadata.get('stop_loss')
-                                            if not take_profit:
-                                                take_profit = metadata.get('take_profit')
-                                        except (json.JSONDecodeError, AttributeError):
-                                            pass
-                        except Exception as e:
+                                        metadata = trade['metadata']
+                                        if isinstance(metadata, str):
+                                            metadata = json.loads(metadata)
+
+                                        # Prefer database metadata values
+                                        stop_loss = metadata.get('stop_loss')
+                                        take_profit = metadata.get('take_profit')
+                        except (json.JSONDecodeError, AttributeError, Exception) as e:
                             logger.error(f"Error enriching position from DB: {e}")
+
+                    # Fallback to position data if DB enrichment fails
+                    if stop_loss is None:
+                        stop_loss = position.get('stop_loss')
+                    if take_profit is None:
+                        take_profit = position.get('take_profit')
                     
                     # Calculate duration
                     duration_str = 'unknown'
@@ -1925,42 +1964,54 @@ class DashboardEndpoints:
                 await asyncio.sleep(10)
     
     async def _generate_report(self, period, start_date, end_date, metrics):
-        """Generate performance report"""
+        """Generate detailed performance report."""
         report = {
             'period': period,
+            'start_date': start_date,
+            'end_date': end_date,
             'generated_at': datetime.utcnow().isoformat(),
-            'metrics': {}
+            'metrics': {},
+            'trades': []
         }
+
+        if not self.db:
+            return report
+
+        # Fetch trades from the database
+        trades = await self.db.get_recent_trades(limit=5000) # Fetch more for filtering
         
-        # Get trades for period
-        trades = self.db.get_recent_trades(limit=1000)
-        
-        # Apply date filters
+        # Filter by date
         if start_date:
-            start = datetime.fromisoformat(start_date)
-            trades = [t for t in trades if datetime.fromisoformat(t['timestamp']) >= start]
-        
+            start_dt = datetime.fromisoformat(start_date)
+            trades = [t for t in trades if t['entry_timestamp'] and datetime.fromisoformat(t['entry_timestamp']) >= start_dt]
         if end_date:
-            end = datetime.fromisoformat(end_date)
-            trades = [t for t in trades if datetime.fromisoformat(t['timestamp']) <= end]
-        
-        # Calculate metrics
+            end_dt = datetime.fromisoformat(end_date)
+            trades = [t for t in trades if t['entry_timestamp'] and datetime.fromisoformat(t['entry_timestamp']) <= end_dt]
+
+        closed_trades = [t for t in trades if t.get('status') == 'closed']
+        report['trades'] = self._serialize_decimals(closed_trades)
+
+        # Calculate metrics if there are any closed trades
+        if not closed_trades:
+            return report
+
+        df = pd.DataFrame(closed_trades)
+        df['profit_loss'] = pd.to_numeric(df['profit_loss'])
+
         if 'all' in metrics or 'pnl' in metrics:
-            total_pnl = sum(float(t.get('pnl', 0)) for t in trades if t.get('status') == 'closed')
-            report['metrics']['total_pnl'] = total_pnl
+            report['metrics']['total_pnl'] = df['profit_loss'].sum()
         
         if 'all' in metrics or 'win_rate' in metrics:
-            winning_trades = len([t for t in trades if float(t.get('pnl', 0)) > 0])
-            total_trades = len([t for t in trades if t.get('status') == 'closed'])
-            report['metrics']['win_rate'] = winning_trades / total_trades if total_trades > 0 else 0
-        
+            winning_trades = len(df[df['profit_loss'] > 0])
+            total_closed = len(df)
+            report['metrics']['win_rate'] = (winning_trades / total_closed * 100) if total_closed > 0 else 0
+            report['metrics']['winning_trades'] = winning_trades
+            report['metrics']['losing_trades'] = total_closed - winning_trades
+
         if 'all' in metrics or 'trades_count' in metrics:
             report['metrics']['total_trades'] = len(trades)
-            report['metrics']['open_trades'] = len([t for t in trades if t.get('status') == 'open'])
-            report['metrics']['closed_trades'] = len([t for t in trades if t.get('status') == 'closed'])
-        
-        # Add more metrics as needed
-        
+            report['metrics']['closed_trades'] = len(closed_trades)
+
         return report
     
     async def _generate_custom_report(self, filters):
