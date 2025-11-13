@@ -15,6 +15,7 @@ import aiohttp
 from collections import deque, defaultdict
 import hashlib
 import hmac
+from utils.helpers import retry_async
 
 logger = logging.getLogger(__name__)
 
@@ -785,7 +786,7 @@ class AlertsSystem:
                 lines.append(f"{key}: {value}")
             return "\n".join(lines)
 
-
+    @retry_async(max_retries=3, delay=5, exponential_backoff=True)
     async def _send_telegram(self, alert: Alert) -> bool:
         """Send alert via Telegram"""
         try:

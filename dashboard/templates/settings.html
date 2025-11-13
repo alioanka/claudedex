@@ -6,11 +6,11 @@
 <div class="page-header">
     <h1>Settings</h1>
     <div class="page-actions">
-        <button class="btn btn-secondary" id="revertSettings">
-            <i class="fas fa-undo"></i> Revert Changes
+        <button class="btn btn-secondary" id="revertAllSettings" disabled>
+            <i class="fas fa-undo"></i> Revert All
         </button>
-        <button class="btn btn-primary" id="saveSettings">
-            <i class="fas fa-save"></i> Save Settings
+        <button class="btn btn-primary" id="saveAllSettings">
+            <i class="fas fa-save"></i> Save All Changes
         </button>
     </div>
 </div>
@@ -18,111 +18,33 @@
 <!-- Settings Tabs -->
 <div class="tabs">
     <button class="tab-btn active category-tab" data-category="trading">Trading</button>
-    <button class="tab-btn category-tab" data-category="risk">Risk Management</button>
-    <button class="tab-btn category-tab" data-category="api">API & Connections</button>
-    <button class="tab-btn category-tab" data-category="notifications">Notifications</button>
-    <button class="tab-btn category-tab" data-category="strategies">Strategies</button>
-    <button class="tab-btn category-tab" data-category="advanced">Advanced</button>
+    <button class="tab-btn category-tab" data-category="risk">Risk</button>
+    <button class="tab-btn category-tab" data-category="api">API</button>
+    <button class="tab-btn category-tab" data-category="monitoring">Monitoring</button>
+    <button class="tab-btn category-tab" data-category="ml_models">ML Models</button>
 </div>
 
-<!-- Trading Settings -->
-<div class="card settings-section" id="trading-settings-section">
-    <div class="card-header">
-        <h3 class="card-title">Trading Configuration</h3>
+<!-- Settings Sections -->
+<div id="settings-container">
+    <div id="trading-settings" class="settings-section card">
+        <div class="card-header"><h3 class="card-title">Trading Configuration</h3></div>
+        <div class="card-body" id="trading-settings-form"></div>
     </div>
-    <div class="card-body" data-category="trading">
-        <div class="form-group">
-            <label class="form-label">Minimum Opportunity Score</label>
-            <input type="number" id="min_opportunity_score" class="form-control settings-input" step="0.01" min="0" max="1">
-            <small class="form-help">The minimum score required to consider a trade.</small>
-        </div>
-        <div class="form-group">
-            <label class="form-label">Max Slippage (BPS)</label>
-            <input type="number" id="max_slippage_bps" class="form-control settings-input" step="10">
-            <small class="form-help">Maximum acceptable slippage in basis points (e.g., 50 = 0.5%).</small>
-        </div>
+    <div id="risk-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Risk Management</h3></div>
+        <div class="card-body" id="risk-settings-form"></div>
     </div>
-</div>
-
-<!-- Risk Management Settings -->
-<div class="card settings-section" id="risk-settings-section" style="display: none;">
-    <div class="card-header">
-        <h3 class="card-title">Risk Management</h3>
+    <div id="api-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">API & Connections</h3></div>
+        <div class="card-body" id="api-settings-form"></div>
     </div>
-    <div class="card-body" data-category="risk">
-        <div class="form-group">
-            <label class="form-label">Stop Loss (%)</label>
-            <input type="number" id="stop_loss_pct" class="form-control settings-input" step="0.1">
-            <small class="form-help">Default stop loss percentage.</small>
-        </div>
-        <div class="form-group">
-            <label class="form-label">Take Profit (%)</label>
-            <input type="number" id="take_profit_pct" class="form-control settings-input" step="0.1">
-            <small class="form-help">Default take profit percentage.</small>
-        </div>
-        <div class="form-group">
-            <label class="form-label">Risk Per Trade (%)</label>
-            <input type="number" id="risk_per_trade_pct" class="form-control settings-input" step="0.01">
-            <small class="form-help">Percentage of portfolio to risk per trade.</small>
-        </div>
+    <div id="monitoring-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Monitoring & Notifications</h3></div>
+        <div class="card-body" id="monitoring-settings-form"></div>
     </div>
-</div>
-
-<!-- API Settings -->
-<div class="card settings-section" id="api-settings-section" style="display: none;">
-    <div class="card-header">
-        <h3 class="card-title">API & Connections</h3>
-    </div>
-    <div class="card-body" data-category="api">
-        <!-- API settings will be populated here from JS if needed -->
-        <p class="text-muted">API keys and sensitive connection details are managed via environment variables and are not displayed here for security reasons.</p>
-    </div>
-</div>
-
-<!-- Notification Settings -->
-<div class="card settings-section" id="notifications-settings-section" style="display: none;">
-    <div class="card-header">
-        <h3 class="card-title">Notifications</h3>
-    </div>
-    <div class="card-body" data-category="monitoring">
-        <div class="form-group">
-            <label class="form-label">Log Level</label>
-            <select id="log_level" class="form-control settings-input">
-                <option value="DEBUG">Debug</option>
-                <option value="INFO">Info</option>
-                <option value="WARNING">Warning</option>
-                <option value="ERROR">Error</option>
-                <option value="CRITICAL">Critical</option>
-            </select>
-            <small class="form-help">Set the application log level.</small>
-        </div>
-        <div class="form-group">
-            <label class="form-label">
-                <input type="checkbox" id="enable_metrics" class="settings-input">
-                Enable Prometheus Metrics
-            </label>
-            <small class="form-help">Expose a /metrics endpoint for Prometheus.</small>
-        </div>
-    </div>
-</div>
-
-<!-- Strategies Settings -->
-<div class="card settings-section" id="strategiesSettings" style="display: none;">
-    <div class="card-header">
-        <h3 class="card-title">Strategy Parameters</h3>
-    </div>
-    <div class="card-body">
-        <p class="text-muted">Configure strategy-specific parameters here.</p>
-    </div>
-</div>
-
-<!-- Advanced Settings -->
-<div class="card settings-section" id="advancedSettings" style="display: none;">
-    <div class="card-header">
-        <h3 class="card-title">Advanced Configuration</h3>
-    </div>
-    <div class="card-body">
-        <p class="text-muted">Advanced settings for experienced users.</p>
+    <div id="ml_models-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Machine Learning Models</h3></div>
+        <div class="card-body" id="ml_models-settings-form"></div>
     </div>
 </div>
 {% endblock %}

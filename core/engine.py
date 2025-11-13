@@ -812,7 +812,8 @@ class TradingBotEngine:
                     else:
                         logger.warning(f"   ❌ Safety checks failed for {opportunity.token_address[:10]}")
                         
-                    self.pending_opportunities.remove(opportunity)
+                    if opportunity in self.pending_opportunities:
+                        self.pending_opportunities.remove(opportunity)
                     
                 await asyncio.sleep(0.5)
                 
@@ -1788,7 +1789,8 @@ class TradingBotEngine:
                 logger.info(f"📊 Total profit so far: ${self.stats.get('total_profit', 0):.2f}")
                 
                 # Remove from active positions
-                del self.active_positions[token_address]
+                if token_address in self.active_positions:
+                    del self.active_positions[token_address]
 
                 # ✅ NEW: Update portfolio manager
                 if hasattr(self, 'portfolio_manager') and self.portfolio_manager:
