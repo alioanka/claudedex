@@ -759,6 +759,10 @@ class ConfigManager:
         """Get portfolio configuration"""
         return self.configs.get(ConfigType.PORTFOLIO, PortfolioConfig())
 
+    def get_logging_config(self) -> LoggingConfig:
+        """Get logging configuration"""
+        return self.configs.get(ConfigType.LOGGING, LoggingConfig())
+
     async def update_config(self,
                           config_type: ConfigType, 
                           updates: Dict[str, Any],

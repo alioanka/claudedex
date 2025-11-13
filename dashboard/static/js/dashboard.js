@@ -223,90 +223,126 @@ function getAlertIconType(type) {
 
 // Initialize dashboard charts
 function initializeDashboardCharts() {
-    createPortfolioMiniChart();
-    createPnlMiniChart();
-}
-
-// Create mini portfolio chart
-function createPortfolioMiniChart() {
-    const canvas = document.getElementById('portfolioMiniChart');
-    if (!canvas) return;
-    
-    // Sample data - replace with actual data
-    const data = Array.from({length: 24}, (_, i) => ({
-        x: i,
-        y: 10000 + Math.random() * 1000
-    }));
-    
-    createChart('portfolioMiniChart', {
-        type: 'line',
-        data: {
-            labels: data.map(d => d.x),
-            datasets: [{
-                data: data.map(d => d.y),
-                borderColor: '#3b82f6',
-                borderWidth: 2,
-                fill: false,
-                tension: 0.4,
-                pointRadius: 0
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: { display: false },
-                tooltip: { enabled: false }
-            },
-            scales: {
-                x: { display: false },
-                y: { display: false }
-            }
-        }
-    });
-}
-
-// Create mini P&L chart
-function createPnlMiniChart() {
-    const canvas = document.getElementById('pnlMiniChart');
-    if (!canvas) return;
-    
-    // Sample data - replace with actual data
-    const data = Array.from({length: 24}, (_, i) => ({
-        x: i,
-        y: Math.random() * 200 - 100
-    }));
-    
-    createChart('pnlMiniChart', {
-        type: 'bar',
-        data: {
-            labels: data.map(d => d.x),
-            datasets: [{
-                data: data.map(d => d.y),
-                backgroundColor: data.map(d => 
-                    d.y >= 0 ? 'rgba(16, 185, 129, 0.8)' : 'rgba(239, 68, 68, 0.8)'
-                ),
-                borderWidth: 0
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: { display: false },
-                tooltip: { enabled: false }
-            },
-            scales: {
-                x: { display: false },
-                y: { display: false }
-            }
-        }
-    });
+    loadCharts();
 }
 
 // Price ticker functionality
 function updatePriceTicker() {
     // Implementation for live price updates
+}
+
+async function loadCharts() {
+    // Load portfolio chart
+    loadPortfolioChart();
+    
+    // Load P&L chart
+    loadPnLChart();
+    
+    // Load win rate chart
+    loadWinRateChart();
+}
+
+async function loadPortfolioChart() {
+    const timeframe = document.getElementById('portfolioTimeframe').value;
+    
+    try {
+        const response = await apiGet(`/api/performance/charts?timeframe=${timeframe}`);
+
+        if (response.success && response.data.portfolio_history && response.data.portfolio_history.length > 0) {
+            const data = response.data.portfolio_history;
+
+            // ✅ Format labels based on timeframe
+            const formatLabel = (timestamp) => {
+                const date = new Date(timestamp);
+                if (timeframe === '7d' || timeframe === '30d') {
+                    return date.toLocaleDateString(); // Show date for longer timeframes
+                } else {
+                    return date.toLocaleTimeString(); // Show time for 1h/24h
+                }
+            };
+
+            createChart('portfolioChart', {
+                type: 'line',
+                data: {
+                    labels: data.map(d => formatLabel(d.timestamp)),
+                    datasets: [{
+                        label: 'Portfolio Value',
+                        data: data.map(d => d.value),
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            ticks: { callback: value => formatCurrency(value) }
+                        }
+                    }
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Error loading portfolio chart:', error);
+    }
+}
+
+async function loadPnLChart() {
+    const timeframe = document.getElementById('pnlTimeframe').value;
+
+    try {
+        const response = await apiGet(`/api/performance/charts?timeframe=${timeframe}`);
+
+        if (response.success && response.data.pnl_history && response.data.pnl_history.length > 0) {
+            const data = response.data.pnl_history;
+
+            createChart('pnlChart', {
+                type: 'bar',
+                data: {
+                    labels: data.map(d => formatDate(d.timestamp)),
+                    datasets: [{
+                        label: 'P&L',
+                        data: data.map(d => d.value),
+                        backgroundColor: data.map(d => d.value >= 0 ?
+                            'rgba(16, 185, 129, 0.8)' : 'rgba(239, 68, 68, 0.8)')
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: value => formatCurrency(value)
+                            }
+                        }
+                    }
+                }
+            });
+        } else {
+            // ✅ Show "No data" message
+            const canvas = document.getElementById('pnlChart');
+            if (canvas) {
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.font = '16px Arial';
+                ctx.fillStyle = '#999';
+                ctx.textAlign = 'center';
+                ctx.fillText('No data available for this timeframe', canvas.width / 2, canvas.height / 2);
+            }
+        }
+    } catch (error) {
+        console.error('Error loading P&L chart:', error);
+    }
 }
 
 // Cleanup on page unload
