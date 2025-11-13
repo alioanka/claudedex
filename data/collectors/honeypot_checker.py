@@ -92,6 +92,10 @@ class HoneypotChecker:
     async def _setup_web3_connections(self):
         """Setup Web3 connections for each chain"""
         for chain in Chain:
+            # ✅ Skip Solana for Web3 connections
+            if chain.name.lower() == 'solana':
+                continue
+
             if chain in CHAIN_RPC_URLS:
                 rpc_urls = CHAIN_RPC_URLS[chain]
                 if rpc_urls:
@@ -105,7 +109,7 @@ class HoneypotChecker:
 
     async def close(self):
         """Clean up resources"""
-        if self.session:
+        if self.session and not self.session.closed:
             await self.session.close()
             
     async def check_token(self, address: str, chain: str) -> Dict:

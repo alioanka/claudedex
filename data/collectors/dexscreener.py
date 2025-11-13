@@ -138,7 +138,7 @@ class DexScreenerCollector:
             
     async def close(self):
         """Close the collector"""
-        if self.session:
+        if self.session and not self.session.closed:
             await self.session.close()
             
     async def _rate_limit(self):

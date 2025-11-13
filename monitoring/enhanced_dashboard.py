@@ -635,11 +635,24 @@ class DashboardEndpoints:
                         except (json.JSONDecodeError, AttributeError, Exception) as e:
                             logger.error(f"Error enriching position from DB: {e}")
 
-                    # Fallback to position data if DB enrichment fails
+                    # --- FIX STARTS HERE ---
+                    # Fallback logic to calculate SL/TP if they are not in the database metadata
                     if stop_loss is None:
-                        stop_loss = position.get('stop_loss')
+                        sl_pct = position.get('stop_loss_percentage')
+                        if sl_pct and entry_price > 0:
+                            stop_loss = entry_price * (1 - sl_pct)
+                        # Final fallback if even percentage is missing
+                        else:
+                            stop_loss = entry_price * 0.88 # Default to 12% SL
+
                     if take_profit is None:
-                        take_profit = position.get('take_profit')
+                        tp_pct = position.get('take_profit_percentage')
+                        if tp_pct and entry_price > 0:
+                            take_profit = entry_price * (1 + tp_pct)
+                        # Final fallback
+                        else:
+                            take_profit = entry_price * 1.24 # Default to 24% TP
+                    # --- FIX ENDS HERE ---
                     
                     # Calculate duration
                     duration_str = 'unknown'
@@ -983,6 +996,7 @@ class DashboardEndpoints:
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
             df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
 
+            # --- FIX STARTS HERE ---
             # Basic metrics
             total_pnl = df['profit_loss'].sum()
             total_trades = len(df)
@@ -990,22 +1004,34 @@ class DashboardEndpoints:
             losing_trades = df[df['profit_loss'] <= 0]
             win_rate = (len(winning_trades) / total_trades) * 100 if total_trades > 0 else 0
 
-            # Advanced metrics
-            avg_win = winning_trades['profit_loss'].mean()
-            avg_loss = losing_trades['profit_loss'].mean()
-            best_trade = df['profit_loss'].max()
-            worst_trade = df['profit_loss'].min()
-            profit_factor = abs(winning_trades['profit_loss'].sum() / losing_trades['profit_loss'].sum()) if losing_trades['profit_loss'].sum() != 0 else float('inf')
+            # Advanced metrics with safe defaults
+            avg_win = winning_trades['profit_loss'].mean() if not winning_trades.empty else 0
+            avg_loss = losing_trades['profit_loss'].mean() if not losing_trades.empty else 0
+            best_trade = df['profit_loss'].max() if not df.empty else 0
+            worst_trade = df['profit_loss'].min() if not df.empty else 0
 
-            # Sharpe Ratio (assuming risk-free rate is 0 and daily returns)
+            sum_of_wins = winning_trades['profit_loss'].sum()
+            sum_of_losses = abs(losing_trades['profit_loss'].sum())
+            profit_factor = sum_of_wins / sum_of_losses if sum_of_losses > 0 else float('inf')
+
+            # Sharpe Ratio (annualized, assuming risk-free rate is 0)
             daily_returns = df.set_index('exit_timestamp')['profit_loss'].resample('D').sum()
-            sharpe_ratio = (daily_returns.mean() / daily_returns.std()) * np.sqrt(365) if daily_returns.std() != 0 else 0
+            # Ensure there's more than one period to calculate std dev
+            if len(daily_returns) > 1 and daily_returns.std() != 0:
+                sharpe_ratio = (daily_returns.mean() / daily_returns.std()) * np.sqrt(365)
+            else:
+                sharpe_ratio = 0.0
 
-            # Max Drawdown
-            cumulative_pnl = df['profit_loss'].cumsum()
-            peak = cumulative_pnl.expanding(min_periods=1).max()
-            drawdown = (cumulative_pnl - peak) / peak
-            max_drawdown = drawdown.min() * 100 if not peak.empty and peak.iloc[-1] > 0 else 0
+            # Correct Max Drawdown calculation based on equity
+            initial_balance = self.config_mgr.get_portfolio_config().initial_balance
+            df['cumulative_pnl'] = df['profit_loss'].cumsum()
+            df['equity'] = initial_balance + df['cumulative_pnl']
+
+            peak = df['equity'].expanding(min_periods=1).max()
+            # Ensure division by zero is handled if peak is 0
+            drawdown = ((df['equity'] - peak) / peak).replace([np.inf, -np.inf], 0)
+            max_drawdown = abs(drawdown.min() * 100) if not drawdown.empty else 0
+            # --- FIX ENDS HERE ---
 
 
             metrics = {
@@ -1085,20 +1111,40 @@ class DashboardEndpoints:
                 return metadata.get('strategy', 'unknown') if metadata else 'unknown'
 
             df['strategy'] = df['metadata'].apply(get_strategy)
+
+            # --- FIX STARTS HERE ---
             
-            # Filter by timeframe
+            # 1. Calculate Equity Curve on the ENTIRE dataset first
+            initial_balance = self.config_mgr.get_portfolio_config().initial_balance
+            df_full = df.copy() # Use a copy for full history calculations
+            df_full['cumulative_pnl'] = df_full['profit_loss'].cumsum()
+            df_full['equity'] = initial_balance + df_full['cumulative_pnl']
+
+            # 2. Now, filter the DataFrame by the requested timeframe
             if timeframe != 'all':
                 now = pd.Timestamp.utcnow()
-                delta = pd.Timedelta(days={'24h': 1, '7d': 7, '30d': 30, '90d': 90}.get(timeframe, 7))
-                df = df[df['exit_timestamp'] >= (now - delta)]
+                # Use a mapping for timedelta
+                time_delta_map = {
+                    '24h': pd.Timedelta(days=1),
+                    '7d': pd.Timedelta(days=7),
+                    '30d': pd.Timedelta(days=30),
+                    '90d': pd.Timedelta(days=90)
+                }
+                delta = time_delta_map.get(timeframe, pd.Timedelta(days=7)) # Default to 7d
 
-            # Equity Curve
-            initial_balance = self.config_mgr.get_portfolio_config().initial_balance
-            df['cumulative_pnl'] = df['profit_loss'].cumsum()
-            df['equity'] = initial_balance + df['cumulative_pnl']
+                # Filter both the main df and the full history df for display
+                df = df[df['exit_timestamp'] >= (now - delta)]
+                df_full_filtered = df_full[df_full['exit_timestamp'] >= (now - delta)]
+            else:
+                # If 'all' time, the filtered version is the same as the full
+                df_full_filtered = df_full
+
+            # 3. Generate chart data from the correctly filtered data
+            # The equity curve uses the filtered full history, preserving the correct starting equity
+            equity_curve_data = [{'timestamp': ts.isoformat(), 'value': val} for ts, val in df_full_filtered[['exit_timestamp', 'equity']].values]
+            cumulative_pnl_data = [{'timestamp': ts.isoformat(), 'cumulative_pnl': val} for ts, val in df_full_filtered[['exit_timestamp', 'cumulative_pnl']].values]
             
-            equity_curve_data = [{'timestamp': ts.isoformat(), 'value': val} for ts, val in df[['exit_timestamp', 'equity']].values]
-            cumulative_pnl_data = [{'timestamp': ts.isoformat(), 'cumulative_pnl': val} for ts, val in df[['exit_timestamp', 'cumulative_pnl']].values]
+            # --- FIX ENDS HERE ---
 
             # Strategy Performance
             strategy_performance = df.groupby('strategy')['profit_loss'].sum().reset_index()
@@ -1243,53 +1289,24 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_bot_status(self, request):
-        """Get bot status with robust detection"""
+        """Get the bot's running status and uptime."""
         try:
-            # ✅ FIX: Check multiple possible state indicators
-            is_running = False
-            uptime_str = 'N/A'
-            
-            if self.engine:
-                # Try different state attribute names
-                if hasattr(self.engine, 'state'):
-                    # Check for various "running" values
-                    state_val = str(self.engine.state).lower()
-                    is_running = state_val in ['running', 'active', 'started', 'true', '1']
-                elif hasattr(self.engine, 'running'):
-                    is_running = bool(self.engine.running)
-                elif hasattr(self.engine, 'is_running'):
-                    is_running = bool(self.engine.is_running)
-                elif hasattr(self.engine, '_running'):
-                    is_running = bool(self.engine._running)
-                elif hasattr(self.engine, 'active'):
-                    is_running = bool(self.engine.active)
-                
-                # Calculate uptime if running
-                if is_running:
-                    start_time = None
-                    if hasattr(self.engine, 'start_time') and self.engine.start_time:
-                        start_time = self.engine.start_time
-                    elif hasattr(self.engine, 'started_at') and self.engine.started_at:
-                        start_time = self.engine.started_at
-                    elif hasattr(self.engine, 'startup_time') and self.engine.startup_time:
-                        start_time = self.engine.startup_time
-                    
-                    if start_time:
-                        try:
-                            uptime_delta = datetime.utcnow() - start_time
-                            hours = int(uptime_delta.total_seconds() // 3600)
-                            minutes = int((uptime_delta.total_seconds() % 3600) // 60)
-                            uptime_str = f"{hours}h {minutes}m"
-                        except Exception as e:
-                            logger.warning(f"Error calculating uptime: {e}")
-                            uptime_str = "Running"
-            
+            from core.engine import BotState
+            is_running = self.engine and self.engine.state == BotState.RUNNING
+            uptime_str = "N/A"
+
+            if is_running and self.engine.start_time:
+                uptime_delta = datetime.utcnow() - self.engine.start_time
+                hours, remainder = divmod(int(uptime_delta.total_seconds()), 3600)
+                minutes, _ = divmod(remainder, 60)
+                uptime_str = f"{hours}h {minutes}m"
+
             status = {
                 'running': is_running,
                 'uptime': uptime_str,
-                'mode': self.config.get('mode', 'unknown'),
-                'version': '1.0.0',
-                'last_health_check': datetime.utcnow().isoformat()
+                'mode': self.config_mgr.get_general_config().mode,
+                'dry_run': self.config_mgr.get_general_config().dry_run,
+                'version': '1.0.0', # Replace with actual version if available
             }
             
             return web.json_response({
@@ -1977,18 +1994,41 @@ class DashboardEndpoints:
         if not self.db:
             return report
 
-        # Fetch trades from the database
-        trades = await self.db.get_recent_trades(limit=5000) # Fetch more for filtering
-        
-        # Filter by date
-        if start_date:
-            start_dt = datetime.fromisoformat(start_date)
-            trades = [t for t in trades if t['entry_timestamp'] and datetime.fromisoformat(t['entry_timestamp']) >= start_dt]
-        if end_date:
-            end_dt = datetime.fromisoformat(end_date)
-            trades = [t for t in trades if t['entry_timestamp'] and datetime.fromisoformat(t['entry_timestamp']) <= end_dt]
+        # --- FIX STARTS HERE ---
+        # 1. Determine date range based on period
+        now = datetime.utcnow()
+        if period == 'daily':
+            start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_date = now
+        elif period == 'weekly':
+            start_date = now - timedelta(days=7)
+            end_date = now
+        elif period == 'monthly':
+            start_date = now - timedelta(days=30)
+            end_date = now
+        elif start_date and end_date:
+            # Use provided dates for custom reports
+            if isinstance(start_date, str):
+                start_date = datetime.fromisoformat(start_date)
+            if isinstance(end_date, str):
+                end_date = datetime.fromisoformat(end_date).replace(hour=23, minute=59, second=59)
+        else:
+            # Default to last 7 days if no period is matched
+            start_date = now - timedelta(days=7)
+            end_date = now
 
-        closed_trades = [t for t in trades if t.get('status') == 'closed']
+        # 2. Fetch trades from the database within the calculated date range
+        # Filtering on exit_timestamp for closed trades makes more sense for reports
+        query = """
+            SELECT * FROM trades
+            WHERE status = 'closed' AND exit_timestamp >= $1 AND exit_timestamp <= $2
+            ORDER BY exit_timestamp ASC;
+        """
+        closed_trades = await self.db.pool.fetch(query, start_date, end_date)
+        
+        # The report should only contain closed trades, so we assign this directly
+        report['trades'] = self._serialize_decimals([dict(row) for row in closed_trades])
+        # --- FIX ENDS HERE ---
         report['trades'] = self._serialize_decimals(closed_trades)
 
         # Calculate metrics if there are any closed trades
@@ -2073,43 +2113,80 @@ class DashboardEndpoints:
         return web.json_response(report)
     
     async def _run_backtest_task(self, test_id, strategy, start_date, end_date, initial_balance, parameters):
-        """Run backtest in background"""
+        """Run backtest in the background using historical data."""
         try:
-            logger.info(f"Starting backtest {test_id}")
-            
-            await asyncio.sleep(5) # Simulate processing time
+            logger.info(f"Starting backtest {test_id} from {start_date} to {end_date}")
             self.backtests[test_id]['progress'] = 'Fetching historical data...'
-            await asyncio.sleep(5)
-            self.backtests[test_id]['progress'] = 'Simulating trades...'
 
-            # Simulate some results
-            final_balance = initial_balance * (1 + np.random.uniform(-0.5, 2.5))
-            total_trades = np.random.randint(50, 500)
-            winning_trades = int(total_trades * np.random.uniform(0.3, 0.7))
+            if not self.db:
+                raise Exception("Database connection is not available.")
 
-            # Generate mock equity curve
-            equity_curve = []
-            current_balance = initial_balance
-            for i in range(100):
-                current_balance *= (1 + np.random.uniform(-0.05, 0.05))
-                equity_curve.append({'timestamp': (datetime.fromisoformat(start_date) + timedelta(days=i)).isoformat(), 'value': current_balance})
+            # Fetch historical trades from the database within the specified date range
+            query = """
+                SELECT * FROM trades
+                WHERE status = 'closed' AND exit_timestamp >= $1 AND exit_timestamp <= $2
+                ORDER BY exit_timestamp ASC;
+            """
+            trades = await self.db.pool.fetch(query, datetime.fromisoformat(start_date), datetime.fromisoformat(end_date))
+
+            if not trades:
+                self.backtests[test_id] = {'status': 'completed', 'message': 'No trades found for the selected period.', 'equity_curve': []}
+                return
+
+            self.backtests[test_id]['progress'] = f'Simulating {len(trades)} trades...'
+            df = pd.DataFrame([dict(trade) for trade in trades])
+            df['profit_loss'] = pd.to_numeric(df['profit_loss'])
+            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
+
+            # Calculate equity curve
+            df['cumulative_pnl'] = df['profit_loss'].cumsum()
+            df['equity'] = float(initial_balance) + df['cumulative_pnl']
+            equity_curve = [{'timestamp': ts.isoformat(), 'value': val} for ts, val in df[['exit_timestamp', 'equity']].values]
+
+            # Calculate final metrics
+            final_balance = df['equity'].iloc[-1]
+            total_return_pct = (final_balance / float(initial_balance) - 1) * 100
+            total_trades = len(df)
+            winning_trades = df[df['profit_loss'] > 0]
+            win_rate = (len(winning_trades) / total_trades) * 100 if total_trades > 0 else 0
+
+            # Correct Max Drawdown
+            peak = df['equity'].expanding(min_periods=1).max()
+            drawdown = ((df['equity'] - peak) / peak).replace([np.inf, -np.inf], 0)
+            max_drawdown = abs(drawdown.min() * 100)
+
+            # --- FIX STARTS HERE: Implement missing backtesting statistics ---
+            total_pnl = final_balance - float(initial_balance)
+
+            gross_profit = winning_trades['profit_loss'].sum()
+            gross_loss = abs(df[df['profit_loss'] <= 0]['profit_loss'].sum())
+
+            profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+
+            avg_win = winning_trades['profit_loss'].mean() if not winning_trades.empty else 0
+            avg_loss = abs(df[df['profit_loss'] <= 0]['profit_loss'].mean()) if not df[df['profit_loss'] <= 0].empty else 0
+            # --- FIX ENDS HERE ---
 
             self.backtests[test_id] = {
                 'status': 'completed',
                 'final_balance': final_balance,
-                'total_return': (final_balance / initial_balance - 1) * 100,
+                'total_pnl': total_pnl, # ✅ ADDED
+                'profit_factor': profit_factor, # ✅ ADDED
+                'avg_win': avg_win, # ✅ ADDED
+                'avg_loss': avg_loss, # ✅ ADDED
+                'total_return': total_return_pct,
                 'total_trades': total_trades,
-                'win_rate': (winning_trades / total_trades) * 100,
-                'winning_trades': winning_trades,
-                'losing_trades': total_trades - winning_trades,
-                'sharpe_ratio': np.random.uniform(0.5, 2.5),
-                'max_drawdown': np.random.uniform(5, 25),
+                'win_rate': win_rate,
+                'winning_trades': len(winning_trades),
+                'losing_trades': total_trades - len(winning_trades),
+                'sharpe_ratio': 0, # Placeholder, as Sharpe ratio needs more complex calculation
+                'max_drawdown': max_drawdown,
                 'equity_curve': equity_curve
             }
-            
-            logger.info(f"Backtest {test_id} completed")
+            logger.info(f"Backtest {test_id} completed successfully.")
+
         except Exception as e:
-            logger.error(f"Error in backtest {test_id}: {e}")
+            logger.error(f"Error in backtest task {test_id}: {e}", exc_info=True)
             self.backtests[test_id] = {'status': 'failed', 'error': str(e)}
     
     async def start(self):

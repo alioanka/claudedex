@@ -121,6 +121,7 @@ function setupBotControls() {
 }
 
 async function handleBotControl(action) {
+    console.log(`[handleBotControl] Action initiated: ${action}`); // Debugging line
     const actionMap = {
         'start': { url: '/api/bot/start', message: 'Starting bot...' },
         'stop': { url: '/api/bot/stop', message: 'Stopping bot...' },
@@ -128,23 +129,37 @@ async function handleBotControl(action) {
     };
     
     const config = actionMap[action];
-    if (!config) return;
+    if (!config) {
+        console.error(`[handleBotControl] Invalid action: ${action}`);
+        return;
+    }
     
     try {
+        console.log(`[handleBotControl] Sending request to ${config.url}`);
         showToast('info', config.message);
         
         const response = await fetch(config.url, { method: 'POST' });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`[handleBotControl] API request failed with status ${response.status}:`, errorText);
+            showToast('error', `Error: ${response.status} ${response.statusText}`);
+            return;
+        }
+
         const data = await response.json();
+        console.log(`[handleBotControl] Received response for ${action}:`, data);
         
         if (data.success) {
             showToast('success', data.message || `Bot ${action} successful`);
-            updateBotStatus();
+            // Give the backend a moment to update its state before querying
+            setTimeout(updateBotStatus, 1000);
         } else {
             showToast('error', data.error || `Failed to ${action} bot`);
         }
     } catch (error) {
-        console.error(`Error ${action} bot:`, error);
-        showToast('error', `Failed to ${action} bot`);
+        console.error(`[handleBotControl] CATCH block - Error during '${action}' action:`, error);
+        showToast('error', `An unexpected error occurred while trying to ${action} the bot.`);
     }
 }
 

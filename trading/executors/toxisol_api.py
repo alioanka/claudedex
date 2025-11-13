@@ -472,7 +472,7 @@ class ToxiSolAPIExecutor(BaseExecutor):
         
     async def cleanup(self) -> None:
         """Cleanup resources"""
-        if self.session:
+        if self.session and not self.session.closed:
             await self.session.close()
             
         logger.info("ToxiSol API Executor cleaned up")
