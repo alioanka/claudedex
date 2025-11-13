@@ -351,34 +351,8 @@ class DashboardEndpoints:
             df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
 
             # Performance by strategy
-            def get_strategy(metadata):
-                """Recursively search for a 'strategy' key in the metadata."""
-                if not metadata:
-                    return 'Unspecified'
-
-                if isinstance(metadata, str):
-                    try:
-                        metadata = json.loads(metadata)
-                    except json.JSONDecodeError:
-                        return 'Unspecified'
-
-                if not isinstance(metadata, dict):
-                    return 'Unspecified'
-
-                # Check top level
-                if 'strategy' in metadata:
-                    return metadata['strategy']
-
-                # Recursively check nested dicts
-                for key, value in metadata.items():
-                    if isinstance(value, dict):
-                        strategy = get_strategy(value)
-                        if strategy != 'Unspecified':
-                            return strategy
-
-                return 'Unspecified'
-
-            df['strategy'] = df['metadata'].apply(get_strategy)
+            # The strategy name is now in the 'strategy' column directly.
+            df['strategy'] = df['strategy'].fillna('Unspecified')
             strategy_performance = df.groupby('strategy')['profit_loss'].sum().reset_index()
             strategy_performance.columns = ['strategy', 'total_pnl']
 
@@ -408,7 +382,8 @@ class DashboardEndpoints:
             trades = await self.db.pool.fetch(query)
 
             insights = []
-            if not trades:
+            if not trades or len(trades) < 5:
+                insights.append("Not enough trade data for performance insights. Complete more trades to see suggestions.")
                 return web.json_response({'success': True, 'data': insights})
 
             df = pd.DataFrame([dict(trade) for trade in trades])
@@ -417,16 +392,28 @@ class DashboardEndpoints:
             # Insight 1: Win rate analysis
             win_rate = (df['profit_loss'] > 0).mean()
             if win_rate < 0.5:
-                insights.append("Your win rate is below 50%. Consider tightening your entry criteria or adjusting your stop-loss strategy.")
+                insights.append(f"Win rate is low ({win_rate:.1%}). Consider tightening entry criteria or adjusting stop-loss strategy.")
+            else:
+                insights.append(f"Win rate is solid at {win_rate:.1%}. Keep up the good work!")
 
             # Insight 2: Risk/Reward Ratio
-            avg_win = df[df['profit_loss'] > 0]['profit_loss'].mean()
-            avg_loss = abs(df[df['profit_loss'] <= 0]['profit_loss'].mean())
-            if avg_win < 1.5 * avg_loss:
-                insights.append("Your average win is less than 1.5x your average loss. Aim for a higher risk/reward ratio by adjusting take-profit levels.")
+            winning_trades = df[df['profit_loss'] > 0]
+            losing_trades = df[df['profit_loss'] <= 0]
+
+            if not winning_trades.empty and not losing_trades.empty:
+                avg_win = winning_trades['profit_loss'].mean()
+                avg_loss = abs(losing_trades['profit_loss'].mean())
+                rr_ratio = avg_win / avg_loss if avg_loss > 0 else float('inf')
+
+                if rr_ratio < 1.5:
+                    insights.append(f"Risk/Reward ratio is {rr_ratio:.2f}:1. Aim for a higher ratio (e.g., > 1.5:1) by adjusting take-profit levels.")
+                else:
+                    insights.append(f"Good Risk/Reward ratio of {rr_ratio:.2f}:1.")
+
+            if not insights:
+                insights.append("Overall performance looks stable. Continue monitoring your strategy.")
 
             return web.json_response({'success': True, 'data': insights})
-
         except Exception as e:
             logger.error(f"Error generating insights: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
@@ -434,74 +421,66 @@ class DashboardEndpoints:
     async def api_dashboard_summary(self, request):
         """Get dashboard summary data"""
         try:
-            summary = {}
-            
-            # Get portfolio data if available
-            if self.portfolio:
-                # Get portfolio summary
-                portfolio_summary = self.engine.portfolio_manager.get_portfolio_summary()
-                
-                # Get config with fallback
-                try:
-                    from config.config_manager import PortfolioConfig
-                    config = PortfolioConfig()
-                    default_balance = config.initial_balance
-                except Exception as e:
-                    logger.warning(f"Could not load PortfolioConfig: {e}, using default 400")
-                    default_balance = 400
-                
-                summary = {
-                    'cash_balance': float(portfolio_summary.get('cash_balance', default_balance)),
-                    'positions_value': float(portfolio_summary.get('positions_value', 0)),
-                    'daily_pnl': float(portfolio_summary.get('daily_pnl', 0)),
-                    'sharpe_ratio': float(portfolio_summary.get('sharpe_ratio', 0)),
-                    'max_drawdown': float(portfolio_summary.get('max_drawdown', 0)),
-                }
-            
-            # ✅ Get ACTUAL cumulative P&L and metrics from database
-            total_pnl = 0
-            win_rate = 0
-            open_positions_count = 0
-            
+            # Get portfolio config for starting balance
+            try:
+                portfolio_config = self.config_mgr.get_portfolio_config()
+                starting_balance = portfolio_config.initial_balance
+            except Exception:
+                starting_balance = 400.0
+
+            # Get realized P&L from database (closed trades)
+            realized_pnl = 0.0
+            win_rate = 0.0
             if self.db:
                 try:
                     perf_data = await self.db.get_performance_summary()
                     if perf_data and 'total_pnl' in perf_data:
-                        total_pnl = float(perf_data.get('total_pnl', 0))
+                        realized_pnl = float(perf_data.get('total_pnl', 0))
                         win_rate = float(perf_data.get('win_rate', 0))
                 except Exception as e:
                     logger.error(f"Error getting performance data: {e}")
-            
-            # Get actual open positions count from engine
+
+            # Get open positions and calculate their current value and unrealized P&L
+            open_positions_count = 0
+            positions_value = 0.0
+            unrealized_pnl = 0.0
+            cost_basis = 0.0
             if self.engine and hasattr(self.engine, 'active_positions'):
-                open_positions_count = len(self.engine.active_positions)
-            
-            # Calculate portfolio value: starting balance + cumulative P&L
-            try:
-                config = PortfolioConfig()
-                starting_balance = config.initial_balance
-            except Exception:
-                starting_balance = 400
+                active_positions = self.engine.active_positions
+                open_positions_count = len(active_positions)
+                for pos in active_positions.values():
+                    entry_price = float(pos.get('entry_price', 0))
+                    amount = float(pos.get('amount', 0))
+                    current_price = float(pos.get('current_price', entry_price))
+
+                    entry_value = entry_price * amount
+                    current_value = current_price * amount
+
+                    cost_basis += entry_value
+                    positions_value += current_value
+                    unrealized_pnl += (current_value - entry_value)
+
+            # Calculate final metrics
+            total_pnl = realized_pnl + unrealized_pnl
             portfolio_value = starting_balance + total_pnl
-            
-            # Update summary with calculated values
-            summary.update({
+            cash_balance = starting_balance + realized_pnl - cost_basis
+
+            summary = {
                 'portfolio_value': portfolio_value,
                 'total_pnl': total_pnl,
-                'total_value': portfolio_value,
-                'net_profit': total_pnl,
                 'open_positions': open_positions_count,
-                'win_rate': win_rate,  # ✅ Now includes actual win rate
+                'win_rate': win_rate,
+                'cash_balance': cash_balance,
+                'positions_value': positions_value,
+                'daily_pnl': 0, # Placeholder, as this requires more complex tracking
+                'net_profit': total_pnl,
                 'pending_orders': len(self.orders.active_orders) if self.orders else 0,
                 'active_alerts': len(self.alerts.alerts_queue._queue) if self.alerts else 0
-            })
-            
-            return web.json_response({
-                'success': True,
-                'data': summary
-            })
+            }
+
+            return web.json_response({'success': True, 'data': self._serialize_decimals(summary)})
         except Exception as e:
-            logger.error(f"Error getting dashboard summary: {e}")
+            logger.error(f"Error getting dashboard summary: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_recent_trades(self, request):
@@ -694,15 +673,15 @@ class DashboardEndpoints:
                         'id': position.get('id', str(token_address)),
                         'token_address': token_address,
                         'token_symbol': position.get('token_symbol', position.get('symbol', 'UNKNOWN')),
-                        'entry_price': round(entry_price, 8),
-                        'current_price': round(current_price, 8),
-                        'amount': round(amount, 4),
-                        'value': round(value, 2),
-                        'unrealized_pnl': round(unrealized_pnl, 2),
-                        'roi': round(roi, 2),
-                        'stop_loss': stop_loss,  # ✅ Now enriched from DB
-                        'take_profit': take_profit,  # ✅ Now enriched from DB
-                        'entry_timestamp': entry_timestamp.isoformat() if isinstance(entry_timestamp, datetime) else entry_timestamp,  # ✅ Now enriched from DB
+                        'entry_price': entry_price,
+                        'current_price': current_price,
+                        'amount': amount,
+                        'value': value,
+                        'unrealized_pnl': unrealized_pnl,
+                        'roi': roi,
+                        'stop_loss': stop_loss,
+                        'take_profit': take_profit,
+                        'entry_timestamp': entry_timestamp.isoformat() if isinstance(entry_timestamp, datetime) else entry_timestamp,
                         'duration': duration_str,
                         'status': position.get('status', 'open'),
                         'chain': position.get('chain', 'unknown'),
@@ -985,7 +964,6 @@ class DashboardEndpoints:
             if not self.db:
                 return web.json_response({'error': 'Database connection not available.'}, status=503)
 
-            # Fetch all closed trades from the database
             query = "SELECT * FROM trades WHERE status = 'closed' ORDER BY exit_timestamp ASC;"
             trades = await self.db.pool.fetch(query)
 
@@ -996,64 +974,76 @@ class DashboardEndpoints:
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
             df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
 
-            # --- FIX STARTS HERE ---
-            # Basic metrics
-            total_pnl = df['profit_loss'].sum()
-            total_trades = len(df)
-            winning_trades = df[df['profit_loss'] > 0]
-            losing_trades = df[df['profit_loss'] <= 0]
-            win_rate = (len(winning_trades) / total_trades) * 100 if total_trades > 0 else 0
-
-            # Advanced metrics with safe defaults
-            avg_win = winning_trades['profit_loss'].mean() if not winning_trades.empty else 0
-            avg_loss = losing_trades['profit_loss'].mean() if not losing_trades.empty else 0
-            best_trade = df['profit_loss'].max() if not df.empty else 0
-            worst_trade = df['profit_loss'].min() if not df.empty else 0
-
-            sum_of_wins = winning_trades['profit_loss'].sum()
-            sum_of_losses = abs(losing_trades['profit_loss'].sum())
-            profit_factor = sum_of_wins / sum_of_losses if sum_of_losses > 0 else float('inf')
-
-            # Sharpe Ratio (annualized, assuming risk-free rate is 0)
-            daily_returns = df.set_index('exit_timestamp')['profit_loss'].resample('D').sum()
-            # Ensure there's more than one period to calculate std dev
-            if len(daily_returns) > 1 and daily_returns.std() != 0:
-                sharpe_ratio = (daily_returns.mean() / daily_returns.std()) * np.sqrt(365)
-            else:
-                sharpe_ratio = 0.0
-
-            # Correct Max Drawdown calculation based on equity
             initial_balance = self.config_mgr.get_portfolio_config().initial_balance
             df['cumulative_pnl'] = df['profit_loss'].cumsum()
             df['equity'] = initial_balance + df['cumulative_pnl']
 
-            peak = df['equity'].expanding(min_periods=1).max()
-            # Ensure division by zero is handled if peak is 0
-            drawdown = ((df['equity'] - peak) / peak).replace([np.inf, -np.inf], 0)
-            max_drawdown = abs(drawdown.min() * 100) if not drawdown.empty else 0
-            # --- FIX ENDS HERE ---
+            # Basic Metrics
+            total_pnl = df['profit_loss'].sum()
+            total_trades = len(df)
+            winning_trades_df = df[df['profit_loss'] > 0]
+            losing_trades_df = df[df['profit_loss'] <= 0]
+            win_rate = len(winning_trades_df) / total_trades * 100 if total_trades > 0 else 0
 
+            # ROI
+            total_investment = df['usd_value'].sum()
+            roi = (total_pnl / total_investment) * 100 if total_investment > 0 else 0
+
+            # Risk Metrics
+            daily_returns = df.set_index('exit_timestamp')['profit_loss'].resample('D').sum() / initial_balance
+
+            sharpe_ratio = (daily_returns.mean() / daily_returns.std()) * np.sqrt(365) if daily_returns.std() != 0 else 0
+
+            downside_returns = daily_returns[daily_returns < 0]
+            sortino_ratio = (daily_returns.mean() / downside_returns.std()) * np.sqrt(365) if downside_returns.std() != 0 else 0
+
+            peak = df['equity'].expanding(min_periods=1).max()
+            drawdown = (df['equity'] - peak) / peak
+            max_drawdown = abs(drawdown.min() * 100)
+
+            avg_drawdown = abs(drawdown[drawdown < 0].mean() * 100) if not drawdown[drawdown < 0].empty else 0
+
+            annual_return = daily_returns.mean() * 365
+            calmar_ratio = annual_return / (max_drawdown / 100) if max_drawdown > 0 else 0
+
+            daily_volatility = daily_returns.std() * 100
+            annual_volatility = daily_volatility * np.sqrt(365)
+
+            # Recovery Time
+            in_drawdown = False
+            drawdown_start = None
+            recovery_times = []
+            for i in range(len(df)):
+                if drawdown.iloc[i] < 0 and not in_drawdown:
+                    in_drawdown = True
+                    drawdown_start = df['exit_timestamp'].iloc[i]
+                elif drawdown.iloc[i] == 0 and in_drawdown:
+                    in_drawdown = False
+                    recovery_time = (df['exit_timestamp'].iloc[i] - drawdown_start).days
+                    recovery_times.append(recovery_time)
+
+            avg_recovery_time = np.mean(recovery_times) if recovery_times else 0
 
             metrics = {
                 'total_pnl': total_pnl,
+                'roi': roi,
                 'total_trades': total_trades,
-                'winning_trades': len(winning_trades),
-                'losing_trades': len(losing_trades),
+                'winning_trades': len(winning_trades_df),
+                'losing_trades': len(losing_trades_df),
                 'win_rate': win_rate,
-                'avg_win': avg_win,
-                'avg_loss': avg_loss,
-                'best_trade': best_trade,
-                'worst_trade': worst_trade,
-                'profit_factor': profit_factor,
+                'avg_win': winning_trades_df['profit_loss'].mean() if not winning_trades_df.empty else 0,
+                'avg_loss': abs(losing_trades_df['profit_loss'].mean()) if not losing_trades_df.empty else 0,
                 'sharpe_ratio': sharpe_ratio,
+                'sortino_ratio': sortino_ratio,
+                'calmar_ratio': calmar_ratio,
                 'max_drawdown': max_drawdown,
+                'avg_drawdown': avg_drawdown,
+                'daily_volatility': daily_volatility,
+                'annual_volatility': annual_volatility,
+                'recovery_time': avg_recovery_time,
             }
 
-            return web.json_response({
-                'success': True,
-                'data': {'historical': self._serialize_decimals(metrics)}
-            })
-
+            return web.json_response({'success': True, 'data': {'historical': self._serialize_decimals(metrics)}})
         except Exception as e:
             logger.error(f"Error in api_performance_metrics: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
@@ -1102,15 +1092,9 @@ class DashboardEndpoints:
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
             df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
 
-            def get_strategy(metadata):
-                if isinstance(metadata, str):
-                    try:
-                        metadata = json.loads(metadata)
-                    except json.JSONDecodeError:
-                        return 'unknown'
-                return metadata.get('strategy', 'unknown') if metadata else 'unknown'
-
-            df['strategy'] = df['metadata'].apply(get_strategy)
+            # The strategy name is in the 'strategy' column directly.
+            # Fallback to 'unknown' if the strategy is null or empty.
+            df['strategy'] = df['strategy'].fillna('unknown').apply(lambda x: x if x else 'unknown')
 
             # --- FIX STARTS HERE ---
             
@@ -1295,8 +1279,8 @@ class DashboardEndpoints:
             is_running = self.engine and self.engine.state == BotState.RUNNING
             uptime_str = "N/A"
 
-            if is_running and self.engine.start_time:
-                uptime_delta = datetime.utcnow() - self.engine.start_time
+            if is_running and hasattr(self.engine, 'stats') and self.engine.stats.get('start_time'):
+                uptime_delta = datetime.utcnow() - self.engine.stats['start_time']
                 hours, remainder = divmod(int(uptime_delta.total_seconds()), 3600)
                 minutes, _ = divmod(remainder, 60)
                 uptime_str = f"{hours}h {minutes}m"
@@ -1335,13 +1319,19 @@ class DashboardEndpoints:
             if not self.config_mgr:
                 return web.json_response({'error': 'Config manager not available'}, status=503)
             
-            # Convert Pydantic models to dictionaries for JSON serialization
             settings = {
-                'trading': self.config_mgr.get_trading_config().model_dump(),
-                'risk': self.config_mgr.get_risk_management_config().model_dump(),
+                'general': self.config_mgr.get_general_config().model_dump(),
                 'api': self.config_mgr.get_api_config().model_dump(),
+                'chain': self.config_mgr.get_chain_config().model_dump(),
+                'database': self.config_mgr.get_database_config().model_dump(),
+                'logging': self.config_mgr.get_logging_config().model_dump(),
                 'monitoring': self.config_mgr.get_monitoring_config().model_dump(),
-                'ml_models': self.config_mgr.get_ml_models_config().model_dump()
+                'notifications': self.config_mgr.get_notifications_config().model_dump(),
+                'portfolio': self.config_mgr.get_portfolio_config().model_dump(),
+                'risk_management': self.config_mgr.get_risk_management_config().model_dump(),
+                'security': self.config_mgr.get_security_config().model_dump(),
+                'trading': self.config_mgr.get_trading_config().model_dump(),
+                'ml_models': self.config_mgr.get_ml_models_config().model_dump(),
             }
             
             return web.json_response({
@@ -2025,11 +2015,7 @@ class DashboardEndpoints:
             ORDER BY exit_timestamp ASC;
         """
         closed_trades = await self.db.pool.fetch(query, start_date, end_date)
-        
-        # The report should only contain closed trades, so we assign this directly
         report['trades'] = self._serialize_decimals([dict(row) for row in closed_trades])
-        # --- FIX ENDS HERE ---
-        report['trades'] = self._serialize_decimals(closed_trades)
 
         # Calculate metrics if there are any closed trades
         if not closed_trades:
@@ -2155,31 +2141,31 @@ class DashboardEndpoints:
             drawdown = ((df['equity'] - peak) / peak).replace([np.inf, -np.inf], 0)
             max_drawdown = abs(drawdown.min() * 100)
 
-            # --- FIX STARTS HERE: Implement missing backtesting statistics ---
             total_pnl = final_balance - float(initial_balance)
-
             gross_profit = winning_trades['profit_loss'].sum()
             gross_loss = abs(df[df['profit_loss'] <= 0]['profit_loss'].sum())
-
             profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
-
             avg_win = winning_trades['profit_loss'].mean() if not winning_trades.empty else 0
             avg_loss = abs(df[df['profit_loss'] <= 0]['profit_loss'].mean()) if not df[df['profit_loss'] <= 0].empty else 0
-            # --- FIX ENDS HERE ---
+            largest_win = winning_trades['profit_loss'].max() if not winning_trades.empty else 0
+            largest_loss = df[df['profit_loss'] <= 0]['profit_loss'].min() if not df[df['profit_loss'] <= 0].empty else 0
 
             self.backtests[test_id] = {
                 'status': 'completed',
                 'final_balance': final_balance,
-                'total_pnl': total_pnl, # ✅ ADDED
-                'profit_factor': profit_factor, # ✅ ADDED
-                'avg_win': avg_win, # ✅ ADDED
-                'avg_loss': avg_loss, # ✅ ADDED
+                'total_pnl': total_pnl,
+                'profit_factor': profit_factor,
+                'avg_win': avg_win,
+                'avg_loss': avg_loss,
+                'largest_win': largest_win,
+                'largest_loss': largest_loss,
                 'total_return': total_return_pct,
                 'total_trades': total_trades,
                 'win_rate': win_rate,
                 'winning_trades': len(winning_trades),
                 'losing_trades': total_trades - len(winning_trades),
-                'sharpe_ratio': 0, # Placeholder, as Sharpe ratio needs more complex calculation
+                'sharpe_ratio': 0,
+                'sortino_ratio': 0,
                 'max_drawdown': max_drawdown,
                 'equity_curve': equity_curve
             }
