@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Trade Analysis - DexScreener Trading Bot{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Trade Analysis</h1>
+</div>
+
+<div class="grid grid-2">
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Performance by Strategy</h3>
+        </div>
+        <div class="card-body">
+            <canvas id="strategyPerformanceChart" height="300"></canvas>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Profitability by Hour of Day</h3>
+        </div>
+        <div class="card-body">
+            <canvas id="hourlyProfitabilityChart" height="300"></canvas>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/analysis.js"></script>
+{% endblock %}

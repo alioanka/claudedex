@@ -26,143 +26,82 @@
 </div>
 
 <!-- Trading Settings -->
-<div class="card settings-section" id="tradingSettings">
+<div class="card settings-section" id="trading-settings-section">
     <div class="card-header">
         <h3 class="card-title">Trading Configuration</h3>
     </div>
-    <div class="card-body">
+    <div class="card-body" data-category="trading">
         <div class="form-group">
-            <label class="form-label">
-                <input type="checkbox" id="tradingEnabled" class="settings-input">
-                Enable Trading
-            </label>
-            <small class="form-help">Master switch for all trading activity</small>
+            <label class="form-label">Minimum Opportunity Score</label>
+            <input type="number" id="min_opportunity_score" class="form-control settings-input" step="0.01" min="0" max="1">
+            <small class="form-help">The minimum score required to consider a trade.</small>
         </div>
-        
         <div class="form-group">
-            <label class="form-label">Max Position Size ($)</label>
-            <input type="number" id="maxPositionSize" class="form-control settings-input" step="100">
-            <small class="form-help">Maximum amount per single position</small>
-        </div>
-        
-        <div class="form-group">
-            <label class="form-label">Max Open Positions</label>
-            <input type="number" id="maxOpenPositions" class="form-control settings-input" min="1" max="20">
-            <small class="form-help">Maximum number of concurrent positions</small>
-        </div>
-        
-        <div class="form-group">
-            <label class="form-label">Default Stop Loss (%)</label>
-            <input type="number" id="defaultStopLoss" class="form-control settings-input" step="0.1">
-            <small class="form-help">Default stop loss percentage</small>
-        </div>
-        
-        <div class="form-group">
-            <label class="form-label">Default Take Profit (%)</label>
-            <input type="number" id="defaultTakeProfit" class="form-control settings-input" step="0.1">
-            <small class="form-help">Default take profit percentage</small>
-        </div>
-        
-        <div class="form-group">
-            <label class="form-label">Slippage Tolerance (%)</label>
-            <input type="number" id="slippageTolerance" class="form-control settings-input" step="0.1">
-            <small class="form-help">Maximum acceptable slippage</small>
+            <label class="form-label">Max Slippage (BPS)</label>
+            <input type="number" id="max_slippage_bps" class="form-control settings-input" step="10">
+            <small class="form-help">Maximum acceptable slippage in basis points (e.g., 50 = 0.5%).</small>
         </div>
     </div>
 </div>
 
 <!-- Risk Management Settings -->
-<div class="card settings-section" id="riskSettings" style="display: none;">
+<div class="card settings-section" id="risk-settings-section" style="display: none;">
     <div class="card-header">
         <h3 class="card-title">Risk Management</h3>
     </div>
-    <div class="card-body">
+    <div class="card-body" data-category="risk">
         <div class="form-group">
-            <label class="form-label">Max Drawdown (%)</label>
-            <input type="number" id="maxDrawdown" class="form-control settings-input" step="0.1">
+            <label class="form-label">Stop Loss (%)</label>
+            <input type="number" id="stop_loss_pct" class="form-control settings-input" step="0.1">
+            <small class="form-help">Default stop loss percentage.</small>
         </div>
-        
         <div class="form-group">
-            <label class="form-label">Max Daily Loss ($)</label>
-            <input type="number" id="maxDailyLoss" class="form-control settings-input" step="100">
+            <label class="form-label">Take Profit (%)</label>
+            <input type="number" id="take_profit_pct" class="form-control settings-input" step="0.1">
+            <small class="form-help">Default take profit percentage.</small>
         </div>
-        
-        <div class="form-group">
-            <label class="form-label">Position Size Method</label>
-            <select id="positionSizeMethod" class="form-control settings-input">
-                <option value="fixed">Fixed Amount</option>
-                <option value="percentage">Percentage of Portfolio</option>
-                <option value="kelly">Kelly Criterion</option>
-            </select>
-        </div>
-        
         <div class="form-group">
             <label class="form-label">Risk Per Trade (%)</label>
-            <input type="number" id="riskPerTrade" class="form-control settings-input" step="0.1">
+            <input type="number" id="risk_per_trade_pct" class="form-control settings-input" step="0.01">
+            <small class="form-help">Percentage of portfolio to risk per trade.</small>
         </div>
     </div>
 </div>
 
 <!-- API Settings -->
-<div class="card settings-section" id="apiSettings" style="display: none;">
+<div class="card settings-section" id="api-settings-section" style="display: none;">
     <div class="card-header">
         <h3 class="card-title">API & Connections</h3>
     </div>
-    <div class="card-body">
-        <div class="form-group">
-            <label class="form-label">DexScreener API Key</label>
-            <input type="password" id="dexscreenerKey" class="form-control settings-input">
-        </div>
-        
-        <div class="form-group">
-            <label class="form-label">Web3 Provider URL</label>
-            <input type="text" id="web3Provider" class="form-control settings-input">
-        </div>
-        
-        <div class="form-group">
-            <label class="form-label">RPC Timeout (seconds)</label>
-            <input type="number" id="rpcTimeout" class="form-control settings-input" min="5" max="60">
-        </div>
-        
-        <div class="form-group">
-            <label class="form-label">Max Retries</label>
-            <input type="number" id="maxRetries" class="form-control settings-input" min="1" max="10">
-        </div>
+    <div class="card-body" data-category="api">
+        <!-- API settings will be populated here from JS if needed -->
+        <p class="text-muted">API keys and sensitive connection details are managed via environment variables and are not displayed here for security reasons.</p>
     </div>
 </div>
 
 <!-- Notification Settings -->
-<div class="card settings-section" id="notificationsSettings" style="display: none;">
+<div class="card settings-section" id="notifications-settings-section" style="display: none;">
     <div class="card-header">
         <h3 class="card-title">Notifications</h3>
     </div>
-    <div class="card-body">
-        <h4>Telegram</h4>
+    <div class="card-body" data-category="monitoring">
+        <div class="form-group">
+            <label class="form-label">Log Level</label>
+            <select id="log_level" class="form-control settings-input">
+                <option value="DEBUG">Debug</option>
+                <option value="INFO">Info</option>
+                <option value="WARNING">Warning</option>
+                <option value="ERROR">Error</option>
+                <option value="CRITICAL">Critical</option>
+            </select>
+            <small class="form-help">Set the application log level.</small>
+        </div>
         <div class="form-group">
             <label class="form-label">
-                <input type="checkbox" id="telegramEnabled" class="settings-input">
-                Enable Telegram Notifications
+                <input type="checkbox" id="enable_metrics" class="settings-input">
+                Enable Prometheus Metrics
             </label>
-        </div>
-        <div class="form-group">
-            <label class="form-label">Bot Token</label>
-            <input type="password" id="telegramBotToken" class="form-control settings-input">
-        </div>
-        <div class="form-group">
-            <label class="form-label">Chat ID</label>
-            <input type="text" id="telegramChatId" class="form-control settings-input">
-        </div>
-        
-        <h4>Discord</h4>
-        <div class="form-group">
-            <label class="form-label">
-                <input type="checkbox" id="discordEnabled" class="settings-input">
-                Enable Discord Notifications
-            </label>
-        </div>
-        <div class="form-group">
-            <label class="form-label">Webhook URL</label>
-            <input type="password" id="discordWebhook" class="form-control settings-input">
+            <small class="form-help">Expose a /metrics endpoint for Prometheus.</small>
         </div>
     </div>
 </div>
@@ -190,98 +129,4 @@
 
 {% block extra_js %}
 <script src="/static/js/settings.js"></script>
-<script>
-// Tab switching
-document.querySelectorAll('.category-tab').forEach(tab => {
-    tab.addEventListener('click', function() {
-        // Update active tab
-        document.querySelectorAll('.category-tab').forEach(t => t.classList.remove('active'));
-        this.classList.add('active');
-        
-        // Show corresponding section
-        const category = this.dataset.category;
-        document.querySelectorAll('.settings-section').forEach(section => {
-            section.style.display = 'none';
-        });
-        document.getElementById(category + 'Settings').style.display = 'block';
-    });
-});
-
-// Load settings on page load
-document.addEventListener('DOMContentLoaded', async function() {
-    try {
-        const response = await apiGet('/api/settings/all');
-        
-        if (response.success && response.data) {
-            // Populate trading settings
-            if (response.data.trading) {
-                document.getElementById('tradingEnabled').checked = response.data.trading.enabled || false;
-                const defaultPositionSize = 10;  // ✅ 400 / 40 = 10
-                document.getElementById('maxPositionSize').value = response.data.trading.max_position_size || defaultPositionSize;
-                document.getElementById('maxOpenPositions').value = response.data.trading.max_open_positions || 5;
-                document.getElementById('defaultStopLoss').value = response.data.trading.default_stop_loss || 5;
-                document.getElementById('defaultTakeProfit').value = response.data.trading.default_take_profit || 10;
-                document.getElementById('slippageTolerance').value = response.data.trading.slippage_tolerance || 1;
-            }
-            
-            // Populate risk settings
-            if (response.data.risk) {
-                document.getElementById('maxDrawdown').value = response.data.risk.max_drawdown || 20;
-                document.getElementById('maxDailyLoss').value = response.data.risk.max_daily_loss || 500;
-                document.getElementById('positionSizeMethod').value = response.data.risk.position_size_method || 'fixed';
-                document.getElementById('riskPerTrade').value = response.data.risk.risk_per_trade || 2;
-            }
-            
-            // Populate API settings
-            if (response.data.api) {
-                document.getElementById('dexscreenerKey').value = response.data.api.dexscreener_api_key || '';
-                document.getElementById('web3Provider').value = response.data.api.web3_provider_url || '';
-                document.getElementById('rpcTimeout').value = response.data.api.rpc_timeout || 30;
-                document.getElementById('maxRetries').value = response.data.api.max_retries || 3;
-            }
-            
-            // Populate notification settings
-            if (response.data.notifications) {
-                if (response.data.notifications.telegram) {
-                    document.getElementById('telegramEnabled').checked = response.data.notifications.telegram.enabled || false;
-                    document.getElementById('telegramBotToken').value = response.data.notifications.telegram.bot_token || '';
-                    document.getElementById('telegramChatId').value = response.data.notifications.telegram.chat_id || '';
-                }
-                if (response.data.notifications.discord) {
-                    document.getElementById('discordEnabled').checked = response.data.notifications.discord.enabled || false;
-                    document.getElementById('discordWebhook').value = response.data.notifications.discord.webhook_url || '';
-                }
-            }
-        } else {
-            // ✅ If API fails, populate with default values
-            document.getElementById('tradingEnabled').checked = true;
-            const defaultPositionSize = 10;
-            document.getElementById('maxPositionSize').value = defaultPositionSize;
-            document.getElementById('maxOpenPositions').value = 5;
-            document.getElementById('defaultStopLoss').value = 5;
-            document.getElementById('defaultTakeProfit').value = 10;
-            document.getElementById('slippageTolerance').value = 1;
-            
-            document.getElementById('maxDrawdown').value = 20;
-            document.getElementById('maxDailyLoss').value = 500;
-            document.getElementById('positionSizeMethod').value = 'fixed';
-            document.getElementById('riskPerTrade').value = 2;
-            
-            showToast('warning', 'Using default settings - API not available');
-        }
-    } catch (error) {
-        console.error('Error loading settings:', error);
-        // ✅ Populate with defaults on error
-        document.getElementById('tradingEnabled').checked = true;
-        const defaultPositionSize = 10;
-        document.getElementById('maxPositionSize').value = defaultPositionSize;
-        document.getElementById('maxOpenPositions').value = 5;
-        document.getElementById('defaultStopLoss').value = 5;
-        document.getElementById('defaultTakeProfit').value = 10;
-        document.getElementById('slippageTolerance').value = 1;
-        
-        showToast('warning', 'Using default settings - Error loading from API');
-    }
-});
-</script>
 {% endblock %}
