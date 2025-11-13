@@ -304,14 +304,17 @@ function updateDashboardUI(data) {
 // Update bot status
 async function updateBotStatus() {
     try {
+        console.log('Fetching bot status...');
         const response = await fetch('/api/bot/status');
         const data = await response.json();
-        
+        console.log('Bot status response:', data);
+
         if (data.success && data.data) {
             const status = data.data;
             // ✅ FIX: Check if bot is running (handle both boolean and string)
             const isRunning = status.running === true || status.running === 'running' || status.running === 'active';
             state.botStatus = isRunning ? 'online' : 'offline';
+            console.log('Bot is running:', isRunning, 'Status:', state.botStatus);
             
             const statusIndicator = document.getElementById('botStatus');
             if (statusIndicator) {
@@ -324,6 +327,7 @@ async function updateBotStatus() {
                 }
             }
         } else {
+            console.log('Bot status API call failed or data missing.');
             // If API call fails but gives a response, assume offline
             state.botStatus = 'offline';
             const statusIndicator = document.getElementById('botStatus');
