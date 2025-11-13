@@ -14,11 +14,13 @@ class SettingsManager {
     }
 
     bindEvents() {
+        // Tab switching
         document.querySelectorAll('.category-tab').forEach(tab => {
             tab.addEventListener('click', (e) => this.switchTab(e));
         });
 
-        const saveButton = document.getElementById('saveSettings');
+        // Save button
+        const saveButton = document.getElementById('saveAllSettings');
         if (saveButton) {
             saveButton.addEventListener('click', () => this.saveAllSettings());
         }
@@ -29,15 +31,13 @@ class SettingsManager {
         const clickedTab = event.currentTarget;
         const category = clickedTab.dataset.category;
 
-        // Deactivate all tabs and hide all sections
         document.querySelectorAll('.category-tab').forEach(tab => tab.classList.remove('active'));
         document.querySelectorAll('.settings-section').forEach(section => {
             section.style.display = 'none';
         });
 
-        // Activate the clicked tab and show the corresponding section
         clickedTab.classList.add('active');
-        const sectionId = `${category}-settings-section`;
+        const sectionId = `${category}-settings`;
         const section = document.getElementById(sectionId);
         if (section) {
             section.style.display = 'block';
@@ -46,108 +46,151 @@ class SettingsManager {
 
     async loadSettings() {
         try {
-            const response = await fetch('/api/settings/all');
-            if (!response.ok) {
-                throw new Error(`Failed to fetch settings: ${response.statusText}`);
-            }
-            const result = await response.json();
-
-            if (result.success && result.data) {
-                this.settings = result.data;
-                this.initialSettings = JSON.parse(JSON.stringify(result.data)); // Deep copy
-                this.populateForm(this.settings);
-                console.log('Settings loaded successfully.');
+            const response = await apiGet('/api/settings/all');
+            if (response.success && response.data) {
+                this.settings = response.data;
+                this.initialSettings = JSON.parse(JSON.stringify(response.data)); // Deep copy
+                this.renderAllForms(this.settings);
+                // Activate the first tab by default
+                document.querySelector('.category-tab').click();
+                showToast('success', 'Settings loaded successfully');
             } else {
-                console.error('Failed to load settings:', result.error);
+                showToast('error', response.error || 'Failed to load settings.');
             }
         } catch (error) {
-            console.error('Error loading settings:', error);
+            showToast('error', `Error loading settings: ${error.message}`);
         }
     }
 
-    populateForm(data) {
-        document.querySelectorAll('.settings-input').forEach(input => {
-            const category = input.closest('[data-category]').dataset.category;
-            const key = input.id;
-            if (data[category] && data[category].hasOwnProperty(key)) {
-                if (input.type === 'checkbox') {
-                    input.checked = data[category][key];
-                } else {
-                    input.value = data[category][key];
-                }
+    renderAllForms(data) {
+        for (const category in data) {
+            const container = document.getElementById(`${category}-settings-form`);
+            if (container) {
+                container.innerHTML = ''; // Clear previous content
+                const formContent = this.renderFormCategory(category, data[category]);
+                container.appendChild(formContent);
             }
-        });
+        }
+    }
+
+    renderFormCategory(category, categoryData) {
+        const fragment = document.createDocumentFragment();
+        for (const key in categoryData) {
+            const value = categoryData[key];
+            const settingElement = this.createSettingElement(category, key, value);
+            if (settingElement) {
+                fragment.appendChild(settingElement);
+            }
+        }
+        return fragment;
+    }
+
+    createSettingElement(category, key, value) {
+        const formGroup = document.createElement('div');
+        formGroup.className = 'form-group';
+
+        const label = document.createElement('label');
+        label.className = 'form-label';
+        label.setAttribute('for', `${category}-${key}`);
+        label.textContent = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+        let input;
+        if (typeof value === 'boolean') {
+            input = document.createElement('input');
+            input.type = 'checkbox';
+            input.checked = value;
+            input.className = 'form-checkbox';
+        } else if (typeof value === 'number') {
+            input = document.createElement('input');
+            input.type = 'number';
+            input.value = value;
+            input.className = 'form-control';
+        } else if (typeof value === 'string') {
+            input = document.createElement('input');
+            input.type = 'text';
+            input.value = value;
+            input.className = 'form-control';
+        } else {
+            // For nested objects or arrays, display as readonly JSON
+            input = document.createElement('textarea');
+            input.value = JSON.stringify(value, null, 2);
+            input.className = 'form-control';
+            input.rows = 4;
+            input.readOnly = true;
+        }
+
+        input.id = `${category}-${key}`;
+        input.dataset.category = category;
+        input.dataset.key = key;
+
+        formGroup.appendChild(label);
+        formGroup.appendChild(input);
+
+        return formGroup;
     }
 
     async saveAllSettings() {
-        const sections = document.querySelectorAll('.settings-section .card-body');
-        let allUpdatesSucceeded = true;
+        showToast('info', 'Saving all settings...');
+        let allSucceeded = true;
 
-        for (const section of sections) {
-            const category = section.dataset.category;
-            if (!category) continue;
+        for (const category in this.settings) {
+            const container = document.getElementById(`${category}-settings-form`);
+            if (!container) continue;
 
             const updates = {};
-            const inputs = section.querySelectorAll('.settings-input');
+            const inputs = container.querySelectorAll('[data-key]');
 
             inputs.forEach(input => {
-                const key = input.id;
+                const key = input.dataset.key;
                 let value;
                 if (input.type === 'checkbox') {
                     value = input.checked;
                 } else if (input.type === 'number') {
                     value = parseFloat(input.value);
+                } else if (input.tagName === 'TEXTAREA') {
+                    // Skip read-only textareas
+                    return;
                 } else {
                     value = input.value;
                 }
-                updates[key] = value;
+
+                // Only include changed values
+                if (this.initialSettings[category][key] !== value) {
+                    updates[key] = value;
+                }
             });
 
             if (Object.keys(updates).length > 0) {
                 const success = await this.sendUpdateRequest(category, updates);
                 if (!success) {
-                    allUpdatesSucceeded = false;
+                    allSucceeded = false;
                 }
             }
         }
 
-        if (allUpdatesSucceeded) {
-            showToast('success', 'All settings saved successfully!');
-            // Optionally, reload settings to confirm they've been applied
-            this.loadSettings();
+        if (allSucceeded) {
+            showToast('success', 'All changed settings saved successfully!');
+            await this.loadSettings(); // Reload to confirm changes
         } else {
-            showToast('error', 'One or more settings categories failed to save.');
+            showToast('error', 'One or more settings failed to save. Please review the form.');
         }
     }
 
     async sendUpdateRequest(category, updates) {
         try {
-            const response = await fetch('/api/settings/update', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    config_type: category,
-                    updates: updates,
-                }),
+            const response = await apiPost('/api/settings/update', {
+                config_type: category,
+                updates: updates,
             });
 
-            if (!response.ok) {
-                throw new Error(`API returned status ${response.status}`);
-            }
-
-            const result = await response.json();
-
-            if (result.success) {
-                console.log(`Settings for '${category}' updated successfully.`);
+            if (response.success) {
                 return true;
             } else {
-                showToast('error', `Failed to update settings for '${category}': ${result.error}`);
+                showToast('error', `Failed to update ${category}: ${response.error}`);
                 return false;
             }
         } catch (error) {
-            showToast('error', `Error saving settings for '${category}': ${error.message}`);
+            showToast('error', `Error saving ${category}: ${error.message}`);
             return false;
         }
     }

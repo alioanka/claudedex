@@ -309,27 +309,29 @@ async function updateBotStatus() {
                 }
             }
         } else {
-            // ✅ If API fails, assume bot is running if we have data
+            // If API call fails but gives a response, assume offline
+            state.botStatus = 'offline';
             const statusIndicator = document.getElementById('botStatus');
             if (statusIndicator) {
-                statusIndicator.classList.remove('offline');
-                statusIndicator.classList.add('online');
+                statusIndicator.classList.remove('online');
+                statusIndicator.classList.add('offline');
                 const statusText = statusIndicator.querySelector('.status-text');
                 if (statusText) {
-                    statusText.textContent = 'Bot Running';
+                    statusText.textContent = 'Connecting...';
                 }
             }
         }
     } catch (error) {
         console.error('Error updating bot status:', error);
-        // ✅ Don't set as offline on error - assume running
+        // If fetch fails, bot is unreachable
+        state.botStatus = 'offline';
         const statusIndicator = document.getElementById('botStatus');
         if (statusIndicator) {
-            statusIndicator.classList.remove('offline');
-            statusIndicator.classList.add('online');
+            statusIndicator.classList.remove('online');
+            statusIndicator.classList.add('offline');
             const statusText = statusIndicator.querySelector('.status-text');
             if (statusText) {
-                statusText.textContent = 'Bot Running';
+                statusText.textContent = 'Error';
             }
         }
     }
