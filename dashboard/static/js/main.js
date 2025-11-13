@@ -604,6 +604,7 @@ async function exportData(format, endpoint) {
 document.addEventListener('DOMContentLoaded', function() {
     loadTheme();
     initDashboard();
+    initWebSocket(); // Initialize WebSocket connection
     updateBotStatus();  // Load bot status first
     loadTopBarData();    // ✅ Load top bar ONCE
     loadDashboardData(); // Load other data
