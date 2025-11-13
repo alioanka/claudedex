@@ -2247,12 +2247,18 @@ class TradingBotEngine:
             ]
             
             for name, collector in collectors:
+                cleanup_method = None
                 if hasattr(collector, 'cleanup'):
+                    cleanup_method = collector.cleanup
+                elif hasattr(collector, 'close'):
+                    cleanup_method = collector.close
+
+                if cleanup_method:
                     try:
-                        await collector.cleanup()
+                        await cleanup_method()
                         logger.info(f"✅ {name} collector cleaned up")
                     except Exception as e:
-                        logger.debug(f"Error cleaning up {name}: {e}")
+                        logger.debug(f"Error cleaning up {name} collector: {e}")
             
             # 4. Cleanup database connection
             if hasattr(self.db, 'disconnect'):
