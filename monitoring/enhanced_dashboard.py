@@ -391,6 +391,14 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Error generating insights: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
+
+    async def api_get_analysis(self, request):
+        """Get trade analysis data"""
+        try:
+            if not self.db:
+                return web.json_response({'error': 'Database connection not available.'}, status=503)
+
+            query = "SELECT * FROM trades WHERE status = 'closed';"
             trades = await self.db.pool.fetch(query)
 
             if not trades:
@@ -423,39 +431,6 @@ class DashboardEndpoints:
             })
         except Exception as e:
             logger.error(f"Error in api_get_analysis: {e}", exc_info=True)
-            return web.json_response({'error': str(e)}, status=500)
-
-    async def api_get_insights(self, request):
-        """Generate performance tuning suggestions"""
-        try:
-            if not self.db:
-                return web.json_response({'error': 'Database connection not available.'}, status=503)
-
-            query = "SELECT * FROM trades WHERE status = 'closed';"
-            trades = await self.db.pool.fetch(query)
-
-            insights = []
-            if not trades:
-                return web.json_response({'success': True, 'data': insights})
-
-            df = pd.DataFrame([dict(trade) for trade in trades])
-            df['profit_loss'] = pd.to_numeric(df['profit_loss'])
-
-            # Insight 1: Win rate analysis
-            win_rate = (df['profit_loss'] > 0).mean()
-            if win_rate < 0.5:
-                insights.append("Your win rate is below 50%. Consider tightening your entry criteria or adjusting your stop-loss strategy.")
-
-            # Insight 2: Risk/Reward Ratio
-            avg_win = df[df['profit_loss'] > 0]['profit_loss'].mean()
-            avg_loss = abs(df[df['profit_loss'] <= 0]['profit_loss'].mean())
-            if avg_win < 1.5 * avg_loss:
-                insights.append("Your average win is less than 1.5x your average loss. Aim for a higher risk/reward ratio by adjusting take-profit levels.")
-
-            return web.json_response({'success': True, 'data': insights})
-
-        except Exception as e:
-            logger.error(f"Error generating insights: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
 
     async def api_dashboard_summary(self, request):
