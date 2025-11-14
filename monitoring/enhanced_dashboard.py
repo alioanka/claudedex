@@ -338,6 +338,59 @@ class DashboardEndpoints:
                 return web.json_response({'error': 'Database connection not available.'}, status=503)
 
             query = "SELECT * FROM trades WHERE status = 'closed';"
+
+    async def api_get_insights(self, request):
+        """Generate performance tuning suggestions"""
+        try:
+            if not self.db:
+                return web.json_response({'error': 'Database connection not available.'}, status=503)
+
+            query = "SELECT * FROM trades WHERE status = 'closed';"
+            trades = await self.db.pool.fetch(query)
+
+            insights = []
+            if not trades:
+                return web.json_response({'success': True, 'data': insights})
+
+            df = pd.DataFrame([dict(trade) for trade in trades])
+            df['profit_loss'] = pd.to_numeric(df['profit_loss'])
+
+            # Insight 1: Win rate analysis
+            win_rate = (df['profit_loss'] > 0).mean()
+            if win_rate < 0.5:
+                insights.append({
+                    'type': 'suggestion',
+                    'title': 'Improve Win Rate',
+                    'message': 'Your win rate is below 50%. Consider tightening entry criteria or adjusting your stop-loss strategy to be more conservative.'
+                })
+
+            # Insight 2: Risk/Reward Ratio
+            avg_win = df[df['profit_loss'] > 0]['profit_loss'].mean()
+            avg_loss = abs(df[df['profit_loss'] <= 0]['profit_loss'].mean())
+            if not np.isnan(avg_win) and not np.isnan(avg_loss) and avg_loss > 0 and (avg_win / avg_loss < 1.5):
+                insights.append({
+                    'type': 'suggestion',
+                    'title': 'Increase Risk/Reward Ratio',
+                    'message': 'Your average win is less than 1.5x your average loss. Aim for a higher risk/reward ratio by adjusting take-profit levels or seeking trades with better potential.'
+                })
+
+            # Insight 3: Identify problematic strategies
+            df['strategy'] = df['metadata'].apply(self._get_strategy_from_metadata)
+            strategy_pnl = df.groupby('strategy')['profit_loss'].sum()
+            losing_strategies = strategy_pnl[strategy_pnl < 0]
+            if not losing_strategies.empty:
+                for strategy, pnl in losing_strategies.items():
+                    insights.append({
+                        'type': 'warning',
+                        'title': f'Review Strategy: {strategy}',
+                        'message': f'The "{strategy}" strategy has a total P&L of {pnl:.2f}. It may require tuning or deactivation.'
+                    })
+
+            return web.json_response({'success': True, 'data': self._serialize_decimals(insights)})
+
+        except Exception as e:
+            logger.error(f"Error generating insights: {e}", exc_info=True)
+            return web.json_response({'error': str(e)}, status=500)
             trades = await self.db.pool.fetch(query)
 
             if not trades:
@@ -350,37 +403,11 @@ class DashboardEndpoints:
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
             df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
 
-            # Performance by strategy
-            def get_strategy(metadata):
-                """Recursively search for a 'strategy' key in the metadata."""
-                if not metadata:
-                    return 'Unspecified'
-
-                if isinstance(metadata, str):
-                    try:
-                        metadata = json.loads(metadata)
-                    except json.JSONDecodeError:
-                        return 'Unspecified'
-
-                if not isinstance(metadata, dict):
-                    return 'Unspecified'
-
-                # Check top level
-                if 'strategy' in metadata:
-                    return metadata['strategy']
-
-                # Recursively check nested dicts
-                for key, value in metadata.items():
-                    if isinstance(value, dict):
-                        strategy = get_strategy(value)
-                        if strategy != 'Unspecified':
-                            return strategy
-
-                return 'Unspecified'
-
-            df['strategy'] = df['metadata'].apply(get_strategy)
+            # --- FIX STARTS HERE: Use centralized strategy parsing ---
+            df['strategy'] = df['metadata'].apply(self._get_strategy_from_metadata)
             strategy_performance = df.groupby('strategy')['profit_loss'].sum().reset_index()
             strategy_performance.columns = ['strategy', 'total_pnl']
+            # --- FIX ENDS HERE ---
 
             # Profitability by hour
             df['hour'] = df['exit_timestamp'].dt.hour
@@ -1123,37 +1150,7 @@ class DashboardEndpoints:
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
             df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
 
-            def get_strategy(metadata):
-                """Recursively search for a 'strategy' key in the metadata."""
-                if not metadata:
-                    return 'unknown'
-
-                if isinstance(metadata, str):
-                    try:
-                        metadata = json.loads(metadata)
-                    except json.JSONDecodeError:
-                        return 'unknown'
-
-                if not isinstance(metadata, dict):
-                    return 'unknown'
-
-                # Check top level
-                if 'strategy' in metadata:
-                    # If strategy is a dict, look for a 'name' key
-                    if isinstance(metadata['strategy'], dict):
-                        return metadata['strategy'].get('name', 'unknown')
-                    return metadata['strategy']
-
-                # Recursively check nested dicts
-                for key, value in metadata.items():
-                    if isinstance(value, dict):
-                        strategy = get_strategy(value)
-                        if strategy != 'unknown':
-                            return strategy
-
-                return 'unknown'
-
-            df['strategy'] = df['metadata'].apply(get_strategy)
+            df['strategy'] = df['metadata'].apply(self._get_strategy_from_metadata)
 
             # --- FIX STARTS HERE ---
             
@@ -1807,6 +1804,46 @@ class DashboardEndpoints:
         return resp
     
     # ==================== HELPER METHODS ====================
+
+    def _get_strategy_from_metadata(self, metadata: Any) -> str:
+        """
+        Recursively search for a 'strategy' key in the metadata, which can be
+        a JSON string or a dictionary. Returns the strategy name or a default.
+        """
+        default_name = "Unknown Strategy"
+
+        if not metadata:
+            return default_name
+
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                return default_name
+
+        if not isinstance(metadata, dict):
+            return default_name
+
+        # Check top level for 'strategy'
+        if 'strategy' in metadata:
+            strategy_value = metadata['strategy']
+            # If strategy value is a dict, look for a 'name' key
+            if isinstance(strategy_value, dict):
+                return strategy_value.get('name', default_name)
+            # If it's a string, return it
+            if isinstance(strategy_value, str) and strategy_value:
+                return strategy_value
+            # Fallback if it's something else
+            return default_name
+
+        # Recursively check nested dicts if not found at the top level
+        for key, value in metadata.items():
+            if isinstance(value, dict):
+                strategy = self._get_strategy_from_metadata(value)
+                if strategy != default_name:
+                    return strategy
+
+        return default_name
     
     async def _send_initial_data(self, sid):
         """Send initial data to newly connected client"""
@@ -2072,14 +2109,22 @@ class DashboardEndpoints:
         # The report should only contain closed trades, so we assign this directly
         report['trades'] = self._serialize_decimals([dict(row) for row in closed_trades])
         # --- FIX ENDS HERE ---
-        report['trades'] = self._serialize_decimals(closed_trades)
 
         # Calculate metrics if there are any closed trades
         if not closed_trades:
             return report
 
-        df = pd.DataFrame(closed_trades)
-        df['profit_loss'] = pd.to_numeric(df['profit_loss'])
+        # Convert records to a list of dicts for DataFrame creation
+        trade_list = [dict(row) for row in closed_trades]
+        df = pd.DataFrame(trade_list)
+
+        # Ensure 'profit_loss' column exists and handle potential missing values
+        if 'profit_loss' not in df.columns:
+            # If the column is completely missing, create it with zeros
+            df['profit_loss'] = 0
+        else:
+            # If it exists, ensure it's numeric and fill any NaNs
+            df['profit_loss'] = pd.to_numeric(df['profit_loss'], errors='coerce').fillna(0)
 
         if 'all' in metrics or 'pnl' in metrics:
             report['metrics']['total_pnl'] = df['profit_loss'].sum()
@@ -2092,7 +2137,7 @@ class DashboardEndpoints:
             report['metrics']['losing_trades'] = total_closed - winning_trades
 
         if 'all' in metrics or 'trades_count' in metrics:
-            report['metrics']['total_trades'] = len(trades)
+            report['metrics']['total_trades'] = len(closed_trades) # FIX: Was 'trades'
             report['metrics']['closed_trades'] = len(closed_trades)
 
         return report
@@ -2191,7 +2236,14 @@ class DashboardEndpoints:
 
             for index, trade in df.iterrows():
                 # Calculate simulated P&L based on a fixed investment size
-                roi = (trade['exit_price'] - trade['entry_price']) / trade['entry_price']
+                entry_price = float(trade.get('entry_price', 0))
+                exit_price = float(trade.get('exit_price', 0))
+
+                if entry_price > 0:
+                    roi = (exit_price - entry_price) / entry_price
+                else:
+                    roi = 0.0
+
                 simulated_pnl = position_size_per_trade * roi
 
                 # Update balance
@@ -2209,40 +2261,43 @@ class DashboardEndpoints:
             total_return_pct = (total_pnl / float(initial_balance)) * 100 if initial_balance > 0 else 0
 
             total_trades = len(df)
-            winning_trades = df[df['profit_loss'] > 0]
-            win_rate = (len(winning_trades) / total_trades) * 100 if total_trades > 0 else 0
+            winning_trades_df = df[df['profit_loss'] > 0]
+            losing_trades_df = df[df['profit_loss'] <= 0]
+            win_rate = (len(winning_trades_df) / total_trades) * 100 if total_trades > 0 else 0.0
 
             # Correct Max Drawdown
             equity_df = pd.DataFrame(equity_curve)
             equity_df['value'] = pd.to_numeric(equity_df['value'])
             peak = equity_df['value'].expanding(min_periods=1).max()
-            drawdown = ((equity_df['value'] - peak) / peak).replace([np.inf, -np.inf], 0)
-            max_drawdown = abs(drawdown.min() * 100)
+            drawdown = ((equity_df['value'] - peak) / peak).replace([np.inf, -np.inf], 0).fillna(0)
+            max_drawdown = abs(float(drawdown.min()) * 100) if not drawdown.empty else 0.0
 
             # --- FIX STARTS HERE: Implement missing backtesting statistics ---
-            gross_profit = winning_trades['profit_loss'].sum()
-            gross_loss = abs(df[df['profit_loss'] <= 0]['profit_loss'].sum())
+            gross_profit = float(winning_trades_df['profit_loss'].sum())
+            gross_loss = abs(float(losing_trades_df['profit_loss'].sum()))
             profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
-            avg_win = winning_trades['profit_loss'].mean() if not winning_trades.empty else 0
-            avg_loss = abs(df[df['profit_loss'] <= 0]['profit_loss'].mean()) if not df[df['profit_loss'] <= 0].empty else 0
-            largest_win = winning_trades['profit_loss'].max() if not winning_trades.empty else 0
-            largest_loss = df[df['profit_loss'] <= 0]['profit_loss'].min() if not df[df['profit_loss'] <= 0].empty else 0
+
+            avg_win = float(winning_trades_df['profit_loss'].mean()) if not winning_trades_df.empty else 0.0
+            avg_loss = abs(float(losing_trades_df['profit_loss'].mean())) if not losing_trades_df.empty else 0.0
+
+            largest_win = float(winning_trades_df['profit_loss'].max()) if not winning_trades_df.empty else 0.0
+            largest_loss = abs(float(losing_trades_df['profit_loss'].min())) if not losing_trades_df.empty else 0.0
             # --- FIX ENDS HERE ---
 
             self.backtests[test_id] = {
                 'status': 'completed',
-                'final_balance': final_balance,
-                'total_pnl': total_pnl,
-                'profit_factor': profit_factor,
-                'avg_win': avg_win,
-                'avg_loss': avg_loss,
-                'largest_win': largest_win,
-                'largest_loss': largest_loss,
-                'total_return': total_return_pct,
+                'final_balance': float(final_balance),
+                'total_pnl': float(total_pnl),
+                'profit_factor': float(profit_factor),
+                'avg_win': float(avg_win),
+                'avg_loss': float(avg_loss),
+                'largest_win': float(largest_win),
+                'largest_loss': float(largest_loss),
+                'total_return': float(total_return_pct),
                 'total_trades': total_trades,
-                'win_rate': win_rate,
-                'winning_trades': len(winning_trades),
-                'losing_trades': total_trades - len(winning_trades),
+                'win_rate': float(win_rate),
+                'winning_trades': len(winning_trades_df),
+                'losing_trades': len(losing_trades_df),
                 'sharpe_ratio': 0, # Placeholder
                 'sortino_ratio': 0, # Placeholder
                 'max_drawdown': max_drawdown,

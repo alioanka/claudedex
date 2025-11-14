@@ -121,7 +121,6 @@ function setupBotControls() {
 }
 
 async function handleBotControl(action) {
-    console.log(`[handleBotControl] Action initiated: ${action}`); // Debugging line
     const actionMap = {
         'start': { url: '/api/bot/start', message: 'Starting bot...' },
         'stop': { url: '/api/bot/stop', message: 'Stopping bot...' },
@@ -130,25 +129,23 @@ async function handleBotControl(action) {
     
     const config = actionMap[action];
     if (!config) {
-        console.error(`[handleBotControl] Invalid action: ${action}`);
+        console.error(`Invalid action: ${action}`);
         return;
     }
     
     try {
-        console.log(`[handleBotControl] Sending request to ${config.url}`);
         showToast('info', config.message);
         
         const response = await fetch(config.url, { method: 'POST' });
 
         if (!response.ok) {
             const errorText = await response.text();
-            console.error(`[handleBotControl] API request failed with status ${response.status}:`, errorText);
+            console.error(`API request failed with status ${response.status}:`, errorText);
             showToast('error', `Error: ${response.status} ${response.statusText}`);
             return;
         }
 
         const data = await response.json();
-        console.log(`[handleBotControl] Received response for ${action}:`, data);
         
         if (data.success) {
             showToast('success', data.message || `Bot ${action} successful`);
@@ -304,17 +301,14 @@ function updateDashboardUI(data) {
 // Update bot status
 async function updateBotStatus() {
     try {
-        console.log('Fetching bot status...');
         const response = await fetch('/api/bot/status');
         const data = await response.json();
-        console.log('Bot status response:', data);
 
         if (data.success && data.data) {
             const status = data.data;
             // ✅ FIX: Check if bot is running (handle both boolean and string)
             const isRunning = status.running === true || status.running === 'running' || status.running === 'active';
             state.botStatus = isRunning ? 'online' : 'offline';
-            console.log('Bot is running:', isRunning, 'Status:', state.botStatus);
             
             const statusIndicator = document.getElementById('botStatus');
             if (statusIndicator) {
@@ -327,7 +321,6 @@ async function updateBotStatus() {
                 }
             }
         } else {
-            console.log('Bot status API call failed or data missing.');
             // If API call fails but gives a response, assume offline
             state.botStatus = 'offline';
             const statusIndicator = document.getElementById('botStatus');
@@ -467,6 +460,30 @@ function formatCurrency(value, decimals = 2) {
         minimumFractionDigits: decimals,
         maximumFractionDigits: decimals
     }).format(value);
+}
+
+/**
+ * NEW: formatPrice function to handle scientific notation and show full precision
+ * for token prices, which can be very small.
+ */
+function formatPrice(value) {
+    if (value === null || value === undefined) return 'N/A';
+
+    // Convert to number to handle scientific notation (e.g., 1.23e-8)
+    const num = Number(value);
+
+    // If it's a very small number, format it to show up to 18 decimal places
+    if (num > 0 && num < 0.0001) {
+        return '$' + num.toFixed(18).replace(/\.?0+$/, ""); // Remove trailing zeros
+    }
+
+    // For larger numbers, use a standard currency format but with more precision
+    return num.toLocaleString('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 8,
+    });
 }
 
 function formatPercent(value, decimals = 2) {
@@ -638,6 +655,7 @@ window.showToast = showToast;
 window.showConfirmation = showConfirmation;
 window.showAlert = showAlert;
 window.formatCurrency = formatCurrency;
+window.formatPrice = formatPrice;
 window.formatPercent = formatPercent;
 window.formatNumber = formatNumber;
 window.formatDate = formatDate;

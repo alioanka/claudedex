@@ -767,6 +767,48 @@ class ConfigManager:
         """Get general configuration"""
         return self.configs.get(ConfigType.GENERAL, GeneralConfig())
 
+    def get_chain_config(self) -> ChainConfig:
+        return self.configs.get(ConfigType.CHAIN, ChainConfig())
+
+    def get_position_management_config(self) -> PositionManagementConfig:
+        return self.configs.get(ConfigType.POSITION_MANAGEMENT, PositionManagementConfig())
+
+    def get_volatility_config(self) -> VolatilityConfig:
+        return self.configs.get(ConfigType.VOLATILITY, VolatilityConfig())
+
+    def get_exit_strategy_config(self) -> ExitStrategyConfig:
+        return self.configs.get(ConfigType.EXIT_STRATEGY, ExitStrategyConfig())
+
+    def get_solana_config(self) -> SolanaConfig:
+        return self.configs.get(ConfigType.SOLANA, SolanaConfig())
+
+    def get_jupiter_config(self) -> JupiterConfig:
+        return self.configs.get(ConfigType.JUPITER, JupiterConfig())
+
+    def get_performance_config(self) -> PerformanceConfig:
+        return self.configs.get(ConfigType.PERFORMANCE, PerformanceConfig())
+
+    def get_feature_flags_config(self) -> FeatureFlagsConfig:
+        return self.configs.get(ConfigType.FEATURE_FLAGS, FeatureFlagsConfig())
+
+    def get_gas_price_config(self) -> GasPriceConfig:
+        return self.configs.get(ConfigType.GAS_PRICE, GasPriceConfig())
+
+    def get_trading_limits_config(self) -> TradingLimitsConfig:
+        return self.configs.get(ConfigType.TRADING_LIMITS, TradingLimitsConfig())
+
+    def get_backtesting_config(self) -> BacktestingConfig:
+        return self.configs.get(ConfigType.BACKTESTING, BacktestingConfig())
+
+    def get_network_config(self) -> NetworkConfig:
+        return self.configs.get(ConfigType.NETWORK, NetworkConfig())
+
+    def get_debug_config(self) -> DebugConfig:
+        return self.configs.get(ConfigType.DEBUG, DebugConfig())
+
+    def get_dashboard_config(self) -> DashboardConfig:
+        return self.configs.get(ConfigType.DASHBOARD, DashboardConfig())
+
     async def update_config(self,
                           config_type: ConfigType, 
                           updates: Dict[str, Any],

@@ -182,10 +182,8 @@ async function loadPositions() {
 async function loadClosedPositions() {
     try {
         const response = await apiGet('/api/positions/history?limit=50');
-        console.log('Closed positions response:', response);
         
         if (response.success && response.data) {
-            console.log('Closed positions count:', response.data.length);
             
             // ✅ Wait for DOM to be ready
             setTimeout(() => {
@@ -198,19 +196,12 @@ async function loadClosedPositions() {
 }
 
 function displayClosedPositions(positions) {
-    console.log('displayClosedPositions called with', positions.length, 'positions');
-    
     const tbody = document.getElementById('closedPositionsBody');
-    console.log('tbody element:', tbody); // ✅ Add this
     
     if (!tbody) {
         console.error('Closed positions table body not found');
-        console.log('All elements with ID:', document.querySelectorAll('[id*="closed"]')); // ✅ Debug
         return;
     }
-    
-    // ... rest of function
-
     
     if (!positions || positions.length === 0) {
         tbody.innerHTML = '<tr><td colspan="8" class="text-center">No closed positions</td></tr>';
@@ -298,8 +289,8 @@ function displayPositions(positions) {
                     <br>
                     <small class="text-muted">${(pos.token_address || '').substring(0, 10)}...</small>
                 </td>
-                <td>${formatCurrency(pos.entry_price)}</td>
-                <td>${formatCurrency(currentPrice)}</td>
+                <td>${formatPrice(pos.entry_price)}</td>
+                <td>${formatPrice(currentPrice)}</td>
                 <td>${formatNumber(pos.amount, 4)}</td>
                 <td>${formatCurrency(value)}</td>
                 <td class="${pnlClass}">
@@ -397,11 +388,11 @@ async function viewPositionDetails(positionId) {
                 </div>
                 <div class="metric-row">
                     <span class="metric-label">Entry Price</span>
-                    <span class="metric-value">${formatCurrency(position.entry_price)}</span>
+                    <span class="metric-value">${formatPrice(position.entry_price)}</span>
                 </div>
                 <div class="metric-row">
                     <span class="metric-label">Current Price</span>
-                    <span class="metric-value">${formatCurrency(position.current_price || position.entry_price)}</span>
+                    <span class="metric-value">${formatPrice(position.current_price || position.entry_price)}</span>
                 </div>
                 <div class="metric-row">
                     <span class="metric-label">Amount</span>
