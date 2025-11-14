@@ -338,6 +338,39 @@ class DashboardEndpoints:
                 return web.json_response({'error': 'Database connection not available.'}, status=503)
 
             query = "SELECT * FROM trades WHERE status = 'closed';"
+            trades = await self.db.pool.fetch(query)
+
+            if not trades:
+                return web.json_response({'success': True, 'data': {
+                    'strategy_performance': [],
+                    'hourly_profitability': [],
+                }})
+
+            df = pd.DataFrame([dict(trade) for trade in trades])
+            df['profit_loss'] = pd.to_numeric(df['profit_loss'])
+            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
+
+            # --- FIX STARTS HERE: Use centralized strategy parsing ---
+            df['strategy'] = df['metadata'].apply(self._get_strategy_from_metadata)
+            strategy_performance = df.groupby('strategy')['profit_loss'].sum().reset_index()
+            strategy_performance.columns = ['strategy', 'total_pnl']
+            # --- FIX ENDS HERE ---
+
+            # Profitability by hour
+            df['hour'] = df['exit_timestamp'].dt.hour
+            hourly_profitability = df.groupby('hour')['profit_loss'].mean().reset_index()
+            hourly_profitability.columns = ['hour', 'avg_pnl']
+
+            return web.json_response({
+                'success': True,
+                'data': {
+                    'strategy_performance': strategy_performance.to_dict('records'),
+                    'hourly_profitability': hourly_profitability.to_dict('records'),
+                }
+            })
+        except Exception as e:
+            logger.error(f"Error in api_get_analysis: {e}", exc_info=True)
+            return web.json_response({'error': str(e)}, status=500)
 
     async def api_get_insights(self, request):
         """Generate performance tuning suggestions"""
@@ -390,47 +423,6 @@ class DashboardEndpoints:
 
         except Exception as e:
             logger.error(f"Error generating insights: {e}", exc_info=True)
-            return web.json_response({'error': str(e)}, status=500)
-
-    async def api_get_analysis(self, request):
-        """Get trade analysis data"""
-        try:
-            if not self.db:
-                return web.json_response({'error': 'Database connection not available.'}, status=503)
-
-            query = "SELECT * FROM trades WHERE status = 'closed';"
-            trades = await self.db.pool.fetch(query)
-
-            if not trades:
-                return web.json_response({'success': True, 'data': {
-                    'strategy_performance': [],
-                    'hourly_profitability': [],
-                }})
-
-            df = pd.DataFrame([dict(trade) for trade in trades])
-            df['profit_loss'] = pd.to_numeric(df['profit_loss'])
-            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
-
-            # --- FIX STARTS HERE: Use centralized strategy parsing ---
-            df['strategy'] = df['metadata'].apply(self._get_strategy_from_metadata)
-            strategy_performance = df.groupby('strategy')['profit_loss'].sum().reset_index()
-            strategy_performance.columns = ['strategy', 'total_pnl']
-            # --- FIX ENDS HERE ---
-
-            # Profitability by hour
-            df['hour'] = df['exit_timestamp'].dt.hour
-            hourly_profitability = df.groupby('hour')['profit_loss'].mean().reset_index()
-            hourly_profitability.columns = ['hour', 'avg_pnl']
-
-            return web.json_response({
-                'success': True,
-                'data': {
-                    'strategy_performance': strategy_performance.to_dict('records'),
-                    'hourly_profitability': hourly_profitability.to_dict('records'),
-                }
-            })
-        except Exception as e:
-            logger.error(f"Error in api_get_analysis: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
 
     async def api_dashboard_summary(self, request):
