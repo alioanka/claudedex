@@ -2272,65 +2272,56 @@ class DashboardEndpoints:
                 raise Exception("Database connection is not available.")
 
             # Fetch historical trades from the database within the specified date range
-        # --- FIX STARTS HERE: Filter trades by the selected strategy ---
+            # Filter trades by the selected strategy
             query = """
                 SELECT * FROM trades
-            WHERE status = 'closed'
-              AND exit_timestamp >= $1
-              AND exit_timestamp <= $2
-              AND (
-                  (metadata->'strategy'->>'name' = $3) OR
-                  (jsonb_typeof(metadata->'strategy') = 'string' AND metadata->>'strategy' = $3)
-              )
+                WHERE status = 'closed'
+                AND exit_timestamp >= $1
+                AND exit_timestamp <= $2
+                AND (
+                    (metadata->'strategy'->>'name' = $3) OR
+                    (jsonb_typeof(metadata->'strategy') = 'string' AND metadata->>'strategy' = $3)
+                )
                 ORDER BY exit_timestamp ASC;
             """
-        trades = await self.db.pool.fetch(
-            query,
-            datetime.fromisoformat(start_date),
-            datetime.fromisoformat(end_date),
-            strategy
-        )
-        # --- FIX ENDS HERE ---
+            trades = await self.db.pool.fetch(
+                query,
+                datetime.fromisoformat(start_date),
+                datetime.fromisoformat(end_date),
+                strategy,
+            )
 
             if not trades:
-                self.backtests[test_id] = {'status': 'completed', 'message': 'No trades found for the selected period.', 'equity_curve': []}
+                self.backtests[test_id] = {
+                    'status': 'completed',
+                    'message': 'No trades found for the selected period.',
+                    'equity_curve': []
+                }
                 return
 
-            self.backtests[test_id]['progress'] = f'Simulating {len(trades)} trades...'
+            self.backtests[test_id]['progress'] = f'Simulating {len(trades)} trades.'
             df = pd.DataFrame([dict(trade) for trade in trades])
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
             df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
 
-            # --- FIX STARTS HERE: Correct backtesting simulation ---
             # Simulate trades instead of just replaying old P&L
             balance = float(initial_balance)
             equity_curve = [{'timestamp': start_date, 'value': balance}]
-
-            # Assume a fixed position size for simulation
-            position_size_per_trade = balance * 0.1 # Use 10% of initial balance per trade
+            position_size_per_trade = balance * 0.1  # 10% of initial balance per trade
 
             for index, trade in df.iterrows():
-                # Calculate simulated P&L based on a fixed investment size
                 entry_price = float(trade.get('entry_price', 0))
                 exit_price = float(trade.get('exit_price', 0))
-
-                if entry_price > 0:
-                    roi = (exit_price - entry_price) / entry_price
-                else:
-                    roi = 0.0
-
+                roi = (exit_price - entry_price) / entry_price if entry_price > 0 else 0.0
                 simulated_pnl = position_size_per_trade * roi
-
-                # Update balance
                 balance += simulated_pnl
                 df.at[index, 'simulated_pnl'] = simulated_pnl
-
                 equity_curve.append({'timestamp': trade['exit_timestamp'].isoformat(), 'value': balance})
 
-            df['profit_loss'] = df['simulated_pnl'] # Use simulated P&L for all metrics
-            # --- FIX ENDS HERE ---
+            # Use simulated P&L for all metrics
+            df['profit_loss'] = df['simulated_pnl']
 
-            # Calculate final metrics
+            # Final metrics
             final_balance = balance
             total_pnl = final_balance - float(initial_balance)
             total_return_pct = (total_pnl / float(initial_balance)) * 100 if initial_balance > 0 else 0
@@ -2340,14 +2331,14 @@ class DashboardEndpoints:
             losing_trades_df = df[df['profit_loss'] <= 0]
             win_rate = (len(winning_trades_df) / total_trades) * 100 if total_trades > 0 else 0.0
 
-            # Correct Max Drawdown
+            # Max Drawdown from equity curve
             equity_df = pd.DataFrame(equity_curve)
             equity_df['value'] = pd.to_numeric(equity_df['value'])
             peak = equity_df['value'].expanding(min_periods=1).max()
             drawdown = ((equity_df['value'] - peak) / peak).replace([np.inf, -np.inf], 0).fillna(0)
             max_drawdown = abs(float(drawdown.min()) * 100) if not drawdown.empty else 0.0
 
-            # --- FIX STARTS HERE: Implement missing backtesting statistics ---
+            # Backtesting statistics
             gross_profit = float(winning_trades_df['profit_loss'].sum())
             gross_loss = abs(float(losing_trades_df['profit_loss'].sum()))
             profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
@@ -2357,7 +2348,6 @@ class DashboardEndpoints:
 
             largest_win = float(winning_trades_df['profit_loss'].max()) if not winning_trades_df.empty else 0.0
             largest_loss = abs(float(losing_trades_df['profit_loss'].min())) if not losing_trades_df.empty else 0.0
-            # --- FIX ENDS HERE ---
 
             self.backtests[test_id] = {
                 'status': 'completed',
@@ -2373,13 +2363,12 @@ class DashboardEndpoints:
                 'win_rate': float(win_rate),
                 'winning_trades': len(winning_trades_df),
                 'losing_trades': len(losing_trades_df),
-                'sharpe_ratio': 0, # Placeholder
-                'sortino_ratio': 0, # Placeholder
+                'sharpe_ratio': 0,  # placeholder
+                'sortino_ratio': 0,  # placeholder
                 'max_drawdown': max_drawdown,
                 'equity_curve': equity_curve
             }
             logger.info(f"Backtest {test_id} completed successfully.")
-
         except Exception as e:
             logger.error(f"Error in backtest task {test_id}: {e}", exc_info=True)
             self.backtests[test_id] = {'status': 'failed', 'error': str(e)}
