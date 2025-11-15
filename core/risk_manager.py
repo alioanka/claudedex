@@ -187,7 +187,7 @@ class Position:
 class RiskManager:
     """Advanced risk management system"""
     
-    def __init__(self, config: Dict, portfolio_manager=None):
+    def __init__(self, config: Dict, portfolio_manager=None, config_manager=None, chain_rpc_urls=None):
         """
         Initialize risk manager
         
@@ -197,7 +197,7 @@ class RiskManager:
         self.config = config
         self.portfolio_manager = portfolio_manager
         self.chain_collector = ChainDataCollector(config.get('web3', {}))
-        self.honeypot_checker = HoneypotChecker()
+        self.honeypot_checker = HoneypotChecker(config_manager, chain_rpc_urls)
         self.wallet_manager = WalletSecurityManager(config.get('security', {}))
         
         # Risk thresholds
