@@ -277,7 +277,6 @@ class HoneypotChecker:
 
     @retry_async(max_retries=3, delay=2.0, exponential_backoff=True)
     @rate_limit(calls=12, period=60.0)
-    @retry_async(max_retries=3, delay=1.0, exponential_backoff=True)
     async def _check_rugcheck_summary(self, address: str) -> Dict:
         """
         Check token using RugCheck.xyz v1 summary API
