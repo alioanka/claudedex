@@ -281,8 +281,23 @@ class TradingBotApplication:
                 }
 
             self.logger.info("Initializing trading engine...")
-            self.engine = TradingBotEngine(nested_config, mode=self.mode)
+
+            # --- FIX STARTS HERE: Pass ConfigManager and RPC URLs to the engine ---
+            # Extract all chain-specific RPC URLs from environment variables
+            chain_rpc_urls = {}
+            for env_var, value in os.environ.items():
+                if env_var.endswith('_RPC_URLS'):
+                    chain_name = env_var.replace('_RPC_URLS', '').lower()
+                    chain_rpc_urls[chain_name] = [url.strip() for url in value.split(',')]
+
+            self.engine = TradingBotEngine(
+                config=nested_config,
+                config_manager=self.config_manager,
+                chain_rpc_urls=chain_rpc_urls,
+                mode=self.mode
+            )
             await self.engine.initialize()
+            # --- FIX ENDS HERE ---
             
             self.dashboard = DashboardEndpoints(
                 host="0.0.0.0",

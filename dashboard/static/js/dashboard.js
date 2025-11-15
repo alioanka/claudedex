@@ -25,7 +25,13 @@ async function loadInsights() {
             const insightsList = document.getElementById('insightsList');
             if (insightsList) {
                 if (response.data.length > 0) {
-                    insightsList.innerHTML = response.data.map(insight => `<li>${insight}</li>`).join('');
+                    // --- FIX STARTS HERE: Correctly render insight objects ---
+                    insightsList.innerHTML = response.data.map(insight => `
+                        <li class="insight-${insight.type || 'suggestion'}">
+                            <strong>${insight.title}:</strong> ${insight.message}
+                        </li>
+                    `).join('');
+                    // --- FIX ENDS HERE ---
                 } else {
                     insightsList.innerHTML = '<li>No performance insights available yet.</li>';
                 }
