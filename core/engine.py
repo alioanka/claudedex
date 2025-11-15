@@ -133,7 +133,9 @@ class TradingBotEngine:
         self.portfolio_manager = PortfolioManager(config.get('portfolio', {}))
         self.risk_manager = RiskManager(
             config['risk_management'], 
-            portfolio_manager=self.portfolio_manager
+            portfolio_manager=self.portfolio_manager,
+            config_manager=self.config_manager,
+            chain_rpc_urls=self.chain_rpc_urls
         )
         self.pattern_analyzer = PatternAnalyzer()
         self.decision_maker = DecisionMaker(config)
