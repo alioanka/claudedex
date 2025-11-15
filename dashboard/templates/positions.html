@@ -299,8 +299,8 @@ function displayPositions(positions) {
                 <td class="${pnlClass}">
                     <strong>${displayRoi.toFixed(2)}%</strong>
                 </td>
-                <td>${pos.stop_loss || pos.metadata?.stop_loss ? formatNumber(pos.stop_loss || pos.metadata?.stop_loss, 8) : '-'}</td>
-                <td>${pos.take_profit || pos.metadata?.take_profit ? formatNumber(pos.take_profit || pos.metadata?.take_profit, 8) : '-'}</td>
+                <td>${pos.stop_loss || pos.metadata?.stop_loss ? formatPrice(pos.stop_loss || pos.metadata?.stop_loss) : '-'}</td>
+                <td>${pos.take_profit || pos.metadata?.take_profit ? formatPrice(pos.take_profit || pos.metadata?.take_profit) : '-'}</td>
                 <td>${durationText}</td>
                 <td>
                     <button class="btn btn-sm btn-icon btn-secondary" onclick="viewPositionDetails('${pos.id}')" title="View Details">
@@ -411,11 +411,11 @@ async function viewPositionDetails(positionId) {
                 </div>
                 <div class="metric-row">
                     <span class="metric-label">Stop Loss</span>
-                    <span class="metric-value">${position.stop_loss || position.metadata?.stop_loss ? formatNumber(position.stop_loss || position.metadata?.stop_loss, 8) : 'Not set'}</span>
+                    <span class="metric-value">${position.stop_loss || position.metadata?.stop_loss ? formatPrice(position.stop_loss || position.metadata?.stop_loss) : 'Not set'}</span>
                 </div>
                 <div class="metric-row">
                     <span class="metric-label">Take Profit</span>
-                    <span class="metric-value">${position.take_profit || position.metadata?.take_profit ? formatNumber(position.take_profit || position.metadata?.take_profit, 8) : 'Not set'}</span>
+                    <span class="metric-value">${position.take_profit || position.metadata?.take_profit ? formatPrice(position.take_profit || position.metadata?.take_profit) : 'Not set'}</span>
                 </div>
                 <div class="metric-row">
                     <span class="metric-label">Opened</span>

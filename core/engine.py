@@ -112,15 +112,19 @@ class ClosedPositionRecord:
 class TradingBotEngine:
     """Main orchestration engine for the trading bot"""
     
-    def __init__(self, config: Dict, mode: str = "production"):
+    def __init__(self, config: Dict, config_manager, chain_rpc_urls: Dict, mode: str = "production"):
         """
         Initialize the trading engine
         
         Args:
             config: Configuration dictionary
+            config_manager: The main ConfigManager instance
+            chain_rpc_urls: Dictionary of chain-specific RPC URLs
             mode: Operating mode
         """
         self.config = config
+        self.config_manager = config_manager
+        self.chain_rpc_urls = chain_rpc_urls
         self.mode = mode
         self.state = BotState.INITIALIZING
         
@@ -135,7 +139,6 @@ class TradingBotEngine:
         self.decision_maker = DecisionMaker(config)
 
         # Data collectors
-        # Use:
         self.dex_collector = DexScreenerCollector(
             config.get('data_sources', {}).get('dexscreener', {})
         )
@@ -144,8 +147,8 @@ class TradingBotEngine:
         self.mempool_monitor = MempoolMonitor(config['web3'])
         self.whale_tracker = WhaleTracker(config['web3'])
 
-        # ✅ ADD THIS LINE - Initialize honeypot checker
-        self.honeypot_checker = HoneypotChecker(config.get('security', {}))
+        # --- FIX: Initialize honeypot checker with config manager and RPC URLs ---
+        self.honeypot_checker = HoneypotChecker(self.config_manager, self.chain_rpc_urls)
         
         # ML components
         self.ensemble_predictor = EnsemblePredictor()

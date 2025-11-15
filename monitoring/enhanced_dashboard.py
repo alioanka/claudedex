@@ -21,6 +21,7 @@ import pandas as pd
 import numpy as np
 import csv
 from config.config_manager import PortfolioConfig
+from pydantic.types import SecretStr
 
 logger = logging.getLogger(__name__)
 
@@ -1148,8 +1149,8 @@ class DashboardEndpoints:
 
             # 3. Generate chart data from the correctly filtered data
             # The equity curve uses the filtered full history, preserving the correct starting equity
-            equity_curve_data = [{'timestamp': ts.isoformat(), 'value': val} for ts, val in df_full_filtered[['exit_timestamp', 'equity']].values]
-            cumulative_pnl_data = [{'timestamp': ts.isoformat(), 'cumulative_pnl': val} for ts, val in df_full_filtered[['exit_timestamp', 'cumulative_pnl']].values]
+            equity_curve_data = [{'timestamp': ts.isoformat(), 'value': val} for ts, val in df_full_filtered[['exit_timestamp', 'equity']].values] if not df_full_filtered.empty else []
+            cumulative_pnl_data = [{'timestamp': ts.isoformat(), 'cumulative_pnl': val} for ts, val in df_full_filtered[['exit_timestamp', 'cumulative_pnl']].values] if not df_full_filtered.empty else []
             
             # --- FIX ENDS HERE ---
 
@@ -1335,28 +1336,68 @@ class DashboardEndpoints:
             }, status=200)
     
     # ==================== API - SETTINGS ====================
-    
+
+    def _json_serializer(self, obj):
+        """Custom JSON serializer for objects not serializable by default json code"""
+        if isinstance(obj, (datetime,)):
+            return obj.isoformat()
+        if isinstance(obj, SecretStr):
+            return obj.get_secret_value() if obj else None
+        if isinstance(obj, Enum):
+            return obj.value
+        if hasattr(obj, 'model_dump'):
+            return obj.model_dump()
+        if hasattr(obj, 'dict'):
+            return obj.dict()
+        if hasattr(obj, '__dict__'):
+            return obj.__dict__
+        raise TypeError(f"Type {type(obj)} not serializable")
+
     async def api_get_settings(self, request):
-        """Get all settings"""
+        """Get all settings, correctly handling SecretStr."""
         try:
             if not self.config_mgr:
                 return web.json_response({'error': 'Config manager not available'}, status=503)
-            
-            # Convert Pydantic models to dictionaries for JSON serialization
-            settings = {
-                'trading': self.config_mgr.get_trading_config().model_dump(),
-                'risk': self.config_mgr.get_risk_management_config().model_dump(),
-                'api': self.config_mgr.get_api_config().model_dump(),
-                'monitoring': self.config_mgr.get_monitoring_config().model_dump(),
-                'ml_models': self.config_mgr.get_ml_models_config().model_dump()
+
+            # --- FIX STARTS HERE ---
+            # Fetch all configuration models from the config manager
+            all_configs = {
+                'general': self.config_mgr.get_general_config(),
+                'portfolio': self.config_mgr.get_portfolio_config(),
+                'risk_management': self.config_mgr.get_risk_management_config(),
+                'trading': self.config_mgr.get_trading_config(),
+                'chain': self.config_mgr.get_chain_config(),
+                'position_management': self.config_mgr.get_position_management_config(),
+                'volatility': self.config_mgr.get_volatility_config(),
+                'exit_strategy': self.config_mgr.get_exit_strategy_config(),
+                'solana': self.config_mgr.get_solana_config(),
+                'jupiter': self.config_mgr.get_jupiter_config(),
+                'performance': self.config_mgr.get_performance_config(),
+                'logging': self.config_mgr.get_logging_config(),
+                'feature_flags': self.config_mgr.get_feature_flags_config(),
+                'gas_price': self.config_mgr.get_gas_price_config(),
+                'trading_limits': self.config_mgr.get_trading_limits_config(),
+                'ml_models': self.config_mgr.get_ml_models_config(),
+                'backtesting': self.config_mgr.get_backtesting_config(),
+                'network': self.config_mgr.get_network_config(),
+                'debug': self.config_mgr.get_debug_config(),
+                'dashboard': self.config_mgr.get_dashboard_config(),
+                'security': self.config_mgr.get_security_config(),
+                'database': self.config_mgr.get_database_config(),
+                'api': self.config_mgr.get_api_config(),
+                'monitoring': self.config_mgr.get_monitoring_config(),
             }
-            
-            return web.json_response({
-                'success': True,
-                'data': settings
-            })
+
+            # Use aiohttp's json_response with a custom dumps function
+            # This is the correct way to handle custom serialization in aiohttp
+            return web.json_response(
+                {'success': True, 'data': all_configs},
+                dumps=lambda data: json.dumps(data, default=self._json_serializer)
+            )
+            # --- FIX ENDS HERE ---
+
         except Exception as e:
-            logger.error(f"Error getting settings: {e}")
+            logger.error(f"Error getting settings: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_update_settings(self, request):
@@ -1774,41 +1815,45 @@ class DashboardEndpoints:
 
     def _get_strategy_from_metadata(self, metadata: Any) -> str:
         """
-        Recursively search for a 'strategy' key in the metadata, which can be
-        a JSON string or a dictionary. Returns the strategy name or a default.
+        Robustly search for a 'strategy' name in the metadata, which can be
+        a JSON string or a dictionary. Handles multiple formats.
         """
-        default_name = "Unknown Strategy"
+        default_name = "unknown"
 
         if not metadata:
             return default_name
 
+        # If metadata is a string, parse it to a dict
         if isinstance(metadata, str):
             try:
                 metadata = json.loads(metadata)
             except json.JSONDecodeError:
-                return default_name
+                # If it's just a plain string (not JSON), it might be the strategy name
+                return metadata if metadata else default_name
 
         if not isinstance(metadata, dict):
             return default_name
 
-        # Check top level for 'strategy'
-        if 'strategy' in metadata:
-            strategy_value = metadata['strategy']
-            # If strategy value is a dict, look for a 'name' key
-            if isinstance(strategy_value, dict):
-                return strategy_value.get('name', default_name)
-            # If it's a string, return it
-            if isinstance(strategy_value, str) and strategy_value:
-                return strategy_value
-            # Fallback if it's something else
-            return default_name
+        # --- FIX STARTS HERE: Handle multiple common metadata structures ---
+        # 1. Direct 'strategy_name' key
+        if 'strategy_name' in metadata and isinstance(metadata['strategy_name'], str):
+            return metadata['strategy_name']
 
-        # Recursively check nested dicts if not found at the top level
+        # 2. Nested 'strategy' dictionary with a 'name' key
+        if 'strategy' in metadata and isinstance(metadata['strategy'], dict):
+            return metadata['strategy'].get('name', default_name)
+
+        # 3. Direct 'strategy' key that is a string
+        if 'strategy' in metadata and isinstance(metadata['strategy'], str):
+            return metadata['strategy']
+
+        # 4. Fallback for other potential nested structures (recursive)
         for key, value in metadata.items():
             if isinstance(value, dict):
                 strategy = self._get_strategy_from_metadata(value)
                 if strategy != default_name:
                     return strategy
+        # --- FIX ENDS HERE ---
 
         return default_name
     
@@ -2087,25 +2132,46 @@ class DashboardEndpoints:
 
         # Ensure 'profit_loss' column exists and handle potential missing values
         if 'profit_loss' not in df.columns:
-            # If the column is completely missing, create it with zeros
             df['profit_loss'] = 0
         else:
-            # If it exists, ensure it's numeric and fill any NaNs
             df['profit_loss'] = pd.to_numeric(df['profit_loss'], errors='coerce').fillna(0)
 
-        if 'all' in metrics or 'pnl' in metrics:
-            report['metrics']['total_pnl'] = df['profit_loss'].sum()
-        
-        if 'all' in metrics or 'win_rate' in metrics:
-            winning_trades = len(df[df['profit_loss'] > 0])
-            total_closed = len(df)
-            report['metrics']['win_rate'] = (winning_trades / total_closed * 100) if total_closed > 0 else 0
-            report['metrics']['winning_trades'] = winning_trades
-            report['metrics']['losing_trades'] = total_closed - winning_trades
+        # --- FIX STARTS HERE: Calculate all missing report metrics ---
+        winning_trades_df = df[df['profit_loss'] > 0]
+        losing_trades_df = df[df['profit_loss'] <= 0]
 
-        if 'all' in metrics or 'trades_count' in metrics:
-            report['metrics']['total_trades'] = len(closed_trades) # FIX: Was 'trades'
-            report['metrics']['closed_trades'] = len(closed_trades)
+        total_pnl = df['profit_loss'].sum()
+        total_trades = len(df)
+        win_rate = (len(winning_trades_df) / total_trades) * 100 if total_trades > 0 else 0
+
+        avg_win = winning_trades_df['profit_loss'].mean() if not winning_trades_df.empty else 0
+        avg_loss = abs(losing_trades_df['profit_loss'].mean()) if not losing_trades_df.empty else 0
+
+        gross_profit = winning_trades_df['profit_loss'].sum()
+        gross_loss = abs(losing_trades_df['profit_loss'].sum())
+        profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+
+        initial_balance = self.config_mgr.get_portfolio_config().initial_balance
+        df['cumulative_pnl'] = df['profit_loss'].cumsum()
+        df['equity'] = initial_balance + df['cumulative_pnl']
+        peak = df['equity'].expanding(min_periods=1).max()
+        drawdown = ((df['equity'] - peak) / peak).replace([np.inf, -np.inf], 0).fillna(0)
+        max_drawdown = abs(drawdown.min() * 100) if not drawdown.empty else 0
+
+        # Populate metrics dictionary
+        report['metrics'] = {
+            'total_pnl': total_pnl,
+            'total_trades': total_trades,
+            'win_rate': win_rate,
+            'winning_trades': len(winning_trades_df),
+            'losing_trades': len(losing_trades_df),
+            'avg_win': avg_win,
+            'avg_loss': avg_loss,
+            'profit_factor': profit_factor,
+            'max_drawdown': max_drawdown,
+            'recovery_factor': 0 # Placeholder for now
+        }
+        # --- FIX ENDS HERE ---
 
         return report
     
@@ -2123,15 +2189,44 @@ class DashboardEndpoints:
     async def _export_csv(self, report):
         """Export report as CSV"""
         output = io.StringIO()
-        
-        # Write CSV data
+        writer = csv.writer(output)
+
+        # --- FIX STARTS HERE: Write both metrics and trade data ---
+        # Write metrics
+        writer.writerow(['Metric', 'Value'])
         if 'metrics' in report:
-            writer = csv.writer(output)
-            writer.writerow(['Metric', 'Value'])
             for key, value in report['metrics'].items():
-                writer.writerow([key, value])
+                # Format numbers for better readability in CSV
+                if isinstance(value, float):
+                    value = f"{value:.4f}"
+                writer.writerow([key.replace('_', ' ').title(), value])
+
+        writer.writerow([]) # Add a blank line for separation
+
+        # Write trade data
+        writer.writerow([
+            'ID', 'Token Symbol', 'Entry Timestamp', 'Exit Timestamp',
+            'Entry Price', 'Exit Price', 'Amount', 'Profit/Loss', 'ROI (%)', 'Exit Reason'
+        ])
+
+        if 'trades' in report and report['trades']:
+            for trade in report['trades']:
+                writer.writerow([
+                    trade.get('id'),
+                    trade.get('token_symbol', 'N/A'),
+                    trade.get('entry_timestamp'),
+                    trade.get('exit_timestamp'),
+                    trade.get('entry_price'),
+                    trade.get('exit_price'),
+                    trade.get('amount'),
+                    trade.get('profit_loss'),
+                    trade.get('roi', 0),
+                    trade.get('exit_reason', 'N/A')
+                ])
+        else:
+            writer.writerow(['No trade data available for this period.'])
+        # --- FIX ENDS HERE ---
         
-        # Return as file
         response = web.Response(
             body=output.getvalue().encode('utf-8'),
             content_type='text/csv',
@@ -2177,12 +2272,25 @@ class DashboardEndpoints:
                 raise Exception("Database connection is not available.")
 
             # Fetch historical trades from the database within the specified date range
+        # --- FIX STARTS HERE: Filter trades by the selected strategy ---
             query = """
                 SELECT * FROM trades
-                WHERE status = 'closed' AND exit_timestamp >= $1 AND exit_timestamp <= $2
+            WHERE status = 'closed'
+              AND exit_timestamp >= $1
+              AND exit_timestamp <= $2
+              AND (
+                  (metadata->'strategy'->>'name' = $3) OR
+                  (jsonb_typeof(metadata->'strategy') = 'string' AND metadata->>'strategy' = $3)
+              )
                 ORDER BY exit_timestamp ASC;
             """
-            trades = await self.db.pool.fetch(query, datetime.fromisoformat(start_date), datetime.fromisoformat(end_date))
+        trades = await self.db.pool.fetch(
+            query,
+            datetime.fromisoformat(start_date),
+            datetime.fromisoformat(end_date),
+            strategy
+        )
+        # --- FIX ENDS HERE ---
 
             if not trades:
                 self.backtests[test_id] = {'status': 'completed', 'message': 'No trades found for the selected period.', 'equity_curve': []}

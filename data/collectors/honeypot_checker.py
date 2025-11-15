@@ -15,6 +15,7 @@ import json
 from solders.pubkey import Pubkey  # For Solana address validation
 
 from utils.helpers import retry_async, rate_limit, is_valid_address, format_token_amount
+from utils.helpers import retry_async
 from utils.constants import (
     HONEYPOT_CHECKS, HONEYPOT_THRESHOLDS, Chain, CHAIN_RPC_URLS,
     BLACKLISTED_TOKENS, BLACKLISTED_CONTRACTS, BLACKLISTED_WALLETS
@@ -68,44 +69,49 @@ def is_valid_solana_address(address: str) -> bool:
 class HoneypotChecker:
     """Advanced multi-API honeypot detection system"""
 
-
-    def __init__(self, config: Dict = None):
-        """Initialize honeypot checker with configuration"""
-        self.config = config or {}
+    def __init__(self, config_manager, chain_rpc_urls: Dict[str, List[str]]):
+        """Initialize honeypot checker with configuration and RPC URLs."""
+        self.config_mgr = config_manager
+        self.chain_rpc_urls = chain_rpc_urls
         self.session = None
         self.web3_connections = {}
+
+        # --- FIX: Load API keys from the config manager ---
+        api_config = self.config_mgr.get_api_config()
         self.api_keys = {
-            "honeypot_is": self.config.get("honeypot_is_api_key", ""),
-            "tokensniffer": self.config.get("tokensniffer_api_key", ""),
-            "goplus": self.config.get("goplus_api_key", "")
+            "honeypot_is": api_config.honeypot_is_api_key if hasattr(api_config, 'honeypot_is_api_key') else "",
+            "tokensniffer": api_config.tokensniffer_api_key if hasattr(api_config, 'tokensniffer_api_key') else "",
+            "goplus": api_config.goplus_api_key if hasattr(api_config, 'goplus_api_key') else ""
         }
-        self.cache = {}  # Simple cache for results
-        self.cache_ttl = 300  # 5 minutes
         
+        self.cache = {}
+        self.cache_ttl = 300  # 5 minutes
+
     async def initialize(self):
         """Initialize connections and resources"""
-        timeout = aiohttp.ClientTimeout(total=30)  # Increase timeout for Solana
+        timeout = aiohttp.ClientTimeout(total=30)
         self.session = aiohttp.ClientSession(timeout=timeout)
         await self._setup_web3_connections()
         logger.info("✅ HoneypotChecker initialized (EVM + Solana support)")
-        
+
     async def _setup_web3_connections(self):
-        """Setup Web3 connections for each chain"""
-        for chain in Chain:
-            # ✅ Skip Solana for Web3 connections
-            if chain.name.lower() == 'solana':
+        """Setup Web3 connections for each chain using the provided RPC URLs."""
+        for chain_name, rpc_urls in self.chain_rpc_urls.items():
+            if not rpc_urls:
                 continue
 
-            if chain in CHAIN_RPC_URLS:
-                rpc_urls = CHAIN_RPC_URLS[chain]
-                if rpc_urls:
-                    # ✅ Make sure the URL includes the API key!
-                    rpc_url = rpc_urls[0]
-                    
-                    # ✅ ADD THIS CHECK
-           
-                    self.web3_connections[chain] = Web3(Web3.HTTPProvider(rpc_url))
-                    logger.info(f"✅ Connected to {chain.name}: {rpc_url[:50]}...")
+            # --- FIX: Use the correct chain enum and URLs from config ---
+            try:
+                chain_enum = Chain[chain_name.upper()]
+                rpc_url = rpc_urls[0] # Use the first available RPC URL
+
+                self.web3_connections[chain_enum] = Web3(Web3.HTTPProvider(rpc_url))
+                if self.web3_connections[chain_enum].is_connected():
+                    logger.info(f"✅ Web3 connected for {chain_name.upper()} via {rpc_url[:50]}...")
+                else:
+                    logger.error(f"❌ Failed to connect Web3 for {chain_name.upper()}")
+            except (KeyError, IndexError):
+                logger.warning(f"⚠️ No valid RPC URL or chain enum for '{chain_name}'")
 
     async def close(self):
         """Clean up resources"""
@@ -271,6 +277,7 @@ class HoneypotChecker:
 
     @retry_async(max_retries=3, delay=2.0, exponential_backoff=True)
     @rate_limit(calls=12, period=60.0)
+    @retry_async(max_retries=3, delay=1.0, exponential_backoff=True)
     async def _check_rugcheck_summary(self, address: str) -> Dict:
         """
         Check token using RugCheck.xyz v1 summary API
