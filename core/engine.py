@@ -1724,19 +1724,35 @@ class TradingBotEngine:
 
                     if trade_record:
                         trade_id = trade_record['id']
+
+                        # --- HOTFIX STARTS HERE ---
+                        # Get existing metadata
+                        query_meta = "SELECT metadata FROM trades WHERE id = $1"
+                        existing_meta_record = await self.db.pool.fetchrow(query_meta, trade_id)
+                        existing_meta = existing_meta_record['metadata'] if existing_meta_record and existing_meta_record['metadata'] else {}
                         
-                        # Prepare the update payload
+                        # Add the exit reason to the metadata
+                        if isinstance(existing_meta, str):
+                            try:
+                                existing_meta = json.loads(existing_meta)
+                            except json.JSONDecodeError:
+                                existing_meta = {} # Overwrite if invalid JSON
+
+                        existing_meta['exit_reason'] = reason
+
+                        # Prepare the update payload (without the problematic column)
                         update_payload = {
                             'status': 'closed',
                             'exit_price': float(current_price),
                             'exit_timestamp': datetime.now(),
                             'profit_loss': float(final_pnl),
                             'profit_loss_percentage': float(pnl_percentage),
-                            'exit_reason': reason # Add the exit reason directly
+                            'metadata': json.dumps(existing_meta) # Store updated metadata
                         }
 
                         # Update the trade record in the database
                         success = await self.db.update_trade(trade_id, update_payload)
+                        # --- HOTFIX ENDS HERE ---
 
                         if success:
                             logger.info(f"✅ Trade {trade_id} successfully updated to 'closed' in the database.")
