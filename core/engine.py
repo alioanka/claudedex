@@ -1711,72 +1711,54 @@ class TradingBotEngine:
                 else:
                     self.stats['failed_trades'] += 1
                 
-                # ✅ UPDATE DATABASE - FIXED VERSION
+                # ✅ UPDATE DATABASE - REWRITTEN FOR RELIABILITY
                 try:
-                    trade_id = position.get('trade_id')
-
-                    # If trade_id is not in the position object, try to find it in the database
-                    if not trade_id:
-                        query = """
+                    # --- NEW FIX STARTS HERE ---
+                    # Always query the database to get the definitive trade ID for the open position
+                    query = """
                         SELECT id FROM trades 
-                        WHERE token_address = $1 
-                        AND status = 'open'
-                        ORDER BY entry_timestamp DESC 
-                        LIMIT 1
-                        """
-                        trade_id = await self.db.pool.fetchval(query, token_address)
+                        WHERE token_address = $1 AND status = 'open'
+                        ORDER BY entry_timestamp DESC LIMIT 1
+                    """
+                    trade_record = await self.db.pool.fetchrow(query, token_address)
 
-                    if trade_id:
-                        updated_metadata = {
-                            **position.get('metadata', {}),
-                            'close_reason': reason,
-                            'holding_time_minutes': holding_time,
-                            'close_details': {
-                                'entry_price': float(entry_price),
-                                'exit_price': float(current_price),
-                                'amount': float(amount),
-                                'final_pnl': float(final_pnl),
-                                'pnl_percentage': float(pnl_percentage)
-                            }
-                        }
+                    if trade_record:
+                        trade_id = trade_record['id']
                         
-                        # --- FIX STARTS HERE: Pass integer ID to update_trade ---
-                        await self.db.update_trade(int(trade_id), {
+                        # Prepare the update payload
+                        update_payload = {
+                            'status': 'closed',
                             'exit_price': float(current_price),
                             'exit_timestamp': datetime.now(),
                             'profit_loss': float(final_pnl),
                             'profit_loss_percentage': float(pnl_percentage),
-                            'status': 'closed',
-                            'metadata': updated_metadata
-                        })
-                        # --- FIX ENDS HERE ---
-                        
-                        logger.info(f"✅ Trade {trade_id} closed in database")
+                            'exit_reason': reason # Add the exit reason directly
+                        }
 
-                        # Structured trade exit logging
-                        try:
-                            chain = position.get('chain', 'unknown')
-                            log_trade_exit(
-                                chain=chain,
-                                symbol=token_symbol,
-                                trade_id=str(trade_id),
-                                entry_price=float(entry_price),
-                                exit_price=float(current_price),
-                                profit_loss=float(final_pnl),
-                                pnl_pct=float(pnl_percentage),
-                                reason=reason,
-                                hold_time_minutes=int(holding_time)
-                            )
-                        except Exception as log_err:
-                            logger.warning(f"Failed to log trade exit: {log_err}")
+                        # Update the trade record in the database
+                        success = await self.db.update_trade(trade_id, update_payload)
 
+                        if success:
+                            logger.info(f"✅ Trade {trade_id} successfully updated to 'closed' in the database.")
+                            # Structured trade exit logging
+                            try:
+                                chain = position.get('chain', 'unknown')
+                                log_trade_exit(
+                                    chain=chain, symbol=token_symbol, trade_id=str(trade_id),
+                                    entry_price=float(entry_price), exit_price=float(current_price),
+                                    profit_loss=float(final_pnl), pnl_pct=float(pnl_percentage),
+                                    reason=reason, hold_time_minutes=int(holding_time)
+                                )
+                            except Exception as log_err:
+                                logger.warning(f"Failed to log trade exit: {log_err}")
+                        else:
+                            logger.error(f"❌ Database update failed for trade {trade_id}.")
                     else:
-                        logger.warning(f"⚠️  Could not find open trade_id for {token_symbol}")
+                        logger.warning(f"⚠️ Could not find an open trade in the database for {token_symbol} to close.")
+                    # --- NEW FIX ENDS HERE ---
                         
                 except Exception as e:
-                    logger.error(f"❌ Failed to update trade in database: {e}")
-                    import traceback
-                    logger.error(traceback.format_exc())
+                    logger.error(f"❌ An exception occurred while updating the trade in the database: {e}", exc_info=True)
 
                 # ✅ Update circuit breaker metrics ONCE at the end
                 self.risk_manager.update_trade_metrics({

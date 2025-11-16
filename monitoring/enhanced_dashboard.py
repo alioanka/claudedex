@@ -1117,45 +1117,52 @@ class DashboardEndpoints:
             df = pd.DataFrame([dict(trade) for trade in trades])
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
             df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
-
             df['strategy'] = df['metadata'].apply(self._get_strategy_from_metadata)
 
-            # --- FIX STARTS HERE ---
+            # --- NEW FIX STARTS HERE: Correctly handle empty dataframes and date filtering ---
             
-            # 1. Calculate Equity Curve on the ENTIRE dataset first
+            # 1. Calculate cumulative P&L and equity on the complete dataset first
             initial_balance = self.config_mgr.get_portfolio_config().initial_balance
-            df_full = df.copy() # Use a copy for full history calculations
-            df_full['cumulative_pnl'] = df_full['profit_loss'].cumsum()
-            df_full['equity'] = initial_balance + df_full['cumulative_pnl']
+            df['cumulative_pnl'] = df['profit_loss'].cumsum()
+            df['equity'] = initial_balance + df['cumulative_pnl']
 
-            # 2. Now, filter the DataFrame by the requested timeframe
+            # Add the starting balance as the first point in the equity curve
+            start_date = df['exit_timestamp'].min() - pd.Timedelta(seconds=1) if not df.empty else pd.Timestamp.utcnow()
+            equity_curve_df = pd.concat([
+                pd.DataFrame([{'exit_timestamp': start_date, 'equity': initial_balance}]),
+                df[['exit_timestamp', 'equity']]
+            ], ignore_index=True)
+
+            cumulative_pnl_df = pd.concat([
+                pd.DataFrame([{'exit_timestamp': start_date, 'cumulative_pnl': 0}]),
+                df[['exit_timestamp', 'cumulative_pnl']]
+            ], ignore_index=True)
+
+
+            # 2. Filter the DataFrame by the requested timeframe
             if timeframe != 'all':
                 now = pd.Timestamp.utcnow()
-                # Use a mapping for timedelta
                 time_delta_map = {
                     '24h': pd.Timedelta(days=1),
                     '7d': pd.Timedelta(days=7),
                     '30d': pd.Timedelta(days=30),
                     '90d': pd.Timedelta(days=90)
                 }
-                delta = time_delta_map.get(timeframe, pd.Timedelta(days=7)) # Default to 7d
+                delta = time_delta_map.get(timeframe, pd.Timedelta(days=7))
+                cutoff_date = now - delta
 
-                # Filter both the main df and the full history df for display
-                df = df[df['exit_timestamp'] >= (now - delta)]
-                df_full_filtered = df_full[df_full['exit_timestamp'] >= (now - delta)]
-            else:
-                # If 'all' time, the filtered version is the same as the full
-                df_full_filtered = df_full
+                df = df[df['exit_timestamp'] >= cutoff_date]
+                equity_curve_df = equity_curve_df[equity_curve_df['exit_timestamp'] >= cutoff_date]
+                cumulative_pnl_df = cumulative_pnl_df[cumulative_pnl_df['exit_timestamp'] >= cutoff_date]
 
-            # 3. Generate chart data from the correctly filtered data
-            # The equity curve uses the filtered full history, preserving the correct starting equity
-            equity_curve_data = [{'timestamp': ts.isoformat(), 'value': val} for ts, val in df_full_filtered[['exit_timestamp', 'equity']].values] if not df_full_filtered.empty else []
-            cumulative_pnl_data = [{'timestamp': ts.isoformat(), 'cumulative_pnl': val} for ts, val in df_full_filtered[['exit_timestamp', 'cumulative_pnl']].values] if not df_full_filtered.empty else []
+            # 3. Generate chart data from the filtered dataframes
+            equity_curve_data = [{'timestamp': ts.isoformat(), 'value': val} for ts, val in equity_curve_df.values]
+            cumulative_pnl_data = [{'timestamp': ts.isoformat(), 'cumulative_pnl': val} for ts, val in cumulative_pnl_df.values]
             
-            # --- FIX ENDS HERE ---
+            # --- NEW FIX ENDS HERE ---
 
-            # Strategy Performance
-            strategy_performance = df.groupby('strategy')['profit_loss'].sum().reset_index()
+            # Strategy Performance (calculated on the filtered dataframe)
+            strategy_performance = df.groupby('strategy')['profit_loss'].sum().reset_index() if not df.empty else pd.DataFrame(columns=['strategy', 'pnl'])
             strategy_performance.columns = ['strategy', 'pnl']
 
             # Win/Loss Distribution
@@ -1164,10 +1171,17 @@ class DashboardEndpoints:
                 'losses': len(df[df['profit_loss'] <= 0])
             }
 
-            # Monthly Performance
-            df['month'] = df['exit_timestamp'].dt.to_period('M').astype(str)
-            monthly_performance = df.groupby('month')['profit_loss'].sum().reset_index()
-            monthly_performance.columns = ['month', 'pnl']
+            # Monthly Performance (calculated on the full dataframe, more meaningful)
+            full_df_for_monthly = pd.DataFrame([dict(trade) for trade in trades])
+            if not full_df_for_monthly.empty:
+                full_df_for_monthly['profit_loss'] = pd.to_numeric(full_df_for_monthly['profit_loss'])
+                full_df_for_monthly['exit_timestamp'] = pd.to_datetime(full_df_for_monthly['exit_timestamp'])
+                full_df_for_monthly['month'] = full_df_for_monthly['exit_timestamp'].dt.to_period('M').astype(str)
+                monthly_performance = full_df_for_monthly.groupby('month')['profit_loss'].sum().reset_index()
+                monthly_performance.columns = ['month', 'pnl']
+            else:
+                monthly_performance = pd.DataFrame(columns=['month', 'pnl'])
+
 
             return web.json_response({
                 'success': True,
@@ -1625,32 +1639,33 @@ class DashboardEndpoints:
     async def api_export_report(self, request):
         """Export report in various formats"""
         try:
-            format_type = request.match_info['format']
-            
-            # Get report data from query parameters
-            period = request.query.get('period', 'daily')
+            format_type = request.match_info['format'].lower()
+            period = request.query.get('period', 'custom')
             start_date_str = request.query.get('start_date')
             end_date_str = request.query.get('end_date')
 
+            # Generate the report with the correct timeframe
             report = await self._generate_report(period, start_date_str, end_date_str, ['all'])
 
+            # --- NEW FIX STARTS HERE: Unified and corrected export logic ---
             if format_type == 'csv':
                 return await self._export_csv(report)
-            elif format_type == 'xls': # Use 'xls' to match user request
+            elif format_type in ['xls', 'xlsx']:
                 return await self._export_excel(report)
             elif format_type == 'pdf':
-                return await self._export_pdf(report)
+                # We generate a .txt file as a placeholder for PDF
+                return await self._export_pdf_as_txt(report)
             elif format_type == 'json':
-                # Ensure proper JSON serialization for various data types
                 return web.json_response(
                     self._serialize_decimals(report),
                     headers={'Content-Disposition': f'attachment; filename="report_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.json"'}
                 )
             else:
-                return web.json_response({'error': 'Invalid format'}, status=400)
+                return web.json_response({'error': f"Invalid format: {format_type}"}, status=400)
+            # --- NEW FIX ENDS HERE ---
         except Exception as e:
             logger.error(f"Error exporting report: {e}", exc_info=True)
-            return web.json_response({'error': str(e)}, status=500)
+            return web.json_response({'error': 'An internal error occurred during report export.'}, status=500)
     
     async def api_custom_report(self, request):
         """Generate custom report with specific filters"""
@@ -1838,30 +1853,30 @@ class DashboardEndpoints:
         if not isinstance(metadata, dict):
             return default_name
 
-        # --- FIX STARTS HERE: Handle multiple common metadata structures ---
-        # 1. Direct 'strategy_name' key
-        if 'strategy_name' in metadata and isinstance(metadata['strategy_name'], str):
-            return metadata['strategy_name']
+        # --- NEW FIX STARTS HERE: More robust search logic ---
+        # Common keys for strategy name, in order of priority
+        keys_to_check = ['strategy_name', 'strategy_id', 'strategy']
 
-        # 2. Direct 'strategy_id' key
-        if 'strategy_id' in metadata and isinstance(metadata['strategy_id'], str):
-            return metadata['strategy_id']
+        for key in keys_to_check:
+            if key in metadata:
+                value = metadata[key]
+                if isinstance(value, str) and value:
+                    return value
+                if isinstance(value, dict):
+                    # Check for a 'name' key inside a nested strategy object
+                    name = value.get('name')
+                    if isinstance(name, str) and name:
+                        return name
 
-        # 2. Nested 'strategy' dictionary with a 'name' key
-        if 'strategy' in metadata and isinstance(metadata['strategy'], dict):
-            return metadata['strategy'].get('name', default_name)
-
-        # 3. Direct 'strategy' key that is a string
-        if 'strategy' in metadata and isinstance(metadata['strategy'], str):
-            return metadata['strategy']
-
-        # 4. Fallback for other potential nested structures (recursive)
+        # Final fallback: recursive search for any key containing 'strategy'
         for key, value in metadata.items():
+            if 'strategy' in key.lower() and isinstance(value, str) and value:
+                return value
             if isinstance(value, dict):
-                strategy = self._get_strategy_from_metadata(value)
-                if strategy != default_name:
-                    return strategy
-        # --- FIX ENDS HERE ---
+                result = self._get_strategy_from_metadata(value)
+                if result != default_name:
+                    return result
+        # --- NEW FIX ENDS HERE ---
 
         return default_name
 
@@ -2105,12 +2120,12 @@ class DashboardEndpoints:
                 logger.error(f"Error in broadcast loop: {e}")
                 await asyncio.sleep(10)
     
-    async def _generate_report(self, period, start_date, end_date, metrics):
-        """Generate detailed performance report."""
+    async def _generate_report(self, period, start_date_str, end_date_str, metrics):
+        """Generate detailed performance report with correct timeframe filtering."""
         report = {
             'period': period,
-            'start_date': start_date,
-            'end_date': end_date,
+            'start_date': start_date_str,
+            'end_date': end_date_str,
             'generated_at': datetime.utcnow().isoformat(),
             'metrics': {},
             'trades': []
@@ -2119,9 +2134,10 @@ class DashboardEndpoints:
         if not self.db:
             return report
 
-        # --- FIX STARTS HERE ---
-        # 1. Determine date range based on period
+        # --- NEW FIX STARTS HERE: Correct date range handling ---
         now = datetime.utcnow()
+        start_date, end_date = None, None
+
         if period == 'daily':
             start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
             end_date = now
@@ -2131,55 +2147,47 @@ class DashboardEndpoints:
         elif period == 'monthly':
             start_date = now - timedelta(days=30)
             end_date = now
-        elif start_date and end_date:
-            # Use provided dates for custom reports
-            if isinstance(start_date, str):
-                start_date = datetime.fromisoformat(start_date)
-            if isinstance(end_date, str):
-                end_date = datetime.fromisoformat(end_date).replace(hour=23, minute=59, second=59)
+        elif period == 'custom' and start_date_str and end_date_str:
+            try:
+                start_date = datetime.fromisoformat(start_date_str)
+                end_date = datetime.fromisoformat(end_date_str).replace(hour=23, minute=59, second=59)
+            except ValueError:
+                # Fallback if date format is wrong
+                start_date = now - timedelta(days=7)
+                end_date = now
         else:
-            # Default to last 7 days if no period is matched
+            # Default to the last 7 days if no valid period is matched
             start_date = now - timedelta(days=7)
             end_date = now
 
-        # 2. Fetch trades from the database within the calculated date range
-        # Filtering on exit_timestamp for closed trades makes more sense for reports
+        report['start_date'] = start_date.isoformat()
+        report['end_date'] = end_date.isoformat()
+
         query = """
             SELECT * FROM trades
             WHERE status = 'closed' AND exit_timestamp >= $1 AND exit_timestamp <= $2
             ORDER BY exit_timestamp ASC;
         """
         closed_trades = await self.db.pool.fetch(query, start_date, end_date)
-
-        # The report should only contain closed trades, so we assign this directly
         report['trades'] = self._serialize_decimals([dict(row) for row in closed_trades])
-        # --- FIX ENDS HERE ---
+        # --- NEW FIX ENDS HERE ---
 
-        # Calculate metrics if there are any closed trades
         if not closed_trades:
             return report
 
-        # Convert records to a list of dicts for DataFrame creation
-        trade_list = [dict(row) for row in closed_trades]
-        df = pd.DataFrame(trade_list)
-
-        # Ensure 'profit_loss' column exists and handle potential missing values
-        if 'profit_loss' not in df.columns:
-            df['profit_loss'] = 0
-        else:
+        df = pd.DataFrame([dict(row) for row in closed_trades])
+        if 'profit_loss' in df.columns:
             df['profit_loss'] = pd.to_numeric(df['profit_loss'], errors='coerce').fillna(0)
+        else:
+            df['profit_loss'] = 0
 
-        # --- FIX STARTS HERE: Calculate all missing report metrics ---
         winning_trades_df = df[df['profit_loss'] > 0]
         losing_trades_df = df[df['profit_loss'] <= 0]
-
         total_pnl = df['profit_loss'].sum()
         total_trades = len(df)
         win_rate = (len(winning_trades_df) / total_trades) * 100 if total_trades > 0 else 0
-
         avg_win = winning_trades_df['profit_loss'].mean() if not winning_trades_df.empty else 0
         avg_loss = abs(losing_trades_df['profit_loss'].mean()) if not losing_trades_df.empty else 0
-
         gross_profit = winning_trades_df['profit_loss'].sum()
         gross_loss = abs(losing_trades_df['profit_loss'].sum())
         profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
@@ -2188,23 +2196,14 @@ class DashboardEndpoints:
         df['cumulative_pnl'] = df['profit_loss'].cumsum()
         df['equity'] = initial_balance + df['cumulative_pnl']
         peak = df['equity'].expanding(min_periods=1).max()
-        drawdown = ((df['equity'] - peak) / peak).replace([np.inf, -np.inf], 0).fillna(0)
+        drawdown = ((df['equity'] - peak) / peak).fillna(0)
         max_drawdown = abs(drawdown.min() * 100) if not drawdown.empty else 0
 
-        # Populate metrics dictionary
         report['metrics'] = {
-            'total_pnl': total_pnl,
-            'total_trades': total_trades,
-            'win_rate': win_rate,
-            'winning_trades': len(winning_trades_df),
-            'losing_trades': len(losing_trades_df),
-            'avg_win': avg_win,
-            'avg_loss': avg_loss,
-            'profit_factor': profit_factor,
-            'max_drawdown': max_drawdown,
-            'recovery_factor': 0 # Placeholder for now
+            'total_pnl': total_pnl, 'total_trades': total_trades, 'win_rate': win_rate,
+            'winning_trades': len(winning_trades_df), 'losing_trades': len(losing_trades_df),
+            'avg_win': avg_win, 'avg_loss': avg_loss, 'profit_factor': profit_factor, 'max_drawdown': max_drawdown
         }
-        # --- FIX ENDS HERE ---
 
         return report
     
@@ -2285,48 +2284,39 @@ class DashboardEndpoints:
 
             # Sheet 2: Trade Log
             if 'trades' in report and report['trades']:
-                # Pre-process trades to add token symbol
-                for trade in report['trades']:
-                    trade['token_symbol'] = self._get_token_symbol_from_metadata(trade)
-
                 trades_df = pd.DataFrame(report['trades'])
-                # Select and reorder columns for clarity
+                # --- NEW FIX: Add token symbol and clean up data ---
+                trades_df['token_symbol'] = trades_df.apply(self._get_token_symbol_from_metadata, axis=1)
+                trades_df['exit_reason'] = trades_df['exit_reason'].fillna('N/A')
                 desired_columns = [
-                    'id', 'token_symbol', 'entry_timestamp', 'exit_timestamp',
-                    'entry_price', 'exit_price', 'amount', 'profit_loss', 'roi', 'exit_reason'
+                    'id', 'token_symbol', 'entry_timestamp', 'exit_timestamp', 'entry_price',
+                    'exit_price', 'amount', 'profit_loss', 'roi', 'exit_reason'
                 ]
-                # Filter to only include columns that actually exist in the DataFrame
                 existing_columns = [col for col in desired_columns if col in trades_df.columns]
-                trades_df = trades_df[existing_columns]
-                trades_df.to_excel(writer, sheet_name='Trade Log', index=False)
+                trades_df[existing_columns].to_excel(writer, sheet_name='Trade Log', index=False)
             else:
                 pd.DataFrame([{'Status': 'No trade data available'}]).to_excel(writer, sheet_name='Trade Log', index=False)
 
         output.seek(0)
-        response = web.Response(
+        return web.Response(
             body=output.read(),
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            headers={
-                'Content-Disposition': f'attachment; filename="report_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.xlsx"'
-            }
+            headers={'Content-Disposition': f'attachment; filename="report_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.xlsx"'}
         )
-        return response
 
-    async def _export_pdf(self, report):
-        """Export report as a simple text-based PDF (placeholder)."""
-        # NOTE: This is a placeholder as reportlab is not a dependency.
-        # It generates a simple, pre-formatted text response.
+    async def _export_pdf_as_txt(self, report):
+        """Export report as a well-formatted text file."""
         output = io.StringIO()
         output.write("========================================\n")
         output.write("         Performance Report\n")
         output.write("========================================\n\n")
         output.write(f"Generated At: {report.get('generated_at', 'N/A')}\n")
-        output.write(f"Period: {report.get('period', 'N/A').title()}\n\n")
+        output.write(f"Period: {report.get('period', 'N/A').title()}\n")
+        output.write(f"Date Range: {report.get('start_date', 'N/A')} to {report.get('end_date', 'N/A')}\n\n")
 
         output.write("---------- Metrics Summary ----------\n")
         if 'metrics' in report and report['metrics']:
             for key, value in report['metrics'].items():
-                # Format value for display
                 if isinstance(value, float): value = f"{value:.4f}"
                 output.write(f"{key.replace('_', ' ').title():<20}: {value}\n")
         else:
@@ -2334,114 +2324,92 @@ class DashboardEndpoints:
 
         output.write("\n\n---------- Trade Log ----------\n")
         if 'trades' in report and report['trades']:
-            # Header
-            output.write(f"{'ID':<6} {'Symbol':<10} {'P&L':<10} {'Exit Reason':<15}\n")
-            output.write("-" * 50 + "\n")
+            headers = f"{'ID':<8} {'Symbol':<12} {'P&L':<12} {'ROI (%)':<10} {'Exit Reason':<20}\n"
+            output.write(headers)
+            output.write("-" * len(headers) + "\n")
             for trade in report['trades']:
                 symbol = self._get_token_symbol_from_metadata(trade)
                 pnl = trade.get('profit_loss', 0)
+                roi = trade.get('roi', trade.get('profit_loss_percentage', 0))
                 output.write(
-                    f"{trade.get('id', ''):<6} {symbol:<10} {pnl:<10.2f} {trade.get('exit_reason', 'N/A'):<15}\n"
+                    f"{trade.get('id', ''):<8} {symbol:<12} {pnl:<12.4f} {roi:<10.2f} {str(trade.get('exit_reason', 'N/A')):<20}\n"
                 )
         else:
             output.write("No trade data available.\n")
 
         return web.Response(
             body=output.getvalue().encode('utf-8'),
-            content_type='text/plain', # Changed from application/pdf to text/plain
-            headers={
-                'Content-Disposition': f'attachment; filename="report_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.txt"'
-            }
+            content_type='text/plain',
+            headers={'Content-Disposition': f'attachment; filename="report_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.txt"'}
         )
     
     async def _run_backtest_task(self, test_id, strategy, start_date, end_date, initial_balance, parameters):
         """Run backtest in the background using historical data."""
         try:
-            logger.info(f"Starting backtest {test_id} from {start_date} to {end_date}")
+            logger.info(f"Starting backtest {test_id} for strategy '{strategy}' from {start_date} to {end_date}")
             self.backtests[test_id]['progress'] = 'Fetching historical data...'
 
             if not self.db:
                 raise Exception("Database connection is not available.")
 
-            # --- FIX STARTS HERE ---
-            # Corrected query to handle both nested and flat strategy metadata
+            # --- NEW FIX STARTS HERE: A completely rewritten backtesting logic ---
+            # Query all trades and filter in memory for maximum compatibility
             query = """
                 SELECT * FROM trades
-                WHERE status = 'closed'
-                AND exit_timestamp >= $1
-                AND exit_timestamp <= $2
-                AND (
-                    (metadata->'strategy'->>'name' = $3) OR
-                    (metadata->>'strategy' = $3)
-                )
+                WHERE status = 'closed' AND exit_timestamp >= $1 AND exit_timestamp <= $2
                 ORDER BY exit_timestamp ASC;
             """
-            # --- FIX ENDS HERE ---
-
-            trades = await self.db.pool.fetch(
+            all_trades = await self.db.pool.fetch(
                 query,
                 datetime.fromisoformat(start_date),
-                datetime.fromisoformat(end_date),
-                strategy,
+                datetime.fromisoformat(end_date)
             )
 
-            if not trades:
+            # Filter trades by the selected strategy using the robust helper function
+            strategy_trades = [
+                trade for trade in all_trades
+                if self._get_strategy_from_metadata(trade.get('metadata')) == strategy
+            ]
+
+            if not strategy_trades:
                 self.backtests[test_id] = {
-                    'status': 'completed',
-                    'message': 'No trades found for the selected period.',
-                    'equity_curve': [],
-                    # --- FIX STARTS HERE: Add all fields to prevent frontend errors ---
-                    'final_balance': initial_balance,
-                    'total_pnl': 0,
-                    'profit_factor': 0,
-                    'avg_win': 0,
-                    'avg_loss': 0,
-                    'largest_win': 0,
-                    'largest_loss': 0,
-                    'total_return': 0,
-                    'total_trades': 0,
-                    'win_rate': 0,
-                    'winning_trades': 0,
-                    'losing_trades': 0,
-                    'sharpe_ratio': 0,
-                    'sortino_ratio': 0,
-                    'max_drawdown': 0,
-                    # --- FIX ENDS HERE ---
+                    'status': 'completed', 'message': f'No trades found for strategy "{strategy}" in the selected period.',
+                    'equity_curve': [], 'final_balance': initial_balance, 'total_pnl': 0, 'profit_factor': 0,
+                    'avg_win': 0, 'avg_loss': 0, 'largest_win': 0, 'largest_loss': 0, 'total_return': 0,
+                    'total_trades': 0, 'win_rate': 0, 'winning_trades': 0, 'losing_trades': 0,
+                    'sharpe_ratio': 0, 'sortino_ratio': 0, 'max_drawdown': 0
                 }
                 return
 
-            self.backtests[test_id]['progress'] = f'Simulating {len(trades)} trades.'
-            df = pd.DataFrame([dict(trade) for trade in trades])
-            df['profit_loss'] = pd.to_numeric(df['profit_loss'])
+            self.backtests[test_id]['progress'] = f'Simulating {len(strategy_trades)} trades...'
+            df = pd.DataFrame([dict(trade) for trade in strategy_trades])
             df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
 
-            # --- FIX STARTS HERE: Correct trade simulation logic ---
+            # Simulation logic
             balance = float(initial_balance)
             equity_curve = [{'timestamp': start_date, 'value': balance}]
-
-            # Use a fixed percentage of the initial balance for each trade for consistency
-            position_size_per_trade = balance * 0.1
+            # Use a consistent position size for each trade to simulate a fixed-risk strategy
+            position_size_per_trade = balance * 0.1  # Assume 10% of initial capital per trade
 
             for index, trade in df.iterrows():
                 entry_price = float(trade.get('entry_price', 0))
                 exit_price = float(trade.get('exit_price', 0))
 
-                # Calculate ROI based on actual prices
-                roi = (exit_price - entry_price) / entry_price if entry_price > 0 else 0.0
+                # Calculate the percentage return of the historical trade
+                trade_return_pct = (exit_price - entry_price) / entry_price if entry_price > 0 else 0.0
 
-                # Calculate simulated P&L for this trade
-                simulated_pnl = position_size_per_trade * roi
+                # Apply this return to the simulated position size to get the simulated P&L
+                simulated_pnl = position_size_per_trade * trade_return_pct
 
-                # Update balance and equity curve
+                # Update the balance and record the equity curve
                 balance += simulated_pnl
                 df.at[index, 'simulated_pnl'] = simulated_pnl
                 equity_curve.append({'timestamp': trade['exit_timestamp'].isoformat(), 'value': balance})
 
-            # Use the newly calculated 'simulated_pnl' for all metrics
+            # Use the simulated P&L for all subsequent metric calculations
             df['profit_loss'] = df['simulated_pnl']
-            # --- FIX ENDS HERE ---
 
-            # Final metrics
+            # Calculate final metrics
             final_balance = balance
             total_pnl = final_balance - float(initial_balance)
             total_return_pct = (total_pnl / float(initial_balance)) * 100 if initial_balance > 0 else 0
@@ -2451,44 +2419,32 @@ class DashboardEndpoints:
             losing_trades_df = df[df['profit_loss'] <= 0]
             win_rate = (len(winning_trades_df) / total_trades) * 100 if total_trades > 0 else 0.0
 
-            # Max Drawdown from equity curve
+            # Correct max drawdown calculation from the simulated equity curve
             equity_df = pd.DataFrame(equity_curve)
             equity_df['value'] = pd.to_numeric(equity_df['value'])
             peak = equity_df['value'].expanding(min_periods=1).max()
-            drawdown = ((equity_df['value'] - peak) / peak).replace([np.inf, -np.inf], 0).fillna(0)
+            drawdown = ((equity_df['value'] - peak) / peak).fillna(0)
             max_drawdown = abs(float(drawdown.min()) * 100) if not drawdown.empty else 0.0
 
-            # Backtesting statistics
+            # Calculate other statistics
             gross_profit = float(winning_trades_df['profit_loss'].sum())
             gross_loss = abs(float(losing_trades_df['profit_loss'].sum()))
             profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
-
             avg_win = float(winning_trades_df['profit_loss'].mean()) if not winning_trades_df.empty else 0.0
             avg_loss = abs(float(losing_trades_df['profit_loss'].mean())) if not losing_trades_df.empty else 0.0
-
             largest_win = float(winning_trades_df['profit_loss'].max()) if not winning_trades_df.empty else 0.0
             largest_loss = abs(float(losing_trades_df['profit_loss'].min())) if not losing_trades_df.empty else 0.0
 
             self.backtests[test_id] = {
-                'status': 'completed',
-                'final_balance': float(final_balance),
-                'total_pnl': float(total_pnl),
-                'profit_factor': float(profit_factor),
-                'avg_win': float(avg_win),
-                'avg_loss': float(avg_loss),
-                'largest_win': float(largest_win),
-                'largest_loss': float(largest_loss),
-                'total_return': float(total_return_pct),
-                'total_trades': total_trades,
-                'win_rate': float(win_rate),
-                'winning_trades': len(winning_trades_df),
-                'losing_trades': len(losing_trades_df),
-                'sharpe_ratio': 0,
-                'sortino_ratio': 0,
-                'max_drawdown': max_drawdown,
-                'equity_curve': equity_curve
+                'status': 'completed', 'final_balance': float(final_balance), 'total_pnl': float(total_pnl),
+                'profit_factor': float(profit_factor), 'avg_win': float(avg_win), 'avg_loss': float(avg_loss),
+                'largest_win': float(largest_win), 'largest_loss': float(largest_loss),
+                'total_return': float(total_return_pct), 'total_trades': total_trades, 'win_rate': float(win_rate),
+                'winning_trades': len(winning_trades_df), 'losing_trades': len(losing_trades_df),
+                'sharpe_ratio': 0, 'sortino_ratio': 0, 'max_drawdown': max_drawdown, 'equity_curve': equity_curve
             }
-            logger.info(f"Backtest {test_id} completed successfully.")
+            logger.info(f"Backtest {test_id} completed successfully with new logic.")
+            # --- NEW FIX ENDS HERE ---
         except Exception as e:
             logger.error(f"Error in backtest task {test_id}: {e}", exc_info=True)
             self.backtests[test_id] = {'status': 'failed', 'error': str(e)}
