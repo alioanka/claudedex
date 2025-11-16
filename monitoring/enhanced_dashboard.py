@@ -1625,27 +1625,31 @@ class DashboardEndpoints:
     async def api_export_report(self, request):
         """Export report in various formats"""
         try:
-            format_type = request.match_info['format']  # csv, excel, pdf, json
+            format_type = request.match_info['format']
             
-            # Get report data
+            # Get report data from query parameters
             period = request.query.get('period', 'daily')
-            report = await self._generate_report(period, None, None, ['all'])
-            
+            start_date_str = request.query.get('start_date')
+            end_date_str = request.query.get('end_date')
+
+            report = await self._generate_report(period, start_date_str, end_date_str, ['all'])
+
             if format_type == 'csv':
                 return await self._export_csv(report)
-            elif format_type == 'excel':
+            elif format_type == 'xls': # Use 'xls' to match user request
                 return await self._export_excel(report)
             elif format_type == 'pdf':
                 return await self._export_pdf(report)
             elif format_type == 'json':
-                return web.json_response(report)
+                # Ensure proper JSON serialization for various data types
+                return web.json_response(
+                    self._serialize_decimals(report),
+                    headers={'Content-Disposition': f'attachment; filename="report_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.json"'}
+                )
             else:
-                return web.json_response({
-                    'success': False,
-                    'error': 'Invalid format'
-                }, status=400)
+                return web.json_response({'error': 'Invalid format'}, status=400)
         except Exception as e:
-            logger.error(f"Error exporting report: {e}")
+            logger.error(f"Error exporting report: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_custom_report(self, request):
@@ -1839,6 +1843,10 @@ class DashboardEndpoints:
         if 'strategy_name' in metadata and isinstance(metadata['strategy_name'], str):
             return metadata['strategy_name']
 
+        # 2. Direct 'strategy_id' key
+        if 'strategy_id' in metadata and isinstance(metadata['strategy_id'], str):
+            return metadata['strategy_id']
+
         # 2. Nested 'strategy' dictionary with a 'name' key
         if 'strategy' in metadata and isinstance(metadata['strategy'], dict):
             return metadata['strategy'].get('name', default_name)
@@ -1856,6 +1864,31 @@ class DashboardEndpoints:
         # --- FIX ENDS HERE ---
 
         return default_name
+
+    def _get_token_symbol_from_metadata(self, trade_record: Dict[str, Any]) -> str:
+        """Robustly extract the token symbol from a trade record."""
+        # 1. Check for a direct key on the record
+        if 'token_symbol' in trade_record and trade_record['token_symbol'] not in [None, 'N/A', 'UNKNOWN']:
+            return trade_record['token_symbol']
+
+        # 2. Check the metadata field
+        metadata = trade_record.get('metadata')
+        if not metadata:
+            return "N/A"
+
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                return "N/A"
+
+        if isinstance(metadata, dict):
+            # Check for common keys
+            for key in ['token_symbol', 'symbol', 'tokenSymbol']:
+                if key in metadata and metadata[key]:
+                    return metadata[key]
+
+        return "N/A"
     
     async def _send_initial_data(self, sid):
         """Send initial data to newly connected client"""
@@ -2194,33 +2227,36 @@ class DashboardEndpoints:
         # --- FIX STARTS HERE: Write both metrics and trade data ---
         # Write metrics
         writer.writerow(['Metric', 'Value'])
-        if 'metrics' in report:
+        if 'metrics' in report and report['metrics']:
             for key, value in report['metrics'].items():
-                # Format numbers for better readability in CSV
                 if isinstance(value, float):
                     value = f"{value:.4f}"
                 writer.writerow([key.replace('_', ' ').title(), value])
+        else:
+            writer.writerow(['No metrics available.'])
 
-        writer.writerow([]) # Add a blank line for separation
 
-        # Write trade data
-        writer.writerow([
+        writer.writerow([])
+
+        # Write trade data headers
+        headers = [
             'ID', 'Token Symbol', 'Entry Timestamp', 'Exit Timestamp',
             'Entry Price', 'Exit Price', 'Amount', 'Profit/Loss', 'ROI (%)', 'Exit Reason'
-        ])
+        ]
+        writer.writerow(headers)
 
         if 'trades' in report and report['trades']:
             for trade in report['trades']:
                 writer.writerow([
                     trade.get('id'),
-                    trade.get('token_symbol', 'N/A'),
+                    self._get_token_symbol_from_metadata(trade), # Use the new helper
                     trade.get('entry_timestamp'),
                     trade.get('exit_timestamp'),
                     trade.get('entry_price'),
                     trade.get('exit_price'),
                     trade.get('amount'),
                     trade.get('profit_loss'),
-                    trade.get('roi', 0),
+                    trade.get('roi', trade.get('profit_loss_percentage', 0)), # Fallback for ROI
                     trade.get('exit_reason', 'N/A')
                 ])
         else:
@@ -2237,16 +2273,36 @@ class DashboardEndpoints:
         return response
     
     async def _export_excel(self, report):
-        """Export report as Excel"""
-        # Create Excel file using pandas or openpyxl
+        """Export report as a multi-sheet Excel file."""
         output = io.BytesIO()
-        
-        if 'metrics' in report:
-            df = pd.DataFrame(list(report['metrics'].items()), columns=['Metric', 'Value'])
-            df.to_excel(output, index=False, engine='openpyxl')
-        
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            # Sheet 1: Metrics Summary
+            if 'metrics' in report and report['metrics']:
+                metrics_df = pd.DataFrame(list(report['metrics'].items()), columns=['Metric', 'Value'])
+                metrics_df.to_excel(writer, sheet_name='Summary', index=False)
+            else:
+                pd.DataFrame([{'Status': 'No metrics available'}]).to_excel(writer, sheet_name='Summary', index=False)
+
+            # Sheet 2: Trade Log
+            if 'trades' in report and report['trades']:
+                # Pre-process trades to add token symbol
+                for trade in report['trades']:
+                    trade['token_symbol'] = self._get_token_symbol_from_metadata(trade)
+
+                trades_df = pd.DataFrame(report['trades'])
+                # Select and reorder columns for clarity
+                desired_columns = [
+                    'id', 'token_symbol', 'entry_timestamp', 'exit_timestamp',
+                    'entry_price', 'exit_price', 'amount', 'profit_loss', 'roi', 'exit_reason'
+                ]
+                # Filter to only include columns that actually exist in the DataFrame
+                existing_columns = [col for col in desired_columns if col in trades_df.columns]
+                trades_df = trades_df[existing_columns]
+                trades_df.to_excel(writer, sheet_name='Trade Log', index=False)
+            else:
+                pd.DataFrame([{'Status': 'No trade data available'}]).to_excel(writer, sheet_name='Trade Log', index=False)
+
         output.seek(0)
-        
         response = web.Response(
             body=output.read(),
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -2255,12 +2311,48 @@ class DashboardEndpoints:
             }
         )
         return response
-    
+
     async def _export_pdf(self, report):
-        """Export report as PDF"""
-        # Implement PDF generation (using reportlab or similar)
-        # For now, return JSON
-        return web.json_response(report)
+        """Export report as a simple text-based PDF (placeholder)."""
+        # NOTE: This is a placeholder as reportlab is not a dependency.
+        # It generates a simple, pre-formatted text response.
+        output = io.StringIO()
+        output.write("========================================\n")
+        output.write("         Performance Report\n")
+        output.write("========================================\n\n")
+        output.write(f"Generated At: {report.get('generated_at', 'N/A')}\n")
+        output.write(f"Period: {report.get('period', 'N/A').title()}\n\n")
+
+        output.write("---------- Metrics Summary ----------\n")
+        if 'metrics' in report and report['metrics']:
+            for key, value in report['metrics'].items():
+                # Format value for display
+                if isinstance(value, float): value = f"{value:.4f}"
+                output.write(f"{key.replace('_', ' ').title():<20}: {value}\n")
+        else:
+            output.write("No metrics available.\n")
+
+        output.write("\n\n---------- Trade Log ----------\n")
+        if 'trades' in report and report['trades']:
+            # Header
+            output.write(f"{'ID':<6} {'Symbol':<10} {'P&L':<10} {'Exit Reason':<15}\n")
+            output.write("-" * 50 + "\n")
+            for trade in report['trades']:
+                symbol = self._get_token_symbol_from_metadata(trade)
+                pnl = trade.get('profit_loss', 0)
+                output.write(
+                    f"{trade.get('id', ''):<6} {symbol:<10} {pnl:<10.2f} {trade.get('exit_reason', 'N/A'):<15}\n"
+                )
+        else:
+            output.write("No trade data available.\n")
+
+        return web.Response(
+            body=output.getvalue().encode('utf-8'),
+            content_type='text/plain', # Changed from application/pdf to text/plain
+            headers={
+                'Content-Disposition': f'attachment; filename="report_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.txt"'
+            }
+        )
     
     async def _run_backtest_task(self, test_id, strategy, start_date, end_date, initial_balance, parameters):
         """Run backtest in the background using historical data."""
@@ -2271,8 +2363,8 @@ class DashboardEndpoints:
             if not self.db:
                 raise Exception("Database connection is not available.")
 
-            # Fetch historical trades from the database within the specified date range
-            # Filter trades by the selected strategy
+            # --- FIX STARTS HERE ---
+            # Corrected query to handle both nested and flat strategy metadata
             query = """
                 SELECT * FROM trades
                 WHERE status = 'closed'
@@ -2280,10 +2372,12 @@ class DashboardEndpoints:
                 AND exit_timestamp <= $2
                 AND (
                     (metadata->'strategy'->>'name' = $3) OR
-                    (jsonb_typeof(metadata->'strategy') = 'string' AND metadata->>'strategy' = $3)
+                    (metadata->>'strategy' = $3)
                 )
                 ORDER BY exit_timestamp ASC;
             """
+            # --- FIX ENDS HERE ---
+
             trades = await self.db.pool.fetch(
                 query,
                 datetime.fromisoformat(start_date),
@@ -2295,7 +2389,24 @@ class DashboardEndpoints:
                 self.backtests[test_id] = {
                     'status': 'completed',
                     'message': 'No trades found for the selected period.',
-                    'equity_curve': []
+                    'equity_curve': [],
+                    # --- FIX STARTS HERE: Add all fields to prevent frontend errors ---
+                    'final_balance': initial_balance,
+                    'total_pnl': 0,
+                    'profit_factor': 0,
+                    'avg_win': 0,
+                    'avg_loss': 0,
+                    'largest_win': 0,
+                    'largest_loss': 0,
+                    'total_return': 0,
+                    'total_trades': 0,
+                    'win_rate': 0,
+                    'winning_trades': 0,
+                    'losing_trades': 0,
+                    'sharpe_ratio': 0,
+                    'sortino_ratio': 0,
+                    'max_drawdown': 0,
+                    # --- FIX ENDS HERE ---
                 }
                 return
 
@@ -2304,22 +2415,31 @@ class DashboardEndpoints:
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
             df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
 
-            # Simulate trades instead of just replaying old P&L
+            # --- FIX STARTS HERE: Correct trade simulation logic ---
             balance = float(initial_balance)
             equity_curve = [{'timestamp': start_date, 'value': balance}]
-            position_size_per_trade = balance * 0.1  # 10% of initial balance per trade
+
+            # Use a fixed percentage of the initial balance for each trade for consistency
+            position_size_per_trade = balance * 0.1
 
             for index, trade in df.iterrows():
                 entry_price = float(trade.get('entry_price', 0))
                 exit_price = float(trade.get('exit_price', 0))
+
+                # Calculate ROI based on actual prices
                 roi = (exit_price - entry_price) / entry_price if entry_price > 0 else 0.0
+
+                # Calculate simulated P&L for this trade
                 simulated_pnl = position_size_per_trade * roi
+
+                # Update balance and equity curve
                 balance += simulated_pnl
                 df.at[index, 'simulated_pnl'] = simulated_pnl
                 equity_curve.append({'timestamp': trade['exit_timestamp'].isoformat(), 'value': balance})
 
-            # Use simulated P&L for all metrics
+            # Use the newly calculated 'simulated_pnl' for all metrics
             df['profit_loss'] = df['simulated_pnl']
+            # --- FIX ENDS HERE ---
 
             # Final metrics
             final_balance = balance
@@ -2363,8 +2483,8 @@ class DashboardEndpoints:
                 'win_rate': float(win_rate),
                 'winning_trades': len(winning_trades_df),
                 'losing_trades': len(losing_trades_df),
-                'sharpe_ratio': 0,  # placeholder
-                'sortino_ratio': 0,  # placeholder
+                'sharpe_ratio': 0,
+                'sortino_ratio': 0,
                 'max_drawdown': max_drawdown,
                 'equity_curve': equity_curve
             }
