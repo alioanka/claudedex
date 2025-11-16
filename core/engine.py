@@ -1714,7 +1714,8 @@ class TradingBotEngine:
                 # ✅ UPDATE DATABASE - FIXED VERSION
                 try:
                     trade_id = position.get('trade_id')
-                    
+
+                    # If trade_id is not in the position object, try to find it in the database
                     if not trade_id:
                         query = """
                         SELECT id FROM trades 
@@ -1739,7 +1740,8 @@ class TradingBotEngine:
                             }
                         }
                         
-                        await self.db.update_trade(trade_id, {
+                        # --- FIX STARTS HERE: Pass integer ID to update_trade ---
+                        await self.db.update_trade(int(trade_id), {
                             'exit_price': float(current_price),
                             'exit_timestamp': datetime.now(),
                             'profit_loss': float(final_pnl),
@@ -1747,10 +1749,11 @@ class TradingBotEngine:
                             'status': 'closed',
                             'metadata': updated_metadata
                         })
+                        # --- FIX ENDS HERE ---
                         
                         logger.info(f"✅ Trade {trade_id} closed in database")
 
-                        # 🆕 PATCH: Structured trade exit logging
+                        # Structured trade exit logging
                         try:
                             chain = position.get('chain', 'unknown')
                             log_trade_exit(

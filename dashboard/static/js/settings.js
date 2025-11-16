@@ -15,29 +15,31 @@ class SettingsManager {
 
     bindEvents() {
         // Tab switching
-        document.querySelectorAll('.category-tab').forEach(tab => {
+        document.querySelectorAll('.tab-btn').forEach(tab => {
             tab.addEventListener('click', (e) => this.switchTab(e));
         });
 
-        // Save button
-        const saveButton = document.getElementById('saveAllSettings');
-        if (saveButton) {
-            saveButton.addEventListener('click', () => this.saveAllSettings());
-        }
+        // Save buttons
+        document.querySelectorAll('.btn-primary[id^="save-"]').forEach(button => {
+            button.addEventListener('click', () => {
+                const category = button.dataset.category;
+                this.saveSettingsByCategory(category);
+            });
+        });
     }
 
     switchTab(event) {
         event.preventDefault();
         const clickedTab = event.currentTarget;
-        const category = clickedTab.dataset.category;
+        const tab = clickedTab.dataset.tab;
 
-        document.querySelectorAll('.category-tab').forEach(tab => tab.classList.remove('active'));
+        document.querySelectorAll('.tab-btn').forEach(t => t.classList.remove('active'));
         document.querySelectorAll('.settings-section').forEach(section => {
             section.style.display = 'none';
         });
 
         clickedTab.classList.add('active');
-        const sectionId = `${category}-settings`;
+        const sectionId = `${tab}-settings`;
         const section = document.getElementById(sectionId);
         if (section) {
             section.style.display = 'block';
@@ -52,7 +54,7 @@ class SettingsManager {
                 this.initialSettings = JSON.parse(JSON.stringify(response.data)); // Deep copy
                 this.renderAllForms(this.settings);
                 // Activate the first tab by default
-                document.querySelector('.category-tab').click();
+                document.querySelector('.tab-btn').click();
                 showToast('success', 'Settings loaded successfully');
             } else {
                 showToast('error', response.error || 'Failed to load settings.');
@@ -105,6 +107,11 @@ class SettingsManager {
             input.type = 'number';
             input.value = value;
             input.className = 'form-control';
+        } else if (key.includes('private_key') || key.includes('secret') || key.includes('token')) {
+            input = document.createElement('input');
+            input.type = 'password';
+            input.value = value;
+            input.className = 'form-control';
         } else if (typeof value === 'string') {
             input = document.createElement('input');
             input.type = 'text';
@@ -129,50 +136,45 @@ class SettingsManager {
         return formGroup;
     }
 
-    async saveAllSettings() {
-        showToast('info', 'Saving all settings...');
-        let allSucceeded = true;
-
-        for (const category in this.settings) {
-            const container = document.getElementById(`${category}-settings-form`);
-            if (!container) continue;
-
-            const updates = {};
-            const inputs = container.querySelectorAll('[data-key]');
-
-            inputs.forEach(input => {
-                const key = input.dataset.key;
-                let value;
-                if (input.type === 'checkbox') {
-                    value = input.checked;
-                } else if (input.type === 'number') {
-                    value = parseFloat(input.value);
-                } else if (input.tagName === 'TEXTAREA') {
-                    // Skip read-only textareas
-                    return;
-                } else {
-                    value = input.value;
-                }
-
-                // Only include changed values
-                if (this.initialSettings[category][key] !== value) {
-                    updates[key] = value;
-                }
-            });
-
-            if (Object.keys(updates).length > 0) {
-                const success = await this.sendUpdateRequest(category, updates);
-                if (!success) {
-                    allSucceeded = false;
-                }
-            }
+    async saveSettingsByCategory(category) {
+        showToast('info', `Saving ${category.replace(/_/g, ' ')} settings...`);
+        const container = document.getElementById(`${category}-settings-form`);
+        if (!container) {
+            showToast('error', `Could not find settings container for ${category}`);
+            return;
         }
 
-        if (allSucceeded) {
-            showToast('success', 'All changed settings saved successfully!');
-            await this.loadSettings(); // Reload to confirm changes
+        const updates = {};
+        const inputs = container.querySelectorAll('[data-key]');
+
+        inputs.forEach(input => {
+            const key = input.dataset.key;
+            let value;
+            if (input.type === 'checkbox') {
+                value = input.checked;
+            } else if (input.type === 'number') {
+                value = parseFloat(input.value);
+            } else if (input.tagName === 'TEXTAREA') {
+                // Skip read-only textareas
+                return;
+            } else {
+                value = input.value;
+            }
+
+            // Only include changed values
+            if (this.initialSettings[category][key] !== value) {
+                updates[key] = value;
+            }
+        });
+
+        if (Object.keys(updates).length > 0) {
+            const success = await this.sendUpdateRequest(category, updates);
+            if (success) {
+                showToast('success', `${category.replace(/_/g, ' ')} settings saved successfully!`);
+                await this.loadSettings(); // Reload to confirm changes
+            }
         } else {
-            showToast('error', 'One or more settings failed to save. Please review the form.');
+            showToast('info', 'No changes to save.');
         }
     }
 
