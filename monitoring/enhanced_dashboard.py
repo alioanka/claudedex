@@ -1904,6 +1904,29 @@ class DashboardEndpoints:
                     return metadata[key]
 
         return "N/A"
+
+    def _get_exit_reason_from_metadata(self, trade_record: Dict[str, Any]) -> str:
+        """Robustly extract the exit reason from a trade record."""
+        # 1. Check for a direct key on the record (for older records)
+        if 'exit_reason' in trade_record and trade_record['exit_reason'] not in [None, 'N/A']:
+            return trade_record['exit_reason']
+
+        # 2. Check the metadata field
+        metadata = trade_record.get('metadata')
+        if not metadata:
+            return "N/A"
+
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                return "N/A"
+
+        if isinstance(metadata, dict):
+            # Check for the new location of exit_reason
+            return metadata.get('exit_reason', 'N/A')
+
+        return "N/A"
     
     async def _send_initial_data(self, sid):
         """Send initial data to newly connected client"""
@@ -2248,15 +2271,15 @@ class DashboardEndpoints:
             for trade in report['trades']:
                 writer.writerow([
                     trade.get('id'),
-                    self._get_token_symbol_from_metadata(trade), # Use the new helper
+                    self._get_token_symbol_from_metadata(trade),
                     trade.get('entry_timestamp'),
                     trade.get('exit_timestamp'),
                     trade.get('entry_price'),
                     trade.get('exit_price'),
                     trade.get('amount'),
                     trade.get('profit_loss'),
-                    trade.get('roi', trade.get('profit_loss_percentage', 0)), # Fallback for ROI
-                    trade.get('exit_reason', 'N/A')
+                    trade.get('roi', trade.get('profit_loss_percentage', 0)),
+                    self._get_exit_reason_from_metadata(trade) # Use the new helper
                 ])
         else:
             writer.writerow(['No trade data available for this period.'])
@@ -2287,7 +2310,7 @@ class DashboardEndpoints:
                 trades_df = pd.DataFrame(report['trades'])
                 # --- NEW FIX: Add token symbol and clean up data ---
                 trades_df['token_symbol'] = trades_df.apply(self._get_token_symbol_from_metadata, axis=1)
-                trades_df['exit_reason'] = trades_df['exit_reason'].fillna('N/A')
+                trades_df['exit_reason'] = trades_df.apply(self._get_exit_reason_from_metadata, axis=1) # Use the new helper
                 desired_columns = [
                     'id', 'token_symbol', 'entry_timestamp', 'exit_timestamp', 'entry_price',
                     'exit_price', 'amount', 'profit_loss', 'roi', 'exit_reason'
@@ -2331,8 +2354,9 @@ class DashboardEndpoints:
                 symbol = self._get_token_symbol_from_metadata(trade)
                 pnl = trade.get('profit_loss', 0)
                 roi = trade.get('roi', trade.get('profit_loss_percentage', 0))
+                exit_reason = self._get_exit_reason_from_metadata(trade) # Use the new helper
                 output.write(
-                    f"{trade.get('id', ''):<8} {symbol:<12} {pnl:<12.4f} {roi:<10.2f} {str(trade.get('exit_reason', 'N/A')):<20}\n"
+                    f"{trade.get('id', ''):<8} {symbol:<12} {pnl:<12.4f} {roi:<10.2f} {str(exit_reason):<20}\n"
                 )
         else:
             output.write("No trade data available.\n")
