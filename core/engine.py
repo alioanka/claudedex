@@ -51,6 +51,15 @@ from decimal import Decimal
 from monitoring.alerts import AlertManager
 from monitoring.performance import PerformanceTracker
 from monitoring.logger import StructuredLogger  # Add import at top
+def json_serializer(obj):
+    """Custom JSON serializer for objects not serializable by default json code"""
+    if isinstance(obj, (datetime, timedelta)):
+        return obj.isoformat()
+    if isinstance(obj, RiskScore):
+        return asdict(obj)
+    if isinstance(obj, Decimal):
+        return str(obj)
+    raise TypeError(f"Type {type(obj)} not serializable")
 from monitoring.logger import log_trade_entry, log_trade_exit
 
 from security.wallet_security import WalletSecurityManager
@@ -1758,7 +1767,7 @@ class TradingBotEngine:
                             'exit_timestamp': datetime.now(),
                             'profit_loss': float(final_pnl),
                             'profit_loss_percentage': float(pnl_percentage),
-                            'metadata': json.dumps(updated_metadata) # Store the complete, updated metadata
+                            'metadata': json.dumps(updated_metadata, default=json_serializer)
                         }
 
                         # 6. Update the trade record in the database
