@@ -70,7 +70,7 @@ async def export_trades(format: str = "csv", output: str = None):
             
         elif format == "excel":
             df = pd.DataFrame(trades_data)
-            output = output.replace('.excel', '.xlsx')
+            output = output.replace('.xls', '.xlsx')
             df.to_excel(output, index=False)
             print(f"✅ Exported {len(trades)} trades to {output}")
         

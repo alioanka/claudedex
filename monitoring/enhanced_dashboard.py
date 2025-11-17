@@ -1133,7 +1133,7 @@ class DashboardEndpoints:
             # 2) Build dataframe
             df = pd.DataFrame([dict(trade) for trade in trades])
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
-            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
+            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'], utc=True).dt.tz_convert(None)
 
             # Strategy name for grouping
             df['strategy'] = df['metadata'].apply(self._get_strategy_from_metadata)
@@ -1677,7 +1677,7 @@ class DashboardEndpoints:
             # --- NEW FIX STARTS HERE: Unified and corrected export logic ---
             if format_type == 'csv':
                 return await self._export_csv(report)
-            elif format_type in ['xls', 'xlsx']:
+            elif format_type in ['xls', 'xlsx', 'excel']:
                 return await self._export_excel(report)
             elif format_type == 'pdf':
                 # We generate a .txt file as a placeholder for PDF
@@ -2223,6 +2223,19 @@ class DashboardEndpoints:
             start_date = now - timedelta(days=30)
             end_date = now
         elif period == 'custom' and start_date_str and end_date_str:
+            # ✅ Support both ISO (YYYY-MM-DD) and Turkish-style (DD.MM.YYYY) dates
+            def _parse_date(date_str: str) -> datetime:
+                # Try ISO first
+                try:
+                    return datetime.fromisoformat(date_str)
+                except ValueError:
+                    pass
+                # Try DD.MM.YYYY (e.g. 16.11.2025)
+                try:
+                    return datetime.strptime(date_str, "%d.%m.%Y")
+                except ValueError:
+                    # Let caller handle fallback
+                    raise
             try:
                 start_date = datetime.fromisoformat(start_date_str)
                 end_date = datetime.fromisoformat(end_date_str).replace(hour=23, minute=59, second=59)
@@ -2406,7 +2419,7 @@ class DashboardEndpoints:
                 symbol = self._get_token_symbol_from_metadata(trade)
                 pnl = trade.get('profit_loss', 0)
                 roi = trade.get('roi', trade.get('profit_loss_percentage', 0))
-                exit_reason = self._get_exit_reason_from_metadata(trade) # Use the new helper
+                exit_reason = self._get_exit_reason_from_trade(trade) # Use the new helper
                 output.write(
                     f"{trade.get('id', ''):<8} {symbol:<12} {pnl:<12.4f} {roi:<10.2f} {str(exit_reason):<20}\n"
                 )
