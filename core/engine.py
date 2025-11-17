@@ -1739,6 +1739,8 @@ class TradingBotEngine:
                                 existing_meta = {} # Overwrite if invalid JSON
 
                         existing_meta['exit_reason'] = reason
+                        if 'token_symbol' not in existing_meta:
+                            existing_meta['token_symbol'] = token_symbol
 
                         # Prepare the update payload (without the problematic column)
                         update_payload = {
