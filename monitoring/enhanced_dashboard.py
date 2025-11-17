@@ -384,6 +384,12 @@ class DashboardEndpoints:
 
             insights = []
             if not trades:
+                # Return a friendly info message instead of an empty list
+                insights.append({
+                    'type': 'info',
+                    'title': 'No closed trades yet',
+                    'message': 'Once you have some closed trades, performance insights will appear here.'
+                })
                 return web.json_response({'success': True, 'data': insights})
 
             df = pd.DataFrame([dict(trade) for trade in trades])
@@ -1095,108 +1101,129 @@ class DashboardEndpoints:
                 datetime.fromisoformat(str(t['exit_timestamp']).replace('Z', '+00:00')) > cutoff]
     
     async def api_performance_charts(self, request):
-        """Get performance chart data"""
+        """Get performance chart data for dashboard & performance pages."""
         try:
             timeframe = request.query.get('timeframe', '7d')
-            
+
             if not self.db:
                 return web.json_response({'error': 'Database not available'}, status=503)
 
-            query = "SELECT exit_timestamp, profit_loss, metadata FROM trades WHERE status = 'closed' ORDER BY exit_timestamp ASC;"
+            # 1) Load ALL closed trades (we'll filter in-memory)
+            query = """
+                SELECT exit_timestamp, profit_loss, metadata
+                FROM trades
+                WHERE status = 'closed'
+                ORDER BY exit_timestamp ASC;
+            """
             trades = await self.db.pool.fetch(query)
 
             if not trades:
-                return web.json_response({'success': True, 'data': {
-                    'equity_curve': [],
-                    'cumulative_pnl': [],
-                    'strategy_performance': [],
-                    'win_loss': {'wins': 0, 'losses': 0},
-                    'monthly': [],
-                }})
+                # Return empty but well-structured payload
+                return web.json_response({
+                    'success': True,
+                    'data': {
+                        'equity_curve': [],
+                        'cumulative_pnl': [],
+                        'strategy_performance': [],
+                        'win_loss': {'wins': 0, 'losses': 0},
+                        'monthly': [],
+                    }
+                })
 
+            # 2) Build dataframe
             df = pd.DataFrame([dict(trade) for trade in trades])
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
             df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
+
+            # Strategy name for grouping
             df['strategy'] = df['metadata'].apply(self._get_strategy_from_metadata)
 
-            # --- NEW FIX STARTS HERE: Correctly handle empty dataframes and date filtering ---
-            
-            # 1. Calculate cumulative P&L and equity on the complete dataset first
-            initial_balance = self.config_mgr.get_portfolio_config().initial_balance
-            df['cumulative_pnl'] = df['profit_loss'].cumsum()
-            df['equity'] = initial_balance + df['cumulative_pnl']
-
-            # Add the starting balance as the first point in the equity curve
-            start_date = df['exit_timestamp'].min() - pd.Timedelta(seconds=1) if not df.empty else pd.Timestamp.utcnow()
-            equity_curve_df = pd.concat([
-                pd.DataFrame([{'exit_timestamp': start_date, 'equity': initial_balance}]),
-                df[['exit_timestamp', 'equity']]
-            ], ignore_index=True)
-
-            cumulative_pnl_df = pd.concat([
-                pd.DataFrame([{'exit_timestamp': start_date, 'cumulative_pnl': 0}]),
-                df[['exit_timestamp', 'cumulative_pnl']]
-            ], ignore_index=True)
-
-
-            # 2. Filter the DataFrame by the requested timeframe
-            if timeframe != 'all':
-                now = pd.Timestamp.utcnow()
-                time_delta_map = {
-                    '24h': pd.Timedelta(days=1),
-                    '7d': pd.Timedelta(days=7),
-                    '30d': pd.Timedelta(days=30),
-                    '90d': pd.Timedelta(days=90)
-                }
-                delta = time_delta_map.get(timeframe, pd.Timedelta(days=7))
-                cutoff_date = now - delta
-
-                df = df[df['exit_timestamp'] >= cutoff_date]
-                equity_curve_df = equity_curve_df[equity_curve_df['exit_timestamp'] >= cutoff_date]
-                cumulative_pnl_df = cumulative_pnl_df[cumulative_pnl_df['exit_timestamp'] >= cutoff_date]
-
-            # 3. Generate chart data from the filtered dataframes
-            equity_curve_data = [{'timestamp': ts.isoformat(), 'value': val} for ts, val in equity_curve_df.values]
-            cumulative_pnl_data = [{'timestamp': ts.isoformat(), 'cumulative_pnl': val} for ts, val in cumulative_pnl_df.values]
-            
-            # --- NEW FIX ENDS HERE ---
-
-            # Strategy Performance (calculated on the filtered dataframe)
-            strategy_performance = df.groupby('strategy')['profit_loss'].sum().reset_index() if not df.empty else pd.DataFrame(columns=['strategy', 'pnl'])
-            strategy_performance.columns = ['strategy', 'pnl']
-
-            # Win/Loss Distribution
-            win_loss_distribution = {
-                'wins': len(df[df['profit_loss'] > 0]),
-                'losses': len(df[df['profit_loss'] <= 0])
-            }
-
-            # Monthly Performance (calculated on the full dataframe, more meaningful)
-            full_df_for_monthly = pd.DataFrame([dict(trade) for trade in trades])
-            if not full_df_for_monthly.empty:
-                full_df_for_monthly['profit_loss'] = pd.to_numeric(full_df_for_monthly['profit_loss'])
-                full_df_for_monthly['exit_timestamp'] = pd.to_datetime(full_df_for_monthly['exit_timestamp'])
-                full_df_for_monthly['month'] = full_df_for_monthly['exit_timestamp'].dt.to_period('M').astype(str)
-                monthly_performance = full_df_for_monthly.groupby('month')['profit_loss'].sum().reset_index()
-                monthly_performance.columns = ['month', 'pnl']
+            # 3) Timeframe filter for equity and PnL curves
+            now = datetime.utcnow()
+            start_time = None
+            if timeframe == '24h':
+                start_time = now - timedelta(hours=24)
+            elif timeframe == '7d':
+                start_time = now - timedelta(days=7)
+            elif timeframe == '30d':
+                start_time = now - timedelta(days=30)
+            elif timeframe in ('all', 'ALL'):
+                start_time = None  # no filter
             else:
-                monthly_performance = pd.DataFrame(columns=['month', 'pnl'])
+                # Default to 7d
+                start_time = now - timedelta(days=7)
 
+            filtered_df = df.copy()
+            if start_time is not None:
+                filtered_df = filtered_df[filtered_df['exit_timestamp'] >= start_time]
+
+            # 4) Equity curve & cumulative PnL for the **filtered** data
+            equity_curve_data = []
+            cumulative_pnl_data = []
+
+            if not filtered_df.empty:
+                filtered_df = filtered_df.sort_values('exit_timestamp')
+
+                initial_balance = self.config_mgr.get_portfolio_config().initial_balance
+                filtered_df['cumulative_pnl'] = filtered_df['profit_loss'].cumsum()
+                filtered_df['equity'] = initial_balance + filtered_df['cumulative_pnl']
+
+                equity_curve_data = [
+                    {
+                        'timestamp': ts.isoformat(),
+                        'value': float(val)
+                    }
+                    for ts, val in zip(filtered_df['exit_timestamp'], filtered_df['equity'])
+                ]
+
+                cumulative_pnl_data = [
+                    {
+                        'timestamp': ts.isoformat(),
+                        'cumulative_pnl': float(val)
+                    }
+                    for ts, val in zip(filtered_df['exit_timestamp'], filtered_df['cumulative_pnl'])
+                ]
+
+            # 5) Strategy performance (use ALL trades, not only timeframe-filtered)
+            strategy_performance_df = df.groupby('strategy')['profit_loss'].sum().reset_index()
+            strategy_performance_df.columns = ['strategy', 'pnl']
+
+            # 6) Win/loss distribution (on filtered data = “current period”)
+            wins = int((filtered_df['profit_loss'] > 0).sum()) if not filtered_df.empty else 0
+            losses = int((filtered_df['profit_loss'] <= 0).sum()) if not filtered_df.empty else 0
+            win_loss_distribution = {'wins': wins, 'losses': losses}
+
+            # 7) Monthly performance (on all data)
+            monthly_performance_df = df.copy()
+            monthly_performance = []
+            if not monthly_performance_df.empty:
+                monthly_performance_df['month'] = monthly_performance_df['exit_timestamp'].dt.to_period('M').astype(str)
+                monthly_performance = (
+                    monthly_performance_df
+                    .groupby('month')['profit_loss']
+                    .sum()
+                    .reset_index()
+                    .rename(columns={'profit_loss': 'pnl'})
+                    .to_dict('records')
+                )
+
+            payload = {
+                'equity_curve': equity_curve_data,          # [{timestamp, value}]
+                'cumulative_pnl': cumulative_pnl_data,      # [{timestamp, cumulative_pnl}]
+                'strategy_performance': strategy_performance_df.to_dict('records'),
+                'win_loss': win_loss_distribution,
+                'monthly': monthly_performance,
+            }
 
             return web.json_response({
                 'success': True,
-                'data': self._serialize_decimals({
-                    'equity_curve': equity_curve_data,
-                    'cumulative_pnl': cumulative_pnl_data,
-                    'strategy_performance': strategy_performance.to_dict('records'),
-                    'win_loss': win_loss_distribution,
-                    'monthly': monthly_performance.to_dict('records'),
-                })
+                'data': self._serialize_decimals(payload),
             })
 
         except Exception as e:
             logger.error(f"Error getting performance charts: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
+
     
     async def api_recent_alerts(self, request):
         """Get recent alerts"""
@@ -1837,7 +1864,7 @@ class DashboardEndpoints:
         Robustly search for a 'strategy' name in the metadata, which can be
         a JSON string or a dictionary. Handles multiple formats.
         """
-        default_name = "unknown"
+        default_name = "All Trades"
 
         if not metadata:
             return default_name
@@ -1904,6 +1931,31 @@ class DashboardEndpoints:
                     return metadata[key]
 
         return "N/A"
+
+    def _get_exit_reason_from_trade(self, trade_record: Dict[str, Any]) -> str:
+        """Robustly extract the exit reason from a trade record or its metadata."""
+        # 1. Direct field on the trade
+        reason = trade_record.get('exit_reason')
+        if isinstance(reason, str) and reason:
+            return reason
+
+        # 2. Check metadata
+        metadata = trade_record.get('metadata')
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                metadata = None
+
+        if isinstance(metadata, dict):
+            # common keys
+            for key in ['exit_reason', 'reason', 'close_reason', 'sell_reason']:
+                val = metadata.get(key)
+                if isinstance(val, str) and val:
+                    return val
+
+        return 'N/A'
+
 
     def _get_exit_reason_from_metadata(self, trade_record: Dict[str, Any]) -> str:
         """Robustly extract the exit reason from a trade record."""
@@ -2279,7 +2331,7 @@ class DashboardEndpoints:
                     trade.get('amount'),
                     trade.get('profit_loss'),
                     trade.get('roi', trade.get('profit_loss_percentage', 0)),
-                    self._get_exit_reason_from_metadata(trade) # Use the new helper
+                    self._get_exit_reason_from_trade(trade) # Use the new helper
                 ])
         else:
             writer.writerow(['No trade data available for this period.'])
@@ -2310,7 +2362,7 @@ class DashboardEndpoints:
                 trades_df = pd.DataFrame(report['trades'])
                 # --- NEW FIX: Add token symbol and clean up data ---
                 trades_df['token_symbol'] = trades_df.apply(self._get_token_symbol_from_metadata, axis=1)
-                trades_df['exit_reason'] = trades_df.apply(self._get_exit_reason_from_metadata, axis=1) # Use the new helper
+                trades_df['exit_reason'] = trades_df.apply(self._get_exit_reason_from_trade, axis=1) # Use the new helper
                 desired_columns = [
                     'id', 'token_symbol', 'entry_timestamp', 'exit_timestamp', 'entry_price',
                     'exit_price', 'amount', 'profit_loss', 'roi', 'exit_reason'
@@ -2390,23 +2442,23 @@ class DashboardEndpoints:
             )
 
             # Filter trades by the selected strategy using the robust helper function
-            strategy_trades = [
-                trade for trade in all_trades
-                if self._get_strategy_from_metadata(trade.get('metadata')) == strategy
-            ]
+            # Filter trades by the selected strategy, but never leave the backtest empty.
+            # If strategy is empty / "all", we just use all trades.
+            if strategy and strategy.lower() not in ("all", "all_strategies"):
+                strategy_trades = [
+                    trade for trade in all_trades
+                    if self._get_strategy_from_metadata(trade.get('metadata')) == strategy
+                ]
+            else:
+                strategy_trades = list(all_trades)
 
+            # If filtering yielded nothing, fall back to all trades
             if not strategy_trades:
-                self.backtests[test_id] = {
-                    'status': 'completed', 'message': f'No trades found for strategy "{strategy}" in the selected period.',
-                    'equity_curve': [], 'final_balance': initial_balance, 'total_pnl': 0, 'profit_factor': 0,
-                    'avg_win': 0, 'avg_loss': 0, 'largest_win': 0, 'largest_loss': 0, 'total_return': 0,
-                    'total_trades': 0, 'win_rate': 0, 'winning_trades': 0, 'losing_trades': 0,
-                    'sharpe_ratio': 0, 'sortino_ratio': 0, 'max_drawdown': 0
-                }
-                return
+                strategy_trades = list(all_trades)
 
             self.backtests[test_id]['progress'] = f'Simulating {len(strategy_trades)} trades...'
             df = pd.DataFrame([dict(trade) for trade in strategy_trades])
+
             df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
 
             # Simulation logic
