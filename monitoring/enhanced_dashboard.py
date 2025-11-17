@@ -520,7 +520,7 @@ class DashboardEndpoints:
             for trade in trades:
                 enriched_trade = dict(trade)
                 
-                enriched_trade['token_symbol'] = self._get_token_symbol_from_metadata(trade)
+                enriched_trade['token_symbol'] = self._get_token_symbol_from_metadata(enriched_trade)
                 enriched_trade['network'] = trade.get('chain', 'unknown')
                 enriched_trades.append(enriched_trade)
             
@@ -741,7 +741,7 @@ class DashboardEndpoints:
                         except:
                             pass
                     
-                    token_symbol = self._get_token_symbol_from_metadata(trade)
+                    token_symbol = self._get_token_symbol_from_metadata(dict(trade))
                     
                     # Convert timestamps to ISO string
                     entry_ts = trade.get('entry_timestamp')
@@ -2361,7 +2361,7 @@ class DashboardEndpoints:
             for trade in report['trades']:
                 writer.writerow([
                     trade.get('id'),
-                    self._get_token_symbol_from_metadata(trade),
+                    self._get_token_symbol_from_metadata(dict(trade)),
                     trade.get('entry_timestamp'),
                     trade.get('exit_timestamp'),
                     trade.get('entry_price'),
