@@ -1667,7 +1667,12 @@ class DashboardEndpoints:
         """Export report in various formats"""
         try:
             format_type = request.match_info['format'].lower()
-            period = request.query.get('period', 'custom')
+            # Normalize period so 'Daily', 'WEEKLY' etc. work correctly
+            raw_period = request.query.get('period', 'custom') or 'custom'
+            period = raw_period.lower()
+
+            # These may be empty for daily/weekly/monthly and will be handled
+            # inside _generate_report
             start_date_str = request.query.get('start_date')
             end_date_str = request.query.get('end_date')
 
@@ -1907,54 +1912,91 @@ class DashboardEndpoints:
 
         return default_name
 
-    def _get_token_symbol_from_metadata(self, trade_record: Dict[str, Any]) -> str:
-        """Robustly extract the token symbol from a trade record."""
-        # 1. Check for a direct key on the record
-        if 'token_symbol' in trade_record and trade_record['token_symbol'] not in [None, 'N/A', 'UNKNOWN']:
-            return trade_record['token_symbol']
+    def _get_token_symbol_from_metadata(self, trade: Dict[str, Any]) -> str:
+        """
+        Robustly extract token symbol from a trade row.
 
-        # 2. Check the metadata field
-        metadata = trade_record.get('metadata')
-        if not metadata:
-            return "N/A"
+        Works whether token_symbol is in:
+        - trade['token_symbol']
+        - trade['symbol']
+        - JSON metadata (string or dict) under 'token_symbol' / 'symbol'
+        """
+        try:
+            # 1) Direct column first (most reliable)
+            direct = trade.get('token_symbol') or trade.get('symbol')
+            if direct:
+                return str(direct)
 
-        if isinstance(metadata, str):
-            try:
-                metadata = json.loads(metadata)
-            except json.JSONDecodeError:
-                return "N/A"
+            # 2) Metadata field (can be str or dict)
+            metadata = trade.get('metadata')
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except json.JSONDecodeError:
+                    metadata = None
 
-        if isinstance(metadata, dict):
-            # Check for common keys
-            for key in ['token_symbol', 'symbol', 'tokenSymbol']:
-                if key in metadata and metadata[key]:
-                    return metadata[key]
+            if isinstance(metadata, dict):
+                for key in ['token_symbol', 'symbol', 'base_token', 'pair_symbol']:
+                    if metadata.get(key):
+                        return str(metadata[key])
 
-        return "N/A"
+            # 3) Fallback: if engine moved symbol to top-level under another name
+            for key in ['base_symbol', 'pair', 'token']:
+                if trade.get(key):
+                    return str(trade[key])
 
-    def _get_exit_reason_from_trade(self, trade_record: Dict[str, Any]) -> str:
-        """Robustly extract the exit reason from a trade record or its metadata."""
-        # 1. Direct field on the trade
-        reason = trade_record.get('exit_reason')
-        if isinstance(reason, str) and reason:
-            return reason
-
-        # 2. Check metadata
-        metadata = trade_record.get('metadata')
-        if isinstance(metadata, str):
-            try:
-                metadata = json.loads(metadata)
-            except json.JSONDecodeError:
-                metadata = None
-
-        if isinstance(metadata, dict):
-            # common keys
-            for key in ['exit_reason', 'reason', 'close_reason', 'sell_reason']:
-                val = metadata.get(key)
-                if isinstance(val, str) and val:
-                    return val
+        except Exception as e:
+            logger.error(f"Error extracting token symbol from trade: {e}", exc_info=True)
 
         return 'N/A'
+
+
+    def _get_exit_reason_from_trade(self, trade: Dict[str, Any]) -> str:
+        """
+        Robustly determine exit reason for a trade.
+
+        Checks:
+        - direct 'exit_reason' column
+        - metadata['exit_reason'] / 'closing_reason' / 'reason'
+        - heuristic based on P&L, tp/sl flags, etc.
+        """
+        try:
+            # 1) Direct DB column if present
+            direct = trade.get('exit_reason')
+            if direct:
+                return str(direct)
+
+            # 2) Metadata (string or dict)
+            metadata = trade.get('metadata')
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except json.JSONDecodeError:
+                    metadata = None
+
+            if isinstance(metadata, dict):
+                for key in ['exit_reason', 'closing_reason', 'reason']:
+                    if metadata.get(key):
+                        return str(metadata[key])
+
+            # 3) Heuristic fallback based on P&L
+            pnl = trade.get('profit_loss')
+            try:
+                pnl_val = float(pnl) if pnl is not None else 0.0
+            except (TypeError, ValueError):
+                pnl_val = 0.0
+
+            if pnl_val > 0:
+                return 'take_profit'
+            elif pnl_val < 0:
+                return 'stop_loss'
+
+            return 'manual'
+
+        except Exception as e:
+            logger.error(f"Error determining exit reason: {e}", exc_info=True)
+            return 'manual'
+
 
 
     def _get_exit_reason_from_metadata(self, trade_record: Dict[str, Any]) -> str:
@@ -2211,40 +2253,60 @@ class DashboardEndpoints:
 
         # --- NEW FIX STARTS HERE: Correct date range handling ---
         now = datetime.utcnow()
+        period_normalized = (period or 'custom').lower()
         start_date, end_date = None, None
 
-        if period == 'daily':
-            start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            end_date = now
-        elif period == 'weekly':
-            start_date = now - timedelta(days=7)
-            end_date = now
-        elif period == 'monthly':
-            start_date = now - timedelta(days=30)
-            end_date = now
-        elif period == 'custom' and start_date_str and end_date_str:
-            # ✅ Support both ISO (YYYY-MM-DD) and Turkish-style (DD.MM.YYYY) dates
-            def _parse_date(date_str: str) -> datetime:
-                # Try ISO first
-                try:
-                    return datetime.fromisoformat(date_str)
-                except ValueError:
-                    pass
-                # Try DD.MM.YYYY (e.g. 16.11.2025)
-                try:
-                    return datetime.strptime(date_str, "%d.%m.%Y")
-                except ValueError:
-                    # Let caller handle fallback
-                    raise
+        def _parse_date_safe(s: str) -> Optional[datetime]:
+            if not s:
+                return None
             try:
-                start_date = datetime.fromisoformat(start_date_str)
-                end_date = datetime.fromisoformat(end_date_str).replace(hour=23, minute=59, second=59)
-            except ValueError:
-                # Fallback if date format is wrong
+                # Accept plain date ("2025-11-17") or full ISO with time
+                return datetime.fromisoformat(s.replace('Z', '+00:00')) \
+                    if 'T' in s else datetime.fromisoformat(s)
+            except Exception:
+                return None
+
+        # Try to use UI-provided dates if they exist
+        ui_start = _parse_date_safe(start_date_str) if start_date_str else None
+        ui_end = _parse_date_safe(end_date_str) if end_date_str else None
+
+        if period_normalized == 'daily':
+            # If UI sends a specific day, use that; otherwise use "today"
+            if ui_start:
+                start_date = ui_start.replace(hour=0, minute=0, second=0, microsecond=0)
+                end_date = (ui_end or ui_start).replace(hour=23, minute=59, second=59)
+            else:
+                start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                end_date = now
+
+        elif period_normalized == 'weekly':
+            # If UI gives a week start, use that; else "last 7 days"
+            if ui_start and ui_end:
+                start_date = ui_start.replace(hour=0, minute=0, second=0, microsecond=0)
+                end_date = ui_end.replace(hour=23, minute=59, second=59)
+            elif ui_start and not ui_end:
+                start_date = ui_start.replace(hour=0, minute=0, second=0, microsecond=0)
+                end_date = (ui_start + timedelta(days=7)).replace(
+                    hour=23, minute=59, second=59
+                )
+            else:
                 start_date = now - timedelta(days=7)
                 end_date = now
+
+        elif period_normalized == 'monthly':
+            if ui_start and ui_end:
+                start_date = ui_start.replace(hour=0, minute=0, second=0, microsecond=0)
+                end_date = ui_end.replace(hour=23, minute=59, second=59)
+            else:
+                start_date = now - timedelta(days=30)
+                end_date = now
+
+        elif period_normalized == 'custom' and (ui_start and ui_end):
+            start_date = ui_start.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_date = ui_end.replace(hour=23, minute=59, second=59)
+
         else:
-            # Default to the last 7 days if no valid period is matched
+            # Fallback: last 7 days
             start_date = now - timedelta(days=7)
             end_date = now
 
@@ -2258,7 +2320,7 @@ class DashboardEndpoints:
         """
         closed_trades = await self.db.pool.fetch(query, start_date, end_date)
         report['trades'] = self._serialize_decimals([dict(row) for row in closed_trades])
-        # --- NEW FIX ENDS HERE ---
+        # --- FIX ENDS HERE ---
 
         if not closed_trades:
             return report
