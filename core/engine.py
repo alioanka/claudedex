@@ -1747,6 +1747,10 @@ class TradingBotEngine:
                         if 'token_symbol' not in updated_metadata and token_symbol != 'UNKNOWN':
                             updated_metadata['token_symbol'] = token_symbol
 
+                        # Convert RiskScore to dict if it exists, to prevent serialization error
+                        if 'risk_score' in updated_metadata and isinstance(updated_metadata['risk_score'], RiskScore):
+                            updated_metadata['risk_score'] = updated_metadata['risk_score'].to_dict()
+
                         # 5. Prepare the final payload for the database
                         update_payload = {
                             'status': 'closed',
