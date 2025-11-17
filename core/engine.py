@@ -1725,36 +1725,41 @@ class TradingBotEngine:
                     if trade_record:
                         trade_id = trade_record['id']
 
-                        # --- HOTFIX STARTS HERE ---
-                        # Get existing metadata
-                        query_meta = "SELECT metadata FROM trades WHERE id = $1"
-                        existing_meta_record = await self.db.pool.fetchrow(query_meta, trade_id)
-                        existing_meta = existing_meta_record['metadata'] if existing_meta_record and existing_meta_record['metadata'] else {}
-                        
-                        # Add the exit reason to the metadata
-                        if isinstance(existing_meta, str):
+                        # --- CORRECT FIX STARTS HERE ---
+                        # 1. Get the full, existing trade record from the active position object
+                        # This contains the original metadata with the token_symbol
+                        original_metadata = position.get('metadata', {})
+                        if isinstance(original_metadata, str):
                             try:
-                                existing_meta = json.loads(existing_meta)
+                                original_metadata = json.loads(original_metadata)
                             except json.JSONDecodeError:
-                                existing_meta = {} # Overwrite if invalid JSON
+                                original_metadata = {}
 
-                        existing_meta['exit_reason'] = reason
-                        if 'token_symbol' not in existing_meta:
-                            existing_meta['token_symbol'] = token_symbol
+                        # 2. Create a new metadata dictionary for the update
+                        # This ensures we don't modify the in-memory object
+                        updated_metadata = original_metadata.copy()
 
-                        # Prepare the update payload (without the problematic column)
+                        # 3. Add or update the exit_reason
+                        updated_metadata['exit_reason'] = reason
+
+                        # 4. Ensure the token_symbol from the active position is preserved
+                        # This is the most critical part
+                        if 'token_symbol' not in updated_metadata and token_symbol != 'UNKNOWN':
+                            updated_metadata['token_symbol'] = token_symbol
+
+                        # 5. Prepare the final payload for the database
                         update_payload = {
                             'status': 'closed',
                             'exit_price': float(current_price),
                             'exit_timestamp': datetime.now(),
                             'profit_loss': float(final_pnl),
                             'profit_loss_percentage': float(pnl_percentage),
-                            'metadata': json.dumps(existing_meta) # Store updated metadata
+                            'metadata': json.dumps(updated_metadata) # Store the complete, updated metadata
                         }
 
-                        # Update the trade record in the database
+                        # 6. Update the trade record in the database
                         success = await self.db.update_trade(trade_id, update_payload)
-                        # --- HOTFIX ENDS HERE ---
+                        # --- CORRECT FIX ENDS HERE ---
 
                         if success:
                             logger.info(f"✅ Trade {trade_id} successfully updated to 'closed' in the database.")
