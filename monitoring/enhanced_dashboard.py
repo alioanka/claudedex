@@ -520,24 +520,7 @@ class DashboardEndpoints:
             for trade in trades:
                 enriched_trade = dict(trade)
                 
-                # Extract token_symbol from metadata JSON if present
-                token_symbol = trade.get('token_symbol', 'UNKNOWN')
-                
-                if token_symbol == 'UNKNOWN' and trade.get('metadata'):
-                    try:
-                        import json
-                        metadata = trade.get('metadata')
-                        
-                        # If metadata is string, parse it
-                        if isinstance(metadata, str):
-                            metadata = json.loads(metadata)
-                        
-                        # Extract token_symbol from metadata
-                        token_symbol = metadata.get('token_symbol', 'UNKNOWN')
-                    except:
-                        pass
-                
-                enriched_trade['token_symbol'] = token_symbol
+                enriched_trade['token_symbol'] = self._get_token_symbol_from_metadata(trade)
                 enriched_trade['network'] = trade.get('chain', 'unknown')
                 enriched_trades.append(enriched_trade)
             
@@ -758,20 +741,7 @@ class DashboardEndpoints:
                         except:
                             pass
                     
-                    # ✅ Extract token_symbol from metadata
-                    token_symbol = trade.get('token_symbol', 'UNKNOWN')
-                    
-                    if token_symbol == 'UNKNOWN' and trade.get('metadata'):
-                        try:
-                            import json
-                            metadata = trade.get('metadata')
-                            
-                            if isinstance(metadata, str):
-                                metadata = json.loads(metadata)
-                            
-                            token_symbol = metadata.get('token_symbol', 'UNKNOWN')
-                        except:
-                            pass
+                    token_symbol = self._get_token_symbol_from_metadata(trade)
                     
                     # Convert timestamps to ISO string
                     entry_ts = trade.get('entry_timestamp')
@@ -1108,7 +1078,7 @@ class DashboardEndpoints:
             if not self.db:
                 return web.json_response({'error': 'Database not available'}, status=503)
 
-            # 1) Load ALL closed trades (we'll filter in-memory)
+            # 1) Load ALL closed trades
             query = """
                 SELECT exit_timestamp, profit_loss, metadata
                 FROM trades
@@ -1118,98 +1088,91 @@ class DashboardEndpoints:
             trades = await self.db.pool.fetch(query)
 
             if not trades:
-                # Return empty but well-structured payload
                 return web.json_response({
                     'success': True,
                     'data': {
-                        'equity_curve': [],
-                        'cumulative_pnl': [],
-                        'strategy_performance': [],
-                        'win_loss': {'wins': 0, 'losses': 0},
-                        'monthly': [],
+                        'equity_curve': [], 'cumulative_pnl': [],
+                        'strategy_performance': [], 'win_loss': {'wins': 0, 'losses': 0},
+                        'monthly': []
                     }
                 })
 
-            # 2) Build dataframe
             df = pd.DataFrame([dict(trade) for trade in trades])
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
             df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'], utc=True).dt.tz_convert(None)
-
-            # Strategy name for grouping
             df['strategy'] = df['metadata'].apply(self._get_strategy_from_metadata)
 
-            # 3) Timeframe filter for equity and PnL curves
+            # 2) Calculate cumulative data on the FULL history first
+            df = df.sort_values('exit_timestamp').reset_index(drop=True)
+            initial_balance = self.config_mgr.get_portfolio_config().initial_balance
+            df['cumulative_pnl'] = df['profit_loss'].cumsum()
+            df['equity'] = initial_balance + df['cumulative_pnl']
+
+            # 3) Now, filter by the requested timeframe
             now = datetime.utcnow()
             start_time = None
-            if timeframe == '24h':
-                start_time = now - timedelta(hours=24)
+            if timeframe == '1h':
+                start_time = now - timedelta(hours=1)
+            elif timeframe == '24h':
+                start_time = now - timedelta(days=1)
             elif timeframe == '7d':
                 start_time = now - timedelta(days=7)
             elif timeframe == '30d':
                 start_time = now - timedelta(days=30)
-            elif timeframe in ('all', 'ALL'):
-                start_time = None  # no filter
-            else:
-                # Default to 7d
-                start_time = now - timedelta(days=7)
 
             filtered_df = df.copy()
-            if start_time is not None:
-                filtered_df = filtered_df[filtered_df['exit_timestamp'] >= start_time]
+            if start_time:
+                # Find the last data point *before* the window starts to anchor the chart
+                anchor_row = df[df['exit_timestamp'] < start_time].tail(1)
+                # Filter the main data to be within the window
+                main_df = df[df['exit_timestamp'] >= start_time]
 
-            # 4) Equity curve & cumulative PnL for the **filtered** data
+                # If there's data before the window, combine it with the window's data
+                if not anchor_row.empty:
+                    filtered_df = pd.concat([anchor_row, main_df]).reset_index(drop=True)
+                else:
+                    filtered_df = main_df # No data before the window, just use what's inside
+            else: # 'all' timeframe
+                filtered_df = df
+
+
+            # 4) Generate chart data from the correctly filtered dataframe
             equity_curve_data = []
             cumulative_pnl_data = []
 
             if not filtered_df.empty:
-                filtered_df = filtered_df.sort_values('exit_timestamp')
-
-                initial_balance = self.config_mgr.get_portfolio_config().initial_balance
-                filtered_df['cumulative_pnl'] = filtered_df['profit_loss'].cumsum()
-                filtered_df['equity'] = initial_balance + filtered_df['cumulative_pnl']
-
                 equity_curve_data = [
-                    {
-                        'timestamp': ts.isoformat(),
-                        'value': float(val)
-                    }
+                    {'timestamp': ts.isoformat(), 'value': float(val)}
                     for ts, val in zip(filtered_df['exit_timestamp'], filtered_df['equity'])
                 ]
-
                 cumulative_pnl_data = [
-                    {
-                        'timestamp': ts.isoformat(),
-                        'cumulative_pnl': float(val)
-                    }
+                    {'timestamp': ts.isoformat(), 'cumulative_pnl': float(val)}
                     for ts, val in zip(filtered_df['exit_timestamp'], filtered_df['cumulative_pnl'])
                 ]
 
-            # 5) Strategy performance (use ALL trades, not only timeframe-filtered)
+            # 5) Other stats (can be calculated from the full or filtered dataframe as needed)
             strategy_performance_df = df.groupby('strategy')['profit_loss'].sum().reset_index()
             strategy_performance_df.columns = ['strategy', 'pnl']
 
-            # 6) Win/loss distribution (on filtered data = “current period”)
-            wins = int((filtered_df['profit_loss'] > 0).sum()) if not filtered_df.empty else 0
-            losses = int((filtered_df['profit_loss'] <= 0).sum()) if not filtered_df.empty else 0
+            # Use the time-filtered df for win/loss stats for the current period
+            period_df = df[df['exit_timestamp'] >= start_time] if start_time else df
+            wins = int((period_df['profit_loss'] > 0).sum())
+            losses = int((period_df['profit_loss'] <= 0).sum())
             win_loss_distribution = {'wins': wins, 'losses': losses}
 
-            # 7) Monthly performance (on all data)
-            monthly_performance_df = df.copy()
             monthly_performance = []
-            if not monthly_performance_df.empty:
-                monthly_performance_df['month'] = monthly_performance_df['exit_timestamp'].dt.to_period('M').astype(str)
+            if not df.empty:
+                monthly_df = df.copy()
+                monthly_df['month'] = monthly_df['exit_timestamp'].dt.to_period('M').astype(str)
                 monthly_performance = (
-                    monthly_performance_df
-                    .groupby('month')['profit_loss']
-                    .sum()
-                    .reset_index()
-                    .rename(columns={'profit_loss': 'pnl'})
+                    monthly_df.groupby('month')['profit_loss'].sum()
+                    .reset_index().rename(columns={'profit_loss': 'pnl'})
                     .to_dict('records')
                 )
 
             payload = {
-                'equity_curve': equity_curve_data,          # [{timestamp, value}]
-                'cumulative_pnl': cumulative_pnl_data,      # [{timestamp, cumulative_pnl}]
+                'equity_curve': equity_curve_data,
+                'cumulative_pnl': cumulative_pnl_data,
                 'strategy_performance': strategy_performance_df.to_dict('records'),
                 'win_loss': win_loss_distribution,
                 'monthly': monthly_performance,

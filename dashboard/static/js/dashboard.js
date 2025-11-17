@@ -25,13 +25,18 @@ async function loadInsights() {
             const insightsList = document.getElementById('insightsList');
             if (insightsList) {
                 if (response.data.length > 0) {
-                    // --- FIX STARTS HERE: Correctly render insight objects ---
-                    insightsList.innerHTML = response.data.map(insight => `
-                        <li class="insight-${insight.type || 'suggestion'}">
-                            <strong>${insight.title}:</strong> ${insight.message}
-                        </li>
-                    `).join('');
-                    // --- FIX ENDS HERE ---
+                    insightsList.innerHTML = response.data.map(insight => {
+                        // Ensure insight is an object with title and message
+                        if (typeof insight === 'object' && insight.title && insight.message) {
+                            return `
+                                <li class="insight-${insight.type || 'suggestion'}">
+                                    <strong>${insight.title}:</strong> ${insight.message}
+                                </li>
+                            `;
+                        }
+                        // Fallback for string data for backward compatibility
+                        return `<li>${insight}</li>`;
+                    }).join('');
                 } else {
                     insightsList.innerHTML = '<li>No performance insights available yet.</li>';
                 }

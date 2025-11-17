@@ -368,6 +368,10 @@ class HoneypotChecker:
                     }
                     
                 else:
+                    # For server-side errors (5xx), raise an exception to trigger the retry decorator
+                    if response.status >= 500:
+                        await response.raise_for_status()
+
                     # ✅ PATCH: Log response text for other errors
                     error_text = await response.text()
                     logger.error(
