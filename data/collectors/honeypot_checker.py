@@ -86,6 +86,7 @@ class HoneypotChecker:
         
         self.cache = {}
         self.cache_ttl = 300  # 5 minutes
+        self.rugcheck_400_errors = set()
 
     async def initialize(self):
         """Initialize connections and resources"""
@@ -305,6 +306,14 @@ class HoneypotChecker:
         }
         """
         try:
+            # Check if this token has previously caused a 400 error
+            if address in self.rugcheck_400_errors:
+                logger.warning(f"⚠️ Skipping RugCheck for {address[:16]}... as it previously failed with a 400 error.")
+                return {
+                    "status": "error",
+                    "error": "Skipping check for previously failed address",
+                    "http_status": 400
+                }
             # ✅ PATCH: Validate Solana address format BEFORE API call
             if not is_valid_solana_address(address):
                 logger.warning(f"⚠️ Invalid Solana address format: {address[:16]}...")
@@ -345,6 +354,8 @@ class HoneypotChecker:
                     }
                     
                 elif response.status == 400:
+                    # Add the token to the set of failed addresses
+                    self.rugcheck_400_errors.add(address)
                     # ✅ PATCH: Enhanced 400 error logging with actual address
                     error_text = await response.text()
                     logger.error(

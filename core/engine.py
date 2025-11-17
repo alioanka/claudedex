@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from collections import defaultdict
 from datetime import datetime, timedelta
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 import json
 from enum import Enum
 import numpy as np
@@ -1749,7 +1749,7 @@ class TradingBotEngine:
 
                         # Convert RiskScore to dict if it exists, to prevent serialization error
                         if 'risk_score' in updated_metadata and isinstance(updated_metadata['risk_score'], RiskScore):
-                            updated_metadata['risk_score'] = updated_metadata['risk_score'].to_dict()
+                            updated_metadata['risk_score'] = asdict(updated_metadata['risk_score'])
 
                         # 5. Prepare the final payload for the database
                         update_payload = {
