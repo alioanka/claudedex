@@ -520,7 +520,7 @@ class DashboardEndpoints:
             for trade in trades:
                 enriched_trade = dict(trade)
                 
-                enriched_trade['token_symbol'] = self._get_token_symbol_from_metadata(enriched_trade)
+                enriched_trade['token_symbol'] = await self._get_token_symbol_from_metadata(enriched_trade)
                 enriched_trade['network'] = trade.get('chain', 'unknown')
                 enriched_trades.append(enriched_trade)
             
@@ -557,7 +557,7 @@ class DashboardEndpoints:
             enriched_trades = []
             for trade in trades:
                 enriched_trade = dict(trade)
-                enriched_trade['token_symbol'] = self._get_token_symbol_from_metadata(enriched_trade)
+                enriched_trade['token_symbol'] = await self._get_token_symbol_from_metadata(enriched_trade)
                 enriched_trades.append(enriched_trade)
             # --- FIX ENDS HERE ---
             
@@ -749,7 +749,7 @@ class DashboardEndpoints:
                         except:
                             pass
                     
-                    token_symbol = self._get_token_symbol_from_metadata(dict(trade))
+                    token_symbol = await self._get_token_symbol_from_metadata(dict(trade))
                     
                     # Convert timestamps to ISO string
                     entry_ts = trade.get('entry_timestamp')
@@ -1883,19 +1883,20 @@ class DashboardEndpoints:
 
         return default_name
 
-    def _get_token_symbol_from_metadata(self, trade: Dict[str, Any]) -> str:
+    async def _get_token_symbol_from_metadata(self, trade: Dict[str, Any]) -> str:
         """
-        Robustly extract token symbol from a trade row.
+        Robustly extract token symbol from a trade row, with a live fallback.
 
         Works whether token_symbol is in:
         - trade['token_symbol']
         - trade['symbol']
         - JSON metadata (string or dict) under 'token_symbol' / 'symbol'
+        - Live lookup via DexScreener API as a fallback.
         """
         try:
             # 1) Direct column first (most reliable)
             direct = trade.get('token_symbol') or trade.get('symbol')
-            if direct:
+            if direct and direct not in ['N/A', 'UNKNOWN', None]:
                 return str(direct)
 
             # 2) Metadata field (can be str or dict)
@@ -1903,23 +1904,54 @@ class DashboardEndpoints:
             if isinstance(metadata, str):
                 try:
                     metadata = json.loads(metadata)
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, TypeError):
                     metadata = None
 
             if isinstance(metadata, dict):
-                for key in ['token_symbol', 'symbol', 'base_token', 'pair_symbol']:
-                    if metadata.get(key):
-                        return str(metadata[key])
+                for key in ['token_symbol', 'symbol', 'baseToken', 'base_token_symbol']:
+                    symbol_from_meta = metadata.get(key)
+                    if isinstance(symbol_from_meta, dict): # Handle cases like "baseToken": {"symbol": "WETH"}
+                        symbol_from_meta = symbol_from_meta.get('symbol')
 
-            # 3) Fallback: if engine moved symbol to top-level under another name
+                    if symbol_from_meta and symbol_from_meta not in ['N/A', 'UNKNOWN', None]:
+                        return str(symbol_from_meta)
+
+            # 3) Fallback: other top-level keys
             for key in ['base_symbol', 'pair', 'token']:
-                if trade.get(key):
-                    return str(trade[key])
+                symbol_from_trade = trade.get(key)
+                if symbol_from_trade and symbol_from_trade not in ['N/A', 'UNKNOWN', None]:
+                    return str(symbol_from_trade)
 
         except Exception as e:
-            logger.error(f"Error extracting token symbol from trade: {e}", exc_info=True)
+            logger.error(f"Error extracting token symbol from trade record: {e}", exc_info=True)
 
-        return 'N/A'
+        # 4) Live lookup fallback if not found in existing data
+        try:
+            token_address = trade.get('token_address')
+            chain = trade.get('chain')
+
+            if token_address and chain and self.engine and hasattr(self.engine, 'dex_collector'):
+                logger.info(f"Symbol for {token_address} not in DB. Performing live lookup on {chain}...")
+
+                # DexScreener search is a good general-purpose lookup
+                pairs = await self.engine.dex_collector.search_pairs(token_address)
+
+                if pairs:
+                    # Find the first pair that matches our chain
+                    for pair in pairs:
+                        if pair.get('chainId', '').lower() == chain.lower():
+                            base_token = pair.get('baseToken')
+                            if base_token and base_token.get('symbol'):
+                                found_symbol = base_token.get('symbol')
+                                logger.info(f"Live lookup for {token_address} successful: found '{found_symbol}'")
+                                return found_symbol
+
+            logger.warning(f"Live lookup failed for token {token_address} on {chain}.")
+            return 'N/A'
+
+        except Exception as e:
+            logger.error(f"Error during live symbol lookup for {trade.get('token_address')}: {e}", exc_info=True)
+            return 'N/A'
 
 
     def _get_exit_reason_from_trade(self, trade: Dict[str, Any]) -> str:
@@ -2369,7 +2401,7 @@ class DashboardEndpoints:
             for trade in report['trades']:
                 writer.writerow([
                     trade.get('id'),
-                    self._get_token_symbol_from_metadata(dict(trade)),
+                    await self._get_token_symbol_from_metadata(dict(trade)),
                     trade.get('entry_timestamp'),
                     trade.get('exit_timestamp'),
                     trade.get('entry_price'),
