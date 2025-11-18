@@ -552,11 +552,19 @@ class DashboardEndpoints:
             if end_date:
                 end = datetime.fromisoformat(end_date)
                 trades = [t for t in trades if datetime.fromisoformat(t['timestamp']) <= end]
+
+            # --- FIX STARTS HERE: Enrich trades with token symbol ---
+            enriched_trades = []
+            for trade in trades:
+                enriched_trade = dict(trade)
+                enriched_trade['token_symbol'] = self._get_token_symbol_from_metadata(enriched_trade)
+                enriched_trades.append(enriched_trade)
+            # --- FIX ENDS HERE ---
             
             return web.json_response({
                 'success': True,
-                'data': trades,
-                'count': len(trades)
+                'data': self._serialize_decimals(enriched_trades),
+                'count': len(enriched_trades)
             })
         except Exception as e:
             logger.error(f"Error getting trade history: {e}")

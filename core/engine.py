@@ -1722,10 +1722,9 @@ class TradingBotEngine:
                 
                 # ✅ UPDATE DATABASE - REWRITTEN FOR RELIABILITY
                 try:
-                    # --- NEW FIX STARTS HERE ---
                     # Always query the database to get the definitive trade ID for the open position
                     query = """
-                        SELECT id FROM trades 
+                        SELECT id, metadata FROM trades
                         WHERE token_address = $1 AND status = 'open'
                         ORDER BY entry_timestamp DESC LIMIT 1
                     """
@@ -1735,21 +1734,28 @@ class TradingBotEngine:
                         trade_id = trade_record['id']
 
                         # --- ROBUST FIX STARTS HERE ---
-                        # 1. Get existing metadata from the live position object.
+                        # 1. Get existing metadata from the live position object first.
                         final_metadata = position.get('metadata', {})
-                        if isinstance(final_metadata, str):
-                            try:
-                                final_metadata = json.loads(final_metadata)
-                            except (json.JSONDecodeError, TypeError):
-                                final_metadata = {}
 
-                        # 2. Ensure critical information is preserved from the top-level position dict.
+                        # 2. Safely merge with database metadata if it exists
+                        db_metadata = trade_record.get('metadata')
+                        if db_metadata:
+                            if isinstance(db_metadata, str):
+                                try:
+                                    db_metadata = json.loads(db_metadata)
+                                except (json.JSONDecodeError, TypeError):
+                                    db_metadata = {}
+                            if isinstance(db_metadata, dict):
+                                # Merge, prioritizing live data over stored data
+                                final_metadata = {**db_metadata, **final_metadata}
+
+                        # 3. Ensure critical information is preserved from the top-level position dict.
                         # This prevents data loss if metadata was incomplete.
                         final_metadata['token_symbol'] = position.get('token_symbol', final_metadata.get('token_symbol', 'UNKNOWN'))
                         final_metadata['exit_reason'] = reason
                         final_metadata['chain'] = position.get('chain', final_metadata.get('chain', 'unknown'))
 
-                        # 3. Prepare payload for the database update.
+                        # 4. Prepare payload for the database update.
                         update_payload = {
                             'status': 'closed',
                             'exit_price': float(current_price),
@@ -1759,7 +1765,7 @@ class TradingBotEngine:
                             'metadata': json.dumps(final_metadata, default=json_serializer)
                         }
 
-                        # 4. Update the trade in the database.
+                        # 5. Update the trade in the database.
                         success = await self.db.update_trade(trade_id, update_payload)
                         # --- ROBUST FIX ENDS HERE ---
 
