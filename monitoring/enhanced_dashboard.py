@@ -985,7 +985,8 @@ class DashboardEndpoints:
             trades = await self.db.pool.fetch(query)
 
             if not trades:
-                return web.json_response({'success': True, 'data': {'historical': {}}})
+                initial_balance = self.config_mgr.get_portfolio_config().initial_balance
+                return web.json_response({'success': True, 'data': {'historical': {'initial_balance': initial_balance}}})
 
             df = pd.DataFrame([dict(trade) for trade in trades])
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
@@ -1046,6 +1047,7 @@ class DashboardEndpoints:
 
 
             metrics = {
+                'initial_balance': initial_balance,
                 'total_pnl': total_pnl,
                 'roi': roi,
                 'sortino_ratio': sortino_ratio,
