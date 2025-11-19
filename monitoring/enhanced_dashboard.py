@@ -349,7 +349,7 @@ class DashboardEndpoints:
 
             df = pd.DataFrame([dict(trade) for trade in trades])
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
-            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
+            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'], utc=True)
 
             # --- FIX STARTS HERE: Use centralized strategy parsing ---
             df['strategy'] = df['metadata'].apply(self._get_strategy_from_metadata)
@@ -1053,6 +1053,7 @@ class DashboardEndpoints:
             daily_volatility = daily_returns.std() * 100
             annual_volatility = daily_returns.std() * np.sqrt(365) * 100
             # --- FIX ENDS HERE ---
+
 
             metrics = {
                 'initial_balance': initial_balance,
