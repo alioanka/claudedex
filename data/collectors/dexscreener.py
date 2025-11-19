@@ -12,6 +12,9 @@ from dataclasses import dataclass, field
 import time
 from collections import deque
 import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class TokenPair:
@@ -159,55 +162,38 @@ class DexScreenerCollector:
         
     async def _make_request(self, endpoint: str, params: Dict = None) -> Optional[Dict]:
         """
-        Make API request with error handling
-        
-        Args:
-            endpoint: API endpoint (without base URL)
-            params: Query parameters
-            
-        Returns:
-            Response data or None
+        Make API request with error handling, rate limiting, and enhanced logging.
         """
         await self._rate_limit()
-        
-        # Remove any leading slashes from endpoint
         endpoint = endpoint.lstrip('/')
-        
         url = f"{self.base_url}/{endpoint}"
-        headers = {}
-        
-        if self.api_key:
-            headers['X-API-KEY'] = self.api_key
-            
+        headers = {'X-API-KEY': self.api_key} if self.api_key else {}
+
         try:
             self.stats['total_requests'] += 1
-            
             async with self.session.get(url, params=params, headers=headers) as response:
                 if response.status == 200:
                     self.stats['successful_requests'] += 1
-                    data = await response.json()
-                    return data
-                else:
-                    self.stats['failed_requests'] += 1
-                    print(f"API request failed: {response.status} - URL: {url}")
-                    return None
-                    
+                    return await response.json()
+
+                # Log non-200 responses with more detail
+                self.stats['failed_requests'] += 1
+                error_text = await response.text()
+                logger.error(
+                    f"DexScreener API request failed | Status: {response.status} | URL: {url} | Response: {error_text[:200]}"
+                )
+                return None
         except asyncio.TimeoutError:
             self.stats['failed_requests'] += 1
-            print("Request timeout")
+            logger.warning(f"DexScreener API request timed out for URL: {url}")
+            return None
+        except aiohttp.ClientError as e:
+            self.stats['failed_requests'] += 1
+            logger.error(f"DexScreener API client error for URL {url}: {e}", exc_info=True)
             return None
         except Exception as e:
             self.stats['failed_requests'] += 1
-            print(f"Request error: {e}")
-            return None
-                    
-        except asyncio.TimeoutError:
-            self.stats['failed_requests'] += 1
-            print("Request timeout")
-            return None
-        except Exception as e:
-            self.stats['failed_requests'] += 1
-            print(f"Request error: {e}")
+            logger.error(f"Unexpected error during DexScreener API request for {url}: {e}", exc_info=True)
             return None
             
     # 1. Fix get_new_pairs signature (line ~165)
@@ -997,6 +983,23 @@ class DexScreenerCollector:
     def get_stats(self) -> Dict:
         """Get collector statistics"""
         return self.stats.copy()
+
+    async def search_pairs_unfiltered(self, query: str) -> List[Dict]:
+        """
+        Search for pairs without any local filtering.
+        Used for direct lookups where filtering might hide the result.
+        """
+        endpoint = "/latest/dex/search"
+        params = {'q': query}
+        data = await self._make_request(endpoint, params)
+
+        pairs = []
+        if data and 'pairs' in data:
+            for pair_data in data['pairs']:
+                pair = self._parse_pair(pair_data)
+                if pair:
+                    pairs.append(self._pair_to_dict(pair))
+        return pairs
 
     # ============================================================================
     # PATCH FOR: dexscreener.py

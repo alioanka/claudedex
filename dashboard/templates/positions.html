@@ -565,6 +565,35 @@ function refreshPositions() {
     loadPositions();
 }
 
+async function closePosition(positionId) {
+    const position = currentPositions.find(p => p.id === positionId);
+    if (!position) {
+        showToast('error', 'Position not found');
+        return;
+    }
+
+    const confirmed = await showConfirmation(
+        'Close Position',
+        `Are you sure you want to close the position for ${position.token_symbol}?`
+    );
+
+    if (!confirmed) return;
+
+    try {
+        const response = await apiPost('/api/position/close', { position_id: positionId });
+        if (response.success) {
+            showToast('success', `Position for ${position.token_symbol} closed successfully.`);
+            // Refresh both open and closed positions tables immediately
+            await Promise.all([loadPositions(), loadClosedPositions()]);
+        } else {
+            showToast('error', response.error || 'Failed to close position.');
+        }
+    } catch (error) {
+        console.error('Error closing position:', error);
+        showToast('error', 'An unexpected error occurred while closing the position.');
+    }
+}
+
 //document.addEventListener('DOMContentLoaded', loadPositions);
 
 // Auto-refresh every 5 seconds

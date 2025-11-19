@@ -1886,13 +1886,11 @@ class DashboardEndpoints:
     async def _get_token_symbol_from_metadata(self, trade: Dict[str, Any]) -> str:
         """
         Robustly extract token symbol from a trade row, with a live fallback.
-
-        Works whether token_symbol is in:
-        - trade['token_symbol']
-        - trade['symbol']
-        - JSON metadata (string or dict) under 'token_symbol' / 'symbol'
-        - Live lookup via DexScreener API as a fallback.
+        This function is designed to be resilient and should not raise exceptions.
         """
+        token_address = trade.get('token_address') # Get for logging
+        chain = trade.get('chain') # Get for logging
+
         try:
             # 1) Direct column first (most reliable)
             direct = trade.get('token_symbol') or trade.get('symbol')
@@ -1910,9 +1908,8 @@ class DashboardEndpoints:
             if isinstance(metadata, dict):
                 for key in ['token_symbol', 'symbol', 'baseToken', 'base_token_symbol']:
                     symbol_from_meta = metadata.get(key)
-                    if isinstance(symbol_from_meta, dict): # Handle cases like "baseToken": {"symbol": "WETH"}
+                    if isinstance(symbol_from_meta, dict):
                         symbol_from_meta = symbol_from_meta.get('symbol')
-
                     if symbol_from_meta and symbol_from_meta not in ['N/A', 'UNKNOWN', None]:
                         return str(symbol_from_meta)
 
@@ -1922,22 +1919,14 @@ class DashboardEndpoints:
                 if symbol_from_trade and symbol_from_trade not in ['N/A', 'UNKNOWN', None]:
                     return str(symbol_from_trade)
 
-        except Exception as e:
-            logger.error(f"Error extracting token symbol from trade record: {e}", exc_info=True)
-
-        # 4) Live lookup fallback if not found in existing data
-        try:
-            token_address = trade.get('token_address')
-            chain = trade.get('chain')
-
+            # 4) Live lookup fallback if not found in existing data
             if token_address and chain and self.engine and hasattr(self.engine, 'dex_collector'):
                 logger.info(f"Symbol for {token_address} not in DB. Performing live lookup on {chain}...")
 
-                # DexScreener search is a good general-purpose lookup
-                pairs = await self.engine.dex_collector.search_pairs(token_address)
+                # Use the unfiltered search to ensure we find the pair regardless of its stats
+                pairs = await self.engine.dex_collector.search_pairs_unfiltered(token_address)
 
                 if pairs:
-                    # Find the first pair that matches our chain
                     for pair in pairs:
                         if pair.get('chainId', '').lower() == chain.lower():
                             base_token = pair.get('baseToken')
@@ -1946,11 +1935,11 @@ class DashboardEndpoints:
                                 logger.info(f"Live lookup for {token_address} successful: found '{found_symbol}'")
                                 return found_symbol
 
-            logger.warning(f"Live lookup failed for token {token_address} on {chain}.")
+            logger.warning(f"Could not determine symbol for token {token_address} on {chain} from DB or live lookup.")
             return 'N/A'
 
         except Exception as e:
-            logger.error(f"Error during live symbol lookup for {trade.get('token_address')}: {e}", exc_info=True)
+            logger.error(f"Critical error in _get_token_symbol_from_metadata for {token_address}: {e}", exc_info=True)
             return 'N/A'
 
 

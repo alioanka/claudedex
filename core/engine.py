@@ -1676,19 +1676,25 @@ class TradingBotEngine:
 
     async def _close_position(self, position: Dict, reason: str):
         """Close a trading position and add to cooldown"""
-        # ✅ Get token_address from position parameter FIRST
         token_address = position.get('token_address')
         token_symbol = position.get('token_symbol', 'UNKNOWN')
-        
+
         if not token_address:
-            logger.error(f"❌ Cannot close position - missing token_address")
+            logger.error("Cannot close position - missing token_address in provided position data.")
             return False
-        
-        # ✅ Verify position exists in active_positions
+
+        # --- NEW FIX STARTS HERE ---
+        # First, check if the position is actually considered active by the engine.
+        # This prevents errors and duplicate close attempts for positions already closed
+        # by stop-loss/take-profit just before a manual close command arrives.
         if token_address not in self.active_positions:
-            logger.error(f"❌ Cannot close position - not in active positions: {token_symbol}")
+            logger.warning(
+                f"Received request to close {token_symbol}, but it is not an active position. "
+                f"It might have been closed recently. Ignoring request."
+            )
             return False
-        
+        # --- NEW FIX ENDS HERE ---
+
         try:
             logger.info(f"💰 CLOSING POSITION: {token_symbol} ({token_address[:10]}...)")
             logger.info(f"   Reason: {reason}")
