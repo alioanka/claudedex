@@ -986,7 +986,16 @@ class DashboardEndpoints:
 
             if not trades:
                 initial_balance = self.config_mgr.get_portfolio_config().initial_balance
-                return web.json_response({'success': True, 'data': {'historical': {'initial_balance': initial_balance}}})
+                default_metrics = {
+                    'initial_balance': initial_balance,
+                    'total_pnl': 0.0, 'roi': 0.0, 'sortino_ratio': 0.0,
+                    'calmar_ratio': 0.0, 'daily_volatility': 0.0, 'annual_volatility': 0.0,
+                    'total_trades': 0, 'winning_trades': 0, 'losing_trades': 0,
+                    'win_rate': 0.0, 'avg_win': 0.0, 'avg_loss': 0.0,
+                    'best_trade': 0.0, 'worst_trade': 0.0, 'profit_factor': 0.0,
+                    'sharpe_ratio': 0.0, 'max_drawdown': 0.0,
+                }
+                return web.json_response({'success': True, 'data': {'historical': default_metrics}})
 
             df = pd.DataFrame([dict(trade) for trade in trades])
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
@@ -1045,7 +1054,6 @@ class DashboardEndpoints:
             annual_volatility = daily_returns.std() * np.sqrt(365) * 100
             # --- FIX ENDS HERE ---
 
-
             metrics = {
                 'initial_balance': initial_balance,
                 'total_pnl': total_pnl,
@@ -1066,6 +1074,10 @@ class DashboardEndpoints:
                 'sharpe_ratio': sharpe_ratio,
                 'max_drawdown': max_drawdown,
             }
+
+            for key, value in metrics.items():
+                if np.isnan(value) or np.isinf(value):
+                    metrics[key] = 0.0
 
             return web.json_response({
                 'success': True,
