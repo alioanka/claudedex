@@ -1163,8 +1163,8 @@ class DashboardEndpoints:
 
             # 3. Generate chart data from the correctly filtered data
             # The equity curve uses the filtered full history, preserving the correct starting equity
-            equity_curve_data = [{'timestamp': ts.isoformat(), 'value': val} for ts, val in df_full_filtered[['exit_timestamp', 'equity']].values] if not df_full_filtered.empty else []
-            cumulative_pnl_data = [{'timestamp': ts.isoformat(), 'cumulative_pnl': val} for ts, val in df_full_filtered[['exit_timestamp', 'cumulative_pnl']].values] if not df_full_filtered.empty else []
+            equity_curve_data = [{'timestamp': ts.isoformat(), 'value': val if not np.isnan(val) else 0.0} for ts, val in df_full_filtered[['exit_timestamp', 'equity']].values] if not df_full_filtered.empty else []
+            cumulative_pnl_data = [{'timestamp': ts.isoformat(), 'cumulative_pnl': val if not np.isnan(val) else 0.0} for ts, val in df_full_filtered[['exit_timestamp', 'cumulative_pnl']].values] if not df_full_filtered.empty else []
             
             # --- FIX ENDS HERE ---
 
