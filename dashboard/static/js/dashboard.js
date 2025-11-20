@@ -20,25 +20,40 @@ function initDashboard() {
 
 async function loadInsights() {
     try {
+        console.log('Loading insights...');
         const response = await apiGet('/api/insights');
-        if (response.success && response.data) {
+        console.log('Insights response:', response);
+
+        if (response && response.success && response.data) {
             const insightsList = document.getElementById('insightsList');
             if (insightsList) {
                 if (response.data.length > 0) {
-                    // --- FIX STARTS HERE: Correctly render insight objects ---
+                    console.log(`Rendering ${response.data.length} insights`);
                     insightsList.innerHTML = response.data.map(insight => `
                         <li class="insight-${insight.type || 'suggestion'}">
                             <strong>${insight.title}:</strong> ${insight.message}
                         </li>
                     `).join('');
-                    // --- FIX ENDS HERE ---
                 } else {
-                    insightsList.innerHTML = '<li>No performance insights available yet.</li>';
+                    console.log('No insights available');
+                    insightsList.innerHTML = '<li class="insight-info">No performance insights available yet. Start trading to receive personalized recommendations.</li>';
                 }
+            } else {
+                console.error('insightsList element not found');
+            }
+        } else {
+            console.warn('Invalid insights response:', response);
+            const insightsList = document.getElementById('insightsList');
+            if (insightsList) {
+                insightsList.innerHTML = '<li class="insight-info">Loading insights...</li>';
             }
         }
     } catch (error) {
         console.error('Error loading insights:', error);
+        const insightsList = document.getElementById('insightsList');
+        if (insightsList) {
+            insightsList.innerHTML = '<li class="insight-warning">Failed to load insights. Please refresh the page.</li>';
+        }
     }
 }
 

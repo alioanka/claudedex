@@ -984,16 +984,17 @@ document.addEventListener('DOMContentLoaded', function() {
     loadCharts();
     loadPositions();
     loadOrders();
-    
+    loadInsights();  // ✅ Load performance insights
+
     // Add timeframe change listeners (these will reload specific charts)
     document.getElementById('portfolioTimeframe').addEventListener('change', loadPortfolioChart);
     document.getElementById('pnlTimeframe').addEventListener('change', loadPnLChart);
-    
+
     // Initialize WebSocket
     if (typeof initWebSocket === 'function') {
         initWebSocket();
     }
-    
+
     // ✅ DON'T call loadCharts() repeatedly - only load once!
     // ✅ Auto-refresh positions and orders every 5 seconds
     // Positions/Orders refresh every 5 seconds
@@ -1007,7 +1008,12 @@ document.addEventListener('DOMContentLoaded', function() {
         await loadPortfolioChart();
         await loadPnLChart();
     }, 900000);  // 15 minutes = 900,000 ms
-    
+
+    // Insights refresh every 30 seconds
+    setInterval(async () => {
+        await loadInsights();
+    }, 30000);  // 30 seconds
+
     // ✅ DON'T refresh summary stats - they should only be loaded once
 });
 </script>
