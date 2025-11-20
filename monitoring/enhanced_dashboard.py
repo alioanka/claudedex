@@ -1124,6 +1124,8 @@ class DashboardEndpoints:
                 return web.json_response({'success': True, 'data': {
                     'equity_curve': [],
                     'cumulative_pnl': [],
+                    'portfolio_history': [],  # For dashboard.html compatibility
+                    'pnl_history': [],  # For dashboard.html compatibility
                     'strategy_performance': [],
                     'win_loss': {'wins': 0, 'losses': 0},
                     'monthly': [],
@@ -1148,6 +1150,7 @@ class DashboardEndpoints:
                 now = pd.Timestamp.utcnow()
                 # Use a mapping for timedelta
                 time_delta_map = {
+                    '1h': pd.Timedelta(hours=1),
                     '24h': pd.Timedelta(days=1),
                     '7d': pd.Timedelta(days=7),
                     '30d': pd.Timedelta(days=30),
@@ -1166,7 +1169,10 @@ class DashboardEndpoints:
             # The equity curve uses the filtered full history, preserving the correct starting equity
             equity_curve_data = [{'timestamp': ts.isoformat(), 'value': val if not np.isnan(val) else 0.0} for ts, val in df_full_filtered[['exit_timestamp', 'equity']].values] if not df_full_filtered.empty else []
             cumulative_pnl_data = [{'timestamp': ts.isoformat(), 'cumulative_pnl': val if not np.isnan(val) else 0.0} for ts, val in df_full_filtered[['exit_timestamp', 'cumulative_pnl']].values] if not df_full_filtered.empty else []
-            
+
+            # Generate individual P&L history for bar chart (not cumulative)
+            pnl_history_data = [{'timestamp': ts.isoformat(), 'value': float(val) if not np.isnan(val) else 0.0} for ts, val in df_full_filtered[['exit_timestamp', 'profit_loss']].values] if not df_full_filtered.empty else []
+
             # --- FIX ENDS HERE ---
 
             # Strategy Performance
@@ -1189,6 +1195,8 @@ class DashboardEndpoints:
                 'data': self._serialize_decimals({
                     'equity_curve': equity_curve_data,
                     'cumulative_pnl': cumulative_pnl_data,
+                    'portfolio_history': equity_curve_data,  # For dashboard.html compatibility
+                    'pnl_history': pnl_history_data,  # Individual P&L values for bar chart
                     'strategy_performance': strategy_performance.to_dict('records'),
                     'win_loss': win_loss_distribution,
                     'monthly': monthly_performance.to_dict('records'),
