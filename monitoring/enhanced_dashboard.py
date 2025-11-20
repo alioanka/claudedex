@@ -1857,11 +1857,21 @@ class DashboardEndpoints:
         """Export report in various formats"""
         try:
             format_type = request.match_info['format']  # csv, excel, pdf, json
-            
-            # Get report data
-            period = request.query.get('period', 'daily')
-            report = await self._generate_report(period, None, None, ['all'])
-            
+
+            # Get query parameters for custom date range
+            period = request.query.get('period', 'custom')
+            start_date = request.query.get('start_date')
+            end_date = request.query.get('end_date')
+            metrics = request.query.get('metrics', 'all')
+
+            # If no custom dates provided, use period-based report
+            if not start_date or not end_date:
+                period = request.query.get('period', 'daily')
+                report = await self._generate_report(period, None, None, ['all'])
+            else:
+                # Use custom date range
+                report = await self._generate_report('custom', start_date, end_date, ['all'])
+
             if format_type == 'csv':
                 return await self._export_csv(report)
             elif format_type == 'excel':
@@ -1876,7 +1886,7 @@ class DashboardEndpoints:
                     'error': 'Invalid format'
                 }, status=400)
         except Exception as e:
-            logger.error(f"Error exporting report: {e}")
+            logger.error(f"Error exporting report: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_custom_report(self, request):
@@ -2355,26 +2365,60 @@ class DashboardEndpoints:
 
         # Process trades to extract metadata fields and calculate ROI
         trades_list = []
-        for trade in closed_trades:
+        for idx, trade in enumerate(closed_trades):
             trade_dict = dict(trade)
 
-            # Extract metadata
+            # Extract and parse metadata (JSONB column)
             metadata = trade_dict.get('metadata', {})
             if isinstance(metadata, str):
                 try:
                     metadata = json.loads(metadata)
-                except:
+                except Exception as e:
+                    logger.warning(f"Failed to parse metadata for trade {trade_dict.get('id')}: {e}")
                     metadata = {}
 
-            # Extract and add metadata fields
-            trade_dict['token_symbol'] = metadata.get('token_symbol', metadata.get('token', 'N/A'))
-            trade_dict['exit_reason'] = metadata.get('exit_reason', metadata.get('reason', 'N/A'))
-            trade_dict['strategy'] = metadata.get('strategy', 'N/A')
+            # Debug: Log first trade to see structure
+            if idx == 0:
+                logger.info(f"Sample trade structure - Available fields: {list(trade_dict.keys())}")
+                logger.info(f"Sample metadata structure: {metadata}")
+
+            # Extract token_symbol with multiple fallbacks
+            token_symbol = (
+                metadata.get('token_symbol') or
+                metadata.get('token') or
+                trade_dict.get('token_symbol') or
+                trade_dict.get('token') or
+                trade_dict.get('token_address', 'Unknown')[:10]  # Use first 10 chars of address if nothing else
+            )
+            trade_dict['token_symbol'] = token_symbol
+
+            # Extract exit_reason with multiple fallbacks
+            exit_reason = (
+                metadata.get('exit_reason') or
+                metadata.get('reason') or
+                trade_dict.get('exit_reason') or
+                'Manual'  # Default if not specified
+            )
+            trade_dict['exit_reason'] = exit_reason
+
+            # Extract strategy with fallbacks
+            strategy = metadata.get('strategy', 'N/A')
+            if isinstance(strategy, dict):
+                strategy = strategy.get('name', 'N/A')
+            trade_dict['strategy'] = strategy
+
+            # Extract chain
             trade_dict['chain'] = metadata.get('chain', trade_dict.get('chain', 'N/A'))
 
             # Calculate ROI percentage
             profit_loss = float(trade_dict.get('profit_loss', 0) or 0)
             entry_value = float(trade_dict.get('entry_value', 0) or 0)
+
+            # If entry_value is 0, try to calculate from entry_price * amount
+            if entry_value == 0:
+                entry_price = float(trade_dict.get('entry_price', 0) or 0)
+                amount = float(trade_dict.get('amount', 0) or 0)
+                entry_value = entry_price * amount
 
             if entry_value > 0:
                 roi = (profit_loss / entry_value) * 100
