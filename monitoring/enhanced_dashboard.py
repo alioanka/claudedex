@@ -374,51 +374,259 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
 
     async def api_get_insights(self, request):
-        """Generate performance tuning suggestions"""
+        """Generate comprehensive performance insights and actionable recommendations"""
         try:
             if not self.db:
                 return web.json_response({'error': 'Database connection not available.'}, status=503)
 
-            query = "SELECT * FROM trades WHERE status = 'closed';"
+            query = "SELECT * FROM trades WHERE status = 'closed' ORDER BY exit_timestamp DESC;"
             trades = await self.db.pool.fetch(query)
 
             insights = []
             if not trades:
+                insights.append({
+                    'type': 'info',
+                    'title': 'Getting Started',
+                    'message': 'No completed trades yet. Start trading to receive personalized performance insights and recommendations.'
+                })
                 return web.json_response({'success': True, 'data': insights})
 
             df = pd.DataFrame([dict(trade) for trade in trades])
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
+            df['entry_timestamp'] = pd.to_datetime(df['entry_timestamp'])
+            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
 
-            # Insight 1: Win rate analysis
-            win_rate = (df['profit_loss'] > 0).mean()
-            if win_rate < 0.5:
+            # Calculate key metrics
+            total_trades = len(df)
+            winning_trades = df[df['profit_loss'] > 0]
+            losing_trades = df[df['profit_loss'] <= 0]
+            win_rate = (df['profit_loss'] > 0).mean() * 100
+            total_pnl = df['profit_loss'].sum()
+
+            avg_win = winning_trades['profit_loss'].mean() if len(winning_trades) > 0 else 0
+            avg_loss = abs(losing_trades['profit_loss'].mean()) if len(losing_trades) > 0 else 0
+
+            # Insight 1: Overall Performance Summary
+            if total_pnl > 0:
                 insights.append({
-                    'type': 'suggestion',
-                    'title': 'Improve Win Rate',
-                    'message': 'Your win rate is below 50%. Consider tightening entry criteria or adjusting your stop-loss strategy to be more conservative.'
+                    'type': 'success',
+                    'title': '🎉 Profitable Trading',
+                    'message': f'Great job! Your total P&L is ${total_pnl:.2f} across {total_trades} trades. Keep maintaining your winning edge.'
+                })
+            elif total_pnl < 0:
+                insights.append({
+                    'type': 'warning',
+                    'title': '⚠️ Negative Performance',
+                    'message': f'Your account is down ${abs(total_pnl):.2f}. Review your strategy and consider reducing position sizes until performance improves.'
                 })
 
-            # Insight 2: Risk/Reward Ratio
-            avg_win = df[df['profit_loss'] > 0]['profit_loss'].mean()
-            avg_loss = abs(df[df['profit_loss'] <= 0]['profit_loss'].mean())
-            if not np.isnan(avg_win) and not np.isnan(avg_loss) and avg_loss > 0 and (avg_win / avg_loss < 1.5):
+            # Insight 2: Win Rate Analysis with Specific Actions
+            if win_rate < 40:
+                insights.append({
+                    'type': 'critical',
+                    'title': '🔴 Low Win Rate Alert',
+                    'message': f'Win rate at {win_rate:.1f}% is critically low. Action: Pause trading and backtest your strategy. Consider stricter entry filters and better technical indicators.'
+                })
+            elif win_rate < 50:
                 insights.append({
                     'type': 'suggestion',
-                    'title': 'Increase Risk/Reward Ratio',
-                    'message': 'Your average win is less than 1.5x your average loss. Aim for a higher risk/reward ratio by adjusting take-profit levels or seeking trades with better potential.'
+                    'title': '💡 Improve Win Rate',
+                    'message': f'Win rate: {win_rate:.1f}%. To improve: (1) Wait for stronger confirmation signals, (2) Avoid trading in choppy markets, (3) Use tighter stop losses.'
+                })
+            elif win_rate > 60:
+                insights.append({
+                    'type': 'success',
+                    'title': '✅ Excellent Win Rate',
+                    'message': f'Win rate: {win_rate:.1f}%. Outstanding! Consider gradually increasing position sizes to maximize profits while maintaining discipline.'
                 })
 
-            # Insight 3: Identify problematic strategies
-            df['strategy'] = df['metadata'].apply(self._get_strategy_from_metadata)
-            strategy_pnl = df.groupby('strategy')['profit_loss'].sum()
-            losing_strategies = strategy_pnl[strategy_pnl < 0]
-            if not losing_strategies.empty:
-                for strategy, pnl in losing_strategies.items():
+            # Insight 3: Risk/Reward Ratio with Actionable Steps
+            if avg_loss > 0:
+                risk_reward = avg_win / avg_loss
+                if risk_reward < 1.0:
+                    insights.append({
+                        'type': 'critical',
+                        'title': '🔴 Poor Risk/Reward',
+                        'message': f'R:R ratio {risk_reward:.2f}:1 is unsustainable. Action: Set take-profit at 2x your stop-loss distance. Let winners run longer.'
+                    })
+                elif risk_reward < 1.5:
+                    insights.append({
+                        'type': 'suggestion',
+                        'title': '📊 Optimize Risk/Reward',
+                        'message': f'R:R ratio {risk_reward:.2f}:1. Target minimum 2:1. Tip: Move stop-loss to breakeven after 1:1 gain, and let profits run to 2-3x targets.'
+                    })
+                elif risk_reward > 2.0:
+                    insights.append({
+                        'type': 'success',
+                        'title': '⭐ Strong Risk/Reward',
+                        'message': f'R:R ratio {risk_reward:.2f}:1. Excellent risk management! Maintain this discipline.'
+                    })
+
+            # Insight 4: Profit Factor
+            total_wins = winning_trades['profit_loss'].sum() if len(winning_trades) > 0 else 0
+            total_losses = abs(losing_trades['profit_loss'].sum()) if len(losing_trades) > 0 else 0
+            profit_factor = total_wins / total_losses if total_losses > 0 else 0
+
+            if profit_factor > 0:
+                if profit_factor < 1.0:
                     insights.append({
                         'type': 'warning',
-                        'title': f'Review Strategy: {strategy}',
-                        'message': f'The "{strategy}" strategy has a total P&L of {pnl:.2f}. It may require tuning or deactivation.'
+                        'title': '⚠️ Negative Profit Factor',
+                        'message': f'Profit factor {profit_factor:.2f} means you lose more than you win. Reduce trade frequency and be more selective with entries.'
                     })
+                elif profit_factor > 2.0:
+                    insights.append({
+                        'type': 'success',
+                        'title': '🏆 Excellent Profit Factor',
+                        'message': f'Profit factor {profit_factor:.2f}. You\'re making ${profit_factor:.1f} for every $1 lost. Keep it up!'
+                    })
+
+            # Insight 5: Consecutive Loss Streak Detection
+            df['is_loss'] = df['profit_loss'] <= 0
+            current_streak = 0
+            max_streak = 0
+            temp_streak = 0
+
+            for is_loss in df['is_loss'].values:
+                if is_loss:
+                    temp_streak += 1
+                    max_streak = max(max_streak, temp_streak)
+                else:
+                    temp_streak = 0
+
+            # Check current streak
+            for is_loss in df.head(10)['is_loss'].values:
+                if is_loss:
+                    current_streak += 1
+                else:
+                    break
+
+            if current_streak >= 3:
+                insights.append({
+                    'type': 'critical',
+                    'title': '🚨 Loss Streak Alert',
+                    'message': f'You have {current_streak} consecutive losses. STOP TRADING NOW. Take a break, review your strategy, and reduce position size by 50% when you return.'
+                })
+            elif max_streak >= 5:
+                insights.append({
+                    'type': 'warning',
+                    'title': '⚠️ Streak Risk',
+                    'message': f'Your longest loss streak was {max_streak} trades. Implement a rule: After 3 consecutive losses, reduce position size by 50% until you get 2 wins.'
+                })
+
+            # Insight 6: Strategy Performance Analysis
+            df['strategy'] = df['metadata'].apply(self._get_strategy_from_metadata)
+            strategy_stats = df.groupby('strategy').agg({
+                'profit_loss': ['sum', 'count', lambda x: (x > 0).mean() * 100]
+            }).round(2)
+            strategy_stats.columns = ['pnl', 'trades', 'win_rate']
+
+            best_strategy = strategy_stats.nlargest(1, 'pnl')
+            worst_strategy = strategy_stats.nsmallest(1, 'pnl')
+
+            if not best_strategy.empty and best_strategy['pnl'].values[0] > 0:
+                strat_name = best_strategy.index[0]
+                strat_pnl = best_strategy['pnl'].values[0]
+                strat_wr = best_strategy['win_rate'].values[0]
+                insights.append({
+                    'type': 'success',
+                    'title': f'⭐ Best Strategy: {strat_name}',
+                    'message': f'${strat_pnl:.2f} profit with {strat_wr:.1f}% win rate. Focus more capital on this strategy and analyze what makes it successful.'
+                })
+
+            if not worst_strategy.empty and worst_strategy['pnl'].values[0] < 0:
+                strat_name = worst_strategy.index[0]
+                strat_pnl = worst_strategy['pnl'].values[0]
+                strat_wr = worst_strategy['win_rate'].values[0]
+                insights.append({
+                    'type': 'warning',
+                    'title': f'❌ Underperforming: {strat_name}',
+                    'message': f'${strat_pnl:.2f} loss with {strat_wr:.1f}% win rate. Disable this strategy or reduce allocation to 10% of normal size for testing.'
+                })
+
+            # Insight 7: Chain/Network Performance
+            if 'chain' in df.columns:
+                chain_pnl = df.groupby('chain')['profit_loss'].agg(['sum', 'count']).round(2)
+                chain_pnl.columns = ['pnl', 'trades']
+
+                best_chain = chain_pnl.nlargest(1, 'pnl')
+                if not best_chain.empty and best_chain['pnl'].values[0] > 0:
+                    chain_name = best_chain.index[0].upper()
+                    chain_profit = best_chain['pnl'].values[0]
+                    insights.append({
+                        'type': 'info',
+                        'title': f'🔗 Best Network: {chain_name}',
+                        'message': f'${chain_profit:.2f} profit on {chain_name}. Consider allocating more trading capital to this network.'
+                    })
+
+            # Insight 8: Trade Frequency & Overtrading
+            recent_24h = df[df['exit_timestamp'] > (pd.Timestamp.utcnow() - pd.Timedelta(days=1))]
+            if len(recent_24h) > 20:
+                insights.append({
+                    'type': 'warning',
+                    'title': '⚠️ Overtrading Detected',
+                    'message': f'{len(recent_24h)} trades in 24h. Quality > Quantity. Reduce trade frequency and wait for higher-probability setups.'
+                })
+
+            # Insight 9: Average Hold Time
+            df['hold_time'] = (df['exit_timestamp'] - df['entry_timestamp']).dt.total_seconds() / 60  # minutes
+            avg_hold_time = df['hold_time'].mean()
+
+            if avg_hold_time < 5:
+                insights.append({
+                    'type': 'suggestion',
+                    'title': '⏱️ Very Short Holds',
+                    'message': f'Average hold time: {avg_hold_time:.1f} minutes. You might be exiting too quickly. Give trades more time to develop (aim for 15-30 min).'
+                })
+
+            # Insight 10: Recent Performance Trend
+            recent_10 = df.head(10)['profit_loss'].sum()
+            if recent_10 < 0 and total_pnl > 0:
+                insights.append({
+                    'type': 'warning',
+                    'title': '📉 Recent Downturn',
+                    'message': f'Last 10 trades: ${recent_10:.2f}. Your edge may be deteriorating. Review recent trades and consider taking a break.'
+                })
+            elif recent_10 > 0 and len(df) > 10:
+                older_pnl = df.iloc[10:]['profit_loss'].sum()
+                if recent_10 > older_pnl * 0.5:  # Recent performance much better
+                    insights.append({
+                        'type': 'success',
+                        'title': '📈 Improving Performance',
+                        'message': 'Your recent trades are performing better! Whatever changes you made are working. Keep it up!'
+                    })
+
+            # Insight 11: Position Sizing Recommendation
+            if avg_loss > 0:
+                max_recommended_loss = 2.0  # $2 max loss per trade
+                if avg_loss > max_recommended_loss:
+                    reduction = ((avg_loss - max_recommended_loss) / avg_loss) * 100
+                    insights.append({
+                        'type': 'suggestion',
+                        'title': '💰 Reduce Position Size',
+                        'message': f'Average loss: ${avg_loss:.2f}. Reduce position size by {reduction:.0f}% to limit losses to $2 per trade maximum.'
+                    })
+
+            # Insight 12: Best Time to Trade (if enough data)
+            if len(df) > 50:
+                df['hour'] = df['entry_timestamp'].dt.hour
+                hourly_pnl = df.groupby('hour')['profit_loss'].sum().sort_values(ascending=False)
+                best_hours = hourly_pnl.head(3).index.tolist()
+                worst_hours = hourly_pnl.tail(3).index.tolist()
+
+                insights.append({
+                    'type': 'info',
+                    'title': '🕐 Optimal Trading Hours',
+                    'message': f'Most profitable hours: {", ".join(map(str, best_hours))}:00 UTC. Avoid hours: {", ".join(map(str, worst_hours))}:00 UTC.'
+                })
+
+            # Always add at least one positive insight if performance is decent
+            if not any(i['type'] == 'success' for i in insights) and win_rate >= 45:
+                insights.append({
+                    'type': 'success',
+                    'title': '👍 Solid Foundation',
+                    'message': 'You have a solid trading foundation. Focus on consistency, proper risk management, and continuous improvement.'
+                })
 
             return web.json_response({'success': True, 'data': self._serialize_decimals(insights)})
 
