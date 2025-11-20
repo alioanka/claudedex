@@ -17,7 +17,7 @@ from solders.pubkey import Pubkey  # For Solana address validation
 from utils.helpers import retry_async, rate_limit, is_valid_address, format_token_amount
 from utils.helpers import retry_async
 from utils.constants import (
-    HONEYPOT_CHECKS, HONEYPOT_THRESHOLDS, Chain, CHAIN_RPC_URLS,
+    HONEYPOT_CHECKS, HONEYPOT_THRESHOLDS, Chain,
     BLACKLISTED_TOKENS, BLACKLISTED_CONTRACTS, BLACKLISTED_WALLETS
 )
 
@@ -663,17 +663,12 @@ class HoneypotChecker:
     async def analyze_contract_code(self, address: str, chain: str) -> Dict:
         """Analyze smart contract code for honeypot patterns"""
         try:
-            chain_id = self._get_chain_id(chain)
-            if chain_id not in self.web3_connections:
-                logger.warning(f"Chain {chain_id} not in web3_connections")
+            # ✅ Lazy-load connection
+            w3 = await self._get_web3_for_chain(chain)
+            
+            if not w3 or not w3.is_connected():
+                logger.warning(f"Could not get Web3 connection for {chain}")
                 return {"error": "Chain not supported", "skip": True}
-            
-            w3 = self.web3_connections[chain_id]
-            
-            # ✅ ADD THIS CHECK:
-            if not w3.is_connected():
-                logger.error(f"Web3 not connected for chain {chain_id}")
-                return {"error": "Web3 not connected", "skip": True}
             
             # ... rest of method
             

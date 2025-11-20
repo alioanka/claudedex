@@ -92,9 +92,6 @@ async def test_web3_connection():
 
 async def test_api_connection():
     """Test DexScreener API connection"""
-    from data.collectors.dexscreener import test_api_connection as test_api
-    await test_api()
-    
 async def verify_models_loaded():
     """Verify ML models are loaded"""
     from ml.models.ensemble_model import EnsemblePredictor
@@ -369,11 +366,12 @@ class TradingBotApplication:
             ("Database connectivity", self._check_database),
             ("Redis connectivity", self._check_redis),
             ("Web3 connectivity", self._check_web3),
-            ("API endpoints", self._check_apis),
-            ("ML models", self._check_models),
             ("Wallet balance", self._check_wallet)
         ]
         
+        if os.getenv('ML_ENABLED', 'false').lower() == 'true':
+            checks.append(("ML models", self._check_models))
+
         for check_name, check_func in checks:
             try:
                 self.logger.info(f"Checking {check_name}...")

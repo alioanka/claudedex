@@ -22,6 +22,7 @@ from pydantic.types import SecretStr
 from jsonschema import validate, ValidationError as JsonValidationError
 
 from security.encryption import EncryptionManager
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -341,6 +342,7 @@ class ConfigManager:
         self._reload_task = None
 
         self._raw_config = {}
+        load_dotenv()  # Load .env file
         self._env_config = self._load_environment_config()
         self._raw_config.update(self._env_config)
     

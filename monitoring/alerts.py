@@ -845,7 +845,7 @@ class AlertsSystem:
                         return True
                     else:
                         error_text = await response.text()
-                        logger.error(f"Telegram API error: {error_text}")
+                        logger.error(f"Telegram API error: {response.status} - {error_text}")
                         return False
                         
         except aiohttp.ClientError as e:

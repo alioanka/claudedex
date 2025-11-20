@@ -4,14 +4,17 @@ Real-time DEX data collection and monitoring
 """
 
 import asyncio
-import aiohttp
+import httpx
 from typing import Dict, List, Optional, Any, AsyncGenerator
 from datetime import datetime, timedelta
 import json
 from dataclasses import dataclass, field
+import logging
 import time
 from collections import deque
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class TokenPair:
@@ -83,8 +86,8 @@ class DexScreenerCollector:
         self.max_age_hours = config.get('max_age_hours', 24)
         self.chains = config.get('chains', ['ethereum', 'bsc', 'polygon', 'arbitrum', 'base', 'solana'])
         
-        # Session
-        self.session: Optional[aiohttp.ClientSession] = None
+        # httpx client
+        self.client: Optional[httpx.AsyncClient] = None
         
         # Statistics
         self.stats = {
@@ -132,10 +135,10 @@ class DexScreenerCollector:
 
     async def initialize(self):
         """Initialize the collector"""
-        if not self.session:
-            timeout = aiohttp.ClientTimeout(total=30)
-            self.session = aiohttp.ClientSession(timeout=timeout)
-            
+        if not self.client:
+            self.client = httpx.AsyncClient(timeout=20.0, limits=httpx.Limits(max_connections=10))
+            logger.debug("DexScreener client initialized")
+
     async def close(self):
         """Close the collector"""
         if self.session and not self.session.closed:
@@ -181,29 +184,21 @@ class DexScreenerCollector:
             
         try:
             self.stats['total_requests'] += 1
-            
-            async with self.session.get(url, params=params, headers=headers) as response:
-                if response.status == 200:
-                    self.stats['successful_requests'] += 1
-                    data = await response.json()
-                    return data
-                else:
-                    self.stats['failed_requests'] += 1
-                    print(f"API request failed: {response.status} - URL: {url}")
-                    return None
+            response = await self.client.get(url, params=params, headers=headers)
+
+            if response.status_code == 200:
+                self.stats['successful_requests'] += 1
+                return response.json()
+            else:
+                self.stats['failed_requests'] += 1
+                print(f"API request failed: {response.status_code} - URL: {url}")
+                logger.debug(f"[DexScreener] request failed {response.status_code} url={url}")
+                return None
                     
-        except asyncio.TimeoutError:
+        except httpx.TimeoutException:
             self.stats['failed_requests'] += 1
             print("Request timeout")
-            return None
-        except Exception as e:
-            self.stats['failed_requests'] += 1
-            print(f"Request error: {e}")
-            return None
-                    
-        except asyncio.TimeoutError:
-            self.stats['failed_requests'] += 1
-            print("Request timeout")
+            logger.debug("[DexScreener] request timeout")
             return None
         except Exception as e:
             self.stats['failed_requests'] += 1
@@ -232,8 +227,12 @@ class DexScreenerCollector:
         # ✅ CRITICAL: Normalize chain name for DexScreener
         chain = self._normalize_chain(chain)
         
-        new_pairs = []
+        new_pairs: List[Dict] = []
         seen_addresses = set()
+        start = time.monotonic()
+        # Hard overall time budget for this call (must be < engine wait_for)
+        MAX_SECS = 25.0
+        logger.info(f"[DexScreener] get_new_pairs start chain={chain} limit={limit}")
         
         # Check cache
         cache_key = f"new_pairs_{chain}"
@@ -252,6 +251,7 @@ class DexScreenerCollector:
                 
                 if boosted_data:
                     print(f"  Found {len(boosted_data) if isinstance(boosted_data, list) else 1} boosted tokens")
+                    logger.debug(f"[DexScreener] boosted tokens fetched")
                     
                     tokens_list = boosted_data if isinstance(boosted_data, list) else [boosted_data]
                     
@@ -335,9 +335,16 @@ class DexScreenerCollector:
                             if len(new_pairs) >= limit:
                                 break
                 except Exception as e:
-                    print(f"  Token profiles strategy failed: {e}")
+                    logger.warning(f"[DexScreener] profiles strategy failed: {e}")
             
             print(f"  Strategy 2 (Profiles): {len(new_pairs)} pairs")
+
+            logger.debug(f"[DexScreener] profiles result so far: {len(new_pairs)}")
+
+            # ✅ Check overall time budget frequently
+            if time.monotonic() - start > MAX_SECS:
+                logger.warning("[DexScreener] time budget exceeded; returning partial results")
+                return new_pairs
             
             # ✅ STRATEGY 3: Search common quote tokens (CORRECT endpoint)
             # ============================================

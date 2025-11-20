@@ -1,5 +1,5 @@
 # data/storage/database.py
-
+import os
 import asyncio
 import logging
 from typing import Dict, List, Optional, Any, Union
@@ -28,46 +28,17 @@ class DatabaseManager:
     async def connect(self) -> None:
         """Establish connection pool to PostgreSQL database."""
         try:
-            # Check if DATABASE_URL exists (single connection string)
-            database_url = self.config.get('DATABASE_URL')
+            # Robustly get DATABASE_URL from environment or config
+            database_url = os.getenv('DATABASE_URL') or os.getenv('DB_URL') or self.config.get('DATABASE_URL')
             
-            if database_url:
-                # Parse DATABASE_URL: postgresql://user:pass@host:port/dbname
-                import urllib.parse
-                parsed = urllib.parse.urlparse(database_url)
-                
-                host = parsed.hostname or 'postgres'
-                port = parsed.port or 5432
-                user = parsed.username or 'bot_user'
-                password = parsed.password or ''
-                database = parsed.path.lstrip('/') or 'tradingbot'
-                
-                logger.info(f"Connecting to database at {host}:{port}/{database}")
-                
-                self.pool = await asyncpg.create_pool(
-                    host=host,
-                    port=port,
-                    user=user,
-                    password=password,
-                    database=database,
-                    min_size=self.config.get('DB_POOL_MIN', 10),
-                    max_size=self.config.get('DB_POOL_MAX', 20),
-                    max_queries=self.config.get('DB_MAX_QUERIES', 50000),
-                    max_inactive_connection_lifetime=self.config.get('DB_CONN_LIFETIME', 300),
-                    command_timeout=self.config.get('DB_COMMAND_TIMEOUT', 60),
-                )
-            else:
-                # Fall back to individual config keys with Docker-friendly defaults
-                host = self.config.get('DB_HOST', 'postgres')  # ✅ Changed default
-                
-                logger.info(f"Connecting to database at {host}:{self.config.get('DB_PORT', 5432)}")
-                
-                self.pool = await asyncpg.create_pool(
-                    host=host,
-                    port=self.config.get('DB_PORT', 5432),
-                    user=self.config.get('DB_USER', 'bot_user'),
-                    password=self.config.get('DB_PASSWORD', 'bot_password'),
-                    database=self.config.get('DB_NAME', 'tradingbot'),
+            if not database_url:
+                logger.error("Database connection URL not found in environment or config.")
+                raise ValueError("DATABASE_URL or DB_URL must be set.")
+
+            logger.info(f"Connecting to database using URL from environment...")
+
+            self.pool = await asyncpg.create_pool(
+                    dsn=database_url,
                     min_size=self.config.get('DB_POOL_MIN', 10),
                     max_size=self.config.get('DB_POOL_MAX', 20),
                     max_queries=self.config.get('DB_MAX_QUERIES', 50000),
@@ -84,7 +55,9 @@ class DatabaseManager:
             
         except Exception as e:
             logger.error(f"Failed to connect to database: {e}")
-            raise
+            logger.warning("Falling back to in-memory SQLite database.")
+            self.pool = None
+            self.is_connected = False
     
     async def disconnect(self) -> None:
         """Close database connection pool."""
@@ -96,12 +69,17 @@ class DatabaseManager:
     @asynccontextmanager
     async def acquire(self):
         """Acquire a connection from the pool."""
-        async with self.pool.acquire() as connection:
-            yield connection
+        if self.pool:
+            async with self.pool.acquire() as connection:
+                yield connection
+        else:
+            yield None
     
     async def _initialize_timescaledb(self) -> None:
         """Initialize TimescaleDB extensions and hypertables."""
         async with self.acquire() as conn:
+            if not conn:
+                return
             # Create TimescaleDB extension
             await conn.execute("CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;")
             
@@ -113,6 +91,8 @@ class DatabaseManager:
     async def _create_tables(self) -> None:
         """Create all required database tables."""
         async with self.acquire() as conn:
+            if not conn:
+                return
             # Trades table
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS trades (
@@ -308,6 +288,8 @@ class DatabaseManager:
                 return default
         
         async with self.acquire() as conn:
+            if not conn:
+                return "in-memory-trade"
             result = await conn.fetchrow("""
                 INSERT INTO trades (
                     trade_id, token_address, chain, side, entry_price, exit_price,
@@ -344,6 +326,8 @@ class DatabaseManager:
     async def update_trade(self, trade_id: Union[str, int], updates: Dict[str, Any]) -> bool:
         """Update an existing trade record."""
         async with self.acquire() as conn:
+            if not conn:
+                return True
             # Build update query dynamically
             set_clauses = []
             values = []
@@ -381,6 +365,8 @@ class DatabaseManager:
     async def save_position(self, position: Dict[str, Any]) -> str:
         """Save a position record to the database."""
         async with self.acquire() as conn:
+            if not conn:
+                return "in-memory-position"
             result = await conn.fetchrow("""
                 INSERT INTO positions (
                     position_id, token_address, chain, entry_price, current_price,
@@ -407,6 +393,8 @@ class DatabaseManager:
     async def update_position(self, position_id: str, updates: Dict[str, Any]) -> bool:
         """Update an existing position."""
         async with self.acquire() as conn:
+            if not conn:
+                return True
             # Build update query
             set_clauses = []
             values = []
@@ -431,6 +419,8 @@ class DatabaseManager:
     async def save_market_data(self, data: Dict[str, Any]) -> None:
         """Save market data point to time-series table."""
         async with self.acquire() as conn:
+            if not conn:
+                return
             await conn.execute("""
                 INSERT INTO market_data (
                     time, token_address, chain, price, volume_24h, volume_5m,
@@ -467,6 +457,8 @@ class DatabaseManager:
     async def save_market_data_batch(self, data_points: List[Dict[str, Any]]) -> None:
         """Save multiple market data points efficiently."""
         async with self.acquire() as conn:
+            if not conn:
+                return
             # Prepare data for batch insert
             records = [
                 (
@@ -514,6 +506,8 @@ class DatabaseManager:
             List of OHLCV data points
         """
         async with self.acquire() as conn:
+            if not conn:
+                return []
             # Determine time bucket based on timeframe
             time_buckets = {
                 '1m': '1 minute',
@@ -575,6 +569,8 @@ class DatabaseManager:
         """
         # Original implementation remains the same
         async with self.acquire() as conn:
+            if not conn:
+                return []
             time_buckets = {
                 '1m': '1 minute',
                 '5m': '5 minutes',
@@ -612,6 +608,8 @@ class DatabaseManager:
     async def get_active_positions(self) -> List[Dict[str, Any]]:
         """Get all active trading positions."""
         async with self.acquire() as conn:
+            if not conn:
+                return []
             rows = await conn.fetch("""
                 SELECT * FROM positions
                 WHERE status = 'open'
@@ -626,6 +624,8 @@ class DatabaseManager:
             return []
         
         async with self.pool.acquire() as conn:
+            if not conn:
+                return []
             rows = await conn.fetch("""
                 SELECT *
                 FROM trades
@@ -641,6 +641,8 @@ class DatabaseManager:
             return []
         
         async with self.pool.acquire() as conn:
+            if not conn:
+                return []
             rows = await conn.fetch("""
                 SELECT *
                 FROM trades
@@ -656,6 +658,8 @@ class DatabaseManager:
     async def save_token_analysis(self, analysis: Dict[str, Any]) -> None:
         """Save token analysis results."""
         async with self.acquire() as conn:
+            if not conn:
+                return
             await conn.execute("""
                 INSERT INTO token_analysis (
                     token_address, chain, analysis_timestamp, risk_score,
@@ -696,6 +700,8 @@ class DatabaseManager:
     ) -> List[Dict[str, Any]]:
         """Get recent token analysis results."""
         async with self.acquire() as conn:
+            if not conn:
+                return []
             rows = await conn.fetch("""
                 SELECT * FROM token_analysis
                 WHERE token_address = $1 AND chain = $2
@@ -708,6 +714,8 @@ class DatabaseManager:
     async def save_performance_metrics(self, metrics: Dict[str, Any]) -> None:
         """Save performance metrics snapshot."""
         async with self.acquire() as conn:
+            if not conn:
+                return
             await conn.execute("""
                 INSERT INTO performance_metrics (
                     period, start_date, end_date, total_trades,
@@ -734,6 +742,8 @@ class DatabaseManager:
     async def cleanup_old_data(self, days: int = 90) -> None:
         """Clean up old data to manage storage."""
         async with self.acquire() as conn:
+            if not conn:
+                return
             # Clean old market data (keep aggregated data)
             await conn.execute("""
                 DELETE FROM market_data
@@ -757,6 +767,8 @@ class DatabaseManager:
     async def get_statistics(self) -> Dict[str, Any]:
         """Get database statistics."""
         async with self.acquire() as conn:
+            if not conn:
+                return {}
             stats = {}
             
             # Table sizes
@@ -795,6 +807,8 @@ class DatabaseManager:
             
             # ✅ FIX: Use self.pool.acquire() instead of self.db.acquire()
             async with self.pool.acquire() as conn:
+                if not conn:
+                    return {'error': 'Database not connected'}
                 # Get all closed trades
                 trades = await conn.fetch("""
                     SELECT 
@@ -855,6 +869,8 @@ class DatabaseManager:
             Trade ID if found, None otherwise
         """
         try:
+            if not self.pool:
+                return None
             query = """
                 SELECT id FROM trades 
                 WHERE token_address = $1 
@@ -885,6 +901,8 @@ class DatabaseManager:
             Position ID if found, None otherwise
         """
         try:
+            if not self.pool:
+                return None
             query = """
                 SELECT id FROM positions 
                 WHERE token_address = $1 

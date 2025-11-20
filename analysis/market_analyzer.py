@@ -9,9 +9,24 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 from scipy import stats
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
 import aiohttp
+
+# Conditionally import scikit-learn
+try:
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.decomposition import PCA
+    ML_LIBS_AVAILABLE = True
+except ImportError:
+    ML_LIBS_AVAILABLE = False
+    # Mock classes if scikit-learn is not installed
+    class StandardScaler:
+        def fit_transform(self, data):
+            return data
+    class PCA:
+        def __init__(self, n_components=None):
+            pass
+        def fit_transform(self, data):
+            return data
 
 from core.event_bus import EventBus
 from data.storage.database import DatabaseManager

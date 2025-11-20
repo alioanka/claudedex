@@ -192,16 +192,17 @@ class RiskManager:
         Initialize risk manager
         
         Args:
-            config: Risk management configuration
+            config_manager: The configuration manager instance
         """
-        self.config = config
+        self.config_manager = config_manager
+        self.config = config_manager.get_all_configs()  # Get the raw config dict
         self.portfolio_manager = portfolio_manager
         self.chain_collector = ChainDataCollector(config.get('web3', {}))
         self.honeypot_checker = HoneypotChecker(config_manager, chain_rpc_urls)
         self.wallet_manager = WalletSecurityManager(config.get('security', {}))
         
         # Risk thresholds
-        self.thresholds = config.get('risk_levels', {
+        self.thresholds = self.config.get('risk_levels', {
             'ultra_safe': {'max_risk': 0.2, 'position_multiplier': 1.5},
             'safe': {'max_risk': 0.4, 'position_multiplier': 1.0},
             'moderate': {'max_risk': 0.6, 'position_multiplier': 0.7},
@@ -210,10 +211,10 @@ class RiskManager:
         })
         
         # Position sizing parameters
-        self.max_position_size_percent = config.get('max_position_size_pct', 10)
-        self.max_position_size_usd = config.get('max_position_size_usd', 10.0)
-        self.max_portfolio_risk_percent = config.get('max_portfolio_risk_percent', 20)
-        self.kelly_fraction = config.get('kelly_fraction', 0.25)  # Conservative Kelly
+        self.max_position_size_percent = self.config.get('max_position_size_pct', 10)
+        self.max_position_size_usd = self.config.get('max_position_size_usd', 10.0)
+        self.max_portfolio_risk_percent = self.config.get('max_portfolio_risk_percent', 20)
+        self.kelly_fraction = self.config.get('kelly_fraction', 0.25)  # Conservative Kelly
         
         # Cache for risk assessments
         self.risk_cache: Dict[str, RiskScore] = {}
@@ -237,7 +238,7 @@ class RiskManager:
         self.positions = {}
         self.consecutive_losses = 0
         self.returns_history = []
-        self.max_positions = self.config.get('max_positions', 10)
+        self.max_positions = self.config.get('max_positions', 40)
 
                 # Circuit breaker tracking
         self.error_count = 0

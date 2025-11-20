@@ -16,7 +16,7 @@ import aiohttp
 from loguru import logger
 
 from utils.helpers import retry_async, measure_time
-from utils.constants import CHAIN_RPC_URLS, DEX_ROUTERS
+from utils.constants import DEX_ROUTERS
 
 
 class VolumePattern(Enum):

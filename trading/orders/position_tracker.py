@@ -235,7 +235,7 @@ class PositionTracker:
         """Default configuration"""
         return {
             # Position limits
-            "max_positions": 10,
+            "max_positions": 40,
             "max_position_size": 0.1,  # 10% of portfolio
             "max_correlated_positions": 3,
             "correlation_threshold": 0.7,

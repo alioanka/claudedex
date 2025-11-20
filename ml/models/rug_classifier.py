@@ -10,17 +10,22 @@ from pathlib import Path
 import pickle
 import joblib
 
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.neural_network import MLPClassifier
-from sklearn.preprocessing import StandardScaler, RobustScaler
-from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
-from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score,
-    roc_auc_score, confusion_matrix, classification_report
-)
-from sklearn.calibration import CalibratedClassifierCV
-import xgboost as xgb
-import lightgbm as lgb
+# Conditionally import ML libraries
+try:
+    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+    from sklearn.neural_network import MLPClassifier
+    from sklearn.preprocessing import StandardScaler, RobustScaler
+    from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
+    from sklearn.metrics import (
+        accuracy_score, precision_score, recall_score, f1_score,
+        roc_auc_score, confusion_matrix, classification_report
+    )
+    from sklearn.calibration import CalibratedClassifierCV
+    import xgboost as xgb
+    import lightgbm as lgb
+    ML_LIBS_AVAILABLE = True
+except ImportError:
+    ML_LIBS_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +38,7 @@ class RugClassifier:
     
     def __init__(self, config: Dict[str, Any]):
         self.config = config
+        self.ml_enabled = self.config.get('ml_enabled', False) and ML_LIBS_AVAILABLE
         self.models = {}
         self.scalers = {}
         self.feature_importance = {}
@@ -103,6 +109,8 @@ class RugClassifier:
     
     def _initialize_models(self):
         """Initialize ensemble of classifiers."""
+        if not self.ml_enabled:
+            return
         
         # XGBoost
         self.models['xgboost'] = xgb.XGBClassifier(
@@ -265,6 +273,9 @@ class RugClassifier:
         Returns:
             Dictionary with training results
         """
+        if not self.ml_enabled:
+            logger.warning("ML is disabled. Skipping rug classifier training.")
+            return {}
         # Use internal default for validation_split
         validation_split = 0.2  # Make this an internal parameter
         
@@ -348,6 +359,8 @@ class RugClassifier:
         Predict rug probability for a token.
         Returns probability and individual model predictions.
         """
+        if not self.ml_enabled:
+            return 0.99, {}  # Return high probability if ML is disabled
         # Extract features
         features = self.extract_features(token_features)
         

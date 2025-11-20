@@ -9,9 +9,26 @@ from typing import Dict, List, Any, Optional, Tuple
 from decimal import Decimal
 from datetime import datetime, timedelta
 from scipy import stats
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import talib
 from loguru import logger
+
+# Conditionally import scikit-learn
+try:
+    from sklearn.preprocessing import StandardScaler, MinMaxScaler
+    ML_LIBS_AVAILABLE = True
+except ImportError:
+    ML_LIBS_AVAILABLE = False
+    # Mock scalers if scikit-learn is not installed
+    class StandardScaler:
+        def fit_transform(self, data):
+            return data
+        def transform(self, data):
+            return data
+    class MinMaxScaler:
+        def fit_transform(self, data):
+            return data
+        def transform(self, data):
+            return data
 
 
 class FeatureExtractor:

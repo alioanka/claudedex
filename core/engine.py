@@ -3,6 +3,8 @@ Core Trading Engine - Orchestrates all bot operations
 """
 
 import asyncio
+import gc
+import heapq
 import uuid
 import logging  # ADD THIS LINE
 from typing import Dict, List, Optional, Any, Tuple
@@ -28,10 +30,6 @@ from data.collectors.social_data import SocialDataCollector
 from data.collectors.mempool_monitor import MempoolMonitor
 from data.collectors.whale_tracker import WhaleTracker
 from data.collectors.honeypot_checker import HoneypotChecker
-
-from ml.models.ensemble_model import EnsemblePredictor
-from ml.optimization.hyperparameter import HyperparameterOptimizer
-from ml.optimization.reinforcement import RLOptimizer
 
 from trading.executors.base_executor import TradeExecutor
 from trading.strategies import StrategyManager
@@ -96,6 +94,9 @@ class TradingOpportunity:
             min(self.expected_return / 100, 1) * 0.2
         )
 
+    def __lt__(self, other):
+        return self.score < other.score
+
 @dataclass
 class ClosedPositionRecord:
     """Track recently closed positions for cooldown"""
@@ -104,7 +105,7 @@ class ClosedPositionRecord:
     reason: str
     pnl: float
     
-    def is_cooled_down(self, cooldown_minutes: int = 60) -> bool:
+    def is_cooled_down(self, cooldown_minutes: int = 30) -> bool:
         """Check if cooldown period has elapsed"""
         elapsed = (datetime.now() - self.closed_at).total_seconds() / 60
         return elapsed >= cooldown_minutes
@@ -130,7 +131,7 @@ class TradingBotEngine:
         
         # Core components
         self.event_bus = EventBus()
-        self.portfolio_manager = PortfolioManager(config.get('portfolio', {}))
+        self.portfolio_manager = PortfolioManager(self.config.get('portfolio', {}))
         self.risk_manager = RiskManager(
             config['risk_management'], 
             portfolio_manager=self.portfolio_manager,
@@ -138,48 +139,43 @@ class TradingBotEngine:
             chain_rpc_urls=self.chain_rpc_urls
         )
         self.pattern_analyzer = PatternAnalyzer()
-        self.decision_maker = DecisionMaker(config)
+        self.decision_maker = DecisionMaker(self.config)
 
         # Data collectors
         self.dex_collector = DexScreenerCollector(
-            config.get('data_sources', {}).get('dexscreener', {})
+            self.config.get('data_sources', {}).get('dexscreener', {})
         )
-        self.chain_collector = ChainDataCollector(config['web3'])
-        self.social_collector = SocialDataCollector(config['data_sources']['social'])
-        self.mempool_monitor = MempoolMonitor(config['web3'])
-        self.whale_tracker = WhaleTracker(config['web3'])
+        self.chain_collector = ChainDataCollector(self.config['web3'])
+        self.social_collector = SocialDataCollector(self.config['data_sources']['social'])
+        self.mempool_monitor = MempoolMonitor(self.config['web3'])
+        self.whale_tracker = WhaleTracker(self.config_manager)
 
         # --- FIX: Initialize honeypot checker with config manager and RPC URLs ---
         self.honeypot_checker = HoneypotChecker(self.config_manager, self.chain_rpc_urls)
         
         # ML components
-        self.ensemble_predictor = EnsemblePredictor()
-        self.hyperparam_optimizer = HyperparameterOptimizer()
-        self.rl_optimizer = RLOptimizer()
+        self.ml_enabled = self.config.get('ml_models', {}).get('ml_enabled', False)
+        if self.ml_enabled:
+            from ml.models.ensemble_model import EnsemblePredictor
+            from ml.optimization.hyperparameter import HyperparameterOptimizer
+            from ml.optimization.reinforcement import RLOptimizer
+            self.ensemble_predictor = EnsemblePredictor(self.config.get('ml_models', {}))
+            self.hyperparam_optimizer = HyperparameterOptimizer()
+            self.rl_optimizer = RLOptimizer()
+        else:
+            self.ensemble_predictor = None
+            self.hyperparam_optimizer = None
+            self.rl_optimizer = None
         
         # Trading components
-
-        executor_config = {
-            'web3_provider_url': config.get('web3', {}).get('provider_url'),
-            'private_key': config.get('security', {}).get('private_key'),
-            'chain_id': config.get('web3', {}).get('chain_id', 1),
-            'max_gas_price': config.get('web3', {}).get('max_gas_price', 500),
-            'gas_limit': config.get('web3', {}).get('gas_limit', 500000),
-            'max_retries': 3,
-            'retry_delay': 1,
-            'uniswap_v2_router': '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',  # Mainnet router
-            '1inch_api_key': config.get('api', {}).get('1inch_api_key'),
-            'paraswap_api_key': config.get('api', {}).get('paraswap_api_key'),
-        }
-
         # Database connection for logging
         from data.storage.database import DatabaseManager
-        self.db = DatabaseManager(config.get('database', {}))  
+        self.db = DatabaseManager(self.config.get('database', {}))
 
-        self.strategy_manager = StrategyManager(config['trading']['strategies'])
-        self.order_manager = OrderManager(config, db_manager=self.db)  # 🆕 ADD db_manager
+        self.strategy_manager = StrategyManager(self.config['trading']['strategies'])
+        self.order_manager = OrderManager(self.config_manager, db_manager=self.db)
         self.position_tracker = PositionTracker()
-        self.trade_executor = TradeExecutor(executor_config, db_manager=self.db)  # 🆕 ADD db_manager
+        self.trade_executor = TradeExecutor(self.config_manager, db_manager=self.db)
         
 
         # ✅ PATCH 1: Connect OrderManager to actual execution engine
@@ -192,13 +188,6 @@ class TradingBotEngine:
         self.order_manager.risk_monitor.portfolio_manager = self.portfolio_manager
 
         logger.info("✅ OrderManager integrations complete")
-
-        # Find this section in __init__:
-        # self.trade_executor = DirectDEXExecutor(config)
-        # OR
-        # self.trade_executor = ToxiSolAPIExecutor(config)
-
-        # Add AFTER the existing executor initialization:
 
         # Initialize Solana executor if enabled
         self.solana_executor = None
@@ -230,13 +219,13 @@ class TradingBotEngine:
             logger.info("ℹ️ Solana trading disabled")
         
         # Monitoring
-        self.alert_manager = AlertManager(config['notifications'])
+        self.alert_manager = AlertManager(self.config.get('notifications', {}))
         self.performance_tracker = PerformanceTracker()
 
-        self.structured_logger = StructuredLogger("TradingBot", config.get('logging', {}))
+        self.structured_logger = StructuredLogger("TradingBot", self.config.get('logging', {}))
         
         # Security
-        self.wallet_manager = WalletSecurityManager(config['security'])
+        self.wallet_manager = WalletSecurityManager(self.config.get('security', {}))
         
         # Internal state
         self.active_positions: Dict[str, Any] = {}
@@ -430,7 +419,7 @@ class TradingBotEngine:
         while self.state == BotState.RUNNING:
             try:
                 discovery_count += 1
-                all_opportunities = []
+                top_opportunities = []  # This will be our min-heap
                 chain_stats = {}
                 
                 logger.info(f"🌐 Discovery cycle #{discovery_count} across {len(enabled_chains)} chains...")
@@ -446,12 +435,25 @@ class TradingBotEngine:
                         min_liquidity = chain_config.get(f'{chain}_min_liquidity', 10000)
                         
                         logger.info(f"  🔗 Scanning {chain.upper()}... (min liquidity: ${min_liquidity:,.0f})")
+                        logger.debug(f"  [engine] calling get_new_pairs(chain={chain}, limit={max_pairs_per_chain})")
                         
-                        # ✅ CRITICAL: Pass chain parameter to get_new_pairs
-                        pairs = await self.dex_collector.get_new_pairs(
-                            chain=chain, 
-                            limit=max_pairs_per_chain
-                        )
+                        
+                        # ✅ CRITICAL: Pass chain parameter to get_new_pairs WITH TIMEOUT
+                        try:
+                            pairs = await asyncio.wait_for(
+                                self.dex_collector.get_new_pairs(
+                                    chain=chain,
+                                    limit=max_pairs_per_chain
+                                ),
+                                timeout=30.0  # 30 second timeout per chain
+                            )
+                            logger.debug(f"  [engine] get_new_pairs returned {len(pairs) if pairs else 0} pairs")
+                        except asyncio.TimeoutError:
+                            logger.warning(f"⏰ Timeout fetching pairs for {chain.upper()} - skipping this chain")
+                            pairs = None
+                        except Exception as e:
+                            logger.exception(f"❌ Error fetching new pairs for {chain.upper()}: {e}")
+                            pairs = None
                         
                         if pairs:
                             logger.info(f"    ✅ Found {len(pairs)} pairs on {chain.upper()}")
@@ -474,42 +476,38 @@ class TradingBotEngine:
                             # ============================================================================
 
                             # FIND THIS CODE (around line 300):
-                            for pair in pairs:
+                            for i, pair in enumerate(pairs):
                                 try:
                                     self.stats['tokens_analyzed'] += 1
+                                    token_symbol = pair.get('token_symbol', 'UNKNOWN')
                                     
+                                    # Log progress
+                                    logger.info(f"    🔎 Analyzing pair {i+1}/{len(pairs)}: {token_symbol}...")
+
                                     # Normalize token address
                                     token_address = pair.get('token_address', '').lower()
                                     
                                     # Check blacklist
                                     if token_address in self.blacklisted_tokens:
-                                        logger.debug(f"⛔ Token {pair.get('token_symbol')} is blacklisted - SKIPPING")
+                                        logger.debug(f"    ⛔ Token {token_symbol} is blacklisted - SKIPPING")
                                         continue
                                     
                                     # Quick filter checks
                                     if self._is_blacklisted(pair):
-                                        logger.debug(f"⛔ Pair {pair.get('pair_address', 'unknown')} is blacklisted")
+                                        logger.debug(f"    ⛔ Pair {pair.get('pair_address', 'unknown')} is blacklisted")
                                         continue
-                                    
-                                    # REPLACE THIS SECTION:
-                                    # OLD (BROKEN):
-                                    # if pair.get('liquidity_usd', 0) < min_liquidity:
-                                    #     continue
                                     
                                     # NEW (FIXED) - Check both possible key names:
                                     liquidity = pair.get('liquidity_usd') or pair.get('liquidity') or 0
-                                    
-                                    # ADD DEBUG LOG
-                                    logger.info(f"  🔍 Checking {pair.get('token_symbol', 'UNKNOWN')}: liq=${liquidity:,.0f}, min=${min_liquidity:,.0f}")
                                     
                                     if liquidity < min_liquidity:
                                         logger.debug(f"    ❌ Rejected: Liquidity ${liquidity:,.0f} < ${min_liquidity:,.0f}")
                                         continue
                                     
-                                    logger.info(f"  ✅ Passed liquidity filter: {pair.get('token_symbol', 'UNKNOWN')}")
+                                    logger.info(f"    ✅ Passed liquidity filter: {token_symbol}")
                                     
                                     # Analyze opportunity
-                                    logger.debug(f"Analyzing pair: {pair.get('token_symbol', 'UNKNOWN')} on {chain}")
+                                    logger.debug(f"    🔬 In-depth analysis for {token_symbol} on {chain}...")
                                     opportunity = await self._analyze_opportunity(pair)
                                     
                                     if opportunity:
@@ -518,9 +516,13 @@ class TradingBotEngine:
                                         
                                         if opportunity.score > min_score:
                                             opportunity.chain = chain
-                                            all_opportunities.append(opportunity)
+                                            if len(top_opportunities) < 10:
+                                                heapq.heappush(top_opportunities, opportunity)
+                                            else:
+                                                heapq.heappushpop(top_opportunities, opportunity)
+
                                             self.stats['opportunities_found'] += 1
-                                            logger.info(f"🎯 OPPORTUNITY: {pair.get('token_symbol')} on {chain.upper()} - Score: {opportunity.score:.3f}")
+                                            logger.info(f"    🎯 OPPORTUNITY FOUND: {token_symbol} on {chain.upper()} - Score: {opportunity.score:.3f}")
                                             
                                             # Emit event
                                             await self.event_bus.emit(Event(
@@ -528,11 +530,13 @@ class TradingBotEngine:
                                                 data=opportunity
                                             ))
                                         else:
-                                            logger.info(f"  ❌ Score too low: {opportunity.score:.3f} < {min_score}")
+                                            logger.info(f"    ❌ Score too low: {opportunity.score:.3f} < {min_score}")
                                             
                                 except Exception as e:
-                                    logger.debug(f"Error analyzing pair on {chain}: {e}")
-                                    continue
+                                    logger.error(f"❌ Error analyzing pair {token_symbol} on {chain}: {e}")
+                                    logger.error(f"   Pair data: {pair}")
+                                finally:
+                                    gc.collect()
                         else:
                             logger.warning(f"    ⚠️  No pairs found on {chain.upper()}")
                         
@@ -540,7 +544,7 @@ class TradingBotEngine:
                         chain_elapsed = asyncio.get_event_loop().time() - chain_start
                         chain_stats[chain] = {
                             'pairs_found': len(pairs) if pairs else 0,
-                            'opportunities': len([o for o in all_opportunities if o.chain == chain]),
+                            'opportunities': len([o for o in top_opportunities if o.chain == chain]),
                             'scan_time': chain_elapsed
                         }
                         
@@ -555,7 +559,7 @@ class TradingBotEngine:
                 # Log summary
                 cycle_elapsed = asyncio.get_event_loop().time() - cycle_start
                 total_pairs = sum(s.get('pairs_found', 0) for s in chain_stats.values())
-                total_opps = len(all_opportunities)
+                total_opps = self.stats['opportunities_found']
                 
                 logger.info(f"📊 Discovery #{discovery_count} Complete ({cycle_elapsed:.1f}s):")
                 logger.info(f"   • Total pairs scanned: {total_pairs}")
@@ -566,14 +570,14 @@ class TradingBotEngine:
                             f"({stats.get('scan_time', 0):.1f}s)")
                 
                 # Add opportunities to pending queue
-                if all_opportunities:
+                if top_opportunities:
                     # Sort by score
-                    all_opportunities.sort(key=lambda x: x.score, reverse=True)
+                    sorted_opportunities = sorted(top_opportunities, key=lambda x: x.score, reverse=True)
                     
                     # Add to pending
-                    self.pending_opportunities.extend(all_opportunities[:10])  # Top 10
+                    self.pending_opportunities.extend(sorted_opportunities)
                     
-                    logger.info(f"📋 Added {min(len(all_opportunities), 10)} opportunities to pending queue")
+                    logger.info(f"📋 Added {len(sorted_opportunities)} opportunities to pending queue")
                 else:
                     logger.info("⏸️  No qualifying opportunities in this cycle")
                 
@@ -684,34 +688,45 @@ class TradingBotEngine:
             logger.info(f"   Volume 24h: ${pair.get('volume_24h', 0):,.2f}")
             logger.info(f"   Age: {pair.get('age_hours', 999):.1f}h")
             
-            # Parallel analysis tasks
-            results = await asyncio.gather(
-                self.risk_manager.analyze_token(pair.get('token_address', '')),
-                self.pattern_analyzer.analyze_patterns(pair),
-                self.chain_collector.get_token_info(pair.get('token_address', '')),
-                self._check_developer_reputation(pair.get('creator_address', '')),
-                self._analyze_liquidity_depth(pair),
-                self._check_smart_contract(pair.get('token_address', '')),
-                self._analyze_holder_distribution(pair.get('token_address', '')),
-                return_exceptions=True
-            )
+            # Sequential analysis to reduce memory pressure
+            risk_score, patterns, token_info, dev_reputation, liquidity_depth, contract_safety, holder_dist = [None] * 7
+
+            try:
+                risk_score = await self.risk_manager.analyze_token(pair.get('token_address', ''))
+            except Exception as e:
+                logger.debug(f"Risk analysis failed: {e}")
             
-            # Unpack results
-            risk_score, patterns, token_info, dev_reputation, \
-            liquidity_depth, contract_safety, holder_dist = results
-            
+            try:
+                patterns = await self.pattern_analyzer.analyze_patterns(pair)
+            except Exception as e:
+                logger.debug(f"Pattern analysis failed: {e}")
+
+            try:
+                token_info = await self.chain_collector.get_token_info(pair.get('token_address', ''))
+            except Exception as e:
+                logger.debug(f"Token info failed: {e}")
+
+            try:
+                dev_reputation = await self._check_developer_reputation(pair.get('creator_address', ''))
+            except Exception as e:
+                logger.debug(f"Dev reputation check failed: {e}")
+
+            try:
+                liquidity_depth = await self._analyze_liquidity_depth(pair)
+            except Exception as e:
+                logger.debug(f"Liquidity depth analysis failed: {e}")
+
+            try:
+                contract_safety = await self._check_smart_contract(pair.get('token_address', ''))
+            except Exception as e:
+                logger.debug(f"Smart contract check failed: {e}")
+
+            try:
+                holder_dist = await self._analyze_holder_distribution(pair.get('token_address', ''))
+            except Exception as e:
+                logger.debug(f"Holder distribution analysis failed: {e}")
+
             sentiment = None
-            
-            # Handle exceptions
-            if isinstance(risk_score, Exception):
-                logger.debug(f"Risk analysis failed: {risk_score}")
-                risk_score = None
-            if isinstance(patterns, Exception):
-                logger.debug(f"Pattern analysis failed: {patterns}")
-                patterns = None
-            if isinstance(token_info, Exception):
-                logger.debug(f"Token info failed: {token_info}")
-                token_info = None
             
             # Calculate overall score
             score = self._calculate_opportunity_score(
@@ -722,6 +737,18 @@ class TradingBotEngine:
                 liquidity=liquidity_depth,
                 contract_safety=contract_safety
             )
+
+            ml_confidence = 0.5
+            pump_probability = 0.5
+            rug_probability = 0.5
+            expected_return = 0.0
+
+            if self.ml_enabled and self.ensemble_predictor:
+                ml_prediction = await self.ensemble_predictor.predict(token=token_address, chain=pair.get('chain', 'ethereum'))
+                ml_confidence = ml_prediction.get('confidence', 0.5)
+                pump_probability = ml_prediction.get('pump_probability', 0.5)
+                rug_probability = ml_prediction.get('rug_probability', 0.5)
+                expected_return = ml_prediction.get('expected_return', 0.0)
             
             # ADD THIS DETAILED LOG
             min_score = self.config.get('trading', {}).get('min_opportunity_score', 0.25)
@@ -750,10 +777,10 @@ class TradingBotEngine:
                 liquidity=pair.get('liquidity_usd', 0),
                 volume_24h=pair.get('volume_24h', 0),
                 risk_score=risk_score if risk_score else RiskScore(overall_risk=0.5),
-                ml_confidence=score,
-                pump_probability=score * 0.8,
-                rug_probability=0.2,
-                expected_return=score * 100,
+                ml_confidence=ml_confidence,
+                pump_probability=pump_probability,
+                rug_probability=rug_probability,
+                expected_return=expected_return,
                 recommended_position_size=position_size,  # ✅ FROM CONFIG!
                 entry_strategy='momentum',
                 metadata={
@@ -953,7 +980,6 @@ class TradingBotEngine:
                 # Create simulated position (same as before)
                 # ✅ Create simulated position with calculated size
                 from decimal import Decimal
-                import uuid
                 
                 # Use the recommended_position_size from opportunity (already calculated)
                 position_value = Decimal(str(opportunity.recommended_position_size))
@@ -1168,7 +1194,7 @@ class TradingBotEngine:
                 logger.warning(f"   Chain: {chain}")
                 
             # Now execute the trade
-            result = await executor.execute_trade(order)
+            result = await executor.execute_trade(order, is_dry_run=is_dry_run)
             
             # Wait for transaction confirmation
             if not self.config.get('dry_run', True):
@@ -1358,7 +1384,7 @@ class TradingBotEngine:
 
     async def _monitor_existing_positions(self):
         """Monitor and manage existing positions"""
-        logger.info("📊 Starting position monitoring loop...")
+        logger.info("📊 Starting chain-agnostic position monitoring loop...")
         
         while self.state == BotState.RUNNING:
             # ✅ FIX: Initialize at outer scope
@@ -1367,7 +1393,8 @@ class TradingBotEngine:
             
             try:
                 if not self.active_positions:
-                    await asyncio.sleep(5)
+                    logger.debug("📊 No active positions, sleeping for 10s...")
+                    await asyncio.sleep(10)
                     continue
                 
                 logger.info(f"📊 Monitoring {len(self.active_positions)} active positions...")
@@ -1572,7 +1599,7 @@ class TradingBotEngine:
             logger.info(f"   Clamped Size (Min: ${min_size}, Max: ${max_size}): ${final_size:,.2f}")
 
             return float(final_size)
-            
+
         except Exception as e:
             logger.error(f"Error in dynamic position size calculation: {e}", exc_info=True)
             # Fallback to a safe, fixed position size on error
@@ -2003,6 +2030,9 @@ class TradingBotEngine:
 
     async def _optimize_strategies(self):
         """Continuously optimize trading strategies"""
+        if not self.ml_enabled:
+            logger.info("ML is disabled. Skipping strategy optimization.")
+            return
         while self.state == BotState.RUNNING:
             try:
                 # Wait for enough data
@@ -2060,6 +2090,9 @@ class TradingBotEngine:
                 
     async def _retrain_models(self):
         """Periodically retrain ML models"""
+        if not self.ml_enabled:
+            logger.info("ML is disabled. Skipping model retraining.")
+            return
         while self.state == BotState.RUNNING:
             try:
                 # Wait for retrain interval
@@ -2949,9 +2982,10 @@ class TradingBotEngine:
         contract_safety: Optional[Dict]
     ) -> float:
         """
-        Calculate overall opportunity score with detailed logging
+        Calculate overall opportunity score with a more sophisticated model.
         Returns: Score between 0 and 1
         """
+        import math
         try:
             age_minutes = pair.get('age_minutes', 9999)
             if age_minutes < 15:
@@ -3019,46 +3053,59 @@ class TradingBotEngine:
                 'score': age_score, 'weight': 0.05, 'contribution': age_score * 0.05, 'raw_value': age_hours
             }
             
-            # Normalize by total weights used
-            if weights > 0:
-                final_score = score / weights
+            # Normalize momentum (cap at 50% combined gain for a score of 1)
+            momentum_score = min(max(momentum / 50, 0), 1)
+
+            # Volatility Penalty
+            if price_change_5m > 75: # Penalize extreme pumps
+                penalty = (price_change_5m - 75) / 100
+                momentum_score *= (1 - penalty)
+            score_components['momentum'] = max(momentum_score, 0)
+
+            # 4. Age Score (Gaussian Peak at 12 hours)
+            age_hours = pair.get('age_hours', 24)
+            if age_hours > 0:
+                peak_age = 12 # hours
+                std_dev = 8   # hours
+                age_score = math.exp(-((age_hours - peak_age)**2) / (2 * std_dev**2))
+                score_components['age'] = age_score
+
+            # 5. Safety Score
+            if risk_score and hasattr(risk_score, 'overall_risk'):
+                safety_score = 1.0 - risk_score.overall_risk
+                # Incorporate contract safety if available
+                if contract_safety and not contract_safety.get('verified', True):
+                    safety_score *= 0.8 # Penalize unverified contracts
+                score_components['safety'] = safety_score
+
+            # Calculate final weighted score
+            final_score = 0.0
+            total_weight = 0.0
+            for component, score in score_components.items():
+                final_score += score * weights[component]
+                total_weight += weights[component]
+
+            if total_weight > 0:
+                normalized_score = final_score / total_weight
             else:
-                final_score = 0.3
+                normalized_score = 0.0
             
-            # Detailed logging
             token_symbol = pair.get('token_symbol', 'UNKNOWN')
             logger.info(f"      📊 Scoring breakdown for {token_symbol}:")
-            
-            for component, data in score_breakdown.items():
+            for component, score in score_components.items():
+                contribution = score * weights[component]
                 logger.info(
-                    f"         • {component.upper()}: "
-                    f"score={data['score']:.3f}, "
-                    f"weight={data['weight']:.0%}, "
-                    f"contribution={data['contribution']:.4f} "
-                    f"(raw={data['raw_value']})"
+                    f"         • {component.upper():<10}: "
+                    f"score={score:.3f}, "
+                    f"weight={weights[component]:.0%}, "
+                    f"contribution={contribution:.4f}"
                 )
             
-            logger.info(f"      📈 Total weights: {weights:.2f}")
-            logger.info(f"      🎯 Final normalized score: {final_score:.4f}")
-            
-            # Check what's missing
-            missing_components = []
-            if 'volume' not in score_breakdown:
-                missing_components.append('volume')
-            if 'liquidity' not in score_breakdown:
-                missing_components.append('liquidity')
-            if 'price_change' not in score_breakdown:
-                missing_components.append('price_change')
-            if 'risk' not in score_breakdown:
-                missing_components.append('risk')
-            if 'age' not in score_breakdown:
-                missing_components.append('age')
-            
-            if missing_components:
-                logger.warning(f"      ⚠️  Missing score components: {', '.join(missing_components)}")
-            
-            return max(0.0, min(1.0, final_score))
+            logger.info(f"      📈 Total weights: {total_weight:.2f}")
+            logger.info(f"      🎯 Final normalized score: {normalized_score:.4f}")
+
+            return max(0.0, min(1.0, normalized_score))
             
         except Exception as e:
             logger.error(f"Error calculating opportunity score: {e}", exc_info=True)
-            return 0.3
+            return 0.0

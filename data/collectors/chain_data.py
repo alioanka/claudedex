@@ -4,7 +4,7 @@ Chain Data Collector - On-chain data analysis via Web3
 
 import asyncio
 from web3 import Web3, AsyncWeb3
-from web3.middleware import geth_poa_middleware
+from web3.middleware.geth_poa import geth_poa_middleware
 from eth_account import Account
 import json
 from typing import Dict, List, Optional, Tuple, Any

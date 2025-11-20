@@ -1628,7 +1628,7 @@ class OrderRiskMonitor:
             
             # 5. Check position limits
             open_positions = len(self.position_tracker.positions)
-            max_positions = self.config.get('max_positions', 10)
+            max_positions = self.config.get('max_positions', 40)
             
             if side == OrderSide.BUY and open_positions >= max_positions:
                 logger.error(
