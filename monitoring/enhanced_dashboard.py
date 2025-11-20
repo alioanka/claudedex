@@ -795,6 +795,7 @@ class DashboardEndpoints:
                 trades_records = await conn.fetch("""
                     SELECT
                         id,
+                        trade_id,
                         token_address,
                         chain,
                         strategy,
@@ -806,7 +807,12 @@ class DashboardEndpoints:
                         exit_timestamp,
                         status,
                         profit_loss,
-                        gas_cost,
+                        profit_loss_percentage,
+                        gas_fee,
+                        slippage,
+                        usd_value,
+                        risk_score,
+                        ml_confidence,
                         metadata
                     FROM trades
                     ORDER BY entry_timestamp DESC
@@ -835,10 +841,12 @@ class DashboardEndpoints:
 
                 exit_reason = metadata.get('exit_reason', 'N/A')
 
-                # Calculate ROI
-                entry_value = float(trade_dict.get('entry_price', 0) or 0) * float(trade_dict.get('amount', 0) or 0)
-                profit_loss = float(trade_dict.get('profit_loss', 0) or 0)
-                roi = (profit_loss / entry_value * 100) if entry_value > 0 else 0
+                # Use ROI from database or calculate if not available
+                roi = float(trade_dict.get('profit_loss_percentage', 0) or 0)
+                if roi == 0 and trade_dict.get('profit_loss'):
+                    entry_value = float(trade_dict.get('entry_price', 0) or 0) * float(trade_dict.get('amount', 0) or 0)
+                    profit_loss = float(trade_dict.get('profit_loss', 0) or 0)
+                    roi = (profit_loss / entry_value * 100) if entry_value > 0 else 0
 
                 # Calculate hold time
                 hold_time = 'N/A'
@@ -856,7 +864,7 @@ class DashboardEndpoints:
                     except:
                         pass
 
-                # Enrich trade dict
+                # Enrich trade dict with additional fields
                 trade_dict.update({
                     'token_symbol': token_symbol,
                     'exit_reason': exit_reason,
@@ -864,7 +872,7 @@ class DashboardEndpoints:
                     'hold_time': hold_time,
                     'stop_loss': metadata.get('stop_loss'),
                     'take_profit': metadata.get('take_profit'),
-                    'slippage': metadata.get('slippage'),
+                    'gas_cost': trade_dict.get('gas_fee'),  # Map gas_fee to gas_cost for backwards compatibility
                     'tx_hash': metadata.get('tx_hash', metadata.get('transaction_hash')),
                 })
 
@@ -885,6 +893,7 @@ class DashboardEndpoints:
     async def _export_trades_csv(self, trades):
         """Export trades to CSV format"""
         import csv
+        from decimal import Decimal
 
         output = io.StringIO()
 
@@ -900,35 +909,63 @@ class DashboardEndpoints:
         writer = csv.writer(output)
         writer.writerow(columns)
 
-        for trade in trades:
-            entry_value = float(trade.get('entry_price', 0) or 0) * float(trade.get('amount', 0) or 0)
-            exit_value = float(trade.get('exit_price', 0) or 0) * float(trade.get('amount', 0) or 0) if trade.get('exit_price') else 0
+        # Helper function to safely convert values
+        def safe_float(val, default=0):
+            """Safely convert value to float, handling Decimal, None, etc."""
+            if val is None or val == '':
+                return default
+            if isinstance(val, (int, float)):
+                return float(val)
+            if isinstance(val, Decimal):
+                return float(val)
+            try:
+                return float(val)
+            except:
+                return default
 
-            writer.writerow([
-                trade.get('id'),
-                trade.get('token_symbol', 'Unknown'),
-                trade.get('token_address', ''),
-                trade.get('chain', ''),
-                trade.get('strategy', ''),
-                trade.get('side', ''),
-                trade.get('entry_timestamp', ''),
-                trade.get('exit_timestamp', ''),
-                trade.get('hold_time', 'N/A'),
-                trade.get('entry_price', 0),
-                trade.get('exit_price', '') or '',
-                trade.get('amount', 0),
-                round(entry_value, 8),
-                round(exit_value, 8) if exit_value else '',
-                trade.get('profit_loss', 0),
-                trade.get('roi', 0),
-                trade.get('status', ''),
-                trade.get('exit_reason', 'N/A'),
-                trade.get('stop_loss', '') or '',
-                trade.get('take_profit', '') or '',
-                trade.get('gas_cost', '') or '',
-                trade.get('slippage', '') or '',
-                trade.get('tx_hash', '') or '',
-            ])
+        def safe_str(val, default=''):
+            """Safely convert value to string"""
+            if val is None:
+                return default
+            return str(val)
+
+        for trade in trades:
+            try:
+                entry_price = safe_float(trade.get('entry_price'))
+                exit_price = safe_float(trade.get('exit_price'))
+                amount = safe_float(trade.get('amount'))
+
+                entry_value = entry_price * amount
+                exit_value = exit_price * amount if exit_price > 0 else 0
+
+                writer.writerow([
+                    trade.get('id', ''),
+                    safe_str(trade.get('token_symbol', 'Unknown')),
+                    safe_str(trade.get('token_address')),
+                    safe_str(trade.get('chain')),
+                    safe_str(trade.get('strategy')),
+                    safe_str(trade.get('side')),
+                    safe_str(trade.get('entry_timestamp')),
+                    safe_str(trade.get('exit_timestamp')),
+                    safe_str(trade.get('hold_time', 'N/A')),
+                    round(entry_price, 8) if entry_price else '',
+                    round(exit_price, 8) if exit_price else '',
+                    round(amount, 8) if amount else '',
+                    round(entry_value, 8) if entry_value else '',
+                    round(exit_value, 8) if exit_value else '',
+                    round(safe_float(trade.get('profit_loss')), 8),
+                    round(safe_float(trade.get('roi')), 4),
+                    safe_str(trade.get('status')),
+                    safe_str(trade.get('exit_reason', 'N/A')),
+                    round(safe_float(trade.get('stop_loss')), 8) if trade.get('stop_loss') else '',
+                    round(safe_float(trade.get('take_profit')), 8) if trade.get('take_profit') else '',
+                    round(safe_float(trade.get('gas_cost')), 8) if trade.get('gas_cost') else '',
+                    round(safe_float(trade.get('slippage')), 4) if trade.get('slippage') else '',
+                    safe_str(trade.get('tx_hash')),
+                ])
+            except Exception as e:
+                logger.error(f"Error writing CSV row for trade {trade.get('id')}: {e}", exc_info=True)
+                continue
 
         csv_content = output.getvalue()
         output.close()
@@ -945,6 +982,7 @@ class DashboardEndpoints:
         from openpyxl import Workbook
         from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
         from openpyxl.cell import MergedCell
+        from decimal import Decimal
 
         output = io.BytesIO()
         wb = Workbook()
@@ -978,53 +1016,81 @@ class DashboardEndpoints:
             cell.alignment = Alignment(horizontal='center', vertical='center')
             cell.border = border
 
+        # Helper function to safely convert values
+        def safe_float(val, default=0):
+            """Safely convert value to float, handling Decimal, None, etc."""
+            if val is None or val == '':
+                return default
+            if isinstance(val, (int, float)):
+                return float(val)
+            if isinstance(val, Decimal):
+                return float(val)
+            try:
+                return float(val)
+            except:
+                return default
+
+        def safe_str(val, default=''):
+            """Safely convert value to string"""
+            if val is None:
+                return default
+            return str(val)
+
         # Write data
         for row_num, trade in enumerate(trades, 2):
-            entry_value = float(trade.get('entry_price', 0) or 0) * float(trade.get('amount', 0) or 0)
-            exit_value = float(trade.get('exit_price', 0) or 0) * float(trade.get('amount', 0) or 0) if trade.get('exit_price') else 0
+            try:
+                entry_price = safe_float(trade.get('entry_price'))
+                exit_price = safe_float(trade.get('exit_price'))
+                amount = safe_float(trade.get('amount'))
 
-            row_data = [
-                trade.get('id'),
-                trade.get('token_symbol', 'Unknown'),
-                trade.get('token_address', ''),
-                trade.get('chain', ''),
-                trade.get('strategy', ''),
-                trade.get('side', ''),
-                str(trade.get('entry_timestamp', '')),
-                str(trade.get('exit_timestamp', '')),
-                trade.get('hold_time', 'N/A'),
-                trade.get('entry_price', 0),
-                trade.get('exit_price', '') or '',
-                trade.get('amount', 0),
-                round(entry_value, 8),
-                round(exit_value, 8) if exit_value else '',
-                trade.get('profit_loss', 0),
-                trade.get('roi', 0),
-                trade.get('status', ''),
-                trade.get('exit_reason', 'N/A'),
-                trade.get('stop_loss', '') or '',
-                trade.get('take_profit', '') or '',
-                trade.get('gas_cost', '') or '',
-                trade.get('slippage', '') or '',
-                trade.get('tx_hash', '') or '',
-            ]
+                entry_value = entry_price * amount
+                exit_value = exit_price * amount if exit_price > 0 else 0
 
-            for col_num, value in enumerate(row_data, 1):
-                cell = ws.cell(row=row_num, column=col_num, value=value)
-                cell.border = border
+                row_data = [
+                    int(trade.get('id', 0)) if trade.get('id') else '',
+                    safe_str(trade.get('token_symbol', 'Unknown')),
+                    safe_str(trade.get('token_address')),
+                    safe_str(trade.get('chain')),
+                    safe_str(trade.get('strategy')),
+                    safe_str(trade.get('side')),
+                    safe_str(trade.get('entry_timestamp')),
+                    safe_str(trade.get('exit_timestamp')),
+                    safe_str(trade.get('hold_time', 'N/A')),
+                    round(entry_price, 8) if entry_price else '',
+                    round(exit_price, 8) if exit_price else '',
+                    round(amount, 8) if amount else '',
+                    round(entry_value, 8) if entry_value else '',
+                    round(exit_value, 8) if exit_value else '',
+                    round(safe_float(trade.get('profit_loss')), 8),
+                    round(safe_float(trade.get('roi')), 4),
+                    safe_str(trade.get('status')),
+                    safe_str(trade.get('exit_reason', 'N/A')),
+                    round(safe_float(trade.get('stop_loss')), 8) if trade.get('stop_loss') else '',
+                    round(safe_float(trade.get('take_profit')), 8) if trade.get('take_profit') else '',
+                    round(safe_float(trade.get('gas_cost')), 8) if trade.get('gas_cost') else '',
+                    round(safe_float(trade.get('slippage')), 4) if trade.get('slippage') else '',
+                    safe_str(trade.get('tx_hash')),
+                ]
 
-                # Color-code P&L and ROI
-                if columns[col_num-1] in ['Profit/Loss', 'ROI (%)']:
-                    try:
-                        val = float(value) if value else 0
-                        if val > 0:
-                            cell.font = Font(color='00B050', bold=True)
-                            cell.fill = PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid')
-                        elif val < 0:
-                            cell.font = Font(color='FF0000', bold=True)
-                            cell.fill = PatternFill(start_color='FCE4D6', end_color='FCE4D6', fill_type='solid')
-                    except:
-                        pass
+                for col_num, value in enumerate(row_data, 1):
+                    cell = ws.cell(row=row_num, column=col_num, value=value)
+                    cell.border = border
+
+                    # Color-code P&L and ROI
+                    if columns[col_num-1] in ['Profit/Loss', 'ROI (%)']:
+                        try:
+                            val = float(value) if value and value != '' else 0
+                            if val > 0:
+                                cell.font = Font(color='00B050', bold=True)
+                                cell.fill = PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid')
+                            elif val < 0:
+                                cell.font = Font(color='FF0000', bold=True)
+                                cell.fill = PatternFill(start_color='FCE4D6', end_color='FCE4D6', fill_type='solid')
+                        except:
+                            pass
+            except Exception as e:
+                logger.error(f"Error writing row {row_num}: {e}", exc_info=True)
+                continue
 
         # Auto-adjust column widths
         for col in ws.iter_cols():
@@ -1036,8 +1102,12 @@ class DashboardEndpoints:
                     pass
 
         # Save workbook
-        wb.save(output)
-        output.seek(0)
+        try:
+            wb.save(output)
+            output.seek(0)
+        except Exception as e:
+            logger.error(f"Error saving Excel workbook: {e}", exc_info=True)
+            raise
 
         response = web.Response(
             body=output.read(),
