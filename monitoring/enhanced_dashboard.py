@@ -2552,21 +2552,244 @@ class DashboardEndpoints:
         return response
     
     async def _export_excel(self, report):
-        """Export report as Excel"""
-        # Create Excel file using pandas or openpyxl
+        """Export comprehensive Excel report with multiple sheets and formatting"""
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils.dataframe import dataframe_to_rows
+        from openpyxl.chart import BarChart, LineChart, Reference
+
         output = io.BytesIO()
-        
+        wb = Workbook()
+
+        # Remove default sheet
+        if 'Sheet' in wb.sheetnames:
+            del wb['Sheet']
+
+        # ==================== SHEET 1: SUMMARY ====================
+        ws_summary = wb.create_sheet('Summary', 0)
+
+        # Title
+        ws_summary['A1'] = 'Trading Performance Report'
+        ws_summary['A1'].font = Font(size=16, bold=True, color='FFFFFF')
+        ws_summary['A1'].fill = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid')
+        ws_summary.merge_cells('A1:D1')
+
+        # Report info
+        ws_summary['A2'] = 'Generated:'
+        ws_summary['B2'] = report.get('generated_at', datetime.utcnow().isoformat())
+        ws_summary['A3'] = 'Period:'
+        ws_summary['B3'] = report.get('period', 'custom')
+
+        # Performance Metrics Header
+        ws_summary['A5'] = 'Performance Metrics'
+        ws_summary['A5'].font = Font(size=14, bold=True, color='FFFFFF')
+        ws_summary['A5'].fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+        ws_summary.merge_cells('A5:D5')
+
+        # Metrics table
+        row = 6
         if 'metrics' in report:
-            df = pd.DataFrame(list(report['metrics'].items()), columns=['Metric', 'Value'])
-            df.to_excel(output, index=False, engine='openpyxl')
-        
+            metrics = report['metrics']
+
+            # Header
+            ws_summary['A6'] = 'Metric'
+            ws_summary['B6'] = 'Value'
+            ws_summary['A6'].font = Font(bold=True)
+            ws_summary['B6'].font = Font(bold=True)
+            ws_summary['A6'].fill = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
+            ws_summary['B6'].fill = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
+
+            row = 7
+            for key, value in metrics.items():
+                ws_summary[f'A{row}'] = key.replace('_', ' ').title()
+
+                # Format value based on metric type
+                if isinstance(value, float):
+                    if 'rate' in key.lower() or 'drawdown' in key.lower():
+                        ws_summary[f'B{row}'] = f"{value:.2f}%"
+                    else:
+                        ws_summary[f'B{row}'] = f"{value:.4f}"
+                else:
+                    ws_summary[f'B{row}'] = value
+
+                # Color code based on performance
+                if 'pnl' in key.lower() or 'profit' in key.lower():
+                    if isinstance(value, (int, float)) and value > 0:
+                        ws_summary[f'B{row}'].font = Font(color='00B050', bold=True)
+                    elif isinstance(value, (int, float)) and value < 0:
+                        ws_summary[f'B{row}'].font = Font(color='FF0000', bold=True)
+
+                row += 1
+
+        # Adjust column widths
+        ws_summary.column_dimensions['A'].width = 25
+        ws_summary.column_dimensions['B'].width = 20
+
+        # ==================== SHEET 2: DETAILED TRADES ====================
+        ws_trades = wb.create_sheet('Detailed Trades', 1)
+
+        if 'trades' in report and report['trades']:
+            # Convert trades to DataFrame
+            df_trades = pd.DataFrame(report['trades'])
+
+            # Select and order columns
+            columns = [
+                'id', 'token_symbol', 'token_address', 'chain', 'strategy',
+                'entry_timestamp', 'exit_timestamp', 'entry_price', 'exit_price',
+                'amount', 'entry_value', 'exit_value', 'profit_loss', 'roi',
+                'exit_reason', 'status', 'gas_cost'
+            ]
+
+            # Only include columns that exist
+            columns = [col for col in columns if col in df_trades.columns]
+            df_trades = df_trades[columns]
+
+            # Rename columns for better readability
+            column_names = {
+                'id': 'ID',
+                'token_symbol': 'Token',
+                'token_address': 'Address',
+                'chain': 'Chain',
+                'strategy': 'Strategy',
+                'entry_timestamp': 'Entry Time',
+                'exit_timestamp': 'Exit Time',
+                'entry_price': 'Entry Price',
+                'exit_price': 'Exit Price',
+                'amount': 'Amount',
+                'entry_value': 'Entry Value',
+                'exit_value': 'Exit Value',
+                'profit_loss': 'P&L',
+                'roi': 'ROI %',
+                'exit_reason': 'Exit Reason',
+                'status': 'Status',
+                'gas_cost': 'Gas Cost'
+            }
+            df_trades = df_trades.rename(columns=column_names)
+
+            # Write header
+            for col_num, column_name in enumerate(df_trades.columns, 1):
+                cell = ws_trades.cell(row=1, column=col_num, value=column_name)
+                cell.font = Font(bold=True, color='FFFFFF')
+                cell.fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+                cell.alignment = Alignment(horizontal='center')
+
+            # Write data
+            for row_num, row_data in enumerate(df_trades.values, 2):
+                for col_num, value in enumerate(row_data, 1):
+                    cell = ws_trades.cell(row=row_num, column=col_num, value=value)
+
+                    # Color code P&L and ROI
+                    if df_trades.columns[col_num-1] in ['P&L', 'ROI %']:
+                        try:
+                            val = float(value) if value else 0
+                            if val > 0:
+                                cell.font = Font(color='00B050', bold=True)
+                                cell.fill = PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid')
+                            elif val < 0:
+                                cell.font = Font(color='FF0000', bold=True)
+                                cell.fill = PatternFill(start_color='FCE4D6', end_color='FCE4D6', fill_type='solid')
+                        except:
+                            pass
+
+            # Auto-adjust column widths
+            for column_cells in ws_trades.columns:
+                length = max(len(str(cell.value or '')) for cell in column_cells)
+                ws_trades.column_dimensions[column_cells[0].column_letter].width = min(length + 2, 40)
+
+        # ==================== SHEET 3: ANALYSIS BY STRATEGY ====================
+        ws_strategy = wb.create_sheet('Strategy Analysis', 2)
+
+        if 'trades' in report and report['trades']:
+            df_all = pd.DataFrame(report['trades'])
+
+            if 'strategy' in df_all.columns and 'profit_loss' in df_all.columns:
+                # Group by strategy
+                strategy_analysis = df_all.groupby('strategy').agg({
+                    'profit_loss': ['count', 'sum', 'mean', lambda x: (x > 0).sum(), lambda x: (x <= 0).sum()]
+                }).round(4)
+
+                strategy_analysis.columns = ['Total Trades', 'Total P&L', 'Avg P&L', 'Wins', 'Losses']
+                strategy_analysis['Win Rate %'] = (strategy_analysis['Wins'] / strategy_analysis['Total Trades'] * 100).round(2)
+                strategy_analysis = strategy_analysis.reset_index()
+
+                # Write header
+                ws_strategy['A1'] = 'Strategy Performance Analysis'
+                ws_strategy['A1'].font = Font(size=14, bold=True, color='FFFFFF')
+                ws_strategy['A1'].fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+                ws_strategy.merge_cells('A1:G1')
+
+                # Write data
+                for col_num, column_name in enumerate(strategy_analysis.columns, 1):
+                    cell = ws_strategy.cell(row=2, column=col_num, value=column_name)
+                    cell.font = Font(bold=True, color='FFFFFF')
+                    cell.fill = PatternFill(start_color='70AD47', end_color='70AD47', fill_type='solid')
+
+                for row_num, row_data in enumerate(strategy_analysis.values, 3):
+                    for col_num, value in enumerate(row_data, 1):
+                        ws_strategy.cell(row=row_num, column=col_num, value=value)
+
+                # Auto-adjust widths
+                for col in ws_strategy.columns:
+                    max_length = max(len(str(cell.value or '')) for cell in col)
+                    ws_strategy.column_dimensions[col[0].column_letter].width = max_length + 2
+
+        # ==================== SHEET 4: ANALYSIS BY TOKEN ====================
+        ws_token = wb.create_sheet('Token Analysis', 3)
+
+        if 'trades' in report and report['trades']:
+            df_all = pd.DataFrame(report['trades'])
+
+            if 'token_symbol' in df_all.columns and 'profit_loss' in df_all.columns:
+                # Group by token
+                token_analysis = df_all.groupby('token_symbol').agg({
+                    'profit_loss': ['count', 'sum', 'mean', lambda x: (x > 0).sum()]
+                }).round(4)
+
+                token_analysis.columns = ['Trades', 'Total P&L', 'Avg P&L', 'Wins']
+                token_analysis['Win Rate %'] = (token_analysis['Wins'] / token_analysis['Trades'] * 100).round(2)
+                token_analysis = token_analysis.sort_values('Total P&L', ascending=False).reset_index()
+
+                # Write header
+                ws_token['A1'] = 'Token Performance Analysis'
+                ws_token['A1'].font = Font(size=14, bold=True, color='FFFFFF')
+                ws_token['A1'].fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+                ws_token.merge_cells('A1:F1')
+
+                # Write data
+                for col_num, column_name in enumerate(token_analysis.columns, 1):
+                    cell = ws_token.cell(row=2, column=col_num, value=column_name)
+                    cell.font = Font(bold=True, color='FFFFFF')
+                    cell.fill = PatternFill(start_color='FFC000', end_color='FFC000', fill_type='solid')
+
+                for row_num, row_data in enumerate(token_analysis.values, 3):
+                    for col_num, value in enumerate(row_data, 1):
+                        cell = ws_token.cell(row=row_num, column=col_num, value=value)
+
+                        # Highlight top/bottom performers
+                        if token_analysis.columns[col_num-1] == 'Total P&L':
+                            try:
+                                val = float(value) if value else 0
+                                if val > 0:
+                                    cell.font = Font(color='00B050', bold=True)
+                                elif val < 0:
+                                    cell.font = Font(color='FF0000', bold=True)
+                            except:
+                                pass
+
+                # Auto-adjust widths
+                for col in ws_token.columns:
+                    max_length = max(len(str(cell.value or '')) for cell in col)
+                    ws_token.column_dimensions[col[0].column_letter].width = max_length + 2
+
+        # Save workbook to BytesIO
+        wb.save(output)
         output.seek(0)
-        
+
         response = web.Response(
             body=output.read(),
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             headers={
-                'Content-Disposition': f'attachment; filename="report_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.xlsx"'
+                'Content-Disposition': f'attachment; filename="trading_report_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.xlsx"'
             }
         )
         return response
