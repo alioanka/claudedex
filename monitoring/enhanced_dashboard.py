@@ -18,8 +18,10 @@ from aiohttp_sse import sse_response
 import socketio
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 import pandas as pd
+import numpy as np
 import csv
 from config.config_manager import PortfolioConfig
+from pydantic.types import SecretStr
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +71,9 @@ class DashboardEndpoints:
         # Start update tasks
         asyncio.create_task(self._broadcast_loop())
 
+        # In-memory storage for backtests
+        self.backtests = {}
+
     @staticmethod
     def _serialize_decimals(obj):
         """Convert Decimal objects to float for JSON serialization"""
@@ -100,9 +105,14 @@ class DashboardEndpoints:
         self.app.router.add_get('/settings', self.settings_page)
         self.app.router.add_get('/reports', self.reports_page)
         self.app.router.add_get('/backtest', self.backtest_page)
+        self.app.router.add_get('/logs', self.logs_page)
+        self.app.router.add_get('/analysis', self.analysis_page)
         
         # API - Data endpoints
         self.app.router.add_get('/api/dashboard/summary', self.api_dashboard_summary)
+        self.app.router.add_get('/api/logs', self.api_get_logs)
+        self.app.router.add_get('/api/analysis', self.api_get_analysis)
+        self.app.router.add_get('/api/insights', self.api_get_insights)
         self.app.router.add_get('/api/trades/recent', self.api_recent_trades)
         self.app.router.add_get('/api/trades/history', self.api_trade_history)
         self.app.router.add_get('/api/positions/open', self.api_open_positions)
@@ -264,19 +274,168 @@ class DashboardEndpoints:
             text=template.render(page='backtest'),
             content_type='text/html'
         )
+
+    async def logs_page(self, request):
+        """Logs viewer page"""
+        template = self.jinja_env.get_template('logs.html')
+        return web.Response(
+            text=template.render(page='logs'),
+            content_type='text/html'
+        )
     
     # ==================== API - DATA ENDPOINTS ====================
+
+    async def analysis_page(self, request):
+        """Trade analysis page"""
+        template = self.jinja_env.get_template('analysis.html')
+        return web.Response(
+            text=template.render(page='analysis'),
+            content_type='text/html'
+        )
     
+    async def api_get_logs(self, request):
+        """Get recent log entries from all available log files."""
+        try:
+            log_dir = "/app/logs"
+            log_files = [
+                "TradingBot.log",
+                "TradingBot_errors.log",
+                "TradingBot_trades.log"
+            ]
+            # Add rotated logs
+            for i in range(1, 11):
+                log_files.append(f"TradingBot.log.{i}")
+
+            all_lines = []
+            for lf in log_files:
+                try:
+                    full_path = f"{log_dir}/{lf}"
+                    with open(full_path, 'r') as f:
+                        for line in f:
+                            try:
+                                log_entry = json.loads(line)
+                                # Ensure timestamp exists for sorting
+                                if 'timestamp' in log_entry:
+                                    all_lines.append(log_entry)
+                            except (json.JSONDecodeError, TypeError):
+                                pass
+                except FileNotFoundError:
+                    # It's normal for some rotated files not to exist
+                    continue
+
+            # Sort all log entries by timestamp
+            all_lines.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+
+            # Return last 500 log lines
+            return web.json_response({'success': True, 'data': all_lines[:500]})
+        except Exception as e:
+            logger.error(f"Error reading log files: {e}", exc_info=True)
+            return web.json_response({'error': str(e)}, status=500)
+
+    async def api_get_analysis(self, request):
+        """Get trade analysis data"""
+        try:
+            if not self.db:
+                return web.json_response({'error': 'Database connection not available.'}, status=503)
+
+            query = "SELECT * FROM trades WHERE status = 'closed';"
+            trades = await self.db.pool.fetch(query)
+
+            if not trades:
+                return web.json_response({'success': True, 'data': {
+                    'strategy_performance': [],
+                    'hourly_profitability': [],
+                }})
+
+            df = pd.DataFrame([dict(trade) for trade in trades])
+            df['profit_loss'] = pd.to_numeric(df['profit_loss'])
+            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'], utc=True)
+
+            # --- FIX STARTS HERE: Use centralized strategy parsing ---
+            df['strategy'] = df['metadata'].apply(self._get_strategy_from_metadata)
+            strategy_performance = df.groupby('strategy')['profit_loss'].sum().reset_index()
+            strategy_performance.columns = ['strategy', 'total_pnl']
+            # --- FIX ENDS HERE ---
+
+            # Profitability by hour
+            df['hour'] = df['exit_timestamp'].dt.hour
+            hourly_profitability = df.groupby('hour')['profit_loss'].mean().reset_index()
+            hourly_profitability.columns = ['hour', 'avg_pnl']
+
+            return web.json_response({
+                'success': True,
+                'data': {
+                    'strategy_performance': strategy_performance.to_dict('records'),
+                    'hourly_profitability': hourly_profitability.to_dict('records'),
+                }
+            })
+        except Exception as e:
+            logger.error(f"Error in api_get_analysis: {e}", exc_info=True)
+            return web.json_response({'error': str(e)}, status=500)
+
+    async def api_get_insights(self, request):
+        """Generate performance tuning suggestions"""
+        try:
+            if not self.db:
+                return web.json_response({'error': 'Database connection not available.'}, status=503)
+
+            query = "SELECT * FROM trades WHERE status = 'closed';"
+            trades = await self.db.pool.fetch(query)
+
+            insights = []
+            if not trades:
+                return web.json_response({'success': True, 'data': insights})
+
+            df = pd.DataFrame([dict(trade) for trade in trades])
+            df['profit_loss'] = pd.to_numeric(df['profit_loss'])
+
+            # Insight 1: Win rate analysis
+            win_rate = (df['profit_loss'] > 0).mean()
+            if win_rate < 0.5:
+                insights.append({
+                    'type': 'suggestion',
+                    'title': 'Improve Win Rate',
+                    'message': 'Your win rate is below 50%. Consider tightening entry criteria or adjusting your stop-loss strategy to be more conservative.'
+                })
+
+            # Insight 2: Risk/Reward Ratio
+            avg_win = df[df['profit_loss'] > 0]['profit_loss'].mean()
+            avg_loss = abs(df[df['profit_loss'] <= 0]['profit_loss'].mean())
+            if not np.isnan(avg_win) and not np.isnan(avg_loss) and avg_loss > 0 and (avg_win / avg_loss < 1.5):
+                insights.append({
+                    'type': 'suggestion',
+                    'title': 'Increase Risk/Reward Ratio',
+                    'message': 'Your average win is less than 1.5x your average loss. Aim for a higher risk/reward ratio by adjusting take-profit levels or seeking trades with better potential.'
+                })
+
+            # Insight 3: Identify problematic strategies
+            df['strategy'] = df['metadata'].apply(self._get_strategy_from_metadata)
+            strategy_pnl = df.groupby('strategy')['profit_loss'].sum()
+            losing_strategies = strategy_pnl[strategy_pnl < 0]
+            if not losing_strategies.empty:
+                for strategy, pnl in losing_strategies.items():
+                    insights.append({
+                        'type': 'warning',
+                        'title': f'Review Strategy: {strategy}',
+                        'message': f'The "{strategy}" strategy has a total P&L of {pnl:.2f}. It may require tuning or deactivation.'
+                    })
+
+            return web.json_response({'success': True, 'data': self._serialize_decimals(insights)})
+
+        except Exception as e:
+            logger.error(f"Error generating insights: {e}", exc_info=True)
+            return web.json_response({'error': str(e)}, status=500)
+
     async def api_dashboard_summary(self, request):
         """Get dashboard summary data"""
         try:
             summary = {}
-            
+
             # Get portfolio data if available
             if self.portfolio:
                 # Get portfolio summary
                 portfolio_summary = self.engine.portfolio_manager.get_portfolio_summary()
-                
+
                 # Get config with fallback
                 try:
                     from config.config_manager import PortfolioConfig
@@ -285,7 +444,7 @@ class DashboardEndpoints:
                 except Exception as e:
                     logger.warning(f"Could not load PortfolioConfig: {e}, using default 400")
                     default_balance = 400
-                
+
                 summary = {
                     'cash_balance': float(portfolio_summary.get('cash_balance', default_balance)),
                     'positions_value': float(portfolio_summary.get('positions_value', 0)),
@@ -293,12 +452,12 @@ class DashboardEndpoints:
                     'sharpe_ratio': float(portfolio_summary.get('sharpe_ratio', 0)),
                     'max_drawdown': float(portfolio_summary.get('max_drawdown', 0)),
                 }
-            
+
             # ✅ Get ACTUAL cumulative P&L and metrics from database
             total_pnl = 0
             win_rate = 0
             open_positions_count = 0
-            
+
             if self.db:
                 try:
                     perf_data = await self.db.get_performance_summary()
@@ -307,11 +466,11 @@ class DashboardEndpoints:
                         win_rate = float(perf_data.get('win_rate', 0))
                 except Exception as e:
                     logger.error(f"Error getting performance data: {e}")
-            
+
             # Get actual open positions count from engine
             if self.engine and hasattr(self.engine, 'active_positions'):
                 open_positions_count = len(self.engine.active_positions)
-            
+
             # Calculate portfolio value: starting balance + cumulative P&L
             try:
                 config = PortfolioConfig()
@@ -319,7 +478,7 @@ class DashboardEndpoints:
             except Exception:
                 starting_balance = 400
             portfolio_value = starting_balance + total_pnl
-            
+
             # Update summary with calculated values
             summary.update({
                 'portfolio_value': portfolio_value,
@@ -331,7 +490,7 @@ class DashboardEndpoints:
                 'pending_orders': len(self.orders.active_orders) if self.orders else 0,
                 'active_alerts': len(self.alerts.alerts_queue._queue) if self.alerts else 0
             })
-            
+
             return web.json_response({
                 'success': True,
                 'data': summary
@@ -439,13 +598,12 @@ class DashboardEndpoints:
                     # Calculate ROI
                     roi = ((current_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
                     
-                    # ✅ Get entry_timestamp and stop_loss/take_profit from database
+                    # ✅ Always enrich from database for definitive SL/TP values
                     entry_timestamp = position.get('entry_timestamp') or position.get('opened_at') or position.get('timestamp')
-                    stop_loss = position.get('stop_loss')
-                    take_profit = position.get('take_profit')
-                    
-                    # ✅ Try to enrich from database if fields are missing
-                    if (not entry_timestamp or not stop_loss or not take_profit) and self.db:
+                    stop_loss = None
+                    take_profit = None
+
+                    if self.db:
                         try:
                             async with self.db.pool.acquire() as conn:
                                 trade = await conn.fetchrow("""
@@ -461,22 +619,35 @@ class DashboardEndpoints:
                                     if not entry_timestamp and trade['entry_timestamp']:
                                         entry_timestamp = trade['entry_timestamp']
                                     
-                                    # Extract stop_loss/take_profit from metadata
                                     if trade['metadata']:
-                                        try:
-                                            import json
-                                            metadata = trade['metadata']
-                                            if isinstance(metadata, str):
-                                                metadata = json.loads(metadata)
-                                            
-                                            if not stop_loss:
-                                                stop_loss = metadata.get('stop_loss')
-                                            if not take_profit:
-                                                take_profit = metadata.get('take_profit')
-                                        except:
-                                            pass
-                        except Exception as e:
+                                        metadata = trade['metadata']
+                                        if isinstance(metadata, str):
+                                            metadata = json.loads(metadata)
+
+                                        # Prefer database metadata values
+                                        stop_loss = metadata.get('stop_loss')
+                                        take_profit = metadata.get('take_profit')
+                        except (json.JSONDecodeError, AttributeError, Exception) as e:
                             logger.error(f"Error enriching position from DB: {e}")
+
+                    # --- FIX STARTS HERE ---
+                    # Fallback logic to calculate SL/TP if they are not in the database metadata
+                    if stop_loss is None:
+                        sl_pct = position.get('stop_loss_percentage')
+                        if sl_pct and entry_price > 0:
+                            stop_loss = entry_price * (1 - sl_pct)
+                        # Final fallback if even percentage is missing
+                        else:
+                            stop_loss = entry_price * 0.88 # Default to 12% SL
+
+                    if take_profit is None:
+                        tp_pct = position.get('take_profit_percentage')
+                        if tp_pct and entry_price > 0:
+                            take_profit = entry_price * (1 + tp_pct)
+                        # Final fallback
+                        else:
+                            take_profit = entry_price * 1.24 # Default to 24% TP
+                    # --- FIX ENDS HERE ---
                     
                     # Calculate duration
                     duration_str = 'unknown'
@@ -804,59 +975,119 @@ class DashboardEndpoints:
             return "Unknown"
     
     async def api_performance_metrics(self, request):
-        """Get performance metrics - SAFE VERSION"""
+        """Get detailed performance metrics from all closed trades."""
         try:
-            # Simple safe metrics structure
+            if not self.db:
+                return web.json_response({'error': 'Database connection not available.'}, status=503)
+
+            # Fetch all closed trades from the database
+            query = "SELECT * FROM trades WHERE status = 'closed' ORDER BY exit_timestamp ASC;"
+            trades = await self.db.pool.fetch(query)
+
+            if not trades:
+                initial_balance = self.config_mgr.get_portfolio_config().initial_balance
+                default_metrics = {
+                    'initial_balance': initial_balance,
+                    'total_pnl': 0.0, 'roi': 0.0, 'sortino_ratio': 0.0,
+                    'calmar_ratio': 0.0, 'daily_volatility': 0.0, 'annual_volatility': 0.0,
+                    'total_trades': 0, 'winning_trades': 0, 'losing_trades': 0,
+                    'win_rate': 0.0, 'avg_win': 0.0, 'avg_loss': 0.0,
+                    'best_trade': 0.0, 'worst_trade': 0.0, 'profit_factor': 0.0,
+                    'sharpe_ratio': 0.0, 'max_drawdown': 0.0,
+                }
+                return web.json_response({'success': True, 'data': {'historical': default_metrics}})
+
+            df = pd.DataFrame([dict(trade) for trade in trades])
+            df['profit_loss'] = pd.to_numeric(df['profit_loss'])
+            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
+
+            # --- FIX STARTS HERE ---
+            # Basic metrics
+            total_pnl = df['profit_loss'].sum()
+            total_trades = len(df)
+            winning_trades = df[df['profit_loss'] > 0]
+            losing_trades = df[df['profit_loss'] <= 0]
+            win_rate = (len(winning_trades) / total_trades) * 100 if total_trades > 0 else 0
+
+            # Advanced metrics with safe defaults
+            avg_win = winning_trades['profit_loss'].mean() if not winning_trades.empty else 0
+            avg_loss = losing_trades['profit_loss'].mean() if not losing_trades.empty else 0
+            best_trade = df['profit_loss'].max() if not df.empty else 0
+            worst_trade = df['profit_loss'].min() if not df.empty else 0
+
+            sum_of_wins = winning_trades['profit_loss'].sum()
+            sum_of_losses = abs(losing_trades['profit_loss'].sum())
+            profit_factor = sum_of_wins / sum_of_losses if sum_of_losses > 0 else float('inf')
+
+            # Sharpe Ratio (annualized, assuming risk-free rate is 0)
+            daily_returns = df.set_index('exit_timestamp')['profit_loss'].resample('D').sum()
+            # Ensure there's more than one period to calculate std dev
+            if len(daily_returns) > 1 and daily_returns.std() != 0:
+                sharpe_ratio = (daily_returns.mean() / daily_returns.std()) * np.sqrt(365)
+            else:
+                sharpe_ratio = 0.0
+
+            # Correct Max Drawdown calculation based on equity
+            initial_balance = self.config_mgr.get_portfolio_config().initial_balance
+            df['cumulative_pnl'] = df['profit_loss'].cumsum()
+            df['equity'] = initial_balance + df['cumulative_pnl']
+
+            peak = df['equity'].expanding(min_periods=1).max()
+            # Ensure division by zero is handled if peak is 0
+            drawdown = ((df['equity'] - peak) / peak).replace([np.inf, -np.inf], 0)
+            max_drawdown = abs(drawdown.min() * 100) if not drawdown.empty else 0
+
+            # --- FIX STARTS HERE ---
+            # Calculate ROI
+            roi = (total_pnl / initial_balance) * 100 if initial_balance > 0 else 0
+
+            # Calculate Sortino Ratio
+            downside_returns = daily_returns[daily_returns < 0]
+            downside_std = downside_returns.std() if not downside_returns.empty else 0
+            sortino_ratio = (daily_returns.mean() / downside_std) * np.sqrt(365) if downside_std != 0 else 0
+
+            # Calculate Calmar Ratio
+            calmar_ratio = (daily_returns.mean() * 365) / (max_drawdown / 100) if max_drawdown != 0 else 0
+
+            # Calculate Volatility
+            daily_volatility = daily_returns.std() * 100
+            annual_volatility = daily_returns.std() * np.sqrt(365) * 100
+            # --- FIX ENDS HERE ---
+
+
             metrics = {
-                'historical': {
-                    'total_pnl': 0.0,
-                    'win_rate': 0.0,
-                    'total_trades': 0,
-                    'winning_trades': 0,
-                    'losing_trades': 0,
-                    'avg_win': 0.0,
-                    'avg_loss': 0.0
-                }
+                'initial_balance': initial_balance,
+                'total_pnl': total_pnl,
+                'roi': roi,
+                'sortino_ratio': sortino_ratio,
+                'calmar_ratio': calmar_ratio,
+                'daily_volatility': daily_volatility,
+                'annual_volatility': annual_volatility,
+                'total_trades': total_trades,
+                'winning_trades': len(winning_trades),
+                'losing_trades': len(losing_trades),
+                'win_rate': win_rate,
+                'avg_win': avg_win,
+                'avg_loss': avg_loss,
+                'best_trade': best_trade,
+                'worst_trade': worst_trade,
+                'profit_factor': profit_factor,
+                'sharpe_ratio': sharpe_ratio,
+                'max_drawdown': max_drawdown,
             }
-            
-            # Try to get data from database if available
-            if self.db:
-                try:
-                    # Try to get performance summary
-                    if hasattr(self.db, 'get_performance_summary'):
-                        perf = await self.db.get_performance_summary()
-                        if perf:
-                            metrics['historical']['total_pnl'] = float(perf.get('total_pnl', 0))
-                            metrics['historical']['win_rate'] = float(perf.get('win_rate', 0))
-                            metrics['historical']['total_trades'] = int(perf.get('total_trades', 0))
-                            metrics['historical']['winning_trades'] = int(perf.get('winning_trades', 0))  # ✅ ADD
-                            metrics['historical']['losing_trades'] = int(perf.get('losing_trades', 0))    # ✅ ADD
-                            metrics['historical']['avg_win'] = float(perf.get('avg_win', 0))
-                            metrics['historical']['avg_loss'] = float(perf.get('avg_loss', 0))
-                except Exception as db_error:
-                    logger.error(f"Error getting performance data: {db_error}")
-            
+
+            for key, value in metrics.items():
+                if np.isnan(value) or np.isinf(value):
+                    metrics[key] = 0.0
+
             return web.json_response({
                 'success': True,
-                'data': self._serialize_decimals(metrics)
+                'data': {'historical': self._serialize_decimals(metrics)}
             })
-            
+
         except Exception as e:
-            logger.error(f"Error in api_performance_metrics: {e}")
-            return web.json_response({
-                'success': True,
-                'data': {
-                    'historical': {
-                        'total_pnl': 0.0,
-                        'win_rate': 0.0,
-                        'total_trades': 0,
-                        'winning_trades': 0,
-                        'losing_trades': 0,
-                        'avg_win': 0.0,
-                        'avg_loss': 0.0
-                    }
-                }
-            }, status=200)
+            logger.error(f"Error in api_performance_metrics: {e}", exc_info=True)
+            return web.json_response({'error': str(e)}, status=500)
 
     def _filter_by_period(self, trades, period):
         """Filter trades by time period"""
@@ -881,99 +1112,89 @@ class DashboardEndpoints:
     async def api_performance_charts(self, request):
         """Get performance chart data"""
         try:
-            timeframe = request.query.get('timeframe', '24h')
+            timeframe = request.query.get('timeframe', '7d')
             
             if not self.db:
                 return web.json_response({'error': 'Database not available'}, status=503)
+
+            query = "SELECT exit_timestamp, profit_loss, metadata FROM trades WHERE status = 'closed' ORDER BY exit_timestamp ASC;"
+            trades = await self.db.pool.fetch(query)
+
+            if not trades:
+                return web.json_response({'success': True, 'data': {
+                    'equity_curve': [],
+                    'cumulative_pnl': [],
+                    'strategy_performance': [],
+                    'win_loss': {'wins': 0, 'losses': 0},
+                    'monthly': [],
+                }})
+
+            df = pd.DataFrame([dict(trade) for trade in trades])
+            df['profit_loss'] = pd.to_numeric(df['profit_loss'])
+            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
+
+            df['strategy'] = df['metadata'].apply(self._get_strategy_from_metadata)
+
+            # --- FIX STARTS HERE ---
             
-            # Get closed trades
-            all_trades = await self.db.get_recent_trades(limit=1000)
-            all_trades = self._serialize_decimals(all_trades)
+            # 1. Calculate Equity Curve on the ENTIRE dataset first
+            initial_balance = self.config_mgr.get_portfolio_config().initial_balance
+            df_full = df.copy() # Use a copy for full history calculations
+            df_full['cumulative_pnl'] = df_full['profit_loss'].cumsum()
+            df_full['equity'] = initial_balance + df_full['cumulative_pnl']
+
+            # 2. Now, filter the DataFrame by the requested timeframe
+            if timeframe != 'all':
+                now = pd.Timestamp.utcnow()
+                # Use a mapping for timedelta
+                time_delta_map = {
+                    '24h': pd.Timedelta(days=1),
+                    '7d': pd.Timedelta(days=7),
+                    '30d': pd.Timedelta(days=30),
+                    '90d': pd.Timedelta(days=90)
+                }
+                delta = time_delta_map.get(timeframe, pd.Timedelta(days=7)) # Default to 7d
+
+                # Filter both the main df and the full history df for display
+                df = df[df['exit_timestamp'] >= (now - delta)]
+                df_full_filtered = df_full[df_full['exit_timestamp'] >= (now - delta)]
+            else:
+                # If 'all' time, the filtered version is the same as the full
+                df_full_filtered = df_full
+
+            # 3. Generate chart data from the correctly filtered data
+            # The equity curve uses the filtered full history, preserving the correct starting equity
+            equity_curve_data = [{'timestamp': ts.isoformat(), 'value': val if not np.isnan(val) else 0.0} for ts, val in df_full_filtered[['exit_timestamp', 'equity']].values] if not df_full_filtered.empty else []
+            cumulative_pnl_data = [{'timestamp': ts.isoformat(), 'cumulative_pnl': val if not np.isnan(val) else 0.0} for ts, val in df_full_filtered[['exit_timestamp', 'cumulative_pnl']].values] if not df_full_filtered.empty else []
             
-            # Filter only closed trades with exit timestamps
-            closed_trades = [t for t in all_trades if t.get('status') == 'closed' and t.get('exit_timestamp')]
-            
-            if not closed_trades:
-                return web.json_response({
-                    'success': True,
-                    'data': {
-                        'portfolio_history': [],
-                        'pnl_history': [],
-                        'strategy_performance': {}
-                    }
-                })
-            
-            # Sort by exit timestamp
-            closed_trades.sort(key=lambda x: x['exit_timestamp'])
-            
-            # Filter by timeframe
-            from datetime import datetime, timedelta
-            now = datetime.utcnow()
-            
-            timeframe_hours = {'1h': 1, '24h': 24, '7d': 168, '30d': 720}
-            hours = timeframe_hours.get(timeframe, 24)
-            cutoff = now - timedelta(hours=hours)
-            
-            # ✅ Calculate cumulative P&L before the timeframe
-            cumulative_pnl_before = 0
-            filtered_trades = []
-            
-            for trade in closed_trades:
-                try:
-                    trade_time = datetime.fromisoformat(trade['exit_timestamp'].replace('Z', '+00:00').replace('+00:00', ''))
-                    trade_time = trade_time.replace(tzinfo=None)  # Make naive for comparison
-                    cutoff_naive = cutoff.replace(tzinfo=None)
-                    
-                    if trade_time < cutoff_naive:
-                        cumulative_pnl_before += float(trade.get('profit_loss', 0))
-                    else:
-                        filtered_trades.append(trade)
-                except:
-                    pass
-            
-            # Generate portfolio history
-            portfolio_history = []
-            pnl_history = []
-            from collections import defaultdict
-            daily_pnl = defaultdict(float)
-            
-            # Calculate performance metrics
-            try:
-                from config.config_manager import PortfolioConfig
-                config = PortfolioConfig()
-                starting_value = config.initial_balance
-            except Exception:
-                starting_value = 400  # Fallback
-            cumulative_pnl = cumulative_pnl_before
-            
-            for trade in filtered_trades:
-                pnl = float(trade.get('profit_loss', 0))
-                cumulative_pnl += pnl
-                portfolio_value = starting_value + cumulative_pnl
-                
-                portfolio_history.append({
-                    'timestamp': trade['exit_timestamp'],
-                    'value': portfolio_value
-                })
-                
-                date_key = trade['exit_timestamp'][:10]
-                daily_pnl[date_key] += pnl
-            
-            pnl_history = [
-                {'timestamp': date, 'value': pnl}
-                for date, pnl in sorted(daily_pnl.items())
-            ]
-            
-            logger.info(f"Chart data: {len(portfolio_history)} portfolio points, {len(pnl_history)} P&L points")
-            
+            # --- FIX ENDS HERE ---
+
+            # Strategy Performance
+            strategy_performance = df.groupby('strategy')['profit_loss'].sum().reset_index()
+            strategy_performance.columns = ['strategy', 'pnl']
+
+            # Win/Loss Distribution
+            win_loss_distribution = {
+                'wins': len(df[df['profit_loss'] > 0]),
+                'losses': len(df[df['profit_loss'] <= 0])
+            }
+
+            # Monthly Performance
+            df['month'] = df['exit_timestamp'].dt.to_period('M').astype(str)
+            monthly_performance = df.groupby('month')['profit_loss'].sum().reset_index()
+            monthly_performance.columns = ['month', 'pnl']
+
             return web.json_response({
                 'success': True,
-                'data': {
-                    'portfolio_history': portfolio_history,
-                    'pnl_history': pnl_history,
-                    'strategy_performance': {}
-                }
+                'data': self._serialize_decimals({
+                    'equity_curve': equity_curve_data,
+                    'cumulative_pnl': cumulative_pnl_data,
+                    'strategy_performance': strategy_performance.to_dict('records'),
+                    'win_loss': win_loss_distribution,
+                    'monthly': monthly_performance.to_dict('records'),
+                })
             })
+
         except Exception as e:
             logger.error(f"Error getting performance charts: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
@@ -1091,53 +1312,24 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_bot_status(self, request):
-        """Get bot status with robust detection"""
+        """Get the bot's running status and uptime."""
         try:
-            # ✅ FIX: Check multiple possible state indicators
-            is_running = False
-            uptime_str = 'N/A'
-            
-            if self.engine:
-                # Try different state attribute names
-                if hasattr(self.engine, 'state'):
-                    # Check for various "running" values
-                    state_val = str(self.engine.state).lower()
-                    is_running = state_val in ['running', 'active', 'started', 'true', '1']
-                elif hasattr(self.engine, 'running'):
-                    is_running = bool(self.engine.running)
-                elif hasattr(self.engine, 'is_running'):
-                    is_running = bool(self.engine.is_running)
-                elif hasattr(self.engine, '_running'):
-                    is_running = bool(self.engine._running)
-                elif hasattr(self.engine, 'active'):
-                    is_running = bool(self.engine.active)
-                
-                # Calculate uptime if running
-                if is_running:
-                    start_time = None
-                    if hasattr(self.engine, 'start_time') and self.engine.start_time:
-                        start_time = self.engine.start_time
-                    elif hasattr(self.engine, 'started_at') and self.engine.started_at:
-                        start_time = self.engine.started_at
-                    elif hasattr(self.engine, 'startup_time') and self.engine.startup_time:
-                        start_time = self.engine.startup_time
-                    
-                    if start_time:
-                        try:
-                            uptime_delta = datetime.utcnow() - start_time
-                            hours = int(uptime_delta.total_seconds() // 3600)
-                            minutes = int((uptime_delta.total_seconds() % 3600) // 60)
-                            uptime_str = f"{hours}h {minutes}m"
-                        except Exception as e:
-                            logger.warning(f"Error calculating uptime: {e}")
-                            uptime_str = "Running"
-            
+            from core.engine import BotState
+            is_running = self.engine and self.engine.state == BotState.RUNNING
+            uptime_str = "N/A"
+
+            if is_running and self.engine.stats.get('start_time'):
+                uptime_delta = datetime.utcnow() - self.engine.stats['start_time']
+                hours, remainder = divmod(int(uptime_delta.total_seconds()), 3600)
+                minutes, _ = divmod(remainder, 60)
+                uptime_str = f"{hours}h {minutes}m"
+
             status = {
                 'running': is_running,
                 'uptime': uptime_str,
-                'mode': self.config.get('mode', 'unknown'),
-                'version': '1.0.0',
-                'last_health_check': datetime.utcnow().isoformat()
+                'mode': self.config_mgr.get_general_config().mode,
+                'dry_run': self.config_mgr.get_general_config().dry_run,
+                'version': '1.0.0', # Replace with actual version if available
             }
             
             return web.json_response({
@@ -1159,27 +1351,68 @@ class DashboardEndpoints:
             }, status=200)
     
     # ==================== API - SETTINGS ====================
-    
+
+    def _json_serializer(self, obj):
+        """Custom JSON serializer for objects not serializable by default json code"""
+        if isinstance(obj, (datetime,)):
+            return obj.isoformat()
+        if isinstance(obj, SecretStr):
+            return obj.get_secret_value() if obj else None
+        if isinstance(obj, Enum):
+            return obj.value
+        if hasattr(obj, 'model_dump'):
+            return obj.model_dump()
+        if hasattr(obj, 'dict'):
+            return obj.dict()
+        if hasattr(obj, '__dict__'):
+            return obj.__dict__
+        raise TypeError(f"Type {type(obj)} not serializable")
+
     async def api_get_settings(self, request):
-        """Get all settings"""
+        """Get all settings, correctly handling SecretStr."""
         try:
             if not self.config_mgr:
                 return web.json_response({'error': 'Config manager not available'}, status=503)
-            
-            settings = {
+
+            # --- FIX STARTS HERE ---
+            # Fetch all configuration models from the config manager
+            all_configs = {
+                'general': self.config_mgr.get_general_config(),
+                'portfolio': self.config_mgr.get_portfolio_config(),
+                'risk_management': self.config_mgr.get_risk_management_config(),
                 'trading': self.config_mgr.get_trading_config(),
-                'risk': self.config_mgr.get_risk_management_config(),
+                'chain': self.config_mgr.get_chain_config(),
+                'position_management': self.config_mgr.get_position_management_config(),
+                'volatility': self.config_mgr.get_volatility_config(),
+                'exit_strategy': self.config_mgr.get_exit_strategy_config(),
+                'solana': self.config_mgr.get_solana_config(),
+                'jupiter': self.config_mgr.get_jupiter_config(),
+                'performance': self.config_mgr.get_performance_config(),
+                'logging': self.config_mgr.get_logging_config(),
+                'feature_flags': self.config_mgr.get_feature_flags_config(),
+                'gas_price': self.config_mgr.get_gas_price_config(),
+                'trading_limits': self.config_mgr.get_trading_limits_config(),
+                'ml_models': self.config_mgr.get_ml_models_config(),
+                'backtesting': self.config_mgr.get_backtesting_config(),
+                'network': self.config_mgr.get_network_config(),
+                'debug': self.config_mgr.get_debug_config(),
+                'dashboard': self.config_mgr.get_dashboard_config(),
+                'security': self.config_mgr.get_security_config(),
+                'database': self.config_mgr.get_database_config(),
                 'api': self.config_mgr.get_api_config(),
                 'monitoring': self.config_mgr.get_monitoring_config(),
-                'ml_models': self.config_mgr.get_ml_models_config()
             }
-            
-            return web.json_response({
-                'success': True,
-                'data': settings
-            })
+
+            # Use aiohttp's json_response with a custom dumps function
+            # This is the correct way to handle custom serialization in aiohttp
+            return web.json_response(
+                {'success': True, 'data': all_configs},
+                dumps=lambda data: json.dumps(data, default=self._json_serializer)
+            )
+            # --- FIX ENDS HERE ---
+
         except Exception as e:
-            logger.error(f"Error getting settings: {e}")
+            logger.error(f"Error getting settings: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_update_settings(self, request):
@@ -1211,61 +1444,19 @@ class DashboardEndpoints:
     
     async def api_revert_settings(self, request):
         """Revert settings to previous version"""
-        try:
-            data = await request.json()
-            config_type = data.get('config_type')
-            version = data.get('version', -1)  # -1 for previous, -2 for two versions back, etc.
-            
-            if not self.config_mgr:
-                return web.json_response({'error': 'Config manager not available'}, status=503)
-            
-            # Get change history
-            history = self.config_mgr.get_change_history(config_type, limit=abs(version) + 1)
-            
-            if len(history) >= abs(version):
-                old_config = history[abs(version) - 1]['new_config']
-                
-                # Apply old configuration
-                self.config_mgr.update_config_internal(
-                    config_type=config_type,
-                    updates=old_config,
-                    user='dashboard',
-                    reason=f'Reverted to version {version}',
-                    persist=True
-                )
-                
-                return web.json_response({
-                    'success': True,
-                    'message': f'Settings reverted to version {version}'
-                })
-            else:
-                return web.json_response({
-                    'success': False,
-                    'error': 'Version not found in history'
-                }, status=404)
-        except Exception as e:
-            logger.error(f"Error reverting settings: {e}")
-            return web.json_response({'error': str(e)}, status=500)
-    
+        return web.json_response({
+            'success': False,
+            'error': 'This feature is temporarily disabled.'
+        }, status=503)
+
     async def api_settings_history(self, request):
         """Get settings change history"""
-        try:
-            config_type = request.query.get('config_type')
-            limit = int(request.query.get('limit', 50))
-            
-            if not self.config_mgr:
-                return web.json_response({'error': 'Config manager not available'}, status=503)
-            
-            history = self.config_mgr.get_change_history(config_type, limit=limit)
-            
-            return web.json_response({
-                'success': True,
-                'data': history,
-                'count': len(history)
-            })
-        except Exception as e:
-            logger.error(f"Error getting settings history: {e}")
-            return web.json_response({'error': str(e)}, status=500)
+        return web.json_response({
+            'success': True,
+            'data': [],
+            'count': 0,
+            'message': 'This feature is temporarily disabled.'
+        })
     
     # ==================== API - TRADING CONTROLS ====================
     
@@ -1512,6 +1703,7 @@ class DashboardEndpoints:
             test_id = f"backtest_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
             
             # Store backtest task
+            self.backtests[test_id] = {'status': 'running', 'progress': 'Initializing...'}
             asyncio.create_task(self._run_backtest_task(
                 test_id, strategy, start_date, end_date, initial_balance, parameters
             ))
@@ -1529,9 +1721,7 @@ class DashboardEndpoints:
         """Get backtest results"""
         try:
             test_id = request.match_info['test_id']
-            
-            # Retrieve results (implement storage mechanism)
-            results = {}  # Fetch from storage
+            results = self.backtests.get(test_id, {'status': 'not_found'})
             
             return web.json_response({
                 'success': True,
@@ -1637,6 +1827,50 @@ class DashboardEndpoints:
         return resp
     
     # ==================== HELPER METHODS ====================
+
+    def _get_strategy_from_metadata(self, metadata: Any) -> str:
+        """
+        Robustly search for a 'strategy' name in the metadata, which can be
+        a JSON string or a dictionary. Handles multiple formats.
+        """
+        default_name = "unknown"
+
+        if not metadata:
+            return default_name
+
+        # If metadata is a string, parse it to a dict
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                # If it's just a plain string (not JSON), it might be the strategy name
+                return metadata if metadata else default_name
+
+        if not isinstance(metadata, dict):
+            return default_name
+
+        # --- FIX STARTS HERE: Handle multiple common metadata structures ---
+        # 1. Direct 'strategy_name' key
+        if 'strategy_name' in metadata and isinstance(metadata['strategy_name'], str):
+            return metadata['strategy_name']
+
+        # 2. Nested 'strategy' dictionary with a 'name' key
+        if 'strategy' in metadata and isinstance(metadata['strategy'], dict):
+            return metadata['strategy'].get('name', default_name)
+
+        # 3. Direct 'strategy' key that is a string
+        if 'strategy' in metadata and isinstance(metadata['strategy'], str):
+            return metadata['strategy']
+
+        # 4. Fallback for other potential nested structures (recursive)
+        for key, value in metadata.items():
+            if isinstance(value, dict):
+                strategy = self._get_strategy_from_metadata(value)
+                if strategy != default_name:
+                    return strategy
+        # --- FIX ENDS HERE ---
+
+        return default_name
     
     async def _send_initial_data(self, sid):
         """Send initial data to newly connected client"""
@@ -1836,16 +2070,16 @@ class DashboardEndpoints:
                     logger.debug(f"Error broadcasting wallet update: {e}")
                 
                 # ✅ FIX: Add await for async method
-#                if self.db:
-#                    try:
-#                        perf_data = await self.db.get_performance_summary()
-#                        if 'error' not in perf_data:  # Only broadcast if no error
-#                            await self.sio.emit('performance_update', {
-#                                **perf_data,
-#                                'timestamp': datetime.utcnow().isoformat()
-#                            })
-#                    except Exception as e:
-#                        logger.debug(f"Error broadcasting performance update: {e}")
+                if self.db:
+                    try:
+                        perf_data = await self.db.get_performance_summary()
+                        if 'error' not in perf_data:  # Only broadcast if no error
+                            await self.sio.emit('performance_update', {
+                                **perf_data,
+                                'timestamp': datetime.utcnow().isoformat()
+                            })
+                    except Exception as e:
+                        logger.debug(f"Error broadcasting performance update: {e}")
                 
             except asyncio.CancelledError:
                 break
@@ -1854,42 +2088,106 @@ class DashboardEndpoints:
                 await asyncio.sleep(10)
     
     async def _generate_report(self, period, start_date, end_date, metrics):
-        """Generate performance report"""
+        """Generate detailed performance report."""
         report = {
             'period': period,
+            'start_date': start_date,
+            'end_date': end_date,
             'generated_at': datetime.utcnow().isoformat(),
-            'metrics': {}
+            'metrics': {},
+            'trades': []
         }
-        
-        # Get trades for period
-        trades = self.db.get_recent_trades(limit=1000)
-        
-        # Apply date filters
-        if start_date:
-            start = datetime.fromisoformat(start_date)
-            trades = [t for t in trades if datetime.fromisoformat(t['timestamp']) >= start]
-        
-        if end_date:
-            end = datetime.fromisoformat(end_date)
-            trades = [t for t in trades if datetime.fromisoformat(t['timestamp']) <= end]
-        
-        # Calculate metrics
-        if 'all' in metrics or 'pnl' in metrics:
-            total_pnl = sum(float(t.get('pnl', 0)) for t in trades if t.get('status') == 'closed')
-            report['metrics']['total_pnl'] = total_pnl
-        
-        if 'all' in metrics or 'win_rate' in metrics:
-            winning_trades = len([t for t in trades if float(t.get('pnl', 0)) > 0])
-            total_trades = len([t for t in trades if t.get('status') == 'closed'])
-            report['metrics']['win_rate'] = winning_trades / total_trades if total_trades > 0 else 0
-        
-        if 'all' in metrics or 'trades_count' in metrics:
-            report['metrics']['total_trades'] = len(trades)
-            report['metrics']['open_trades'] = len([t for t in trades if t.get('status') == 'open'])
-            report['metrics']['closed_trades'] = len([t for t in trades if t.get('status') == 'closed'])
-        
-        # Add more metrics as needed
-        
+
+        if not self.db:
+            return report
+
+        # --- FIX STARTS HERE ---
+        # 1. Determine date range based on period
+        now = datetime.utcnow()
+        if period == 'daily':
+            start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_date = now
+        elif period == 'weekly':
+            start_date = now - timedelta(days=7)
+            end_date = now
+        elif period == 'monthly':
+            start_date = now - timedelta(days=30)
+            end_date = now
+        elif start_date and end_date:
+            # Use provided dates for custom reports
+            if isinstance(start_date, str):
+                start_date = datetime.fromisoformat(start_date)
+            if isinstance(end_date, str):
+                end_date = datetime.fromisoformat(end_date).replace(hour=23, minute=59, second=59)
+        else:
+            # Default to last 7 days if no period is matched
+            start_date = now - timedelta(days=7)
+            end_date = now
+
+        # 2. Fetch trades from the database within the calculated date range
+        # Filtering on exit_timestamp for closed trades makes more sense for reports
+        query = """
+            SELECT * FROM trades
+            WHERE status = 'closed' AND exit_timestamp >= $1 AND exit_timestamp <= $2
+            ORDER BY exit_timestamp ASC;
+        """
+        closed_trades = await self.db.pool.fetch(query, start_date, end_date)
+
+        # The report should only contain closed trades, so we assign this directly
+        report['trades'] = self._serialize_decimals([dict(row) for row in closed_trades])
+        # --- FIX ENDS HERE ---
+
+        # Calculate metrics if there are any closed trades
+        if not closed_trades:
+            return report
+
+        # Convert records to a list of dicts for DataFrame creation
+        trade_list = [dict(row) for row in closed_trades]
+        df = pd.DataFrame(trade_list)
+
+        # Ensure 'profit_loss' column exists and handle potential missing values
+        if 'profit_loss' not in df.columns:
+            df['profit_loss'] = 0
+        else:
+            df['profit_loss'] = pd.to_numeric(df['profit_loss'], errors='coerce').fillna(0)
+
+        # --- FIX STARTS HERE: Calculate all missing report metrics ---
+        winning_trades_df = df[df['profit_loss'] > 0]
+        losing_trades_df = df[df['profit_loss'] <= 0]
+
+        total_pnl = df['profit_loss'].sum()
+        total_trades = len(df)
+        win_rate = (len(winning_trades_df) / total_trades) * 100 if total_trades > 0 else 0
+
+        avg_win = winning_trades_df['profit_loss'].mean() if not winning_trades_df.empty else 0
+        avg_loss = abs(losing_trades_df['profit_loss'].mean()) if not losing_trades_df.empty else 0
+
+        gross_profit = winning_trades_df['profit_loss'].sum()
+        gross_loss = abs(losing_trades_df['profit_loss'].sum())
+        profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+
+        initial_balance = self.config_mgr.get_portfolio_config().initial_balance
+        df['cumulative_pnl'] = df['profit_loss'].cumsum()
+        df['equity'] = initial_balance + df['cumulative_pnl']
+        peak = df['equity'].expanding(min_periods=1).max()
+        drawdown = ((df['equity'] - peak) / peak).replace([np.inf, -np.inf], 0).fillna(0)
+        max_drawdown = abs(drawdown.min() * 100) if not drawdown.empty else 0
+
+        # Populate metrics dictionary
+        report['metrics'] = {
+            'total_pnl': total_pnl,
+            'total_trades': total_trades,
+            'win_rate': win_rate,
+            'winning_trades': len(winning_trades_df),
+            'losing_trades': len(losing_trades_df),
+            'avg_win': avg_win,
+            'avg_loss': avg_loss,
+            'profit_factor': profit_factor,
+            'max_drawdown': max_drawdown,
+            'recovery_factor': 0 # Placeholder for now
+        }
+        # --- FIX ENDS HERE ---
+
         return report
     
     async def _generate_custom_report(self, filters):
@@ -1906,15 +2204,44 @@ class DashboardEndpoints:
     async def _export_csv(self, report):
         """Export report as CSV"""
         output = io.StringIO()
-        
-        # Write CSV data
+        writer = csv.writer(output)
+
+        # --- FIX STARTS HERE: Write both metrics and trade data ---
+        # Write metrics
+        writer.writerow(['Metric', 'Value'])
         if 'metrics' in report:
-            writer = csv.writer(output)
-            writer.writerow(['Metric', 'Value'])
             for key, value in report['metrics'].items():
-                writer.writerow([key, value])
+                # Format numbers for better readability in CSV
+                if isinstance(value, float):
+                    value = f"{value:.4f}"
+                writer.writerow([key.replace('_', ' ').title(), value])
+
+        writer.writerow([]) # Add a blank line for separation
+
+        # Write trade data
+        writer.writerow([
+            'ID', 'Token Symbol', 'Entry Timestamp', 'Exit Timestamp',
+            'Entry Price', 'Exit Price', 'Amount', 'Profit/Loss', 'ROI (%)', 'Exit Reason'
+        ])
+
+        if 'trades' in report and report['trades']:
+            for trade in report['trades']:
+                writer.writerow([
+                    trade.get('id'),
+                    trade.get('token_symbol', 'N/A'),
+                    trade.get('entry_timestamp'),
+                    trade.get('exit_timestamp'),
+                    trade.get('entry_price'),
+                    trade.get('exit_price'),
+                    trade.get('amount'),
+                    trade.get('profit_loss'),
+                    trade.get('roi', 0),
+                    trade.get('exit_reason', 'N/A')
+                ])
+        else:
+            writer.writerow(['No trade data available for this period.'])
+        # --- FIX ENDS HERE ---
         
-        # Return as file
         response = web.Response(
             body=output.getvalue().encode('utf-8'),
             content_type='text/csv',
@@ -1951,16 +2278,115 @@ class DashboardEndpoints:
         return web.json_response(report)
     
     async def _run_backtest_task(self, test_id, strategy, start_date, end_date, initial_balance, parameters):
-        """Run backtest in background"""
+        """Run backtest in the background using historical data."""
         try:
-            logger.info(f"Starting backtest {test_id}")
-            
-            # Run backtest logic here
-            # Store results
-            
-            logger.info(f"Backtest {test_id} completed")
+            logger.info(f"Starting backtest {test_id} from {start_date} to {end_date}")
+            self.backtests[test_id]['progress'] = 'Fetching historical data...'
+
+            if not self.db:
+                raise Exception("Database connection is not available.")
+
+            # Fetch historical trades from the database within the specified date range
+            # Filter trades by the selected strategy
+            query = """
+                SELECT * FROM trades
+                WHERE status = 'closed'
+                AND exit_timestamp >= $1
+                AND exit_timestamp <= $2
+                AND (
+                    (metadata->'strategy'->>'name' = $3) OR
+                    (jsonb_typeof(metadata->'strategy') = 'string' AND metadata->>'strategy' = $3)
+                )
+                ORDER BY exit_timestamp ASC;
+            """
+            trades = await self.db.pool.fetch(
+                query,
+                datetime.fromisoformat(start_date),
+                datetime.fromisoformat(end_date),
+                strategy,
+            )
+
+            if not trades:
+                self.backtests[test_id] = {
+                    'status': 'completed',
+                    'message': 'No trades found for the selected period.',
+                    'equity_curve': []
+                }
+                return
+
+            self.backtests[test_id]['progress'] = f'Simulating {len(trades)} trades.'
+            df = pd.DataFrame([dict(trade) for trade in trades])
+            df['profit_loss'] = pd.to_numeric(df['profit_loss'])
+            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
+
+            # Simulate trades instead of just replaying old P&L
+            balance = float(initial_balance)
+            equity_curve = [{'timestamp': start_date, 'value': balance}]
+            position_size_per_trade = balance * 0.1  # 10% of initial balance per trade
+
+            for index, trade in df.iterrows():
+                entry_price = float(trade.get('entry_price', 0))
+                exit_price = float(trade.get('exit_price', 0))
+                roi = (exit_price - entry_price) / entry_price if entry_price > 0 else 0.0
+                simulated_pnl = position_size_per_trade * roi
+                balance += simulated_pnl
+                df.at[index, 'simulated_pnl'] = simulated_pnl
+                equity_curve.append({'timestamp': trade['exit_timestamp'].isoformat(), 'value': balance})
+
+            # Use simulated P&L for all metrics
+            df['profit_loss'] = df['simulated_pnl']
+
+            # Final metrics
+            final_balance = balance
+            total_pnl = final_balance - float(initial_balance)
+            total_return_pct = (total_pnl / float(initial_balance)) * 100 if initial_balance > 0 else 0
+
+            total_trades = len(df)
+            winning_trades_df = df[df['profit_loss'] > 0]
+            losing_trades_df = df[df['profit_loss'] <= 0]
+            win_rate = (len(winning_trades_df) / total_trades) * 100 if total_trades > 0 else 0.0
+
+            # Max Drawdown from equity curve
+            equity_df = pd.DataFrame(equity_curve)
+            equity_df['value'] = pd.to_numeric(equity_df['value'])
+            peak = equity_df['value'].expanding(min_periods=1).max()
+            drawdown = ((equity_df['value'] - peak) / peak).replace([np.inf, -np.inf], 0).fillna(0)
+            max_drawdown = abs(float(drawdown.min()) * 100) if not drawdown.empty else 0.0
+
+            # Backtesting statistics
+            gross_profit = float(winning_trades_df['profit_loss'].sum())
+            gross_loss = abs(float(losing_trades_df['profit_loss'].sum()))
+            profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+
+            avg_win = float(winning_trades_df['profit_loss'].mean()) if not winning_trades_df.empty else 0.0
+            avg_loss = abs(float(losing_trades_df['profit_loss'].mean())) if not losing_trades_df.empty else 0.0
+
+            largest_win = float(winning_trades_df['profit_loss'].max()) if not winning_trades_df.empty else 0.0
+            largest_loss = abs(float(losing_trades_df['profit_loss'].min())) if not losing_trades_df.empty else 0.0
+
+            self.backtests[test_id] = {
+                'status': 'completed',
+                'final_balance': float(final_balance),
+                'total_pnl': float(total_pnl),
+                'profit_factor': float(profit_factor),
+                'avg_win': float(avg_win),
+                'avg_loss': float(avg_loss),
+                'largest_win': float(largest_win),
+                'largest_loss': float(largest_loss),
+                'total_return': float(total_return_pct),
+                'total_trades': total_trades,
+                'win_rate': float(win_rate),
+                'winning_trades': len(winning_trades_df),
+                'losing_trades': len(losing_trades_df),
+                'sharpe_ratio': 0,  # placeholder
+                'sortino_ratio': 0,  # placeholder
+                'max_drawdown': max_drawdown,
+                'equity_curve': equity_curve
+            }
+            logger.info(f"Backtest {test_id} completed successfully.")
         except Exception as e:
-            logger.error(f"Error in backtest {test_id}: {e}")
+            logger.error(f"Error in backtest task {test_id}: {e}", exc_info=True)
+            self.backtests[test_id] = {'status': 'failed', 'error': str(e)}
     
     async def start(self):
         """Start the dashboard server"""

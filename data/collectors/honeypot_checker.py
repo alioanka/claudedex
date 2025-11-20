@@ -15,6 +15,7 @@ import json
 from solders.pubkey import Pubkey  # For Solana address validation
 
 from utils.helpers import retry_async, rate_limit, is_valid_address, format_token_amount
+from utils.helpers import retry_async
 from utils.constants import (
     HONEYPOT_CHECKS, HONEYPOT_THRESHOLDS, Chain,
     BLACKLISTED_TOKENS, BLACKLISTED_CONTRACTS, BLACKLISTED_WALLETS
@@ -68,105 +69,53 @@ def is_valid_solana_address(address: str) -> bool:
 class HoneypotChecker:
     """Advanced multi-API honeypot detection system"""
 
-
-    def __init__(self, config: Dict = None):
-        """Initialize honeypot checker with configuration"""
-        self.config = config or {}
+    def __init__(self, config_manager, chain_rpc_urls: Dict[str, List[str]]):
+        """Initialize honeypot checker with configuration and RPC URLs."""
+        self.config_mgr = config_manager
+        self.chain_rpc_urls = chain_rpc_urls
         self.session = None
-        self._web3_instances = {}
-        self._connection_locks = {}
+        self.web3_connections = {}
+
+        # --- FIX: Load API keys from the config manager ---
+        api_config = self.config_mgr.get_api_config()
         self.api_keys = {
-            "honeypot_is": self.config.get("honeypot_is_api_key", ""),
-            "tokensniffer": self.config.get("tokensniffer_api_key", ""),
-            "goplus": self.config.get("goplus_api_key", "")
+            "honeypot_is": api_config.honeypot_is_api_key if hasattr(api_config, 'honeypot_is_api_key') else "",
+            "tokensniffer": api_config.tokensniffer_api_key if hasattr(api_config, 'tokensniffer_api_key') else "",
+            "goplus": api_config.goplus_api_key if hasattr(api_config, 'goplus_api_key') else ""
         }
-        self.cache = {}  # Simple cache for results
-        self.cache_ttl = 300  # 5 minutes
         
+        self.cache = {}
+        self.cache_ttl = 300  # 5 minutes
+
     async def initialize(self):
         """Initialize connections and resources"""
         timeout = aiohttp.ClientTimeout(total=30)
         self.session = aiohttp.ClientSession(timeout=timeout)
-        # ✅ DON'T setup Web3 connections yet - lazy load them
-        self._web3_instances = {}
-        self._connection_locks = {}  # Thread-safe lazy init
-        logger.info("✅ HoneypotChecker initialized (EVM + Solana support, lazy loading)")
-        
-    async def _get_web3_for_chain(self, chain: str):
-            """
-            Lazy-load Web3 connection only when needed
-            Thread-safe with asyncio locks
-            """
-            from utils.constants import Chain
-            
-            # Normalize chain to Chain enum
-            chain_map = {
-                'ethereum': Chain.ETHEREUM,
-                'bsc': Chain.BSC,
-                'polygon': Chain.POLYGON,
-                'arbitrum': Chain.ARBITRUM,
-                'base': Chain.BASE,
-            }
-            
-            # Handle both string and Chain enum
-            if isinstance(chain, str):
-                chain_enum = chain_map.get(chain.lower(), Chain.ETHEREUM)
-            else:
-                chain_enum = chain
-            
-            # Return cached connection if available
-            if chain_enum in self._web3_instances:
-                w3 = self._web3_instances[chain_enum]
-                if w3.is_connected():
-                    return w3
-                else:
-                    # Connection lost, remove from cache
-                    del self._web3_instances[chain_enum]
-            
-            # Create lock for this chain if doesn't exist
-            if chain_enum not in self._connection_locks:
-                self._connection_locks[chain_enum] = asyncio.Lock()
-            
-            # Use lock to ensure only one coroutine creates the connection
-            async with self._connection_locks[chain_enum]:
-                # Double-check after acquiring lock
-                if chain_enum in self._web3_instances:
-                    return self._web3_instances[chain_enum]
-                
-                # Create new connection
-                if hasattr(self.config, 'get_rpc_urls'):
-                    rpc_urls = self.config.get_rpc_urls(chain if isinstance(chain, str) else chain.name.lower())
-                    if rpc_urls:
-                        for rpc_url in rpc_urls:
-                            try:
-                                w3 = Web3(Web3.HTTPProvider(
-                                    rpc_url,
-                                    request_kwargs={'timeout': 10}
-                                ))
-                                if w3.is_connected():
-                                    self._web3_instances[chain_enum] = w3
-                                    logger.info(f"✅ HoneypotChecker lazy-loaded {chain}")
-                                    return w3
-                            except Exception as e:
-                                logger.warning(f"⚠️ Failed to connect to {rpc_url}: {e}")
-                
-                logger.warning(f"⚠️ Could not establish Web3 connection for {chain}")
-                return None
+        await self._setup_web3_connections()
+        logger.info("✅ HoneypotChecker initialized (EVM + Solana support)")
 
-    def _normalize_chain_to_enum(self, chain: str) -> Chain:
-        """Convert chain string to Chain enum"""
-        chain_map = {
-            'ethereum': Chain.ETHEREUM,
-            'bsc': Chain.BSC,
-            'polygon': Chain.POLYGON,
-            'arbitrum': Chain.ARBITRUM,
-            'base': Chain.BASE,
-        }
-        return chain_map.get(chain.lower(), Chain.ETHEREUM)
+    async def _setup_web3_connections(self):
+        """Setup Web3 connections for each chain using the provided RPC URLs."""
+        for chain_name, rpc_urls in self.chain_rpc_urls.items():
+            if not rpc_urls:
+                continue
+
+            # --- FIX: Use the correct chain enum and URLs from config ---
+            try:
+                chain_enum = Chain[chain_name.upper()]
+                rpc_url = rpc_urls[0] # Use the first available RPC URL
+
+                self.web3_connections[chain_enum] = Web3(Web3.HTTPProvider(rpc_url))
+                if self.web3_connections[chain_enum].is_connected():
+                    logger.info(f"✅ Web3 connected for {chain_name.upper()} via {rpc_url[:50]}...")
+                else:
+                    logger.error(f"❌ Failed to connect Web3 for {chain_name.upper()}")
+            except (KeyError, IndexError):
+                logger.warning(f"⚠️ No valid RPC URL or chain enum for '{chain_name}'")
 
     async def close(self):
         """Clean up resources"""
-        if self.session:
+        if self.session and not self.session.closed:
             await self.session.close()
             
     async def check_token(self, address: str, chain: str) -> Dict:
@@ -432,7 +381,7 @@ class HoneypotChecker:
                     }
                     
         except asyncio.TimeoutError:
-            logger.error(f"RugCheck API timeout for {address[:8]}...")
+            logger.warning(f"RugCheck API timeout for {address[:8]}...")
             return {
                 "status": "timeout",
                 "error": "API request timed out"
@@ -710,6 +659,7 @@ class HoneypotChecker:
             return {"error": "Check failed"}
             
     # ✅ ADD THIS to analyze_contract_code around line 280:
+    @retry_async(max_retries=3, delay=1.0, exponential_backoff=True)
     async def analyze_contract_code(self, address: str, chain: str) -> Dict:
         """Analyze smart contract code for honeypot patterns"""
         try:

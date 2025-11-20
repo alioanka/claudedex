@@ -187,7 +187,7 @@ class Position:
 class RiskManager:
     """Advanced risk management system"""
     
-    def __init__(self, config_manager: 'ConfigManager', portfolio_manager=None):
+    def __init__(self, config: Dict, portfolio_manager=None, config_manager=None, chain_rpc_urls=None):
         """
         Initialize risk manager
         
@@ -197,13 +197,9 @@ class RiskManager:
         self.config_manager = config_manager
         self.config = config_manager.get_all_configs()  # Get the raw config dict
         self.portfolio_manager = portfolio_manager
-
-        # Pass the full config_manager instance to components that need it for RPC URLs etc.
-        self.chain_collector = ChainDataCollector(self.config_manager)
-        self.honeypot_checker = HoneypotChecker(self.config_manager)
-
-        # Components that only need a subsection of the config can still use the dict
-        self.wallet_manager = WalletSecurityManager(self.config.get('security', {}))
+        self.chain_collector = ChainDataCollector(config.get('web3', {}))
+        self.honeypot_checker = HoneypotChecker(config_manager, chain_rpc_urls)
+        self.wallet_manager = WalletSecurityManager(config.get('security', {}))
         
         # Risk thresholds
         self.thresholds = self.config.get('risk_levels', {

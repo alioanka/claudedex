@@ -925,7 +925,7 @@ class JupiterExecutor(BaseExecutor):
     
     async def cleanup(self):
         """Cleanup resources"""
-        if self.session:
+        if self.session and not self.session.closed:
             await self.session.close()
             self.session = None
         

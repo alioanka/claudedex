@@ -133,7 +133,7 @@ class TokenSniffer:
     
     async def cleanup(self) -> None:
         """Cleanup resources"""
-        if self.session:
+        if self.session and not self.session.closed:
             await self.session.close()
     
     @retry_async(max_retries=3, delay=1.0)

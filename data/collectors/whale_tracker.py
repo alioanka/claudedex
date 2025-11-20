@@ -119,7 +119,7 @@ class WhaleTracker:
         
     async def close(self):
         """Clean up resources"""
-        if self.session:
+        if self.session and not self.session.closed:
             await self.session.close()
             
     async def track_whale_movements(self, token: str, chain: str) -> Dict:

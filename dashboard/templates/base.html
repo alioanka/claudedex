@@ -114,6 +114,20 @@
                     <span>Settings</span>
                 </a>
             </li>
+
+            <li class="nav-item {% if page == 'logs' %}active{% endif %}">
+                <a href="/logs">
+                    <i class="fas fa-clipboard-list"></i>
+                    <span>Logs</span>
+                </a>
+            </li>
+
+            <li class="nav-item {% if page == 'analysis' %}active{% endif %}">
+                <a href="/analysis">
+                    <i class="fas fa-chart-pie"></i>
+                    <span>Analysis</span>
+                </a>
+            </li>
             
             <li class="nav-divider"></li>
             
@@ -190,24 +204,10 @@
     <div class="toast-container" id="toastContainer"></div>
     
     <!-- Core JavaScript -->
-    <script src="/static/js/main.js"></script>
     <script src="/static/js/websocket.js"></script>
     <script src="/static/js/dashboard.js"></script>
+    <script src="/static/js/main.js"></script>
     
     {% block extra_js %}{% endblock %}
-    
-    <script>
-        // Initialize on page load
-        document.addEventListener('DOMContentLoaded', function() {
-            // Initialize WebSocket connection
-            initWebSocket();
-            
-            // Initialize dashboard
-            initDashboard();
-            
-            // Load initial data
-            loadDashboardData();
-        });
-    </script>
 </body>
 </html>

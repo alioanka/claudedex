@@ -128,23 +128,35 @@ async function handleBotControl(action) {
     };
     
     const config = actionMap[action];
-    if (!config) return;
+    if (!config) {
+        console.error(`Invalid action: ${action}`);
+        return;
+    }
     
     try {
         showToast('info', config.message);
         
         const response = await fetch(config.url, { method: 'POST' });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`API request failed with status ${response.status}:`, errorText);
+            showToast('error', `Error: ${response.status} ${response.statusText}`);
+            return;
+        }
+
         const data = await response.json();
         
         if (data.success) {
             showToast('success', data.message || `Bot ${action} successful`);
-            updateBotStatus();
+            // Give the backend a moment to update its state before querying
+            setTimeout(updateBotStatus, 1000);
         } else {
             showToast('error', data.error || `Failed to ${action} bot`);
         }
     } catch (error) {
-        console.error(`Error ${action} bot:`, error);
-        showToast('error', `Failed to ${action} bot`);
+        console.error(`[handleBotControl] CATCH block - Error during '${action}' action:`, error);
+        showToast('error', `An unexpected error occurred while trying to ${action} the bot.`);
     }
 }
 
@@ -216,7 +228,7 @@ async function loadTopBarData() {
             const hist = response.data.historical;
             
             // Get realized P&L from closed trades
-            const startingBalance = 400;
+            const startingBalance = hist.initial_balance || 400;
             const realizedPnl = hist.total_pnl || 0;
             
             // Get unrealized P&L from open positions
@@ -291,7 +303,7 @@ async function updateBotStatus() {
     try {
         const response = await fetch('/api/bot/status');
         const data = await response.json();
-        
+
         if (data.success && data.data) {
             const status = data.data;
             // ✅ FIX: Check if bot is running (handle both boolean and string)
@@ -309,27 +321,29 @@ async function updateBotStatus() {
                 }
             }
         } else {
-            // ✅ If API fails, assume bot is running if we have data
+            // If API call fails but gives a response, assume offline
+            state.botStatus = 'offline';
             const statusIndicator = document.getElementById('botStatus');
             if (statusIndicator) {
-                statusIndicator.classList.remove('offline');
-                statusIndicator.classList.add('online');
+                statusIndicator.classList.remove('online');
+                statusIndicator.classList.add('offline');
                 const statusText = statusIndicator.querySelector('.status-text');
                 if (statusText) {
-                    statusText.textContent = 'Bot Running';
+                    statusText.textContent = 'Connecting...';
                 }
             }
         }
     } catch (error) {
         console.error('Error updating bot status:', error);
-        // ✅ Don't set as offline on error - assume running
+        // If fetch fails, bot is unreachable
+        state.botStatus = 'offline';
         const statusIndicator = document.getElementById('botStatus');
         if (statusIndicator) {
-            statusIndicator.classList.remove('offline');
-            statusIndicator.classList.add('online');
+            statusIndicator.classList.remove('online');
+            statusIndicator.classList.add('offline');
             const statusText = statusIndicator.querySelector('.status-text');
             if (statusText) {
-                statusText.textContent = 'Bot Running';
+                statusText.textContent = 'Error';
             }
         }
     }
@@ -446,6 +460,30 @@ function formatCurrency(value, decimals = 2) {
         minimumFractionDigits: decimals,
         maximumFractionDigits: decimals
     }).format(value);
+}
+
+/**
+ * NEW: formatPrice function to handle scientific notation and show full precision
+ * for token prices, which can be very small.
+ */
+function formatPrice(value) {
+    if (value === null || value === undefined) return 'N/A';
+
+    // Convert to number to handle scientific notation (e.g., 1.23e-8)
+    const num = Number(value);
+
+    // If it's a very small number, format it to show up to 18 decimal places
+    if (num > 0 && num < 0.0001) {
+        return '$' + num.toFixed(18).replace(/\.?0+$/, ""); // Remove trailing zeros
+    }
+
+    // For larger numbers, use a standard currency format but with more precision
+    return num.toLocaleString('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 8,
+    });
 }
 
 function formatPercent(value, decimals = 2) {
@@ -604,9 +642,12 @@ async function exportData(format, endpoint) {
 document.addEventListener('DOMContentLoaded', function() {
     loadTheme();
     initDashboard();
-    updateBotStatus();  // Load bot status first
-    loadTopBarData();    // ✅ Load top bar ONCE
-    loadDashboardData(); // Load other data
+    initWebSocket(); // Initialize WebSocket connection
+
+    // The following functions are called within initDashboard, so they are redundant here.
+    // updateBotStatus();
+    // loadTopBarData();
+    // loadDashboardData();
 });
 
 // Export global functions
@@ -614,6 +655,7 @@ window.showToast = showToast;
 window.showConfirmation = showConfirmation;
 window.showAlert = showAlert;
 window.formatCurrency = formatCurrency;
+window.formatPrice = formatPrice;
 window.formatPercent = formatPercent;
 window.formatNumber = formatNumber;
 window.formatDate = formatDate;

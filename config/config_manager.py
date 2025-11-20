@@ -3,14 +3,13 @@ Configuration Manager for DexScreener Trading Bot
 Centralized configuration management with validation, hot-reloading, and environment handling
 """
 from __future__ import annotations
-from typing import Tuple
+from typing import Tuple, List, Dict, Any, Optional, Callable, Union
 
 import os
 import json
 import yaml
 import asyncio
 import hashlib
-from typing import Dict, List, Optional, Any, Union, Callable
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -18,7 +17,7 @@ import logging
 from enum import Enum
 
 import aiofiles
-from pydantic import BaseModel, ValidationError, validator
+from pydantic import BaseModel, ValidationError, validator, Field
 from pydantic.types import SecretStr
 from jsonschema import validate, ValidationError as JsonValidationError
 
@@ -29,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 class ConfigType(Enum):
     """Configuration types"""
-    #SYSTEM = "system"
+    GENERAL = "general"
     TRADING = "trading"
     SECURITY = "security"
     DATABASE = "database"
@@ -37,8 +36,23 @@ class ConfigType(Enum):
     MONITORING = "monitoring"
     ML_MODELS = "ml_models"
     RISK_MANAGEMENT = "risk_management"
-    PORTFOLIO = "portfolio"  # Add this
-    WEB3 = "web3"
+    PORTFOLIO = "portfolio"
+    CHAIN = "chain"
+    POSITION_MANAGEMENT = "position_management"
+    VOLATILITY = "volatility"
+    EXIT_STRATEGY = "exit_strategy"
+    SOLANA = "solana"
+    JUPITER = "jupiter"
+    PERFORMANCE = "performance"
+    LOGGING = "logging"
+    FEATURE_FLAGS = "feature_flags"
+    GAS_PRICE = "gas_price"
+    TRADING_LIMITS = "trading_limits"
+    BACKTESTING = "backtesting"
+    NETWORK = "network"
+    DEBUG = "debug"
+    DASHBOARD = "dashboard"
+
 
 class ConfigSource(Enum):
     """Configuration sources"""
@@ -60,69 +74,164 @@ class ConfigChange:
     user: Optional[str]
     reason: Optional[str]
 
-class TradingConfig(BaseModel):
-    """Trading configuration schema"""
-    max_position_size: float = 0.1  # from 5% of portfolio
-    max_position_size_usd: float = 10.0  # Max trade size in USD
-    max_daily_trades: int = 100
-    max_slippage: float = 0.02  # 2%
-    stop_loss_percentage: float = 0.05  # 5%
-    take_profit_percentage: float = 0.15  # 15%
-    min_liquidity_threshold: float = 50000  # $50k
-    max_gas_price: int = 100  # Gwei
-    max_slippage_bps: int = 50  # Max slippage tolerance (50 bps = 0.5%)
-    expected_slippage_bps: int = 10  # Expected slippage (10 bps = 0.1%)
-    max_price_impact_bps: int = 100  # Max price impact (100 bps = 1%)
-    dex_fee_bps: int = 30  # DEX trading fee (30 bps = 0.3%)
+class GeneralConfig(BaseModel):
+    ml_enabled: bool = False
+    mode: str = "production"
+    dry_run: bool = True
+
+class PortfolioConfig(BaseModel):
+    initial_balance: float = 400.0
+    initial_balance_per_chain: float = 100.0
+    max_position_size_usd: float = 10.0
+    min_position_size_usd: float = 5.0
+    max_position_size_pct: float = 0.10
+    max_positions: int = 40
+    max_positions_per_chain: int = 10
+    max_concurrent_positions: int = 4
+
+class RiskManagementConfig(BaseModel):
+    max_risk_per_trade: float = 0.10
+    max_portfolio_risk: float = 0.25
+    daily_loss_limit_usd: float = 40.0
+    daily_loss_limit_pct: float = 0.10
+    risk_per_trade_pct: float = 0.02
+    stop_loss_pct: float = 0.12
+    take_profit_pct: float = 0.24
     position_cooldown_minutes: int = 30
+    breaker_error_rate_max: int = 20
+    breaker_slippage_realized_bps_max: int = 120
+    breaker_max_consecutive_losses: int = 5
+    breaker_max_drawdown_pct: int = 15
+    breaker_max_daily_loss_pct: int = 10
+    max_position_size_percent: int = 10
+    max_daily_loss_percent: int = 10
+    max_drawdown_percent: int = 25
 
-    min_opportunity_score: float = 0.05  # Minimum score to consider an opportunity
-
-    # Circuit Breaker Thresholds
-    BREAKER_ERROR_RATE_MAX: int = 20             # Max error rate percentage
-    BREAKER_SLIPPAGE_REALIZED_BPS_MAX: int = 120  # Max realized slippage in basis points
-    BREAKER_MAX_CONSECUTIVE_LOSSES: int = 5       # Max consecutive losing trades
-    BREAKER_MAX_DRAWDOWN_PCT: int = 15            # Max portfolio drawdown percentage
-    BREAKER_MAX_DAILY_LOSS_PCT: int = 10          # Max daily loss percentage
-
-    # ADD THIS:
+class TradingConfig(BaseModel):
+    max_slippage_bps: int = 50
+    expected_slippage_bps: int = 10
+    max_price_impact_bps: int = 100
+    dex_fee_bps: int = 30
+    min_opportunity_score: float = 0.25
+    solana_min_opportunity_score: float = 0.20
     strategies: Dict[str, Dict[str, Any]] = {
         'momentum': {'enabled': True, 'lookback_period': 20},
         'scalping': {'enabled': True, 'profit_target': 0.02},
         'ai_strategy': {'enabled': False}
     }
-    
-    # Strategy settings
-    enable_momentum_strategy: bool = True
-    enable_scalping_strategy: bool = True
-    enable_ai_strategy: bool = False
-    
-    # DEX settings
-    enabled_dexes: List[str] = ["uniswap_v2", "uniswap_v3", "pancakeswap"]
-    preferred_dex: str = "uniswap_v3"
-    
-    @validator('max_position_size')
-    def validate_position_size(cls, v):
-        if not 0 < v <= 1:
-            raise ValueError('max_position_size must be between 0 and 1')
-        return v
+
+class ChainConfig(BaseModel):
+    enabled_chains: str = "ethereum,bsc,base,arbitrum,solana"
+    default_chain: str = "ethereum"
+    max_pairs_per_chain: int = 50
+    discovery_interval_seconds: int = 300
+    chain_id: int = 1
+    ethereum_enabled: bool = True
+    bsc_enabled: bool = True
+    base_enabled: bool = True
+    arbitrum_enabled: bool = True
+    polygon_enabled: bool = False
+    solana_enabled: bool = True
+    ethereum_min_liquidity: int = 3000
+    bsc_min_liquidity: int = 500
+    base_min_liquidity: int = 2000
+    arbitrum_min_liquidity: int = 3000
+    polygon_min_liquidity: int = 500
+    solana_min_liquidity: int = 2000
+
+class PositionManagementConfig(BaseModel):
+    default_stop_loss_percent: int = 12
+    default_take_profit_percent: int = 24
+    max_hold_time_minutes: int = 60
+    trailing_stop_enabled: bool = True
+    trailing_stop_percent: int = 6
+    trailing_stop_activation: int = 10
+    trailing_stop_distance: int = 5
+    position_update_interval_seconds: int = 10
+    enable_position_monitoring: bool = True
+    use_ml_exits: bool = False
+
+class VolatilityConfig(BaseModel):
+    max_volatility_percent: int = 200
+    min_volatility_percent: int = 10
+    volatility_window_minutes: int = 60
+
+class ExitStrategyConfig(BaseModel):
+    exit_check_interval_seconds: int = 10
+
+class SolanaConfig(BaseModel):
+    solana_priority_fee: int = 5000
+    solana_compute_unit_price: int = 1000
+    solana_compute_unit_limit: int = 200000
+    solana_min_liquidity: int = 2000
+    solana_max_position_size_sol: int = 5
+    solana_min_trade_size_sol: float = 0.1
+
+class JupiterConfig(BaseModel):
+    jupiter_url: str = "https://quote-api.jup.ag/v6"
+    jupiter_max_slippage_bps: int = 500
+
+class PerformanceConfig(BaseModel):
+    max_workers: int = 4
+    batch_size: int = 100
+    cache_ttl: int = 300
+
+class LoggingConfig(BaseModel):
+    log_level: str = "INFO"
+    log_file: str = "/app/logs/trading_bot.log"
+
+class FeatureFlagsConfig(BaseModel):
+    enable_experimental_features: bool = False
+    use_ai_sentiment: bool = False
+    use_whale_tracking: bool = True
+    use_mempool_monitoring: bool = True
+
+class GasPriceConfig(BaseModel):
+    max_gas_price: int = 500
+    priority_gas_multiplier: float = 1.2
+
+class TradingLimitsConfig(BaseModel):
+    min_balance_eth: float = 0.01
+    min_trade_size_usd: int = 5
+    max_trade_size_usd: int = 10
+
+class MLModelsConfig(BaseModel):
+    ml_retrain_interval_hours: int = 24
+    ml_min_confidence: float = 0.7
+
+class BacktestingConfig(BaseModel):
+    backtest_start_date: str = "2024-01-01"
+    backtest_end_date: str = "2024-12-31"
+    backtest_initial_balance: float = 1.0
+
+class NetworkConfig(BaseModel):
+    http_timeout: int = 30
+    ws_ping_interval: int = 30
+    max_retries: int = 3
+
+class DebugConfig(BaseModel):
+    debug: bool = False
+    testing: bool = False
+    verbose: bool = False
+
+class DashboardConfig(BaseModel):
+    dashboard_host: str = "0.0.0.0"
+    dashboard_port: int = 8080
 
 class SecurityConfig(BaseModel):
     """Security configuration schema"""
+    private_key: Optional[str] = None
+    solana_private_key: Optional[str] = None
+    encryption_key: Optional[str] = None
+    flashbots_signing_key: Optional[str] = None
     api_rate_limit: int = 1000  # requests per hour
     max_login_attempts: int = 5
     session_timeout: int = 3600  # seconds
     require_2fa: bool = True
-    
-    # Encryption settings
     encryption_key_rotation_days: int = 30
     backup_encryption_enabled: bool = True
-    
-    # Audit settings
     audit_log_retention_days: int = 365
     real_time_alerts: bool = True
-    
-    # Wallet security
     hardware_wallet_required: bool = False
     multisig_threshold: int = 2
     
@@ -138,14 +247,10 @@ class DatabaseConfig(BaseModel):
     port: int = 5432
     database: str = "trading_bot"
     username: str = "bot_user"
-    password: SecretStr = SecretStr("bot_password")  # ✅ Add default value
-    
-    # Connection pool settings
+    password: SecretStr = SecretStr("bot_password")
     pool_size: int = 10
     max_overflow: int = 20
     pool_timeout: int = 30
-    
-    # Performance settings
     echo_sql: bool = False
     enable_query_cache: bool = True
     query_cache_size: int = 1000
@@ -155,115 +260,27 @@ class APIConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8080
     debug: bool = False
-    
-    # CORS settings
     cors_origins: List[str] = ["*"]
     cors_methods: List[str] = ["GET", "POST", "PUT", "DELETE"]
-    
-    # Authentication
-    jwt_secret: SecretStr = SecretStr("ti4o1XMf9NWB35RzTFvE0nqrCHblvviJC-N878PWoPs")  # ✅ Add default
-    jwt_expiry: int = 3600  # seconds
-    
-    # Rate limiting
+    jwt_secret: SecretStr = SecretStr("ti4o1XMf9NWB35RzTFvE0nqrCHblvviJC-N878PWoPs")
+    jwt_expiry: int = 3600
     rate_limit_requests: int = 100
-    rate_limit_window: int = 60  # seconds
+    rate_limit_window: int = 60
 
 class MonitoringConfig(BaseModel):
     """Monitoring configuration schema"""
     enable_metrics: bool = True
     metrics_port: int = 9090
-    
-    # Logging
     log_level: str = "INFO"
     log_format: str = "json"
     log_rotation_size: str = "100MB"
     log_retention_days: int = 30
-    
-    # Alerts
     telegram_bot_token: Optional[SecretStr] = None
     telegram_chat_id: Optional[str] = None
     discord_webhook_url: Optional[SecretStr] = None
     email_smtp_server: Optional[str] = None
     email_username: Optional[str] = None
     email_password: Optional[SecretStr] = None
-
-class MLModelsConfig(BaseModel):
-    """ML Models configuration schema"""
-
-    model_config = {'protected_namespaces': ()}  # Add this line
-    ml_enabled: bool = True
-    # Model settings
-    enable_ensemble: bool = True
-    model_update_frequency: int = 24  # hours
-    min_training_samples: int = 1000
-    
-    # Feature engineering
-    lookback_period: int = 100  # candles
-    feature_selection_threshold: float = 0.05
-    
-    # Training settings
-    train_test_split: float = 0.8
-    validation_split: float = 0.2
-    early_stopping_patience: int = 10
-    
-    # Model types
-    enable_xgboost: bool = True
-    enable_lightgbm: bool = True
-    enable_lstm: bool = True
-    enable_transformer: bool = False  # Computationally intensive
-    
-    # Thresholds
-    rug_detection_threshold: float = 0.7
-    pump_prediction_threshold: float = 0.8
-    volume_validation_threshold: float = 0.6
-
-class RiskManagementConfig(BaseModel):
-    """Risk management configuration schema"""
-    # Portfolio limits
-    max_portfolio_risk: float = 0.02  # 2% VaR
-    max_position_correlation: float = 0.7
-    max_sector_exposure: float = 0.3  # 30% per sector
-    
-    # Position sizing
-    kelly_criterion_enabled: bool = True
-    position_sizing_method: str = "kelly"  # "fixed", "kelly", "optimal_f"
-    
-    # Stop losses
-    dynamic_stop_loss: bool = True
-    atr_multiplier: float = 2.0
-    trailing_stop_enabled: bool = True
-    
-    # Emergency controls
-    emergency_stop_drawdown: float = 0.2  # 20%
-    circuit_breaker_enabled: bool = True
-    max_consecutive_losses: int = 5
-    
-    @validator('max_portfolio_risk')
-    def validate_portfolio_risk(cls, v):
-        if not 0 < v <= 0.1:
-            raise ValueError('max_portfolio_risk must be between 0 and 0.1 (10%)')
-        return v
-
-class PortfolioConfig(BaseModel):
-    """Portfolio configuration schema"""
-    # ✅ CHANGE THESE VALUES:
-    initial_balance: float = 400.0              # Was 10000, now 400
-    max_positions: int = 40                      # Was 10, now 8
-    max_position_size_pct: float = 0.10         # Keep 10%
-    max_risk_per_trade: float = 0.10            # Was 0.05, now 0.10
-    max_portfolio_risk: float = 0.25            # Keep 25%
-    min_position_size: float = 5.0              # Was 100.0, now 5.0
-    max_position_size: float = 10.0
-    max_position_size_usd: float = 10.0  # Max trade size in USD
-    allocation_strategy: str = "DYNAMIC"        # Keep
-    daily_loss_limit: float = 0.10              # Was 0.15, now 0.10
-    consecutive_losses_limit: int = 5           # Keep
-    correlation_threshold: float = 0.7          # Keep
-    rebalance_frequency: str = "daily"          # Keep
-
-class Web3Config(BaseModel):
-    """Web3 provider configuration"""
-    rpc_urls: Dict[str, List[str]] = {}
 
 class ConfigManager:
     """
@@ -277,14 +294,6 @@ class ConfigManager:
     """
 
     def __init__(self, config_dir: str = "./config", config_path: Optional[str] = None):
-        """
-        Initialize ConfigManager
-        
-        Args:
-            config_dir: Directory containing config files
-            config_path: Optional path to specific config file (for compatibility)
-        """
-        # Use config_path if provided, otherwise use config_dir
         if config_path:
             self.config_dir = Path(config_path).parent
             self.config_file = Path(config_path)
@@ -294,70 +303,71 @@ class ConfigManager:
         
         self.config_dir.mkdir(parents=True, exist_ok=True)
         
-        # Configuration storage
         self.configs: Dict[ConfigType, BaseModel] = {}
         self.config_schemas: Dict[ConfigType, type] = {
+            ConfigType.GENERAL: GeneralConfig,
+            ConfigType.PORTFOLIO: PortfolioConfig,
+            ConfigType.RISK_MANAGEMENT: RiskManagementConfig,
             ConfigType.TRADING: TradingConfig,
+            ConfigType.CHAIN: ChainConfig,
+            ConfigType.POSITION_MANAGEMENT: PositionManagementConfig,
+            ConfigType.VOLATILITY: VolatilityConfig,
+            ConfigType.EXIT_STRATEGY: ExitStrategyConfig,
+            ConfigType.SOLANA: SolanaConfig,
+            ConfigType.JUPITER: JupiterConfig,
+            ConfigType.PERFORMANCE: PerformanceConfig,
+            ConfigType.LOGGING: LoggingConfig,
+            ConfigType.FEATURE_FLAGS: FeatureFlagsConfig,
+            ConfigType.GAS_PRICE: GasPriceConfig,
+            ConfigType.TRADING_LIMITS: TradingLimitsConfig,
+            ConfigType.ML_MODELS: MLModelsConfig,
+            ConfigType.BACKTESTING: BacktestingConfig,
+            ConfigType.NETWORK: NetworkConfig,
+            ConfigType.DEBUG: DebugConfig,
+            ConfigType.DASHBOARD: DashboardConfig,
             ConfigType.SECURITY: SecurityConfig,
             ConfigType.DATABASE: DatabaseConfig,
             ConfigType.API: APIConfig,
             ConfigType.MONITORING: MonitoringConfig,
-            ConfigType.ML_MODELS: MLModelsConfig,
-            ConfigType.RISK_MANAGEMENT: RiskManagementConfig,
-            ConfigType.PORTFOLIO: PortfolioConfig,  # Add this
-            ConfigType.WEB3: Web3Config,
         }
         
-        # Configuration change tracking
         self.change_history: List[ConfigChange] = []
         self.config_watchers: Dict[ConfigType, List[Callable]] = {}
-        self.file_watchers: Dict[str, float] = {}  # filename -> last_modified
+        self.file_watchers: Dict[str, float] = {}
         
-        # Encryption for sensitive data
         self.encryption_manager = None
         
-        # Hot-reload settings
         self.auto_reload_enabled = True
-        self.reload_check_interval = 5  # seconds
+        self.reload_check_interval = 5
         self._reload_task = None
 
-        # Add this before the final logger.info
         self._raw_config = {}
         load_dotenv()  # Load .env file
         self._env_config = self._load_environment_config()
-        self._raw_config.update(self._env_config)  # Merge env vars into raw config
+        self._raw_config.update(self._env_config)
     
-        
         logger.info("ConfigManager initialized")
 
     async def initialize(self, encryption_key: Optional[str] = None) -> None:
         """Initialize configuration manager"""
         try:
-            # Initialize encryption for sensitive data
             if encryption_key:
                 encryption_config = {'encryption_key': encryption_key}
                 self.encryption_manager = EncryptionManager(encryption_config)
             
-            # Load all configurations
             await self._load_all_configs()
             
-            # ✅ NEW: Store loaded configs in _raw_config for .get() access
             for config_type, config_obj in self.configs.items():
-                config_key = config_type.value  # e.g., 'trading', 'security'
-                if hasattr(config_obj, 'dict'):
-                    # Pydantic v2
+                config_key = config_type.value
+                if hasattr(config_obj, 'model_dump'):
                     self._raw_config[config_key] = config_obj.model_dump()
                 elif hasattr(config_obj, 'dict'):
-                    # Pydantic v1
                     self._raw_config[config_key] = config_obj.dict()
                 else:
-                    # Already a dict
                     self._raw_config[config_key] = config_obj
             
-            # Re-merge env vars (they take priority)
             self._raw_config.update(self._env_config)
             
-            # Start auto-reload if enabled
             if self.auto_reload_enabled:
                 await self._start_auto_reload()
 
@@ -374,34 +384,21 @@ class ConfigManager:
         """
         env_config = {}
         
-        # Common environment variables
-        env_vars = [
-            'PRIVATE_KEY',
-            'ENCRYPTION_KEY',
-            'DB_URL',
-            'DATABASE_URL',
-            'REDIS_URL',
-            'WALLET_ADDRESS',
-            'TRADING_MODE',
-            'DRY_RUN',
-            'DEXSCREENER_API_URL',
-            'DEXSCREENER_API_KEY',
-            'GOPLUS_API_KEY',
-            'TELEGRAM_BOT_TOKEN',
-            'TELEGRAM_CHAT_ID',
-            'ETHEREUM_RPC_URL',
-            'BSC_RPC_URL',
-            'BASE_RPC_URL',
-            'ARBITRUM_RPC_URL',
-            'POLYGON_RPC_URL',
-            'SOLANA_RPC_URL',
-            'SOLANA_PRIVATE_KEY',
-            'WEB3_PROVIDER_URL',
-            'WEB3_BACKUP_PROVIDER_1',
-            'WEB3_BACKUP_PROVIDER_2',
+        sensitive_keys = [
+            'ENCRYPTION_KEY', 'PRIVATE_KEY', 'SOLANA_PRIVATE_KEY', 'WALLET_ADDRESS', 'SOLANA_WALLET',
+            'DEXSCREENER_API_KEY', 'GOPLUS_API_KEY', 'TOKENSNIFFER_API_KEY', '1INCH_API_KEY',
+            'PARASWAP_API_KEY', 'TWITTER_API_KEY', 'TWITTER_API_SECRET', 'TWITTER_BEARER_TOKEN',
+            'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'DISCORD_WEBHOOK_URL', 'SMTP_SERVER',
+            'SMTP_PORT', 'EMAIL_FROM', 'EMAIL_TO', 'EMAIL_PASSWORD', 'FLASHBOTS_SIGNING_KEY',
+            'DASHBOARD_API_KEY', 'GRAFANA_PASSWORD', 'PGADMIN_EMAIL', 'PGADMIN_PASSWORD',
+            'JUPYTER_TOKEN', 'SESSION_SECRET', 'JWT_SECRET', 'API_KEY', 'SENTRY_DSN',
+            'SOLANA_RPC_URL', 'SOLANA_BACKUP_RPCS', 'ETHEREUM_RPC_URLS', 'BSC_RPC_URLS',
+            'POLYGON_RPC_URLS', 'ARBITRUM_RPC_URLS', 'BASE_RPC_URLS', 'SOLANA_RPC_URLS',
+            'WEB3_PROVIDER_URL', 'WEB3_BACKUP_PROVIDER_1', 'WEB3_BACKUP_PROVIDER_2',
+            'FLASHBOTS_RPC', 'DB_URL', 'DATABASE_URL', 'DB_PASSWORD', 'REDIS_URL'
         ]
         
-        for var in env_vars:
+        for var in sensitive_keys:
             value = os.getenv(var)
             if value and value not in ('null', 'None', ''):
                 env_config[var] = value
@@ -422,9 +419,12 @@ class ConfigManager:
             Configuration value or default
         """
         try:
-            # Check raw_config dict if available
+            env_key = key.upper().replace('.', '_')
+            env_value = os.getenv(env_key)
+            if env_value is not None and env_value not in ('', 'null', 'None'):
+                return env_value
+            
             if hasattr(self, '_raw_config') and self._raw_config:
-                # Handle nested keys like 'security.private_key'
                 if '.' in key:
                     parts = key.split('.')
                     value = self._raw_config
@@ -436,46 +436,17 @@ class ConfigManager:
                             break
                     if value is not None:
                         return value
-                # Handle flat keys
                 elif key in self._raw_config:
                     return self._raw_config[key]
             
-            # Try to get from Pydantic models
             key_lower = key.lower()
             
-            # Security keys
-            if key_lower in ['private_key', 'encryption_key', 'jwt_secret']:
-                if ConfigType.SECURITY in self.configs:
-                    security_config = self.configs[ConfigType.SECURITY]
-                    if hasattr(security_config, key_lower):
-                        return getattr(security_config, key_lower)
+            for config_type in ConfigType:
+                if config_type in self.configs:
+                    config_obj = self.configs[config_type]
+                    if hasattr(config_obj, key_lower):
+                        return getattr(config_obj, key_lower)
             
-            # Database keys
-            elif key_lower in ['db_url', 'database_url', 'host', 'port', 'database']:
-                if ConfigType.DATABASE in self.configs:
-                    db_config = self.configs[ConfigType.DATABASE]
-                    if key_lower in ['db_url', 'database_url']:
-                        # Construct DB URL from parts
-                        if hasattr(db_config, 'host'):
-                            return f"postgresql://{db_config.username}:{db_config.password}@{db_config.host}:{db_config.port}/{db_config.database}"
-                    elif hasattr(db_config, key_lower):
-                        return getattr(db_config, key_lower)
-            
-            # API keys
-            elif key_lower in ['dexscreener_api_url', 'dexscreener_api_key', 'goplus_api_key']:
-                if ConfigType.API in self.configs:
-                    api_config = self.configs[ConfigType.API]
-                    if hasattr(api_config, key_lower):
-                        return getattr(api_config, key_lower)
-            
-            # Monitoring/Telegram keys
-            elif key_lower in ['telegram_bot_token', 'telegram_chat_id']:
-                if ConfigType.MONITORING in self.configs:
-                    monitoring_config = self.configs[ConfigType.MONITORING]
-                    if hasattr(monitoring_config, key_lower):
-                        return getattr(monitoring_config, key_lower)
-            
-            # Not found, return default
             return default
             
         except Exception as e:
@@ -484,10 +455,6 @@ class ConfigManager:
 
 
     def __getitem__(self, key: str) -> Any:
-        """
-        Allow dict-style access: config['key']
-        Called when you do: value = config['PRIVATE_KEY']
-        """
         result = self.get(key)
         if result is None:
             raise KeyError(f"Configuration key '{key}' not found")
@@ -495,28 +462,16 @@ class ConfigManager:
 
 
     def __setitem__(self, key: str, value: Any):
-        """
-        Allow dict-style setting: config['key'] = value
-        Called when you do: config['NEW_KEY'] = 'value'
-        """
         if not hasattr(self, '_raw_config'):
             self._raw_config = {}
         self._raw_config[key] = value
 
 
     def __contains__(self, key: str) -> bool:
-        """
-        Allow 'in' operator: if 'key' in config
-        Called when you do: if 'PRIVATE_KEY' in config:
-        """
         return self.get(key) is not None
 
 
     def keys(self) -> List[str]:
-        """
-        Return all available keys
-        Called when you do: config.keys()
-        """
         keys_set = set()
         if hasattr(self, '_raw_config') and self._raw_config:
             keys_set.update(self._raw_config.keys())
@@ -531,39 +486,32 @@ class ConfigManager:
                 await self._load_config(config_type)
             except Exception as e:
                 logger.error(f"Failed to load {config_type.value} config: {e}")
-                # Load default configuration
                 await self._load_default_config(config_type)
 
     async def _load_config(self, config_type: ConfigType) -> None:
         """Load configuration from multiple sources"""
         config_data = {}
         
-        # 1. Load default values from schema
         schema_class = self.config_schemas.get(config_type)
         if schema_class:
             default_config = schema_class()
             config_data.update(default_config.dict())
         
-        # 2. Load from file (YAML/JSON)
         file_data = await self._load_config_from_file(config_type)
         if file_data:
             config_data.update(file_data)
         
-        # 3. Override with environment variables
         env_data = self._load_config_from_env(config_type)
         if env_data:
             config_data.update(env_data)
         
-        # 4. Load from database (if available)
         db_data = await self._load_config_from_database(config_type)
         if db_data:
             config_data.update(db_data)
         
-        # 5. Decrypt sensitive values
         if self.encryption_manager:
             config_data = self._decrypt_sensitive_values(config_data)
         
-        # 6. Validate and create config object
         if schema_class:
             try:
                 validated_config = schema_class(**config_data)
@@ -580,7 +528,6 @@ class ConfigManager:
         config_file = self.config_dir / f"{config_type.value}.yaml"
         
         if not config_file.exists():
-            # Try JSON format
             config_file = self.config_dir / f"{config_type.value}.json"
             if not config_file.exists():
                 return None
@@ -589,7 +536,6 @@ class ConfigManager:
             async with aiofiles.open(config_file, 'r') as f:
                 content = await f.read()
             
-            # Update file watcher
             stat = config_file.stat()
             self.file_watchers[str(config_file)] = stat.st_mtime
             
@@ -606,70 +552,16 @@ class ConfigManager:
         """Load configuration from environment variables"""
         env_data = {}
         
-        # ✅ SPECIAL HANDLING FOR TRADING CONFIG
-        if config_type == ConfigType.TRADING:
-            if os.getenv('MIN_OPPORTUNITY_SCORE'):
-                env_data['min_opportunity_score'] = float(os.getenv('MIN_OPPORTUNITY_SCORE'))
-            # ✅ ADD THIS for Solana-specific:
-            if os.getenv('SOLANA_MIN_OPPORTUNITY_SCORE'):
-                env_data['solana_min_opportunity_score'] = float(os.getenv('SOLANA_MIN_OPPORTUNITY_SCORE'))
-            if os.getenv('MAX_POSITION_SIZE_PERCENT'):
-                env_data['max_position_size'] = float(os.getenv('MAX_POSITION_SIZE_PERCENT')) / 100
-            if os.getenv('MAX_SLIPPAGE'):
-                env_data['max_slippage'] = float(os.getenv('MAX_SLIPPAGE'))
-        
-        # ✅ ADD THIS: Parse ENABLED_CHAINS from .env
-        if config_type == ConfigType.API:  # Store chains config here temporarily
-            enabled_chains_str = os.getenv('ENABLED_CHAINS')
-            if enabled_chains_str:
-                env_data['enabled_chains'] = enabled_chains_str
+        schema_class = self.config_schemas.get(config_type)
+        if not schema_class:
+            return env_data
 
-        if config_type == ConfigType.WEB3:
-            rpc_urls = {}
-            # Handle multi-chain RPC URLs (plural)
-            for chain_name in ['ETHEREUM', 'BSC', 'POLYGON', 'ARBITRUM', 'BASE', 'SOLANA']:
-                env_var = f"{chain_name.upper()}_RPC_URLS"
-                urls_str = os.getenv(env_var)
-                if urls_str:
-                    rpc_urls[chain_name.lower()] = [url.strip() for url in urls_str.split(',') if url.strip()]
+        for field_name in schema_class.__fields__:
+            env_var = field_name.upper()
+            value = os.getenv(env_var)
+            if value is not None:
+                env_data[field_name] = value
 
-            # Handle single RPC URL for backward compatibility (singular)
-            if not rpc_urls:
-                main_rpc = os.getenv('WEB3_PROVIDER_URL')
-                if main_rpc:
-                    # Assume it's for the default chain if not otherwise specified
-                    default_chain = os.getenv('DEFAULT_CHAIN', 'ethereum').lower()
-                    rpc_urls[default_chain] = [main_rpc]
-
-                    # Also populate backup providers if they exist
-                    backup1 = os.getenv('WEB3_BACKUP_PROVIDER_1')
-                    if backup1:
-                        rpc_urls[default_chain].append(backup1)
-                    backup2 = os.getenv('WEB3_BACKUP_PROVIDER_2')
-                    if backup2:
-                        rpc_urls[default_chain].append(backup2)
-
-            env_data['rpc_urls'] = rpc_urls
-        
-        if config_type == ConfigType.ML_MODELS:
-            if os.getenv('ML_ENABLED') is not None:
-                env_data['ml_enabled'] = os.getenv('ML_ENABLED').lower() in ('true', '1', 'yes')
-
-        # Generic prefix-based loading (existing code continues)
-        prefix = f"BOT_{config_type.value.upper()}_"
-        for key, value in os.environ.items():
-            if key.startswith(prefix):
-                config_key = key[len(prefix):].lower()
-                # Parse value type
-                if value.lower() in ('true', 'false'):
-                    env_data[config_key] = value.lower() == 'true'
-                elif value.isdigit():
-                    env_data[config_key] = int(value)
-                elif self._is_float(value):
-                    env_data[config_key] = float(value)
-                else:
-                    env_data[config_key] = value
-        
         return env_data
 
     def _is_float(self, value: str) -> bool:
@@ -682,8 +574,6 @@ class ConfigManager:
 
     async def _load_config_from_database(self, config_type: ConfigType) -> Optional[Dict]:
         """Load configuration from database"""
-        # This would integrate with your database
-        # For now, return None (no database config)
         return None
 
     def _decrypt_sensitive_values(self, config_data: Dict) -> Dict:
@@ -710,14 +600,15 @@ class ConfigManager:
         
         return decrypt_recursive(config_data.copy())
 
-
-    # ✅ ADD THIS METHOD around line 450:
     def validate_environment(self) -> List[str]:
         """Validate required environment variables are set"""
         required_vars = [
-            'WALLET_ADDRESS',
             'PRIVATE_KEY',
-            'DB_URL'
+            'DATABASE_URL',
+            'REDIS_URL',
+            'WEB3_PROVIDER_URL',
+            'TELEGRAM_BOT_TOKEN',
+            'TELEGRAM_CHAT_ID'
         ]
         
         missing = []
@@ -762,7 +653,6 @@ class ConfigManager:
                 if current_modified > last_modified:
                     logger.info(f"Configuration file changed: {file_path}")
                     
-                    # Determine config type from filename
                     filename = Path(file_path).stem
                     config_type = None
                     
@@ -776,7 +666,6 @@ class ConfigManager:
                         self.file_watchers[file_path] = current_modified
                     
             except FileNotFoundError:
-                # File was deleted
                 logger.warning(f"Configuration file deleted: {file_path}")
                 del self.file_watchers[file_path]
             except Exception as e:
@@ -789,11 +678,9 @@ class ConfigManager:
             await self._load_config(config_type)
             new_config = self.configs.get(config_type)
             
-            # Track changes
             if old_config and new_config:
                 await self._track_config_changes(config_type, old_config, new_config)
             
-            # Notify watchers
             await self._notify_config_watchers(config_type, new_config)
             
             logger.info(f"Reloaded {config_type.value} configuration")
@@ -838,182 +725,7 @@ class ConfigManager:
             except Exception as e:
                 logger.error(f"Error notifying config watcher: {e}")
 
-    # Add these methods to ConfigManager class:
-
-    def load_config(self, env: str) -> Dict:
-        """
-        Load configuration for specific environment
-        Matches API specification signature
-        
-        Args:
-            env: Environment name (development, staging, production)
-            
-        Returns:
-            Configuration dictionary
-        """
-        # If configs are already loaded, return them
-        if self.configs:
-            result = {}
-            for config_type, config in self.configs.items():
-                result[config_type.value] = config.dict() if hasattr(config, 'dict') else config
-            return result
-        
-        # If configs aren't loaded yet, they should have been loaded by initialize()
-        # This is a fallback - return defaults synchronously
-        logger.warning("load_config called but configs not initialized - returning defaults")
-        
-        for config_type in ConfigType:
-            if config_type not in self.configs:
-                schema_class = self.config_schemas.get(config_type)
-                if schema_class:
-                    self.configs[config_type] = schema_class()
-        
-        # Return combined config dict
-        result = {}
-        for config_type, config in self.configs.items():
-            result[config_type.value] = config.dict() if hasattr(config, 'dict') else config
-        
-        return result
-
-    async def reload_config(self) -> None:
-        """
-        Reload all configurations
-        Matches API specification signature
-        """
-        # Clear existing configs
-        self.configs.clear()
-        
-        # Reload all
-        await self._load_all_configs()
-        
-        # Notify watchers
-        for config_type, config in self.configs.items():
-            await self._notify_config_watchers(config_type, config)
-
-    def validate_config(self, config: Dict) -> bool:
-        """
-        Validate configuration dictionary
-        Matches API specification signature
-        
-        Args:
-            config: Configuration dictionary to validate
-            
-        Returns:
-            True if valid, False otherwise
-        """
-        try:
-            # Validate each config type
-            for config_type_str, config_data in config.items():
-                # Find matching ConfigType enum
-                config_type = None
-                for ct in ConfigType:
-                    if ct.value == config_type_str:
-                        config_type = ct
-                        break
-                
-                if not config_type:
-                    return False
-                
-                # Get schema and validate
-                schema_class = self.config_schemas.get(config_type)
-                if schema_class:
-                    schema_class(**config_data)  # Will raise ValidationError if invalid
-                
-            return True
-            
-        except ValidationError:
-            return False
-        except Exception:
-            return False
-
-    def update_config(self, key: str, value: Any) -> None:
-        """
-        Update configuration value by key
-        Matches API specification signature
-        
-        Args:
-            key: Configuration key in format "type.field"
-            value: New value
-        """
-        # Parse key
-        parts = key.split('.')
-        if len(parts) < 2:
-            raise ValueError(f"Invalid key format: {key}")
-        
-        config_type_str = parts[0]
-        field_name = '.'.join(parts[1:])
-        
-        # Find config type
-        config_type = None
-        for ct in ConfigType:
-            if ct.value == config_type_str:
-                config_type = ct
-                break
-        
-        if not config_type:
-            raise ValueError(f"Unknown config type: {config_type_str}")
-        
-        # Update using existing method
-        asyncio.run(self.update_config_internal(
-            config_type=config_type,
-            updates={field_name: value}
-        ))
-
-    def get_config(self, key: str) -> Any:
-        """
-        Get configuration value by key
-        Matches API specification signature
-        
-        Args:
-            key: Configuration key in format "type.field"
-            
-        Returns:
-            Configuration value
-        """
-        # Parse key
-        parts = key.split('.')
-        if len(parts) < 1:
-            raise ValueError(f"Invalid key format: {key}")
-        
-        # If just config type requested
-        if len(parts) == 1:
-            config_type_str = parts[0]
-            for ct in ConfigType:
-                if ct.value == config_type_str:
-                    config = self.configs.get(ct)
-                    return config.dict() if config else None
-            return None
-        
-        # Get specific field
-        config_type_str = parts[0]
-        field_path = parts[1:]
-        
-        for ct in ConfigType:
-            if ct.value == config_type_str:
-                config = self.configs.get(ct)
-                if config:
-                    result = config.dict() if hasattr(config, 'dict') else config
-                    # Navigate nested path
-                    for field in field_path:
-                        if isinstance(result, dict):
-                            result = result.get(field)
-                        else:
-                            return None
-                    return result
-        
-        return None
-
-    # Rename the existing update_config to update_config_internal to avoid conflict
-
-    def get_all_configs(self) -> Dict:
-        """Returns the entire raw config dictionary."""
-        return self._raw_config
-
-    def get_portfolio_config(self) -> PortfolioConfig:
-        """Get portfolio configuration"""
-        return self.configs.get(ConfigType.PORTFOLIO, PortfolioConfig())
-
-    def get_config_internal(self, config_type: ConfigType) -> Optional[BaseModel]:
+    def get_config(self, config_type: ConfigType) -> Optional[BaseModel]:
         """Get configuration for specified type"""
         return self.configs.get(config_type)
 
@@ -1045,14 +757,61 @@ class ConfigManager:
         """Get risk management configuration"""
         return self.configs.get(ConfigType.RISK_MANAGEMENT, RiskManagementConfig())
 
-    def get_rpc_urls(self, chain: str) -> List[str]:
-        """Get RPC URLs for a specific chain."""
-        web3_config = self.configs.get(ConfigType.WEB3)
-        if web3_config and chain.lower() in web3_config.rpc_urls:
-            return web3_config.rpc_urls[chain.lower()]
-        return []
+    def get_portfolio_config(self) -> PortfolioConfig:
+        """Get portfolio configuration"""
+        return self.configs.get(ConfigType.PORTFOLIO, PortfolioConfig())
 
-    async def update_config_internal(self, 
+    def get_logging_config(self) -> LoggingConfig:
+        """Get logging configuration"""
+        return self.configs.get(ConfigType.LOGGING, LoggingConfig())
+
+    def get_general_config(self) -> GeneralConfig:
+        """Get general configuration"""
+        return self.configs.get(ConfigType.GENERAL, GeneralConfig())
+
+    def get_chain_config(self) -> ChainConfig:
+        return self.configs.get(ConfigType.CHAIN, ChainConfig())
+
+    def get_position_management_config(self) -> PositionManagementConfig:
+        return self.configs.get(ConfigType.POSITION_MANAGEMENT, PositionManagementConfig())
+
+    def get_volatility_config(self) -> VolatilityConfig:
+        return self.configs.get(ConfigType.VOLATILITY, VolatilityConfig())
+
+    def get_exit_strategy_config(self) -> ExitStrategyConfig:
+        return self.configs.get(ConfigType.EXIT_STRATEGY, ExitStrategyConfig())
+
+    def get_solana_config(self) -> SolanaConfig:
+        return self.configs.get(ConfigType.SOLANA, SolanaConfig())
+
+    def get_jupiter_config(self) -> JupiterConfig:
+        return self.configs.get(ConfigType.JUPITER, JupiterConfig())
+
+    def get_performance_config(self) -> PerformanceConfig:
+        return self.configs.get(ConfigType.PERFORMANCE, PerformanceConfig())
+
+    def get_feature_flags_config(self) -> FeatureFlagsConfig:
+        return self.configs.get(ConfigType.FEATURE_FLAGS, FeatureFlagsConfig())
+
+    def get_gas_price_config(self) -> GasPriceConfig:
+        return self.configs.get(ConfigType.GAS_PRICE, GasPriceConfig())
+
+    def get_trading_limits_config(self) -> TradingLimitsConfig:
+        return self.configs.get(ConfigType.TRADING_LIMITS, TradingLimitsConfig())
+
+    def get_backtesting_config(self) -> BacktestingConfig:
+        return self.configs.get(ConfigType.BACKTESTING, BacktestingConfig())
+
+    def get_network_config(self) -> NetworkConfig:
+        return self.configs.get(ConfigType.NETWORK, NetworkConfig())
+
+    def get_debug_config(self) -> DebugConfig:
+        return self.configs.get(ConfigType.DEBUG, DebugConfig())
+
+    def get_dashboard_config(self) -> DashboardConfig:
+        return self.configs.get(ConfigType.DASHBOARD, DashboardConfig())
+
+    async def update_config(self,
                           config_type: ConfigType, 
                           updates: Dict[str, Any],
                           user: Optional[str] = None,
@@ -1065,10 +824,8 @@ class ConfigManager:
                 logger.error(f"No config found for type {config_type.value}")
                 return False
             
-            # Get current config as dict
             config_dict = current_config.dict()
             
-            # Track changes
             changes = []
             for key, new_value in updates.items():
                 old_value = config_dict.get(key)
@@ -1084,10 +841,8 @@ class ConfigManager:
                         reason=reason
                     ))
             
-            # Apply updates
             config_dict.update(updates)
             
-            # Validate updated configuration
             schema_class = self.config_schemas.get(config_type)
             if schema_class:
                 try:
@@ -1099,17 +854,13 @@ class ConfigManager:
                 logger.error(f"No schema for config type {config_type.value}")
                 return False
             
-            # Update in memory
             self.configs[config_type] = new_config
             
-            # Record changes
             self.change_history.extend(changes)
             
-            # Persist if requested
             if persist:
                 await self._persist_config(config_type, new_config)
             
-            # Notify watchers
             await self._notify_config_watchers(config_type, new_config)
             
             logger.info(f"Updated {config_type.value} configuration with {len(updates)} changes")
@@ -1125,14 +876,12 @@ class ConfigManager:
             config_file = self.config_dir / f"{config_type.value}.yaml"
             config_dict = config.dict()
             
-            # Encrypt sensitive values before saving
             if self.encryption_manager:
                 config_dict = self._encrypt_sensitive_values(config_dict)
             
             async with aiofiles.open(config_file, 'w') as f:
                 await f.write(yaml.dump(config_dict, default_flow_style=False))
             
-            # Update file watcher
             stat = config_file.stat()
             self.file_watchers[str(config_file)] = stat.st_mtime
             
@@ -1164,137 +913,3 @@ class ConfigManager:
             return data
         
         return encrypt_recursive(config_data.copy())
-
-    def register_watcher(self, config_type: ConfigType, callback: Callable) -> None:
-        """Register a callback for configuration changes"""
-        if config_type not in self.config_watchers:
-            self.config_watchers[config_type] = []
-        
-        self.config_watchers[config_type].append(callback)
-        logger.info(f"Registered watcher for {config_type.value} configuration")
-
-    def unregister_watcher(self, config_type: ConfigType, callback: Callable) -> None:
-        """Unregister a configuration watcher"""
-        watchers = self.config_watchers.get(config_type, [])
-        if callback in watchers:
-            watchers.remove(callback)
-            logger.info(f"Unregistered watcher for {config_type.value} configuration")
-
-    def get_change_history(self, 
-                          config_type: Optional[ConfigType] = None,
-                          limit: int = 100) -> List[ConfigChange]:
-        """Get configuration change history"""
-        changes = self.change_history
-        
-        if config_type:
-            changes = [c for c in changes if c.config_type == config_type]
-        
-        # Sort by timestamp (newest first) and limit
-        changes = sorted(changes, key=lambda x: x.timestamp, reverse=True)
-        return changes[:limit]
-
-    async def backup_configs(self, backup_path: str) -> bool:
-        """Backup all configurations"""
-        try:
-            backup_dir = Path(backup_path)
-            backup_dir.mkdir(parents=True, exist_ok=True)
-            
-            timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-            
-            for config_type, config in self.configs.items():
-                backup_file = backup_dir / f"{config_type.value}_{timestamp}.yaml"
-                
-                async with aiofiles.open(backup_file, 'w') as f:
-                    await f.write(yaml.dump(config.dict(), default_flow_style=False))
-            
-            logger.info(f"Backed up configurations to {backup_dir}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to backup configurations: {e}")
-            return False
-
-    async def restore_configs(self, backup_path: str) -> bool:
-        """Restore configurations from backup"""
-        try:
-            backup_dir = Path(backup_path)
-            
-            if not backup_dir.exists():
-                logger.error(f"Backup directory does not exist: {backup_dir}")
-                return False
-            
-            for config_type in ConfigType:
-                # Find latest backup file for this config type
-                pattern = f"{config_type.value}_*.yaml"
-                backup_files = list(backup_dir.glob(pattern))
-                
-                if backup_files:
-                    latest_backup = max(backup_files, key=lambda f: f.stat().st_mtime)
-                    
-                    async with aiofiles.open(latest_backup, 'r') as f:
-                        content = await f.read()
-                    
-                    config_data = yaml.safe_load(content)
-                    
-                    # Validate and restore
-                    schema_class = self.config_schemas.get(config_type)
-                    if schema_class:
-                        try:
-                            restored_config = schema_class(**config_data)
-                            self.configs[config_type] = restored_config
-                            logger.info(f"Restored {config_type.value} from {latest_backup}")
-                        except ValidationError as e:
-                            logger.error(f"Validation error restoring {config_type.value}: {e}")
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to restore configurations: {e}")
-            return False
-
-    def validate_config_internal(self, config_type: ConfigType, config_data: Dict) -> Tuple[bool, Optional[str]]:
-        """Validate configuration data against schema"""
-        try:
-            schema_class = self.config_schemas.get(config_type)
-            if not schema_class:
-                return False, f"No schema defined for {config_type.value}"
-            
-            schema_class(**config_data)
-            return True, None
-            
-        except ValidationError as e:
-            return False, str(e)
-
-    def get_config_status(self) -> Dict[str, Any]:
-        """Get configuration manager status"""
-        return {
-            'loaded_configs': list(self.configs.keys()),
-            'auto_reload_enabled': self.auto_reload_enabled,
-            'watched_files': len(self.file_watchers),
-            'total_changes': len(self.change_history),
-            'registered_watchers': {
-                config_type.value: len(watchers) 
-                for config_type, watchers in self.config_watchers.items()
-            }
-        }
-
-    async def cleanup(self) -> None:
-        """Cleanup configuration manager"""
-        try:
-            # Cancel auto-reload task
-            if self._reload_task:
-                self._reload_task.cancel()
-                try:
-                    await self._reload_task
-                except asyncio.CancelledError:
-                    pass
-            
-            # Clear configurations
-            self.configs.clear()
-            self.config_watchers.clear()
-            self.file_watchers.clear()
-            
-            logger.info("Configuration manager cleanup completed")
-            
-        except Exception as e:
-            logger.error(f"Error during configuration manager cleanup: {e}")

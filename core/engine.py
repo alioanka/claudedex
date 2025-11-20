@@ -113,16 +113,19 @@ class ClosedPositionRecord:
 class TradingBotEngine:
     """Main orchestration engine for the trading bot"""
     
-    def __init__(self, config_manager, mode: str = "production"):
+    def __init__(self, config: Dict, config_manager, chain_rpc_urls: Dict, mode: str = "production"):
         """
         Initialize the trading engine
         
         Args:
+            config: Configuration dictionary
             config_manager: The main ConfigManager instance
+            chain_rpc_urls: Dictionary of chain-specific RPC URLs
             mode: Operating mode
         """
+        self.config = config
         self.config_manager = config_manager
-        self.config = config_manager.get_all_configs() # Keep a dict representation for compatibility
+        self.chain_rpc_urls = chain_rpc_urls
         self.mode = mode
         self.state = BotState.INITIALIZING
         
@@ -130,8 +133,10 @@ class TradingBotEngine:
         self.event_bus = EventBus()
         self.portfolio_manager = PortfolioManager(self.config.get('portfolio', {}))
         self.risk_manager = RiskManager(
-            self.config_manager,
-            portfolio_manager=self.portfolio_manager
+            config['risk_management'], 
+            portfolio_manager=self.portfolio_manager,
+            config_manager=self.config_manager,
+            chain_rpc_urls=self.chain_rpc_urls
         )
         self.pattern_analyzer = PatternAnalyzer()
         self.decision_maker = DecisionMaker(self.config)
@@ -145,7 +150,8 @@ class TradingBotEngine:
         self.mempool_monitor = MempoolMonitor(self.config['web3'])
         self.whale_tracker = WhaleTracker(self.config_manager)
 
-        self.honeypot_checker = HoneypotChecker(self.config_manager)
+        # --- FIX: Initialize honeypot checker with config manager and RPC URLs ---
+        self.honeypot_checker = HoneypotChecker(self.config_manager, self.chain_rpc_urls)
         
         # ML components
         self.ml_enabled = self.config.get('ml_models', {}).get('ml_enabled', False)
@@ -185,9 +191,25 @@ class TradingBotEngine:
 
         # Initialize Solana executor if enabled
         self.solana_executor = None
-        if self.config_manager.get('solana') and self.config_manager.get('solana').get('enabled'):
+
+        # Correctly check if Solana is enabled from the chain configuration
+        chain_config = config.get('chain', {})
+        solana_enabled = chain_config.get('solana_enabled', False)
+
+        if solana_enabled:
             try:
-                self.solana_executor = JupiterExecutor(self.config_manager)
+                solana_config = config.get('solana', {})
+                security_config = config.get('security', {})
+
+                # Assemble the config for JupiterExecutor by combining solana and security configs
+                executor_solana_config = {
+                    **solana_config,
+                    'solana_private_key': security_config.get('solana_private_key'),
+                    'encryption_key': security_config.get('encryption_key'),
+                    'dry_run': config.get('trading', {}).get('dry_run', True)
+                }
+
+                self.solana_executor = JupiterExecutor(executor_solana_config)
                 logger.info("✅ Solana Jupiter Executor initialized")
             except Exception as e:
                 logger.error(f"❌ Failed to initialize Solana executor: {e}")
@@ -219,7 +241,7 @@ class TradingBotEngine:
 
         # Cooldown tracking
         self.recently_closed: Dict[str, ClosedPositionRecord] = {}  # token_address -> record
-        self.cooldown_minutes = self.config.get('trading', {}).get('position_cooldown_minutes', 30)
+        self.cooldown_minutes = config.get('risk_management', {}).get('position_cooldown_minutes', 60)
         
       
         
@@ -383,8 +405,9 @@ class TradingBotEngine:
             logger.warning(f"⚠️ Using default chains: {enabled_chains}")
         
         # Get other settings
-        max_pairs_per_chain = self.config.get('chains', {}).get('max_pairs_per_chain', 50)
-        discovery_interval = self.config.get('chains', {}).get('discovery_interval', 300)
+        chain_config = self.config.get('chain', {})
+        max_pairs_per_chain = chain_config.get('max_pairs_per_chain', 50)
+        discovery_interval = chain_config.get('discovery_interval_seconds', 300)
         
         logger.info(f"🌐 Multi-chain mode: {len(enabled_chains)} chains enabled")
         logger.info(f"  Chains: {', '.join(enabled_chains)}")
@@ -408,8 +431,8 @@ class TradingBotEngine:
                         chain_start = asyncio.get_event_loop().time()
                         
                         # Get chain-specific settings
-                        chain_config = self.config.get('chains', {}).get(chain, {})
-                        min_liquidity = chain_config.get('min_liquidity', 10000)
+                        chain_config = self.config.get('chain', {})
+                        min_liquidity = chain_config.get(f'{chain}_min_liquidity', 10000)
                         
                         logger.info(f"  🔗 Scanning {chain.upper()}... (min liquidity: ${min_liquidity:,.0f})")
                         logger.debug(f"  [engine] calling get_new_pairs(chain={chain}, limit={max_pairs_per_chain})")
@@ -488,8 +511,8 @@ class TradingBotEngine:
                                     opportunity = await self._analyze_opportunity(pair)
                                     
                                     if opportunity:
-                                        # Get from config with proper fallback
-                                        min_score = float(self.config.get('trading', {}).get('min_opportunity_score', 0.25))
+                                        min_score = self.config.get('trading', {}).get('min_opportunity_score', 0.25)
+                                        logger.debug(f"  Score: {opportunity.score:.3f} (min: {min_score})")
                                         
                                         if opportunity.score > min_score:
                                             opportunity.chain = chain
@@ -728,14 +751,8 @@ class TradingBotEngine:
                 expected_return = ml_prediction.get('expected_return', 0.0)
             
             # ADD THIS DETAILED LOG
-            # ✅ Chain-specific threshold
-            chain = pair.get('chain', '').lower()
-            if chain == 'solana':
-                min_score = float(self.config.get('solana_min_opportunity_score', 0.20))
-            else:
-                min_score = float(self.config.get('trading', {}).get('min_opportunity_score', 0.25))
-
-            logger.info(f"   📊 {token_symbol} ({chain.upper()}) Score: {score:.4f} (threshold: {min_score})")
+            min_score = self.config.get('trading', {}).get('min_opportunity_score', 0.25)
+            logger.info(f"   📊 Score: {score:.4f} (min required: {min_score})")
             
             if score < min_score:
                 # ADD THIS LOG TO SEE WHY IT FAILED
@@ -827,7 +844,8 @@ class TradingBotEngine:
                     else:
                         logger.warning(f"   ❌ Safety checks failed for {opportunity.token_address[:10]}")
                         
-                    self.pending_opportunities.remove(opportunity)
+                    if opportunity in self.pending_opportunities:
+                        self.pending_opportunities.remove(opportunity)
                     
                 await asyncio.sleep(0.5)
                 
@@ -869,7 +887,7 @@ class TradingBotEngine:
                     del self.recently_closed[token_address]
             
             # ✅ CHECK 3: Portfolio limits
-            max_positions = self.config.get('trading', {}).get('max_positions', 40)
+            max_positions = self.config.get('portfolio', {}).get('max_positions', 40)
             if len(self.active_positions) >= max_positions:
                 logger.warning(f"⚠️ Max positions reached ({len(self.active_positions)}) - SKIPPING")
                 return
@@ -1381,38 +1399,41 @@ class TradingBotEngine:
                 
                 logger.info(f"📊 Monitoring {len(self.active_positions)} active positions...")
                 
-                # ✅ STEP 1: Collect all prices first
+                # ✅ STEP 1: Collect all prices first (REFACTORED FOR RELIABILITY)
                 price_data = {}
                 for token_address, position in list(self.active_positions.items()):
                     try:
                         chain = position.get('chain', 'ethereum')
                         token_symbol = position.get('token_symbol', 'UNKNOWN')
                         
-                        # Get current price from DexScreener WITH TIMEOUT
-                        try:
-                            current_price = await asyncio.wait_for(
-                                self.dex_collector.get_token_price(
-                                    token_address=token_address,
-                                    chain=chain
-                                ),
-                                timeout=10.0  # 10 second timeout per token
-                            )
-                        except asyncio.TimeoutError:
-                            logger.warning(
-                                f"⏰ Timeout getting price for {token_symbol} "
-                                f"({token_address[:10]}...) on {chain}"
-                            )
-                            current_price = None
+                        # Ensure the pair address from the original opportunity is available
+                        pair_address = position.get('metadata', {}).get('pair', {}).get('pair_address')
+
+                        if not pair_address:
+                            logger.warning(f"⚠️ Missing pair_address in metadata for {token_symbol}. Falling back to token address lookup.")
+                            # Fallback to the less reliable method if pair_address is missing
+                            current_price = await self.dex_collector.get_token_price(token_address=token_address, chain=chain)
+                            if current_price:
+                                price_data[token_address] = float(current_price)
+                            else:
+                                logger.warning(f"⚠️ Could not get price for {token_symbol} using fallback.")
+                            continue
+
+                        # Use the more reliable get_pair_data method
+                        pair_data = await self.dex_collector.get_pair_data(
+                            pair_address=pair_address,
+                            chain=chain
+                        )
                         
-                        if current_price:
-                            price_data[token_address] = float(current_price)
+                        if pair_data and 'price' in pair_data:
+                            price_data[token_address] = float(pair_data['price'])
                         else:
                             logger.warning(
                                 f"⚠️ Could not get price for {token_symbol} "
-                                f"({token_address[:10]}...) on {chain}"
+                                f"(Pair: {pair_address[:10]}...) on {chain}"
                             )
                     except Exception as e:
-                        logger.error(f"Error fetching price for {token_address}: {e}")
+                        logger.error(f"Error fetching price for {token_address}: {e}", exc_info=True)
                         continue
                 
                 # ✅ STEP 2: Bulk update portfolio manager
@@ -1529,56 +1550,60 @@ class TradingBotEngine:
     async def _calculate_position_size(
         self,
         risk_score: Optional[RiskScore] = None,
-        opportunity_score: float = 0.7,
-        chain: str = 'ethereum'
+        opportunity_score: float = 0.7
     ) -> float:
         """
-        Calculates a dynamic position size based on risk, opportunity, and real-time portfolio data.
+        Calculates a dynamic position size based on portfolio value, risk, and opportunity.
         """
         try:
-            # 1. Get Real-time Portfolio Data
-            portfolio_summary = self.portfolio_manager.get_summary()
-            available_capital = portfolio_summary.get('available_capital', self.config['portfolio']['initial_balance'])
-            
-            # 2. Get Risk Parameters from Config
-            max_risk_per_trade_pct = self.config['risk_management'].get('max_risk_per_trade', 0.01) # 1% of portfolio
-            min_position_usd = self.config['portfolio'].get('min_position_size_usd', 10)
-            max_position_usd = self.config['portfolio'].get('max_position_size_usd', 100)
+            portfolio_config = self.config.get('portfolio', {})
+            risk_config = self.config.get('risk_management', {})
 
-            # 3. Determine Base Position Size
-            base_size = available_capital * max_risk_per_trade_pct
+            # Get current total portfolio value
+            portfolio_balance = float(await self.portfolio_manager.get_portfolio_value())
+            
+            # Get risk parameters from config
+            risk_per_trade_pct = risk_config.get('risk_per_trade_pct', 0.02)  # Risk 2% of portfolio by default
+            stop_loss_pct = risk_config.get('stop_loss_pct', 0.12) # Use the tuned stop-loss
 
-            # 4. Adjust for Risk
-            risk_factor = 1.0
-            if risk_score and hasattr(risk_score, 'overall_risk'):
-                # Higher risk = smaller size (e.g., risk 0.8 -> factor 0.6)
-                risk_factor = max(1.0 - (risk_score.overall_risk * 0.5), 0.5)
-            
-            # 5. Adjust for Opportunity (Conviction)
-            # Higher score = larger size (e.g., score 0.9 -> factor 1.2)
-            conviction_factor = 1.0 + (opportunity_score - 0.5) * 0.4
+            # Calculate the total capital to risk on this trade
+            capital_at_risk = portfolio_balance * risk_per_trade_pct
 
-            # 6. Calculate Final Position Size
-            adjusted_size = base_size * risk_factor * conviction_factor
+            # Adjust capital at risk based on opportunity score (higher score = slightly more risk)
+            # A score of 0.5 uses the base risk, 1.0 uses 120% of base risk
+            opportunity_multiplier = 0.8 + (opportunity_score * 0.4) # Range [0.8, 1.2]
+            adjusted_capital_at_risk = capital_at_risk * opportunity_multiplier
             
-            # 7. Apply Hard Limits
-            final_size = max(min_position_usd, min(adjusted_size, max_position_usd))
+            # Calculate position size based on stop-loss
+            # Position Size = Capital at Risk / Stop-Loss Percentage
+            if stop_loss_pct <= 0:
+                logger.warning("Stop loss percentage is zero or negative. Using a safe default of 10%.")
+                stop_loss_pct = 0.10
+                
+            position_size = adjusted_capital_at_risk / stop_loss_pct
+
+            # Get min/max position size limits from config
+            min_size = portfolio_config.get('min_position_size_usd', 5.0)
+            max_size = portfolio_config.get('max_position_size_usd', 100.0) # Increased max cap
             
-            logger.info(
-                f"💰 Position Sizing for {chain.upper()}:\n"
-                f"   - Available Capital: ${available_capital:,.2f}\n"
-                f"   - Base Size ({max_risk_per_trade_pct:.1%}): ${base_size:,.2f}\n"
-                f"   - Risk Factor: {risk_factor:.2f} (Risk Score: {risk_score.overall_risk if risk_score else 'N/A'})\n"
-                f"   - Conviction Factor: {conviction_factor:.2f} (Opp. Score: {opportunity_score:.2f})\n"
-                f"   - Adjusted Size: ${adjusted_size:,.2f}\n"
-                f"   - Final Size (Clamped ${min_position_usd}-${max_position_usd}): ${final_size:,.2f}"
-            )
-            
+            # Enforce absolute min/max limits
+            final_size = max(min_size, min(position_size, max_size))
+
+            logger.info(f"💰 Dynamic Position Sizing:")
+            logger.info(f"   Portfolio Value: ${portfolio_balance:,.2f}")
+            logger.info(f"   Base Capital at Risk ({risk_per_trade_pct:.1%}): ${capital_at_risk:,.2f}")
+            logger.info(f"   Opportunity Score: {opportunity_score:.2f} (Multiplier: {opportunity_multiplier:.2f})")
+            logger.info(f"   Adjusted Capital at Risk: ${adjusted_capital_at_risk:,.2f}")
+            logger.info(f"   Stop-Loss Pct: {stop_loss_pct:.1%}")
+            logger.info(f"   Calculated Size (Risk/SL): ${position_size:,.2f}")
+            logger.info(f"   Clamped Size (Min: ${min_size}, Max: ${max_size}): ${final_size:,.2f}")
+
             return float(final_size)
 
         except Exception as e:
-            logger.error(f"Error in _calculate_position_size: {e}", exc_info=True)
-            return self.config['portfolio'].get('min_position_size_usd', 10.0) # Fallback to min size
+            logger.error(f"Error in dynamic position size calculation: {e}", exc_info=True)
+            # Fallback to a safe, fixed position size on error
+            return portfolio_config.get('min_position_size_usd', 10.0)
                 
     # ============================================================================
     # FIX 2: engine.py - Fix _check_exit_conditions method (around line 820)
@@ -1597,11 +1622,16 @@ class TradingBotEngine:
                 logger.info(f"  ✅ Take profit hit: {pnl_percentage:.2f}% >= {take_profit:.2f}%")
                 return True, "take_profit"
             
-            # 2. Stop loss hit (default -10%)
-            stop_loss = -position.get('stop_loss_percentage', 0.1) * 100
-            if pnl_percentage <= stop_loss:
-                logger.info(f"  🛑 Stop loss hit: {pnl_percentage:.2f}% <= {stop_loss:.2f}%")
-                return True, "stop_loss"
+            # 2. Stop loss hit
+            if 'stop_loss_price' in position:
+                if position['current_price'] <= position['stop_loss_price']:
+                    logger.info(f"  🛑 Custom stop loss hit: ${position['current_price']:.8f} <= ${position['stop_loss_price']:.8f}")
+                    return True, "stop_loss"
+            else:
+                stop_loss_pct = -position.get('stop_loss_percentage', 0.12) * 100
+                if pnl_percentage <= stop_loss_pct:
+                    logger.info(f"  🛑 Percentage stop loss hit: {pnl_percentage:.2f}% <= {stop_loss_pct:.2f}%")
+                    return True, "stop_loss"
             
             # 3. Time-based exit (default 60 minutes for scalping)
             max_hold_time = position.get('max_hold_time', 60)  # minutes
@@ -1609,14 +1639,31 @@ class TradingBotEngine:
                 logger.info(f"  ⏰ Max hold time reached: {holding_time:.1f}min > {max_hold_time}min")
                 return True, "time_limit"
             
-            # 4. Trailing stop (if profit > 10%, exit if drops back to 5%)
-            if pnl_percentage > 10:
+            # 4. Break-even stop-loss
+            if pnl_percentage >= 10 and not position.get('is_break_even', False):
+                position['stop_loss_price'] = position['entry_price']
+                position['is_break_even'] = True
+                logger.info(f"  🛡️ Break-even stop-loss activated for {position.get('token_symbol', 'UNKNOWN')} at ${position['entry_price']:.8f}")
+
+            # 5. Progressive Trailing Stop
+            if pnl_percentage > 10: # Activates after 10% profit
                 max_profit = position.get('max_profit', pnl_percentage)
                 position['max_profit'] = max(max_profit, pnl_percentage)
+
+                trailing_stop_pct = 0
+                if max_profit >= 30:
+                    trailing_stop_pct = 2 # Tighten to 2% trail
+                elif max_profit >= 20:
+                    trailing_stop_pct = 4 # Tighten to 4% trail
+                else: # 10% <= max_profit < 20%
+                    trailing_stop_pct = 6 # Start with 6% trail
                 
-                # If dropped more than 50% from peak
-                if pnl_percentage < (position['max_profit'] * 0.5):
-                    logger.info(f"  📉 Trailing stop: dropped from {position['max_profit']:.2f}% to {pnl_percentage:.2f}%")
+                # Calculate the trailing stop price
+                trailing_stop_price = position['entry_price'] * (Decimal(1) + (Decimal(str(max_profit)) - Decimal(str(trailing_stop_pct))) / Decimal(100))
+
+                if position['current_price'] < trailing_stop_price:
+                    logger.info(f"  📉 Progressive Trailing Stop Hit: Price ${position['current_price']:.8f} < Trail ${trailing_stop_price:.8f}")
+                    logger.info(f"     (Max Profit: {max_profit:.2f}%, Trail: {trailing_stop_pct}%)")
                     return True, "trailing_stop"
             
             # 5. Volatility exit (sudden price movement)
@@ -1629,7 +1676,7 @@ class TradingBotEngine:
             position['last_price'] = position.get('current_price', position['entry_price'])
             
             # 6. ML-based exit signal (if available)
-            if self.config.get('use_ml_exits', False):
+            if self.config.get('position_management', {}).get('use_ml_exits', False):
                 exit_signal = await self._check_ml_exit_signal(position)
                 if exit_signal['should_exit']:
                     return True, f"ml_signal_{exit_signal['reason']}"
@@ -1774,7 +1821,8 @@ class TradingBotEngine:
                 logger.info(f"📊 Total profit so far: ${self.stats.get('total_profit', 0):.2f}")
                 
                 # Remove from active positions
-                del self.active_positions[token_address]
+                if token_address in self.active_positions:
+                    del self.active_positions[token_address]
 
                 # ✅ NEW: Update portfolio manager
                 if hasattr(self, 'portfolio_manager') and self.portfolio_manager:
@@ -2048,7 +2096,7 @@ class TradingBotEngine:
         while self.state == BotState.RUNNING:
             try:
                 # Wait for retrain interval
-                await asyncio.sleep(self.config['ml']['retrain_interval_hours'] * 3600)
+                await asyncio.sleep(self.config.get('ml_models', {}).get('ml_retrain_interval_hours', 24) * 3600)
                 
                 # Collect training data
                 training_data = await self._collect_training_data()
@@ -2237,12 +2285,18 @@ class TradingBotEngine:
             ]
             
             for name, collector in collectors:
+                cleanup_method = None
                 if hasattr(collector, 'cleanup'):
+                    cleanup_method = collector.cleanup
+                elif hasattr(collector, 'close'):
+                    cleanup_method = collector.close
+
+                if cleanup_method:
                     try:
-                        await collector.cleanup()
+                        await cleanup_method()
                         logger.info(f"✅ {name} collector cleaned up")
                     except Exception as e:
-                        logger.debug(f"Error cleaning up {name}: {e}")
+                        logger.debug(f"Error cleaning up {name} collector: {e}")
             
             # 4. Cleanup database connection
             if hasattr(self.db, 'disconnect'):
@@ -2315,10 +2369,9 @@ class TradingBotEngine:
             # 2. Verify liquidity is still sufficient
             logger.info(f"   Checking liquidity...")
             current_liquidity = opportunity.liquidity
- #           min_liquidity = self.config.get('trading', {}).get('min_liquidity_threshold', 50000)
             chain_name = opportunity.chain.lower() if hasattr(opportunity, 'chain') else 'ethereum'
-            chain_config = self.config.get('chains', {}).get(chain_name, {})
-            min_liquidity = chain_config.get('min_liquidity', 50000)          
+            chain_config = self.config.get('chain', {})
+            min_liquidity = chain_config.get(f'{chain_name}_min_liquidity', 10000)
             logger.info(f"   Current liquidity: ${current_liquidity:,.2f}, Min required: ${min_liquidity:,.2f}")
             
             if current_liquidity < min_liquidity:
@@ -2679,7 +2732,8 @@ class TradingBotEngine:
                         
                         # Fetch current price from DexScreener
                         pair_data = await self.dex_collector.get_pair_data(
-                            position.token_address, chain=chain
+                            position.token_address,
+                            chain=chain
                         )
                         
                         if pair_data and 'price_usd' in pair_data:
@@ -2933,35 +2987,71 @@ class TradingBotEngine:
         """
         import math
         try:
-            score_components = {}
-            weights = {
-                'liquidity': 0.25,
-                'volume': 0.20,
-                'momentum': 0.25,
-                'age': 0.15,
-                'safety': 0.15
-            }
+            age_minutes = pair.get('age_minutes', 9999)
+            if age_minutes < 15:
+                logger.info(f"   ❌ REJECTED: Token is too new ({age_minutes} minutes old)")
+                return 0.0
 
-            # 1. Liquidity Score (Logarithmic)
-            liquidity_usd = pair.get('liquidity_usd') or pair.get('liquidity') or 0
-            if liquidity_usd > 1000: # Min liquidity threshold
-                # Scale from $1k (score 0) to $50k (score 1)
-                log_score = math.log10(liquidity_usd / 1000) / math.log10(50)
-                score_components['liquidity'] = min(max(log_score, 0), 1)
-
-            # 2. Volume Score (Logarithmic)
-            volume_24h = pair.get('volume_24h', 0)
-            if volume_24h > 5000: # Min volume threshold
-                # Scale from $5k (score 0) to $100k (score 1)
-                log_score = math.log10(volume_24h / 5000) / math.log10(20)
-                score_components['volume'] = min(max(log_score, 0), 1)
-
-            # 3. Momentum Score (Balanced with Volatility Penalty)
-            price_change_5m = pair.get('price_change_5m', 0)
-            price_change_1h = pair.get('price_change_1h', 0)
+            score = 0.0
+            weights = 0.0
+            score_breakdown = {}
             
-            # Weighted momentum
-            momentum = (0.6 * price_change_5m) + (0.4 * price_change_1h)
+            # Volume score (30% weight) - Max score at $250k volume
+            volume_24h = pair.get('volume_24h', 0)
+            if volume_24h > 0:
+                volume_score = min(volume_24h / 250000, 1.0)
+                score += volume_score * 0.30
+                weights += 0.30
+                score_breakdown['volume'] = {
+                    'score': volume_score, 'weight': 0.30, 'contribution': volume_score * 0.30, 'raw_value': volume_24h
+                }
+            
+            # Liquidity score (35% weight) - Increased weight, max score at $50k
+            liquidity_usd = pair.get('liquidity_usd') or pair.get('liquidity') or 0
+            if liquidity_usd > 0:
+                volume_to_liq_ratio = volume_24h / liquidity_usd if liquidity_usd > 0 else 0
+                if volume_to_liq_ratio < 2.0:
+                    logger.info(f"   ❌ REJECTED: Low volume/liquidity ratio ({volume_to_liq_ratio:.1f}x)")
+                    return 0.0
+
+                liq_score = min(liquidity_usd / 50000, 1.0)
+                score += liq_score * 0.35
+                weights += 0.35
+                score_breakdown['liquidity'] = {
+                    'score': liq_score, 'weight': 0.35, 'contribution': liq_score * 0.35, 'raw_value': liquidity_usd
+                }
+            
+            # Price change score (10% weight) - Reduced weight, less emphasis on initial pump
+            price_change_5m = pair.get('price_change_5m', 0)
+            if price_change_5m is not None:
+                # Normalize score: a 10% change gives a full score, cap at 20%
+                price_score = min(max(price_change_5m / 10, 0), 2.0) / 2.0
+                score += price_score * 0.10
+                weights += 0.10
+                score_breakdown['price_change'] = {
+                    'score': price_score, 'weight': 0.10, 'contribution': price_score * 0.10, 'raw_value': price_change_5m
+                }
+            
+            # Risk score (20% weight) - Adjusted to balance weights
+            if risk_score and hasattr(risk_score, 'overall_risk'):
+                risk_component = 1.0 - risk_score.overall_risk
+                score += risk_component * 0.20
+                weights += 0.20
+                score_breakdown['risk'] = {
+                    'score': risk_component, 'weight': 0.20, 'contribution': risk_component * 0.20, 'raw_value': risk_score.overall_risk
+                }
+            
+            # Age bonus (5% weight) - Remains the same
+            age_hours = pair.get('age_hours', 999)
+            age_score = 0.0
+            if age_hours < 24:
+                age_score = 1.0 - (age_hours / 24)
+
+            score += age_score * 0.05
+            weights += 0.05
+            score_breakdown['age'] = {
+                'score': age_score, 'weight': 0.05, 'contribution': age_score * 0.05, 'raw_value': age_hours
+            }
             
             # Normalize momentum (cap at 50% combined gain for a score of 1)
             momentum_score = min(max(momentum / 50, 0), 1)

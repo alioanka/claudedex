@@ -754,12 +754,19 @@ select.form-control {
     background-color: var(--bg-secondary);
     border-radius: var(--radius-lg);
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-    max-width: 500px;
+    max-width: 800px; /* Increased max-width */
     width: 90%;
+    max-height: 90vh; /* Added max-height */
     z-index: 1200;
     opacity: 0;
     pointer-events: none;
     transition: all var(--transition-normal);
+    display: flex; /* Added for flex layout */
+    flex-direction: column; /* Added for flex layout */
+}
+
+.modal-body {
+    overflow-y: auto; /* Make body scrollable */
 }
 
 .modal.active {
