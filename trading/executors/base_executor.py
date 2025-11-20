@@ -1200,92 +1200,45 @@ class TradeExecutor(BaseExecutor):
         return weth_addresses.get(self.chain_id, weth_addresses[1])
         
     def _load_abi(self, contract_type: str) -> List:
-        """Load contract ABI"""
-        # ✅ TODO: Load from JSON files in production
-        # For now, return minimal ABIs
-        
-        if contract_type == 'uniswap_v2_router':
-            return [
-                {
-                    "name": "swapExactETHForTokens",
-                    "type": "function",
-                    "inputs": [
-                        {"name": "amountOutMin", "type": "uint256"},
-                        {"name": "path", "type": "address[]"},
-                        {"name": "to", "type": "address"},
-                        {"name": "deadline", "type": "uint256"}
-                    ],
-                    "outputs": [{"name": "amounts", "type": "uint256[]"}]
-                },
-                {
-                    "name": "swapExactTokensForETH",
-                    "type": "function",
-                    "inputs": [
-                        {"name": "amountIn", "type": "uint256"},
-                        {"name": "amountOutMin", "type": "uint256"},
-                        {"name": "path", "type": "address[]"},
-                        {"name": "to", "type": "address"},
-                        {"name": "deadline", "type": "uint256"}
-                    ],
-                    "outputs": [{"name": "amounts", "type": "uint256[]"}]
-                },
-                {
-                    "name": "getAmountsOut",
-                    "type": "function",
-                    "inputs": [
-                        {"name": "amountIn", "type": "uint256"},
-                        {"name": "path", "type": "address[]"}
-                    ],
-                    "outputs": [{"name": "amounts", "type": "uint256[]"}],
-                    "stateMutability": "view"
-                }
-            ]
-            
-        elif contract_type == 'erc20':
-            return [
-                {
-                    "name": "approve",
-                    "type": "function",
-                    "inputs": [
-                        {"name": "spender", "type": "address"},
-                        {"name": "amount", "type": "uint256"}
-                    ],
-                    "outputs": [{"name": "", "type": "bool"}]
-                },
-                {
-                    "name": "allowance",
-                    "type": "function",
-                    "inputs": [
-                        {"name": "owner", "type": "address"},
-                        {"name": "spender", "type": "address"}
-                    ],
-                    "outputs": [{"name": "", "type": "uint256"}],
-                    "stateMutability": "view"
-                },
-                {
-                    "name": "balanceOf",
-                    "type": "function",
-                    "inputs": [{"name": "account", "type": "address"}],
-                    "outputs": [{"name": "", "type": "uint256"}],
-                    "stateMutability": "view"
-                },
-                {
-                    "name": "totalSupply",
-                    "type": "function",
-                    "inputs": [],
-                    "outputs": [{"name": "", "type": "uint256"}],
-                    "stateMutability": "view"
-                },
-                {
-                    "name": "decimals",
-                    "type": "function",
-                    "inputs": [],
-                    "outputs": [{"name": "", "type": "uint8"}],
-                    "stateMutability": "view"
-                }
-            ]
-            
-        return []
+        """
+        Load contract ABI from JSON file
+
+        Args:
+            contract_type: Type of contract ('erc20', 'uniswap_v2_router', etc.)
+
+        Returns:
+            List of ABI items
+        """
+        try:
+            # Get the directory where this file is located
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            abi_dir = os.path.join(current_dir, '..', 'abis')
+
+            # Map contract type to JSON file
+            abi_files = {
+                'erc20': 'erc20.json',
+                'uniswap_v2_router': 'uniswap_v2_router.json'
+            }
+
+            if contract_type not in abi_files:
+                logger.warning(f"Unknown contract type: {contract_type}")
+                return []
+
+            # Load ABI from JSON file
+            abi_file_path = os.path.join(abi_dir, abi_files[contract_type])
+
+            if not os.path.exists(abi_file_path):
+                logger.error(f"ABI file not found: {abi_file_path}")
+                return []
+
+            with open(abi_file_path, 'r') as f:
+                abi = json.load(f)
+                logger.debug(f"Loaded ABI for {contract_type} from {abi_file_path}")
+                return abi
+
+        except Exception as e:
+            logger.error(f"Error loading ABI for {contract_type}: {e}", exc_info=True)
+            return []
         
     async def emergency_sell_all(self):
         """Emergency sell all positions"""
