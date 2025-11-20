@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - ClaudeDex Trading Bot</title>
+    <link rel="stylesheet" href="/static/css/login.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="login-header">
+                <i class="fas fa-robot"></i>
+                <h1>ClaudeDex Bot</h1>
+                <p>Secure Trading Dashboard</p>
+            </div>
+
+            <form id="loginForm" class="login-form">
+                <div class="form-group">
+                    <label for="username">
+                        <i class="fas fa-user"></i>
+                        Username
+                    </label>
+                    <input
+                        type="text"
+                        id="username"
+                        name="username"
+                        required
+                        autocomplete="username"
+                        placeholder="Enter your username"
+                        autofocus
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label for="password">
+                        <i class="fas fa-lock"></i>
+                        Password
+                    </label>
+                    <div class="password-input">
+                        <input
+                            type="password"
+                            id="password"
+                            name="password"
+                            required
+                            autocomplete="current-password"
+                            placeholder="Enter your password"
+                        >
+                        <button type="button" class="toggle-password" onclick="togglePassword()">
+                            <i class="fas fa-eye" id="toggleIcon"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="form-group" id="totpGroup" style="display: none;">
+                    <label for="totp_code">
+                        <i class="fas fa-key"></i>
+                        2FA Code
+                    </label>
+                    <input
+                        type="text"
+                        id="totp_code"
+                        name="totp_code"
+                        placeholder="Enter 6-digit code"
+                        maxlength="6"
+                        pattern="[0-9]{6}"
+                        autocomplete="one-time-code"
+                    >
+                    <small>Enter the 6-digit code from your authenticator app</small>
+                </div>
+
+                <div id="errorMessage" class="error-message" style="display: none;"></div>
+
+                <button type="submit" class="login-button" id="loginButton">
+                    <i class="fas fa-sign-in-alt"></i>
+                    Log In
+                </button>
+
+                <div class="login-footer">
+                    <small>
+                        <i class="fas fa-shield-alt"></i>
+                        Secured with end-to-end encryption
+                    </small>
+                </div>
+            </form>
+        </div>
+
+        <div class="login-info">
+            <div class="info-card">
+                <i class="fas fa-info-circle"></i>
+                <h3>Default Credentials</h3>
+                <p>Username: <code>admin</code></p>
+                <p>Password: <code>admin123</code></p>
+                <p class="warning">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    Please change the default password immediately after first login!
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const loginForm = document.getElementById('loginForm');
+        const errorMessage = document.getElementById('errorMessage');
+        const loginButton = document.getElementById('loginButton');
+        const totpGroup = document.getElementById('totpGroup');
+        let requires2FA = false;
+
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const totp_code = document.getElementById('totp_code').value;
+
+            // Disable button and show loading
+            loginButton.disabled = true;
+            loginButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Logging in...';
+            errorMessage.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        username,
+                        password,
+                        totp_code: totp_code || null
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    // Success - redirect to dashboard
+                    window.location.href = '/';
+                } else {
+                    // Check if 2FA is required
+                    if (data.error === '2FA code required') {
+                        requires2FA = true;
+                        totpGroup.style.display = 'block';
+                        document.getElementById('totp_code').focus();
+                        showError('Please enter your 2FA code');
+                    } else {
+                        showError(data.error || 'Login failed');
+                    }
+
+                    // Re-enable button
+                    loginButton.disabled = false;
+                    loginButton.innerHTML = '<i class="fas fa-sign-in-alt"></i> Log In';
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                showError('Network error. Please try again.');
+
+                // Re-enable button
+                loginButton.disabled = false;
+                loginButton.innerHTML = '<i class="fas fa-sign-in-alt"></i> Log In';
+            }
+        });
+
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.style.display = 'block';
+
+            // Auto-hide after 5 seconds
+            setTimeout(() => {
+                errorMessage.style.display = 'none';
+            }, 5000);
+        }
+
+        function togglePassword() {
+            const passwordInput = document.getElementById('password');
+            const toggleIcon = document.getElementById('toggleIcon');
+
+            if (passwordInput.type === 'password') {
+                passwordInput.type = 'text';
+                toggleIcon.className = 'fas fa-eye-slash';
+            } else {
+                passwordInput.type = 'password';
+                toggleIcon.className = 'fas fa-eye';
+            }
+        }
+
+        // Focus on username on load
+        window.addEventListener('load', () => {
+            document.getElementById('username').focus();
+        });
+    </script>
+</body>
+</html>
