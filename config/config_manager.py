@@ -811,6 +811,15 @@ class ConfigManager:
     def get_dashboard_config(self) -> DashboardConfig:
         return self.configs.get(ConfigType.DASHBOARD, DashboardConfig())
 
+    def get_all_configs(self) -> Dict[str, Any]:
+        """
+        Get all configurations as a raw dictionary
+
+        Returns:
+            Dictionary containing all configuration data
+        """
+        return self._raw_config.copy() if hasattr(self, '_raw_config') and self._raw_config else {}
+
     async def update_config(self,
                           config_type: ConfigType, 
                           updates: Dict[str, Any],
