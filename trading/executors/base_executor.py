@@ -137,15 +137,37 @@ class TradeExecutor(BaseExecutor):
             logger.critical("🔥 EXECUTOR IN LIVE MODE - REAL MONEY AT RISK 🔥")
         
         # Web3 setup
-        from utils.constants import Chain, CHAIN_RPC_URLS
+        from utils.constants import Chain
         self.chain_id = config.get('chain_id', 1)
+
+        # Map chain IDs to chain names for RPC URL lookup
+        chain_id_to_name = {
+            1: 'ethereum',
+            56: 'bsc',
+            137: 'polygon',
+            42161: 'arbitrum',
+            8453: 'base',
+            10: 'optimism',
+            43114: 'avalanche'
+        }
 
         try:
             chain_enum = Chain(self.chain_id)
-            rpc_urls = CHAIN_RPC_URLS.get(chain_enum)
-            if not rpc_urls or not rpc_urls[0]:
-                raise ValueError(f"No RPC URL found for chain ID {self.chain_id}")
+            chain_name = chain_id_to_name.get(self.chain_id)
+
+            if not chain_name:
+                raise ValueError(f"Unsupported chain ID: {self.chain_id}")
+
+            # Get RPC URLs from environment variables
+            env_var = f"{chain_name.upper()}_RPC_URLS"
+            rpc_urls_str = os.getenv(env_var)
+
+            if not rpc_urls_str:
+                raise ValueError(f"No RPC URL found for {chain_name}. Please set {env_var} environment variable")
+
+            rpc_urls = [url.strip() for url in rpc_urls_str.split(',')]
             provider_url = rpc_urls[0]
+
             self.w3 = Web3(Web3.HTTPProvider(provider_url))
             logger.info(f"Connecting to {chain_enum.name} via {provider_url[:40]}...")
         except (ValueError, KeyError) as e:
