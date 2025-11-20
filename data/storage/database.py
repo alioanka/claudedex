@@ -77,8 +77,12 @@ class DatabaseManager:
             
             # Rest of the method stays the same...
             await self._initialize_timescaledb()
+
+            # Run database migrations
+            await self._run_migrations()
+
             await self._create_tables()
-            
+
             self.is_connected = True
             logger.info("✅ Successfully connected to PostgreSQL database")
             
@@ -104,12 +108,33 @@ class DatabaseManager:
         async with self.acquire() as conn:
             # Create TimescaleDB extension
             await conn.execute("CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;")
-            
+
             # Create pg_stat_statements for query performance monitoring
             await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_stat_statements;")
-            
+
             logger.info("TimescaleDB extensions initialized")
-    
+
+    async def _run_migrations(self) -> None:
+        """Run database migrations automatically"""
+        try:
+            from data.migration_manager import MigrationManager
+
+            logger.info("🔄 Checking for database migrations...")
+
+            migration_mgr = MigrationManager(self.pool)
+            applied_count = await migration_mgr.run_migrations(fail_fast=False)
+
+            if applied_count > 0:
+                logger.info(f"✅ Applied {applied_count} migration(s)")
+            else:
+                logger.info("✅ Database schema is up to date")
+
+        except ImportError:
+            logger.warning("⚠️  Migration manager not available - skipping migrations")
+        except Exception as e:
+            logger.error(f"❌ Migration error: {e}", exc_info=True)
+            logger.warning("⚠️  Continuing without migrations - manual intervention may be required")
+
     async def _create_tables(self) -> None:
         """Create all required database tables."""
         async with self.acquire() as conn:

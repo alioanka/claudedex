@@ -23,6 +23,16 @@ import csv
 from config.config_manager import PortfolioConfig
 from pydantic.types import SecretStr
 
+# Authentication imports
+try:
+    from auth.auth_service import AuthService
+    from auth.middleware import auth_middleware_factory, require_auth, require_admin
+    from monitoring.auth_routes import AuthRoutes
+    AUTH_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Authentication system not available: {e}")
+    AUTH_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 class DashboardEndpoints:
@@ -43,7 +53,7 @@ class DashboardEndpoints:
         self.host = host
         self.port = port
         self.config = config or {}
-        
+
         # Core components
         self.engine = trading_engine
         self.portfolio = portfolio_manager
@@ -52,27 +62,34 @@ class DashboardEndpoints:
         self.alerts = alerts_system
         self.config_mgr = config_manager
         self.db = db_manager
-        
+
+        # Authentication
+        self.auth_service = None
+        self.auth_enabled = False
+
         # Web application
         self.app = web.Application()
         self.sio = socketio.AsyncServer(async_mode='aiohttp', cors_allowed_origins='*')
         self.sio.attach(self.app)
-        
+
         # Template engine
         self.jinja_env = Environment(
             loader=FileSystemLoader('dashboard/templates'),
             autoescape=select_autoescape(['html', 'xml'])
         )
-        
+
         # Setup routes
         self._setup_routes()
         self._setup_socketio()
-        
+
         # Start update tasks
         asyncio.create_task(self._broadcast_loop())
 
         # In-memory storage for backtests
         self.backtests = {}
+
+        # Initialize auth system if available
+        asyncio.create_task(self._initialize_auth_async())
 
     @staticmethod
     def _serialize_decimals(obj):
@@ -86,7 +103,50 @@ class DashboardEndpoints:
         elif isinstance(obj, datetime):
             return obj.isoformat()
         return obj
-    
+
+    async def _initialize_auth_async(self):
+        """Initialize authentication system asynchronously"""
+        # Wait a bit for database to be ready
+        await asyncio.sleep(2)
+
+        if not AUTH_AVAILABLE:
+            logger.warning("⚠️  Authentication system not available - dashboard will run without auth")
+            logger.warning("   Install required packages: pip install bcrypt pyotp")
+            return
+
+        try:
+            if self.db and hasattr(self.db, 'pool') and self.db.pool:
+                logger.info("🔐 Initializing authentication system...")
+
+                # Create auth service
+                self.auth_service = AuthService(
+                    db_pool=self.db.pool,
+                    session_timeout=3600,  # 1 hour
+                    max_failed_attempts=5
+                )
+
+                # Store in app for middleware access
+                self.app['auth_service'] = self.auth_service
+
+                # Setup auth routes
+                AuthRoutes(self.app, self.auth_service)
+
+                # Add auth middleware (insert at beginning)
+                self.app.middlewares.insert(0, auth_middleware_factory)
+
+                self.auth_enabled = True
+                logger.info("✅ Authentication system initialized successfully")
+                logger.info("   Login at: http://{}:{}/login".format(self.host, self.port))
+                logger.info("   Default credentials: admin/admin123 (CHANGE IMMEDIATELY!)")
+
+            else:
+                logger.warning("⚠️  Database not available - auth system disabled")
+
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize authentication system: {e}", exc_info=True)
+            logger.warning("   Dashboard will run without authentication")
+            self.auth_enabled = False
+
     def _setup_routes(self):
         """Setup all routes"""
 
