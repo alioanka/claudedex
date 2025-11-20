@@ -2557,6 +2557,7 @@ class DashboardEndpoints:
         from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
         from openpyxl.utils.dataframe import dataframe_to_rows
         from openpyxl.chart import BarChart, LineChart, Reference
+        from openpyxl.cell import MergedCell
 
         output = io.BytesIO()
         wb = Workbook()
@@ -2691,10 +2692,14 @@ class DashboardEndpoints:
                         except:
                             pass
 
-            # Auto-adjust column widths
-            for column_cells in ws_trades.columns:
-                length = max(len(str(cell.value or '')) for cell in column_cells)
-                ws_trades.column_dimensions[column_cells[0].column_letter].width = min(length + 2, 40)
+            # Auto-adjust column widths (skip merged cells)
+            for col in ws_trades.iter_cols():
+                if col and not isinstance(col[0], MergedCell):
+                    try:
+                        length = max(len(str(cell.value or '')) for cell in col)
+                        ws_trades.column_dimensions[col[0].column_letter].width = min(length + 2, 40)
+                    except:
+                        pass
 
         # ==================== SHEET 3: ANALYSIS BY STRATEGY ====================
         ws_strategy = wb.create_sheet('Strategy Analysis', 2)
@@ -2728,10 +2733,14 @@ class DashboardEndpoints:
                     for col_num, value in enumerate(row_data, 1):
                         ws_strategy.cell(row=row_num, column=col_num, value=value)
 
-                # Auto-adjust widths
-                for col in ws_strategy.columns:
-                    max_length = max(len(str(cell.value or '')) for cell in col)
-                    ws_strategy.column_dimensions[col[0].column_letter].width = max_length + 2
+                # Auto-adjust widths (skip merged cells)
+                for col in ws_strategy.iter_cols():
+                    if col and not isinstance(col[0], MergedCell):
+                        try:
+                            max_length = max(len(str(cell.value or '')) for cell in col)
+                            ws_strategy.column_dimensions[col[0].column_letter].width = max_length + 2
+                        except:
+                            pass
 
         # ==================== SHEET 4: ANALYSIS BY TOKEN ====================
         ws_token = wb.create_sheet('Token Analysis', 3)
@@ -2776,10 +2785,14 @@ class DashboardEndpoints:
                             except:
                                 pass
 
-                # Auto-adjust widths
-                for col in ws_token.columns:
-                    max_length = max(len(str(cell.value or '')) for cell in col)
-                    ws_token.column_dimensions[col[0].column_letter].width = max_length + 2
+                # Auto-adjust widths (skip merged cells)
+                for col in ws_token.iter_cols():
+                    if col and not isinstance(col[0], MergedCell):
+                        try:
+                            max_length = max(len(str(cell.value or '')) for cell in col)
+                            ws_token.column_dimensions[col[0].column_letter].width = max_length + 2
+                        except:
+                            pass
 
         # Save workbook to BytesIO
         wb.save(output)
