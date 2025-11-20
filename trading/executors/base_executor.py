@@ -138,7 +138,9 @@ class TradeExecutor(BaseExecutor):
         
         # Web3 setup
         from utils.constants import Chain
-        self.chain_id = config.get('chain_id', 1)
+        # Ensure chain_id is an integer (may come as string from config)
+        chain_id_raw = config.get('chain_id', 1)
+        self.chain_id = int(chain_id_raw) if chain_id_raw else 1
 
         # Map chain IDs to chain names for RPC URL lookup
         chain_id_to_name = {
