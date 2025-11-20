@@ -2349,13 +2349,44 @@ class DashboardEndpoints:
         """
         closed_trades = await self.db.pool.fetch(query, start_date, end_date)
 
-        # The report should only contain closed trades, so we assign this directly
-        report['trades'] = self._serialize_decimals([dict(row) for row in closed_trades])
-        # --- FIX ENDS HERE ---
-
         # Calculate metrics if there are any closed trades
         if not closed_trades:
             return report
+
+        # Process trades to extract metadata fields and calculate ROI
+        trades_list = []
+        for trade in closed_trades:
+            trade_dict = dict(trade)
+
+            # Extract metadata
+            metadata = trade_dict.get('metadata', {})
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except:
+                    metadata = {}
+
+            # Extract and add metadata fields
+            trade_dict['token_symbol'] = metadata.get('token_symbol', metadata.get('token', 'N/A'))
+            trade_dict['exit_reason'] = metadata.get('exit_reason', metadata.get('reason', 'N/A'))
+            trade_dict['strategy'] = metadata.get('strategy', 'N/A')
+            trade_dict['chain'] = metadata.get('chain', trade_dict.get('chain', 'N/A'))
+
+            # Calculate ROI percentage
+            profit_loss = float(trade_dict.get('profit_loss', 0) or 0)
+            entry_value = float(trade_dict.get('entry_value', 0) or 0)
+
+            if entry_value > 0:
+                roi = (profit_loss / entry_value) * 100
+                trade_dict['roi'] = round(roi, 4)
+            else:
+                trade_dict['roi'] = 0
+
+            trades_list.append(trade_dict)
+
+        # The report should only contain closed trades with enriched data
+        report['trades'] = self._serialize_decimals(trades_list)
+        # --- FIX ENDS HERE ---
 
         # Convert records to a list of dicts for DataFrame creation
         trade_list = [dict(row) for row in closed_trades]
@@ -2434,10 +2465,12 @@ class DashboardEndpoints:
 
         writer.writerow([]) # Add a blank line for separation
 
-        # Write trade data
+        # Write comprehensive trade data with all available fields
         writer.writerow([
-            'ID', 'Token Symbol', 'Entry Timestamp', 'Exit Timestamp',
-            'Entry Price', 'Exit Price', 'Amount', 'Profit/Loss', 'ROI (%)', 'Exit Reason'
+            'ID', 'Token Symbol', 'Token Address', 'Chain', 'Strategy',
+            'Entry Timestamp', 'Exit Timestamp', 'Entry Price', 'Exit Price',
+            'Amount', 'Entry Value', 'Exit Value', 'Profit/Loss', 'ROI (%)',
+            'Exit Reason', 'Status', 'Gas Cost'
         ])
 
         if 'trades' in report and report['trades']:
@@ -2445,14 +2478,21 @@ class DashboardEndpoints:
                 writer.writerow([
                     trade.get('id'),
                     trade.get('token_symbol', 'N/A'),
+                    trade.get('token_address', trade.get('token', 'N/A')),
+                    trade.get('chain', 'N/A'),
+                    trade.get('strategy', 'N/A'),
                     trade.get('entry_timestamp'),
                     trade.get('exit_timestamp'),
                     trade.get('entry_price'),
                     trade.get('exit_price'),
                     trade.get('amount'),
+                    trade.get('entry_value'),
+                    trade.get('exit_value'),
                     trade.get('profit_loss'),
                     trade.get('roi', 0),
-                    trade.get('exit_reason', 'N/A')
+                    trade.get('exit_reason', 'N/A'),
+                    trade.get('status', 'closed'),
+                    trade.get('gas_cost', 0)
                 ])
         else:
             writer.writerow(['No trade data available for this period.'])
