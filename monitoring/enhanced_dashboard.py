@@ -839,7 +839,25 @@ class DashboardEndpoints:
                     'Unknown'
                 )
 
-                exit_reason = metadata.get('exit_reason', 'N/A')
+                # Extract exit/close reason with multiple fallbacks
+                exit_reason_raw = (
+                    metadata.get('close_reason') or  # Primary: close_reason from engine
+                    metadata.get('exit_reason') or   # Fallback: exit_reason
+                    'N/A'
+                )
+
+                # Map exit reasons to human-readable format
+                exit_reason_map = {
+                    'take_profit': 'Take Profit Hit',
+                    'stop_loss': 'Stop Loss Hit',
+                    'trailing_stop': 'Trailing Stop Loss',
+                    'time_limit': 'Max Hold Time Reached',
+                    'high_volatility': 'High Volatility',
+                    'Manual close via dashboard': 'Manual Close (Dashboard)',
+                    'manual_close': 'Manual Close',
+                    'manual': 'Manual Close',
+                }
+                exit_reason = exit_reason_map.get(exit_reason_raw, exit_reason_raw)
 
                 # Use ROI from database or calculate if not available
                 roi = float(trade_dict.get('profit_loss_percentage', 0) or 0)
@@ -870,8 +888,8 @@ class DashboardEndpoints:
                     'exit_reason': exit_reason,
                     'roi': round(roi, 4),
                     'hold_time': hold_time,
-                    'stop_loss': metadata.get('stop_loss'),
-                    'take_profit': metadata.get('take_profit'),
+                    'stop_loss': metadata.get('stop_loss') or metadata.get('stop_loss_price'),
+                    'take_profit': metadata.get('take_profit') or metadata.get('take_profit_price'),
                     'gas_cost': trade_dict.get('gas_fee'),  # Map gas_fee to gas_cost for backwards compatibility
                     'tx_hash': metadata.get('tx_hash', metadata.get('transaction_hash')),
                 })
