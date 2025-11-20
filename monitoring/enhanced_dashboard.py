@@ -115,6 +115,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/insights', self.api_get_insights)
         self.app.router.add_get('/api/trades/recent', self.api_recent_trades)
         self.app.router.add_get('/api/trades/history', self.api_trade_history)
+        self.app.router.add_get('/api/trades/export/{format}', self.api_export_trades)
         self.app.router.add_get('/api/positions/open', self.api_open_positions)
         self.app.router.add_get('/api/positions/history', self.api_positions_history)
         self.app.router.add_get('/api/performance/metrics', self.api_performance_metrics)
@@ -759,19 +760,19 @@ class DashboardEndpoints:
             start_date = request.query.get('start_date')
             end_date = request.query.get('end_date')
             status = request.query.get('status')
-            
+
             # ✅ FIX: Add await
             trades = await self.db.get_recent_trades(limit=1000, status=status)
-            
+
             # Apply date filters if provided
             if start_date:
                 start = datetime.fromisoformat(start_date)
                 trades = [t for t in trades if datetime.fromisoformat(t['timestamp']) >= start]
-            
+
             if end_date:
                 end = datetime.fromisoformat(end_date)
                 trades = [t for t in trades if datetime.fromisoformat(t['timestamp']) <= end]
-            
+
             return web.json_response({
                 'success': True,
                 'data': trades,
@@ -780,7 +781,271 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Error getting trade history: {e}")
             return web.json_response({'error': str(e)}, status=500)
-    
+
+    async def api_export_trades(self, request):
+        """Export all trades in CSV or Excel format with comprehensive data"""
+        try:
+            format_type = request.match_info['format']
+
+            if not self.db:
+                return web.json_response({'error': 'Database not available'}, status=503)
+
+            # Get all trades from database with full details
+            async with self.db.pool.acquire() as conn:
+                trades_records = await conn.fetch("""
+                    SELECT
+                        id,
+                        token_address,
+                        chain,
+                        strategy,
+                        side,
+                        amount,
+                        entry_price,
+                        exit_price,
+                        entry_timestamp,
+                        exit_timestamp,
+                        status,
+                        profit_loss,
+                        gas_cost,
+                        metadata
+                    FROM trades
+                    ORDER BY entry_timestamp DESC
+                """)
+
+            # Convert to dict and enrich with metadata
+            trades = []
+            for record in trades_records:
+                trade_dict = dict(record)
+
+                # Extract metadata
+                metadata = trade_dict.get('metadata', {})
+                if isinstance(metadata, str):
+                    try:
+                        metadata = json.loads(metadata)
+                    except:
+                        metadata = {}
+
+                # Extract all fields with multiple fallbacks
+                token_symbol = (
+                    metadata.get('token_symbol') or
+                    metadata.get('token') or
+                    trade_dict.get('token_symbol') or
+                    'Unknown'
+                )
+
+                exit_reason = metadata.get('exit_reason', 'N/A')
+
+                # Calculate ROI
+                entry_value = float(trade_dict.get('entry_price', 0) or 0) * float(trade_dict.get('amount', 0) or 0)
+                profit_loss = float(trade_dict.get('profit_loss', 0) or 0)
+                roi = (profit_loss / entry_value * 100) if entry_value > 0 else 0
+
+                # Calculate hold time
+                hold_time = 'N/A'
+                if trade_dict.get('exit_timestamp') and trade_dict.get('entry_timestamp'):
+                    try:
+                        entry_ts = trade_dict['entry_timestamp']
+                        exit_ts = trade_dict['exit_timestamp']
+                        if isinstance(entry_ts, str):
+                            entry_ts = datetime.fromisoformat(entry_ts)
+                        if isinstance(exit_ts, str):
+                            exit_ts = datetime.fromisoformat(exit_ts)
+                        delta = exit_ts - entry_ts
+                        hours = delta.total_seconds() / 3600
+                        hold_time = f"{hours:.2f}h"
+                    except:
+                        pass
+
+                # Enrich trade dict
+                trade_dict.update({
+                    'token_symbol': token_symbol,
+                    'exit_reason': exit_reason,
+                    'roi': round(roi, 4),
+                    'hold_time': hold_time,
+                    'stop_loss': metadata.get('stop_loss'),
+                    'take_profit': metadata.get('take_profit'),
+                    'slippage': metadata.get('slippage'),
+                    'tx_hash': metadata.get('tx_hash', metadata.get('transaction_hash')),
+                })
+
+                trades.append(trade_dict)
+
+            # Export based on format
+            if format_type == 'csv':
+                return await self._export_trades_csv(trades)
+            elif format_type == 'excel':
+                return await self._export_trades_excel(trades)
+            else:
+                return web.json_response({'error': f'Unsupported format: {format_type}'}, status=400)
+
+        except Exception as e:
+            logger.error(f"Error exporting trades: {e}", exc_info=True)
+            return web.json_response({'error': str(e)}, status=500)
+
+    async def _export_trades_csv(self, trades):
+        """Export trades to CSV format"""
+        import csv
+
+        output = io.StringIO()
+
+        # Define comprehensive columns
+        columns = [
+            'ID', 'Token Symbol', 'Token Address', 'Chain', 'Strategy',
+            'Side', 'Entry Timestamp', 'Exit Timestamp', 'Hold Time',
+            'Entry Price', 'Exit Price', 'Amount', 'Entry Value', 'Exit Value',
+            'Profit/Loss', 'ROI (%)', 'Status', 'Exit Reason',
+            'Stop Loss', 'Take Profit', 'Gas Cost', 'Slippage', 'TX Hash'
+        ]
+
+        writer = csv.writer(output)
+        writer.writerow(columns)
+
+        for trade in trades:
+            entry_value = float(trade.get('entry_price', 0) or 0) * float(trade.get('amount', 0) or 0)
+            exit_value = float(trade.get('exit_price', 0) or 0) * float(trade.get('amount', 0) or 0) if trade.get('exit_price') else 0
+
+            writer.writerow([
+                trade.get('id'),
+                trade.get('token_symbol', 'Unknown'),
+                trade.get('token_address', ''),
+                trade.get('chain', ''),
+                trade.get('strategy', ''),
+                trade.get('side', ''),
+                trade.get('entry_timestamp', ''),
+                trade.get('exit_timestamp', ''),
+                trade.get('hold_time', 'N/A'),
+                trade.get('entry_price', 0),
+                trade.get('exit_price', '') or '',
+                trade.get('amount', 0),
+                round(entry_value, 8),
+                round(exit_value, 8) if exit_value else '',
+                trade.get('profit_loss', 0),
+                trade.get('roi', 0),
+                trade.get('status', ''),
+                trade.get('exit_reason', 'N/A'),
+                trade.get('stop_loss', '') or '',
+                trade.get('take_profit', '') or '',
+                trade.get('gas_cost', '') or '',
+                trade.get('slippage', '') or '',
+                trade.get('tx_hash', '') or '',
+            ])
+
+        csv_content = output.getvalue()
+        output.close()
+
+        response = web.Response(
+            body=csv_content.encode('utf-8'),
+            content_type='text/csv',
+            headers={'Content-Disposition': f'attachment; filename="trades_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv"'}
+        )
+        return response
+
+    async def _export_trades_excel(self, trades):
+        """Export trades to Excel format with professional formatting"""
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.cell import MergedCell
+
+        output = io.BytesIO()
+        wb = Workbook()
+        ws = wb.active
+        ws.title = 'Trades Export'
+
+        # Header styling
+        header_fill = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid')
+        header_font = Font(bold=True, color='FFFFFF', size=11)
+        border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+
+        # Define columns
+        columns = [
+            'ID', 'Token Symbol', 'Token Address', 'Chain', 'Strategy',
+            'Side', 'Entry Timestamp', 'Exit Timestamp', 'Hold Time',
+            'Entry Price', 'Exit Price', 'Amount', 'Entry Value', 'Exit Value',
+            'Profit/Loss', 'ROI (%)', 'Status', 'Exit Reason',
+            'Stop Loss', 'Take Profit', 'Gas Cost', 'Slippage', 'TX Hash'
+        ]
+
+        # Write header
+        for col_num, column_name in enumerate(columns, 1):
+            cell = ws.cell(row=1, column=col_num, value=column_name)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            cell.border = border
+
+        # Write data
+        for row_num, trade in enumerate(trades, 2):
+            entry_value = float(trade.get('entry_price', 0) or 0) * float(trade.get('amount', 0) or 0)
+            exit_value = float(trade.get('exit_price', 0) or 0) * float(trade.get('amount', 0) or 0) if trade.get('exit_price') else 0
+
+            row_data = [
+                trade.get('id'),
+                trade.get('token_symbol', 'Unknown'),
+                trade.get('token_address', ''),
+                trade.get('chain', ''),
+                trade.get('strategy', ''),
+                trade.get('side', ''),
+                str(trade.get('entry_timestamp', '')),
+                str(trade.get('exit_timestamp', '')),
+                trade.get('hold_time', 'N/A'),
+                trade.get('entry_price', 0),
+                trade.get('exit_price', '') or '',
+                trade.get('amount', 0),
+                round(entry_value, 8),
+                round(exit_value, 8) if exit_value else '',
+                trade.get('profit_loss', 0),
+                trade.get('roi', 0),
+                trade.get('status', ''),
+                trade.get('exit_reason', 'N/A'),
+                trade.get('stop_loss', '') or '',
+                trade.get('take_profit', '') or '',
+                trade.get('gas_cost', '') or '',
+                trade.get('slippage', '') or '',
+                trade.get('tx_hash', '') or '',
+            ]
+
+            for col_num, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_num, column=col_num, value=value)
+                cell.border = border
+
+                # Color-code P&L and ROI
+                if columns[col_num-1] in ['Profit/Loss', 'ROI (%)']:
+                    try:
+                        val = float(value) if value else 0
+                        if val > 0:
+                            cell.font = Font(color='00B050', bold=True)
+                            cell.fill = PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid')
+                        elif val < 0:
+                            cell.font = Font(color='FF0000', bold=True)
+                            cell.fill = PatternFill(start_color='FCE4D6', end_color='FCE4D6', fill_type='solid')
+                    except:
+                        pass
+
+        # Auto-adjust column widths
+        for col in ws.iter_cols():
+            if col and not isinstance(col[0], MergedCell):
+                try:
+                    max_length = max(len(str(cell.value or '')) for cell in col)
+                    ws.column_dimensions[col[0].column_letter].width = min(max_length + 2, 50)
+                except:
+                    pass
+
+        # Save workbook
+        wb.save(output)
+        output.seek(0)
+
+        response = web.Response(
+            body=output.read(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            headers={'Content-Disposition': f'attachment; filename="trades_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'}
+        )
+        return response
+
     async def api_open_positions(self, request):
         """Get open positions with ALL required fields"""
         try:
