@@ -407,6 +407,9 @@ class SettingsManager {
                     <td>${lastRotated}</td>
                     <td>${config.rotation_interval_days} days</td>
                     <td>
+                        <button class="btn btn-sm btn-primary" onclick="settingsManager.editSensitiveConfig('${config.key}')" style="margin-right: 5px;">
+                            <i class="fas fa-edit"></i> Edit
+                        </button>
                         <button class="btn btn-sm btn-danger" onclick="settingsManager.deleteSensitiveConfig('${config.key}')">
                             <i class="fas fa-trash"></i> Delete
                         </button>
@@ -416,18 +419,53 @@ class SettingsManager {
         }).join('');
     }
 
-    showSensitiveConfigModal() {
+    showSensitiveConfigModal(isEdit = false) {
         // Clear form
         document.getElementById('sensitiveConfigKey').value = '';
         document.getElementById('sensitiveConfigValue').value = '';
         document.getElementById('sensitiveConfigDescription').value = '';
         document.getElementById('sensitiveConfigRotation').value = '30';
 
+        // Update modal title
+        document.getElementById('sensitiveConfigModalTitle').textContent =
+            isEdit ? 'Edit Sensitive Configuration' : 'Add Sensitive Configuration';
+
+        // Disable key field if editing (can't change key)
+        document.getElementById('sensitiveConfigKey').readOnly = isEdit;
+
         // Show modal
         const modal = document.getElementById('sensitiveConfigModal');
         modal.style.display = 'flex';
         // Add active class after a small delay to trigger animation
         setTimeout(() => modal.classList.add('active'), 10);
+    }
+
+    async editSensitiveConfig(key) {
+        try {
+            showToast('info', 'Loading sensitive config...');
+
+            // Fetch the decrypted value from API
+            const response = await apiGet(`/api/settings/sensitive/${key}`);
+
+            if (response.success && response.data) {
+                const config = response.data;
+
+                // Populate the modal with existing values
+                document.getElementById('sensitiveConfigKey').value = config.key;
+                document.getElementById('sensitiveConfigValue').value = config.value;
+                document.getElementById('sensitiveConfigDescription').value = config.description || '';
+                document.getElementById('sensitiveConfigRotation').value = config.rotation_interval_days || 30;
+
+                // Show modal in edit mode
+                this.showSensitiveConfigModal(true);
+
+                showToast('success', 'Config loaded successfully');
+            } else {
+                showToast('error', response.error || 'Failed to load sensitive config');
+            }
+        } catch (error) {
+            showToast('error', `Error loading sensitive config: ${error.message}`);
+        }
     }
 
     hideSensitiveConfigModal() {

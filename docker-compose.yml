@@ -1,5 +1,12 @@
 version: '3.8'
 
+# ⚠️  IMPORTANT: Database Persistence
+# - Use: docker-compose up -d --build           (REBUILDS code, KEEPS data ✅)
+# - Avoid: docker-compose down -v               (WIPES ALL DATA including admin user & secrets ❌)
+# - If you accidentally wipe volumes:
+#   1. Run: docker exec -it trading-bot python scripts/import_env_secrets.py
+#   2. Admin user will be recreated with password: admin123
+
 services:
   postgres:
     image: timescale/timescaledb:latest-pg14

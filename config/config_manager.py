@@ -659,6 +659,45 @@ class ConfigManager:
             logger.error(f"Failed to get sensitive config '{key}': {e}")
             return None
 
+    async def get_sensitive_config_with_metadata(self, key: str) -> Optional[Dict[str, Any]]:
+        """Get decrypted sensitive config with all metadata"""
+        if not self.db_pool or not self.encryption_manager:
+            return None
+
+        try:
+            async with self.db_pool.acquire() as conn:
+                row = await conn.fetchrow("""
+                    SELECT key, encrypted_value, description, last_rotated,
+                           rotation_interval_days, updated_at
+                    FROM config_sensitive
+                    WHERE key = $1 AND is_active = TRUE
+                """, key)
+
+                if not row:
+                    return None
+
+                encrypted_value = row['encrypted_value']
+                decrypted_value = self.encryption_manager.decrypt_sensitive_data(encrypted_value)
+
+                result = {
+                    'key': row['key'],
+                    'value': decrypted_value,
+                    'description': row['description'],
+                    'rotation_interval_days': row['rotation_interval_days']
+                }
+
+                # Convert datetime to ISO string
+                if row.get('last_rotated'):
+                    result['last_rotated'] = row['last_rotated'].isoformat()
+                if row.get('updated_at'):
+                    result['updated_at'] = row['updated_at'].isoformat()
+
+                return result
+
+        except Exception as e:
+            logger.error(f"Failed to get sensitive config with metadata '{key}': {e}")
+            return None
+
     async def set_sensitive_config(self, key: str, value: str, description: str = None,
                                    user_id: int = None, rotation_days: int = 30) -> bool:
         """Encrypt and store a sensitive configuration value"""
