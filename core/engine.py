@@ -176,7 +176,10 @@ class TradingBotEngine:
         from data.storage.database import DatabaseManager
         self.db = DatabaseManager(config.get('database', {}))  
 
-        self.strategy_manager = StrategyManager(config['trading']['strategies'])
+        # FIXED: Strategies moved to top-level config, use conversion method for proper nesting
+        from config.config_manager import ConfigType
+        strategies_config = self.config_manager.get_config(ConfigType.STRATEGIES)
+        self.strategy_manager = StrategyManager(strategies_config.to_strategy_manager_dict())
         self.order_manager = OrderManager(config, db_manager=self.db)  # 🆕 ADD db_manager
         self.position_tracker = PositionTracker()
         self.trade_executor = TradeExecutor(executor_config, db_manager=self.db)  # 🆕 ADD db_manager

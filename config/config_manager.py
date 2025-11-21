@@ -143,6 +143,50 @@ class StrategiesConfig(BaseModel):
     default_strategy: str = "momentum"  # Used when mode is "single"
     multi_strategy_enabled: bool = True  # Allow multiple strategies per opportunity
 
+    def to_strategy_manager_dict(self) -> Dict[str, Any]:
+        """
+        Convert flat config to nested structure expected by StrategyManager.
+
+        StrategyManager expects both flat enabled flags and nested strategy configs:
+        {
+            'momentum_enabled': True,
+            'momentum': { 'lookback_period': 20, ... },
+            'scalping_enabled': True,
+            'scalping': { 'profit_target': 0.02, ... },
+            ...
+        }
+        """
+        return {
+            # Momentum
+            'momentum_enabled': self.momentum_enabled,
+            'momentum': {
+                'lookback_period': self.momentum_lookback_period,
+                'min_momentum_score': self.momentum_min_momentum_score,
+                'volume_threshold': self.momentum_volume_threshold,
+            },
+            # Scalping
+            'scalping_enabled': self.scalping_enabled,
+            'scalping': {
+                'profit_target': self.scalping_profit_target,
+                'max_hold_time': self.scalping_max_hold_time,
+                'min_spread': self.scalping_min_spread,
+            },
+            # AI Strategy
+            'ai_enabled': self.ai_enabled,
+            'ai': {
+                'ml_confidence_threshold': self.ai_ml_confidence_threshold,
+                'min_pump_probability': self.ai_min_pump_probability,
+                'ensemble_min_models': self.ai_ensemble_min_models,
+                'use_lstm': self.ai_use_lstm,
+                'use_xgboost': self.ai_use_xgboost,
+                'use_lightgbm': self.ai_use_lightgbm,
+            },
+            # Strategy Selection
+            'strategy_selection_mode': self.strategy_selection_mode,
+            'default_strategy': self.default_strategy,
+            'multi_strategy_enabled': self.multi_strategy_enabled,
+        }
+
 class ChainConfig(BaseModel):
     enabled_chains: str = "ethereum,bsc,base,arbitrum,solana"
     default_chain: str = "ethereum"
