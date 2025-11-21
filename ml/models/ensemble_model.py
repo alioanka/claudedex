@@ -152,13 +152,21 @@ class TransformerPredictor(nn.Module):
 class EnsemblePredictor:
     """Main ensemble prediction system"""
     
-    def __init__(self, model_dir: str = "models/"):
+    def __init__(self, config: dict = None):
         """
         Initialize ensemble predictor
-        
+
         Args:
-            model_dir: Directory containing trained models
+            config: Configuration dict with optional 'model_dir' key
         """
+        # Handle both dict config and legacy string model_dir
+        if config is None:
+            config = {}
+        elif isinstance(config, str):
+            # Legacy support: if string passed, treat as model_dir
+            config = {"model_dir": config}
+
+        model_dir = config.get("model_dir", "models/")
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(parents=True, exist_ok=True)
         
