@@ -115,24 +115,56 @@ def require_role(required_role: UserRole) -> Callable:
 
 async def auth_middleware_factory(app: web.Application, handler: Callable) -> Callable:
     """
-    Global middleware to inject user into request if session exists
-    This is passive - doesn't block requests, just adds user info if available
+    Global middleware to enforce authentication on all routes
+    Actively blocks unauthenticated requests except for public routes
     """
     async def middleware(request: web.Request):
-        # Skip auth check for login page and static files
-        if request.path in ['/login', '/api/auth/login'] or request.path.startswith('/static/'):
+        # Public routes that don't require authentication
+        public_routes = [
+            '/login',
+            '/api/auth/login',
+            '/api/auth/logout',
+        ]
+
+        # Check if this is a public route
+        is_public = (
+            request.path in public_routes or
+            request.path.startswith('/static/')
+        )
+
+        if is_public:
             return await handler(request)
 
-        # Check for session
-        if hasattr(app, 'auth_service'):
-            auth_service: AuthService = app['auth_service']
-            session_id = request.cookies.get('session_id')
+        # For all other routes, authentication is required
+        if not hasattr(app, 'auth_service'):
+            # Auth service not initialized - allow for backward compatibility
+            logger.warning(f"⚠️  Auth service not initialized, allowing access to {request.path}")
+            return await handler(request)
 
-            if session_id:
-                user = await auth_service.validate_session(session_id)
-                if user:
-                    request['user'] = user
+        auth_service: AuthService = app['auth_service']
+        session_id = request.cookies.get('session_id')
 
+        if not session_id:
+            # No session cookie - redirect to login
+            if request.path.startswith('/api/'):
+                return web.json_response({'error': 'Authentication required'}, status=401)
+            else:
+                return web.HTTPFound('/login')
+
+        # Validate session
+        user = await auth_service.validate_session(session_id)
+
+        if not user:
+            # Invalid or expired session - redirect to login
+            if request.path.startswith('/api/'):
+                return web.json_response({'error': 'Session expired or invalid'}, status=401)
+            else:
+                response = web.HTTPFound('/login')
+                response.del_cookie('session_id')
+                return response
+
+        # Session valid - attach user to request and proceed
+        request['user'] = user
         return await handler(request)
 
     return middleware

@@ -82,14 +82,14 @@ class DashboardEndpoints:
         self._setup_routes()
         self._setup_socketio()
 
+        # Register startup handler for auth initialization
+        self.app.on_startup.append(self._on_startup)
+
         # Start update tasks
         asyncio.create_task(self._broadcast_loop())
 
         # In-memory storage for backtests
         self.backtests = {}
-
-        # Initialize auth system if available
-        asyncio.create_task(self._initialize_auth_async())
 
     @staticmethod
     def _serialize_decimals(obj):
@@ -103,6 +103,11 @@ class DashboardEndpoints:
         elif isinstance(obj, datetime):
             return obj.isoformat()
         return obj
+
+    async def _on_startup(self, app):
+        """Called when app starts - initialize auth system before serving requests"""
+        logger.info("🚀 App startup: initializing authentication system...")
+        await self._initialize_auth_async()
 
     async def _initialize_auth_async(self):
         """Initialize authentication system asynchronously"""
@@ -128,7 +133,7 @@ class DashboardEndpoints:
                 # Store in app for middleware access
                 self.app['auth_service'] = self.auth_service
 
-                # Setup auth routes
+                # Setup auth routes (this will override the placeholder)
                 AuthRoutes(self.app, self.auth_service)
 
                 # Add auth middleware (insert at beginning)
@@ -147,16 +152,71 @@ class DashboardEndpoints:
             logger.warning("   Dashboard will run without authentication")
             self.auth_enabled = False
 
+    async def login_placeholder(self, request):
+        """Temporary login page shown while auth system initializes"""
+        html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Loading...</title>
+            <style>
+                body {
+                    font-family: Arial, sans-serif;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    margin: 0;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                }
+                .message {
+                    background: white;
+                    padding: 40px;
+                    border-radius: 10px;
+                    box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+                    text-align: center;
+                }
+                .spinner {
+                    border: 4px solid #f3f3f3;
+                    border-top: 4px solid #667eea;
+                    border-radius: 50%;
+                    width: 40px;
+                    height: 40px;
+                    animation: spin 1s linear infinite;
+                    margin: 20px auto;
+                }
+                @keyframes spin {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
+                }
+            </style>
+            <meta http-equiv="refresh" content="3">
+        </head>
+        <body>
+            <div class="message">
+                <div class="spinner"></div>
+                <h2>Authentication System Loading...</h2>
+                <p>Please wait while we initialize the security system.</p>
+                <p><small>This page will refresh automatically.</small></p>
+            </div>
+        </body>
+        </html>
+        """
+        return web.Response(text=html, content_type='text/html')
+
     def _setup_routes(self):
         """Setup all routes"""
 
         # ✅ ADD: Add error handling middleware FIRST
         self.app.middlewares.append(self.error_handler_middleware)
-        
+
         # Static files
         self.app.router.add_static('/static', 'dashboard/static', name='static')
-        
-        # Pages
+
+        # ⚠️ Auth routes (including /login) will be added during startup (see _on_startup handler)
+        # This ensures the login route is available when the app serves requests
+
+        # Pages - all will be protected by auth middleware if enabled
         self.app.router.add_get('/', self.index)
         self.app.router.add_get('/dashboard', self.dashboard_page)
         self.app.router.add_get('/trades', self.trades_page)
