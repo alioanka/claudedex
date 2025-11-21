@@ -1,0 +1,60 @@
+# Futures Trading Module Configuration
+# This module handles futures/perpetuals trading on CEX exchanges
+# STATUS: Placeholder for Phase 2 implementation
+
+module:
+  name: "futures_trading"
+  type: "futures_trading"
+  enabled: false  # Disabled until Phase 2
+  description: "CEX futures trading module for hedging and short positions"
+
+# Capital Allocation
+capital:
+  allocation: 300.0  # USD allocated to this module
+  max_position_size: 100.0  # Max USD per position
+  risk_per_trade: 0.02  # 2% risk per trade
+
+# Position Limits
+positions:
+  max_open: 3  # Maximum open positions
+  max_leverage: 3  # Maximum 3x leverage
+  use_cross_margin: false  # Use isolated margin by default
+
+# Risk Management
+risk:
+  stop_loss_pct: 0.03  # 3% stop loss (tighter for leverage)
+  take_profit_pct: 0.08  # 8% take profit
+  liquidation_buffer: 0.20  # 20% buffer from liquidation price
+  max_drawdown_pct: 0.10  # 10% max drawdown
+
+# Strategies (Placeholder)
+strategies:
+  enabled:
+    - "trend_following"
+    - "mean_reversion"
+
+  trend_following:
+    min_trend_strength: 0.7
+
+  mean_reversion:
+    rsi_oversold: 30
+    rsi_overbought: 70
+
+# Exchange Settings (Placeholder)
+exchanges:
+  binance:
+    enabled: true
+    testnet: true  # Start with testnet
+
+  bybit:
+    enabled: false
+
+  okx:
+    enabled: false
+
+# Monitoring
+monitoring:
+  health_check_interval: 30
+  metrics_update_interval: 60
+  alert_on_error: true
+  alert_on_liquidation_risk: true

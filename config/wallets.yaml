@@ -1,0 +1,132 @@
+# Wallet Configuration for Trading Modules
+# Each module can have dedicated wallets for better tracking and isolation
+
+# ⚠️ IMPORTANT: Never commit actual private keys or mnemonics
+# Use environment variables and .env file for sensitive data
+
+# Wallet Configuration Format:
+# module_name:
+#   chain_name:
+#     address: "public_address"
+#     private_key_env: "ENV_VAR_NAME"  # Reference to env variable
+#     initial_balance: amount
+#     current_balance: amount  # Updated by bot
+
+# DEX Trading Module Wallets
+dex_trading:
+  solana:
+    address: "${SOLANA_WALLET_ADDRESS}"
+    private_key_env: "SOLANA_PRIVATE_KEY"
+    initial_balance: 500.0  # USD equivalent
+    current_balance: 500.0
+    description: "Main DEX trading wallet for Solana"
+
+  ethereum:
+    address: "${ETHEREUM_WALLET_ADDRESS}"
+    private_key_env: "ETHEREUM_PRIVATE_KEY"
+    initial_balance: 0.0  # Not currently used
+    current_balance: 0.0
+    description: "DEX trading wallet for Ethereum"
+
+  polygon:
+    address: "${POLYGON_WALLET_ADDRESS}"
+    private_key_env: "POLYGON_PRIVATE_KEY"
+    initial_balance: 0.0
+    current_balance: 0.0
+    description: "DEX trading wallet for Polygon"
+
+  bsc:
+    address: "${BSC_WALLET_ADDRESS}"
+    private_key_env: "BSC_PRIVATE_KEY"
+    initial_balance: 0.0
+    current_balance: 0.0
+    description: "DEX trading wallet for BSC"
+
+# Futures Trading Module Wallets (Placeholder for Phase 2)
+futures_trading:
+  binance:
+    api_key_env: "BINANCE_FUTURES_API_KEY"
+    api_secret_env: "BINANCE_FUTURES_API_SECRET"
+    initial_balance: 300.0
+    current_balance: 300.0
+    testnet: true  # Use testnet initially
+    description: "Binance Futures account"
+
+  bybit:
+    api_key_env: "BYBIT_API_KEY"
+    api_secret_env: "BYBIT_API_SECRET"
+    initial_balance: 0.0
+    current_balance: 0.0
+    testnet: true
+    description: "Bybit Derivatives account"
+
+  okx:
+    api_key_env: "OKX_API_KEY"
+    api_secret_env: "OKX_API_SECRET"
+    initial_balance: 0.0
+    current_balance: 0.0
+    testnet: true
+    description: "OKX Perpetuals account"
+
+# Arbitrage Module Wallets (Placeholder for Phase 3)
+arbitrage:
+  solana:
+    address: "${ARBITRAGE_SOLANA_WALLET}"
+    private_key_env: "ARBITRAGE_SOLANA_KEY"
+    initial_balance: 200.0
+    current_balance: 200.0
+    description: "Arbitrage wallet for Solana"
+
+  ethereum:
+    address: "${ARBITRAGE_ETH_WALLET}"
+    private_key_env: "ARBITRAGE_ETH_KEY"
+    initial_balance: 0.0
+    current_balance: 0.0
+    description: "Arbitrage wallet for Ethereum"
+
+# Master Wallet (Optional - for fund management)
+master:
+  solana:
+    address: "${MASTER_SOLANA_WALLET}"
+    private_key_env: "MASTER_SOLANA_KEY"
+    description: "Master wallet for fund transfers between modules"
+
+  ethereum:
+    address: "${MASTER_ETH_WALLET}"
+    private_key_env: "MASTER_ETH_KEY"
+    description: "Master wallet for EVM chains"
+
+# Wallet Management Settings
+settings:
+  # Auto-balance between wallets
+  auto_balance: false  # Manual transfers for now
+
+  # Minimum balance alerts
+  min_balance_alerts:
+    enabled: true
+    threshold_usd: 10.0  # Alert when balance < $10
+
+  # Security
+  require_confirmation: true  # Require user confirmation for withdrawals
+  max_transfer_amount: 1000.0  # Max transfer without extra confirmation
+
+  # Monitoring
+  balance_check_interval: 300  # Check balances every 5 minutes
+  sync_to_dashboard: true
+
+# Environment Variables Required:
+# Create a .env file with these variables (see .env.example)
+#
+# DEX Trading:
+#   SOLANA_WALLET_ADDRESS=your_public_address
+#   SOLANA_PRIVATE_KEY=your_private_key
+#   ETHEREUM_WALLET_ADDRESS=0x...
+#   ETHEREUM_PRIVATE_KEY=0x...
+#
+# Futures Trading:
+#   BINANCE_FUTURES_API_KEY=your_api_key
+#   BINANCE_FUTURES_API_SECRET=your_api_secret
+#
+# Arbitrage:
+#   ARBITRAGE_SOLANA_WALLET=...
+#   ARBITRAGE_SOLANA_KEY=...

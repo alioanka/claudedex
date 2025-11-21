@@ -1,0 +1,65 @@
+# Shared Risk Management Configuration
+# Risk limits and coordination across all modules
+
+# Global Risk Limits
+global:
+  max_total_capital: 1000.0  # Total capital across all modules
+  max_drawdown_pct: 0.20  # 20% max total drawdown
+  max_daily_loss: 100.0  # $100 max daily loss
+
+  # Emergency stops
+  emergency_stop_loss: 200.0  # Stop all trading if total loss exceeds $200
+  consecutive_loss_limit: 5  # Pause all modules after 5 consecutive losses
+
+# Cross-Module Risk
+cross_module:
+  # Correlation limits
+  max_correlation: 0.7  # Prevent highly correlated positions
+
+  # Exposure limits
+  max_long_exposure: 800.0  # Max long exposure across all modules
+  max_short_exposure: 400.0  # Max short exposure (futures)
+
+  # Diversification
+  min_modules_active: 1  # Minimum active modules
+  max_capital_per_module_pct: 0.6  # Max 60% in single module
+
+# Module Coordination
+coordination:
+  # Allow modules to hedge each other
+  allow_hedging: true
+
+  # Hedge effectiveness threshold
+  min_hedge_effectiveness: 0.6  # 60% hedge effectiveness
+
+  # Rebalancing
+  auto_rebalance: false  # Manual rebalancing for now
+  rebalance_threshold: 0.10  # Rebalance if allocation drifts >10%
+
+# Circuit Breakers
+circuit_breakers:
+  # Volatility-based
+  pause_on_high_volatility: true
+  volatility_threshold: 100  # % (pauses trading during extreme volatility)
+
+  # Loss-based
+  pause_on_drawdown: true
+  drawdown_pause_threshold: 0.15  # Pause at 15% drawdown
+
+  # Time-based
+  pause_on_consecutive_losses: true
+  consecutive_loss_threshold: 3
+  pause_duration_minutes: 30
+
+# Alerts
+alerts:
+  # When to send alerts
+  alert_on_global_drawdown: true
+  alert_on_module_failure: true
+  alert_on_capital_exhaustion: true
+  alert_on_circuit_breaker: true
+
+  # Alert channels (from main config)
+  use_telegram: true
+  use_email: true
+  use_dashboard: true

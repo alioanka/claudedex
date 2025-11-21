@@ -1,0 +1,96 @@
+# DEX Trading Module Configuration
+# This module handles spot trading on decentralized exchanges
+
+module:
+  name: "dex_trading"
+  type: "dex_trading"
+  enabled: true
+  description: "DEX spot trading module for Solana and EVM chains"
+
+# Capital Allocation
+capital:
+  allocation: 500.0  # USD allocated to this module
+  max_position_size: 100.0  # Max USD per position
+  risk_per_trade: 0.02  # 2% risk per trade
+
+# Position Limits
+positions:
+  max_open: 5  # Maximum open positions
+  max_per_chain: 3  # Max positions per chain
+  max_per_token: 1  # Max positions per token
+
+# Risk Management
+risk:
+  stop_loss_pct: 0.05  # 5% stop loss
+  take_profit_pct: 0.10  # 10% take profit
+  trailing_stop_enabled: true
+  trailing_stop_pct: 0.03  # 3% trailing stop
+  max_drawdown_pct: 0.15  # 15% max drawdown before pause
+
+# Strategies
+strategies:
+  enabled:
+    - "momentum"
+    - "scalping"
+    - "ai_strategy"
+
+  momentum:
+    min_confidence: 0.6
+    volume_threshold: 10000
+
+  scalping:
+    min_spread: 0.01  # 1% minimum spread
+    max_hold_time: 3600  # 1 hour max hold
+
+  ai_strategy:
+    min_confidence: 0.65
+    use_ensemble: true
+
+# DEX-Specific Settings
+dex:
+  # Supported chains
+  chains:
+    - solana
+    - ethereum
+    - polygon
+    - bsc
+    - arbitrum
+    - base
+
+  # Supported DEXs
+  dexs:
+    - raydium
+    - orca
+    - jupiter
+    - uniswap
+    - sushiswap
+
+  # Slippage settings
+  max_slippage_bps: 50  # 0.5% max slippage
+
+  # Gas settings
+  max_gas_price: 50  # 50 Gwei max
+
+  # MEV protection
+  mev_protection: true
+
+  # Jupiter routing
+  jupiter_routing: true
+  jupiter_routes_limit: 3
+
+  # Transaction settings
+  transaction_timeout: 60  # seconds
+  confirmation_blocks: 1
+
+# Monitoring
+monitoring:
+  health_check_interval: 30  # seconds
+  metrics_update_interval: 60  # seconds
+  alert_on_error: true
+  alert_on_loss_streak: 3  # Alert after 3 consecutive losses
+
+# Dashboard
+dashboard:
+  show_in_main: true
+  dedicated_tab: true
+  realtime_updates: true

@@ -1,0 +1,36 @@
+# Arbitrage Module Configuration
+# This module handles cross-DEX and CEX-DEX arbitrage
+# STATUS: Placeholder for Phase 3 implementation
+
+module:
+  name: "arbitrage"
+  type: "arbitrage"
+  enabled: false  # Disabled until Phase 3
+  description: "Cross-DEX/CEX arbitrage module"
+
+# Capital Allocation
+capital:
+  allocation: 200.0  # USD allocated to this module
+  max_position_size: 50.0  # Smaller positions for quick arb
+  risk_per_trade: 0.01  # 1% risk per trade
+
+# Position Limits
+positions:
+  max_open: 5  # Maximum open arbitrage pairs
+  max_per_pair: 1
+
+# Arbitrage Settings
+arbitrage:
+  min_profit_pct: 0.005  # 0.5% minimum profit after fees
+  max_execution_time: 10  # seconds
+
+  types:
+    spatial: true  # Cross-DEX arbitrage
+    triangular: false  # Triangular arbitrage (complex)
+    cross_chain: false  # Cross-chain arbitrage (requires bridge)
+
+# Monitoring
+monitoring:
+  health_check_interval: 30
+  metrics_update_interval: 60
+  alert_on_error: true
