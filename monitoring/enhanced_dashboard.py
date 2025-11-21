@@ -62,6 +62,7 @@ class DashboardEndpoints:
         self.alerts = alerts_system
         self.config_mgr = config_manager
         self.db = db_manager
+        self.db_pool = db_manager.pool if db_manager else None  # Add db_pool for easy access
 
         # Authentication
         self.auth_service = None
