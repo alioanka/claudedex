@@ -28,7 +28,16 @@ class SettingsManager {
         // Password change form
         const passwordForm = document.getElementById('changePasswordForm');
         if (passwordForm) {
-            passwordForm.addEventListener('submit', (e) => this.handlePasswordChange(e));
+            console.log('Password form found, attaching event listener');
+            passwordForm.addEventListener('submit', (e) => {
+                console.log('Password form submitted');
+                e.preventDefault();
+                e.stopPropagation();
+                this.handlePasswordChange(e);
+                return false;
+            });
+        } else {
+            console.error('Password form not found in DOM');
         }
     }
 
@@ -212,31 +221,44 @@ class SettingsManager {
     }
 
     async handlePasswordChange(event) {
+        console.log('handlePasswordChange called');
         event.preventDefault();
+        event.stopPropagation();
 
         const currentPassword = document.getElementById('currentPassword').value;
         const newPassword = document.getElementById('newPassword').value;
         const confirmPassword = document.getElementById('confirmPassword').value;
 
+        console.log('Password change form values:', {
+            currentPasswordLength: currentPassword.length,
+            newPasswordLength: newPassword.length,
+            confirmPasswordLength: confirmPassword.length
+        });
+
         // Validate passwords match
         if (newPassword !== confirmPassword) {
+            console.error('Passwords do not match');
             showToast('error', 'New passwords do not match');
-            return;
+            return false;
         }
 
         // Validate password length
         if (newPassword.length < 8) {
+            console.error('Password too short');
             showToast('error', 'New password must be at least 8 characters');
-            return;
+            return false;
         }
 
         try {
+            console.log('Sending password change request...');
             showToast('info', 'Changing password...');
 
             const response = await apiPost('/api/auth/change-password', {
                 old_password: currentPassword,
                 new_password: newPassword
             });
+
+            console.log('Password change response:', response);
 
             if (response.success) {
                 showToast('success', 'Password changed successfully! You will be logged out shortly.');
@@ -249,10 +271,14 @@ class SettingsManager {
                     window.location.href = '/login';
                 }, 2000);
             } else {
+                console.error('Password change failed:', response.error);
                 showToast('error', response.error || 'Failed to change password');
             }
         } catch (error) {
+            console.error('Password change error:', error);
             showToast('error', `Error changing password: ${error.message}`);
         }
+
+        return false;
     }
 }

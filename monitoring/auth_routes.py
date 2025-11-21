@@ -121,7 +121,6 @@ class AuthRoutes:
                 'error': 'Internal server error'
             }, status=500)
 
-    @require_auth
     async def api_logout(self, request):
         """Logout endpoint"""
         try:
@@ -133,7 +132,9 @@ class AuthRoutes:
             response = web.json_response({'success': True})
             response.del_cookie('session_id')
 
-            logger.info(f"User {request['user'].username} logged out")
+            # Try to get username if available
+            username = request.get('user', {}).username if 'user' in request else 'unknown'
+            logger.info(f"User {username} logged out")
             return response
 
         except Exception as e:

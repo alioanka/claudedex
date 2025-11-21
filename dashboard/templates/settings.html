@@ -32,7 +32,7 @@
         <div class="card-body">
             <div class="setting-group">
                 <h4>Change Password</h4>
-                <form id="changePasswordForm">
+                <form id="changePasswordForm" method="post" action="#" onsubmit="return false;">
                     <div class="form-group">
                         <label for="currentPassword">Current Password</label>
                         <input type="password" id="currentPassword" name="currentPassword"
@@ -82,5 +82,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/settings.js"></script>
+<script src="/static/js/settings.js?v=2"></script>
 {% endblock %}
