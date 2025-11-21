@@ -204,14 +204,19 @@ class PositionTracker:
         self.positions: Dict[str, Position] = {}
         self.closed_positions: List[Position] = []
         self.portfolio_history: deque = deque(maxlen=1000)
-        
+
         # Portfolio state
         self.total_portfolio_value = Decimal("0")
         initial_balance = self.config.get('initial_balance', 400)
         self.cash_balance = Decimal(str(initial_balance))
         logger.info(f"Position tracker initialized with balance: ${initial_balance}")
         self.positions_value = Decimal("0")
-        
+
+        # CRITICAL FIX (P1): Add locks to prevent race conditions
+        self.cash_lock = asyncio.Lock()  # Protects cash_balance
+        self.positions_lock = asyncio.Lock()  # Protects positions dict
+        self.metrics_lock = asyncio.Lock()  # Protects performance metrics
+
         # Risk tracking
         self.risk_metrics = {
             "var_95": Decimal("0"),  # Value at Risk
@@ -220,13 +225,13 @@ class PositionTracker:
             "portfolio_volatility": 0.0,
             "correlation_matrix": {}
         }
-        
+
         # Performance tracking
         self.performance_metrics = self._initialize_performance_metrics()
-        
+
         # Price cache
         self.price_cache: Dict[str, Tuple[Decimal, datetime]] = {}
-        
+
         # Start monitoring
         asyncio.create_task(self._monitor_positions())
         asyncio.create_task(self._calculate_portfolio_metrics())
@@ -298,34 +303,45 @@ class PositionTracker:
     async def open_position(self, position: Position) -> str:
         """
         Open position from Position object (API-compliant signature)
-        
+
         Args:
             position: Pre-built Position object
-            
+
         Returns:
             Position ID string
         """
         # Validate position
         if not await self._check_position_limits(position.token_address, position.entry_amount):
             raise ValueError("Position exceeds risk limits")
-        
+
         # Calculate risk metrics
         position.risk_score = await self._calculate_position_risk(position)
         position.risk_level = self._determine_risk_level(position.risk_score)
-        
-        # Store position
-        self.positions[position.position_id] = position
-        
-        # Update portfolio
-        self.cash_balance -= position.entry_value
+
+        # CRITICAL FIX (P1): Protect with locks to prevent race conditions
+        async with self.positions_lock:
+            async with self.cash_lock:
+                # Check cash balance
+                if position.entry_value > self.cash_balance:
+                    raise ValueError(
+                        f"Insufficient cash balance: "
+                        f"Required ${position.entry_value}, Available ${self.cash_balance}"
+                    )
+
+                # Store position
+                self.positions[position.position_id] = position
+
+                # Update portfolio
+                self.cash_balance -= position.entry_value
+
         await self._update_portfolio_value()
-        
+
         # Log
         logger.info(f"Opened position {position.position_id}")
-        
+
         # Update status
         position.status = PositionStatus.OPEN
-        
+
         return position.position_id
 
     async def open_position_from_params(
@@ -455,10 +471,14 @@ class PositionTracker:
             # Calculate initial risk metrics
             position.risk_score = await self._calculate_position_risk(position)
             position.risk_level = self._determine_risk_level(position.risk_score)
-            
-            # Update portfolio
-            self.positions[position.position_id] = position
-            self.cash_balance -= entry_value
+
+            # CRITICAL FIX (P1): Protect with locks to prevent race conditions
+            async with self.positions_lock:
+                async with self.cash_lock:
+                    # Update portfolio
+                    self.positions[position.position_id] = position
+                    self.cash_balance -= entry_value
+
             await self._update_portfolio_value()
             
             # Log position opening
@@ -686,23 +706,27 @@ class PositionTracker:
                 position.exit_value = exit_value
                 position.exit_time = datetime.utcnow()
                 position.realized_pnl = realized_pnl
-                
+
                 if order_ids:
                     position.exit_order_ids.extend(order_ids)
-                
+
                 # Calculate final metrics
                 position.holding_period = position.exit_time - position.entry_time
                 position.roi = float(position.realized_pnl / position.entry_value)
-                
-                # Add to closed positions
-                self.closed_positions.append(position)
-                del self.positions[position_id]
-                
-                # Update portfolio
-                self.cash_balance += exit_value
-                
+
+                # CRITICAL FIX (P1): Protect with locks to prevent race conditions
+                async with self.positions_lock:
+                    async with self.cash_lock:
+                        # Add to closed positions
+                        self.closed_positions.append(position)
+                        del self.positions[position_id]
+
+                        # Update portfolio
+                        self.cash_balance += exit_value
+
                 # Update performance metrics
-                await self._update_performance_metrics(position)
+                async with self.metrics_lock:
+                    await self._update_performance_metrics(position)
                 
                 # Log closure
                 logger.info(
@@ -736,13 +760,17 @@ class PositionTracker:
             else:
                 # Partial close
                 remaining_amount = position.entry_amount - exit_amount
-                position.entry_amount = remaining_amount
-                position.entry_value = position.entry_price * remaining_amount
-                position.realized_pnl += realized_pnl
-                
-                # Update portfolio
-                self.cash_balance += exit_value
-                
+
+                # CRITICAL FIX (P1): Protect with locks to prevent race conditions
+                async with self.positions_lock:
+                    async with self.cash_lock:
+                        position.entry_amount = remaining_amount
+                        position.entry_value = position.entry_price * remaining_amount
+                        position.realized_pnl += realized_pnl
+
+                        # Update portfolio
+                        self.cash_balance += exit_value
+
                 logger.info(
                     f"Partial close {position_id}: "
                     f"Closed {exit_amount} @ {exit_price}, "

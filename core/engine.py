@@ -981,9 +981,11 @@ class TradingBotEngine:
                     'is_dry_run': True,
                     'executor_type': 'Jupiter' if chain == 'solana' else 'EVM'
                 }
-                
+
                 # Add to active positions
-                self.active_positions[token_address] = position
+                # CRITICAL FIX (P1): Protect with lock to prevent race conditions
+                async with self.positions_lock:
+                    self.active_positions[token_address] = position
 
                 # ✅ NEW: Add to portfolio manager
                 if hasattr(self, 'portfolio_manager') and self.portfolio_manager:
@@ -1224,8 +1226,11 @@ class TradingBotEngine:
                         'executor_type': 'Jupiter' if chain == 'solana' else 'EVM'
                     }
                 }
-                
-                self.active_positions[opportunity.token_address] = position
+
+                # CRITICAL FIX (P1): Protect with lock to prevent race conditions
+                async with self.positions_lock:
+                    self.active_positions[opportunity.token_address] = position
+
                 self.stats['total_trades'] += 1
                 self.stats['successful_trades'] += 1
 
@@ -1370,11 +1375,16 @@ class TradingBotEngine:
                     await asyncio.sleep(5)
                     continue
                 
-                logger.info(f"📊 Monitoring {len(self.active_positions)} active positions...")
-                
+                # CRITICAL FIX (P1): Protect with lock to prevent race conditions during iteration
+                async with self.positions_lock:
+                    num_positions = len(self.active_positions)
+                    positions_snapshot = list(self.active_positions.items())
+
+                logger.info(f"📊 Monitoring {num_positions} active positions...")
+
                 # ✅ STEP 1: Collect all prices first (REFACTORED FOR RELIABILITY)
                 price_data = {}
-                for token_address, position in list(self.active_positions.items()):
+                for token_address, position in positions_snapshot:
                     try:
                         chain = position.get('chain', 'ethereum')
                         token_symbol = position.get('token_symbol', 'UNKNOWN')
@@ -1792,10 +1802,12 @@ class TradingBotEngine:
                 logger.info(f"🕐❄️ {token_symbol} added to cooldown for {self.cooldown_minutes} minutes")
                 
                 logger.info(f"📊 Total profit so far: ${self.stats.get('total_profit', 0):.2f}")
-                
+
                 # Remove from active positions
-                if token_address in self.active_positions:
-                    del self.active_positions[token_address]
+                # CRITICAL FIX (P1): Protect with lock to prevent race conditions
+                async with self.positions_lock:
+                    if token_address in self.active_positions:
+                        del self.active_positions[token_address]
 
                 # ✅ NEW: Update portfolio manager
                 if hasattr(self, 'portfolio_manager') and self.portfolio_manager:
@@ -1913,9 +1925,11 @@ class TradingBotEngine:
                 
                 if hasattr(self, 'position_tracker') and position.get('tracker_id'):
                     await self.position_tracker.close_position(position['tracker_id'])
-                
-                del self.active_positions[token_address]
-                
+
+                # CRITICAL FIX (P1): Protect with lock to prevent race conditions
+                async with self.positions_lock:
+                    del self.active_positions[token_address]
+
                 emoji = "💰" if final_pnl > 0 else "💸"
                 await self.alert_manager.send_trade_alert(
                     f"{emoji} Position Closed: {token_symbol}\n"
