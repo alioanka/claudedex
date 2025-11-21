@@ -727,7 +727,17 @@ class ConfigManager:
                     ORDER BY key
                 """)
 
-                return [dict(row) for row in rows]
+                # Convert datetime objects to ISO format strings for JSON serialization
+                result = []
+                for row in rows:
+                    row_dict = dict(row)
+                    if row_dict.get('last_rotated'):
+                        row_dict['last_rotated'] = row_dict['last_rotated'].isoformat()
+                    if row_dict.get('updated_at'):
+                        row_dict['updated_at'] = row_dict['updated_at'].isoformat()
+                    result.append(row_dict)
+
+                return result
 
         except Exception as e:
             logger.error(f"Failed to list sensitive configs: {e}")

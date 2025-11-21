@@ -136,6 +136,8 @@ INSERT INTO config_settings (config_type, key, value, value_type, description, i
 ('chain', 'solana_enabled', 'true', 'bool', 'Enable Solana trading', TRUE, TRUE),
 ('chain', 'ethereum_min_liquidity', '3000', 'int', 'Minimum liquidity for Ethereum pairs', TRUE, FALSE),
 ('chain', 'bsc_min_liquidity', '500', 'int', 'Minimum liquidity for BSC pairs', TRUE, FALSE),
+('chain', 'base_min_liquidity', '2000', 'int', 'Minimum liquidity for Base pairs', TRUE, FALSE),
+('chain', 'arbitrum_min_liquidity', '2500', 'int', 'Minimum liquidity for Arbitrum pairs', TRUE, FALSE),
 ('chain', 'solana_min_liquidity', '2000', 'int', 'Minimum liquidity for Solana pairs', TRUE, FALSE)
 ON CONFLICT (config_type, key) DO NOTHING;
 
