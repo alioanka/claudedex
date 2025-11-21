@@ -202,7 +202,8 @@ class TradeExecutor(BaseExecutor):
         self.private_pool_endpoint = config.get('private_pool_endpoint')
         
         # Gas configuration
-        self.max_gas_price = config.get('max_gas_price', 500)  # Gwei
+        # CRITICAL FIX: Reduced from 500 Gwei to 50 Gwei (500 Gwei = $150-300 per tx!)
+        self.max_gas_price = config.get('max_gas_price', 50)  # Gwei (was 500)
         self.gas_limit = config.get('gas_limit', 500000)
         
         # Execution settings
@@ -334,12 +335,12 @@ class TradeExecutor(BaseExecutor):
 
             w3 = self.w3  # ✅ ADD THIS LINE
             current_gas_price = w3.eth.gas_price
-            max_gas_gwei = w3.to_wei(self.config.get('max_gas_price', 500), 'gwei')
+            max_gas_gwei = w3.to_wei(self.config.get('max_gas_price', 50), 'gwei')  # FIXED: Was 500
 
             if current_gas_price > max_gas_gwei:
                 raise Exception(
                     f"Gas price too high: {w3.from_wei(current_gas_price, 'gwei')} > "
-                    f"{self.config.get('max_gas_price', 500)} Gwei"
+                    f"{self.config.get('max_gas_price', 50)} Gwei"  # FIXED: Was 500
                 )
 
             # Execute trade
@@ -589,12 +590,15 @@ class TradeExecutor(BaseExecutor):
                 logger.info(f"✅ Token approved successfully")
                 return True
             else:
-                logger.error(f"❌ Token approval failed")
-                return False
-                
+                # CRITICAL FIX (P1): Raise exception instead of returning False
+                error_msg = f"❌ Token approval failed - transaction reverted"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+
         except Exception as e:
+            # CRITICAL FIX (P1): Re-raise exception instead of returning False
             logger.error(f"Token approval error: {e}", exc_info=True)
-            return False
+            raise RuntimeError(f"Token approval failed: {str(e)}") from e
             
     async def _select_best_route(self, order: TradeOrder) -> Optional[ExecutionRoute]:
         """
@@ -844,27 +848,14 @@ class TradeExecutor(BaseExecutor):
                 amount_in = int(order.token_amount)
                 
                 # ✅ FIXED: Approve router if needed
-                approval_success = await self._approve_token(
+                # CRITICAL FIX (P1): _approve_token now raises exception on failure
+                await self._approve_token(
                     order.token_address,
                     self.routers['uniswap_v2'],
                     amount_in
                 )
-                
-                if not approval_success:
-                    return ExecutionResult(
-                        success=False,
-                        tx_hash=None,
-                        execution_price=0,
-                        amount=0,
-                        token_amount=0,
-                        gas_used=0,
-                        gas_price=0,
-                        slippage_actual=0,
-                        execution_time=0,
-                        route='uniswap_v2',
-                        error='Token approval failed'
-                    )
-                
+                # If we reach here, approval succeeded
+
                 # Calculate minimum output with slippage
                 amounts_out = router.functions.getAmountsOut(amount_in, path).call()
                 min_amount_out = int(amounts_out[-1] * (1 - order.slippage))

@@ -102,7 +102,28 @@ class DatabaseManager:
         """Acquire a connection from the pool."""
         async with self.pool.acquire() as connection:
             yield connection
-    
+
+    @asynccontextmanager
+    async def transaction(self):
+        """
+        CRITICAL FIX (P1): Transaction context manager for ACID guarantees.
+
+        Wraps multi-step database operations in a transaction to ensure:
+        - Atomicity: All operations succeed or all fail
+        - Consistency: Database remains in valid state
+        - Isolation: Concurrent transactions don't interfere
+        - Durability: Committed changes are permanent
+
+        Usage:
+            async with db.transaction() as conn:
+                await conn.execute("INSERT INTO trades ...")
+                await conn.execute("UPDATE portfolio ...")
+                # Auto-commit on success, auto-rollback on exception
+        """
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                yield connection
+
     async def _initialize_timescaledb(self) -> None:
         """Initialize TimescaleDB extensions and hypertables."""
         async with self.acquire() as conn:

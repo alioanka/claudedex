@@ -84,7 +84,7 @@ class DirectDEXExecutor(BaseExecutor):
         
         # Gas optimization
         self.gas_price_strategy = config.get('gas_strategy', 'fast')
-        self.max_gas_price = config.get('max_gas_price', 500)  # gwei
+        self.max_gas_price = config.get('max_gas_price', 50)  # gwei - FIXED: Was 500
         self.gas_buffer = config.get('gas_buffer', 1.2)
         
         # Sandwich protection
@@ -98,7 +98,12 @@ class DirectDEXExecutor(BaseExecutor):
         
         logger.info("Direct DEX Executor initialized")
         self.active_orders = {}  # Track active orders
-        
+
+        # CRITICAL FIX: Add nonce management (was missing, causing crashes)
+        self.nonce_lock = asyncio.Lock()
+        self._nonce = None
+        self.account = None  # Will be initialized from private key
+
     async def initialize(self) -> None:
         """Initialize Web3 connections and contracts"""
         try:
@@ -144,7 +149,54 @@ class DirectDEXExecutor(BaseExecutor):
                 
                 self.dex_contracts[chain][dex.value] = contract
                 logger.info(f"Initialized {dex.value} on {chain}")
-                
+
+    # CRITICAL FIX: Add nonce management methods (were missing, causing system crash)
+    async def _get_next_nonce(self, chain: str = 'ethereum') -> int:
+        """
+        Thread-safe nonce management for transactions
+
+        Args:
+            chain: Chain name to get nonce for
+
+        Returns:
+            Next nonce to use
+        """
+        async with self.nonce_lock:
+            if self._nonce is None:
+                # Get wallet address
+                if not self.account:
+                    from eth_account import Account
+                    self.account = Account.from_key(self.config.get('private_key'))
+
+                # Get current nonce from chain
+                w3 = self.w3_connections.get(chain)
+                if not w3:
+                    raise ValueError(f"No Web3 connection for chain: {chain}")
+
+                self._nonce = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    w3.eth.get_transaction_count,
+                    self.account.address,
+                    'pending'
+                )
+                logger.debug(f"Initialized nonce for {chain}: {self._nonce}")
+
+            nonce = self._nonce
+            self._nonce += 1
+            logger.debug(f"Using nonce {nonce}, next will be {self._nonce}")
+            return nonce
+
+    async def _reset_nonce(self, chain: str = 'ethereum') -> None:
+        """
+        Reset nonce counter (call on errors or transaction failures)
+
+        Args:
+            chain: Chain name
+        """
+        async with self.nonce_lock:
+            self._nonce = None
+            logger.info(f"Nonce reset for {chain}")
+
     # PATCH for trading/executors/direct_dex.py - Complete the try block for get_best_quote
 
     @measure_time
@@ -415,7 +467,7 @@ class DirectDEXExecutor(BaseExecutor):
                 'from': wallet,
                 'gas': 100000,
                 'gasPrice': w3.eth.gas_price,
-                'nonce': await self._get_next_nonce(),
+                'nonce': await self._get_next_nonce(chain),
                 'chainId': w3.eth.chain_id
             })
             
@@ -539,7 +591,7 @@ class DirectDEXExecutor(BaseExecutor):
                 'data': tx_data,
                 'gas': int(quote.gas_estimate * self.gas_buffer),
                 'gasPrice': gas_price,
-                'nonce': await self._get_next_nonce(),
+                'nonce': await self._get_next_nonce(order.chain),
                 'chainId': w3.eth.chain_id
             }
             

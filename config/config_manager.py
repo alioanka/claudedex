@@ -168,7 +168,7 @@ class SolanaConfig(BaseModel):
 
 class JupiterConfig(BaseModel):
     jupiter_url: str = "https://quote-api.jup.ag/v6"
-    jupiter_max_slippage_bps: int = 500
+    jupiter_max_slippage_bps: int = 50  # FIXED: Was 500 (5%), now 50 (0.5%)
 
 class PerformanceConfig(BaseModel):
     max_workers: int = 4
@@ -186,7 +186,7 @@ class FeatureFlagsConfig(BaseModel):
     use_mempool_monitoring: bool = True
 
 class GasPriceConfig(BaseModel):
-    max_gas_price: int = 500
+    max_gas_price: int = 50  # FIXED: Was 500 (=$150-300/tx), now 50 Gwei
     priority_gas_multiplier: float = 1.2
 
 class TradingLimitsConfig(BaseModel):

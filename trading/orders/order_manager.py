@@ -246,7 +246,7 @@ class OrderManager:
             # Order defaults
             "default_slippage": 0.005,  # 0.5%
             "default_gas_multiplier": 1.1,
-            "max_gas_price": 500,  # Gwei
+            "max_gas_price": 50,  # Gwei - FIXED: Was 500 (=$150-300/tx)
             "order_timeout": 300,  # 5 minutes
             "confirmation_blocks": 2,
             
@@ -1708,7 +1708,7 @@ def create_solana_order(
     symbol_in: str = "SOL",
     symbol_out: str = "USDC",
     entry_price: Optional[Decimal] = None,
-    max_slippage_bps: int = 500,
+    max_slippage_bps: int = 50,  # FIXED: Was 500 (5%), now 50 (0.5%)
     **kwargs
 ) -> Order:
     """

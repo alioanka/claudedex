@@ -54,7 +54,7 @@ class JupiterExecutor(BaseExecutor):
             config: Flat config dict with keys like:
                 - rpc_url: Solana RPC endpoint
                 - private_key: Base58 encoded private key
-                - max_slippage_bps: Maximum slippage in basis points (default: 500 = 5%)
+                - max_slippage_bps: Maximum slippage in basis points (default: 50 = 0.5%)
                 - enabled: Whether Solana trading is enabled
         """
         super().__init__(config, db_manager)
@@ -71,7 +71,8 @@ class JupiterExecutor(BaseExecutor):
         
         # Solana Configuration
         self.rpc_url = config.get('rpc_url') or config.get('solana_rpc_url', 'https://api.mainnet-beta.solana.com')
-        self.max_slippage_bps = int(config.get('max_slippage_bps', 500))  # 5% default
+        # CRITICAL FIX: Reduced from 500 bps (5%) to 50 bps (0.5%) to prevent MEV sandwich attacks
+        self.max_slippage_bps = int(config.get('max_slippage_bps', 50))  # 0.5% default (was 5%)
         
         # Initialize keypair from private key
         private_key = config.get('solana_private_key') or config.get('private_key')
@@ -522,6 +523,38 @@ class JupiterExecutor(BaseExecutor):
             logger.error(f"Order validation error: {e}")
             return False
     
+    def _is_quote_expired(self, quote: Dict[str, Any], max_age_seconds: int = 10) -> bool:
+        """
+        CRITICAL FIX (P1): Check if quote is too old to execute safely.
+
+        Jupiter quotes can become stale quickly in volatile markets.
+        Executing stale quotes leads to:
+        - Unexpected slippage
+        - Failed transactions
+        - MEV sandwich attacks
+
+        Args:
+            quote: Quote dict with '_fetched_at' timestamp
+            max_age_seconds: Maximum age in seconds (default: 10)
+
+        Returns:
+            True if quote is expired, False if still fresh
+        """
+        if '_fetched_at' not in quote:
+            logger.warning("Quote missing timestamp - treating as expired")
+            return True
+
+        age = time.time() - quote['_fetched_at']
+        is_expired = age > max_age_seconds
+
+        if is_expired:
+            logger.warning(
+                f"⚠️ Quote expired: {age:.1f}s old (max: {max_age_seconds}s) - "
+                "prices may have changed significantly"
+            )
+
+        return is_expired
+
     async def _get_quote(
         self,
         input_mint: str,
@@ -564,13 +597,16 @@ class JupiterExecutor(BaseExecutor):
                     return None
                 
                 quote_data = await response.json()
-                
+
                 # Validate required fields
                 required_fields = ['inputMint', 'outputMint', 'inAmount', 'outAmount']
                 if not all(field in quote_data for field in required_fields):
                     logger.error(f"Quote missing required fields: {quote_data.keys()}")
                     return None
-                
+
+                # CRITICAL FIX (P1): Add timestamp for expiration checking
+                quote_data['_fetched_at'] = time.time()
+
                 return quote_data
                 
         except Exception as e:
@@ -593,6 +629,15 @@ class JupiterExecutor(BaseExecutor):
             Dict with execution results
         """
         try:
+            # CRITICAL FIX (P1): Reject stale quotes to prevent executing at outdated prices
+            if self._is_quote_expired(quote):
+                logger.error("❌ Quote expired - refusing to execute swap with stale price data")
+                return {
+                    'success': False,
+                    'error': 'Quote expired (>10 seconds old)',
+                    'quote_age': time.time() - quote.get('_fetched_at', 0)
+                }
+
             # Check if we're in dry run mode
             if self.dry_run:  # Use instance variable instead of config
                 logger.info("🔸 DRY RUN MODE - Simulating swap execution")
