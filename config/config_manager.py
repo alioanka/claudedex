@@ -353,9 +353,9 @@ class ConfigManager:
             if encryption_key:
                 encryption_config = {'encryption_key': encryption_key}
                 self.encryption_manager = EncryptionManager(encryption_config)
-            
+
             await self._load_all_configs()
-            
+
             for config_type, config_obj in self.configs.items():
                 config_key = config_type.value
                 if hasattr(config_obj, 'model_dump'):
@@ -364,17 +364,39 @@ class ConfigManager:
                     self._raw_config[config_key] = config_obj.dict()
                 else:
                     self._raw_config[config_key] = config_obj
-            
+
             self._raw_config.update(self._env_config)
-            
+
             if self.auto_reload_enabled:
                 await self._start_auto_reload()
 
             logger.info("Configuration manager initialized successfully")
-            
+
         except Exception as e:
             logger.error(f"Failed to initialize configuration manager: {e}")
             raise
+
+    async def set_db_pool(self, db_pool) -> None:
+        """
+        Set database pool and reload configs from database
+        This should be called after database connection is established
+        """
+        self.db_pool = db_pool
+        if db_pool:
+            logger.info("Database pool set, reloading configs from database...")
+            await self._load_all_configs()
+
+            # Update _raw_config with database values
+            for config_type, config_obj in self.configs.items():
+                config_key = config_type.value
+                if hasattr(config_obj, 'model_dump'):
+                    self._raw_config[config_key] = config_obj.model_dump()
+                elif hasattr(config_obj, 'dict'):
+                    self._raw_config[config_key] = config_obj.dict()
+                else:
+                    self._raw_config[config_key] = config_obj
+
+            logger.info("✅ Configs reloaded from database")
 
     def _load_environment_config(self) -> Dict[str, Any]:
         """

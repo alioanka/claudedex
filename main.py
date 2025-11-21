@@ -290,6 +290,11 @@ class TradingBotApplication:
             self.logger.info("Running database migrations...")
             await self._run_migrations()
 
+            # Set database pool in config manager and reload configs from database
+            self.logger.info("Connecting config manager to database...")
+            await self.config_manager.set_db_pool(self.db_manager.pool)
+            self.logger.info("✅ Config manager now reading from database")
+
             # Decrypt private key if encrypted
             encrypted_key = os.getenv('PRIVATE_KEY')
             encryption_key = os.getenv('ENCRYPTION_KEY')
