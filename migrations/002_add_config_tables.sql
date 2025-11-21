@@ -19,9 +19,9 @@ CREATE TABLE IF NOT EXISTS config_settings (
     UNIQUE(config_type, key)
 );
 
-CREATE INDEX idx_config_settings_type ON config_settings(config_type);
-CREATE INDEX idx_config_settings_key ON config_settings(key);
-CREATE INDEX idx_config_settings_updated_at ON config_settings(updated_at);
+CREATE INDEX IF NOT EXISTS idx_config_settings_type ON config_settings(config_type);
+CREATE INDEX IF NOT EXISTS idx_config_settings_key ON config_settings(key);
+CREATE INDEX IF NOT EXISTS idx_config_settings_updated_at ON config_settings(updated_at);
 
 -- Sensitive Configuration Table
 -- Stores encrypted sensitive data (API keys, private keys, passwords)
@@ -39,9 +39,9 @@ CREATE TABLE IF NOT EXISTS config_sensitive (
     updated_by INTEGER REFERENCES users(id)
 );
 
-CREATE INDEX idx_config_sensitive_key ON config_sensitive(key);
-CREATE INDEX idx_config_sensitive_active ON config_sensitive(is_active);
-CREATE INDEX idx_config_sensitive_rotation ON config_sensitive(last_rotated) WHERE is_active = TRUE;
+CREATE INDEX IF NOT EXISTS idx_config_sensitive_key ON config_sensitive(key);
+CREATE INDEX IF NOT EXISTS idx_config_sensitive_active ON config_sensitive(is_active);
+CREATE INDEX IF NOT EXISTS idx_config_sensitive_rotation ON config_sensitive(last_rotated) WHERE is_active = TRUE;
 
 -- Configuration Change History
 -- Tracks all configuration changes for audit
@@ -60,10 +60,10 @@ CREATE TABLE IF NOT EXISTS config_history (
     timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE INDEX idx_config_history_type ON config_history(config_type);
-CREATE INDEX idx_config_history_key ON config_history(key);
-CREATE INDEX idx_config_history_timestamp ON config_history(timestamp DESC);
-CREATE INDEX idx_config_history_user ON config_history(changed_by);
+CREATE INDEX IF NOT EXISTS idx_config_history_type ON config_history(config_type);
+CREATE INDEX IF NOT EXISTS idx_config_history_key ON config_history(key);
+CREATE INDEX IF NOT EXISTS idx_config_history_timestamp ON config_history(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_config_history_user ON config_history(changed_by);
 
 -- Configuration Validation Rules
 -- Defines validation rules for configuration values
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS config_validation_rules (
     UNIQUE(config_type, key, validation_type)
 );
 
-CREATE INDEX idx_config_validation_type ON config_validation_rules(config_type);
+CREATE INDEX IF NOT EXISTS idx_config_validation_type ON config_validation_rules(config_type);
 
 -- Insert default configurations
 -- These are the default values that can be overridden
@@ -87,7 +87,8 @@ CREATE INDEX idx_config_validation_type ON config_validation_rules(config_type);
 INSERT INTO config_settings (config_type, key, value, value_type, description, is_editable, requires_restart) VALUES
 ('general', 'ml_enabled', 'false', 'bool', 'Enable machine learning features', TRUE, FALSE),
 ('general', 'mode', 'production', 'string', 'Application mode: development, testing, production', TRUE, TRUE),
-('general', 'dry_run', 'true', 'bool', 'Enable dry run mode (no real trades)', TRUE, FALSE);
+('general', 'dry_run', 'true', 'bool', 'Enable dry run mode (no real trades)', TRUE, FALSE)
+ON CONFLICT (config_type, key) DO NOTHING;
 
 -- Portfolio Configuration
 INSERT INTO config_settings (config_type, key, value, value_type, description, is_editable, requires_restart) VALUES
@@ -99,6 +100,7 @@ INSERT INTO config_settings (config_type, key, value, value_type, description, i
 ('portfolio', 'max_positions', '40', 'int', 'Maximum number of positions', TRUE, FALSE),
 ('portfolio', 'max_positions_per_chain', '10', 'int', 'Maximum positions per blockchain', TRUE, FALSE),
 ('portfolio', 'max_concurrent_positions', '4', 'int', 'Maximum concurrent open positions', TRUE, FALSE);
+ON CONFLICT (config_type, key) DO NOTHING;
 
 -- Risk Management Configuration
 INSERT INTO config_settings (config_type, key, value, value_type, description, is_editable, requires_restart) VALUES
@@ -110,7 +112,8 @@ INSERT INTO config_settings (config_type, key, value, value_type, description, i
 ('risk_management', 'take_profit_pct', '0.24', 'float', 'Default take profit percentage', TRUE, FALSE),
 ('risk_management', 'position_cooldown_minutes', '30', 'int', 'Cooldown period between positions', TRUE, FALSE),
 ('risk_management', 'breaker_max_consecutive_losses', '5', 'int', 'Circuit breaker: max consecutive losses', TRUE, FALSE),
-('risk_management', 'breaker_max_drawdown_pct', '15', 'int', 'Circuit breaker: max drawdown %', TRUE, FALSE);
+('risk_management', 'breaker_max_drawdown_pct', '15', 'int', 'Circuit breaker: max drawdown %', TRUE, FALSE)
+ON CONFLICT (config_type, key) DO NOTHING;
 
 -- Trading Configuration
 INSERT INTO config_settings (config_type, key, value, value_type, description, is_editable, requires_restart) VALUES
@@ -119,7 +122,8 @@ INSERT INTO config_settings (config_type, key, value, value_type, description, i
 ('trading', 'max_price_impact_bps', '100', 'int', 'Maximum price impact in basis points', TRUE, FALSE),
 ('trading', 'dex_fee_bps', '30', 'int', 'DEX fee in basis points', TRUE, FALSE),
 ('trading', 'min_opportunity_score', '0.25', 'float', 'Minimum opportunity score to trade', TRUE, FALSE),
-('trading', 'solana_min_opportunity_score', '0.20', 'float', 'Minimum opportunity score for Solana', TRUE, FALSE);
+('trading', 'solana_min_opportunity_score', '0.20', 'float', 'Minimum opportunity score for Solana', TRUE, FALSE)
+ON CONFLICT (config_type, key) DO NOTHING;
 
 -- Chain Configuration
 INSERT INTO config_settings (config_type, key, value, value_type, description, is_editable, requires_restart) VALUES
@@ -132,7 +136,8 @@ INSERT INTO config_settings (config_type, key, value, value_type, description, i
 ('chain', 'solana_enabled', 'true', 'bool', 'Enable Solana trading', TRUE, TRUE),
 ('chain', 'ethereum_min_liquidity', '3000', 'int', 'Minimum liquidity for Ethereum pairs', TRUE, FALSE),
 ('chain', 'bsc_min_liquidity', '500', 'int', 'Minimum liquidity for BSC pairs', TRUE, FALSE),
-('chain', 'solana_min_liquidity', '2000', 'int', 'Minimum liquidity for Solana pairs', TRUE, FALSE);
+('chain', 'solana_min_liquidity', '2000', 'int', 'Minimum liquidity for Solana pairs', TRUE, FALSE)
+ON CONFLICT (config_type, key) DO NOTHING;
 
 -- Position Management Configuration
 INSERT INTO config_settings (config_type, key, value, value_type, description, is_editable, requires_restart) VALUES
@@ -141,31 +146,36 @@ INSERT INTO config_settings (config_type, key, value, value_type, description, i
 ('position_management', 'max_hold_time_minutes', '60', 'int', 'Maximum position hold time', TRUE, FALSE),
 ('position_management', 'trailing_stop_enabled', 'true', 'bool', 'Enable trailing stop loss', TRUE, FALSE),
 ('position_management', 'trailing_stop_percent', '6', 'int', 'Trailing stop loss %', TRUE, FALSE),
-('position_management', 'position_update_interval_seconds', '10', 'int', 'Position update check interval', TRUE, FALSE);
+('position_management', 'position_update_interval_seconds', '10', 'int', 'Position update check interval', TRUE, FALSE)
+ON CONFLICT (config_type, key) DO NOTHING;
 
 -- API Configuration (non-sensitive parts)
 INSERT INTO config_settings (config_type, key, value, value_type, description, is_editable, requires_restart) VALUES
 ('api', 'rate_limit_requests', '100', 'int', 'API rate limit requests per window', TRUE, TRUE),
 ('api', 'rate_limit_window', '60', 'int', 'API rate limit window in seconds', TRUE, TRUE),
-('api', 'cors_enabled', 'true', 'bool', 'Enable CORS', TRUE, TRUE);
+('api', 'cors_enabled', 'true', 'bool', 'Enable CORS', TRUE, TRUE)
+ON CONFLICT (config_type, key) DO NOTHING;
 
 -- Monitoring Configuration (non-sensitive parts)
 INSERT INTO config_settings (config_type, key, value, value_type, description, is_editable, requires_restart) VALUES
 ('monitoring', 'enable_metrics', 'true', 'bool', 'Enable metrics collection', TRUE, FALSE),
 ('monitoring', 'log_level', 'INFO', 'string', 'Logging level', TRUE, FALSE),
-('monitoring', 'log_retention_days', '30', 'int', 'Log retention period', TRUE, FALSE);
+('monitoring', 'log_retention_days', '30', 'int', 'Log retention period', TRUE, FALSE)
+ON CONFLICT (config_type, key) DO NOTHING;
 
 -- ML Models Configuration
 INSERT INTO config_settings (config_type, key, value, value_type, description, is_editable, requires_restart) VALUES
 ('ml_models', 'ml_retrain_interval_hours', '24', 'int', 'Model retraining interval', TRUE, FALSE),
-('ml_models', 'ml_min_confidence', '0.7', 'float', 'Minimum model confidence threshold', TRUE, FALSE);
+('ml_models', 'ml_min_confidence', '0.7', 'float', 'Minimum model confidence threshold', TRUE, FALSE)
+ON CONFLICT (config_type, key) DO NOTHING;
 
 -- Feature Flags
 INSERT INTO config_settings (config_type, key, value, value_type, description, is_editable, requires_restart) VALUES
 ('feature_flags', 'enable_experimental_features', 'false', 'bool', 'Enable experimental features', TRUE, FALSE),
 ('feature_flags', 'use_ai_sentiment', 'false', 'bool', 'Use AI sentiment analysis', TRUE, FALSE),
 ('feature_flags', 'use_whale_tracking', 'true', 'bool', 'Track whale movements', TRUE, FALSE),
-('feature_flags', 'use_mempool_monitoring', 'true', 'bool', 'Monitor mempool for MEV', TRUE, FALSE);
+('feature_flags', 'use_mempool_monitoring', 'true', 'bool', 'Monitor mempool for MEV', TRUE, FALSE)
+ON CONFLICT (config_type, key) DO NOTHING;
 
 -- Insert validation rules
 INSERT INTO config_validation_rules (config_type, key, validation_type, validation_params, error_message) VALUES
@@ -177,7 +187,8 @@ INSERT INTO config_validation_rules (config_type, key, validation_type, validati
 ('trading', 'max_slippage_bps', 'range', '{"min": 1, "max": 1000}', 'Slippage must be between 1 and 1000 bps'),
 ('trading', 'min_opportunity_score', 'range', '{"min": 0.1, "max": 1.0}', 'Opportunity score must be between 0.1 and 1.0'),
 ('monitoring', 'log_level', 'enum', '{"values": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]}', 'Invalid log level'),
-('general', 'mode', 'enum', '{"values": ["development", "testing", "production"]}', 'Invalid mode');
+('general', 'mode', 'enum', '{"values": ["development", "testing", "production"]}', 'Invalid mode')
+ON CONFLICT (config_type, key, validation_type) DO NOTHING;
 
 -- Function to update config timestamp
 CREATE OR REPLACE FUNCTION update_config_updated_at()
@@ -189,11 +200,13 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Triggers for automatic timestamp updates
+DROP TRIGGER IF EXISTS update_config_settings_timestamp ON config_settings;
 CREATE TRIGGER update_config_settings_timestamp
     BEFORE UPDATE ON config_settings
     FOR EACH ROW
     EXECUTE FUNCTION update_config_updated_at();
 
+DROP TRIGGER IF EXISTS update_config_sensitive_timestamp ON config_sensitive;
 CREATE TRIGGER update_config_sensitive_timestamp
     BEFORE UPDATE ON config_sensitive
     FOR EACH ROW
