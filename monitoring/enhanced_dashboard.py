@@ -308,6 +308,11 @@ class DashboardEndpoints:
         self.app.router.add_post('/api/settings/update', self.api_update_settings)
         self.app.router.add_post('/api/settings/revert', self.api_revert_settings)
         self.app.router.add_get('/api/settings/history', self.api_settings_history)
+
+        # API - Sensitive Configuration (Admin only)
+        self.app.router.add_get('/api/settings/sensitive/list', require_auth(require_admin(self.api_list_sensitive_configs)))
+        self.app.router.add_post('/api/settings/sensitive', require_auth(require_admin(self.api_set_sensitive_config)))
+        self.app.router.add_delete('/api/settings/sensitive/{key}', require_auth(require_admin(self.api_delete_sensitive_config)))
         
         # API - Trading controls
         self.app.router.add_post('/api/trade/execute', self.api_execute_trade)
@@ -2192,13 +2197,134 @@ class DashboardEndpoints:
 
     async def api_settings_history(self, request):
         """Get settings change history"""
-        return web.json_response({
-            'success': True,
-            'data': [],
-            'count': 0,
-            'message': 'This feature is temporarily disabled.'
-        })
-    
+        try:
+            if not self.config_mgr:
+                return web.json_response({'error': 'Config manager not available'}, status=503)
+
+            # Get history from database
+            history = await self.config_mgr.get_config_history(limit=100)
+
+            return web.json_response({
+                'success': True,
+                'data': history,
+                'count': len(history)
+            })
+        except Exception as e:
+            logger.error(f"Error getting settings history: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    async def api_list_sensitive_configs(self, request):
+        """List all sensitive configuration keys (admin only)"""
+        try:
+            if not self.config_mgr:
+                return web.json_response({'error': 'Config manager not available'}, status=503)
+
+            # Get list of sensitive config keys (without values)
+            configs = await self.config_mgr.list_sensitive_configs()
+
+            return web.json_response({
+                'success': True,
+                'data': configs
+            })
+        except Exception as e:
+            logger.error(f"Error listing sensitive configs: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    async def api_set_sensitive_config(self, request):
+        """Set or update a sensitive configuration value (admin only)"""
+        try:
+            if not self.config_mgr:
+                return web.json_response({'error': 'Config manager not available'}, status=503)
+
+            data = await request.json()
+            key = data.get('key')
+            value = data.get('value')
+            description = data.get('description', '')
+            rotation_days = data.get('rotation_days', 30)
+
+            if not key or not value:
+                return web.json_response({
+                    'success': False,
+                    'error': 'Key and value are required'
+                }, status=400)
+
+            # Get user ID from request
+            user = request.get('user')
+            user_id = user.id if user else None
+
+            # Set the sensitive config (will be encrypted)
+            success = await self.config_mgr.set_sensitive_config(
+                key=key,
+                value=value,
+                description=description,
+                user_id=user_id,
+                rotation_days=rotation_days
+            )
+
+            if success:
+                logger.info(f"Admin {user.username if user else 'unknown'} set sensitive config: {key}")
+                return web.json_response({
+                    'success': True,
+                    'message': f'Sensitive config {key} saved successfully'
+                })
+            else:
+                return web.json_response({
+                    'success': False,
+                    'error': 'Failed to save sensitive config'
+                }, status=500)
+
+        except Exception as e:
+            logger.error(f"Error setting sensitive config: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    async def api_delete_sensitive_config(self, request):
+        """Delete a sensitive configuration (admin only)"""
+        try:
+            if not self.config_mgr:
+                return web.json_response({'error': 'Config manager not available'}, status=503)
+
+            key = request.match_info.get('key')
+
+            if not key:
+                return web.json_response({
+                    'success': False,
+                    'error': 'Key is required'
+                }, status=400)
+
+            # Get user for logging
+            user = request.get('user')
+
+            # Delete the sensitive config
+            success = await self.config_mgr.delete_sensitive_config(key)
+
+            if success:
+                logger.info(f"Admin {user.username if user else 'unknown'} deleted sensitive config: {key}")
+                return web.json_response({
+                    'success': True,
+                    'message': f'Sensitive config {key} deleted successfully'
+                })
+            else:
+                return web.json_response({
+                    'success': False,
+                    'error': 'Failed to delete sensitive config'
+                }, status=500)
+
+        except Exception as e:
+            logger.error(f"Error deleting sensitive config: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
     # ==================== API - TRADING CONTROLS ====================
     
     async def api_execute_trade(self, request):

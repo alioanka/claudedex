@@ -23,6 +23,7 @@
     <button class="tab-btn category-tab" data-category="api">API</button>
     <button class="tab-btn category-tab" data-category="monitoring">Monitoring</button>
     <button class="tab-btn category-tab" data-category="ml_models">ML Models</button>
+    <button class="tab-btn category-tab" data-category="sensitive">Sensitive Configs</button>
 </div>
 
 <!-- Settings Sections -->
@@ -78,9 +79,88 @@
         <div class="card-header"><h3 class="card-title">Machine Learning Models</h3></div>
         <div class="card-body" id="ml_models-settings-form"></div>
     </div>
+    <div id="sensitive-settings" class="settings-section card" style="display: none;">
+        <div class="card-header">
+            <h3 class="card-title">Sensitive Configuration (Encrypted)</h3>
+        </div>
+        <div class="card-body">
+            <div class="alert alert-warning">
+                <i class="fas fa-exclamation-triangle"></i>
+                <strong>Warning:</strong> This section contains encrypted sensitive data like API keys and private keys.
+                Only administrators can access this section.
+            </div>
+
+            <div class="form-actions" style="margin-bottom: 20px;">
+                <button class="btn btn-primary" id="addSensitiveConfigBtn">
+                    <i class="fas fa-plus"></i> Add New Sensitive Config
+                </button>
+            </div>
+
+            <div id="sensitive-configs-list">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Key</th>
+                            <th>Description</th>
+                            <th>Last Rotated</th>
+                            <th>Rotation Interval</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sensitive-configs-tbody">
+                        <tr>
+                            <td colspan="5" class="text-center">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
 </div>
+
+<!-- Add/Edit Sensitive Config Modal -->
+<div id="sensitiveConfigModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="sensitiveConfigModalTitle">Add Sensitive Configuration</h3>
+            <button class="close-modal" id="closeSensitiveConfigModal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="sensitiveConfigForm">
+                <div class="form-group">
+                    <label for="sensitiveConfigKey">Key *</label>
+                    <input type="text" id="sensitiveConfigKey" class="form-control"
+                           placeholder="e.g., OPENAI_API_KEY, PRIVATE_KEY_ETH" required>
+                    <small class="form-text">Unique identifier for this configuration</small>
+                </div>
+                <div class="form-group">
+                    <label for="sensitiveConfigValue">Value *</label>
+                    <textarea id="sensitiveConfigValue" class="form-control" rows="3"
+                              placeholder="Enter sensitive value (will be encrypted)" required></textarea>
+                    <small class="form-text">This value will be encrypted before storage</small>
+                </div>
+                <div class="form-group">
+                    <label for="sensitiveConfigDescription">Description</label>
+                    <input type="text" id="sensitiveConfigDescription" class="form-control"
+                           placeholder="Optional description">
+                </div>
+                <div class="form-group">
+                    <label for="sensitiveConfigRotation">Rotation Interval (days)</label>
+                    <input type="number" id="sensitiveConfigRotation" class="form-control"
+                           value="30" min="1" max="365">
+                    <small class="form-text">Recommended rotation interval for this secret</small>
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" id="cancelSensitiveConfigBtn">Cancel</button>
+            <button class="btn btn-primary" id="saveSensitiveConfigBtn">Save</button>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/settings.js?v=2"></script>
+<script src="/static/js/settings.js?v=3"></script>
 {% endblock %}

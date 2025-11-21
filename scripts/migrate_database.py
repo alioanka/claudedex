@@ -35,7 +35,7 @@ async def migrate_database():
         applied_versions = {m['version'] for m in applied}
         
         # Find migration files
-        migrations_dir = Path('data/migrations')
+        migrations_dir = Path('migrations')
         migrations_dir.mkdir(parents=True, exist_ok=True)
         
         migration_files = sorted(migrations_dir.glob('*.sql'))

@@ -292,16 +292,17 @@ class ConfigManager:
     - Multi-source configuration merging
     """
 
-    def __init__(self, config_dir: str = "./config", config_path: Optional[str] = None):
+    def __init__(self, config_dir: str = "./config", config_path: Optional[str] = None, db_pool=None):
         if config_path:
             self.config_dir = Path(config_path).parent
             self.config_file = Path(config_path)
         else:
             self.config_dir = Path(config_dir)
             self.config_file = None
-        
+
         self.config_dir.mkdir(parents=True, exist_ok=True)
-        
+
+        self.db_pool = db_pool  # Database connection pool
         self.configs: Dict[ConfigType, BaseModel] = {}
         self.config_schemas: Dict[ConfigType, type] = {
             ConfigType.GENERAL: GeneralConfig,
@@ -572,7 +573,239 @@ class ConfigManager:
 
     async def _load_config_from_database(self, config_type: ConfigType) -> Optional[Dict]:
         """Load configuration from database"""
-        return None
+        if not self.db_pool:
+            return None
+
+        try:
+            async with self.db_pool.acquire() as conn:
+                # Load non-sensitive configs
+                rows = await conn.fetch("""
+                    SELECT key, value, value_type
+                    FROM config_settings
+                    WHERE config_type = $1
+                    AND is_editable = TRUE
+                """, config_type.value)
+
+                if not rows:
+                    return None
+
+                config_data = {}
+                for row in rows:
+                    key = row['key']
+                    value = row['value']
+                    value_type = row['value_type']
+
+                    # Convert value based on type
+                    if value_type == 'int':
+                        config_data[key] = int(value)
+                    elif value_type == 'float':
+                        config_data[key] = float(value)
+                    elif value_type == 'bool':
+                        config_data[key] = value.lower() in ('true', '1', 'yes', 'on')
+                    elif value_type == 'json':
+                        import json
+                        config_data[key] = json.loads(value)
+                    else:
+                        config_data[key] = value
+
+                return config_data
+
+        except Exception as e:
+            logger.error(f"Failed to load {config_type.value} config from database: {e}")
+            return None
+
+    async def get_sensitive_config(self, key: str) -> Optional[str]:
+        """Get and decrypt a sensitive configuration value"""
+        if not self.db_pool or not self.encryption_manager:
+            return None
+
+        try:
+            async with self.db_pool.acquire() as conn:
+                row = await conn.fetchrow("""
+                    SELECT encrypted_value
+                    FROM config_sensitive
+                    WHERE key = $1 AND is_active = TRUE
+                """, key)
+
+                if not row:
+                    return None
+
+                encrypted_value = row['encrypted_value']
+                return self.encryption_manager.decrypt_sensitive_data(encrypted_value)
+
+        except Exception as e:
+            logger.error(f"Failed to get sensitive config '{key}': {e}")
+            return None
+
+    async def set_sensitive_config(self, key: str, value: str, description: str = None,
+                                   user_id: int = None, rotation_days: int = 30) -> bool:
+        """Encrypt and store a sensitive configuration value"""
+        if not self.db_pool or not self.encryption_manager:
+            logger.error("Database pool or encryption manager not available")
+            return False
+
+        try:
+            encrypted_value = self.encryption_manager.encrypt_sensitive_data(value)
+
+            async with self.db_pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO config_sensitive (
+                        key, encrypted_value, description, last_rotated,
+                        rotation_interval_days, updated_by
+                    )
+                    VALUES ($1, $2, $3, NOW(), $4, $5)
+                    ON CONFLICT (key) DO UPDATE
+                    SET encrypted_value = $2,
+                        description = $3,
+                        last_rotated = NOW(),
+                        rotation_interval_days = $4,
+                        updated_by = $5,
+                        updated_at = NOW()
+                """, key, encrypted_value, description, rotation_days, user_id)
+
+            logger.info(f"Stored sensitive config '{key}'")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to set sensitive config '{key}': {e}")
+            return False
+
+    async def delete_sensitive_config(self, key: str, user_id: int = None) -> bool:
+        """Delete a sensitive configuration value"""
+        if not self.db_pool:
+            return False
+
+        try:
+            async with self.db_pool.acquire() as conn:
+                await conn.execute("""
+                    UPDATE config_sensitive
+                    SET is_active = FALSE, updated_by = $2, updated_at = NOW()
+                    WHERE key = $1
+                """, key, user_id)
+
+            logger.info(f"Deleted sensitive config '{key}'")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to delete sensitive config '{key}': {e}")
+            return False
+
+    async def list_sensitive_configs(self) -> List[Dict[str, Any]]:
+        """List all sensitive configuration keys (without values)"""
+        if not self.db_pool:
+            return []
+
+        try:
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT key, description, last_rotated, rotation_interval_days,
+                           updated_at, is_active
+                    FROM config_sensitive
+                    WHERE is_active = TRUE
+                    ORDER BY key
+                """)
+
+                return [dict(row) for row in rows]
+
+        except Exception as e:
+            logger.error(f"Failed to list sensitive configs: {e}")
+            return []
+
+    async def save_config_to_database(self, config_type: ConfigType,
+                                     updates: Dict[str, Any],
+                                     user_id: int = None,
+                                     reason: str = None) -> bool:
+        """Save configuration changes to database"""
+        if not self.db_pool:
+            return False
+
+        try:
+            async with self.db_pool.acquire() as conn:
+                for key, value in updates.items():
+                    # Determine value type
+                    if isinstance(value, bool):
+                        value_type = 'bool'
+                        value_str = str(value).lower()
+                    elif isinstance(value, int):
+                        value_type = 'int'
+                        value_str = str(value)
+                    elif isinstance(value, float):
+                        value_type = 'float'
+                        value_str = str(value)
+                    elif isinstance(value, (dict, list)):
+                        value_type = 'json'
+                        import json
+                        value_str = json.dumps(value)
+                    else:
+                        value_type = 'string'
+                        value_str = str(value)
+
+                    # Get old value for history
+                    old_row = await conn.fetchrow("""
+                        SELECT value FROM config_settings
+                        WHERE config_type = $1 AND key = $2
+                    """, config_type.value, key)
+
+                    old_value = old_row['value'] if old_row else None
+
+                    # Update or insert config
+                    await conn.execute("""
+                        INSERT INTO config_settings (config_type, key, value, value_type, updated_by)
+                        VALUES ($1, $2, $3, $4, $5)
+                        ON CONFLICT (config_type, key) DO UPDATE
+                        SET value = $3,
+                            value_type = $4,
+                            updated_by = $5,
+                            updated_at = NOW()
+                    """, config_type.value, key, value_str, value_type, user_id)
+
+                    # Log to history
+                    await conn.execute("""
+                        INSERT INTO config_history (
+                            config_type, key, old_value, new_value,
+                            change_source, changed_by, reason
+                        )
+                        VALUES ($1, $2, $3, $4, 'database', $5, $6)
+                    """, config_type.value, key, old_value, value_str, user_id, reason)
+
+            logger.info(f"Saved {len(updates)} config changes to database for {config_type.value}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to save config to database: {e}")
+            return False
+
+    async def get_config_history(self, config_type: Optional[ConfigType] = None,
+                                 limit: int = 100) -> List[Dict[str, Any]]:
+        """Get configuration change history"""
+        if not self.db_pool:
+            return []
+
+        try:
+            async with self.db_pool.acquire() as conn:
+                if config_type:
+                    rows = await conn.fetch("""
+                        SELECT config_type, key, old_value, new_value,
+                               change_source, changed_by_username, reason, timestamp
+                        FROM config_history
+                        WHERE config_type = $1
+                        ORDER BY timestamp DESC
+                        LIMIT $2
+                    """, config_type.value, limit)
+                else:
+                    rows = await conn.fetch("""
+                        SELECT config_type, key, old_value, new_value,
+                               change_source, changed_by_username, reason, timestamp
+                        FROM config_history
+                        ORDER BY timestamp DESC
+                        LIMIT $1
+                    """, limit)
+
+                return [dict(row) for row in rows]
+
+        except Exception as e:
+            logger.error(f"Failed to get config history: {e}")
+            return []
 
     def _decrypt_sensitive_values(self, config_data: Dict) -> Dict:
         """Decrypt sensitive configuration values"""

@@ -39,6 +39,27 @@ class SettingsManager {
         } else {
             console.error('Password form not found in DOM');
         }
+
+        // Sensitive config management
+        const addSensitiveBtn = document.getElementById('addSensitiveConfigBtn');
+        if (addSensitiveBtn) {
+            addSensitiveBtn.addEventListener('click', () => this.showSensitiveConfigModal());
+        }
+
+        const closeSensitiveModal = document.getElementById('closeSensitiveConfigModal');
+        if (closeSensitiveModal) {
+            closeSensitiveModal.addEventListener('click', () => this.hideSensitiveConfigModal());
+        }
+
+        const cancelSensitiveBtn = document.getElementById('cancelSensitiveConfigBtn');
+        if (cancelSensitiveBtn) {
+            cancelSensitiveBtn.addEventListener('click', () => this.hideSensitiveConfigModal());
+        }
+
+        const saveSensitiveBtn = document.getElementById('saveSensitiveConfigBtn');
+        if (saveSensitiveBtn) {
+            saveSensitiveBtn.addEventListener('click', () => this.saveSensitiveConfig());
+        }
     }
 
     switchTab(event) {
@@ -61,11 +82,16 @@ class SettingsManager {
         // Hide/show save buttons based on tab
         const pageActions = document.querySelector('.page-actions');
         if (pageActions) {
-            if (category === 'account') {
+            if (category === 'account' || category === 'sensitive') {
                 pageActions.style.display = 'none';
             } else {
                 pageActions.style.display = 'flex';
             }
+        }
+
+        // Load sensitive configs when tab is opened
+        if (category === 'sensitive') {
+            this.loadSensitiveConfigs();
         }
     }
 
@@ -280,5 +306,134 @@ class SettingsManager {
         }
 
         return false;
+    }
+
+    // ==================== Sensitive Config Management ====================
+
+    async loadSensitiveConfigs() {
+        try {
+            const response = await apiGet('/api/settings/sensitive/list');
+            if (response.success && response.data) {
+                this.renderSensitiveConfigs(response.data);
+            } else {
+                showToast('error', response.error || 'Failed to load sensitive configs');
+                document.getElementById('sensitive-configs-tbody').innerHTML =
+                    '<tr><td colspan="5" class="text-center">Failed to load configs</td></tr>';
+            }
+        } catch (error) {
+            showToast('error', `Error loading sensitive configs: ${error.message}`);
+            document.getElementById('sensitive-configs-tbody').innerHTML =
+                '<tr><td colspan="5" class="text-center">Error loading configs</td></tr>';
+        }
+    }
+
+    renderSensitiveConfigs(configs) {
+        const tbody = document.getElementById('sensitive-configs-tbody');
+
+        if (configs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center">No sensitive configs found</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = configs.map(config => {
+            const lastRotated = config.last_rotated ?
+                new Date(config.last_rotated).toLocaleDateString() : 'Never';
+
+            return `
+                <tr>
+                    <td><code>${config.key}</code></td>
+                    <td>${config.description || '-'}</td>
+                    <td>${lastRotated}</td>
+                    <td>${config.rotation_interval_days} days</td>
+                    <td>
+                        <button class="btn btn-sm btn-danger" onclick="settingsManager.deleteSensitiveConfig('${config.key}')">
+                            <i class="fas fa-trash"></i> Delete
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    showSensitiveConfigModal() {
+        // Clear form
+        document.getElementById('sensitiveConfigKey').value = '';
+        document.getElementById('sensitiveConfigValue').value = '';
+        document.getElementById('sensitiveConfigDescription').value = '';
+        document.getElementById('sensitiveConfigRotation').value = '30';
+
+        // Show modal
+        const modal = document.getElementById('sensitiveConfigModal');
+        modal.style.display = 'flex';
+        // Add active class after a small delay to trigger animation
+        setTimeout(() => modal.classList.add('active'), 10);
+    }
+
+    hideSensitiveConfigModal() {
+        const modal = document.getElementById('sensitiveConfigModal');
+        modal.classList.remove('active');
+        // Hide modal after animation completes
+        setTimeout(() => modal.style.display = 'none', 300);
+    }
+
+    async saveSensitiveConfig() {
+        const key = document.getElementById('sensitiveConfigKey').value.trim();
+        const value = document.getElementById('sensitiveConfigValue').value.trim();
+        const description = document.getElementById('sensitiveConfigDescription').value.trim();
+        const rotationDays = parseInt(document.getElementById('sensitiveConfigRotation').value);
+
+        if (!key || !value) {
+            showToast('error', 'Key and value are required');
+            return;
+        }
+
+        try {
+            showToast('info', 'Saving sensitive config...');
+
+            const response = await apiPost('/api/settings/sensitive', {
+                key: key,
+                value: value,
+                description: description,
+                rotation_days: rotationDays
+            });
+
+            if (response.success) {
+                showToast('success', 'Sensitive config saved successfully!');
+                this.hideSensitiveConfigModal();
+                this.loadSensitiveConfigs(); // Reload the list
+            } else {
+                showToast('error', response.error || 'Failed to save sensitive config');
+            }
+        } catch (error) {
+            showToast('error', `Error saving sensitive config: ${error.message}`);
+        }
+    }
+
+    async deleteSensitiveConfig(key) {
+        if (!confirm(`Are you sure you want to delete the sensitive config "${key}"?`)) {
+            return;
+        }
+
+        try {
+            showToast('info', 'Deleting sensitive config...');
+
+            const response = await fetch(`/api/settings/sensitive/${key}`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                showToast('success', 'Sensitive config deleted successfully!');
+                this.loadSensitiveConfigs(); // Reload the list
+            } else {
+                showToast('error', data.error || 'Failed to delete sensitive config');
+            }
+        } catch (error) {
+            showToast('error', `Error deleting sensitive config: ${error.message}`);
+        }
     }
 }
