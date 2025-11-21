@@ -127,8 +127,8 @@ class SettingsManager {
     renderFormCategory(category, categoryData) {
         const fragment = document.createDocumentFragment();
         for (const key in categoryData) {
-            const value = categoryData[key];
-            const settingElement = this.createSettingElement(category, key, value);
+            const setting = categoryData[key];
+            const settingElement = this.createSettingElement(category, key, setting);
             if (settingElement) {
                 fragment.appendChild(settingElement);
             }
@@ -136,46 +136,94 @@ class SettingsManager {
         return fragment;
     }
 
-    createSettingElement(category, key, value) {
+    createSettingElement(category, key, setting) {
         const formGroup = document.createElement('div');
         formGroup.className = 'form-group';
 
+        // Extract value and metadata
+        const value = setting.value !== undefined ? setting.value : setting;
+        const description = setting.description || '';
+        const requiresRestart = setting.requires_restart || false;
+        const valueType = setting.value_type || typeof value;
+
+        // Create label
         const label = document.createElement('label');
         label.className = 'form-label';
         label.setAttribute('for', `${category}-${key}`);
         label.textContent = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 
+        if (requiresRestart) {
+            const restartBadge = document.createElement('span');
+            restartBadge.className = 'badge badge-warning';
+            restartBadge.textContent = 'Requires Restart';
+            restartBadge.style.marginLeft = '8px';
+            label.appendChild(restartBadge);
+        }
+
+        // Create input based on type
         let input;
-        if (typeof value === 'boolean') {
+        if (valueType === 'bool' || typeof value === 'boolean') {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'checkbox-wrapper';
+
             input = document.createElement('input');
             input.type = 'checkbox';
             input.checked = value;
             input.className = 'form-checkbox';
-        } else if (typeof value === 'number') {
-            input = document.createElement('input');
-            input.type = 'number';
-            input.value = value;
-            input.className = 'form-control';
-        } else if (typeof value === 'string') {
-            input = document.createElement('input');
-            input.type = 'text';
-            input.value = value;
-            input.className = 'form-control';
+            input.id = `${category}-${key}`;
+
+            const checkboxLabel = document.createElement('label');
+            checkboxLabel.setAttribute('for', `${category}-${key}`);
+            checkboxLabel.className = 'checkbox-label';
+            checkboxLabel.textContent = description || 'Enable';
+
+            wrapper.appendChild(input);
+            wrapper.appendChild(checkboxLabel);
+            formGroup.appendChild(label);
+            formGroup.appendChild(wrapper);
         } else {
-            // For nested objects or arrays, display as readonly JSON
-            input = document.createElement('textarea');
-            input.value = JSON.stringify(value, null, 2);
-            input.className = 'form-control';
-            input.rows = 4;
-            input.readOnly = true;
+            if (valueType === 'int' || valueType === 'float' || typeof value === 'number') {
+                input = document.createElement('input');
+                input.type = 'number';
+                input.step = valueType === 'float' ? '0.01' : '1';
+                input.value = value;
+                input.className = 'form-control';
+            } else if (valueType === 'string' || typeof value === 'string') {
+                input = document.createElement('input');
+                input.type = 'text';
+                input.value = value;
+                input.className = 'form-control';
+            } else if (valueType === 'json') {
+                input = document.createElement('textarea');
+                input.value = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+                input.className = 'form-control';
+                input.rows = 4;
+            } else {
+                // Fallback for unknown types
+                input = document.createElement('textarea');
+                input.value = JSON.stringify(value, null, 2);
+                input.className = 'form-control';
+                input.rows = 4;
+                input.readOnly = true;
+            }
+
+            input.id = `${category}-${key}`;
+
+            formGroup.appendChild(label);
+            formGroup.appendChild(input);
         }
 
-        input.id = `${category}-${key}`;
         input.dataset.category = category;
         input.dataset.key = key;
+        input.dataset.valueType = valueType;
 
-        formGroup.appendChild(label);
-        formGroup.appendChild(input);
+        // Add description as help text
+        if (description) {
+            const helpText = document.createElement('small');
+            helpText.className = 'form-text text-muted';
+            helpText.textContent = description;
+            formGroup.appendChild(helpText);
+        }
 
         return formGroup;
     }
@@ -193,20 +241,33 @@ class SettingsManager {
 
             inputs.forEach(input => {
                 const key = input.dataset.key;
+                const valueType = input.dataset.valueType;
+
                 let value;
                 if (input.type === 'checkbox') {
                     value = input.checked;
                 } else if (input.type === 'number') {
                     value = parseFloat(input.value);
-                } else if (input.tagName === 'TEXTAREA') {
+                } else if (input.tagName === 'TEXTAREA' && input.readOnly) {
                     // Skip read-only textareas
                     return;
+                } else if (valueType === 'json') {
+                    try {
+                        value = JSON.parse(input.value);
+                    } catch (e) {
+                        value = input.value;
+                    }
                 } else {
                     value = input.value;
                 }
 
+                // Compare with initial value (handle nested structure)
+                const initialValue = this.initialSettings[category]?.[key]?.value !== undefined
+                    ? this.initialSettings[category][key].value
+                    : this.initialSettings[category]?.[key];
+
                 // Only include changed values
-                if (this.initialSettings[category][key] !== value) {
+                if (initialValue !== value) {
                     updates[key] = value;
                 }
             });

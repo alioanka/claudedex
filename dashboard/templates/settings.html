@@ -18,12 +18,17 @@
 <!-- Settings Tabs -->
 <div class="tabs">
     <button class="tab-btn active category-tab" data-category="account">Account</button>
+    <button class="tab-btn category-tab" data-category="general">General</button>
+    <button class="tab-btn category-tab" data-category="portfolio">Portfolio</button>
+    <button class="tab-btn category-tab" data-category="risk_management">Risk</button>
     <button class="tab-btn category-tab" data-category="trading">Trading</button>
-    <button class="tab-btn category-tab" data-category="risk">Risk</button>
+    <button class="tab-btn category-tab" data-category="chain">Chains</button>
+    <button class="tab-btn category-tab" data-category="position_management">Positions</button>
     <button class="tab-btn category-tab" data-category="api">API</button>
     <button class="tab-btn category-tab" data-category="monitoring">Monitoring</button>
     <button class="tab-btn category-tab" data-category="ml_models">ML Models</button>
-    <button class="tab-btn category-tab" data-category="sensitive">Sensitive Configs</button>
+    <button class="tab-btn category-tab" data-category="feature_flags">Features</button>
+    <button class="tab-btn category-tab" data-category="sensitive">Sensitive</button>
 </div>
 
 <!-- Settings Sections -->
@@ -59,25 +64,45 @@
             </div>
         </div>
     </div>
+    <div id="general-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">General Configuration</h3></div>
+        <div class="card-body" id="general-settings-form"></div>
+    </div>
+    <div id="portfolio-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Portfolio Configuration</h3></div>
+        <div class="card-body" id="portfolio-settings-form"></div>
+    </div>
+    <div id="risk_management-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Risk Management</h3></div>
+        <div class="card-body" id="risk_management-settings-form"></div>
+    </div>
     <div id="trading-settings" class="settings-section card" style="display: none;">
         <div class="card-header"><h3 class="card-title">Trading Configuration</h3></div>
         <div class="card-body" id="trading-settings-form"></div>
     </div>
-    <div id="risk-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Risk Management</h3></div>
-        <div class="card-body" id="risk-settings-form"></div>
+    <div id="chain-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Blockchain Chains</h3></div>
+        <div class="card-body" id="chain-settings-form"></div>
+    </div>
+    <div id="position_management-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Position Management</h3></div>
+        <div class="card-body" id="position_management-settings-form"></div>
     </div>
     <div id="api-settings" class="settings-section card" style="display: none;">
         <div class="card-header"><h3 class="card-title">API & Connections</h3></div>
         <div class="card-body" id="api-settings-form"></div>
     </div>
     <div id="monitoring-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Monitoring & Notifications</h3></div>
+        <div class="card-header"><h3 class="card-title">Monitoring & Logging</h3></div>
         <div class="card-body" id="monitoring-settings-form"></div>
     </div>
     <div id="ml_models-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Machine Learning Models</h3></div>
+        <div class="card-header"><h3 class="card-title">ML Models Configuration</h3></div>
         <div class="card-body" id="ml_models-settings-form"></div>
+    </div>
+    <div id="feature_flags-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Feature Flags</h3></div>
+        <div class="card-body" id="feature_flags-settings-form"></div>
     </div>
     <div id="sensitive-settings" class="settings-section card" style="display: none;">
         <div class="card-header">
@@ -162,5 +187,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/settings.js?v=3"></script>
+<script src="/static/js/settings.js?v=4"></script>
 {% endblock %}

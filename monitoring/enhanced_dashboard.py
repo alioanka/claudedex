@@ -2115,77 +2115,120 @@ class DashboardEndpoints:
         raise TypeError(f"Type {type(obj)} not serializable")
 
     async def api_get_settings(self, request):
-        """Get all settings, correctly handling SecretStr."""
+        """Get all settings from database config_settings table."""
         try:
-            if not self.config_mgr:
-                return web.json_response({'error': 'Config manager not available'}, status=503)
+            # Load settings from database instead of Pydantic models
+            if not self.db_pool:
+                return web.json_response({'error': 'Database not available'}, status=503)
 
-            # --- FIX STARTS HERE ---
-            # Fetch all configuration models from the config manager
-            all_configs = {
-                'general': self.config_mgr.get_general_config(),
-                'portfolio': self.config_mgr.get_portfolio_config(),
-                'risk_management': self.config_mgr.get_risk_management_config(),
-                'trading': self.config_mgr.get_trading_config(),
-                'chain': self.config_mgr.get_chain_config(),
-                'position_management': self.config_mgr.get_position_management_config(),
-                'volatility': self.config_mgr.get_volatility_config(),
-                'exit_strategy': self.config_mgr.get_exit_strategy_config(),
-                'solana': self.config_mgr.get_solana_config(),
-                'jupiter': self.config_mgr.get_jupiter_config(),
-                'performance': self.config_mgr.get_performance_config(),
-                'logging': self.config_mgr.get_logging_config(),
-                'feature_flags': self.config_mgr.get_feature_flags_config(),
-                'gas_price': self.config_mgr.get_gas_price_config(),
-                'trading_limits': self.config_mgr.get_trading_limits_config(),
-                'ml_models': self.config_mgr.get_ml_models_config(),
-                'backtesting': self.config_mgr.get_backtesting_config(),
-                'network': self.config_mgr.get_network_config(),
-                'debug': self.config_mgr.get_debug_config(),
-                'dashboard': self.config_mgr.get_dashboard_config(),
-                'security': self.config_mgr.get_security_config(),
-                'database': self.config_mgr.get_database_config(),
-                'api': self.config_mgr.get_api_config(),
-                'monitoring': self.config_mgr.get_monitoring_config(),
-            }
+            async with self.db_pool.acquire() as conn:
+                # Get all editable config settings from database
+                rows = await conn.fetch("""
+                    SELECT config_type, key, value, value_type, description, is_editable, requires_restart
+                    FROM config_settings
+                    WHERE is_editable = TRUE
+                    ORDER BY config_type, key
+                """)
 
-            # Use aiohttp's json_response with a custom dumps function
-            # This is the correct way to handle custom serialization in aiohttp
-            return web.json_response(
-                {'success': True, 'data': all_configs},
-                dumps=lambda data: json.dumps(data, default=self._json_serializer)
-            )
-            # --- FIX ENDS HERE ---
+                # Group by config_type
+                all_configs = {}
+                for row in rows:
+                    config_type = row['config_type']
+                    key = row['key']
+                    value = row['value']
+                    value_type = row['value_type']
+
+                    # Convert value based on type
+                    if value_type == 'bool':
+                        converted_value = value.lower() in ('true', '1', 'yes')
+                    elif value_type == 'int':
+                        converted_value = int(value)
+                    elif value_type == 'float':
+                        converted_value = float(value)
+                    elif value_type == 'json':
+                        converted_value = json.loads(value)
+                    else:  # string
+                        converted_value = value
+
+                    # Add to config type group
+                    if config_type not in all_configs:
+                        all_configs[config_type] = {}
+
+                    all_configs[config_type][key] = {
+                        'value': converted_value,
+                        'description': row['description'],
+                        'requires_restart': row['requires_restart'],
+                        'value_type': value_type
+                    }
+
+            return web.json_response({
+                'success': True,
+                'data': all_configs
+            })
 
         except Exception as e:
             logger.error(f"Error getting settings: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_update_settings(self, request):
-        """Update settings"""
+        """Update settings in database"""
         try:
             data = await request.json()
             config_type = data.get('config_type')
             updates = data.get('updates', {})
-            
-            if not self.config_mgr:
-                return web.json_response({'error': 'Config manager not available'}, status=503)
-            
-            # Apply updates dynamically
-            self.config_mgr.update_config_internal(
-                config_type=config_type,
-                updates=updates,
-                user='dashboard',
-                reason='Dashboard update',
-                persist=True
-            )
-            
+
+            if not self.db_pool:
+                return web.json_response({'error': 'Database not available'}, status=503)
+
+            if not config_type or not updates:
+                return web.json_response({'error': 'config_type and updates required'}, status=400)
+
+            # Get user info for audit
+            user = request.get('user')
+            user_id = user.id if user else None
+            username = user.username if user else 'unknown'
+
+            async with self.db_pool.acquire() as conn:
+                async with conn.transaction():
+                    for key, value in updates.items():
+                        # Get the current value for audit log
+                        old_row = await conn.fetchrow("""
+                            SELECT value, value_type FROM config_settings
+                            WHERE config_type = $1 AND key = $2
+                        """, config_type, key)
+
+                        if not old_row:
+                            logger.warning(f"Config {config_type}.{key} not found, skipping")
+                            continue
+
+                        # Convert value to string based on type
+                        value_type = old_row['value_type']
+                        if value_type == 'bool':
+                            new_value_str = 'true' if value else 'false'
+                        else:
+                            new_value_str = str(value)
+
+                        # Update the config setting
+                        await conn.execute("""
+                            UPDATE config_settings
+                            SET value = $1, updated_at = NOW(), updated_by = $2
+                            WHERE config_type = $3 AND key = $4
+                        """, new_value_str, user_id, config_type, key)
+
+                        # Log the change in config_history
+                        await conn.execute("""
+                            INSERT INTO config_history
+                            (config_type, key, old_value, new_value, change_source, changed_by, changed_by_username, ip_address)
+                            VALUES ($1, $2, $3, $4, 'api', $5, $6, $7)
+                        """, config_type, key, old_row['value'], new_value_str, user_id, username,
+                             request.remote)
+
             return web.json_response({
                 'success': True,
                 'message': f'Settings updated: {config_type}'
             })
         except Exception as e:
-            logger.error(f"Error updating settings: {e}")
+            logger.error(f"Error updating settings: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_revert_settings(self, request):

@@ -847,6 +847,60 @@ select.form-control {
     color: #28a745;
 }
 
+/* Badges */
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-radius: 3px;
+    text-transform: uppercase;
+}
+
+.badge-warning {
+    background-color: rgba(255, 193, 7, 0.2);
+    color: #ffc107;
+    border: 1px solid #ffc107;
+}
+
+.badge-success {
+    background-color: rgba(40, 167, 69, 0.2);
+    color: #28a745;
+    border: 1px solid #28a745;
+}
+
+.badge-danger {
+    background-color: rgba(220, 53, 69, 0.2);
+    color: #dc3545;
+    border: 1px solid #dc3545;
+}
+
+.badge-info {
+    background-color: rgba(23, 162, 184, 0.2);
+    color: #17a2b8;
+    border: 1px solid #17a2b8;
+}
+
+/* Checkbox wrapper */
+.checkbox-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.checkbox-label {
+    margin: 0;
+    font-weight: normal;
+    color: var(--text-secondary);
+}
+
+.form-text.text-muted {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+    margin-top: 4px;
+    display: block;
+}
+
 /* Modals */
 .modal-overlay {
     position: fixed;
