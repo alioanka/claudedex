@@ -813,10 +813,7 @@ class TradingBotEngine:
                     'liquidity_depth': liquidity_depth,
                     'contract_safety': contract_safety,
                     'holder_distribution': holder_dist,
-                    'token_symbol': token_symbol,
-                    # Add volatility/spread if available from patterns
-                    'volatility': patterns.get('volatility', 0) if patterns else 0,
-                    'spread': pair.get('spread', 0)
+                    'token_symbol': token_symbol
                 },
                 timestamp=datetime.utcnow()
             )
