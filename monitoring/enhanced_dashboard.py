@@ -312,6 +312,7 @@ class DashboardEndpoints:
 
         # API - Sensitive Configuration (Admin only)
         self.app.router.add_get('/api/settings/sensitive/list', require_auth(require_admin(self.api_list_sensitive_configs)))
+        self.app.router.add_get('/api/settings/sensitive/{key}', require_auth(require_admin(self.api_get_sensitive_config)))
         self.app.router.add_post('/api/settings/sensitive', require_auth(require_admin(self.api_set_sensitive_config)))
         self.app.router.add_delete('/api/settings/sensitive/{key}', require_auth(require_admin(self.api_delete_sensitive_config)))
         
@@ -2275,6 +2276,44 @@ class DashboardEndpoints:
             })
         except Exception as e:
             logger.error(f"Error listing sensitive configs: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    async def api_get_sensitive_config(self, request):
+        """Get a specific sensitive configuration with decrypted value (admin only)"""
+        try:
+            if not self.config_mgr:
+                return web.json_response({'error': 'Config manager not available'}, status=503)
+
+            key = request.match_info.get('key')
+
+            if not key:
+                return web.json_response({
+                    'success': False,
+                    'error': 'Key parameter is required'
+                }, status=400)
+
+            # Get sensitive config with decrypted value and metadata
+            config = await self.config_mgr.get_sensitive_config_with_metadata(key)
+
+            if config:
+                user = request.get('user')
+                logger.info(f"Admin {user.username if user else 'unknown'} accessed sensitive config: {key}")
+
+                return web.json_response({
+                    'success': True,
+                    'data': config
+                })
+            else:
+                return web.json_response({
+                    'success': False,
+                    'error': f'Sensitive config "{key}" not found'
+                }, status=404)
+
+        except Exception as e:
+            logger.error(f"Error getting sensitive config: {e}", exc_info=True)
             return web.json_response({
                 'success': False,
                 'error': str(e)
