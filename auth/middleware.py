@@ -21,7 +21,7 @@ def require_auth(handler: Callable) -> Callable:
     @wraps(handler)
     async def middleware(request: web.Request):
         # Check if auth_service is available
-        if not hasattr(request.app, 'auth_service'):
+        if 'auth_service' not in request.app:
             logger.error("AuthService not initialized in app")
             return web.json_response({'error': 'Authentication system not available'}, status=500)
 
