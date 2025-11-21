@@ -106,20 +106,39 @@ class DashboardEndpoints:
 
     async def _on_startup(self, app):
         """Called when app starts - initialize auth system before serving requests"""
-        logger.info("🚀 App startup: initializing authentication system...")
-        await self._initialize_auth_async()
+        try:
+            logger.info("=" * 80)
+            logger.info("🚀 APP STARTUP HANDLER CALLED")
+            logger.info("=" * 80)
+            logger.info("Initializing authentication system...")
+            await self._initialize_auth_async()
+        except Exception as e:
+            logger.error(f"❌ CRITICAL: Startup handler failed: {e}", exc_info=True)
 
     async def _initialize_auth_async(self):
         """Initialize authentication system asynchronously"""
+        logger.info("📍 Starting auth initialization...")
+
         if not AUTH_AVAILABLE:
             logger.error("❌ Authentication system not available - bcrypt/pyotp not installed")
             logger.error("   Install required packages: pip install bcrypt pyotp")
             logger.error("   SECURITY WARNING: Dashboard will be UNSECURED!")
             return
 
+        logger.info(f"✅ Auth modules available (bcrypt, pyotp)")
+
         # Wait for database to be ready (with retries)
         max_retries = 10
         retry_delay = 1
+
+        logger.info(f"🔍 Checking database connection...")
+        logger.info(f"   self.db = {self.db}")
+        logger.info(f"   self.db type = {type(self.db)}")
+
+        if self.db:
+            logger.info(f"   hasattr(pool) = {hasattr(self.db, 'pool')}")
+            if hasattr(self.db, 'pool'):
+                logger.info(f"   self.db.pool = {self.db.pool}")
 
         for attempt in range(max_retries):
             if self.db and hasattr(self.db, 'pool') and self.db.pool:
@@ -127,36 +146,47 @@ class DashboardEndpoints:
                 break
 
             logger.warning(f"⏳ Waiting for database connection... (attempt {attempt + 1}/{max_retries})")
+            logger.warning(f"   DB status: self.db={bool(self.db)}, has pool={hasattr(self.db, 'pool') if self.db else False}, pool={getattr(self.db, 'pool', None) if self.db else None}")
             await asyncio.sleep(retry_delay)
         else:
             logger.error("❌ Database not available after retries - CANNOT INITIALIZE AUTH")
             logger.error("   SECURITY WARNING: Dashboard will be UNSECURED!")
+            logger.error(f"   Final DB state: {self.db}")
             return
 
         try:
             logger.info("🔐 Initializing authentication system...")
+            logger.info(f"   Database pool: {self.db.pool}")
 
             # Create auth service
+            logger.info("   Creating AuthService...")
             self.auth_service = AuthService(
                 db_pool=self.db.pool,
                 session_timeout=3600,  # 1 hour
                 max_failed_attempts=5
             )
+            logger.info("   ✅ AuthService created")
 
             # Store in app for middleware access
             self.app['auth_service'] = self.auth_service
+            logger.info("   ✅ Auth service stored in app")
 
             # Setup auth routes
+            logger.info("   Setting up auth routes...")
             AuthRoutes(self.app, self.auth_service)
+            logger.info("   ✅ Auth routes registered")
 
             # Add auth middleware at beginning of middleware stack
             # Check if already added to avoid duplicates
+            logger.info("   Checking middleware stack...")
             middleware_names = [m.__name__ if hasattr(m, '__name__') else str(m) for m in self.app.middlewares]
+            logger.info(f"   Current middlewares: {middleware_names}")
+
             if 'middleware' not in middleware_names:
                 self.app.middlewares.insert(0, auth_middleware_factory)
-                logger.info("   Auth middleware registered")
+                logger.info("   ✅ Auth middleware registered")
             else:
-                logger.info("   Auth middleware already registered")
+                logger.info("   ⚠️  Auth middleware already registered")
 
             self.auth_enabled = True
 
@@ -169,6 +199,8 @@ class DashboardEndpoints:
 
         except Exception as e:
             logger.error(f"❌ Failed to initialize authentication system: {e}", exc_info=True)
+            logger.error(f"   Error type: {type(e).__name__}")
+            logger.error(f"   Error details: {str(e)}")
             logger.error("   SECURITY WARNING: Dashboard will be UNSECURED!")
             self.auth_enabled = False
 
