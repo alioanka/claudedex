@@ -295,6 +295,27 @@ class TradingBotApplication:
             await self.config_manager.set_db_pool(self.db_manager.pool)
             self.logger.info("✅ Config manager now reading from database")
 
+            # ✅ CRITICAL FIX: Rebuild nested_config AFTER database reload
+            # This ensures managers use database values, not YAML/defaults
+            self.logger.info("Reloading configuration from database...")
+            nested_config = {}
+            for config_type in ConfigType:
+                config_model = self.config.get_config(config_type)
+                if config_model:
+                    nested_config[config_type.value] = config_model.dict()
+
+            # Update managers with fresh database config
+            if hasattr(self, 'portfolio_manager'):
+                self.portfolio_manager.max_position_size_pct = nested_config.get('portfolio', {}).get('max_position_size_pct', 0.1)
+                self.portfolio_manager.max_position_size_usd = nested_config.get('portfolio', {}).get('max_position_size_usd', 10.0)
+                self.logger.info(f"✅ Portfolio: max_position_size_usd=${self.portfolio_manager.max_position_size_usd}, max_position_size_pct={self.portfolio_manager.max_position_size_pct}")
+
+            if hasattr(self, 'risk_manager'):
+                self.risk_manager.max_position_size_percent = nested_config.get('risk_management', {}).get('max_position_size_pct', 10)
+                self.risk_manager.max_position_size_usd = nested_config.get('risk_management', {}).get('max_position_size_usd', 10.0)
+                self.logger.info(f"✅ Risk: max_position_size_usd=${self.risk_manager.max_position_size_usd}, max_position_size_percent={self.risk_manager.max_position_size_percent}")
+
+
             # Decrypt private key if encrypted
             encrypted_key = os.getenv('PRIVATE_KEY')
             encryption_key = os.getenv('ENCRYPTION_KEY')
