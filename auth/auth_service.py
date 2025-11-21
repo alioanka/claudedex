@@ -6,7 +6,7 @@ import secrets
 import hashlib
 import pyotp
 import bcrypt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple, Dict, Any
 import logging
 from asyncpg import Pool
@@ -187,7 +187,7 @@ class AuthService:
         """Create a new session for authenticated user"""
         try:
             session_id = secrets.token_urlsafe(32)
-            expires_at = datetime.utcnow() + timedelta(seconds=self.session_timeout)
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=self.session_timeout)
 
             async with self.db_pool.acquire() as conn:
                 await conn.execute("""
@@ -219,7 +219,7 @@ class AuthService:
                     return None
 
                 # Check if session expired
-                if row['expires_at'] < datetime.utcnow():
+                if row['expires_at'] < datetime.now(timezone.utc):
                     await self.invalidate_session(session_id)
                     return None
 
@@ -232,7 +232,7 @@ class AuthService:
                     return None
 
                 # Update last activity
-                new_expires_at = datetime.utcnow() + timedelta(seconds=self.session_timeout)
+                new_expires_at = datetime.now(timezone.utc) + timedelta(seconds=self.session_timeout)
                 await conn.execute("""
                     UPDATE sessions
                     SET last_activity = NOW(), expires_at = $2
