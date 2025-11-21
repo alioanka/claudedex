@@ -447,8 +447,17 @@ class SettingsManager {
             // Fetch the decrypted value from API
             const response = await apiGet(`/api/settings/sensitive/${key}`);
 
+            console.log('Edit sensitive config response:', response); // Debug logging
+
             if (response.success && response.data) {
                 const config = response.data;
+
+                // Validate required fields
+                if (!config.key || config.value === undefined || config.value === null) {
+                    console.error('Incomplete config data:', config);
+                    showToast('error', 'Failed to load config: Missing required fields');
+                    return;
+                }
 
                 // Populate the modal with existing values
                 document.getElementById('sensitiveConfigKey').value = config.key;
@@ -461,9 +470,11 @@ class SettingsManager {
 
                 showToast('success', 'Config loaded successfully');
             } else {
+                console.error('API error:', response);
                 showToast('error', response.error || 'Failed to load sensitive config');
             }
         } catch (error) {
+            console.error('Exception loading sensitive config:', error);
             showToast('error', `Error loading sensitive config: ${error.message}`);
         }
     }
