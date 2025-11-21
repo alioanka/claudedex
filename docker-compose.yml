@@ -33,11 +33,12 @@ services:
     image: redis:7-alpine
     container_name: trading-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes
+    # SECURITY FIX: Add password authentication and bind to localhost only
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-change_me_in_production}
     volumes:
       - redis-data:/data
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"  # CRITICAL: Bind to localhost only to prevent external access
     networks:
       - trading-network
 
@@ -52,11 +53,10 @@ services:
       - "8080:8080"
     environment:
       DATABASE_URL: postgresql://bot_user:bot_password@postgres:5432/tradingbot
-      REDIS_URL: redis://redis:6379/0
       LOG_LEVEL: INFO
       PYTHONUNBUFFERED: "1"
     env_file:
-      - .env
+      - .env  # REDIS_URL and REDIS_PASSWORD are loaded from .env
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
