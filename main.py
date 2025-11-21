@@ -159,7 +159,87 @@ class TradingBotApplication:
         """Handle shutdown signals gracefully"""
         self.logger.warning(f"Received signal {signum}, initiating graceful shutdown...")
         self.shutdown_event.set()
-        
+
+    async def _run_migrations(self):
+        """Run database migrations on startup"""
+        try:
+            import asyncpg
+            from pathlib import Path
+
+            # Get database connection from db_manager pool
+            pool = self.db_manager.pool
+            if not pool:
+                self.logger.error("Database pool not available for migrations")
+                return
+
+            async with pool.acquire() as conn:
+                # Create migrations tracking table if it doesn't exist
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS migrations (
+                        id SERIAL PRIMARY KEY,
+                        version VARCHAR(50) UNIQUE NOT NULL,
+                        description TEXT,
+                        applied_at TIMESTAMP DEFAULT NOW()
+                    )
+                """)
+
+                # Get list of applied migrations
+                applied = await conn.fetch("SELECT version FROM migrations ORDER BY version")
+                applied_versions = {m['version'] for m in applied}
+
+                # Find migration files
+                migrations_dir = Path('migrations')
+                if not migrations_dir.exists():
+                    self.logger.warning("Migrations directory not found")
+                    return
+
+                migration_files = sorted(migrations_dir.glob('*.sql'))
+                if not migration_files:
+                    self.logger.info("No migration files found")
+                    return
+
+                # Apply pending migrations
+                pending_count = 0
+                for migration_file in migration_files:
+                    version = migration_file.stem
+
+                    if version in applied_versions:
+                        self.logger.debug(f"Migration {version} already applied")
+                        continue
+
+                    self.logger.info(f"Applying migration: {version}")
+
+                    try:
+                        # Read migration SQL
+                        with open(migration_file, 'r') as f:
+                            sql = f.read()
+
+                        # Execute in transaction
+                        async with conn.transaction():
+                            await conn.execute(sql)
+
+                            # Record migration
+                            await conn.execute("""
+                                INSERT INTO migrations (version, description)
+                                VALUES ($1, $2)
+                            """, version, f"Migration from {migration_file.name}")
+
+                        self.logger.info(f"✅ Applied migration: {version}")
+                        pending_count += 1
+
+                    except Exception as e:
+                        self.logger.error(f"❌ Failed to apply migration {version}: {e}")
+                        raise
+
+                if pending_count == 0:
+                    self.logger.info("✅ Database is up to date")
+                else:
+                    self.logger.info(f"✅ Applied {pending_count} new migration(s)")
+
+        except Exception as e:
+            self.logger.error(f"Error running migrations: {e}", exc_info=True)
+            raise
+
     async def initialize(self):
         """Initialize all components"""
         try:
@@ -205,6 +285,10 @@ class TradingBotApplication:
             
             self.logger.info("Connecting to database...")
             await self.db_manager.connect()
+
+            # Run database migrations
+            self.logger.info("Running database migrations...")
+            await self._run_migrations()
 
             # Decrypt private key if encrypted
             encrypted_key = os.getenv('PRIVATE_KEY')
