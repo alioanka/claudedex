@@ -149,10 +149,14 @@ class DashboardEndpoints:
             # Setup auth routes
             AuthRoutes(self.app, self.auth_service)
 
-            # Add auth middleware (insert at beginning of middleware stack)
-            # Remove if already added (to avoid duplicates)
-            self.app.middlewares = [m for m in self.app.middlewares if m.__name__ != 'middleware']
-            self.app.middlewares.insert(0, auth_middleware_factory)
+            # Add auth middleware at beginning of middleware stack
+            # Check if already added to avoid duplicates
+            middleware_names = [m.__name__ if hasattr(m, '__name__') else str(m) for m in self.app.middlewares]
+            if 'middleware' not in middleware_names:
+                self.app.middlewares.insert(0, auth_middleware_factory)
+                logger.info("   Auth middleware registered")
+            else:
+                logger.info("   Auth middleware already registered")
 
             self.auth_enabled = True
 
