@@ -71,7 +71,8 @@ class JupiterExecutor(BaseExecutor):
         
         # Solana Configuration
         self.rpc_url = config.get('rpc_url') or config.get('solana_rpc_url', 'https://api.mainnet-beta.solana.com')
-        self.max_slippage_bps = int(config.get('max_slippage_bps', 500))  # 5% default
+        # CRITICAL FIX: Reduced from 500 bps (5%) to 50 bps (0.5%) to prevent MEV sandwich attacks
+        self.max_slippage_bps = int(config.get('max_slippage_bps', 50))  # 0.5% default (was 5%)
         
         # Initialize keypair from private key
         private_key = config.get('solana_private_key') or config.get('private_key')

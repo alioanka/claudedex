@@ -202,7 +202,8 @@ class TradeExecutor(BaseExecutor):
         self.private_pool_endpoint = config.get('private_pool_endpoint')
         
         # Gas configuration
-        self.max_gas_price = config.get('max_gas_price', 500)  # Gwei
+        # CRITICAL FIX: Reduced from 500 Gwei to 50 Gwei (500 Gwei = $150-300 per tx!)
+        self.max_gas_price = config.get('max_gas_price', 50)  # Gwei (was 500)
         self.gas_limit = config.get('gas_limit', 500000)
         
         # Execution settings

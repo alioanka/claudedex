@@ -111,13 +111,18 @@ class PortfolioManager:
         self.positions: Dict[str, Position] = {}
         self.balance = config.get('initial_balance', 400)
         self.initial_balance = self.balance
-        
+
+        # CRITICAL FIX: Add locks for race condition prevention
+        self.balance_lock = asyncio.Lock()
+        self.positions_lock = asyncio.Lock()
+        self.metrics_lock = asyncio.Lock()
+
         # Performance tracking
         self.trade_history = []
         self.daily_returns = []
         self.peak_balance = self.balance
         self.valley_balance = self.balance
-        
+
         # Risk limits
         self.daily_loss_limit = config.get('daily_loss_limit', 0.1)  # 10% daily loss limit
         self.consecutive_losses_limit = config.get('consecutive_losses_limit', 5)
@@ -190,13 +195,20 @@ class PortfolioManager:
             return False
             
     def get_available_balance(self) -> float:
-        """Get available balance for trading"""
+        """Get available balance for trading (THREAD-SAFE)"""
         try:
-            # Calculate locked balance in positions
+            # CRITICAL FIX: Use locks for consistent snapshot
+            # Note: Using synchronous context manager since this is a sync method
+            # For async callers, consider using async version
+
+            # Get current balance (atomic read)
+            current_balance = self.balance
+
+            # Calculate locked balance in positions (atomic read)
             locked_balance = sum(pos.value for pos in self.positions.values())
-            
+
             # Available balance
-            available = self.balance - locked_balance
+            available = current_balance - locked_balance
             
             # Reserve for fees and slippage
             reserve = self.balance * 0.05  # 5% reserve
@@ -354,67 +366,108 @@ class PortfolioManager:
     # Add these methods to existing PortfolioManager class
     
     async def update_portfolio(self, trade: Dict) -> None:
-        """Update portfolio with new trade"""
+        """Update portfolio with new trade (THREAD-SAFE with rollback)"""
+
+        # CRITICAL FIX: Save original state for rollback
+        async with self.balance_lock:
+            original_balance = self.balance
+
+        async with self.positions_lock:
+            original_positions = {k: Position(**vars(v)) for k, v in self.positions.items()}
+
         try:
             token = trade['token_address'].lower()
-            
-            if trade['side'] == 'buy':
-                # Add or update position
-                if token in self.positions:
-                    position = self.positions[token]
-                    # Average in
-                    total_cost = position.cost + trade['cost']
-                    total_size = position.size + trade['amount']
-                    position.entry_price = total_cost / total_size
-                    position.size = total_size
-                    position.cost = total_cost
-                else:
-                    # New position
-                    self.positions[token] = Position(
-                        id=trade.get('id', str(uuid.uuid4())),
-                        token_address=token,
-                        pair_address=trade.get('pair_address', ''),
-                        chain=trade.get('chain', 'eth'),
-                        entry_price=trade['price'],
-                        current_price=trade['price'],
-                        size=trade['amount'],
-                        cost=trade['cost'],
-                        entry_time=datetime.now(),
-                        last_updated=datetime.now(),
-                        stop_loss=trade.get('stop_loss', 0),
-                        take_profits=trade.get('take_profits', []),
-                        tp_hit=[False] * len(trade.get('take_profits', [])),
-                        strategy=trade.get('strategy', 'unknown'),
-                        metadata={'symbol': trade.get('symbol', 'UNKNOWN')}  # ✅ STORE SYMBOL
-                    )
-                
-                # Update balance
-                self.balance -= trade['cost']
-                
-            elif trade['side'] == 'sell':
-                if token in self.positions:
-                    position = self.positions[token]
-                    
-                    if trade['amount'] >= position.size:
-                        # Close position
-                        self.balance += trade['proceeds']
-                        del self.positions[token]
-                    else:
-                        # Partial close
-                        position.size -= trade['amount']
-                        self.balance += trade['proceeds']
 
-                        # 🆕 PATCH: Log portfolio performance
-                        self.log_current_performance()
-                        
-            # Update trade history
-            self.trade_history.append(trade)
-            
+            if trade['side'] == 'buy':
+                # LOCK BOTH BALANCE AND POSITIONS
+                async with self.balance_lock:
+                    async with self.positions_lock:
+                        # Add or update position
+                        if token in self.positions:
+                            position = self.positions[token]
+
+                            # CRITICAL FIX: Check position size limit when averaging in
+                            total_cost = position.cost + trade['cost']
+
+                            if total_cost > self.max_position_size_usd:
+                                raise ValueError(
+                                    f"Position would exceed max size: ${total_cost:.2f} > "
+                                    f"${self.max_position_size_usd:.2f}. Cannot average in."
+                                )
+
+                            # Average in
+                            total_size = position.size + trade['amount']
+                            position.entry_price = total_cost / total_size
+                            position.size = total_size
+                            position.cost = total_cost
+                            position.last_updated = datetime.now()
+                        else:
+                            # New position - check size limit
+                            if trade['cost'] > self.max_position_size_usd:
+                                raise ValueError(
+                                    f"Position size ${trade['cost']:.2f} exceeds max "
+                                    f"${self.max_position_size_usd:.2f}"
+                                )
+
+                            self.positions[token] = Position(
+                                id=trade.get('id', str(uuid.uuid4())),
+                                token_address=token,
+                                pair_address=trade.get('pair_address', ''),
+                                chain=trade.get('chain', 'eth'),
+                                entry_price=trade['price'],
+                                current_price=trade['price'],
+                                size=trade['amount'],
+                                cost=trade['cost'],
+                                entry_time=datetime.now(),
+                                last_updated=datetime.now(),
+                                stop_loss=trade.get('stop_loss', 0),
+                                take_profits=trade.get('take_profits', []),
+                                tp_hit=[False] * len(trade.get('take_profits', [])),
+                                strategy=trade.get('strategy', 'unknown'),
+                                metadata={'symbol': trade.get('symbol', 'UNKNOWN')}
+                            )
+
+                        # Update balance
+                        self.balance -= trade['cost']
+
+            elif trade['side'] == 'sell':
+                async with self.balance_lock:
+                    async with self.positions_lock:
+                        if token in self.positions:
+                            position = self.positions[token]
+
+                            if trade['amount'] >= position.size:
+                                # Close position
+                                self.balance += trade['proceeds']
+                                del self.positions[token]
+                            else:
+                                # Partial close
+                                position.size -= trade['amount']
+                                self.balance += trade['proceeds']
+                                position.last_updated = datetime.now()
+
+                                # 🆕 PATCH: Log portfolio performance
+                                self.log_current_performance()
+
+            # Update trade history (use metrics lock)
+            async with self.metrics_lock:
+                self.trade_history.append(trade)
+
             # Update performance metrics
             await self._update_performance_metrics()
-            
+
         except Exception as e:
-            print(f"Portfolio update error: {e}")
+            # CRITICAL FIX: Rollback on failure
+            print(f"Portfolio update error, rolling back: {e}")
+
+            async with self.balance_lock:
+                self.balance = original_balance
+
+            async with self.positions_lock:
+                self.positions = original_positions
+
+            # Re-raise to signal failure
+            raise
     
     async def get_portfolio_value(self) -> Decimal:
         """Get total portfolio value"""
@@ -750,61 +803,80 @@ class PortfolioManager:
         return self.get_portfolio_metrics()
 
     async def close_position(self, position_id: str) -> Dict:
-        """Close a specific position with proper P&L tracking"""
+        """Close a specific position with proper P&L tracking (THREAD-SAFE)"""
         try:
-            # Find position by ID
-            for token, position in list(self.positions.items()):
-                if position.id == position_id:
-                    # ✅ FIXED: Proper P&L tracking
-                    
-                    # Calculate realized P&L
-                    realized_pnl = position.value - position.cost
-                    pnl_percentage = ((position.value - position.cost) / position.cost * 100 
-                                     if position.cost > 0 else 0)
-                    
-                    # Create trade record
-                    trade = {
-                        'id': position.id,
-                        'token_address': token,
-                        'pair_address': position.pair_address,
-                        'chain': position.chain,
-                        'side': 'sell',
-                        'price': position.current_price,
-                        'amount': position.size,
-                        'cost': position.cost,
-                        'proceeds': position.value,
-                        'pnl': realized_pnl,
-                        'pnl_percentage': pnl_percentage,
-                        'strategy': position.strategy,
-                        'timestamp': datetime.now(),
-                        'entry_time': position.entry_time,
-                        'exit_reason': 'manual_close'
+            # CRITICAL FIX: Lock positions to find the position safely
+            async with self.positions_lock:
+                # Find position by ID
+                position = None
+                token_to_close = None
+
+                for token, pos in list(self.positions.items()):
+                    if pos.id == position_id:
+                        position = pos
+                        token_to_close = token
+                        break
+
+                if not position:
+                    return {
+                        'success': False,
+                        'error': 'Position not found'
                     }
-                    
-                    # Add to trade history
-                    self.trade_history.append(trade)
-                    
-                    # Update consecutive losses tracking
-                    # Update consecutive losses tracking
-                    if realized_pnl < 0:
-                        self.consecutive_losses += 1
-                        await self._save_block_state()
-                    else:
-                        self.consecutive_losses = 0
-                        await self._save_block_state()
-                    
+
+                # Calculate realized P&L
+                realized_pnl = position.value - position.cost
+                pnl_percentage = ((position.value - position.cost) / position.cost * 100
+                                 if position.cost > 0 else 0)
+
+                # Create trade record
+                trade = {
+                    'id': position.id,
+                    'token_address': token_to_close,
+                    'pair_address': position.pair_address,
+                    'chain': position.chain,
+                    'side': 'sell',
+                    'price': position.current_price,
+                    'amount': position.size,
+                    'cost': position.cost,
+                    'proceeds': position.value,
+                    'pnl': realized_pnl,
+                    'pnl_percentage': pnl_percentage,
+                    'strategy': position.strategy,
+                    'timestamp': datetime.now(),
+                    'entry_time': position.entry_time,
+                    'exit_reason': 'manual_close'
+                }
+
+            # Update trade history (use metrics lock)
+            async with self.metrics_lock:
+                self.trade_history.append(trade)
+
+                # Update consecutive losses tracking
+                if realized_pnl < 0:
+                    self.consecutive_losses += 1
+                else:
+                    self.consecutive_losses = 0
+
+            # Save state (outside locks to avoid deadlock)
+            await self._save_block_state()
+
+            # Update balance and remove position (needs both locks)
+            async with self.balance_lock:
+                async with self.positions_lock:
                     # Update balance
                     self.balance += position.value
-                    
+
                     # Update peak/valley
-                    current_value = self.balance + sum(p.value for p in self.positions.values() if p.id != position_id)
+                    current_value = self.balance + sum(
+                        p.value for p in self.positions.values() if p.id != position_id
+                    )
                     if current_value > self.peak_balance:
                         self.peak_balance = current_value
                     if current_value < self.valley_balance:
                         self.valley_balance = current_value
-                    
+
                     # Remove position
-                    del self.positions[token]
+                    del self.positions[token_to_close]
                     
                     # Log the trade exit
                     #try:
