@@ -420,11 +420,13 @@ class SettingsManager {
     }
 
     showSensitiveConfigModal(isEdit = false) {
-        // Clear form
-        document.getElementById('sensitiveConfigKey').value = '';
-        document.getElementById('sensitiveConfigValue').value = '';
-        document.getElementById('sensitiveConfigDescription').value = '';
-        document.getElementById('sensitiveConfigRotation').value = '30';
+        // Only clear form if adding new (not editing)
+        if (!isEdit) {
+            document.getElementById('sensitiveConfigKey').value = '';
+            document.getElementById('sensitiveConfigValue').value = '';
+            document.getElementById('sensitiveConfigDescription').value = '';
+            document.getElementById('sensitiveConfigRotation').value = '30';
+        }
 
         // Update modal title
         document.getElementById('sensitiveConfigModalTitle').textContent =
