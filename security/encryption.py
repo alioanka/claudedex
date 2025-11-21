@@ -27,23 +27,39 @@ class EncryptionManager:
         
     def _get_or_create_master_key(self) -> bytes:
         """Get or create master encryption key"""
+        # 1. First, check if encryption_key is provided directly in config (from .env)
+        if 'encryption_key' in self.config:
+            encryption_key = self.config['encryption_key']
+            if isinstance(encryption_key, str):
+                # If it's a string, it should be a base64-encoded Fernet key
+                try:
+                    # Validate it's a proper Fernet key
+                    key_bytes = encryption_key.encode() if isinstance(encryption_key, str) else encryption_key
+                    Fernet(key_bytes)  # This will raise if invalid
+                    logger.info("Using encryption key from config/environment")
+                    return key_bytes
+                except Exception as e:
+                    logger.warning(f"Invalid encryption_key in config: {e}. Falling back to file-based key.")
+
+        # 2. Fall back to file-based key
         key_file = self.config.get('key_file', '.encryption_key')
-        
+
         if os.path.exists(key_file):
             with open(key_file, 'rb') as f:
+                logger.info(f"Using encryption key from file: {key_file}")
                 return f.read()
         else:
             # Generate new key
             key = Fernet.generate_key()
-            
+
             # Save securely (consider using key management service in production)
             with open(key_file, 'wb') as f:
                 f.write(key)
-                
+
             # Set restrictive permissions
             os.chmod(key_file, 0o600)
-            
-            logger.info("New encryption key generated")
+
+            logger.info("New encryption key generated and saved to file")
             return key
             
     def encrypt_sensitive_data(self, data: Union[str, Dict, List]) -> str:
@@ -70,18 +86,20 @@ class EncryptionManager:
         try:
             # Decode from base64
             encrypted = base64.b64decode(encrypted_data.encode())
-            
+
             # Decrypt
             decrypted = self._fernet.decrypt(encrypted).decode()
-            
+
             # Try to parse as JSON
             try:
                 return json.loads(decrypted)
             except json.JSONDecodeError:
                 return decrypted
-                
+
         except Exception as e:
-            logger.error(f"Decryption failed: {e}")
+            logger.error(f"Decryption failed: {type(e).__name__}: {e}")
+            logger.error(f"This usually means the ENCRYPTION_KEY has changed since the data was encrypted.")
+            logger.error(f"Solution: Re-run 'python scripts/import_env_secrets.py' to re-encrypt with current key")
             raise
             
     def encrypt_api_key(self, api_key: str) -> Dict[str, str]:

@@ -68,6 +68,9 @@ async def import_env_secrets():
     if not encryption_key:
         print("❌ ERROR: ENCRYPTION_KEY not found in environment")
         print("   Please set ENCRYPTION_KEY in your .env file")
+        print()
+        print("   To generate a new key, run:")
+        print("   python scripts/generate_encryption_key.py")
         return False
 
     # Initialize encryption manager
@@ -77,6 +80,10 @@ async def import_env_secrets():
         print("✅ Encryption manager initialized")
     except Exception as e:
         print(f"❌ Failed to initialize encryption manager: {e}")
+        print()
+        print("   Your ENCRYPTION_KEY might not be in the correct format.")
+        print("   To generate a valid key, run:")
+        print("   python scripts/generate_encryption_key.py")
         return False
 
     # Connect to database
