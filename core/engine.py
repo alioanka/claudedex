@@ -840,11 +840,13 @@ class TradingBotEngine:
         try:
             token_symbol = opportunity.metadata.get('token_symbol', 'UNKNOWN')
             token_address = opportunity.token_address.lower()
-            
+
             # ✅ CHECK 1: Already have active position?
-            if token_address in self.active_positions:
-                logger.warning(f"⚠️ Already have position in {token_symbol} - SKIPPING")
-                return
+            # CRITICAL FIX (P1): Protect read with lock to prevent race conditions
+            async with self.positions_lock:
+                if token_address in self.active_positions:
+                    logger.warning(f"⚠️ Already have position in {token_symbol} - SKIPPING")
+                    return
             
             # ✅ CHECK 2: Position on cooldown?
             if token_address in self.recently_closed:
@@ -864,8 +866,12 @@ class TradingBotEngine:
             
             # ✅ CHECK 3: Portfolio limits
             max_positions = self.config.get('portfolio', {}).get('max_positions', 40)
-            if len(self.active_positions) >= max_positions:
-                logger.warning(f"⚠️ Max positions reached ({len(self.active_positions)}) - SKIPPING")
+            # CRITICAL FIX (P1): Protect read with lock to prevent race conditions
+            async with self.positions_lock:
+                num_positions = len(self.active_positions)
+
+            if num_positions >= max_positions:
+                logger.warning(f"⚠️ Max positions reached ({num_positions}) - SKIPPING")
                 return
 
             # ✅ CHECK 4: CIRCUIT BREAKERS
@@ -1374,7 +1380,11 @@ class TradingBotEngine:
             position = None
             
             try:
-                if not self.active_positions:
+                # CRITICAL FIX (P1): Protect read with lock to prevent race conditions
+                async with self.positions_lock:
+                    has_positions = len(self.active_positions) > 0
+
+                if not has_positions:
                     await asyncio.sleep(5)
                     continue
                 
@@ -1431,7 +1441,11 @@ class TradingBotEngine:
                         logger.error(f"Error updating portfolio positions: {e}")
                 
                 # ✅ STEP 3: Update active_positions dict (for backward compatibility)
-                for token_address, position in list(self.active_positions.items()):
+                # CRITICAL FIX (P1): Take snapshot under lock to prevent race conditions
+                async with self.positions_lock:
+                    positions_items = list(self.active_positions.items())
+
+                for token_address, position in positions_items:
                     try:
                         if token_address in price_data:
                             current_price = price_data[token_address]
@@ -1496,8 +1510,12 @@ class TradingBotEngine:
                         continue
                 
                 # Log portfolio summary
-                total_value = sum(p.get('current_value', 0) for p in self.active_positions.values())
-                total_pnl = sum(p.get('pnl', 0) for p in self.active_positions.values())
+                # CRITICAL FIX (P1): Protect read with lock to prevent race conditions
+                async with self.positions_lock:
+                    positions_snapshot = list(self.active_positions.values())
+
+                total_value = sum(p.get('current_value', 0) for p in positions_snapshot)
+                total_pnl = sum(p.get('pnl', 0) for p in positions_snapshot)
                 
                 # ✅ NEW: Get per-chain breakdown
                 chain_summary = ""
@@ -1516,7 +1534,7 @@ class TradingBotEngine:
                         logger.debug(f"Could not get chain metrics: {e}")
                 
                 logger.info(
-                    f"💼 Portfolio: {len(self.active_positions)} positions, "
+                    f"💼 Portfolio: {len(positions_snapshot)} positions, "
                     f"Value: ${total_value:.2f}, P&L: ${total_pnl:.2f}{chain_summary}"
                 )
                 
@@ -1689,9 +1707,11 @@ class TradingBotEngine:
             return False
         
         # ✅ Verify position exists in active_positions
-        if token_address not in self.active_positions:
-            logger.error(f"❌ Cannot close position - not in active positions: {token_symbol}")
-            return False
+        # CRITICAL FIX (P1): Protect read with lock to prevent race conditions
+        async with self.positions_lock:
+            if token_address not in self.active_positions:
+                logger.error(f"❌ Cannot close position - not in active positions: {token_symbol}")
+                return False
         
         try:
             logger.info(f"💰 CLOSING POSITION: {token_symbol} ({token_address[:10]}...)")
@@ -1974,10 +1994,14 @@ class TradingBotEngine:
             try:
                 # Get pending transactions
                 pending_txs = await self.mempool_monitor.get_pending_transactions()
-                
+
+                # CRITICAL FIX (P1): Take snapshot of positions to avoid race conditions
+                async with self.positions_lock:
+                    active_tokens = set(self.active_positions.keys())
+
                 for tx in pending_txs:
                     # Check if it affects our positions
-                    if tx['to'] in self.active_positions:
+                    if tx['to'] in active_tokens:
                         await self._analyze_mempool_tx(tx)
                         
                     # Detect sandwich attacks
@@ -1998,10 +2022,14 @@ class TradingBotEngine:
             try:
                 # Get whale movements
                 movements = await self.whale_tracker.get_recent_movements()
-                
+
+                # CRITICAL FIX (P1): Take snapshot of positions to avoid race conditions
+                async with self.positions_lock:
+                    active_tokens = set(self.active_positions.keys())
+
                 for movement in movements:
                     # Check if it affects our tokens
-                    if movement['token'] in self.active_positions:
+                    if movement['token'] in active_tokens:
                         await self._handle_whale_movement(movement)
                         
                     # Check for whale accumulation patterns
@@ -2128,12 +2156,16 @@ class TradingBotEngine:
         """Monitor and report performance metrics"""
         while self.state == BotState.RUNNING:
             try:
+                # CRITICAL FIX (P1): Protect read with lock to prevent race conditions
+                async with self.positions_lock:
+                    num_active_positions = len(self.active_positions)
+
                 # Calculate metrics
                 metrics = {
                     'total_trades': self.stats['total_trades'],
                     'win_rate': self.stats['successful_trades'] / max(self.stats['total_trades'], 1),
                     'total_pnl': self.stats['total_profit'],
-                    'active_positions': len(self.active_positions),
+                    'active_positions': num_active_positions,
                     'opportunities_found': self.stats['opportunities_found'],
                     'tokens_analyzed': self.stats['tokens_analyzed'],
                     'uptime': (datetime.now() - self.stats['start_time']).total_seconds()
@@ -2210,7 +2242,11 @@ class TradingBotEngine:
             # Close positions if configured
             if self.config.get('close_on_stop', False):
                 logger.info("💰 Closing all positions...")
-                for position in list(self.active_positions.values()):
+                # CRITICAL FIX (P1): Take snapshot under lock to prevent race conditions
+                async with self.positions_lock:
+                    positions_to_close = list(self.active_positions.values())
+
+                for position in positions_to_close:
                     await self._close_position(position, "engine_stopped")
             
             # Save state before cleanup
@@ -2605,7 +2641,11 @@ class TradingBotEngine:
 
     async def emergency_close_all_positions(self):
         """Emergency close all open positions"""
-        for position in list(self.active_positions.values()):
+        # CRITICAL FIX (P1): Take snapshot under lock to prevent race conditions
+        async with self.positions_lock:
+            positions_to_close = list(self.active_positions.values())
+
+        for position in positions_to_close:
             await self._close_position(position, "emergency_shutdown")
 
     # ============================================
