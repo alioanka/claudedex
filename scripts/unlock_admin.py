@@ -10,13 +10,21 @@ async def unlock_admin():
     """Unlock admin account and reset password to admin123"""
 
     # Database connection
-    conn = await asyncpg.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        port=int(os.getenv("DB_PORT", 5432)),
-        database=os.getenv("DB_NAME", "tradingbot"),
-        user=os.getenv("DB_USER", "trading"),
-        password=os.getenv("DB_PASSWORD", "trading123")
-    )
+    # Try to get connection from DATABASE_URL first (Docker environment)
+    database_url = os.getenv("DATABASE_URL")
+
+    if database_url:
+        print(f"Connecting using DATABASE_URL...")
+        conn = await asyncpg.connect(database_url)
+    else:
+        print(f"Connecting using individual DB env vars...")
+        conn = await asyncpg.connect(
+            host=os.getenv("DB_HOST", "postgres"),  # Changed default from localhost to postgres
+            port=int(os.getenv("DB_PORT", 5432)),
+            database=os.getenv("DB_NAME", "tradingbot"),
+            user=os.getenv("DB_USER", "bot_user"),  # Changed to match docker-compose
+            password=os.getenv("DB_PASSWORD", "bot_password")  # Changed to match docker-compose
+        )
 
     try:
         # Generate new password hash for "admin123"
