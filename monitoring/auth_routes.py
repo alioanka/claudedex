@@ -144,7 +144,6 @@ class AuthRoutes:
                 'error': str(e)
             }, status=500)
 
-    @require_auth
     async def api_get_session(self, request):
         """Get current session info"""
         user = request['user']
@@ -153,8 +152,6 @@ class AuthRoutes:
             'user': user.to_dict()
         })
 
-    @require_auth
-    @require_admin
     async def api_get_users(self, request):
         """Get all users (admin only)"""
         try:
@@ -170,8 +167,6 @@ class AuthRoutes:
                 'error': str(e)
             }, status=500)
 
-    @require_auth
-    @require_admin
     async def api_create_user(self, request):
         """Create new user (admin only)"""
         try:
@@ -222,8 +217,6 @@ class AuthRoutes:
                 'error': str(e)
             }, status=500)
 
-    @require_auth
-    @require_admin
     async def api_update_user(self, request):
         """Update user (admin only)"""
         try:
@@ -255,8 +248,6 @@ class AuthRoutes:
                 'error': str(e)
             }, status=500)
 
-    @require_auth
-    @require_admin
     async def api_delete_user(self, request):
         """Delete/deactivate user (admin only)"""
         try:
@@ -281,7 +272,6 @@ class AuthRoutes:
                 'error': str(e)
             }, status=500)
 
-    @require_auth
     async def api_change_password(self, request):
         """Change own password"""
         try:
