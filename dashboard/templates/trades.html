@@ -113,12 +113,13 @@
                         <th>Status</th>
                         <th>P&L</th>
                         <th>Network</th>
+                        <th>Strategy</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody id="tradesTableBody">
                     <tr>
-                        <td colspan="10" class="text-center">Loading trades...</td>
+                        <td colspan="11" class="text-center">Loading trades...</td>
                     </tr>
                 </tbody>
             </table>
@@ -147,13 +148,13 @@ async function loadTrades() {
             displayTrades(allTrades);
         } else {
             console.error('Failed to load trades:', response.error);
-            document.getElementById('tradesTableBody').innerHTML = 
-                '<tr><td colspan="9" class="text-center text-danger">Failed to load trades</td></tr>';
+            document.getElementById('tradesTableBody').innerHTML =
+                '<tr><td colspan="11" class="text-center text-danger">Failed to load trades</td></tr>';
         }
     } catch (error) {
         console.error('Error loading trades:', error);
-        document.getElementById('tradesTableBody').innerHTML = 
-            '<tr><td colspan="9" class="text-center text-danger">Error loading trades</td></tr>';
+        document.getElementById('tradesTableBody').innerHTML =
+            '<tr><td colspan="11" class="text-center text-danger">Error loading trades</td></tr>';
     }
 }
 
@@ -174,9 +175,9 @@ function updateTradeSummary(trades) {
 
 function displayTrades(trades) {
     const tbody = document.getElementById('tradesTableBody');
-    
+
     if (trades.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" class="text-center">No trades found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" class="text-center">No trades found</td></tr>';
         return;
     }
     
@@ -188,7 +189,11 @@ function displayTrades(trades) {
     // ✅ Get network from trade data
     const network = trade.network || trade.chain || 'unknown';
     const networkDisplay = network.toUpperCase();
-    
+
+    // ✅ Get strategy from trade data
+    const strategy = trade.strategy || 'unknown';
+    const strategyDisplay = strategy.charAt(0).toUpperCase() + strategy.slice(1);
+
     return `
         <tr>
             <td>${formatTime(trade.entry_timestamp)}</td>
@@ -206,6 +211,7 @@ function displayTrades(trades) {
                 ${trade.status === 'closed' ? formatCurrency(pnl) : '-'}
             </td>
             <td><span class="badge badge-info">${networkDisplay}</span></td>
+            <td><span class="badge badge-secondary">${strategyDisplay}</span></td>
             <td>
                 <button class="btn btn-sm btn-secondary" onclick="viewTradeDetails('${trade.id || trade.trade_id}')">
                     <i class="fas fa-eye"></i>
@@ -292,6 +298,9 @@ function viewTradeDetails(tradeId) {
     const pnl = parseFloat(trade.profit_loss || 0);
     const pnlClass = pnl >= 0 ? 'text-success' : 'text-danger';
     
+    const strategy = trade.strategy || 'unknown';
+    const strategyDisplay = strategy.charAt(0).toUpperCase() + strategy.slice(1);
+
     const modalHtml = `
         <div class="modal-content">
             <div class="modal-header">
@@ -306,7 +315,8 @@ function viewTradeDetails(tradeId) {
                         <strong>Token:</strong> ${trade.token_symbol}<br>
                         <strong>Network:</strong> ${(trade.network || trade.chain || 'unknown').toUpperCase()}<br>
                         <strong>Side:</strong> ${(trade.side || 'unknown').toUpperCase()}<br>
-                        <strong>Status:</strong> ${trade.status || 'unknown'}
+                        <strong>Status:</strong> ${trade.status || 'unknown'}<br>
+                        <strong>Strategy:</strong> ${strategyDisplay}
                     </div>
                     <div>
                         <strong>Entry Price:</strong> ${formatCurrency(trade.entry_price)}<br>
