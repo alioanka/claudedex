@@ -29,6 +29,7 @@ class ConfigType(Enum):
     """Configuration types"""
     GENERAL = "general"
     TRADING = "trading"
+    STRATEGIES = "strategies"
     SECURITY = "security"
     DATABASE = "database"
     API = "api"
@@ -113,11 +114,34 @@ class TradingConfig(BaseModel):
     dex_fee_bps: int = 30
     min_opportunity_score: float = 0.25
     solana_min_opportunity_score: float = 0.20
-    strategies: Dict[str, Dict[str, Any]] = {
-        'momentum': {'enabled': True, 'lookback_period': 20},
-        'scalping': {'enabled': True, 'profit_target': 0.02},
-        'ai_strategy': {'enabled': False}
-    }
+
+class StrategiesConfig(BaseModel):
+    """Trading strategies configuration"""
+    # Momentum Strategy
+    momentum_enabled: bool = True
+    momentum_lookback_period: int = 20
+    momentum_min_momentum_score: float = 0.5
+    momentum_volume_threshold: float = 10000
+
+    # Scalping Strategy
+    scalping_enabled: bool = True
+    scalping_profit_target: float = 0.02
+    scalping_max_hold_time: int = 5  # minutes
+    scalping_min_spread: float = 0.001
+
+    # AI Strategy
+    ai_enabled: bool = True  # Changed from False to True
+    ai_ml_confidence_threshold: float = 0.65
+    ai_min_pump_probability: float = 0.50
+    ai_ensemble_min_models: int = 3
+    ai_use_lstm: bool = True
+    ai_use_xgboost: bool = True
+    ai_use_lightgbm: bool = True
+
+    # Strategy Selection
+    strategy_selection_mode: str = "auto"  # auto, single, multi
+    default_strategy: str = "momentum"  # Used when mode is "single"
+    multi_strategy_enabled: bool = True  # Allow multiple strategies per opportunity
 
 class ChainConfig(BaseModel):
     enabled_chains: str = "ethereum,bsc,base,arbitrum,solana"
@@ -309,6 +333,7 @@ class ConfigManager:
             ConfigType.PORTFOLIO: PortfolioConfig,
             ConfigType.RISK_MANAGEMENT: RiskManagementConfig,
             ConfigType.TRADING: TradingConfig,
+            ConfigType.STRATEGIES: StrategiesConfig,
             ConfigType.CHAIN: ChainConfig,
             ConfigType.POSITION_MANAGEMENT: PositionManagementConfig,
             ConfigType.VOLATILITY: VolatilityConfig,
@@ -1034,6 +1059,10 @@ class ConfigManager:
     def get_trading_config(self) -> TradingConfig:
         """Get trading configuration"""
         return self.configs.get(ConfigType.TRADING, TradingConfig())
+
+    def get_strategies_config(self) -> StrategiesConfig:
+        """Get strategies configuration"""
+        return self.configs.get(ConfigType.STRATEGIES, StrategiesConfig())
 
     def get_security_config(self) -> SecurityConfig:
         """Get security configuration"""

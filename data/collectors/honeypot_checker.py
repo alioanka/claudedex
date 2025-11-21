@@ -100,6 +100,10 @@ class HoneypotChecker:
             if not rpc_urls:
                 continue
 
+            # Skip Solana - it's not an EVM chain and doesn't use Web3
+            if chain_name.lower() == 'solana':
+                continue
+
             # --- FIX: Use the correct chain enum and URLs from config ---
             try:
                 chain_enum = Chain[chain_name.upper()]
