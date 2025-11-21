@@ -13,7 +13,7 @@ class StrategyManager:
     def __init__(self, config: Dict):
         """
         Initialize strategy manager
-        
+
         Args:
             config: Strategy configuration dictionary
         """
@@ -21,6 +21,13 @@ class StrategyManager:
         self.strategies = {}
         self.parameters = {}
         self.active_strategies = set()
+
+        # 🆕 Track strategy usage statistics
+        self.strategy_stats = {
+            'momentum': 0,
+            'scalping': 0,
+            'ai': 0
+        }
         
     async def initialize(self):
         """Initialize all strategies"""
@@ -52,7 +59,7 @@ class StrategyManager:
         
     def select_strategy(self, opportunity: Any) -> str:
         """
-        Select best strategy for opportunity (FIXED: Multi-strategy support)
+        Select best strategy for opportunity (IMPROVED: Balanced multi-strategy support)
 
         Args:
             opportunity: Trading opportunity
@@ -60,27 +67,76 @@ class StrategyManager:
         Returns:
             Strategy name
         """
-        # CRITICAL FIX: Improved strategy selection logic
+        # 🆕 IMPROVED STRATEGY SELECTION LOGIC
+        # Now uses a priority system with better balance across all strategies
 
-        # Fix scalping config conflict: use volatility instead of liquidity
-        # Old bug: selected scalping for liquidity < 100k, but scalping requires >= 100k
-        # New: select scalping for high volatility + tight spreads
-        if hasattr(opportunity, 'volatility') and hasattr(opportunity, 'spread'):
-            if opportunity.volatility > 0.05 and opportunity.spread < 0.01:
+        selected_strategy = None
+
+        # Priority 1: Scalping for HIGH volatility + TIGHT spreads + GOOD liquidity
+        # Scalping works best with: rapid price moves, low slippage, deep liquidity
+        if (hasattr(opportunity, 'volatility') and hasattr(opportunity, 'spread') and
+            hasattr(opportunity, 'liquidity')):
+
+            # Scalping conditions (more balanced):
+            # - High volatility (>3% for quick gains)
+            # - Tight spread (<1% for low cost)
+            # - Sufficient liquidity (>$50k for execution)
+            if (opportunity.volatility > 0.03 and
+                opportunity.spread < 0.01 and
+                opportunity.liquidity > 50000):
+
                 if 'scalping' in self.active_strategies:
-                    return 'scalping'
+                    selected_strategy = 'scalping'
+                    logger.debug(
+                        f"Scalping selected: vol={opportunity.volatility:.2%}, "
+                        f"spread={opportunity.spread:.2%}, liq=${opportunity.liquidity:,.0f}"
+                    )
 
-        # Use AI for medium confidence opportunities (if available)
-        if 0.50 <= opportunity.pump_probability <= 0.75:
+        # Priority 2: AI for MEDIUM confidence (sweet spot for ML models)
+        # AI works best when probability is uncertain but positive
+        if selected_strategy is None:
+            # Wider range for AI: 40%-80% (catches more opportunities)
+            if 0.40 <= opportunity.pump_probability <= 0.80:
+                if 'ai' in self.active_strategies:
+                    selected_strategy = 'ai'
+                    logger.debug(
+                        f"AI selected: pump_prob={opportunity.pump_probability:.2%} "
+                        f"(medium confidence range)"
+                    )
+
+        # Priority 3: Momentum for VERY HIGH confidence
+        # Momentum works best for clear trends with strong signals
+        if selected_strategy is None:
+            # Only use momentum for VERY high confidence (>75%)
+            if opportunity.pump_probability > 0.75:
+                if 'momentum' in self.active_strategies:
+                    selected_strategy = 'momentum'
+                    logger.debug(
+                        f"Momentum selected: pump_prob={opportunity.pump_probability:.2%} "
+                        f"(high confidence)"
+                    )
+
+        # Priority 4: Default strategy based on availability
+        if selected_strategy is None:
+            # Prefer AI for lower confidence, then momentum, then scalping
             if 'ai' in self.active_strategies:
-                return 'ai'
+                selected_strategy = 'ai'
+                logger.debug("AI selected (default for low-medium confidence)")
+            elif 'momentum' in self.active_strategies:
+                selected_strategy = 'momentum'
+                logger.debug("Momentum selected (default fallback)")
+            elif 'scalping' in self.active_strategies:
+                selected_strategy = 'scalping'
+                logger.debug("Scalping selected (only available)")
+            else:
+                selected_strategy = 'momentum'  # Ultimate fallback
+                logger.warning("No strategies active, using momentum as ultimate fallback")
 
-        # Use momentum for high confidence opportunities
-        if opportunity.pump_probability > 0.70:
-            return 'momentum'
+        # 🆕 Track statistics
+        if selected_strategy in self.strategy_stats:
+            self.strategy_stats[selected_strategy] += 1
 
-        # Default to AI if available, otherwise momentum
-        return 'ai' if 'ai' in self.active_strategies else 'momentum'
+        return selected_strategy
 
     def select_strategies_multi(self, opportunity: Any) -> List[str]:
         """
@@ -119,15 +175,62 @@ class StrategyManager:
     def get_parameters(self) -> Dict:
         """Get current strategy parameters"""
         return self.parameters.copy()
-        
+
     async def update_parameters(self, new_params: Dict):
         """Update strategy parameters"""
         self.parameters.update(new_params)
-        
+
         # Update individual strategies (only if they have the method)
         for name, strategy in self.strategies.items():
             if name in new_params and hasattr(strategy, 'update_parameters'):
                 await strategy.update_parameters(new_params[name])
+
+    def get_strategy_stats(self) -> Dict:
+        """
+        Get strategy usage statistics
+
+        Returns:
+            Dict with strategy usage counts and percentages
+        """
+        total = sum(self.strategy_stats.values())
+
+        if total == 0:
+            return {
+                'total_opportunities': 0,
+                'strategies': {name: {'count': 0, 'percentage': 0.0}
+                              for name in self.strategy_stats.keys()}
+            }
+
+        stats = {
+            'total_opportunities': total,
+            'strategies': {}
+        }
+
+        for name, count in self.strategy_stats.items():
+            stats['strategies'][name] = {
+                'count': count,
+                'percentage': (count / total) * 100
+            }
+
+        return stats
+
+    def log_strategy_stats(self):
+        """Log current strategy usage statistics"""
+        stats = self.get_strategy_stats()
+
+        if stats['total_opportunities'] == 0:
+            logger.info("📊 Strategy Stats: No opportunities processed yet")
+            return
+
+        logger.info(
+            f"📊 STRATEGY USAGE STATISTICS (Total: {stats['total_opportunities']} opportunities):\n"
+            f"   🎯 Momentum:  {stats['strategies']['momentum']['count']:3d} "
+            f"({stats['strategies']['momentum']['percentage']:5.1f}%)\n"
+            f"   ⚡ Scalping:  {stats['strategies']['scalping']['count']:3d} "
+            f"({stats['strategies']['scalping']['percentage']:5.1f}%)\n"
+            f"   🤖 AI:        {stats['strategies']['ai']['count']:3d} "
+            f"({stats['strategies']['ai']['percentage']:5.1f}%)"
+        )
 
 # Export main classes
 __all__ = ['StrategyManager']

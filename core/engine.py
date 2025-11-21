@@ -85,7 +85,7 @@ class TradingOpportunity:
     entry_strategy: str
     metadata: Dict = field(default_factory=dict)
     timestamp: datetime = field(default_factory=datetime.now)
-    
+
     @property
     def score(self) -> float:
         """Calculate overall opportunity score"""
@@ -95,6 +95,51 @@ class TradingOpportunity:
             (1 - self.rug_probability) * 0.25 +
             min(self.expected_return / 100, 1) * 0.2
         )
+
+    @property
+    def volatility(self) -> float:
+        """
+        Calculate volatility for strategy selection
+
+        Uses price change metrics from metadata if available,
+        otherwise estimates from volume/liquidity ratio
+        """
+        # Try to get from metadata first
+        if 'volatility' in self.metadata:
+            return self.metadata['volatility']
+
+        # Estimate from volume/liquidity ratio
+        # High volume relative to liquidity indicates high volatility
+        if self.liquidity > 0:
+            vol_estimate = (self.volume_24h / self.liquidity) * 0.1
+            return min(vol_estimate, 1.0)  # Cap at 100%
+
+        return 0.0
+
+    @property
+    def spread(self) -> float:
+        """
+        Calculate bid-ask spread for strategy selection
+
+        Uses spread from metadata if available,
+        otherwise estimates from liquidity (high liquidity = low spread)
+        """
+        # Try to get from metadata first
+        if 'spread' in self.metadata:
+            return self.metadata['spread']
+
+        # Estimate from liquidity (inverse relationship)
+        # High liquidity = tight spread, low liquidity = wide spread
+        if self.liquidity > 100000:  # >$100k liquidity
+            return 0.003  # 0.3% spread
+        elif self.liquidity > 50000:  # >$50k liquidity
+            return 0.007  # 0.7% spread
+        elif self.liquidity > 10000:  # >$10k liquidity
+            return 0.015  # 1.5% spread
+        else:
+            return 0.030  # 3.0% spread (high)
+
+        return 0.01  # Default 1%
 
 @dataclass
 class ClosedPositionRecord:
@@ -744,8 +789,9 @@ class TradingBotEngine:
                 opportunity_score=score
             )
 
-            # Create opportunity
-            opportunity = TradingOpportunity(
+            # 🆕 CRITICAL FIX: Create opportunity FIRST (needed for strategy selection)
+            # Create a temporary opportunity for strategy selection
+            temp_opportunity = TradingOpportunity(
                 token_address=pair.get('token_address', ''),
                 pair_address=pair.get('pair_address', ''),
                 chain=pair.get('chain', 'ethereum'),
@@ -757,8 +803,8 @@ class TradingBotEngine:
                 pump_probability=score * 0.8,
                 rug_probability=0.2,
                 expected_return=score * 100,
-                recommended_position_size=position_size,  # ✅ FROM CONFIG!
-                entry_strategy='momentum',
+                recommended_position_size=position_size,
+                entry_strategy='momentum',  # Temporary, will be updated
                 metadata={
                     'pair': pair,
                     'risk_score': risk_score,
@@ -767,10 +813,30 @@ class TradingBotEngine:
                     'liquidity_depth': liquidity_depth,
                     'contract_safety': contract_safety,
                     'holder_distribution': holder_dist,
-                    'token_symbol': token_symbol
+                    'token_symbol': token_symbol,
+                    # Add volatility/spread if available from patterns
+                    'volatility': patterns.get('volatility', 0) if patterns else 0,
+                    'spread': pair.get('spread', 0)
                 },
                 timestamp=datetime.utcnow()
             )
+
+            # 🆕 CRITICAL FIX: Use StrategyManager to select appropriate strategy
+            selected_strategy = self.strategy_manager.select_strategy(temp_opportunity)
+
+            # Log strategy selection with details
+            logger.info(
+                f"   📊 STRATEGY SELECTION for {token_symbol}:\n"
+                f"      Pump Probability: {temp_opportunity.pump_probability:.2%}\n"
+                f"      Volatility: {temp_opportunity.volatility:.2%}\n"
+                f"      Spread: {temp_opportunity.spread:.2%}\n"
+                f"      Liquidity: ${temp_opportunity.liquidity:,.0f}\n"
+                f"      ➜ Selected: {selected_strategy.upper()}"
+            )
+
+            # Update the opportunity with the selected strategy
+            opportunity = temp_opportunity
+            opportunity.entry_strategy = selected_strategy
             
             return opportunity
             
@@ -1537,7 +1603,19 @@ class TradingBotEngine:
                     f"💼 Portfolio: {len(positions_snapshot)} positions, "
                     f"Value: ${total_value:.2f}, P&L: ${total_pnl:.2f}{chain_summary}"
                 )
-                
+
+                # 🆕 Log strategy statistics every 10 iterations (to avoid spam)
+                if hasattr(self, '_position_monitor_iteration'):
+                    self._position_monitor_iteration += 1
+                else:
+                    self._position_monitor_iteration = 1
+
+                if self._position_monitor_iteration % 10 == 0:
+                    try:
+                        self.strategy_manager.log_strategy_stats()
+                    except Exception as e:
+                        logger.debug(f"Could not log strategy stats: {e}")
+
                 # Get interval from config
                 update_interval = self.config.get('position_update_interval_seconds', 10)
                 await asyncio.sleep(update_interval)
