@@ -99,7 +99,7 @@ INSERT INTO config_settings (config_type, key, value, value_type, description, i
 ('portfolio', 'max_position_size_pct', '0.10', 'float', 'Maximum position size as % of portfolio', TRUE, FALSE),
 ('portfolio', 'max_positions', '40', 'int', 'Maximum number of positions', TRUE, FALSE),
 ('portfolio', 'max_positions_per_chain', '10', 'int', 'Maximum positions per blockchain', TRUE, FALSE),
-('portfolio', 'max_concurrent_positions', '4', 'int', 'Maximum concurrent open positions', TRUE, FALSE);
+('portfolio', 'max_concurrent_positions', '4', 'int', 'Maximum concurrent open positions', TRUE, FALSE)
 ON CONFLICT (config_type, key) DO NOTHING;
 
 -- Risk Management Configuration
