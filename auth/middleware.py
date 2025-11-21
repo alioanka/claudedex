@@ -136,7 +136,7 @@ async def auth_middleware_factory(app: web.Application, handler: Callable) -> Ca
             return await handler(request)
 
         # For all other routes, authentication is required
-        if not hasattr(app, 'auth_service'):
+        if 'auth_service' not in app:
             # Auth service not initialized - this is a critical error
             logger.error(f"🚨 SECURITY: Auth service not initialized, blocking access to {request.path}")
             if request.path.startswith('/api/'):
