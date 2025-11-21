@@ -111,45 +111,61 @@ class DashboardEndpoints:
 
     async def _initialize_auth_async(self):
         """Initialize authentication system asynchronously"""
-        # Wait a bit for database to be ready
-        await asyncio.sleep(2)
-
         if not AUTH_AVAILABLE:
-            logger.warning("⚠️  Authentication system not available - dashboard will run without auth")
-            logger.warning("   Install required packages: pip install bcrypt pyotp")
+            logger.error("❌ Authentication system not available - bcrypt/pyotp not installed")
+            logger.error("   Install required packages: pip install bcrypt pyotp")
+            logger.error("   SECURITY WARNING: Dashboard will be UNSECURED!")
+            return
+
+        # Wait for database to be ready (with retries)
+        max_retries = 10
+        retry_delay = 1
+
+        for attempt in range(max_retries):
+            if self.db and hasattr(self.db, 'pool') and self.db.pool:
+                logger.info(f"✅ Database connection ready (attempt {attempt + 1}/{max_retries})")
+                break
+
+            logger.warning(f"⏳ Waiting for database connection... (attempt {attempt + 1}/{max_retries})")
+            await asyncio.sleep(retry_delay)
+        else:
+            logger.error("❌ Database not available after retries - CANNOT INITIALIZE AUTH")
+            logger.error("   SECURITY WARNING: Dashboard will be UNSECURED!")
             return
 
         try:
-            if self.db and hasattr(self.db, 'pool') and self.db.pool:
-                logger.info("🔐 Initializing authentication system...")
+            logger.info("🔐 Initializing authentication system...")
 
-                # Create auth service
-                self.auth_service = AuthService(
-                    db_pool=self.db.pool,
-                    session_timeout=3600,  # 1 hour
-                    max_failed_attempts=5
-                )
+            # Create auth service
+            self.auth_service = AuthService(
+                db_pool=self.db.pool,
+                session_timeout=3600,  # 1 hour
+                max_failed_attempts=5
+            )
 
-                # Store in app for middleware access
-                self.app['auth_service'] = self.auth_service
+            # Store in app for middleware access
+            self.app['auth_service'] = self.auth_service
 
-                # Setup auth routes (this will override the placeholder)
-                AuthRoutes(self.app, self.auth_service)
+            # Setup auth routes
+            AuthRoutes(self.app, self.auth_service)
 
-                # Add auth middleware (insert at beginning)
-                self.app.middlewares.insert(0, auth_middleware_factory)
+            # Add auth middleware (insert at beginning of middleware stack)
+            # Remove if already added (to avoid duplicates)
+            self.app.middlewares = [m for m in self.app.middlewares if m.__name__ != 'middleware']
+            self.app.middlewares.insert(0, auth_middleware_factory)
 
-                self.auth_enabled = True
-                logger.info("✅ Authentication system initialized successfully")
-                logger.info("   Login at: http://{}:{}/login".format(self.host, self.port))
-                logger.info("   Default credentials: admin/admin123 (CHANGE IMMEDIATELY!)")
+            self.auth_enabled = True
 
-            else:
-                logger.warning("⚠️  Database not available - auth system disabled")
+            logger.info("=" * 80)
+            logger.info("✅ AUTHENTICATION SYSTEM ACTIVE")
+            logger.info(f"   Login URL: http://{self.host}:{self.port}/login")
+            logger.info("   Default credentials: admin / admin123")
+            logger.info("   ⚠️  CHANGE PASSWORD IMMEDIATELY AFTER FIRST LOGIN!")
+            logger.info("=" * 80)
 
         except Exception as e:
             logger.error(f"❌ Failed to initialize authentication system: {e}", exc_info=True)
-            logger.warning("   Dashboard will run without authentication")
+            logger.error("   SECURITY WARNING: Dashboard will be UNSECURED!")
             self.auth_enabled = False
 
     async def login_placeholder(self, request):
