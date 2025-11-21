@@ -55,12 +55,58 @@ function initDashboard() {
             notificationPanel.classList.remove('active');
         });
     }
-    
+
+    // Setup user menu
+    const userMenuBtn = document.getElementById('userMenuBtn');
+    const userMenuDropdown = document.getElementById('userMenuDropdown');
+
+    if (userMenuBtn && userMenuDropdown) {
+        userMenuBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            userMenuDropdown.classList.toggle('active');
+        });
+
+        // Close menu when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!userMenuBtn.contains(e.target) && !userMenuDropdown.contains(e.target)) {
+                userMenuDropdown.classList.remove('active');
+            }
+        });
+    }
+
+    // Setup logout button
+    const logoutBtn = document.getElementById('logoutBtn');
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', handleLogout);
+    }
+
     // Setup bot controls
     setupBotControls();
     
     // Start periodic updates
     startPeriodicUpdates();
+}
+
+// Logout handler
+async function handleLogout() {
+    try {
+        const response = await apiPost('/api/auth/logout', {});
+        if (response.success) {
+            showToast('success', 'Logged out successfully');
+            setTimeout(() => {
+                window.location.href = '/login';
+            }, 500);
+        } else {
+            showToast('error', 'Logout failed');
+        }
+    } catch (error) {
+        console.error('Logout error:', error);
+        showToast('error', 'Logout error');
+        // Redirect anyway
+        setTimeout(() => {
+            window.location.href = '/login';
+        }, 500);
+    }
 }
 
 // Theme management

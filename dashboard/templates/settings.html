@@ -17,7 +17,8 @@
 
 <!-- Settings Tabs -->
 <div class="tabs">
-    <button class="tab-btn active category-tab" data-category="trading">Trading</button>
+    <button class="tab-btn active category-tab" data-category="account">Account</button>
+    <button class="tab-btn category-tab" data-category="trading">Trading</button>
     <button class="tab-btn category-tab" data-category="risk">Risk</button>
     <button class="tab-btn category-tab" data-category="api">API</button>
     <button class="tab-btn category-tab" data-category="monitoring">Monitoring</button>
@@ -26,7 +27,38 @@
 
 <!-- Settings Sections -->
 <div id="settings-container">
-    <div id="trading-settings" class="settings-section card">
+    <div id="account-settings" class="settings-section card">
+        <div class="card-header"><h3 class="card-title">Account & Security</h3></div>
+        <div class="card-body">
+            <div class="setting-group">
+                <h4>Change Password</h4>
+                <form id="changePasswordForm">
+                    <div class="form-group">
+                        <label for="currentPassword">Current Password</label>
+                        <input type="password" id="currentPassword" name="currentPassword"
+                               class="form-control" required autocomplete="current-password">
+                    </div>
+                    <div class="form-group">
+                        <label for="newPassword">New Password</label>
+                        <input type="password" id="newPassword" name="newPassword"
+                               class="form-control" required minlength="8" autocomplete="new-password">
+                        <small class="form-text">Minimum 8 characters</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="confirmPassword">Confirm New Password</label>
+                        <input type="password" id="confirmPassword" name="confirmPassword"
+                               class="form-control" required minlength="8" autocomplete="new-password">
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-key"></i> Change Password
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div id="trading-settings" class="settings-section card" style="display: none;">
         <div class="card-header"><h3 class="card-title">Trading Configuration</h3></div>
         <div class="card-body" id="trading-settings-form"></div>
     </div>

@@ -24,6 +24,12 @@ class SettingsManager {
         if (saveButton) {
             saveButton.addEventListener('click', () => this.saveAllSettings());
         }
+
+        // Password change form
+        const passwordForm = document.getElementById('changePasswordForm');
+        if (passwordForm) {
+            passwordForm.addEventListener('submit', (e) => this.handlePasswordChange(e));
+        }
     }
 
     switchTab(event) {
@@ -41,6 +47,16 @@ class SettingsManager {
         const section = document.getElementById(sectionId);
         if (section) {
             section.style.display = 'block';
+        }
+
+        // Hide/show save buttons based on tab
+        const pageActions = document.querySelector('.page-actions');
+        if (pageActions) {
+            if (category === 'account') {
+                pageActions.style.display = 'none';
+            } else {
+                pageActions.style.display = 'flex';
+            }
         }
     }
 
@@ -192,6 +208,51 @@ class SettingsManager {
         } catch (error) {
             showToast('error', `Error saving ${category}: ${error.message}`);
             return false;
+        }
+    }
+
+    async handlePasswordChange(event) {
+        event.preventDefault();
+
+        const currentPassword = document.getElementById('currentPassword').value;
+        const newPassword = document.getElementById('newPassword').value;
+        const confirmPassword = document.getElementById('confirmPassword').value;
+
+        // Validate passwords match
+        if (newPassword !== confirmPassword) {
+            showToast('error', 'New passwords do not match');
+            return;
+        }
+
+        // Validate password length
+        if (newPassword.length < 8) {
+            showToast('error', 'New password must be at least 8 characters');
+            return;
+        }
+
+        try {
+            showToast('info', 'Changing password...');
+
+            const response = await apiPost('/api/auth/change-password', {
+                old_password: currentPassword,
+                new_password: newPassword
+            });
+
+            if (response.success) {
+                showToast('success', 'Password changed successfully! You will be logged out shortly.');
+
+                // Clear form
+                document.getElementById('changePasswordForm').reset();
+
+                // Redirect to login after 2 seconds
+                setTimeout(() => {
+                    window.location.href = '/login';
+                }, 2000);
+            } else {
+                showToast('error', response.error || 'Failed to change password');
+            }
+        } catch (error) {
+            showToast('error', `Error changing password: ${error.message}`);
         }
     }
 }
