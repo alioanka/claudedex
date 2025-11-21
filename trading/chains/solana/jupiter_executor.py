@@ -54,7 +54,7 @@ class JupiterExecutor(BaseExecutor):
             config: Flat config dict with keys like:
                 - rpc_url: Solana RPC endpoint
                 - private_key: Base58 encoded private key
-                - max_slippage_bps: Maximum slippage in basis points (default: 500 = 5%)
+                - max_slippage_bps: Maximum slippage in basis points (default: 50 = 0.5%)
                 - enabled: Whether Solana trading is enabled
         """
         super().__init__(config, db_manager)

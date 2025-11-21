@@ -147,13 +147,13 @@ class ConfigValidator:
             result.add_error("min_liquidity_threshold must be a positive number")
         elif min_liquidity < 10000:  # $10k
             result.add_warning("min_liquidity_threshold below $10k increases rug pull risk")
-        
+
         # Gas price validation
         max_gas_price = config.get('max_gas_price', 0)
         if not isinstance(max_gas_price, int) or max_gas_price <= 0:
             result.add_error("max_gas_price must be a positive integer")
-        elif max_gas_price > 500:  # 500 Gwei
-            result.add_warning("max_gas_price above 500 Gwei is extremely high")
+        elif max_gas_price > 100:  # FIXED: Changed from 500 to 100 Gwei warning threshold
+            result.add_warning(f"max_gas_price of {max_gas_price} Gwei is very high (recommended: 50 Gwei)")
         
         # DEX validation
         enabled_dexes = config.get('enabled_dexes', [])

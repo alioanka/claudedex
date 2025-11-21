@@ -41,7 +41,7 @@ async def test_jupiter_executor():
     config = {
         'rpc_url': os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com'),
         'private_key': os.getenv('SOLANA_PRIVATE_KEY', ''),
-        'max_slippage_bps': 500,
+        'max_slippage_bps': 50,  # FIXED: Was 500 (5%), now 50 (0.5%)
         'dry_run': True  # Always use dry run for testing
     }
     

@@ -84,7 +84,7 @@ class DirectDEXExecutor(BaseExecutor):
         
         # Gas optimization
         self.gas_price_strategy = config.get('gas_strategy', 'fast')
-        self.max_gas_price = config.get('max_gas_price', 500)  # gwei
+        self.max_gas_price = config.get('max_gas_price', 50)  # gwei - FIXED: Was 500
         self.gas_buffer = config.get('gas_buffer', 1.2)
         
         # Sandwich protection

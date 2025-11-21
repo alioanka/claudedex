@@ -222,7 +222,7 @@ TRAILING_STOP_ACTIVATION = Decimal("0.05")  # Activate at 5% profit
 DEFAULT_SLIPPAGE = Decimal("0.02")  # 2%
 MAX_SLIPPAGE = Decimal("0.05")  # 5%
 DEFAULT_GAS_LIMIT = 500000
-MAX_GAS_PRICE_GWEI = 500
+MAX_GAS_PRICE_GWEI = 50  # FIXED: Was 500 (=$150-300/tx), now 50 (=$15-30/tx)
 PRIORITY_FEE_GWEI = 2
 
 # ============= ML Model Parameters =============

@@ -335,12 +335,12 @@ class TradeExecutor(BaseExecutor):
 
             w3 = self.w3  # ✅ ADD THIS LINE
             current_gas_price = w3.eth.gas_price
-            max_gas_gwei = w3.to_wei(self.config.get('max_gas_price', 500), 'gwei')
+            max_gas_gwei = w3.to_wei(self.config.get('max_gas_price', 50), 'gwei')  # FIXED: Was 500
 
             if current_gas_price > max_gas_gwei:
                 raise Exception(
                     f"Gas price too high: {w3.from_wei(current_gas_price, 'gwei')} > "
-                    f"{self.config.get('max_gas_price', 500)} Gwei"
+                    f"{self.config.get('max_gas_price', 50)} Gwei"  # FIXED: Was 500
                 )
 
             # Execute trade

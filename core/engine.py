@@ -163,7 +163,7 @@ class TradingBotEngine:
             'web3_provider_url': config.get('web3', {}).get('provider_url'),
             'private_key': config.get('security', {}).get('private_key'),
             'chain_id': config.get('web3', {}).get('chain_id', 1),
-            'max_gas_price': config.get('web3', {}).get('max_gas_price', 500),
+            'max_gas_price': config.get('web3', {}).get('max_gas_price', 50),  # FIXED: Was 500
             'gas_limit': config.get('web3', {}).get('gas_limit', 500000),
             'max_retries': 3,
             'retry_delay': 1,
