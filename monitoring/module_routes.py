@@ -51,6 +51,7 @@ class ModuleRoutes:
         # API endpoints
         app.router.add_get('/api/modules', self.get_modules_status)
         app.router.add_get('/api/modules/{module_name}', self.get_module_status)
+        app.router.add_post('/api/modules/{module_name}/start', self.start_module)
         app.router.add_post('/api/modules/{module_name}/enable', self.enable_module)
         app.router.add_post('/api/modules/{module_name}/disable', self.disable_module)
         app.router.add_post('/api/modules/{module_name}/pause', self.pause_module)
@@ -369,6 +370,39 @@ class ModuleRoutes:
 
         except Exception as e:
             self.logger.error(f"Error disabling module: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    async def start_module(self, request: web.Request) -> web.Response:
+        """
+        Start a module
+
+        Args:
+            request: HTTP request with module_name in path
+
+        Returns:
+            web.Response: JSON response
+        """
+        try:
+            module_name = request.match_info['module_name']
+
+            success = await self.module_manager.start_module(module_name)
+
+            if success:
+                return web.json_response({
+                    'success': True,
+                    'message': f'Module {module_name} started'
+                })
+            else:
+                return web.json_response({
+                    'success': False,
+                    'error': f'Failed to start module {module_name}'
+                }, status=400)
+
+        except Exception as e:
+            self.logger.error(f"Error starting module: {e}", exc_info=True)
             return web.json_response({
                 'success': False,
                 'error': str(e)

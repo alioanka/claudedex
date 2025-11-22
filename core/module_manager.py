@@ -285,6 +285,20 @@ class ModuleManager:
             return True
         return False
 
+    async def start_module(self, module_name: str) -> bool:
+        """Start a stopped or paused module"""
+        if module_name in self.modules:
+            module = self.modules[module_name]
+            if module.status == ModuleStatus.STOPPED or module.status == ModuleStatus.PAUSED:
+                await module.start()
+                return True
+            elif module.status == ModuleStatus.DISABLED:
+                # Need to enable first
+                await self.enable_module(module_name)
+                await module.start()
+                return True
+        return False
+
     def get_module(self, module_name: str) -> Optional[BaseModule]:
         """
         Get a module by name
