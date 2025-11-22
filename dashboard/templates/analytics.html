@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Analytics - ClaudeDex</title>
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link rel="stylesheet" href="/static/css/analytics.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <h2>🤖 ClaudeDex</h2>
+            </div>
+            <nav class="nav-menu">
+                <a href="/" class="nav-item">📊 Dashboard</a>
+                <a href="/modules" class="nav-item">📦 Modules</a>
+                <a href="/analytics" class="nav-item active">📈 Analytics</a>
+                <a href="/positions" class="nav-item">💼 Positions</a>
+                <a href="/settings" class="nav-item">⚙️ Settings</a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="page-header">
+                <h1>📈 Advanced Analytics</h1>
+                <div class="header-actions">
+                    <select id="timeframe-selector" class="timeframe-select">
+                        <option value="1h">1 Hour</option>
+                        <option value="4h">4 Hours</option>
+                        <option value="24h" selected>24 Hours</option>
+                        <option value="7d">7 Days</option>
+                        <option value="30d">30 Days</option>
+                        <option value="all">All Time</option>
+                    </select>
+                    <button id="refresh-btn" class="btn btn-primary">🔄 Refresh</button>
+                </div>
+            </header>
+
+            <!-- Portfolio Summary -->
+            <section class="portfolio-summary">
+                <div class="summary-card">
+                    <div class="card-header">
+                        <h3>💰 Portfolio Overview</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="summary-stats">
+                            <div class="stat">
+                                <span class="stat-label">Total P&L</span>
+                                <span id="total-pnl" class="stat-value pnl-positive">$0.00</span>
+                            </div>
+                            <div class="stat">
+                                <span class="stat-label">Total Trades</span>
+                                <span id="total-trades" class="stat-value">0</span>
+                            </div>
+                            <div class="stat">
+                                <span class="stat-label">Active Modules</span>
+                                <span id="active-modules" class="stat-value">0</span>
+                            </div>
+                            <div class="stat">
+                                <span class="stat-label">Best Performer</span>
+                                <span id="best-performer" class="stat-value">-</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Module Tabs -->
+            <section class="module-tabs">
+                <div class="tabs-header" id="module-tabs">
+                    <!-- Dynamically populated -->
+                </div>
+            </section>
+
+            <!-- Module Analytics -->
+            <section class="module-analytics" id="module-analytics">
+                <!-- Performance Metrics -->
+                <div class="analytics-grid">
+                    <!-- Performance Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>📊 Performance Metrics</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="metrics-grid">
+                                <div class="metric">
+                                    <span class="metric-label">Win Rate</span>
+                                    <span id="win-rate" class="metric-value">0%</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">Profit Factor</span>
+                                    <span id="profit-factor" class="metric-value">0.00</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">Sharpe Ratio</span>
+                                    <span id="sharpe-ratio" class="metric-value">0.00</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">Max Drawdown</span>
+                                    <span id="max-drawdown" class="metric-value">0%</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">Avg Win</span>
+                                    <span id="avg-win" class="metric-value">$0.00</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">Avg Loss</span>
+                                    <span id="avg-loss" class="metric-value">$0.00</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Risk Metrics -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>⚠️ Risk Metrics</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="metrics-grid">
+                                <div class="metric">
+                                    <span class="metric-label">Total Exposure</span>
+                                    <span id="total-exposure" class="metric-value">$0.00</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">Net Exposure</span>
+                                    <span id="net-exposure" class="metric-value">$0.00</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">VaR (95%)</span>
+                                    <span id="var-95" class="metric-value">$0.00</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">Volatility (Annual)</span>
+                                    <span id="annual-vol" class="metric-value">0%</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">Avg Leverage</span>
+                                    <span id="avg-leverage" class="metric-value">1.0x</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">Largest Position</span>
+                                    <span id="largest-position" class="metric-value">0%</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Charts -->
+                <div class="charts-grid">
+                    <!-- Equity Curve -->
+                    <div class="card chart-card">
+                        <div class="card-header">
+                            <h3>📈 Equity Curve</h3>
+                        </div>
+                        <div class="card-body">
+                            <canvas id="equity-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Daily P&L -->
+                    <div class="card chart-card">
+                        <div class="card-header">
+                            <h3>💹 Daily P&L</h3>
+                        </div>
+                        <div class="card-body">
+                            <canvas id="daily-pnl-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Trade History -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3>📋 Recent Trades</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-container">
+                            <table class="trades-table">
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Token</th>
+                                        <th>Type</th>
+                                        <th>Entry</th>
+                                        <th>Exit</th>
+                                        <th>Size</th>
+                                        <th>P&L</th>
+                                        <th>Duration</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="trades-table-body">
+                                    <tr>
+                                        <td colspan="8" class="no-data">No trades found</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/static/js/analytics.js"></script>
+</body>
+</html>
