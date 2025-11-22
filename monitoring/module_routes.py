@@ -48,6 +48,21 @@ class ModuleRoutes:
         app.router.add_get('/modules/{module_name}/details', self.module_detail_page)
         app.router.add_get('/modules/{module_name}/configure', self.module_configure_page)
 
+        # DEX Module Pages
+        app.router.add_get('/dex/dashboard', self.dex_dashboard_page)
+
+        # Futures Module Pages
+        app.router.add_get('/futures/dashboard', self.futures_dashboard_page)
+        app.router.add_get('/futures/positions', self.futures_positions_page)
+        app.router.add_get('/futures/trades', self.futures_trades_page)
+        app.router.add_get('/futures/performance', self.futures_performance_page)
+
+        # Solana Module Pages
+        app.router.add_get('/solana/dashboard', self.solana_dashboard_page)
+        app.router.add_get('/solana/positions', self.solana_positions_page)
+        app.router.add_get('/solana/trades', self.solana_trades_page)
+        app.router.add_get('/solana/performance', self.solana_performance_page)
+
         # API endpoints
         app.router.add_get('/api/modules', self.get_modules_status)
         app.router.add_get('/api/modules/{module_name}', self.get_module_status)
@@ -579,3 +594,95 @@ class ModuleRoutes:
                 'success': False,
                 'error': str(e)
             }, status=500)
+
+    # ========== Module-Specific Dashboard Pages ==========
+
+    async def dex_dashboard_page(self, request: web.Request) -> web.Response:
+        """Render DEX module dashboard"""
+        try:
+            template = self.jinja_env.get_template('dashboard.html')
+            html = template.render(page='dex_dashboard')
+            return web.Response(text=html, content_type='text/html')
+        except Exception as e:
+            self.logger.error(f"Error rendering DEX dashboard: {e}", exc_info=True)
+            return web.Response(text=f"Error: {e}", status=500)
+
+    async def futures_dashboard_page(self, request: web.Request) -> web.Response:
+        """Render Futures module dashboard"""
+        try:
+            template = self.jinja_env.get_template('dashboard_futures.html')
+            html = template.render(page='futures_dashboard')
+            return web.Response(text=html, content_type='text/html')
+        except Exception as e:
+            self.logger.error(f"Error rendering Futures dashboard: {e}", exc_info=True)
+            return web.Response(text=f"Error: {e}", status=500)
+
+    async def futures_positions_page(self, request: web.Request) -> web.Response:
+        """Render Futures positions page"""
+        try:
+            template = self.jinja_env.get_template('positions_futures.html')
+            html = template.render(page='futures_positions')
+            return web.Response(text=html, content_type='text/html')
+        except Exception as e:
+            self.logger.error(f"Error rendering Futures positions: {e}", exc_info=True)
+            return web.Response(text=f"Error: {e}", status=500)
+
+    async def futures_trades_page(self, request: web.Request) -> web.Response:
+        """Render Futures trades page"""
+        try:
+            template = self.jinja_env.get_template('trades_futures.html')
+            html = template.render(page='futures_trades')
+            return web.Response(text=html, content_type='text/html')
+        except Exception as e:
+            self.logger.error(f"Error rendering Futures trades: {e}", exc_info=True)
+            return web.Response(text=f"Error: {e}", status=500)
+
+    async def futures_performance_page(self, request: web.Request) -> web.Response:
+        """Render Futures performance page"""
+        try:
+            template = self.jinja_env.get_template('performance_futures.html')
+            html = template.render(page='futures_performance')
+            return web.Response(text=html, content_type='text/html')
+        except Exception as e:
+            self.logger.error(f"Error rendering Futures performance: {e}", exc_info=True)
+            return web.Response(text=f"Error: {e}", status=500)
+
+    async def solana_dashboard_page(self, request: web.Request) -> web.Response:
+        """Render Solana module dashboard"""
+        try:
+            template = self.jinja_env.get_template('dashboard_solana.html')
+            html = template.render(page='solana_dashboard')
+            return web.Response(text=html, content_type='text/html')
+        except Exception as e:
+            self.logger.error(f"Error rendering Solana dashboard: {e}", exc_info=True)
+            return web.Response(text=f"Error: {e}", status=500)
+
+    async def solana_positions_page(self, request: web.Request) -> web.Response:
+        """Render Solana positions page"""
+        try:
+            template = self.jinja_env.get_template('positions_solana.html')
+            html = template.render(page='solana_positions')
+            return web.Response(text=html, content_type='text/html')
+        except Exception as e:
+            self.logger.error(f"Error rendering Solana positions: {e}", exc_info=True)
+            return web.Response(text=f"Error: {e}", status=500)
+
+    async def solana_trades_page(self, request: web.Request) -> web.Response:
+        """Render Solana trades page"""
+        try:
+            template = self.jinja_env.get_template('trades_solana.html')
+            html = template.render(page='solana_trades')
+            return web.Response(text=html, content_type='text/html')
+        except Exception as e:
+            self.logger.error(f"Error rendering Solana trades: {e}", exc_info=True)
+            return web.Response(text=f"Error: {e}", status=500)
+
+    async def solana_performance_page(self, request: web.Request) -> web.Response:
+        """Render Solana performance page"""
+        try:
+            template = self.jinja_env.get_template('performance_solana.html')
+            html = template.render(page='solana_performance')
+            return web.Response(text=html, content_type='text/html')
+        except Exception as e:
+            self.logger.error(f"Error rendering Solana performance: {e}", exc_info=True)
+            return web.Response(text=f"Error: {e}", status=500)

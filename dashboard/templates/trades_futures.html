@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}Futures Trades{% endblock %}
+
+{% block extra_head %}
+<style>
+    .page-container {
+        padding: 20px;
+    }
+
+    .page-header {
+        margin-bottom: 30px;
+    }
+
+    .page-title {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        margin-bottom: 8px;
+    }
+
+    .page-subtitle {
+        color: var(--text-secondary);
+        font-size: 1rem;
+    }
+
+    .section-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+
+    .section-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: var(--text-secondary);
+    }
+
+    [data-theme="dark"] {
+        --card-bg: #1f2937;
+        --border-color: #374151;
+        --text-primary: #f9fafb;
+        --text-secondary: #d1d5db;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-container">
+    <div class="page-header">
+        <h1 class="page-title">
+            <i class="fas fa-exchange-alt"></i>
+            Futures Trades
+        </h1>
+        <p class="page-subtitle">Trade history for futures module</p>
+    </div>
+
+    <div class="section-card">
+        <div class="section-title">
+            <i class="fas fa-history"></i>
+            Recent Trades
+        </div>
+        <div class="empty-state">
+            <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
+            <p>No trades yet. Trade history will appear here.</p>
+        </div>
+    </div>
+</div>
+{% endblock %}

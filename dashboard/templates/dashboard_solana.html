@@ -1,0 +1,379 @@
+{% extends "base.html" %}
+
+{% block title %}Solana Strategies - Dashboard{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    .dashboard-container {
+        padding: 20px;
+    }
+
+    .dashboard-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 30px;
+    }
+
+    .dashboard-title {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+
+    .dashboard-subtitle {
+        color: var(--text-secondary);
+        font-size: 1rem;
+        margin-top: 4px;
+    }
+
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+
+    .stat-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 20px;
+        transition: all 0.3s;
+    }
+
+    .stat-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+    }
+
+    .stat-label {
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+        margin-bottom: 8px;
+        font-weight: 500;
+    }
+
+    .stat-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        margin-bottom: 4px;
+    }
+
+    .stat-change {
+        font-size: 0.875rem;
+        color: var(--text-tertiary);
+    }
+
+    .positive {
+        color: #10b981;
+    }
+
+    .negative {
+        color: #ef4444;
+    }
+
+    .section-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+
+    .section-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .chart-container {
+        position: relative;
+        height: 300px;
+        margin-top: 20px;
+    }
+
+    .strategy-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 20px;
+    }
+
+    .strategy-card {
+        background: var(--metric-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        padding: 20px;
+    }
+
+    .strategy-name {
+        font-size: 1.125rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 12px;
+    }
+
+    .strategy-status {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        background: #d1fae5;
+        color: #065f46;
+        margin-bottom: 12px;
+    }
+
+    .strategy-metrics {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+    }
+
+    .metric-box {
+        text-align: center;
+        padding: 10px;
+        background: var(--card-bg);
+        border-radius: 8px;
+    }
+
+    .metric-label {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        margin-bottom: 4px;
+    }
+
+    .metric-value {
+        font-size: 1.125rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: var(--text-secondary);
+    }
+
+    [data-theme="dark"] {
+        --card-bg: #1f2937;
+        --border-color: #374151;
+        --text-primary: #f9fafb;
+        --text-secondary: #d1d5db;
+        --text-tertiary: #9ca3af;
+        --metric-bg: #111827;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <!-- Header -->
+    <div class="dashboard-header">
+        <div>
+            <h1 class="dashboard-title">
+                <i class="fas fa-coins"></i>
+                Solana Strategies Dashboard
+            </h1>
+            <p class="dashboard-subtitle">Solana DeFi strategies: Pump.fun, Jupiter, Drift</p>
+        </div>
+        <div>
+            <button class="btn btn-secondary" onclick="location.reload()">
+                <i class="fas fa-sync"></i>
+                Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- Key Metrics -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">Capital Allocated</div>
+            <div class="stat-value">$400.00</div>
+            <div class="stat-change">Used: $0.00 (0%)</div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-label">Total P&L</div>
+            <div class="stat-value positive">$0.00</div>
+            <div class="stat-change positive">0.00% ROI</div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-label">Active Positions</div>
+            <div class="stat-value">0</div>
+            <div class="stat-change">Across all strategies</div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-label">SOL Balance</div>
+            <div class="stat-value">0.00</div>
+            <div class="stat-change">Wallet balance</div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-label">Win Rate</div>
+            <div class="stat-value">0%</div>
+            <div class="stat-change">0 wins / 0 losses</div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-label">Active Strategies</div>
+            <div class="stat-value">0/3</div>
+            <div class="stat-change">Enabled strategies</div>
+        </div>
+    </div>
+
+    <!-- Strategy Breakdown -->
+    <div class="section-card">
+        <div class="section-title">
+            <i class="fas fa-layer-group"></i>
+            Strategy Performance
+        </div>
+        <div class="strategy-grid">
+            <!-- Pump.fun Strategy -->
+            <div class="strategy-card">
+                <div class="strategy-name">Pump.fun Sniper</div>
+                <span class="strategy-status">DISABLED</span>
+                <div class="strategy-metrics">
+                    <div class="metric-box">
+                        <div class="metric-label">P&L</div>
+                        <div class="metric-value">$0.00</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Trades</div>
+                        <div class="metric-value">0</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Win Rate</div>
+                        <div class="metric-value">0%</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Positions</div>
+                        <div class="metric-value">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Jupiter Strategy -->
+            <div class="strategy-card">
+                <div class="strategy-name">Jupiter Arb</div>
+                <span class="strategy-status">DISABLED</span>
+                <div class="strategy-metrics">
+                    <div class="metric-box">
+                        <div class="metric-label">P&L</div>
+                        <div class="metric-value">$0.00</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Trades</div>
+                        <div class="metric-value">0</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Win Rate</div>
+                        <div class="metric-value">0%</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Swaps</div>
+                        <div class="metric-value">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Drift Strategy -->
+            <div class="strategy-card">
+                <div class="strategy-name">Drift Perps</div>
+                <span class="strategy-status">DISABLED</span>
+                <div class="strategy-metrics">
+                    <div class="metric-box">
+                        <div class="metric-label">P&L</div>
+                        <div class="metric-value">$0.00</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Trades</div>
+                        <div class="metric-value">0</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Win Rate</div>
+                        <div class="metric-value">0%</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Positions</div>
+                        <div class="metric-value">0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- P&L Chart -->
+    <div class="section-card">
+        <div class="section-title">
+            <i class="fas fa-chart-area"></i>
+            Performance History
+        </div>
+        <div class="chart-container">
+            <canvas id="pnlChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Active Positions -->
+    <div class="section-card">
+        <div class="section-title">
+            <i class="fas fa-wallet"></i>
+            Active Positions
+        </div>
+        <div class="empty-state">
+            <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
+            <p>No active positions. Positions will appear here once trading begins.</p>
+        </div>
+    </div>
+</div>
+
+<script>
+// P&L Chart
+const ctx = document.getElementById('pnlChart').getContext('2d');
+new Chart(ctx, {
+    type: 'line',
+    data: {
+        labels: [],
+        datasets: [{
+            label: 'P&L ($)',
+            data: [],
+            borderColor: '#10b981',
+            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+            fill: true,
+            tension: 0.4
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                display: true,
+                position: 'top'
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                grid: {
+                    color: 'rgba(0, 0, 0, 0.05)'
+                }
+            },
+            x: {
+                grid: {
+                    display: false
+                }
+            }
+        }
+    }
+});
+</script>
+{% endblock %}
