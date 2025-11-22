@@ -45,6 +45,8 @@ class ModuleRoutes:
         # HTML pages
         app.router.add_get('/modules', self.modules_page)
         app.router.add_get('/modules/{module_name}', self.module_detail_page)
+        app.router.add_get('/modules/{module_name}/details', self.module_detail_page)
+        app.router.add_get('/modules/{module_name}/configure', self.module_configure_page)
 
         # API endpoints
         app.router.add_get('/api/modules', self.get_modules_status)
@@ -118,21 +120,132 @@ class ModuleRoutes:
 
             module = self.module_manager.get_module(module_name)
             if not module:
-                return web.Response(text="Module not found", status=404)
+                if not self.jinja_env:
+                    return web.Response(text="Module not found", status=404)
+
+                template = self.jinja_env.get_template('error.html')
+                html = template.render(
+                    error_code=404,
+                    error_message=f"Module '{module_name}' not found",
+                    page='modules'
+                )
+                return web.Response(text=html, content_type='text/html', status=404)
 
             status = module.get_status()
             metrics = await module.get_metrics()
             positions = await module.get_positions()
 
-            # For now, return JSON (TODO: create detail template)
-            return web.json_response({
-                'module': status,
-                'metrics': metrics.to_dict(),
-                'positions': positions
-            })
+            # Get recent trades for this module
+            trades = []
+            if hasattr(module, '_get_trade_history'):
+                trades = await module._get_trade_history()
+
+            # Prepare chart data (last 30 days)
+            chart_labels = []
+            chart_data = []
+            # TODO: Fetch actual historical data from database
+            # For now, use placeholder data
+            for i in range(30):
+                chart_labels.append(f"Day {i+1}")
+                chart_data.append(metrics.to_dict().get('total_pnl', 0) * (i / 30))
+
+            # Render HTML template
+            if self.jinja_env:
+                template = self.jinja_env.get_template('module_details.html')
+                html = template.render(
+                    module=status,
+                    metrics=metrics.to_dict(),
+                    positions=positions,
+                    trades=trades[:20],  # Show last 20 trades
+                    chart_labels=chart_labels,
+                    chart_data=chart_data,
+                    page='modules'
+                )
+                return web.Response(text=html, content_type='text/html')
+            else:
+                # Fallback to JSON if no template engine
+                return web.json_response({
+                    'module': status,
+                    'metrics': metrics.to_dict(),
+                    'positions': positions
+                })
 
         except Exception as e:
             self.logger.error(f"Error rendering module detail: {e}", exc_info=True)
+            if self.jinja_env:
+                template = self.jinja_env.get_template('error.html')
+                html = template.render(
+                    error_code=500,
+                    error_message=str(e),
+                    page='modules'
+                )
+                return web.Response(text=html, content_type='text/html', status=500)
+            return web.Response(text=f"Error: {str(e)}", status=500)
+
+    async def module_configure_page(self, request: web.Request) -> web.Response:
+        """
+        Render module configuration page
+
+        Args:
+            request: HTTP request
+
+        Returns:
+            web.Response: HTML response
+        """
+        try:
+            module_name = request.match_info['module_name']
+
+            module = self.module_manager.get_module(module_name)
+            if not module:
+                return web.Response(text="Module not found", status=404)
+
+            status = module.get_status()
+
+            # Render HTML template or fallback message
+            if self.jinja_env:
+                try:
+                    template = self.jinja_env.get_template('module_configure.html')
+                    html = template.render(
+                        module=status,
+                        page='modules'
+                    )
+                    return web.Response(text=html, content_type='text/html')
+                except Exception as template_error:
+                    # Template doesn't exist yet, show placeholder
+                    html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Configure {module_name}</title>
+    <link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body>
+    <div style="padding: 40px; max-width: 800px; margin: 0 auto;">
+        <a href="/modules" style="display: inline-block; margin-bottom: 20px;">&larr; Back to Modules</a>
+        <h1>Configure {module_name.title().replace('_', ' ')}</h1>
+        <div style="background: #f3f4f6; border: 2px dashed #d1d5db; border-radius: 12px; padding: 40px; text-align: center;">
+            <div style="font-size: 3rem; margin-bottom: 16px;">⚙️</div>
+            <h2>Configuration UI Coming Soon</h2>
+            <p style="color: #6b7280;">The configuration interface for {module_name} is under development.</p>
+            <p style="color: #6b7280;">For now, you can modify the configuration files directly in <code>config/modules/{module_name}.yaml</code></p>
+            <div style="margin-top: 30px;">
+                <h3 style="text-align: left;">Current Configuration:</h3>
+                <pre style="background: white; padding: 20px; border-radius: 8px; text-align: left; overflow-x: auto;">{status.get('config', {})}</pre>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+                    """
+                    return web.Response(text=html, content_type='text/html')
+            else:
+                return web.json_response({
+                    'module': status,
+                    'message': 'Configuration UI not available'
+                })
+
+        except Exception as e:
+            self.logger.error(f"Error rendering module configure page: {e}", exc_info=True)
             return web.Response(text=f"Error: {str(e)}", status=500)
 
     async def get_modules_status(self, request: web.Request) -> web.Response:
