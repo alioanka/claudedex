@@ -1,0 +1,443 @@
+{% extends "base.html" %}
+
+{% block title %}Module Management - Trading Bot{% endblock %}
+
+{% block extra_head %}
+<style>
+    .module-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 10px;
+        padding: 20px;
+        margin-bottom: 20px;
+        color: white;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+
+    .module-card.disabled {
+        background: linear-gradient(135deg, #636363 0%, #a2ab58 100%);
+        opacity: 0.7;
+    }
+
+    .module-card.error {
+        background: linear-gradient(135deg, #f12711 0%, #f5af19 100%);
+    }
+
+    .module-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+    }
+
+    .module-name {
+        font-size: 1.5rem;
+        font-weight: bold;
+    }
+
+    .module-status {
+        display: inline-block;
+        padding: 5px 15px;
+        border-radius: 20px;
+        font-size: 0.9rem;
+        font-weight: bold;
+    }
+
+    .status-running {
+        background-color: #10b981;
+    }
+
+    .status-stopped {
+        background-color: #6b7280;
+    }
+
+    .status-error {
+        background-color: #ef4444;
+    }
+
+    .status-disabled {
+        background-color: #9ca3af;
+    }
+
+    .module-metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 15px;
+        margin-top: 15px;
+    }
+
+    .metric-box {
+        background: rgba(255,255,255,0.2);
+        padding: 10px;
+        border-radius: 5px;
+    }
+
+    .metric-label {
+        font-size: 0.8rem;
+        opacity: 0.9;
+        margin-bottom: 5px;
+    }
+
+    .metric-value {
+        font-size: 1.3rem;
+        font-weight: bold;
+    }
+
+    .module-actions {
+        margin-top: 15px;
+        display: flex;
+        gap: 10px;
+    }
+
+    .btn-module {
+        padding: 8px 20px;
+        border: none;
+        border-radius: 5px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+
+    .btn-enable {
+        background-color: #10b981;
+        color: white;
+    }
+
+    .btn-disable {
+        background-color: #ef4444;
+        color: white;
+    }
+
+    .btn-configure {
+        background-color: #3b82f6;
+        color: white;
+    }
+
+    .btn-module:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+
+    .capital-allocation {
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .allocation-chart {
+        margin-top: 15px;
+    }
+
+    .allocation-bar {
+        display: flex;
+        height: 40px;
+        border-radius: 5px;
+        overflow: hidden;
+        margin-bottom: 15px;
+    }
+
+    .allocation-segment {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: bold;
+        transition: all 0.3s;
+    }
+
+    .allocation-segment:hover {
+        opacity: 0.8;
+    }
+
+    .summary-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+        margin-bottom: 30px;
+    }
+
+    .stat-card {
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .stat-label {
+        font-size: 0.9rem;
+        color: #6b7280;
+        margin-bottom: 5px;
+    }
+
+    .stat-value {
+        font-size: 1.8rem;
+        font-weight: bold;
+        color: #111827;
+    }
+
+    .stat-change {
+        font-size: 0.85rem;
+        margin-top: 5px;
+    }
+
+    .positive {
+        color: #10b981;
+    }
+
+    .negative {
+        color: #ef4444;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <h1 class="mb-4">📦 Module Management</h1>
+
+    <!-- Summary Statistics -->
+    <div class="summary-stats">
+        <div class="stat-card">
+            <div class="stat-label">Total Capital</div>
+            <div class="stat-value">${{ metrics.total_capital|default(0)|round(2) }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Allocated Capital</div>
+            <div class="stat-value">${{ metrics.allocated_capital|default(0)|round(2) }}</div>
+            <div class="stat-change">
+                {{ ((metrics.allocated_capital|default(0) / metrics.total_capital|default(1)) * 100)|round(1) }}% of total
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Active Modules</div>
+            <div class="stat-value">{{ metrics.active_modules|default(0) }}/{{ metrics.modules_count|default(0) }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Total PnL</div>
+            <div class="stat-value {% if metrics.total_pnl|default(0) >= 0 %}positive{% else %}negative{% endif %}">
+                ${{ metrics.total_pnl|default(0)|round(2) }}
+            </div>
+            <div class="stat-change {% if metrics.total_pnl|default(0) >= 0 %}positive{% else %}negative{% endif %}">
+                {{ ((metrics.total_pnl|default(0) / metrics.total_capital|default(1)) * 100)|round(2) }}%
+            </div>
+        </div>
+    </div>
+
+    <!-- Capital Allocation Visualization -->
+    <div class="capital-allocation">
+        <h3>Capital Allocation</h3>
+        <div class="allocation-chart">
+            <div class="allocation-bar">
+                {% if modules %}
+                    {% for module in modules %}
+                        {% if module.config.capital_allocation > 0 %}
+                        <div class="allocation-segment"
+                             style="width: {{ (module.config.capital_allocation / metrics.total_capital * 100)|round(1) }}%;
+                                    background-color: {{ ['#667eea', '#f093fb', '#4facfe', '#43e97b']|random }};">
+                            {{ module.name }}<br>
+                            ${{ module.config.capital_allocation|round(0) }}
+                        </div>
+                        {% endif %}
+                    {% endfor %}
+                    {% if metrics.available_capital > 0 %}
+                    <div class="allocation-segment"
+                         style="width: {{ (metrics.available_capital / metrics.total_capital * 100)|round(1) }}%;
+                                background-color: #e0e0e0; color: #333;">
+                        Available<br>
+                        ${{ metrics.available_capital|round(0) }}
+                    </div>
+                    {% endif %}
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Module Cards -->
+    <h2 class="mb-3">Trading Modules</h2>
+
+    {% if modules %}
+        {% for module in modules %}
+        <div class="module-card {% if not module.enabled %}disabled{% endif %} {% if module.status == 'error' %}error{% endif %}">
+            <div class="module-header">
+                <div>
+                    <div class="module-name">{{ module.name|upper }}</div>
+                    <div style="font-size: 0.9rem; opacity: 0.9;">{{ module.config.description|default('No description') }}</div>
+                </div>
+                <div>
+                    <span class="module-status status-{{ module.status }}">
+                        {{ module.status|upper }}
+                    </span>
+                </div>
+            </div>
+
+            <div class="module-metrics">
+                <div class="metric-box">
+                    <div class="metric-label">Capital</div>
+                    <div class="metric-value">${{ module.metrics.capital_allocated|round(0) }}</div>
+                    <div style="font-size: 0.75rem; margin-top: 3px;">
+                        Used: ${{ module.metrics.capital_used|round(0) }}
+                    </div>
+                </div>
+
+                <div class="metric-box">
+                    <div class="metric-label">Positions</div>
+                    <div class="metric-value">{{ module.metrics.active_positions }}</div>
+                    <div style="font-size: 0.75rem; margin-top: 3px;">
+                        Max: {{ module.config.max_positions }}
+                    </div>
+                </div>
+
+                <div class="metric-box">
+                    <div class="metric-label">Total Trades</div>
+                    <div class="metric-value">{{ module.metrics.total_trades }}</div>
+                    <div style="font-size: 0.75rem; margin-top: 3px;">
+                        Win Rate: {{ (module.metrics.win_rate * 100)|round(1) }}%
+                    </div>
+                </div>
+
+                <div class="metric-box">
+                    <div class="metric-label">PnL</div>
+                    <div class="metric-value" style="color: {% if module.metrics.total_pnl >= 0 %}#10b981{% else %}#ef4444{% endif %}">
+                        ${{ module.metrics.total_pnl|round(2) }}
+                    </div>
+                    <div style="font-size: 0.75rem; margin-top: 3px;">
+                        {{ ((module.metrics.total_pnl / module.metrics.capital_allocated * 100)|round(2)) if module.metrics.capital_allocated > 0 else 0 }}%
+                    </div>
+                </div>
+
+                <div class="metric-box">
+                    <div class="metric-label">Uptime</div>
+                    <div class="metric-value">{{ (module.metrics.uptime_seconds / 3600)|round(1) }}h</div>
+                    <div style="font-size: 0.75rem; margin-top: 3px;">
+                        Errors: {{ module.metrics.errors_count }}
+                    </div>
+                </div>
+            </div>
+
+            <div class="module-actions">
+                {% if module.enabled %}
+                    {% if module.status == 'running' %}
+                        <button class="btn-module btn-disable" onclick="pauseModule('{{ module.name }}')">
+                            ⏸️ Pause
+                        </button>
+                    {% elif module.status == 'paused' %}
+                        <button class="btn-module btn-enable" onclick="resumeModule('{{ module.name }}')">
+                            ▶️ Resume
+                        </button>
+                    {% endif %}
+                    <button class="btn-module btn-disable" onclick="disableModule('{{ module.name }}')">
+                        🛑 Disable
+                    </button>
+                {% else %}
+                    <button class="btn-module btn-enable" onclick="enableModule('{{ module.name }}')">
+                        ✅ Enable
+                    </button>
+                {% endif %}
+                <button class="btn-module btn-configure" onclick="configureModule('{{ module.name }}')">
+                    ⚙️ Configure
+                </button>
+                <button class="btn-module btn-configure" onclick="viewModuleDetails('{{ module.name }}')">
+                    📊 Details
+                </button>
+            </div>
+
+            {% if module.error_message %}
+            <div style="margin-top: 15px; padding: 10px; background: rgba(255,255,255,0.2); border-radius: 5px;">
+                <strong>⚠️ Error:</strong> {{ module.error_message }}
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="alert alert-info">
+            No modules registered yet.
+        </div>
+    {% endif %}
+</div>
+
+<script>
+    async function enableModule(moduleName) {
+        if (!confirm(`Enable module: ${moduleName}?`)) return;
+
+        try {
+            const response = await fetch(`/api/modules/${moduleName}/enable`, {
+                method: 'POST'
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                alert(`Module ${moduleName} enabled successfully`);
+                location.reload();
+            } else {
+                alert(`Failed to enable module: ${data.error}`);
+            }
+        } catch (error) {
+            alert(`Error: ${error.message}`);
+        }
+    }
+
+    async function disableModule(moduleName) {
+        if (!confirm(`Disable module: ${moduleName}? All positions will be closed.`)) return;
+
+        try {
+            const response = await fetch(`/api/modules/${moduleName}/disable`, {
+                method: 'POST'
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                alert(`Module ${moduleName} disabled successfully`);
+                location.reload();
+            } else {
+                alert(`Failed to disable module: ${data.error}`);
+            }
+        } catch (error) {
+            alert(`Error: ${error.message}`);
+        }
+    }
+
+    async function pauseModule(moduleName) {
+        try {
+            const response = await fetch(`/api/modules/${moduleName}/pause`, {
+                method: 'POST'
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                alert(`Module ${moduleName} paused`);
+                location.reload();
+            }
+        } catch (error) {
+            alert(`Error: ${error.message}`);
+        }
+    }
+
+    async function resumeModule(moduleName) {
+        try {
+            const response = await fetch(`/api/modules/${moduleName}/resume`, {
+                method: 'POST'
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                alert(`Module ${moduleName} resumed`);
+                location.reload();
+            }
+        } catch (error) {
+            alert(`Error: ${error.message}`);
+        }
+    }
+
+    function configureModule(moduleName) {
+        alert(`Configuration UI for ${moduleName} coming soon!`);
+        // Will open a modal with module settings
+    }
+
+    function viewModuleDetails(moduleName) {
+        window.location.href = `/modules/${moduleName}`;
+    }
+
+    // Auto-refresh every 30 seconds
+    setTimeout(() => location.reload(), 30000);
+</script>
+{% endblock %}

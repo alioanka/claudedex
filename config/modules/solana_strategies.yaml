@@ -1,0 +1,178 @@
+# Solana Strategies Module Configuration
+# Advanced Solana-specific trading strategies
+
+module:
+  name: "solana_strategies"
+  type: "solana_strategies"
+  enabled: true
+  description: "Advanced Solana-specific trading strategies (Pump.fun, Jupiter, Drift)"
+
+# Capital Allocation
+capital:
+  allocation: 400.0  # USD allocated to this module
+  max_position_size: 80.0  # Max USD per position
+  risk_per_trade: 0.02  # 2% risk per trade
+
+# Position Limits
+positions:
+  max_open: 8  # Maximum total positions across all strategies
+  max_per_strategy: 3  # Max positions per strategy
+  max_per_token: 1  # Max positions per token
+
+# Risk Management
+risk:
+  stop_loss_pct: 0.10  # 10% stop loss default
+  take_profit_pct: 0.20  # 20% take profit default
+  trailing_stop_enabled: true
+  trailing_stop_pct: 0.04  # 4% trailing stop
+  max_drawdown_pct: 0.20  # 20% max drawdown before pause
+
+# Strategy-Specific Configurations
+
+strategies:
+  # Pump.fun Launch Trading
+  pumpfun:
+    enabled: true
+    name: "Pump.fun Launch Trading"
+    description: "Trade new token launches on Pump.fun"
+
+    # Launch filters
+    max_token_age: 1800  # 30 minutes max
+    min_bonding_progress: 10.0  # 10% minimum
+    max_bonding_progress: 85.0  # 85% maximum
+    min_holder_count: 20
+    min_buy_sell_ratio: 1.5
+
+    # Safety checks
+    max_dev_holding: 5.0  # 5% max
+    max_top_10_holding: 25.0  # 25% max
+    max_sniper_pct: 15.0  # 15% max
+
+    # Risk management
+    quick_stop_loss_pct: 0.15  # 15% SL
+    max_hold_time: 3600  # 1 hour max
+    tp_levels: [0.30, 0.50, 1.00, 2.00]  # 30%, 50%, 100%, 200%
+    tp_quantities: [0.25, 0.25, 0.25, 0.25]  # 25% each
+
+    # Graduated tokens
+    trade_graduated: true
+    graduated_min_liquidity: 50000
+
+    # Position sizing
+    max_position_pct: 0.02  # 2% of capital per launch
+
+  # Jupiter Limit Orders
+  jupiter:
+    enabled: true
+    name: "Jupiter Limit Orders"
+    description: "Better execution with limit orders"
+
+    # Order configuration
+    use_limit_orders: true
+    limit_order_offset_pct: 0.01  # 1% better price
+    max_order_age: 3600  # 1 hour
+    partial_fill_enabled: true
+    auto_cancel_unfilled: true
+
+    # DCA strategy
+    dca_enabled: false
+    dca_intervals: [300, 600, 900]  # 5, 10, 15 min
+    dca_amounts: [0.4, 0.3, 0.3]  # 40%, 30%, 30%
+
+    # Range trading
+    range_trading_enabled: false
+    range_levels: 5
+    range_spread: 0.02  # 2%
+
+    # Risk management
+    stop_loss_pct: 0.08  # 8%
+    risk_reward_ratio: 2.0
+    min_confidence: 0.65
+
+  # Drift Protocol Perpetuals
+  drift:
+    enabled: true
+    name: "Drift Perpetuals"
+    description: "Leverage trading on Drift Protocol"
+
+    # Drift configuration
+    drift_program_id: "dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH"
+    drift_rpc: "https://api.mainnet-beta.solana.com"
+
+    # Leverage settings
+    max_leverage: 5  # Conservative 5x max
+    min_leverage: 1
+    use_cross_margin: true
+    max_positions: 3
+
+    # Funding rate strategy
+    funding_rate_enabled: true
+    funding_threshold: 0.01  # 0.01% per 8h
+    funding_arb_min_apr: 0.20  # 20% APR minimum
+
+    # Risk management (more conservative for leverage)
+    perp_stop_loss_pct: 0.08  # 8% (amplified by leverage)
+    perp_take_profit_pct: 0.15  # 15%
+    max_drawdown_pct: 0.20  # 20%
+    liquidation_buffer_pct: 0.25  # 25% buffer from liquidation
+
+    # Position management
+    use_trailing_stop: true
+    trailing_distance_pct: 0.03  # 3%
+    partial_tp_enabled: true
+    tp_levels: [0.05, 0.10, 0.15, 0.20]  # 5%, 10%, 15%, 20%
+    tp_quantities: [0.25, 0.25, 0.25, 0.25]
+
+    # Preferred markets
+    preferred_markets:
+      - "SOL-PERP"
+      - "BTC-PERP"
+      - "ETH-PERP"
+
+    min_confidence: 0.65
+
+# Solana-Specific Settings
+solana:
+  # RPC endpoints
+  rpc_primary: "https://api.mainnet-beta.solana.com"
+  rpc_backup: "https://solana-api.projectserum.com"
+
+  # Transaction settings
+  compute_unit_limit: 200000
+  compute_unit_price: 1000
+  priority_fee_enabled: true
+  max_priority_fee: 0.01  # SOL
+
+  # Confirmation settings
+  commitment_level: "confirmed"
+  skip_preflight: false
+  max_retries: 3
+
+  # Slippage
+  max_slippage_bps: 100  # 1% for Solana DEXs
+
+# Monitoring
+monitoring:
+  health_check_interval: 30  # seconds
+  metrics_update_interval: 60  # seconds
+  alert_on_error: true
+  alert_on_loss_streak: 3
+
+  # Strategy-specific monitoring
+  pumpfun_monitor_interval: 5  # seconds (fast for launches)
+  jupiter_order_check_interval: 30  # seconds
+  drift_position_check_interval: 15  # seconds
+
+# Dashboard
+dashboard:
+  show_in_main: true
+  dedicated_tab: true
+  realtime_updates: true
+  show_strategy_breakdown: true
+
+# Feature Flags
+features:
+  enable_websocket_monitoring: true
+  enable_advanced_analytics: true
+  enable_auto_rebalancing: false
+  enable_cross_strategy_hedging: false

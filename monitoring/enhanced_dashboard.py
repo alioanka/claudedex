@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 class DashboardEndpoints:
     """Enhanced dashboard with comprehensive features"""
     
-    def __init__(self, 
+    def __init__(self,
                  host: str = "0.0.0.0",
                  port: int = 8080,
                  config: Optional[Dict] = None,
@@ -48,8 +48,11 @@ class DashboardEndpoints:
                  risk_manager = None,
                  alerts_system = None,
                  config_manager = None,
-                 db_manager = None):
-        
+                 db_manager = None,
+                 module_manager = None,
+                 analytics_engine = None,
+                 advanced_alerts = None):
+
         self.host = host
         self.port = port
         self.config = config or {}
@@ -63,6 +66,11 @@ class DashboardEndpoints:
         self.config_mgr = config_manager
         self.db = db_manager
         self.db_pool = db_manager.pool if db_manager else None  # Add db_pool for easy access
+        self.module_manager = module_manager  # Module manager for Phase 1 & 2
+
+        # Phase 4: Advanced Analytics & Alerts
+        self.analytics_engine = analytics_engine
+        self.advanced_alerts = advanced_alerts
 
         # Authentication
         self.auth_service = None
@@ -82,6 +90,14 @@ class DashboardEndpoints:
         # Setup routes
         self._setup_routes()
         self._setup_socketio()
+
+        # Setup module routes if module manager available
+        if self.module_manager:
+            self._setup_module_routes()
+
+        # Setup analytics routes if analytics engine available
+        if self.analytics_engine:
+            self._setup_analytics_routes()
 
         # Register startup handler for auth initialization
         self.app.on_startup.append(self._on_startup)
@@ -357,7 +373,50 @@ class DashboardEndpoints:
                 except ValueError as e:
                     # Skip routes that already have OPTIONS handler
                     logger.debug(f"Skipping CORS for route: {route.resource}")
-    
+
+    def _setup_module_routes(self):
+        """Setup module management routes"""
+        try:
+            from monitoring.module_routes import ModuleRoutes
+
+            logger.info("Setting up module management routes...")
+
+            # Create module routes handler
+            module_routes = ModuleRoutes(
+                module_manager=self.module_manager,
+                jinja_env=self.jinja_env
+            )
+
+            # Setup all module routes
+            module_routes.setup_routes(self.app)
+
+            logger.info("✅ Module management routes initialized")
+
+        except Exception as e:
+            logger.error(f"Failed to setup module routes: {e}", exc_info=True)
+
+    def _setup_analytics_routes(self):
+        """Setup analytics routes"""
+        try:
+            from monitoring.analytics_routes import AnalyticsRoutes
+
+            logger.info("Setting up analytics routes...")
+
+            # Create analytics routes handler
+            analytics_routes = AnalyticsRoutes(
+                analytics_engine=self.analytics_engine,
+                jinja_env=self.jinja_env
+            )
+
+            # Setup all analytics routes
+            analytics_routes.setup_routes(self.app)
+
+            logger.info("✅ Analytics routes initialized")
+
+        except Exception as e:
+            logger.error(f"Failed to setup analytics routes: {e}", exc_info=True)
+            logger.warning("Module management will not be available")
+
     def _setup_socketio(self):
         """Setup Socket.IO handlers"""
         

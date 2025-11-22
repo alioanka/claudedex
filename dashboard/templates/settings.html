@@ -18,6 +18,7 @@
 <!-- Settings Tabs -->
 <div class="tabs">
     <button class="tab-btn active category-tab" data-category="account">Account</button>
+    <button class="tab-btn category-tab" data-category="modules">📦 Modules</button>
     <button class="tab-btn category-tab" data-category="general">General</button>
     <button class="tab-btn category-tab" data-category="portfolio">Portfolio</button>
     <button class="tab-btn category-tab" data-category="risk_management">Risk</button>
@@ -62,6 +63,20 @@
                         </button>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+    <div id="modules-settings" class="settings-section card" style="display: none;">
+        <div class="card-header">
+            <h3 class="card-title">📦 Trading Modules</h3>
+            <p style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                Manage independent trading modules (DEX, Futures, Arbitrage). Each module operates with its own wallet, capital allocation, and strategies.
+            </p>
+        </div>
+        <div class="card-body" id="modules-container">
+            <div style="text-align: center; padding: 40px;">
+                <i class="fas fa-spinner fa-spin" style="font-size: 2em; color: #667eea;"></i>
+                <p style="margin-top: 10px;">Loading modules...</p>
             </div>
         </div>
     </div>
