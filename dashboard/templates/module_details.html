@@ -1,0 +1,494 @@
+{% extends "base.html" %}
+
+{% block title %}{{ module.name|title }} - Module Details{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    .details-container {
+        padding: 20px;
+        max-width: 1400px;
+        margin: 0 auto;
+    }
+
+    .back-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--primary-color, #3b82f6);
+        text-decoration: none;
+        margin-bottom: 20px;
+        font-weight: 600;
+    }
+
+    .back-link:hover {
+        text-decoration: underline;
+    }
+
+    .details-header {
+        background: var(--card-bg, #ffffff);
+        border: 1px solid var(--border-color, #e5e7eb);
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+
+    .module-title-section {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 20px;
+    }
+
+    .module-title {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--text-primary, #111827);
+        margin-bottom: 8px;
+    }
+
+    .module-subtitle {
+        color: var(--text-secondary, #6b7280);
+        font-size: 1rem;
+    }
+
+    .status-badge {
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-weight: 600;
+        font-size: 0.875rem;
+        text-transform: uppercase;
+    }
+
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        margin-bottom: 32px;
+    }
+
+    .stat-box {
+        background: var(--card-bg, #ffffff);
+        border: 1px solid var(--border-color, #e5e7eb);
+        border-radius: 12px;
+        padding: 20px;
+    }
+
+    .stat-label {
+        font-size: 0.813rem;
+        color: var(--text-secondary, #6b7280);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 8px;
+        font-weight: 600;
+    }
+
+    .stat-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--text-primary, #111827);
+    }
+
+    .stat-change {
+        font-size: 0.875rem;
+        margin-top: 4px;
+    }
+
+    .section-card {
+        background: var(--card-bg, #ffffff);
+        border: 1px solid var(--border-color, #e5e7eb);
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+
+    .section-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--text-primary, #111827);
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .config-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .config-table tr {
+        border-bottom: 1px solid var(--border-color, #e5e7eb);
+    }
+
+    .config-table tr:last-child {
+        border-bottom: none;
+    }
+
+    .config-table td {
+        padding: 12px 0;
+    }
+
+    .config-label {
+        font-weight: 600;
+        color: var(--text-secondary, #6b7280);
+        width: 200px;
+    }
+
+    .config-value {
+        color: var(--text-primary, #111827);
+    }
+
+    .chart-container {
+        position: relative;
+        height: 300px;
+        margin-top: 20px;
+    }
+
+    .trade-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .trade-table th {
+        background: var(--metric-bg, #f9fafb);
+        padding: 12px;
+        text-align: left;
+        font-weight: 600;
+        color: var(--text-secondary, #6b7280);
+        font-size: 0.875rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .trade-table td {
+        padding: 12px;
+        border-bottom: 1px solid var(--border-color, #e5e7eb);
+    }
+
+    .trade-table tr:hover {
+        background: var(--metric-bg, #f9fafb);
+    }
+
+    .positive {
+        color: #10b981;
+        font-weight: 600;
+    }
+
+    .negative {
+        color: #ef4444;
+        font-weight: 600;
+    }
+
+    .badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .badge-success {
+        background: #d1fae5;
+        color: #065f46;
+    }
+
+    .badge-danger {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: var(--text-secondary, #6b7280);
+    }
+
+    [data-theme="dark"] {
+        --card-bg: #1f2937;
+        --border-color: #374151;
+        --text-primary: #f9fafb;
+        --text-secondary: #d1d5db;
+        --metric-bg: #111827;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="details-container">
+    <a href="/modules" class="back-link">
+        <i class="fas fa-arrow-left"></i>
+        Back to Modules
+    </a>
+
+    <!-- Header -->
+    <div class="details-header">
+        <div class="module-title-section">
+            <div>
+                <h1 class="module-title">{{ module.name|title|replace('_', ' ') }}</h1>
+                <div class="module-subtitle">
+                    <i class="fas fa-{{ 'cube' if module.module_type == 'dex_trading' else 'chart-line' if module.module_type == 'futures_trading' else 'coins' }}"></i>
+                    {{ module.module_type|title|replace('_', ' ') }} Module
+                </div>
+            </div>
+            <span class="status-badge status-{{ module.status }}">
+                {{ module.status|upper }}
+            </span>
+        </div>
+    </div>
+
+    <!-- Key Metrics -->
+    <div class="stats-grid">
+        <div class="stat-box">
+            <div class="stat-label">Capital Allocated</div>
+            <div class="stat-value">${{ module.metrics.capital_allocated|round(2) }}</div>
+            <div class="stat-change">
+                Used: ${{ module.metrics.capital_used|round(2) }}
+                ({{ ((module.metrics.capital_used / module.metrics.capital_allocated * 100)|round(1)) if module.metrics.capital_allocated > 0 else 0 }}%)
+            </div>
+        </div>
+
+        <div class="stat-box">
+            <div class="stat-label">Total P&L</div>
+            <div class="stat-value {% if module.metrics.total_pnl >= 0 %}positive{% else %}negative{% endif %}">
+                ${{ module.metrics.total_pnl|round(2) }}
+            </div>
+            <div class="stat-change {% if module.metrics.total_pnl >= 0 %}positive{% else %}negative{% endif %}">
+                {{ ((module.metrics.total_pnl / module.metrics.capital_allocated * 100)|round(2)) if module.metrics.capital_allocated > 0 else 0 }}% ROI
+            </div>
+        </div>
+
+        <div class="stat-box">
+            <div class="stat-label">Win Rate</div>
+            <div class="stat-value">{{ (module.metrics.win_rate * 100)|round(1) }}%</div>
+            <div class="stat-change">
+                {{ module.metrics.winning_trades }} wins / {{ module.metrics.losing_trades }} losses
+            </div>
+        </div>
+
+        <div class="stat-box">
+            <div class="stat-label">Active Positions</div>
+            <div class="stat-value">{{ module.metrics.active_positions }}</div>
+            <div class="stat-change">
+                Max: {{ module.config.max_positions }}
+            </div>
+        </div>
+
+        <div class="stat-box">
+            <div class="stat-label">Sharpe Ratio</div>
+            <div class="stat-value">{{ module.metrics.sharpe_ratio|round(2) }}</div>
+            <div class="stat-change">
+                Max DD: {{ (module.metrics.max_drawdown * 100)|round(2) }}%
+            </div>
+        </div>
+
+        <div class="stat-box">
+            <div class="stat-label">Profit Factor</div>
+            <div class="stat-value">{{ module.metrics.profit_factor|round(2) }}</div>
+            <div class="stat-change">
+                {{ module.metrics.total_trades }} total trades
+            </div>
+        </div>
+    </div>
+
+    <!-- Performance Chart -->
+    <div class="section-card">
+        <div class="section-title">
+            <i class="fas fa-chart-line"></i>
+            Performance History
+        </div>
+        <div class="chart-container">
+            <canvas id="performanceChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Configuration -->
+    <div class="section-card">
+        <div class="section-title">
+            <i class="fas fa-cog"></i>
+            Module Configuration
+        </div>
+        <table class="config-table">
+            <tr>
+                <td class="config-label">Module Type</td>
+                <td class="config-value">{{ module.module_type|title|replace('_', ' ') }}</td>
+            </tr>
+            <tr>
+                <td class="config-label">Status</td>
+                <td class="config-value">{{ module.status|title }}</td>
+            </tr>
+            <tr>
+                <td class="config-label">Enabled</td>
+                <td class="config-value">{{ 'Yes' if module.enabled else 'No' }}</td>
+            </tr>
+            <tr>
+                <td class="config-label">Capital Allocation</td>
+                <td class="config-value">${{ module.config.capital_allocation|round(2) }}</td>
+            </tr>
+            <tr>
+                <td class="config-label">Max Positions</td>
+                <td class="config-value">{{ module.config.max_positions }}</td>
+            </tr>
+            <tr>
+                <td class="config-label">Max Position Size</td>
+                <td class="config-value">${{ module.config.max_position_size|round(2) }}</td>
+            </tr>
+            <tr>
+                <td class="config-label">Risk Per Trade</td>
+                <td class="config-value">{{ (module.config.risk_per_trade * 100)|round(2) }}%</td>
+            </tr>
+            <tr>
+                <td class="config-label">Stop Loss</td>
+                <td class="config-value">{{ (module.config.stop_loss_pct * 100)|round(2) }}%</td>
+            </tr>
+            <tr>
+                <td class="config-label">Take Profit</td>
+                <td class="config-value">{{ (module.config.take_profit_pct * 100)|round(2) }}%</td>
+            </tr>
+            <tr>
+                <td class="config-label">Strategies</td>
+                <td class="config-value">{{ module.config.strategies|join(', ')|title }}</td>
+            </tr>
+        </table>
+    </div>
+
+    <!-- Active Positions -->
+    {% if positions %}
+    <div class="section-card">
+        <div class="section-title">
+            <i class="fas fa-wallet"></i>
+            Active Positions ({{ positions|length }})
+        </div>
+        <table class="trade-table">
+            <thead>
+                <tr>
+                    <th>Token</th>
+                    <th>Entry Price</th>
+                    <th>Current Price</th>
+                    <th>Size</th>
+                    <th>P&L</th>
+                    <th>P&L %</th>
+                    <th>Duration</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for position in positions %}
+                <tr>
+                    <td><strong>{{ position.token_symbol }}</strong></td>
+                    <td>${{ position.entry_price|round(6) }}</td>
+                    <td>${{ position.current_price|round(6) }}</td>
+                    <td>${{ position.position_size|round(2) }}</td>
+                    <td class="{% if position.unrealized_pnl >= 0 %}positive{% else %}negative{% endif %}">
+                        ${{ position.unrealized_pnl|round(2) }}
+                    </td>
+                    <td class="{% if position.unrealized_pnl_pct >= 0 %}positive{% else %}negative{% endif %}">
+                        {{ position.unrealized_pnl_pct|round(2) }}%
+                    </td>
+                    <td>{{ position.duration }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <!-- Recent Trades -->
+    <div class="section-card">
+        <div class="section-title">
+            <i class="fas fa-history"></i>
+            Recent Trades
+        </div>
+        {% if trades %}
+        <table class="trade-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Token</th>
+                    <th>Side</th>
+                    <th>Entry</th>
+                    <th>Exit</th>
+                    <th>P&L</th>
+                    <th>P&L %</th>
+                    <th>Result</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for trade in trades %}
+                <tr>
+                    <td>{{ trade.timestamp|default('N/A') }}</td>
+                    <td><strong>{{ trade.token_symbol|default('Unknown') }}</strong></td>
+                    <td>{{ trade.side|upper }}</td>
+                    <td>${{ trade.entry_price|round(6) if trade.entry_price else 'N/A' }}</td>
+                    <td>${{ trade.exit_price|round(6) if trade.exit_price else 'N/A' }}</td>
+                    <td class="{% if trade.pnl >= 0 %}positive{% else %}negative{% endif %}">
+                        ${{ trade.pnl|round(2) if trade.pnl else '0.00' }}
+                    </td>
+                    <td class="{% if trade.pnl_pct >= 0 %}positive{% else %}negative{% endif %}">
+                        {{ trade.pnl_pct|round(2) if trade.pnl_pct else '0.00' }}%
+                    </td>
+                    <td>
+                        {% if trade.pnl >= 0 %}
+                            <span class="badge badge-success">WIN</span>
+                        {% else %}
+                            <span class="badge badge-danger">LOSS</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
+            <p>No trades yet. Module will appear here once it starts trading.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+// Performance Chart
+const ctx = document.getElementById('performanceChart').getContext('2d');
+const chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+        labels: {{ chart_labels|tojson|safe if chart_labels else '[]' }},
+        datasets: [{
+            label: 'P&L ($)',
+            data: {{ chart_data|tojson|safe if chart_data else '[]' }},
+            borderColor: '#3b82f6',
+            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+            fill: true,
+            tension: 0.4
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                display: true,
+                position: 'top'
+            },
+            tooltip: {
+                mode: 'index',
+                intersect: false
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                grid: {
+                    color: 'rgba(0, 0, 0, 0.05)'
+                }
+            },
+            x: {
+                grid: {
+                    display: false
+                }
+            }
+        }
+    }
+});
+</script>
+{% endblock %}

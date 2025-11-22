@@ -3,138 +3,121 @@
 {% block title %}Module Management - Trading Bot{% endblock %}
 
 {% block extra_head %}
+<link rel="stylesheet" href="/static/css/modules.css">
 <style>
-    .module-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        border-radius: 10px;
+    /* Theme-aware styles that respect dark/light mode */
+    .modules-container {
         padding: 20px;
-        margin-bottom: 20px;
-        color: white;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        max-width: 1400px;
+        margin: 0 auto;
     }
 
-    .module-card.disabled {
-        background: linear-gradient(135deg, #636363 0%, #a2ab58 100%);
-        opacity: 0.7;
-    }
-
-    .module-card.error {
-        background: linear-gradient(135deg, #f12711 0%, #f5af19 100%);
-    }
-
-    .module-header {
+    .modules-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 15px;
+        margin-bottom: 30px;
+        padding-bottom: 20px;
+        border-bottom: 2px solid var(--border-color, #e5e7eb);
     }
 
-    .module-name {
-        font-size: 1.5rem;
-        font-weight: bold;
-    }
-
-    .module-status {
-        display: inline-block;
-        padding: 5px 15px;
-        border-radius: 20px;
-        font-size: 0.9rem;
-        font-weight: bold;
-    }
-
-    .status-running {
-        background-color: #10b981;
-    }
-
-    .status-stopped {
-        background-color: #6b7280;
-    }
-
-    .status-error {
-        background-color: #ef4444;
-    }
-
-    .status-disabled {
-        background-color: #9ca3af;
-    }
-
-    .module-metrics {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        gap: 15px;
-        margin-top: 15px;
-    }
-
-    .metric-box {
-        background: rgba(255,255,255,0.2);
-        padding: 10px;
-        border-radius: 5px;
-    }
-
-    .metric-label {
-        font-size: 0.8rem;
-        opacity: 0.9;
-        margin-bottom: 5px;
-    }
-
-    .metric-value {
-        font-size: 1.3rem;
-        font-weight: bold;
-    }
-
-    .module-actions {
-        margin-top: 15px;
+    .modules-title {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--text-primary, #111827);
         display: flex;
-        gap: 10px;
+        align-items: center;
+        gap: 12px;
     }
 
-    .btn-module {
-        padding: 8px 20px;
+    .refresh-btn {
+        background: var(--primary-color, #3b82f6);
+        color: white;
         border: none;
-        border-radius: 5px;
-        font-weight: bold;
+        padding: 10px 20px;
+        border-radius: 8px;
         cursor: pointer;
+        font-weight: 600;
         transition: all 0.3s;
     }
 
-    .btn-enable {
-        background-color: #10b981;
-        color: white;
-    }
-
-    .btn-disable {
-        background-color: #ef4444;
-        color: white;
-    }
-
-    .btn-configure {
-        background-color: #3b82f6;
-        color: white;
-    }
-
-    .btn-module:hover {
+    .refresh-btn:hover {
+        background: var(--primary-hover, #2563eb);
         transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
     }
 
-    .capital-allocation {
-        background: white;
+    /* Summary Cards */
+    .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+
+    .summary-card {
+        background: var(--card-bg, #ffffff);
+        border: 1px solid var(--border-color, #e5e7eb);
+        border-radius: 12px;
         padding: 20px;
-        border-radius: 10px;
-        margin-bottom: 20px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        transition: all 0.3s;
     }
 
-    .allocation-chart {
-        margin-top: 15px;
+    .summary-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+    }
+
+    .summary-label {
+        font-size: 0.875rem;
+        color: var(--text-secondary, #6b7280);
+        margin-bottom: 8px;
+        font-weight: 500;
+    }
+
+    .summary-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--text-primary, #111827);
+        margin-bottom: 4px;
+    }
+
+    .summary-subtitle {
+        font-size: 0.813rem;
+        color: var(--text-tertiary, #9ca3af);
+    }
+
+    .positive {
+        color: #10b981 !important;
+    }
+
+    .negative {
+        color: #ef4444 !important;
+    }
+
+    /* Capital Allocation Chart */
+    .capital-section {
+        background: var(--card-bg, #ffffff);
+        border: 1px solid var(--border-color, #e5e7eb);
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 30px;
+    }
+
+    .capital-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--text-primary, #111827);
+        margin-bottom: 20px;
     }
 
     .allocation-bar {
         display: flex;
-        height: 40px;
-        border-radius: 5px;
+        height: 48px;
+        border-radius: 8px;
         overflow: hidden;
-        margin-bottom: 15px;
+        margin-bottom: 20px;
+        border: 1px solid var(--border-color, #e5e7eb);
     }
 
     .allocation-segment {
@@ -142,302 +125,673 @@
         align-items: center;
         justify-content: center;
         color: white;
-        font-weight: bold;
+        font-weight: 600;
+        font-size: 0.875rem;
         transition: all 0.3s;
+        cursor: pointer;
     }
 
     .allocation-segment:hover {
-        opacity: 0.8;
+        filter: brightness(1.1);
     }
 
-    .summary-stats {
+    .allocation-legend {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
         gap: 15px;
-        margin-bottom: 30px;
     }
 
-    .stat-card {
-        background: white;
-        padding: 20px;
-        border-radius: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
     }
 
-    .stat-label {
-        font-size: 0.9rem;
+    .legend-color {
+        width: 16px;
+        height: 16px;
+        border-radius: 4px;
+    }
+
+    .legend-name {
+        font-weight: 500;
+        color: var(--text-primary, #111827);
+    }
+
+    .legend-amount {
+        color: var(--text-secondary, #6b7280);
+        font-size: 0.875rem;
+    }
+
+    /* Module Cards */
+    .modules-grid {
+        display: grid;
+        gap: 24px;
+    }
+
+    .module-card {
+        background: var(--card-bg, #ffffff);
+        border: 2px solid var(--border-color, #e5e7eb);
+        border-radius: 12px;
+        padding: 24px;
+        transition: all 0.3s;
+    }
+
+    .module-card.running {
+        border-color: #10b981;
+        box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.1);
+    }
+
+    .module-card.stopped {
+        border-color: #6b7280;
+        opacity: 0.8;
+    }
+
+    .module-card.disabled {
+        border-color: #d1d5db;
+        opacity: 0.6;
+    }
+
+    .module-card.error {
+        border-color: #ef4444;
+        box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.1);
+    }
+
+    .module-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    }
+
+    .module-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 20px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--border-color, #e5e7eb);
+    }
+
+    .module-info {
+        flex: 1;
+    }
+
+    .module-name {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--text-primary, #111827);
+        margin-bottom: 6px;
+    }
+
+    .module-type {
+        font-size: 0.875rem;
+        color: var(--text-secondary, #6b7280);
+        font-weight: 500;
+    }
+
+    .module-status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-size: 0.813rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .status-running {
+        background: #d1fae5;
+        color: #065f46;
+    }
+
+    .status-stopped {
+        background: #e5e7eb;
+        color: #374151;
+    }
+
+    .status-disabled {
+        background: #f3f4f6;
         color: #6b7280;
-        margin-bottom: 5px;
     }
 
-    .stat-value {
-        font-size: 1.8rem;
-        font-weight: bold;
-        color: #111827;
+    .status-error {
+        background: #fee2e2;
+        color: #991b1b;
     }
 
-    .stat-change {
-        font-size: 0.85rem;
-        margin-top: 5px;
+    .status-initializing {
+        background: #dbeafe;
+        color: #1e40af;
     }
 
-    .positive {
-        color: #10b981;
+    .status-paused {
+        background: #fef3c7;
+        color: #92400e;
     }
 
-    .negative {
-        color: #ef4444;
+    /* Module Metrics Grid */
+    .module-metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 16px;
+        margin-bottom: 20px;
+    }
+
+    .metric-item {
+        background: var(--metric-bg, #f9fafb);
+        padding: 14px;
+        border-radius: 8px;
+        border: 1px solid var(--border-color, #e5e7eb);
+    }
+
+    .metric-label {
+        font-size: 0.75rem;
+        color: var(--text-secondary, #6b7280);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 6px;
+        font-weight: 600;
+    }
+
+    .metric-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--text-primary, #111827);
+        margin-bottom: 4px;
+    }
+
+    .metric-subtitle {
+        font-size: 0.75rem;
+        color: var(--text-tertiary, #9ca3af);
+    }
+
+    /* Module Actions */
+    .module-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .action-btn {
+        padding: 8px 16px;
+        border: none;
+        border-radius: 6px;
+        font-weight: 600;
+        font-size: 0.875rem;
+        cursor: pointer;
+        transition: all 0.3s;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .action-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+
+    .btn-enable {
+        background: #10b981;
+        color: white;
+    }
+
+    .btn-enable:hover {
+        background: #059669;
+    }
+
+    .btn-disable {
+        background: #ef4444;
+        color: white;
+    }
+
+    .btn-disable:hover {
+        background: #dc2626;
+    }
+
+    .btn-pause {
+        background: #f59e0b;
+        color: white;
+    }
+
+    .btn-pause:hover {
+        background: #d97706;
+    }
+
+    .btn-configure {
+        background: #3b82f6;
+        color: white;
+    }
+
+    .btn-configure:hover {
+        background: #2563eb;
+    }
+
+    .btn-details {
+        background: #8b5cf6;
+        color: white;
+    }
+
+    .btn-details:hover {
+        background: #7c3aed;
+    }
+
+    /* Error Message */
+    .error-message {
+        margin-top: 16px;
+        padding: 12px;
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        border-radius: 8px;
+        color: #991b1b;
+        font-size: 0.875rem;
+        display: flex;
+        align-items: start;
+        gap: 8px;
+    }
+
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        background: var(--card-bg, #ffffff);
+        border: 2px dashed var(--border-color, #e5e7eb);
+        border-radius: 12px;
+    }
+
+    .empty-icon {
+        font-size: 4rem;
+        margin-bottom: 16px;
+    }
+
+    .empty-title {
+        font-size: 1.5rem;
+        font-weight: 600;
+        color: var(--text-primary, #111827);
+        margin-bottom: 8px;
+    }
+
+    .empty-text {
+        color: var(--text-secondary, #6b7280);
+    }
+
+    /* Loading Spinner */
+    .loading-spinner {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        border: 3px solid rgba(59, 130, 246, 0.3);
+        border-radius: 50%;
+        border-top-color: #3b82f6;
+        animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    /* Dark mode adjustments */
+    [data-theme="dark"] {
+        --card-bg: #1f2937;
+        --border-color: #374151;
+        --text-primary: #f9fafb;
+        --text-secondary: #d1d5db;
+        --text-tertiary: #9ca3af;
+        --metric-bg: #111827;
+    }
+
+    [data-theme="dark"] .summary-card,
+    [data-theme="dark"] .capital-section,
+    [data-theme="dark"] .module-card {
+        background: var(--card-bg);
+    }
+
+    [data-theme="dark"] .status-running {
+        background: #064e3b;
+        color: #6ee7b7;
+    }
+
+    [data-theme="dark"] .status-stopped {
+        background: #374151;
+        color: #d1d5db;
+    }
+
+    [data-theme="dark"] .status-disabled {
+        background: #1f2937;
+        color: #9ca3af;
+    }
+
+    [data-theme="dark"] .status-error {
+        background: #7f1d1d;
+        color: #fca5a5;
+    }
+
+    [data-theme="dark"] .error-message {
+        background: #7f1d1d;
+        border-color: #991b1b;
+        color: #fca5a5;
     }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <h1 class="mb-4">📦 Module Management</h1>
+<div class="modules-container">
+    <!-- Header -->
+    <div class="modules-header">
+        <div class="modules-title">
+            <i class="fas fa-cubes"></i>
+            Module Management
+        </div>
+        <button class="refresh-btn" onclick="refreshModules()">
+            <i class="fas fa-sync-alt"></i> Refresh
+        </button>
+    </div>
 
     <!-- Summary Statistics -->
-    <div class="summary-stats">
-        <div class="stat-card">
-            <div class="stat-label">Total Capital</div>
-            <div class="stat-value">${{ metrics.total_capital|default(0)|round(2) }}</div>
+    <div class="summary-grid">
+        <div class="summary-card">
+            <div class="summary-label">Total Capital</div>
+            <div class="summary-value" id="totalCapital">${{ metrics.total_capital|default(1400)|round(2) }}</div>
+            <div class="summary-subtitle">Available: ${{ metrics.available_capital|default(200)|round(2) }}</div>
         </div>
-        <div class="stat-card">
-            <div class="stat-label">Allocated Capital</div>
-            <div class="stat-value">${{ metrics.allocated_capital|default(0)|round(2) }}</div>
-            <div class="stat-change">
-                {{ ((metrics.allocated_capital|default(0) / metrics.total_capital|default(1)) * 100)|round(1) }}% of total
+
+        <div class="summary-card">
+            <div class="summary-label">Allocated Capital</div>
+            <div class="summary-value" id="allocatedCapital">${{ metrics.allocated_capital|default(1200)|round(2) }}</div>
+            <div class="summary-subtitle">
+                {{ ((metrics.allocated_capital|default(1200) / metrics.total_capital|default(1400)) * 100)|round(1) }}% of total
             </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-label">Active Modules</div>
-            <div class="stat-value">{{ metrics.active_modules|default(0) }}/{{ metrics.modules_count|default(0) }}</div>
+
+        <div class="summary-card">
+            <div class="summary-label">Active Modules</div>
+            <div class="summary-value" id="activeModules">
+                {{ metrics.active_modules|default(1) }}<span style="font-size: 1.5rem; color: var(--text-secondary);">/{{ modules|length|default(3) }}</span>
+            </div>
+            <div class="summary-subtitle">{{ modules|length|default(3) }} modules registered</div>
         </div>
-        <div class="stat-card">
-            <div class="stat-label">Total PnL</div>
-            <div class="stat-value {% if metrics.total_pnl|default(0) >= 0 %}positive{% else %}negative{% endif %}">
+
+        <div class="summary-card">
+            <div class="summary-label">Total P&L</div>
+            <div class="summary-value {% if metrics.total_pnl|default(0) >= 0 %}positive{% else %}negative{% endif %}" id="totalPnl">
                 ${{ metrics.total_pnl|default(0)|round(2) }}
             </div>
-            <div class="stat-change {% if metrics.total_pnl|default(0) >= 0 %}positive{% else %}negative{% endif %}">
-                {{ ((metrics.total_pnl|default(0) / metrics.total_capital|default(1)) * 100)|round(2) }}%
+            <div class="summary-subtitle {% if metrics.total_pnl|default(0) >= 0 %}positive{% else %}negative{% endif %}">
+                {{ ((metrics.total_pnl|default(0) / metrics.total_capital|default(1)) * 100)|round(2) }}% ROI
             </div>
         </div>
     </div>
 
-    <!-- Capital Allocation Visualization -->
-    <div class="capital-allocation">
-        <h3>Capital Allocation</h3>
-        <div class="allocation-chart">
-            <div class="allocation-bar">
-                {% if modules %}
-                    {% for module in modules %}
-                        {% if module.config.capital_allocation > 0 %}
-                        <div class="allocation-segment"
-                             style="width: {{ (module.config.capital_allocation / metrics.total_capital * 100)|round(1) }}%;
-                                    background-color: {{ ['#667eea', '#f093fb', '#4facfe', '#43e97b']|random }};">
-                            {{ module.name }}<br>
-                            ${{ module.config.capital_allocation|round(0) }}
-                        </div>
-                        {% endif %}
-                    {% endfor %}
-                    {% if metrics.available_capital > 0 %}
+    <!-- Capital Allocation Chart -->
+    <div class="capital-section">
+        <div class="capital-title">Capital Allocation</div>
+        <div class="allocation-bar">
+            {% if modules %}
+                {% set colors = ['#667eea', '#f093fb', '#4facfe', '#43e97b', '#fa709a', '#fee140'] %}
+                {% for module in modules %}
+                    {% if module.config.capital_allocation > 0 %}
                     <div class="allocation-segment"
-                         style="width: {{ (metrics.available_capital / metrics.total_capital * 100)|round(1) }}%;
-                                background-color: #e0e0e0; color: #333;">
-                        Available<br>
-                        ${{ metrics.available_capital|round(0) }}
+                         style="width: {{ (module.config.capital_allocation / metrics.total_capital * 100)|round(1) }}%;
+                                background: {{ colors[loop.index0 % colors|length] }};"
+                         title="{{ module.name }}: ${{ module.config.capital_allocation }}">
+                        {% if (module.config.capital_allocation / metrics.total_capital * 100) > 8 %}
+                            ${{ module.config.capital_allocation|round(0) }}
+                        {% endif %}
                     </div>
                     {% endif %}
+                {% endfor %}
+                {% if metrics.available_capital > 0 %}
+                <div class="allocation-segment"
+                     style="width: {{ (metrics.available_capital / metrics.total_capital * 100)|round(1) }}%;
+                            background: #e0e0e0; color: #555;"
+                     title="Available: ${{ metrics.available_capital }}">
+                    {% if (metrics.available_capital / metrics.total_capital * 100) > 8 %}
+                        Available
+                    {% endif %}
+                </div>
                 {% endif %}
-            </div>
+            {% endif %}
+        </div>
+
+        <div class="allocation-legend">
+            {% if modules %}
+                {% set colors = ['#667eea', '#f093fb', '#4facfe', '#43e97b', '#fa709a', '#fee140'] %}
+                {% for module in modules %}
+                <div class="legend-item">
+                    <div class="legend-color" style="background: {{ colors[loop.index0 % colors|length] }};"></div>
+                    <div>
+                        <div class="legend-name">{{ module.name|title }}</div>
+                        <div class="legend-amount">${{ module.config.capital_allocation|round(0) }} ({{ (module.config.capital_allocation / metrics.total_capital * 100)|round(1) }}%)</div>
+                    </div>
+                </div>
+                {% endfor %}
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #e0e0e0;"></div>
+                    <div>
+                        <div class="legend-name">Available</div>
+                        <div class="legend-amount">${{ metrics.available_capital|round(0) }} ({{ (metrics.available_capital / metrics.total_capital * 100)|round(1) }}%)</div>
+                    </div>
+                </div>
+            {% endif %}
         </div>
     </div>
 
     <!-- Module Cards -->
-    <h2 class="mb-3">Trading Modules</h2>
-
-    {% if modules %}
-        {% for module in modules %}
-        <div class="module-card {% if not module.enabled %}disabled{% endif %} {% if module.status == 'error' %}error{% endif %}">
-            <div class="module-header">
-                <div>
-                    <div class="module-name">{{ module.name|upper }}</div>
-                    <div style="font-size: 0.9rem; opacity: 0.9;">{{ module.config.description|default('No description') }}</div>
-                </div>
-                <div>
-                    <span class="module-status status-{{ module.status }}">
+    <div class="modules-grid">
+        {% if modules %}
+            {% for module in modules %}
+            <div class="module-card {{ module.status }}" id="module-{{ module.name }}">
+                <div class="module-header">
+                    <div class="module-info">
+                        <div class="module-name">{{ module.name|title|replace('_', ' ') }}</div>
+                        <div class="module-type">
+                            <i class="fas fa-{{ 'cube' if module.module_type == 'dex_trading' else 'chart-line' if module.module_type == 'futures_trading' else 'coins' }}"></i>
+                            {{ module.module_type|title|replace('_', ' ') }}
+                        </div>
+                    </div>
+                    <span class="module-status-badge status-{{ module.status }}">
+                        <span class="status-dot"></span>
                         {{ module.status|upper }}
                     </span>
                 </div>
-            </div>
 
-            <div class="module-metrics">
-                <div class="metric-box">
-                    <div class="metric-label">Capital</div>
-                    <div class="metric-value">${{ module.metrics.capital_allocated|round(0) }}</div>
-                    <div style="font-size: 0.75rem; margin-top: 3px;">
-                        Used: ${{ module.metrics.capital_used|round(0) }}
+                <div class="module-metrics">
+                    <div class="metric-item">
+                        <div class="metric-label">Capital</div>
+                        <div class="metric-value">${{ module.metrics.capital_allocated|round(0) }}</div>
+                        <div class="metric-subtitle">Used: ${{ module.metrics.capital_used|round(0) }}</div>
+                    </div>
+
+                    <div class="metric-item">
+                        <div class="metric-label">Positions</div>
+                        <div class="metric-value">{{ module.metrics.active_positions }}</div>
+                        <div class="metric-subtitle">Max: {{ module.config.max_positions }}</div>
+                    </div>
+
+                    <div class="metric-item">
+                        <div class="metric-label">Total Trades</div>
+                        <div class="metric-value">{{ module.metrics.total_trades }}</div>
+                        <div class="metric-subtitle">
+                            Win Rate: {{ (module.metrics.win_rate * 100)|round(1) }}%
+                        </div>
+                    </div>
+
+                    <div class="metric-item">
+                        <div class="metric-label">P&L</div>
+                        <div class="metric-value {% if module.metrics.total_pnl >= 0 %}positive{% else %}negative{% endif %}">
+                            ${{ module.metrics.total_pnl|round(2) }}
+                        </div>
+                        <div class="metric-subtitle {% if module.metrics.total_pnl >= 0 %}positive{% else %}negative{% endif %}">
+                            {{ ((module.metrics.total_pnl / module.metrics.capital_allocated * 100)|round(2)) if module.metrics.capital_allocated > 0 else 0 }}%
+                        </div>
+                    </div>
+
+                    <div class="metric-item">
+                        <div class="metric-label">Uptime</div>
+                        <div class="metric-value">{{ (module.metrics.uptime_seconds / 3600)|round(1) }}h</div>
+                        <div class="metric-subtitle">Errors: {{ module.metrics.errors_count }}</div>
+                    </div>
+
+                    <div class="metric-item">
+                        <div class="metric-label">Sharpe</div>
+                        <div class="metric-value">{{ module.metrics.sharpe_ratio|round(2) }}</div>
+                        <div class="metric-subtitle">Max DD: {{ (module.metrics.max_drawdown * 100)|round(1) }}%</div>
                     </div>
                 </div>
 
-                <div class="metric-box">
-                    <div class="metric-label">Positions</div>
-                    <div class="metric-value">{{ module.metrics.active_positions }}</div>
-                    <div style="font-size: 0.75rem; margin-top: 3px;">
-                        Max: {{ module.config.max_positions }}
-                    </div>
-                </div>
-
-                <div class="metric-box">
-                    <div class="metric-label">Total Trades</div>
-                    <div class="metric-value">{{ module.metrics.total_trades }}</div>
-                    <div style="font-size: 0.75rem; margin-top: 3px;">
-                        Win Rate: {{ (module.metrics.win_rate * 100)|round(1) }}%
-                    </div>
-                </div>
-
-                <div class="metric-box">
-                    <div class="metric-label">PnL</div>
-                    <div class="metric-value" style="color: {% if module.metrics.total_pnl >= 0 %}#10b981{% else %}#ef4444{% endif %}">
-                        ${{ module.metrics.total_pnl|round(2) }}
-                    </div>
-                    <div style="font-size: 0.75rem; margin-top: 3px;">
-                        {{ ((module.metrics.total_pnl / module.metrics.capital_allocated * 100)|round(2)) if module.metrics.capital_allocated > 0 else 0 }}%
-                    </div>
-                </div>
-
-                <div class="metric-box">
-                    <div class="metric-label">Uptime</div>
-                    <div class="metric-value">{{ (module.metrics.uptime_seconds / 3600)|round(1) }}h</div>
-                    <div style="font-size: 0.75rem; margin-top: 3px;">
-                        Errors: {{ module.metrics.errors_count }}
-                    </div>
-                </div>
-            </div>
-
-            <div class="module-actions">
-                {% if module.enabled %}
-                    {% if module.status == 'running' %}
-                        <button class="btn-module btn-disable" onclick="pauseModule('{{ module.name }}')">
-                            ⏸️ Pause
+                <div class="module-actions">
+                    {% if module.enabled %}
+                        {% if module.status == 'running' %}
+                            <button class="action-btn btn-pause" onclick="pauseModule('{{ module.name }}')">
+                                <i class="fas fa-pause"></i> Pause
+                            </button>
+                        {% elif module.status in ['paused', 'stopped'] %}
+                            <button class="action-btn btn-enable" onclick="startModule('{{ module.name }}')">
+                                <i class="fas fa-play"></i> Start
+                            </button>
+                        {% endif %}
+                        <button class="action-btn btn-disable" onclick="disableModule('{{ module.name }}')">
+                            <i class="fas fa-stop-circle"></i> Disable
                         </button>
-                    {% elif module.status == 'paused' %}
-                        <button class="btn-module btn-enable" onclick="resumeModule('{{ module.name }}')">
-                            ▶️ Resume
+                    {% else %}
+                        <button class="action-btn btn-enable" onclick="enableModule('{{ module.name }}')">
+                            <i class="fas fa-check-circle"></i> Enable
                         </button>
                     {% endif %}
-                    <button class="btn-module btn-disable" onclick="disableModule('{{ module.name }}')">
-                        🛑 Disable
+                    <button class="action-btn btn-configure" onclick="configureModule('{{ module.name }}')">
+                        <i class="fas fa-cog"></i> Configure
                     </button>
-                {% else %}
-                    <button class="btn-module btn-enable" onclick="enableModule('{{ module.name }}')">
-                        ✅ Enable
+                    <button class="action-btn btn-details" onclick="viewModuleDetails('{{ module.name }}')">
+                        <i class="fas fa-chart-bar"></i> Details
                     </button>
-                {% endif %}
-                <button class="btn-module btn-configure" onclick="configureModule('{{ module.name }}')">
-                    ⚙️ Configure
-                </button>
-                <button class="btn-module btn-configure" onclick="viewModuleDetails('{{ module.name }}')">
-                    📊 Details
-                </button>
-            </div>
+                </div>
 
-            {% if module.error_message %}
-            <div style="margin-top: 15px; padding: 10px; background: rgba(255,255,255,0.2); border-radius: 5px;">
-                <strong>⚠️ Error:</strong> {{ module.error_message }}
+                {% if module.error_message %}
+                <div class="error-message">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <div>
+                        <strong>Error:</strong> {{ module.error_message }}
+                    </div>
+                </div>
+                {% endif %}
             </div>
-            {% endif %}
-        </div>
-        {% endfor %}
-    {% else %}
-        <div class="alert alert-info">
-            No modules registered yet.
-        </div>
-    {% endif %}
+            {% endfor %}
+        {% else %}
+            <div class="empty-state">
+                <div class="empty-icon">📦</div>
+                <div class="empty-title">No Modules Found</div>
+                <div class="empty-text">No trading modules are currently registered. Please check the system configuration.</div>
+            </div>
+        {% endif %}
+    </div>
 </div>
 
 <script>
-    async function enableModule(moduleName) {
-        if (!confirm(`Enable module: ${moduleName}?`)) return;
+function refreshModules() {
+    location.reload();
+}
 
-        try {
-            const response = await fetch(`/api/modules/${moduleName}/enable`, {
-                method: 'POST'
-            });
-            const data = await response.json();
-
-            if (data.success) {
-                alert(`Module ${moduleName} enabled successfully`);
-                location.reload();
-            } else {
-                alert(`Failed to enable module: ${data.error}`);
-            }
-        } catch (error) {
-            alert(`Error: ${error.message}`);
+async function pauseModule(moduleName) {
+    try {
+        const response = await fetch(`/api/modules/${moduleName}/pause`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        if (response.ok) {
+            showToast('Module paused successfully', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            const error = await response.json();
+            showToast('Failed to pause module: ' + error.detail, 'error');
         }
+    } catch (error) {
+        showToast('Error: ' + error.message, 'error');
     }
+}
 
-    async function disableModule(moduleName) {
-        if (!confirm(`Disable module: ${moduleName}? All positions will be closed.`)) return;
-
-        try {
-            const response = await fetch(`/api/modules/${moduleName}/disable`, {
-                method: 'POST'
-            });
-            const data = await response.json();
-
-            if (data.success) {
-                alert(`Module ${moduleName} disabled successfully`);
-                location.reload();
-            } else {
-                alert(`Failed to disable module: ${data.error}`);
-            }
-        } catch (error) {
-            alert(`Error: ${error.message}`);
+async function startModule(moduleName) {
+    try {
+        const response = await fetch(`/api/modules/${moduleName}/start`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        if (response.ok) {
+            showToast('Module started successfully', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            const error = await response.json();
+            showToast('Failed to start module: ' + error.detail, 'error');
         }
+    } catch (error) {
+        showToast('Error: ' + error.message, 'error');
     }
+}
 
-    async function pauseModule(moduleName) {
-        try {
-            const response = await fetch(`/api/modules/${moduleName}/pause`, {
-                method: 'POST'
-            });
-            const data = await response.json();
-
-            if (data.success) {
-                alert(`Module ${moduleName} paused`);
-                location.reload();
-            }
-        } catch (error) {
-            alert(`Error: ${error.message}`);
+async function enableModule(moduleName) {
+    try {
+        const response = await fetch(`/api/modules/${moduleName}/enable`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        if (response.ok) {
+            showToast('Module enabled successfully', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            const error = await response.json();
+            showToast('Failed to enable module: ' + error.detail, 'error');
         }
+    } catch (error) {
+        showToast('Error: ' + error.message, 'error');
     }
+}
 
-    async function resumeModule(moduleName) {
-        try {
-            const response = await fetch(`/api/modules/${moduleName}/resume`, {
-                method: 'POST'
-            });
-            const data = await response.json();
-
-            if (data.success) {
-                alert(`Module ${moduleName} resumed`);
-                location.reload();
-            }
-        } catch (error) {
-            alert(`Error: ${error.message}`);
+async function disableModule(moduleName) {
+    if (!confirm(`Are you sure you want to disable ${moduleName}? This will stop all active trading.`)) {
+        return;
+    }
+    try {
+        const response = await fetch(`/api/modules/${moduleName}/disable`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        if (response.ok) {
+            showToast('Module disabled successfully', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            const error = await response.json();
+            showToast('Failed to disable module: ' + error.detail, 'error');
         }
+    } catch (error) {
+        showToast('Error: ' + error.message, 'error');
     }
+}
 
-    function configureModule(moduleName) {
-        alert(`Configuration UI for ${moduleName} coming soon!`);
-        // Will open a modal with module settings
-    }
+function configureModule(moduleName) {
+    window.location.href = `/modules/${moduleName}/configure`;
+}
 
-    function viewModuleDetails(moduleName) {
-        window.location.href = `/modules/${moduleName}`;
-    }
+function viewModuleDetails(moduleName) {
+    window.location.href = `/modules/${moduleName}/details`;
+}
 
-    // Auto-refresh every 30 seconds
-    setTimeout(() => location.reload(), 30000);
+function showToast(message, type = 'info') {
+    // Simple toast notification
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    toast.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 16px 24px;
+        background: ${type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#3b82f6'};
+        color: white;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        z-index: 10000;
+        font-weight: 600;
+    `;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
 </script>
 {% endblock %}

@@ -124,6 +124,57 @@ class DatabaseManager:
             async with connection.transaction():
                 yield connection
 
+    async def fetch_all(self, query: str, *args):
+        """
+        Execute a SELECT query and return all results.
+
+        Args:
+            query: SQL query string
+            *args: Query parameters
+
+        Returns:
+            List of Row objects from asyncpg
+        """
+        if not self.pool or not self.is_connected:
+            return []
+
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(query, *args)
+
+    async def fetch_one(self, query: str, *args):
+        """
+        Execute a SELECT query and return a single result.
+
+        Args:
+            query: SQL query string
+            *args: Query parameters
+
+        Returns:
+            Single Row object from asyncpg or None
+        """
+        if not self.pool or not self.is_connected:
+            return None
+
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(query, *args)
+
+    async def execute(self, query: str, *args):
+        """
+        Execute a query (INSERT, UPDATE, DELETE).
+
+        Args:
+            query: SQL query string
+            *args: Query parameters
+
+        Returns:
+            Query result status
+        """
+        if not self.pool or not self.is_connected:
+            return None
+
+        async with self.pool.acquire() as conn:
+            return await conn.execute(query, *args)
+
     async def _initialize_timescaledb(self) -> None:
         """Initialize TimescaleDB extensions and hypertables."""
         async with self.acquire() as conn:
