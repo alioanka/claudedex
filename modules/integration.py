@@ -12,6 +12,8 @@ from typing import Dict, Optional
 from core.module_manager import ModuleManager
 from modules.base_module import ModuleConfig, ModuleType
 from modules.dex_trading import DexTradingModule
+from modules.futures_trading import FuturesTradingModule
+from modules.solana_strategies import SolanaStrategiesModule
 
 
 logger = logging.getLogger(__name__)
@@ -92,10 +94,19 @@ class ModuleIntegration:
                 module_manager.register_module(dex_module)
                 self.logger.info("DEX trading module registered")
 
-            # Future modules will be registered here:
-            # - Futures trading module
-            # - Arbitrage module
-            # - etc.
+            # Register Futures trading module
+            if 'futures_trading' in module_configs:
+                futures_config = module_configs['futures_trading']
+                futures_module = self._create_futures_module(futures_config)
+                module_manager.register_module(futures_module)
+                self.logger.info("Futures trading module registered")
+
+            # Register Solana Strategies module
+            if 'solana_strategies' in module_configs:
+                solana_config = module_configs['solana_strategies']
+                solana_module = self._create_solana_module(solana_config)
+                module_manager.register_module(solana_module)
+                self.logger.info("Solana strategies module registered")
 
             self.logger.info(
                 f"Module setup complete. "
@@ -190,6 +201,91 @@ class ModuleIntegration:
 
         except Exception as e:
             self.logger.error(f"Error creating DEX module: {e}", exc_info=True)
+            raise
+
+    def _create_futures_module(self, config_data: Dict) -> FuturesTradingModule:
+        """Create Futures trading module from configuration"""
+        try:
+            module_cfg = config_data['module']
+            capital_cfg = config_data.get('capital', {})
+            positions_cfg = config_data.get('positions', {})
+            risk_cfg = config_data.get('risk', {})
+
+            # Load wallet addresses
+            wallet_addresses = self._load_wallet_addresses('futures_trading')
+
+            # Create module configuration
+            config = ModuleConfig(
+                name=module_cfg['name'],
+                module_type=ModuleType.FUTURES_TRADING,
+                enabled=module_cfg.get('enabled', True),
+                capital_allocation=capital_cfg.get('allocation', 300.0),
+                max_positions=positions_cfg.get('max_open', 5),
+                max_position_size=capital_cfg.get('max_position_size', 60.0),
+                risk_per_trade=capital_cfg.get('risk_per_trade', 0.02),
+                stop_loss_pct=risk_cfg.get('stop_loss_pct', 0.05),
+                take_profit_pct=risk_cfg.get('take_profit_pct', 0.10),
+                wallet_addresses=wallet_addresses,
+                strategies=config_data.get('strategies', {}).get('enabled', []),
+                custom_settings=config_data
+            )
+
+            # Create module instance
+            module = FuturesTradingModule(
+                config=config,
+                trading_engine=self.engine,
+                db_manager=self.db,
+                cache_manager=self.cache,
+                alert_manager=self.alerts,
+                risk_manager=self.risk
+            )
+
+            return module
+
+        except Exception as e:
+            self.logger.error(f"Error creating Futures module: {e}", exc_info=True)
+            raise
+
+    def _create_solana_module(self, config_data: Dict) -> SolanaStrategiesModule:
+        """Create Solana strategies module from configuration"""
+        try:
+            module_cfg = config_data['module']
+            capital_cfg = config_data.get('capital', {})
+            positions_cfg = config_data.get('positions', {})
+            risk_cfg = config_data.get('risk', {})
+
+            # Load wallet addresses
+            wallet_addresses = self._load_wallet_addresses('solana_strategies')
+
+            # Create module configuration
+            config = ModuleConfig(
+                name=module_cfg['name'],
+                module_type=ModuleType.CUSTOM,
+                enabled=module_cfg.get('enabled', True),
+                capital_allocation=capital_cfg.get('allocation', 400.0),
+                max_positions=positions_cfg.get('max_open', 8),
+                max_position_size=capital_cfg.get('max_position_size', 80.0),
+                risk_per_trade=capital_cfg.get('risk_per_trade', 0.02),
+                stop_loss_pct=risk_cfg.get('stop_loss_pct', 0.10),
+                take_profit_pct=risk_cfg.get('take_profit_pct', 0.20),
+                wallet_addresses=wallet_addresses,
+                strategies=list(config_data.get('strategies', {}).keys()),
+                custom_settings=config_data
+            )
+
+            # Create module instance
+            module = SolanaStrategiesModule(
+                config=config,
+                trading_engine=self.engine,
+                db_manager=self.db,
+                cache_manager=self.cache,
+                alert_manager=self.alerts
+            )
+
+            return module
+
+        except Exception as e:
+            self.logger.error(f"Error creating Solana module: {e}", exc_info=True)
             raise
 
     def _load_wallet_addresses(self, module_name: str) -> Dict[str, str]:

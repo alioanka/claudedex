@@ -68,7 +68,16 @@ futures_trading:
     testnet: true
     description: "OKX Perpetuals account"
 
-# Arbitrage Module Wallets (Placeholder for Phase 3)
+# Solana Strategies Module Wallets (Phase 3)
+solana_strategies:
+  solana:
+    address: "${SOLANA_STRATEGIES_WALLET_ADDRESS}"
+    private_key_env: "SOLANA_STRATEGIES_PRIVATE_KEY"
+    initial_balance: 400.0
+    current_balance: 400.0
+    description: "Solana strategies wallet for Pump.fun, Jupiter, Drift"
+
+# Arbitrage Module Wallets (Placeholder for future)
 arbitrage:
   solana:
     address: "${ARBITRAGE_SOLANA_WALLET}"
@@ -126,6 +135,10 @@ settings:
 # Futures Trading:
 #   BINANCE_FUTURES_API_KEY=your_api_key
 #   BINANCE_FUTURES_API_SECRET=your_api_secret
+#
+# Solana Strategies:
+#   SOLANA_STRATEGIES_WALLET_ADDRESS=your_public_address
+#   SOLANA_STRATEGIES_PRIVATE_KEY=your_private_key
 #
 # Arbitrage:
 #   ARBITRAGE_SOLANA_WALLET=...
