@@ -20,6 +20,8 @@ class ModuleType(Enum):
     FUTURES_TRADING = "futures_trading"
     ARBITRAGE = "arbitrage"
     LIQUIDITY_PROVISION = "liquidity_provision"
+    SOLANA_STRATEGIES = "solana_strategies"
+    CUSTOM = "custom"
 
 
 class ModuleStatus(Enum):
