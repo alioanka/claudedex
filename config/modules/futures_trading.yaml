@@ -1,60 +1,255 @@
 # Futures Trading Module Configuration
-# This module handles futures/perpetuals trading on CEX exchanges
-# STATUS: Placeholder for Phase 2 implementation
+# Complete professional futures trading system
+# STATUS: Phase 2 - IMPLEMENTED ✅
 
 module:
   name: "futures_trading"
   type: "futures_trading"
-  enabled: false  # Disabled until Phase 2
-  description: "CEX futures trading module for hedging and short positions"
+  enabled: false  # Enable when ready to trade futures
+  description: "Professional futures trading with ML, advanced TA, and position management"
 
 # Capital Allocation
 capital:
-  allocation: 300.0  # USD allocated to this module
+  allocation: 300.0  # USD allocated to futures
   max_position_size: 100.0  # Max USD per position
   risk_per_trade: 0.02  # 2% risk per trade
 
 # Position Limits
 positions:
-  max_open: 3  # Maximum open positions
-  max_leverage: 3  # Maximum 3x leverage
-  use_cross_margin: false  # Use isolated margin by default
+  max_open: 3  # Maximum simultaneous positions
+  max_leverage: 3  # Maximum 3x leverage (safety limit)
+  use_cross_margin: false  # Use isolated margin (safer)
 
-# Risk Management
+# Advanced Risk Management
 risk:
-  stop_loss_pct: 0.03  # 3% stop loss (tighter for leverage)
-  take_profit_pct: 0.08  # 8% take profit
-  liquidation_buffer: 0.20  # 20% buffer from liquidation price
-  max_drawdown_pct: 0.10  # 10% max drawdown
+  # Stop Loss
+  stop_loss_pct: 0.03  # 3% stop loss
 
-# Strategies (Placeholder)
+  # Trailing Stop Loss
+  trailing_stop_enabled: true
+  trailing_stop_start_pct: 0.03  # Start trailing after +3% profit
+  trailing_stop_distance_pct: 0.02  # Trail 2% below peak
+
+  # Partial Take Profits (4 levels @ 25% each)
+  tp_levels: [0.02, 0.05, 0.08, 0.12]  # TP at +2%, +5%, +8%, +12%
+  tp_quantities: [0.25, 0.25, 0.25, 0.25]  # Close 25% at each level
+
+  # Liquidation Protection
+  liquidation_buffer: 0.20  # Keep 20% buffer from liquidation price
+  max_drawdown_pct: 0.10  # Auto-deleverage if drawdown > 10%
+  max_total_exposure: 500.0  # Max $500 total exposure across all positions
+
+# Trading Strategies
 strategies:
   enabled:
     - "trend_following"
     - "mean_reversion"
+    - "funding_arbitrage"
+    - "hedging"
 
+  # Trend Following (both LONG and SHORT)
   trend_following:
-    min_trend_strength: 0.7
-
-  mean_reversion:
+    enabled: true
+    trend_strength_threshold: 0.7  # Min trend strength (0-1)
     rsi_oversold: 30
     rsi_overbought: 70
+    min_volume_change: 0.2  # 20% volume increase
+    leverage_range: [2, 3]  # Use 2-3x leverage
 
-# Exchange Settings (Placeholder)
+  # Mean Reversion
+  mean_reversion:
+    enabled: true
+    rsi_extreme_threshold: 0.8  # Very oversold/overbought
+    bollinger_band_std: 2.0
+    quick_scalp_targets: [0.01, 0.02]  # 1%, 2% targets
+    leverage_range: [1, 2]  # Lower leverage for scalping
+
+  # Funding Rate Arbitrage
+  funding_arbitrage:
+    enabled: true
+    min_funding_rate: 0.01  # 0.01% minimum (0.0001)
+    min_apr: 0.10  # 10% APR minimum
+    min_hold_hours: 8  # Hold for at least 1 funding period
+    max_price_diff_pct: 0.005  # 0.5% max price difference
+
+  # DEX Hedge Strategy
+  hedging:
+    enabled: true
+    drawdown_threshold: 0.10  # Hedge when DEX down 10%
+    hedge_ratio: 0.8  # Hedge 80% of DEX exposure
+    min_position_size: 10.0  # $10 minimum
+
+# ML Integration
+ml_integration:
+  enabled: true
+  model_path: "./models/futures_ensemble"  # Path to ML model
+  confidence_threshold: 0.7  # Min 70% confidence to enter
+
+  # Signal weighting
+  ml_weight: 0.40  # 40% weight
+  ta_weight: 0.30  # 30% weight
+  pattern_weight: 0.20  # 20% weight
+  mtf_weight: 0.10  # 10% weight
+
+# Pattern Recognition
+pattern_recognition:
+  enabled: true
+  min_pattern_reliability: 0.75  # 75% reliability
+
+  patterns:
+    - "head_and_shoulders"
+    - "double_top"
+    - "double_bottom"
+    - "triangle"
+    - "flag"
+    - "cup_and_handle"
+
+# Multi-Timeframe Analysis
+multi_timeframe:
+  enabled: true
+  timeframes:
+    - "1m"   # Scalping
+    - "5m"   # Short-term
+    - "15m"  # Intraday
+    - "1h"   # Swing
+    - "4h"   # Trend
+
+  higher_timeframe_bias: true  # 4h trend takes precedence
+
+# Exchange Settings
 exchanges:
+  # Binance Futures (Primary)
   binance:
     enabled: true
-    testnet: true  # Start with testnet
+    testnet: true  # ⚠️ START WITH TESTNET! Set to false for mainnet
 
+    # API credentials (from .env)
+    api_key: "${BINANCE_FUTURES_API_KEY}"
+    api_secret: "${BINANCE_FUTURES_API_SECRET}"
+
+    # Settings
+    max_leverage: 3
+    default_margin_type: "ISOLATED"  # ISOLATED or CROSSED
+
+    # Supported symbols
+    symbols:
+      - "BTCUSDT"
+      - "ETHUSDT"
+      - "SOLUSDT"
+      - "BNBUSDT"
+
+  # Bybit Derivatives (Secondary)
   bybit:
-    enabled: false
+    enabled: false  # Enable if you want to use Bybit
+    testnet: true
 
+    api_key: "${BYBIT_API_KEY}"
+    api_secret: "${BYBIT_API_SECRET}"
+
+  # OKX Futures (Future)
   okx:
     enabled: false
 
-# Monitoring
+# Dynamic Position Sizing
+position_sizing:
+  # Base on ML confidence
+  confidence_multiplier: true  # Larger positions with higher confidence
+  min_size_pct: 0.5  # Min 50% of max position size
+  max_size_pct: 1.0  # Max 100% of max position size
+
+  # Adjust for volatility
+  volatility_adjustment: true
+  high_volatility_threshold: 100  # Reduce size if vol > 100%
+  low_volatility_threshold: 30   # Can increase size if vol < 30%
+
+# Leverage Adjustment
+leverage_adjustment:
+  auto_adjust: true
+
+  # Conditions
+  high_volatility_leverage: 1  # Drop to 1x in high vol
+  medium_volatility_leverage: 2  # 2x in medium vol
+  low_volatility_leverage: 3  # 3x in low vol
+
+  # Performance-based
+  after_3_losses_leverage: 1  # Drop to 1x after 3 consecutive losses
+  low_winrate_max_leverage: 2  # Max 2x if win rate < 40%
+
+# Monitoring & Alerts
 monitoring:
-  health_check_interval: 30
-  metrics_update_interval: 60
+  health_check_interval: 30  # Check every 30 seconds
+  metrics_update_interval: 60  # Update metrics every minute
+  position_check_interval: 10  # Check positions every 10 seconds
+
+  # Alerts
   alert_on_error: true
   alert_on_liquidation_risk: true
+  alert_on_large_pnl: true  # Alert on big wins/losses
+  alert_on_tp_hit: true  # Alert when TP levels hit
+  alert_on_trailing_stop: true  # Alert when trailing stop activates
+
+  # Liquidation risk levels
+  liquidation_risk_thresholds:
+    low: 0.20  # > 20% from liquidation
+    medium: 0.15  # 10-20% from liquidation
+    high: 0.10  # 5-10% from liquidation
+    extreme: 0.05  # < 5% from liquidation
+
+# Performance Tracking
+performance:
+  track_metrics: true
+  log_every_trade: true
+
+  # Targets
+  target_win_rate: 0.60  # 60%
+  target_profit_factor: 2.0
+  target_sharpe_ratio: 1.5
+  max_acceptable_drawdown: 0.15  # 15%
+
+# Dashboard
+dashboard:
+  show_in_main: true
+  dedicated_tab: true
+  realtime_updates: true
+
+  # Display features
+  show_liquidation_prices: true
+  show_funding_rates: true
+  show_tp_progress: true
+  show_trailing_stop_status: true
+  show_leverage_per_position: true
+
+# Safety Features
+safety:
+  # Circuit breakers
+  pause_on_consecutive_losses: 3
+  pause_on_drawdown: 0.15  # Pause if 15% drawdown
+  pause_on_high_liquidation_risk: true
+
+  # Confirmations
+  require_confirmation_above: 500.0  # Confirm if position > $500
+
+  # Limits
+  daily_loss_limit: 100.0  # $100 max daily loss
+  daily_trade_limit: 20  # Max 20 trades per day
+
+# Notes
+notes: |
+  IMPORTANT SAFETY GUIDELINES:
+
+  1. ⚠️ ALWAYS start with TESTNET
+  2. ⚠️ NEVER exceed 3x leverage
+  3. ⚠️ ALWAYS use isolated margin
+  4. ⚠️ Keep 20% buffer from liquidation
+  5. ⚠️ Monitor positions at least 2x daily
+  6. ⚠️ Start with small capital ($50-100)
+  7. ⚠️ Scale gradually after 50+ trades
+
+  This is a PROFESSIONAL trading system. It can:
+  - Trade LONG in bullish markets
+  - Trade SHORT in bearish markets
+  - Use ML for better decisions
+  - Manage risk with trailing stops & partial TPs
+  - Operate independently from DEX module
+
+  It's NOT just a hedging tool!
