@@ -65,28 +65,34 @@ class FuturesTradingModule(BaseModule):
     def __init__(
         self,
         config: ModuleConfig,
+        trading_engine=None,  # Main trading engine reference
         ml_model=None,  # ML ensemble predictor
         pattern_analyzer=None,  # Chart pattern analyzer
         db_manager=None,
         cache_manager=None,
-        alert_manager=None
+        alert_manager=None,
+        risk_manager=None  # Risk manager instance
     ):
         """
         Initialize Futures Trading Module
 
         Args:
             config: Module configuration
+            trading_engine: Main trading engine reference
             ml_model: ML ensemble model for predictions
             pattern_analyzer: Chart pattern analyzer
             db_manager: Database manager
             cache_manager: Cache manager
             alert_manager: Alert manager
+            risk_manager: Risk manager instance
         """
         super().__init__(config, db_manager, cache_manager, alert_manager)
 
         self.logger = logging.getLogger("FuturesModule")
+        self.engine = trading_engine
         self.ml_model = ml_model
         self.pattern_analyzer = pattern_analyzer
+        self.risk_manager = risk_manager
 
         # Exchange executors
         self.binance: Optional[BinanceFuturesExecutor] = None
