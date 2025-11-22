@@ -11,9 +11,22 @@ from typing import Dict, Optional
 
 from core.module_manager import ModuleManager
 from modules.base_module import ModuleConfig, ModuleType
-from modules.dex_trading import DexTradingModule
-from modules.futures_trading import FuturesTradingModule
-from modules.solana_strategies import SolanaStrategiesModule
+
+# Conditional imports for modules that may not exist yet
+try:
+    from modules.dex_trading import DexTradingModule
+except ImportError:
+    DexTradingModule = None
+
+try:
+    from modules.futures_trading import FuturesTradingModule
+except ImportError:
+    FuturesTradingModule = None
+
+try:
+    from modules.solana_strategies import SolanaStrategiesModule
+except ImportError:
+    SolanaStrategiesModule = None
 
 
 logger = logging.getLogger(__name__)
@@ -88,25 +101,31 @@ class ModuleIntegration:
             await module_manager.initialize()
 
             # Register DEX trading module
-            if 'dex_trading' in module_configs:
+            if 'dex_trading' in module_configs and DexTradingModule is not None:
                 dex_config = module_configs['dex_trading']
                 dex_module = self._create_dex_module(dex_config)
                 module_manager.register_module(dex_module)
                 self.logger.info("DEX trading module registered")
+            elif 'dex_trading' in module_configs:
+                self.logger.warning("DEX trading module configured but not available (not installed)")
 
             # Register Futures trading module
-            if 'futures_trading' in module_configs:
+            if 'futures_trading' in module_configs and FuturesTradingModule is not None:
                 futures_config = module_configs['futures_trading']
                 futures_module = self._create_futures_module(futures_config)
                 module_manager.register_module(futures_module)
                 self.logger.info("Futures trading module registered")
+            elif 'futures_trading' in module_configs:
+                self.logger.warning("Futures trading module configured but not available (not installed)")
 
             # Register Solana Strategies module
-            if 'solana_strategies' in module_configs:
+            if 'solana_strategies' in module_configs and SolanaStrategiesModule is not None:
                 solana_config = module_configs['solana_strategies']
                 solana_module = self._create_solana_module(solana_config)
                 module_manager.register_module(solana_module)
                 self.logger.info("Solana strategies module registered")
+            elif 'solana_strategies' in module_configs:
+                self.logger.warning("Solana strategies module configured but not available (not installed)")
 
             self.logger.info(
                 f"Module setup complete. "

@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import Enum
 import aiohttp
+import numpy as np
 
 from .base_strategy import BaseStrategy, TradingSignal, SignalType, SignalStrength
 
