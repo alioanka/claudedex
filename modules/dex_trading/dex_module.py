@@ -209,7 +209,7 @@ class DexTradingModule(BaseModule):
                 return []
 
             # Get all positions and filter for DEX chains
-            all_positions = self.position_tracker.get_all_positions()
+            all_positions = self.position_tracker.get_open_positions()
 
             dex_positions = []
             for pos in all_positions:
@@ -293,7 +293,7 @@ class DexTradingModule(BaseModule):
             query = """
                 SELECT * FROM trades
                 WHERE chain IN ('solana', 'ethereum', 'polygon', 'bsc', 'arbitrum', 'base')
-                ORDER BY timestamp DESC
+                ORDER BY entry_timestamp DESC
                 LIMIT 1000
             """
 

@@ -248,7 +248,7 @@ class ModuleManager:
 
     async def disable_module(self, module_name: str) -> bool:
         """
-        Disable a module
+        Disable a module and close all open positions
 
         Args:
             module_name: Name of module to disable
@@ -262,6 +262,31 @@ class ModuleManager:
                 return False
 
             module = self.modules[module_name]
+
+            # Close all open positions before disabling
+            self.logger.info(f"Closing all positions for module: {module_name}")
+            try:
+                positions = await module.get_positions()
+                if positions:
+                    self.logger.info(f"Found {len(positions)} open positions to close")
+
+                    # Close each position
+                    for position in positions:
+                        try:
+                            # Check if module has close_position method
+                            if hasattr(module, 'close_position'):
+                                await module.close_position(position)
+                                self.logger.info(f"Closed position: {position.get('symbol', 'unknown')}")
+                            else:
+                                self.logger.warning(f"Module {module_name} does not have close_position method")
+                        except Exception as e:
+                            self.logger.error(f"Failed to close position {position.get('symbol', 'unknown')}: {e}")
+                else:
+                    self.logger.info(f"No open positions to close for {module_name}")
+            except Exception as e:
+                self.logger.error(f"Error getting positions for {module_name}: {e}")
+
+            # Now disable the module
             await module.disable()
 
             self.logger.info(f"Module disabled: {module_name}")
@@ -283,6 +308,20 @@ class ModuleManager:
         if module_name in self.modules:
             await self.modules[module_name].resume()
             return True
+        return False
+
+    async def start_module(self, module_name: str) -> bool:
+        """Start a stopped or paused module"""
+        if module_name in self.modules:
+            module = self.modules[module_name]
+            if module.status == ModuleStatus.STOPPED or module.status == ModuleStatus.PAUSED:
+                await module.start()
+                return True
+            elif module.status == ModuleStatus.DISABLED:
+                # Need to enable first
+                await self.enable_module(module_name)
+                await module.start()
+                return True
         return False
 
     def get_module(self, module_name: str) -> Optional[BaseModule]:

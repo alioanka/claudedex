@@ -1,211 +1,459 @@
 {% extends "base.html" %}
 
-{% block title %}Settings - DexScreener Trading Bot{% endblock %}
+{% block title %}Settings - Module Control{% endblock %}
 
-{% block content %}
-<div class="page-header">
-    <h1>Settings</h1>
-    <div class="page-actions">
-        <button class="btn btn-secondary" id="revertAllSettings" disabled>
-            <i class="fas fa-undo"></i> Revert All
-        </button>
-        <button class="btn btn-primary" id="saveAllSettings">
-            <i class="fas fa-save"></i> Save All Changes
-        </button>
-    </div>
-</div>
+{% block extra_head %}
+<style>
+    .settings-container {
+        padding: 20px;
+        max-width: 1200px;
+        margin: 0 auto;
+    }
 
-<!-- Settings Tabs -->
-<div class="tabs">
-    <button class="tab-btn active category-tab" data-category="account">Account</button>
-    <button class="tab-btn category-tab" data-category="modules">📦 Modules</button>
-    <button class="tab-btn category-tab" data-category="general">General</button>
-    <button class="tab-btn category-tab" data-category="portfolio">Portfolio</button>
-    <button class="tab-btn category-tab" data-category="risk_management">Risk</button>
-    <button class="tab-btn category-tab" data-category="trading">Trading</button>
-    <button class="tab-btn category-tab" data-category="strategies">Strategies</button>
-    <button class="tab-btn category-tab" data-category="chain">Chains</button>
-    <button class="tab-btn category-tab" data-category="position_management">Positions</button>
-    <button class="tab-btn category-tab" data-category="api">API</button>
-    <button class="tab-btn category-tab" data-category="monitoring">Monitoring</button>
-    <button class="tab-btn category-tab" data-category="ml_models">ML Models</button>
-    <button class="tab-btn category-tab" data-category="feature_flags">Features</button>
-    <button class="tab-btn category-tab" data-category="sensitive">Sensitive</button>
-</div>
+    .settings-header {
+        margin-bottom: 30px;
+    }
 
-<!-- Settings Sections -->
-<div id="settings-container">
-    <div id="account-settings" class="settings-section card">
-        <div class="card-header"><h3 class="card-title">Account & Security</h3></div>
-        <div class="card-body">
-            <div class="setting-group">
-                <h4>Change Password</h4>
-                <form id="changePasswordForm" method="post" action="#" onsubmit="return false;">
-                    <div class="form-group">
-                        <label for="currentPassword">Current Password</label>
-                        <input type="password" id="currentPassword" name="currentPassword"
-                               class="form-control" required autocomplete="current-password">
-                    </div>
-                    <div class="form-group">
-                        <label for="newPassword">New Password</label>
-                        <input type="password" id="newPassword" name="newPassword"
-                               class="form-control" required minlength="8" autocomplete="new-password">
-                        <small class="form-text">Minimum 8 characters</small>
-                    </div>
-                    <div class="form-group">
-                        <label for="confirmPassword">Confirm New Password</label>
-                        <input type="password" id="confirmPassword" name="confirmPassword"
-                               class="form-control" required minlength="8" autocomplete="new-password">
-                    </div>
-                    <div class="form-actions">
-                        <button type="submit" class="btn btn-primary">
-                            <i class="fas fa-key"></i> Change Password
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-    <div id="modules-settings" class="settings-section card" style="display: none;">
-        <div class="card-header">
-            <h3 class="card-title">📦 Trading Modules</h3>
-            <p style="margin-top: 10px; font-size: 0.9em; color: #666;">
-                Manage independent trading modules (DEX, Futures, Arbitrage). Each module operates with its own wallet, capital allocation, and strategies.
-            </p>
-        </div>
-        <div class="card-body" id="modules-container">
-            <div style="text-align: center; padding: 40px;">
-                <i class="fas fa-spinner fa-spin" style="font-size: 2em; color: #667eea;"></i>
-                <p style="margin-top: 10px;">Loading modules...</p>
-            </div>
-        </div>
-    </div>
-    <div id="general-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">General Configuration</h3></div>
-        <div class="card-body" id="general-settings-form"></div>
-    </div>
-    <div id="portfolio-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Portfolio Configuration</h3></div>
-        <div class="card-body" id="portfolio-settings-form"></div>
-    </div>
-    <div id="risk_management-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Risk Management</h3></div>
-        <div class="card-body" id="risk_management-settings-form"></div>
-    </div>
-    <div id="trading-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Trading Configuration</h3></div>
-        <div class="card-body" id="trading-settings-form"></div>
-    </div>
-    <div id="strategies-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Trading Strategies Configuration</h3></div>
-        <div class="card-body" id="strategies-settings-form"></div>
-    </div>
-    <div id="chain-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Blockchain Chains</h3></div>
-        <div class="card-body" id="chain-settings-form"></div>
-    </div>
-    <div id="position_management-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Position Management</h3></div>
-        <div class="card-body" id="position_management-settings-form"></div>
-    </div>
-    <div id="api-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">API & Connections</h3></div>
-        <div class="card-body" id="api-settings-form"></div>
-    </div>
-    <div id="monitoring-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Monitoring & Logging</h3></div>
-        <div class="card-body" id="monitoring-settings-form"></div>
-    </div>
-    <div id="ml_models-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">ML Models Configuration</h3></div>
-        <div class="card-body" id="ml_models-settings-form"></div>
-    </div>
-    <div id="feature_flags-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Feature Flags</h3></div>
-        <div class="card-body" id="feature_flags-settings-form"></div>
-    </div>
-    <div id="sensitive-settings" class="settings-section card" style="display: none;">
-        <div class="card-header">
-            <h3 class="card-title">Sensitive Configuration (Encrypted)</h3>
-        </div>
-        <div class="card-body">
-            <div class="alert alert-warning">
-                <i class="fas fa-exclamation-triangle"></i>
-                <strong>Warning:</strong> This section contains encrypted sensitive data like API keys and private keys.
-                Only administrators can access this section.
-            </div>
+    .settings-title {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        margin-bottom: 8px;
+    }
 
-            <div class="form-actions" style="margin-bottom: 20px;">
-                <button class="btn btn-primary" id="addSensitiveConfigBtn">
-                    <i class="fas fa-plus"></i> Add New Sensitive Config
-                </button>
-            </div>
+    .settings-subtitle {
+        color: var(--text-secondary);
+        font-size: 1rem;
+    }
 
-            <div id="sensitive-configs-list">
-                <table class="table">
-                    <thead>
-                        <tr>
-                            <th>Key</th>
-                            <th>Description</th>
-                            <th>Last Rotated</th>
-                            <th>Rotation Interval</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="sensitive-configs-tbody">
-                        <tr>
-                            <td colspan="5" class="text-center">Loading...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-</div>
+    .module-control-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+        gap: 24px;
+    }
 
-<!-- Add/Edit Sensitive Config Modal -->
-<div id="sensitiveConfigModal" class="modal" style="display: none;">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3 id="sensitiveConfigModalTitle">Add Sensitive Configuration</h3>
-            <button class="close-modal" id="closeSensitiveConfigModal">&times;</button>
-        </div>
-        <div class="modal-body">
-            <form id="sensitiveConfigForm">
-                <div class="form-group">
-                    <label for="sensitiveConfigKey">Key *</label>
-                    <input type="text" id="sensitiveConfigKey" class="form-control"
-                           placeholder="e.g., OPENAI_API_KEY, PRIVATE_KEY_ETH" required>
-                    <small class="form-text">Unique identifier for this configuration</small>
-                </div>
-                <div class="form-group">
-                    <label for="sensitiveConfigValue">Value *</label>
-                    <textarea id="sensitiveConfigValue" class="form-control" rows="3"
-                              placeholder="Enter sensitive value (will be encrypted)" required></textarea>
-                    <small class="form-text">This value will be encrypted before storage</small>
-                </div>
-                <div class="form-group">
-                    <label for="sensitiveConfigDescription">Description</label>
-                    <input type="text" id="sensitiveConfigDescription" class="form-control"
-                           placeholder="Optional description">
-                </div>
-                <div class="form-group">
-                    <label for="sensitiveConfigRotation">Rotation Interval (days)</label>
-                    <input type="number" id="sensitiveConfigRotation" class="form-control"
-                           value="30" min="1" max="365">
-                    <small class="form-text">Recommended rotation interval for this secret</small>
-                </div>
-            </form>
-        </div>
-        <div class="modal-footer">
-            <button class="btn btn-secondary" id="cancelSensitiveConfigBtn">Cancel</button>
-            <button class="btn btn-primary" id="saveSensitiveConfigBtn">Save</button>
-        </div>
-    </div>
-</div>
+    .module-control-card {
+        background: var(--card-bg);
+        border: 2px solid var(--border-color);
+        border-radius: 12px;
+        padding: 24px;
+        transition: all 0.3s;
+    }
 
+    .module-control-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+    }
+
+    .module-control-card.running {
+        border-color: #10b981;
+    }
+
+    .module-control-card.disabled {
+        border-color: #6b7280;
+        opacity: 0.7;
+    }
+
+    .module-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .module-name {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+
+    .module-status-badge {
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .status-running {
+        background: #d1fae5;
+        color: #065f46;
+    }
+
+    .status-paused {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .status-stopped {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+
+    .status-disabled {
+        background: #e5e7eb;
+        color: #374151;
+    }
+
+    .module-info {
+        margin-bottom: 20px;
+    }
+
+    .info-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .info-label {
+        color: var(--text-secondary);
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+
+    .info-value {
+        color: var(--text-primary);
+        font-weight: 600;
+    }
+
+    .control-buttons {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+    }
+
+    .control-btn {
+        padding: 10px 16px;
+        border: none;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+    }
+
+    .control-btn:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+
+    .control-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .btn-enable {
+        background: #10b981;
+        color: white;
+    }
+
+    .btn-disable {
+        background: #ef4444;
+        color: white;
+    }
+
+    .btn-pause {
+        background: #f59e0b;
+        color: white;
+    }
+
+    .btn-start {
+        background: #3b82f6;
+        color: white;
+    }
+
+    .toast {
+        position: fixed;
+        top: 80px;
+        right: 20px;
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 16px 20px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 300px;
+        animation: slideIn 0.3s ease-out;
+    }
+
+    @keyframes slideIn {
+        from {
+            transform: translateX(400px);
+            opacity: 0;
+        }
+        to {
+            transform: translateX(0);
+            opacity: 1;
+        }
+    }
+
+    .toast-success {
+        border-left: 4px solid #10b981;
+    }
+
+    .toast-error {
+        border-left: 4px solid #ef4444;
+    }
+
+    [data-theme="dark"] {
+        --card-bg: #1f2937;
+        --border-color: #374151;
+        --text-primary: #f9fafb;
+        --text-secondary: #d1d5db;
+    }
+</style>
 {% endblock %}
 
-{% block extra_js %}
-<script src="/static/js/settings.js?v=4"></script>
+{% block content %}
+<div class="settings-container">
+    <!-- Header -->
+    <div class="settings-header">
+        <h1 class="settings-title">
+            <i class="fas fa-cog"></i>
+            Module Control Settings
+        </h1>
+        <p class="settings-subtitle">Enable, disable, pause, or start trading modules</p>
+    </div>
+
+    <!-- Module Control Grid -->
+    <div class="module-control-grid">
+        <!-- DEX Trading Module -->
+        <div class="module-control-card running" id="dex-card">
+            <div class="module-header">
+                <div class="module-name">
+                    <i class="fas fa-cube"></i>
+                    DEX Trading
+                </div>
+                <span class="module-status-badge status-running" id="dex-status">RUNNING</span>
+            </div>
+
+            <div class="module-info">
+                <div class="info-item">
+                    <span class="info-label">Capital Allocated</span>
+                    <span class="info-value">$500.00</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Status</span>
+                    <span class="info-value">Active</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Type</span>
+                    <span class="info-value">DEX Trading</span>
+                </div>
+            </div>
+
+            <div class="control-buttons">
+                <button class="control-btn btn-enable" onclick="enableModule('dex_trading')" id="dex-enable" disabled>
+                    <i class="fas fa-check-circle"></i>
+                    Enable
+                </button>
+                <button class="control-btn btn-disable" onclick="disableModule('dex_trading')" id="dex-disable">
+                    <i class="fas fa-ban"></i>
+                    Disable
+                </button>
+                <button class="control-btn btn-pause" onclick="pauseModule('dex_trading')" id="dex-pause">
+                    <i class="fas fa-pause"></i>
+                    Pause
+                </button>
+                <button class="control-btn btn-start" onclick="startModule('dex_trading')" id="dex-start">
+                    <i class="fas fa-play"></i>
+                    Start
+                </button>
+            </div>
+        </div>
+
+        <!-- Futures Trading Module -->
+        <div class="module-control-card disabled" id="futures-card">
+            <div class="module-header">
+                <div class="module-name">
+                    <i class="fas fa-chart-line"></i>
+                    Futures Trading
+                </div>
+                <span class="module-status-badge status-disabled" id="futures-status">DISABLED</span>
+            </div>
+
+            <div class="module-info">
+                <div class="info-item">
+                    <span class="info-label">Capital Allocated</span>
+                    <span class="info-value">$300.00</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Status</span>
+                    <span class="info-value">Disabled</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Type</span>
+                    <span class="info-value">Futures Trading</span>
+                </div>
+            </div>
+
+            <div class="control-buttons">
+                <button class="control-btn btn-enable" onclick="enableModule('futures_trading')" id="futures-enable">
+                    <i class="fas fa-check-circle"></i>
+                    Enable
+                </button>
+                <button class="control-btn btn-disable" onclick="disableModule('futures_trading')" id="futures-disable" disabled>
+                    <i class="fas fa-ban"></i>
+                    Disable
+                </button>
+                <button class="control-btn btn-pause" onclick="pauseModule('futures_trading')" id="futures-pause" disabled>
+                    <i class="fas fa-pause"></i>
+                    Pause
+                </button>
+                <button class="control-btn btn-start" onclick="startModule('futures_trading')" id="futures-start" disabled>
+                    <i class="fas fa-play"></i>
+                    Start
+                </button>
+            </div>
+        </div>
+
+        <!-- Solana Strategies Module -->
+        <div class="module-control-card running" id="solana-card">
+            <div class="module-header">
+                <div class="module-name">
+                    <i class="fas fa-coins"></i>
+                    Solana Strategies
+                </div>
+                <span class="module-status-badge status-running" id="solana-status">RUNNING</span>
+            </div>
+
+            <div class="module-info">
+                <div class="info-item">
+                    <span class="info-label">Capital Allocated</span>
+                    <span class="info-value">$400.00</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Status</span>
+                    <span class="info-value">Active</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Type</span>
+                    <span class="info-value">Solana Strategies</span>
+                </div>
+            </div>
+
+            <div class="control-buttons">
+                <button class="control-btn btn-enable" onclick="enableModule('solana_strategies')" id="solana-enable" disabled>
+                    <i class="fas fa-check-circle"></i>
+                    Enable
+                </button>
+                <button class="control-btn btn-disable" onclick="disableModule('solana_strategies')" id="solana-disable">
+                    <i class="fas fa-ban"></i>
+                    Disable
+                </button>
+                <button class="control-btn btn-pause" onclick="pauseModule('solana_strategies')" id="solana-pause">
+                    <i class="fas fa-pause"></i>
+                    Pause
+                </button>
+                <button class="control-btn btn-start" onclick="startModule('solana_strategies')" id="solana-start">
+                    <i class="fas fa-play"></i>
+                    Start
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function showToast(message, type = 'success') {
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.innerHTML = `
+        <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'}" style="color: ${type === 'success' ? '#10b981' : '#ef4444'}"></i>
+        <span>${message}</span>
+    `;
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+        toast.remove();
+    }, 3000);
+}
+
+async function enableModule(moduleName) {
+    try {
+        const response = await fetch(`/api/modules/${moduleName}/enable`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        const data = await response.json();
+
+        if (response.ok) {
+            showToast(`Module ${moduleName} enabled successfully`, 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast(data.error || 'Failed to enable module', 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+async function disableModule(moduleName) {
+    if (!confirm(`Disable ${moduleName}? All open positions will be closed.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/modules/${moduleName}/disable`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        const data = await response.json();
+
+        if (response.ok) {
+            showToast(`Module ${moduleName} disabled successfully`, 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast(data.error || 'Failed to disable module', 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+async function pauseModule(moduleName) {
+    try {
+        const response = await fetch(`/api/modules/${moduleName}/pause`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        const data = await response.json();
+
+        if (response.ok) {
+            showToast(`Module ${moduleName} paused successfully`, 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast(data.error || 'Failed to pause module', 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+async function startModule(moduleName) {
+    try {
+        const response = await fetch(`/api/modules/${moduleName}/start`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        const data = await response.json();
+
+        if (response.ok) {
+            showToast(`Module ${moduleName} started successfully`, 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast(data.error || 'Failed to start module', 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+</script>
 {% endblock %}
