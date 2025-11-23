@@ -1,15 +1,15 @@
 #!/bin/sh
 # Redis Entrypoint Script with Password Decryption
-# This script decrypts the REDIS_PASSWORD using ENCRYPTION_KEY before starting Redis
+# Decrypts REDIS_PASSWORD using ENCRYPTION_KEY (NO prefix required)
 
 set -e
 
-echo "🔐 Redis Entrypoint: Decrypting password..."
+echo "🔐 Redis Entrypoint: Processing password..."
 
-# Check if REDIS_PASSWORD is encrypted (starts with 'encrypted:' or is base64)
+# Check if REDIS_PASSWORD and ENCRYPTION_KEY are set
 if [ -n "$REDIS_PASSWORD" ] && [ -n "$ENCRYPTION_KEY" ]; then
-    # Use Python to decrypt the password
-    DECRYPTED_PASSWORD=$(python3 <<EOF
+    # Try to decrypt the password (works with or without 'encrypted:' prefix)
+    DECRYPTED_PASSWORD=$(python3 <<'EOF'
 import os
 import sys
 from cryptography.fernet import Fernet
@@ -19,37 +19,38 @@ try:
     encryption_key = os.getenv('ENCRYPTION_KEY')
     redis_password = os.getenv('REDIS_PASSWORD')
 
-    # Remove 'encrypted:' prefix if present
+    # Remove 'encrypted:' prefix if present (for compatibility)
     if redis_password.startswith('encrypted:'):
         redis_password = redis_password[10:]
 
-    # Decrypt using Fernet
+    # Try to decrypt using Fernet
     fernet = Fernet(encryption_key.encode())
     encrypted_bytes = base64.b64decode(redis_password.encode())
     decrypted = fernet.decrypt(encrypted_bytes).decode()
 
     print(decrypted, end='')
+    sys.exit(0)
 
 except Exception as e:
-    # If decryption fails, use the password as-is (might be plaintext)
+    # Decryption failed - use password as-is (plaintext)
     print(redis_password, end='')
-    sys.stderr.write(f"Warning: Password decryption failed: {e}\n")
-    sys.stderr.write("Using password as-is (might be plaintext)\n")
+    sys.exit(1)
 EOF
 )
 
-    if [ $? -eq 0 ] && [ -n "$DECRYPTED_PASSWORD" ]; then
+    EXIT_CODE=$?
+    if [ $EXIT_CODE -eq 0 ]; then
         echo "✅ Password decrypted successfully"
-        export REDIS_PASSWORD_PLAIN="$DECRYPTED_PASSWORD"
+        REDIS_PASS="$DECRYPTED_PASSWORD"
     else
-        echo "⚠️  Decryption failed, using password as-is"
-        export REDIS_PASSWORD_PLAIN="$REDIS_PASSWORD"
+        echo "⚠️  Using password as plaintext (decryption not needed or failed)"
+        REDIS_PASS="$REDIS_PASSWORD"
     fi
 else
-    echo "⚠️  No encryption key found, using password as-is"
-    export REDIS_PASSWORD_PLAIN="${REDIS_PASSWORD:-change_me_in_production}"
+    echo "⚠️  Using default or plaintext password"
+    REDIS_PASS="${REDIS_PASSWORD:-change_me_in_production}"
 fi
 
-# Start Redis with decrypted password
+# Start Redis with the password
 echo "🚀 Starting Redis server..."
-exec redis-server --appendonly yes --requirepass "$REDIS_PASSWORD_PLAIN"
+exec redis-server --appendonly yes --requirepass "$REDIS_PASS"
