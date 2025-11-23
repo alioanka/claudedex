@@ -449,18 +449,111 @@ class SolanaStrategiesModule(BaseModule):
         return None
 
     async def _monitor_pumpfun_launches(self) -> None:
-        """Monitor Pump.fun for new launches"""
+        """
+        Monitor Pump.fun for new token launches via WebSocket
+
+        Connects to pumpportal.fun WebSocket API to receive real-time
+        notifications of new token launches on Pump.fun
+        """
+        import websockets
+        import json
+        import os
+
+        ws_url = os.getenv('PUMPFUN_WS_URL', 'wss://pumpportal.fun/api/data')
+
+        self.logger.info(f"🔌 Connecting to Pump.fun WebSocket: {ws_url}")
+
         while self._running:
             try:
-                # TODO: Implement Pump.fun WebSocket monitoring
-                # This would connect to Pump.fun's API and listen for new launches
-                await asyncio.sleep(5)
+                async with websockets.connect(ws_url) as websocket:
+                    self.logger.info("✅ Connected to Pump.fun WebSocket")
+
+                    # Subscribe to new token launches
+                    subscribe_message = {
+                        'method': 'subscribeNewToken',
+                    }
+
+                    await websocket.send(json.dumps(subscribe_message))
+                    self.logger.info("📡 Subscribed to new token launches")
+
+                    # Listen for messages
+                    while self._running:
+                        try:
+                            message = await asyncio.wait_for(
+                                websocket.recv(),
+                                timeout=30
+                            )
+
+                            data = json.loads(message)
+
+                            # Handle new token launch
+                            if data.get('type') == 'newToken' or 'mint' in data:
+                                self.logger.info(
+                                    f"🚀 New Pump.fun token detected: "
+                                    f"{data.get('mint', 'unknown')[:10]}..."
+                                )
+
+                                # Process the launch opportunity
+                                await self._process_pumpfun_launch(data)
+
+                        except asyncio.TimeoutError:
+                            # Send ping to keep connection alive
+                            await websocket.ping()
+                            continue
+
+                        except websockets.exceptions.ConnectionClosed:
+                            self.logger.warning("WebSocket connection closed, reconnecting...")
+                            break
 
             except asyncio.CancelledError:
+                self.logger.info("Pump.fun monitoring cancelled")
                 break
+
             except Exception as e:
-                self.logger.error(f"Pump.fun monitoring error: {e}")
+                self.logger.error(f"❌ Pump.fun WebSocket error: {e}", exc_info=True)
+                self.logger.info("Retrying in 10 seconds...")
                 await asyncio.sleep(10)
+
+        self.logger.info("🛑 Pump.fun monitoring stopped")
+
+    async def _process_pumpfun_launch(self, launch_data: Dict):
+        """
+        Process a new Pump.fun token launch
+
+        Args:
+            launch_data: Launch data from WebSocket
+        """
+        try:
+            # Extract token information
+            token_mint = launch_data.get('mint')
+            if not token_mint:
+                return
+
+            # Create opportunity object for strategy processing
+            opportunity = {
+                'chain': 'solana',
+                'strategy_type': 'pumpfun',
+                'token_address': token_mint,
+                'name': launch_data.get('name', ''),
+                'symbol': launch_data.get('symbol', ''),
+                'initial_liquidity': launch_data.get('initialLiquidity', 0),
+                'bonding_curve': launch_data.get('bondingCurve', ''),
+                'creator': launch_data.get('traderPublicKey', ''),
+                'timestamp': datetime.now(),
+                'metadata': launch_data
+            }
+
+            self.logger.debug(
+                f"Processing {opportunity['symbol']} - "
+                f"Liquidity: ${opportunity['initial_liquidity']}"
+            )
+
+            # Process through Pump.fun strategy
+            if self.pumpfun_strategy and self.pumpfun_strategy.enabled:
+                await self._process_pumpfun_opportunity(opportunity)
+
+        except Exception as e:
+            self.logger.error(f"Error processing Pump.fun launch: {e}")
 
     async def _monitor_jupiter_orders(self) -> None:
         """Monitor Jupiter limit orders"""
