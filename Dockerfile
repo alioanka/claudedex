@@ -41,8 +41,20 @@ RUN pip install --no-cache-dir TA-Lib==0.6.7 \
     && echo "✅ TA-Lib installed"
 
 # Stage 4: Blockchain and Web3
+# Install Solana dependencies first
 RUN pip install --no-cache-dir \
-    web3==6.11.4 \
+    solders==0.27.1 \
+    base58==2.1.1 \
+    && echo "✅ Solana base libraries installed"
+
+# Install driftpy (will bring in anchorpy and other dependencies)
+RUN pip install --no-cache-dir \
+    driftpy==0.8.80 \
+    && echo "✅ DriftPy SDK installed"
+
+# Install Ethereum Web3 libraries
+RUN pip install --no-cache-dir \
+    web3==6.20.4 \
     eth-account==0.10.0 \
     eth-utils==4.0.0 \
     eth-typing==4.1.0 \
@@ -50,10 +62,7 @@ RUN pip install --no-cache-dir \
     hexbytes==0.3.1 \
     hdwallet==2.2.1 \
     mnemonic==0.20 \
-    solders==0.18.1 \
-    base58==2.1.1 \
-    driftpy==0.5.0 \
-    && echo "✅ Blockchain libraries installed"
+    && echo "✅ Ethereum libraries installed"
 
 # Stage 5: Database
 RUN pip install --no-cache-dir \
