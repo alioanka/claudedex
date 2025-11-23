@@ -11,13 +11,21 @@
     <link rel="stylesheet" href="/static/css/charts.css">
     
     <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
-    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"
+            integrity="sha384-g9Va8i9kiVBzI/cQxK3JMb0EqN0TlqvdLp4aLGPmXOkHFRQJrKOjF+qNY4Yh0xz/"
+            crossorigin="anonymous"></script>
+
     <!-- Socket.IO -->
-    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
-    
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"
+            integrity="sha384-/M0k+JizsJfN/wYm2gL+8QqiS4g9SjQcGvPFiFp8kLJqZN8pPwMrVuQ8MJbZ0qWR"
+            crossorigin="anonymous"></script>
+
     <!-- Font Awesome -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+          integrity="sha512-iecdLmaskl7CVkqkXNQ/ZH/XLlvWZOJyj7Yy7tcenmpD1ypASozpmT/E0iPtmFIB46ZmdtAc9eNBvH0H/ZpiBw=="
+          crossorigin="anonymous"
+          referrerpolicy="no-referrer">
 
     <!-- Submenu Styling -->
     <style>
@@ -70,6 +78,67 @@
             height: 1px;
             background: rgba(255, 255, 255, 0.1);
             margin: 12px 0;
+        }
+
+        .nav-control {
+            padding: 0 12px;
+            margin: 4px 0;
+        }
+
+        .control-btn {
+            width: 100%;
+            padding: 10px 16px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            font-size: 0.9rem;
+        }
+
+        .control-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+
+        .btn-success {
+            background: #10b981;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #059669;
+        }
+
+        .btn-warning {
+            background: #f59e0b;
+            color: white;
+        }
+
+        .btn-warning:hover {
+            background: #d97706;
+        }
+
+        .btn-info {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .btn-info:hover {
+            background: #2563eb;
+        }
+
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
         }
     </style>
 
@@ -176,6 +245,30 @@
                             <span>Performance</span>
                         </a>
                     </li>
+                    <li class="nav-item {% if page == 'backtest' %}active{% endif %}">
+                        <a href="/backtest">
+                            <i class="fas fa-history"></i>
+                            <span>Backtesting</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'reports' %}active{% endif %}">
+                        <a href="/reports">
+                            <i class="fas fa-file-alt"></i>
+                            <span>Reports</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'analysis' %}active{% endif %}">
+                        <a href="/analysis">
+                            <i class="fas fa-chart-pie"></i>
+                            <span>Analysis</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'dex_settings' %}active{% endif %}">
+                        <a href="/dex/settings">
+                            <i class="fas fa-cog"></i>
+                            <span>Settings</span>
+                        </a>
+                    </li>
                 </ul>
             </li>
 
@@ -209,6 +302,12 @@
                         <a href="/futures/performance">
                             <i class="fas fa-chart-bar"></i>
                             <span>Performance</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'futures_settings' %}active{% endif %}">
+                        <a href="/futures/settings">
+                            <i class="fas fa-cog"></i>
+                            <span>Settings</span>
                         </a>
                     </li>
                 </ul>
@@ -246,16 +345,22 @@
                             <span>Performance</span>
                         </a>
                     </li>
+                    <li class="nav-item {% if page == 'solana_settings' %}active{% endif %}">
+                        <a href="/solana/settings">
+                            <i class="fas fa-cog"></i>
+                            <span>Settings</span>
+                        </a>
+                    </li>
                 </ul>
             </li>
 
             <li class="nav-divider"></li>
 
-            <!-- Settings (Module Control) -->
-            <li class="nav-item {% if page == 'settings' %}active{% endif %}">
-                <a href="/settings">
-                    <i class="fas fa-cog"></i>
-                    <span>Settings</span>
+            <!-- Module Control -->
+            <li class="nav-item {% if page == 'module_control' %}active{% endif %}">
+                <a href="/module-control">
+                    <i class="fas fa-sliders-h"></i>
+                    <span>Module Control</span>
                 </a>
             </li>
 
@@ -265,6 +370,37 @@
                     <i class="fas fa-clipboard-list"></i>
                     <span>Logs</span>
                 </a>
+            </li>
+
+            <li class="nav-divider"></li>
+
+            <!-- Bot Control Buttons -->
+            <li class="nav-item nav-control">
+                <button class="control-btn btn-success" onclick="controlBot('start')">
+                    <i class="fas fa-play"></i>
+                    <span>Start Bot</span>
+                </button>
+            </li>
+
+            <li class="nav-item nav-control">
+                <button class="control-btn btn-warning" onclick="controlBot('stop')">
+                    <i class="fas fa-stop"></i>
+                    <span>Stop Bot</span>
+                </button>
+            </li>
+
+            <li class="nav-item nav-control">
+                <button class="control-btn btn-info" onclick="controlBot('restart')">
+                    <i class="fas fa-redo"></i>
+                    <span>Restart Bot</span>
+                </button>
+            </li>
+
+            <li class="nav-item nav-control">
+                <button class="control-btn btn-danger" onclick="controlBot('emergency')">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span>Emergency Exit</span>
+                </button>
             </li>
         </ul>
     </aside>
@@ -359,6 +495,32 @@
             }
         });
     });
+
+    // Bot control functions
+    async function controlBot(action) {
+        const actions = {
+            'start': { url: '/api/bot/start', msg: 'Start all enabled modules?' },
+            'stop': { url: '/api/bot/stop', msg: 'Stop all modules?' },
+            'restart': { url: '/api/bot/restart', msg: 'Restart the bot?' },
+            'emergency': { url: '/api/bot/emergency-exit', msg: 'EMERGENCY: Close all positions and stop all modules?' }
+        };
+
+        if (!confirm(actions[action].msg)) return;
+
+        try {
+            const response = await fetch(actions[action].url, { method: 'POST' });
+            const data = await response.json();
+
+            if (response.ok) {
+                alert(data.message || 'Success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                alert('Error: ' + (data.error || 'Unknown error'));
+            }
+        } catch (e) {
+            alert('Error: ' + e.message);
+        }
+    }
     </script>
 
     {% block extra_js %}{% endblock %}

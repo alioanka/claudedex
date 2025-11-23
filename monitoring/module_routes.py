@@ -50,18 +50,30 @@ class ModuleRoutes:
 
         # DEX Module Pages
         app.router.add_get('/dex/dashboard', self.dex_dashboard_page)
+        app.router.add_get('/dex/settings', self.dex_settings_page)
 
         # Futures Module Pages
         app.router.add_get('/futures/dashboard', self.futures_dashboard_page)
         app.router.add_get('/futures/positions', self.futures_positions_page)
         app.router.add_get('/futures/trades', self.futures_trades_page)
         app.router.add_get('/futures/performance', self.futures_performance_page)
+        app.router.add_get('/futures/settings', self.futures_settings_page)
 
         # Solana Module Pages
         app.router.add_get('/solana/dashboard', self.solana_dashboard_page)
         app.router.add_get('/solana/positions', self.solana_positions_page)
         app.router.add_get('/solana/trades', self.solana_trades_page)
         app.router.add_get('/solana/performance', self.solana_performance_page)
+        app.router.add_get('/solana/settings', self.solana_settings_page)
+
+        # Module Control Page
+        app.router.add_get('/module-control', self.module_control_page)
+
+        # Bot Control API endpoints
+        app.router.add_post('/api/bot/start', self.bot_start)
+        app.router.add_post('/api/bot/stop', self.bot_stop)
+        app.router.add_post('/api/bot/restart', self.bot_restart)
+        app.router.add_post('/api/bot/emergency-exit', self.bot_emergency_exit)
 
         # API endpoints
         app.router.add_get('/api/modules', self.get_modules_status)
@@ -686,3 +698,157 @@ class ModuleRoutes:
         except Exception as e:
             self.logger.error(f"Error rendering Solana performance: {e}", exc_info=True)
             return web.Response(text=f"Error: {e}", status=500)
+
+    async def dex_settings_page(self, request: web.Request) -> web.Response:
+        """Render DEX settings page"""
+        try:
+            template = self.jinja_env.get_template('settings_dex.html')
+            html = template.render(page='dex_settings')
+            return web.Response(text=html, content_type='text/html')
+        except Exception as e:
+            self.logger.error(f"Error rendering DEX settings: {e}", exc_info=True)
+            return web.Response(text=f"Error: {e}", status=500)
+
+    async def futures_settings_page(self, request: web.Request) -> web.Response:
+        """Render Futures settings page"""
+        try:
+            template = self.jinja_env.get_template('settings_futures.html')
+            html = template.render(page='futures_settings')
+            return web.Response(text=html, content_type='text/html')
+        except Exception as e:
+            self.logger.error(f"Error rendering Futures settings: {e}", exc_info=True)
+            return web.Response(text=f"Error: {e}", status=500)
+
+    async def solana_settings_page(self, request: web.Request) -> web.Response:
+        """Render Solana settings page"""
+        try:
+            template = self.jinja_env.get_template('settings_solana.html')
+            html = template.render(page='solana_settings')
+            return web.Response(text=html, content_type='text/html')
+        except Exception as e:
+            self.logger.error(f"Error rendering Solana settings: {e}", exc_info=True)
+            return web.Response(text=f"Error: {e}", status=500)
+
+    async def module_control_page(self, request: web.Request) -> web.Response:
+        """Render module control page"""
+        try:
+            template = self.jinja_env.get_template('module_control.html')
+            html = template.render(page='module_control')
+            return web.Response(text=html, content_type='text/html')
+        except Exception as e:
+            self.logger.error(f"Error rendering module control: {e}", exc_info=True)
+            return web.Response(text=f"Error: {e}", status=500)
+
+    async def bot_start(self, request: web.Request) -> web.Response:
+        """Start all enabled modules"""
+        try:
+            self.logger.info("Bot start requested")
+            started_modules = []
+            
+            for module in self.module_manager.get_all_modules():
+                if module.config.enabled and module.status != 'RUNNING':
+                    await module.start()
+                    started_modules.append(module.config.name)
+            
+            return web.json_response({
+                'success': True,
+                'message': f'Started {len(started_modules)} modules',
+                'modules': started_modules
+            })
+        except Exception as e:
+            self.logger.error(f"Error starting bot: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    async def bot_stop(self, request: web.Request) -> web.Response:
+        """Stop all modules"""
+        try:
+            self.logger.info("Bot stop requested")
+            stopped_modules = []
+            
+            for module in self.module_manager.get_all_modules():
+                if module.status == 'RUNNING':
+                    await module.stop()
+                    stopped_modules.append(module.config.name)
+            
+            return web.json_response({
+                'success': True,
+                'message': f'Stopped {len(stopped_modules)} modules',
+                'modules': stopped_modules
+            })
+        except Exception as e:
+            self.logger.error(f"Error stopping bot: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    async def bot_restart(self, request: web.Request) -> web.Response:
+        """Restart all modules"""
+        try:
+            self.logger.info("Bot restart requested")
+            
+            # Stop all modules
+            for module in self.module_manager.get_all_modules():
+                if module.status == 'RUNNING':
+                    await module.stop()
+            
+            # Wait a moment
+            import asyncio
+            await asyncio.sleep(2)
+            
+            # Start enabled modules
+            started_modules = []
+            for module in self.module_manager.get_all_modules():
+                if module.config.enabled:
+                    await module.start()
+                    started_modules.append(module.config.name)
+            
+            return web.json_response({
+                'success': True,
+                'message': f'Restarted {len(started_modules)} modules',
+                'modules': started_modules
+            })
+        except Exception as e:
+            self.logger.error(f"Error restarting bot: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    async def bot_emergency_exit(self, request: web.Request) -> web.Response:
+        """Emergency: Close all positions and stop all modules"""
+        try:
+            self.logger.warning("EMERGENCY EXIT requested!")
+            closed_positions = []
+            
+            # Close all positions in all modules
+            for module in self.module_manager.get_all_modules():
+                try:
+                    positions = await module.get_positions()
+                    for position in positions:
+                        await module.close_position(position)
+                        closed_positions.append({
+                            'module': module.config.name,
+                            'position': position
+                        })
+                except Exception as e:
+                    self.logger.error(f"Error closing positions in {module.config.name}: {e}")
+            
+            # Stop all modules
+            for module in self.module_manager.get_all_modules():
+                await module.stop()
+            
+            return web.json_response({
+                'success': True,
+                'message': f'Emergency exit completed. Closed {len(closed_positions)} positions.',
+                'closed_positions': len(closed_positions)
+            })
+        except Exception as e:
+            self.logger.error(f"Error in emergency exit: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)

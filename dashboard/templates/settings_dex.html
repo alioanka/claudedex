@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+
+{% block title %}Settings - DexScreener Trading Bot{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Settings</h1>
+    <div class="page-actions">
+        <button class="btn btn-secondary" id="revertAllSettings" disabled>
+            <i class="fas fa-undo"></i> Revert All
+        </button>
+        <button class="btn btn-primary" id="saveAllSettings">
+            <i class="fas fa-save"></i> Save All Changes
+        </button>
+    </div>
+</div>
+
+<!-- Settings Tabs -->
+<div class="tabs">
+    <button class="tab-btn active category-tab" data-category="account">Account</button>
+    <button class="tab-btn category-tab" data-category="modules">📦 Modules</button>
+    <button class="tab-btn category-tab" data-category="general">General</button>
+    <button class="tab-btn category-tab" data-category="portfolio">Portfolio</button>
+    <button class="tab-btn category-tab" data-category="risk_management">Risk</button>
+    <button class="tab-btn category-tab" data-category="trading">Trading</button>
+    <button class="tab-btn category-tab" data-category="strategies">Strategies</button>
+    <button class="tab-btn category-tab" data-category="chain">Chains</button>
+    <button class="tab-btn category-tab" data-category="position_management">Positions</button>
+    <button class="tab-btn category-tab" data-category="api">API</button>
+    <button class="tab-btn category-tab" data-category="monitoring">Monitoring</button>
+    <button class="tab-btn category-tab" data-category="ml_models">ML Models</button>
+    <button class="tab-btn category-tab" data-category="feature_flags">Features</button>
+    <button class="tab-btn category-tab" data-category="sensitive">Sensitive</button>
+</div>
+
+<!-- Settings Sections -->
+<div id="settings-container">
+    <div id="account-settings" class="settings-section card">
+        <div class="card-header"><h3 class="card-title">Account & Security</h3></div>
+        <div class="card-body">
+            <div class="setting-group">
+                <h4>Change Password</h4>
+                <form id="changePasswordForm" method="post" action="#" onsubmit="return false;">
+                    <div class="form-group">
+                        <label for="currentPassword">Current Password</label>
+                        <input type="password" id="currentPassword" name="currentPassword"
+                               class="form-control" required autocomplete="current-password">
+                    </div>
+                    <div class="form-group">
+                        <label for="newPassword">New Password</label>
+                        <input type="password" id="newPassword" name="newPassword"
+                               class="form-control" required minlength="8" autocomplete="new-password">
+                        <small class="form-text">Minimum 8 characters</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="confirmPassword">Confirm New Password</label>
+                        <input type="password" id="confirmPassword" name="confirmPassword"
+                               class="form-control" required minlength="8" autocomplete="new-password">
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-key"></i> Change Password
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div id="modules-settings" class="settings-section card" style="display: none;">
+        <div class="card-header">
+            <h3 class="card-title">📦 Trading Modules</h3>
+            <p style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                Manage independent trading modules (DEX, Futures, Arbitrage). Each module operates with its own wallet, capital allocation, and strategies.
+            </p>
+        </div>
+        <div class="card-body" id="modules-container">
+            <div style="text-align: center; padding: 40px;">
+                <i class="fas fa-spinner fa-spin" style="font-size: 2em; color: #667eea;"></i>
+                <p style="margin-top: 10px;">Loading modules...</p>
+            </div>
+        </div>
+    </div>
+    <div id="general-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">General Configuration</h3></div>
+        <div class="card-body" id="general-settings-form"></div>
+    </div>
+    <div id="portfolio-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Portfolio Configuration</h3></div>
+        <div class="card-body" id="portfolio-settings-form"></div>
+    </div>
+    <div id="risk_management-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Risk Management</h3></div>
+        <div class="card-body" id="risk_management-settings-form"></div>
+    </div>
+    <div id="trading-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Trading Configuration</h3></div>
+        <div class="card-body" id="trading-settings-form"></div>
+    </div>
+    <div id="strategies-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Trading Strategies Configuration</h3></div>
+        <div class="card-body" id="strategies-settings-form"></div>
+    </div>
+    <div id="chain-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Blockchain Chains</h3></div>
+        <div class="card-body" id="chain-settings-form"></div>
+    </div>
+    <div id="position_management-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Position Management</h3></div>
+        <div class="card-body" id="position_management-settings-form"></div>
+    </div>
+    <div id="api-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">API & Connections</h3></div>
+        <div class="card-body" id="api-settings-form"></div>
+    </div>
+    <div id="monitoring-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Monitoring & Logging</h3></div>
+        <div class="card-body" id="monitoring-settings-form"></div>
+    </div>
+    <div id="ml_models-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">ML Models Configuration</h3></div>
+        <div class="card-body" id="ml_models-settings-form"></div>
+    </div>
+    <div id="feature_flags-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Feature Flags</h3></div>
+        <div class="card-body" id="feature_flags-settings-form"></div>
+    </div>
+    <div id="sensitive-settings" class="settings-section card" style="display: none;">
+        <div class="card-header">
+            <h3 class="card-title">Sensitive Configuration (Encrypted)</h3>
+        </div>
+        <div class="card-body">
+            <div class="alert alert-warning">
+                <i class="fas fa-exclamation-triangle"></i>
+                <strong>Warning:</strong> This section contains encrypted sensitive data like API keys and private keys.
+                Only administrators can access this section.
+            </div>
+
+            <div class="form-actions" style="margin-bottom: 20px;">
+                <button class="btn btn-primary" id="addSensitiveConfigBtn">
+                    <i class="fas fa-plus"></i> Add New Sensitive Config
+                </button>
+            </div>
+
+            <div id="sensitive-configs-list">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Key</th>
+                            <th>Description</th>
+                            <th>Last Rotated</th>
+                            <th>Rotation Interval</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sensitive-configs-tbody">
+                        <tr>
+                            <td colspan="5" class="text-center">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Sensitive Config Modal -->
+<div id="sensitiveConfigModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="sensitiveConfigModalTitle">Add Sensitive Configuration</h3>
+            <button class="close-modal" id="closeSensitiveConfigModal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="sensitiveConfigForm">
+                <div class="form-group">
+                    <label for="sensitiveConfigKey">Key *</label>
+                    <input type="text" id="sensitiveConfigKey" class="form-control"
+                           placeholder="e.g., OPENAI_API_KEY, PRIVATE_KEY_ETH" required>
+                    <small class="form-text">Unique identifier for this configuration</small>
+                </div>
+                <div class="form-group">
+                    <label for="sensitiveConfigValue">Value *</label>
+                    <textarea id="sensitiveConfigValue" class="form-control" rows="3"
+                              placeholder="Enter sensitive value (will be encrypted)" required></textarea>
+                    <small class="form-text">This value will be encrypted before storage</small>
+                </div>
+                <div class="form-group">
+                    <label for="sensitiveConfigDescription">Description</label>
+                    <input type="text" id="sensitiveConfigDescription" class="form-control"
+                           placeholder="Optional description">
+                </div>
+                <div class="form-group">
+                    <label for="sensitiveConfigRotation">Rotation Interval (days)</label>
+                    <input type="number" id="sensitiveConfigRotation" class="form-control"
+                           value="30" min="1" max="365">
+                    <small class="form-text">Recommended rotation interval for this secret</small>
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" id="cancelSensitiveConfigBtn">Cancel</button>
+            <button class="btn btn-primary" id="saveSensitiveConfigBtn">Save</button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/settings.js?v=4"></script>
+{% endblock %}

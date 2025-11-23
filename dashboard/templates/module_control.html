@@ -1,0 +1,459 @@
+{% extends "base.html" %}
+
+{% block title %}Settings - Module Control{% endblock %}
+
+{% block extra_head %}
+<style>
+    .settings-container {
+        padding: 20px;
+        max-width: 1200px;
+        margin: 0 auto;
+    }
+
+    .settings-header {
+        margin-bottom: 30px;
+    }
+
+    .settings-title {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        margin-bottom: 8px;
+    }
+
+    .settings-subtitle {
+        color: var(--text-secondary);
+        font-size: 1rem;
+    }
+
+    .module-control-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+        gap: 24px;
+    }
+
+    .module-control-card {
+        background: var(--card-bg);
+        border: 2px solid var(--border-color);
+        border-radius: 12px;
+        padding: 24px;
+        transition: all 0.3s;
+    }
+
+    .module-control-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+    }
+
+    .module-control-card.running {
+        border-color: #10b981;
+    }
+
+    .module-control-card.disabled {
+        border-color: #6b7280;
+        opacity: 0.7;
+    }
+
+    .module-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .module-name {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+
+    .module-status-badge {
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .status-running {
+        background: #d1fae5;
+        color: #065f46;
+    }
+
+    .status-paused {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .status-stopped {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+
+    .status-disabled {
+        background: #e5e7eb;
+        color: #374151;
+    }
+
+    .module-info {
+        margin-bottom: 20px;
+    }
+
+    .info-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .info-label {
+        color: var(--text-secondary);
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+
+    .info-value {
+        color: var(--text-primary);
+        font-weight: 600;
+    }
+
+    .control-buttons {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+    }
+
+    .control-btn {
+        padding: 10px 16px;
+        border: none;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+    }
+
+    .control-btn:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+
+    .control-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .btn-enable {
+        background: #10b981;
+        color: white;
+    }
+
+    .btn-disable {
+        background: #ef4444;
+        color: white;
+    }
+
+    .btn-pause {
+        background: #f59e0b;
+        color: white;
+    }
+
+    .btn-start {
+        background: #3b82f6;
+        color: white;
+    }
+
+    .toast {
+        position: fixed;
+        top: 80px;
+        right: 20px;
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 16px 20px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 300px;
+        animation: slideIn 0.3s ease-out;
+    }
+
+    @keyframes slideIn {
+        from {
+            transform: translateX(400px);
+            opacity: 0;
+        }
+        to {
+            transform: translateX(0);
+            opacity: 1;
+        }
+    }
+
+    .toast-success {
+        border-left: 4px solid #10b981;
+    }
+
+    .toast-error {
+        border-left: 4px solid #ef4444;
+    }
+
+    [data-theme="dark"] {
+        --card-bg: #1f2937;
+        --border-color: #374151;
+        --text-primary: #f9fafb;
+        --text-secondary: #d1d5db;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="settings-container">
+    <!-- Header -->
+    <div class="settings-header">
+        <h1 class="settings-title">
+            <i class="fas fa-cog"></i>
+            Module Control Settings
+        </h1>
+        <p class="settings-subtitle">Enable, disable, pause, or start trading modules</p>
+    </div>
+
+    <!-- Module Control Grid -->
+    <div class="module-control-grid">
+        <!-- DEX Trading Module -->
+        <div class="module-control-card running" id="dex-card">
+            <div class="module-header">
+                <div class="module-name">
+                    <i class="fas fa-cube"></i>
+                    DEX Trading
+                </div>
+                <span class="module-status-badge status-running" id="dex-status">RUNNING</span>
+            </div>
+
+            <div class="module-info">
+                <div class="info-item">
+                    <span class="info-label">Capital Allocated</span>
+                    <span class="info-value">$500.00</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Status</span>
+                    <span class="info-value">Active</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Type</span>
+                    <span class="info-value">DEX Trading</span>
+                </div>
+            </div>
+
+            <div class="control-buttons">
+                <button class="control-btn btn-enable" onclick="enableModule('dex_trading')" id="dex-enable" disabled>
+                    <i class="fas fa-check-circle"></i>
+                    Enable
+                </button>
+                <button class="control-btn btn-disable" onclick="disableModule('dex_trading')" id="dex-disable">
+                    <i class="fas fa-ban"></i>
+                    Disable
+                </button>
+                <button class="control-btn btn-pause" onclick="pauseModule('dex_trading')" id="dex-pause">
+                    <i class="fas fa-pause"></i>
+                    Pause
+                </button>
+                <button class="control-btn btn-start" onclick="startModule('dex_trading')" id="dex-start">
+                    <i class="fas fa-play"></i>
+                    Start
+                </button>
+            </div>
+        </div>
+
+        <!-- Futures Trading Module -->
+        <div class="module-control-card disabled" id="futures-card">
+            <div class="module-header">
+                <div class="module-name">
+                    <i class="fas fa-chart-line"></i>
+                    Futures Trading
+                </div>
+                <span class="module-status-badge status-disabled" id="futures-status">DISABLED</span>
+            </div>
+
+            <div class="module-info">
+                <div class="info-item">
+                    <span class="info-label">Capital Allocated</span>
+                    <span class="info-value">$300.00</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Status</span>
+                    <span class="info-value">Disabled</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Type</span>
+                    <span class="info-value">Futures Trading</span>
+                </div>
+            </div>
+
+            <div class="control-buttons">
+                <button class="control-btn btn-enable" onclick="enableModule('futures_trading')" id="futures-enable">
+                    <i class="fas fa-check-circle"></i>
+                    Enable
+                </button>
+                <button class="control-btn btn-disable" onclick="disableModule('futures_trading')" id="futures-disable" disabled>
+                    <i class="fas fa-ban"></i>
+                    Disable
+                </button>
+                <button class="control-btn btn-pause" onclick="pauseModule('futures_trading')" id="futures-pause" disabled>
+                    <i class="fas fa-pause"></i>
+                    Pause
+                </button>
+                <button class="control-btn btn-start" onclick="startModule('futures_trading')" id="futures-start" disabled>
+                    <i class="fas fa-play"></i>
+                    Start
+                </button>
+            </div>
+        </div>
+
+        <!-- Solana Strategies Module -->
+        <div class="module-control-card running" id="solana-card">
+            <div class="module-header">
+                <div class="module-name">
+                    <i class="fas fa-coins"></i>
+                    Solana Strategies
+                </div>
+                <span class="module-status-badge status-running" id="solana-status">RUNNING</span>
+            </div>
+
+            <div class="module-info">
+                <div class="info-item">
+                    <span class="info-label">Capital Allocated</span>
+                    <span class="info-value">$400.00</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Status</span>
+                    <span class="info-value">Active</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Type</span>
+                    <span class="info-value">Solana Strategies</span>
+                </div>
+            </div>
+
+            <div class="control-buttons">
+                <button class="control-btn btn-enable" onclick="enableModule('solana_strategies')" id="solana-enable" disabled>
+                    <i class="fas fa-check-circle"></i>
+                    Enable
+                </button>
+                <button class="control-btn btn-disable" onclick="disableModule('solana_strategies')" id="solana-disable">
+                    <i class="fas fa-ban"></i>
+                    Disable
+                </button>
+                <button class="control-btn btn-pause" onclick="pauseModule('solana_strategies')" id="solana-pause">
+                    <i class="fas fa-pause"></i>
+                    Pause
+                </button>
+                <button class="control-btn btn-start" onclick="startModule('solana_strategies')" id="solana-start">
+                    <i class="fas fa-play"></i>
+                    Start
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function showToast(message, type = 'success') {
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.innerHTML = `
+        <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'}" style="color: ${type === 'success' ? '#10b981' : '#ef4444'}"></i>
+        <span>${message}</span>
+    `;
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+        toast.remove();
+    }, 3000);
+}
+
+async function enableModule(moduleName) {
+    try {
+        const response = await fetch(`/api/modules/${moduleName}/enable`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        const data = await response.json();
+
+        if (response.ok) {
+            showToast(`Module ${moduleName} enabled successfully`, 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast(data.error || 'Failed to enable module', 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+async function disableModule(moduleName) {
+    if (!confirm(`Disable ${moduleName}? All open positions will be closed.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/modules/${moduleName}/disable`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        const data = await response.json();
+
+        if (response.ok) {
+            showToast(`Module ${moduleName} disabled successfully`, 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast(data.error || 'Failed to disable module', 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+async function pauseModule(moduleName) {
+    try {
+        const response = await fetch(`/api/modules/${moduleName}/pause`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        const data = await response.json();
+
+        if (response.ok) {
+            showToast(`Module ${moduleName} paused successfully`, 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast(data.error || 'Failed to pause module', 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+async function startModule(moduleName) {
+    try {
+        const response = await fetch(`/api/modules/${moduleName}/start`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        const data = await response.json();
+
+        if (response.ok) {
+            showToast(`Module ${moduleName} started successfully`, 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast(data.error || 'Failed to start module', 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+</script>
+{% endblock %}
