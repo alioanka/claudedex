@@ -35,6 +35,8 @@ services:
     restart: unless-stopped
     # SECURITY FIX: Add password authentication and bind to localhost only
     command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-change_me_in_production}
+    env_file:
+      - .env  # Load REDIS_PASSWORD from .env
     volumes:
       - redis-data:/data
     ports:
