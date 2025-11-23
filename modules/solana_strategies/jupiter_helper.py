@@ -36,8 +36,15 @@ class JupiterHelper:
             solana_rpc_url: Solana RPC URL
             private_key: Base58-encoded private key for transaction signing
         """
+        # Jupiter API URL - supports different plans:
+        # - Lite (Free): https://lite-api.jup.ag (1 RPS)
+        # - Public: https://quote-api.jup.ag/v6 (standard rate limits)
+        # - Ultra (Premium): https://api.jup.ag/ultra (dynamic scaling)
+        # Set JUPITER_API_URL in .env to your subscribed plan
         self.api_url = os.getenv('JUPITER_API_URL', 'https://quote-api.jup.ag/v6')
         self.solana_rpc = solana_rpc_url or os.getenv('SOLANA_RPC_URL')
+
+        logger.info(f"🔗 Jupiter API endpoint: {self.api_url}")
 
         # Load keypair for signing
         if private_key:
