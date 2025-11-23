@@ -1,0 +1,12 @@
+FROM redis:7-alpine
+
+# Install Python and cryptography for password decryption
+RUN apk add --no-cache python3 py3-pip && \
+    pip3 install --no-cache-dir cryptography && \
+    rm -rf /var/cache/apk/*
+
+# Copy and set entrypoint
+COPY scripts/redis-entrypoint.sh /usr/local/bin/redis-entrypoint.sh
+RUN chmod +x /usr/local/bin/redis-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/redis-entrypoint.sh"]
