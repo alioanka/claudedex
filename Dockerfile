@@ -52,6 +52,7 @@ RUN pip install --no-cache-dir \
     mnemonic==0.20 \
     solders==0.18.1 \
     base58==2.1.1 \
+    driftpy==0.5.0 \
     && echo "✅ Blockchain libraries installed"
 
 # Stage 5: Database
@@ -142,6 +143,7 @@ RUN python -c "import talib; print('✅ TA-Lib version:', talib.__version__)" &&
     python -c "import web3; print('✅ Web3 imported')" && \
     python -c "import asyncpg; print('✅ Database libraries OK')" && \
     python -c "import bcrypt; print('✅ Auth libraries OK')" && \
+    python -c "import driftpy; print('✅ DriftPy imported')" && \
     echo "✅ All critical dependencies verified"
 
 COPY . .
