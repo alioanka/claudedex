@@ -171,11 +171,42 @@ class ModuleRoutes:
             # Prepare chart data (last 30 days)
             chart_labels = []
             chart_data = []
-            # TODO: Fetch actual historical data from database
-            # For now, use placeholder data
-            for i in range(30):
-                chart_labels.append(f"Day {i+1}")
-                chart_data.append(metrics.to_dict().get('total_pnl', 0) * (i / 30))
+
+            # Fetch actual historical data from database
+            try:
+                if self.module_manager and self.module_manager.db_manager:
+                    query = """
+                        SELECT DATE(timestamp) as date, SUM(realized_pnl) as daily_pnl
+                        FROM module_positions
+                        WHERE module_name = $1
+                        AND status = 'CLOSED'
+                        AND timestamp >= NOW() - INTERVAL '30 days'
+                        GROUP BY DATE(timestamp)
+                        ORDER BY date ASC
+                    """
+                    rows = await self.module_manager.db_manager.fetch_all(query, module_name)
+
+                    if rows:
+                        for row in rows:
+                            chart_labels.append(row['date'].strftime('%Y-%m-%d'))
+                            chart_data.append(float(row['daily_pnl']) if row['daily_pnl'] else 0)
+                    else:
+                        # No historical data, use placeholder
+                        for i in range(7):
+                            chart_labels.append(f"Day {i+1}")
+                            chart_data.append(0)
+                else:
+                    # No database connection, use placeholder
+                    for i in range(7):
+                        chart_labels.append(f"Day {i+1}")
+                        chart_data.append(0)
+
+            except Exception as e:
+                self.logger.error(f"Error fetching historical data: {e}")
+                # Fallback to simple placeholder
+                for i in range(7):
+                    chart_labels.append(f"Day {i+1}")
+                    chart_data.append(0)
 
             # Render HTML template
             if self.jinja_env:
