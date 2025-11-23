@@ -250,9 +250,12 @@ class ModuleIntegration:
             )
 
             # Create module instance
+            # Note: ml_model and pattern_analyzer are optional and can be added later
             module = FuturesTradingModule(
                 config=config,
                 trading_engine=self.engine,
+                ml_model=None,  # TODO: Connect ML model if available
+                pattern_analyzer=None,  # TODO: Connect pattern analyzer if available
                 db_manager=self.db,
                 cache_manager=self.cache,
                 alert_manager=self.alerts,

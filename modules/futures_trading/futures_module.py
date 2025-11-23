@@ -603,18 +603,200 @@ class FuturesTradingModule(BaseModule):
         return None
 
     async def _trading_loop(self):
-        """Main trading loop"""
+        """Main trading loop - analyzes market and executes trades"""
+        self.logger.info("🔄 Futures trading loop started")
+        loop_count = 0
+
         while self._running:
             try:
-                await asyncio.sleep(60)  # Check every minute
+                loop_count += 1
 
-                # Analyze market and look for opportunities
-                # (This would connect to market data feeds)
+                # Log heartbeat every 10 iterations
+                if loop_count % 10 == 0:
+                    self.logger.info(
+                        f"💓 Heartbeat - Loop #{loop_count}, "
+                        f"Positions: {len(self.positions)}, "
+                        f"Status: {self.status}"
+                    )
+
+                # Check if we can open new positions
+                if len(self.positions) >= self.config.max_positions:
+                    self.logger.debug(
+                        f"Max positions ({self.config.max_positions}) reached, "
+                        f"skipping new trades"
+                    )
+                    await asyncio.sleep(60)
+                    continue
+
+                # Get top symbols to analyze (simplified for now)
+                # In production, this would connect to market data feeds
+                symbols_to_analyze = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT']
+
+                for symbol in symbols_to_analyze:
+                    if symbol in self.positions:
+                        continue  # Already have position
+
+                    # Basic signal generation (placeholder)
+                    # In production: use ML models, TA, patterns, etc.
+                    signal = await self._generate_trading_signal(symbol)
+
+                    if signal and signal.get('confidence', 0) > 0.7:
+                        self.logger.info(
+                            f"📊 Signal generated for {symbol}: "
+                            f"{signal['direction']} (confidence: {signal['confidence']:.1%})"
+                        )
+
+                        # Execute trade
+                        await self._execute_trade(symbol, signal)
+
+                        # Only one trade per loop iteration
+                        break
+
+                # Wait before next iteration
+                await asyncio.sleep(60)
 
             except asyncio.CancelledError:
+                self.logger.info("Trading loop cancelled")
                 break
             except Exception as e:
-                self.logger.error(f"Trading loop error: {e}")
+                self.logger.error(f"❌ Trading loop error: {e}", exc_info=True)
+                await asyncio.sleep(60)
+
+        self.logger.info("🛑 Futures trading loop stopped")
+
+    async def _generate_trading_signal(self, symbol: str) -> Optional[Dict]:
+        """
+        Generate trading signal for a symbol
+
+        Returns:
+            Optional[Dict]: Signal with direction and confidence
+        """
+        try:
+            # Placeholder implementation
+            # In production: integrate ML models, TA, patterns
+
+            # For now, return None to avoid trades in placeholder mode
+            return None
+
+            # Example signal structure:
+            # return {
+            #     'symbol': symbol,
+            #     'direction': 'LONG',  # or 'SHORT'
+            #     'confidence': 0.75,
+            #     'entry_price': 50000,
+            #     'stop_loss': 49000,
+            #     'take_profit': 52000
+            # }
+
+        except Exception as e:
+            self.logger.error(f"Error generating signal for {symbol}: {e}")
+            return None
+
+    async def _execute_trade(self, symbol: str, signal: Dict):
+        """Execute a trade based on signal"""
+        try:
+            direction = signal['direction']
+
+            # Calculate position size (risk-based)
+            position_size = self._calculate_position_size(
+                symbol,
+                signal.get('entry_price', 0),
+                signal.get('stop_loss', 0)
+            )
+
+            if position_size <= 0:
+                self.logger.warning(f"Invalid position size for {symbol}, skipping")
+                return
+
+            executor = self._get_executor()
+            if not executor:
+                self.logger.error("No executor available")
+                return
+
+            self.logger.info(
+                f"📈 Executing {direction} trade: {symbol} "
+                f"Size: {position_size}, Confidence: {signal['confidence']:.1%}"
+            )
+
+            # Execute the trade
+            if direction == 'LONG':
+                result = await executor.open_long(
+                    symbol,
+                    position_size,
+                    leverage=self.config.custom_settings.get('max_leverage', 3)
+                )
+            else:  # SHORT
+                result = await executor.open_short(
+                    symbol,
+                    position_size,
+                    leverage=self.config.custom_settings.get('max_leverage', 3)
+                )
+
+            if result:
+                self.logger.info(f"✅ Trade executed successfully: {symbol}")
+
+                # Track position
+                self.positions[symbol] = result
+                self.position_entry_times[symbol] = datetime.now()
+
+                # Save to database
+                await self._save_position(result)
+            else:
+                self.logger.warning(f"⚠️ Trade execution failed: {symbol}")
+
+        except Exception as e:
+            self.logger.error(f"❌ Error executing trade for {symbol}: {e}", exc_info=True)
+
+    def _calculate_position_size(
+        self,
+        symbol: str,
+        entry_price: float,
+        stop_loss: float
+    ) -> float:
+        """
+        Calculate position size based on risk management
+
+        Args:
+            symbol: Trading symbol
+            entry_price: Entry price
+            stop_loss: Stop loss price
+
+        Returns:
+            float: Position size in base currency
+        """
+        try:
+            # Risk amount per trade (default 2% of capital)
+            risk_pct = self.config.risk_per_trade
+            risk_amount = self.config.capital_allocation * risk_pct
+
+            # Calculate risk per unit
+            if stop_loss <= 0 or entry_price <= 0:
+                return 0.0
+
+            risk_per_unit = abs(entry_price - stop_loss)
+            if risk_per_unit <= 0:
+                return 0.0
+
+            # Position size = risk_amount / risk_per_unit
+            position_size = risk_amount / risk_per_unit
+
+            # Apply leverage
+            leverage = self.config.custom_settings.get('max_leverage', 3)
+            position_size = position_size * leverage
+
+            # Round to reasonable precision
+            position_size = round(position_size, 8)
+
+            self.logger.debug(
+                f"Position size calculated for {symbol}: {position_size} "
+                f"(Risk: ${risk_amount:.2f}, Leverage: {leverage}x)"
+            )
+
+            return position_size
+
+        except Exception as e:
+            self.logger.error(f"Error calculating position size: {e}")
+            return 0.0
 
     async def _position_monitoring_loop(self):
         """Monitor positions for TP/SL"""
@@ -712,3 +894,111 @@ class FuturesTradingModule(BaseModule):
         except Exception as e:
             self.logger.error(f"Error getting metrics: {e}")
             return self.metrics
+
+    async def close_position(self, position: Dict) -> bool:
+        """
+        Close a specific position
+        
+        Args:
+            position: Position data containing symbol, exchange, etc.
+            
+        Returns:
+            bool: True if position closed successfully
+        """
+        try:
+            symbol = position.get('symbol')
+            exchange = position.get('exchange', 'binance')
+            
+            self.logger.info(f"Closing position: {symbol} on {exchange}")
+            
+            if exchange == 'binance' and self.binance:
+                result = await self.binance.close_position(symbol)
+                if result:
+                    self.logger.info(f"✅ Closed {symbol} position on Binance")
+                    # Remove from local tracking
+                    self.positions.pop(symbol, None)
+                    self.position_entry_times.pop(symbol, None)
+                    
+                    # Save to database
+                    await self._save_position_close(symbol, result)
+                    return True
+                    
+            elif exchange == 'bybit' and self.bybit:
+                result = await self.bybit.close_position(symbol)
+                if result:
+                    self.logger.info(f"✅ Closed {symbol} position on Bybit")
+                    self.positions.pop(symbol, None)
+                    self.position_entry_times.pop(symbol, None)
+                    await self._save_position_close(symbol, result)
+                    return True
+            
+            self.logger.warning(f"⚠️ Failed to close position {symbol} on {exchange}")
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error closing position: {e}", exc_info=True)
+            return False
+
+    async def _save_position_close(self, symbol: str, result: Dict):
+        """Save position closure to database"""
+        try:
+            if not self.db:
+                return
+                
+            query = """
+                UPDATE module_positions
+                SET status = 'CLOSED',
+                    exit_price = $1,
+                    exit_time = $2,
+                    realized_pnl = $3
+                WHERE module_name = 'futures_trading'
+                AND symbol = $4
+                AND status = 'OPEN'
+            """
+            
+            await self.db.execute(
+                query,
+                result.get('exit_price', 0),
+                datetime.now(),
+                result.get('pnl', 0),
+                symbol
+            )
+            
+            self.logger.debug(f"💾 Saved position close for {symbol}")
+            
+        except Exception as e:
+            self.logger.error(f"Error saving position close: {e}")
+
+    async def _save_position(self, position: Dict):
+        """Save/update position in database"""
+        try:
+            if not self.db:
+                return
+                
+            query = """
+                INSERT INTO module_positions (
+                    module_name, symbol, side, size, entry_price,
+                    leverage, unrealized_pnl, timestamp, exchange, status
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'OPEN')
+                ON CONFLICT (module_name, symbol)
+                DO UPDATE SET
+                    size = EXCLUDED.size,
+                    unrealized_pnl = EXCLUDED.unrealized_pnl,
+                    timestamp = EXCLUDED.timestamp
+            """
+            
+            await self.db.execute(
+                query,
+                'futures_trading',
+                position.get('symbol'),
+                position.get('side', 'LONG'),
+                position.get('size', 0),
+                position.get('entry_price', 0),
+                position.get('leverage', 1),
+                position.get('unrealized_pnl', 0),
+                datetime.now(),
+                position.get('exchange', 'binance')
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Error saving position: {e}")
