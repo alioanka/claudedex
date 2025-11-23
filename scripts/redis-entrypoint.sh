@@ -5,11 +5,14 @@
 set -e
 
 echo "🔐 Redis Entrypoint: Processing password..."
+echo "   REDIS_PASSWORD length: ${#REDIS_PASSWORD}"
+echo "   ENCRYPTION_KEY length: ${#ENCRYPTION_KEY}"
 
 # Check if REDIS_PASSWORD and ENCRYPTION_KEY are set
 if [ -n "$REDIS_PASSWORD" ] && [ -n "$ENCRYPTION_KEY" ]; then
+    echo "   Attempting decryption..."
     # Try to decrypt the password (works with or without 'encrypted:' prefix)
-    DECRYPTED_PASSWORD=$(python3 <<'EOF'
+    DECRYPTED_PASSWORD=$(python3 2>&1 <<'EOF'
 import os
 import sys
 from cryptography.fernet import Fernet
@@ -43,11 +46,14 @@ EOF
         echo "✅ Password decrypted successfully"
         REDIS_PASS="$DECRYPTED_PASSWORD"
     else
-        echo "⚠️  Using password as plaintext (decryption not needed or failed)"
+        echo "⚠️  Decryption failed with exit code: $EXIT_CODE"
+        echo "   Python output: $DECRYPTED_PASSWORD"
+        echo "   Using password as plaintext"
         REDIS_PASS="$REDIS_PASSWORD"
     fi
 else
-    echo "⚠️  Using default or plaintext password"
+    echo "⚠️  REDIS_PASSWORD or ENCRYPTION_KEY not set"
+    echo "   Using default password"
     REDIS_PASS="${REDIS_PASSWORD:-change_me_in_production}"
 fi
 

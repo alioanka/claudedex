@@ -73,6 +73,16 @@ async def migrate_database():
                 checksum VARCHAR(64)
             )
         """)
+
+        # Add checksum column if it doesn't exist (for existing databases)
+        try:
+            await conn.execute("""
+                ALTER TABLE migrations ADD COLUMN IF NOT EXISTS checksum VARCHAR(64)
+            """)
+        except Exception as e:
+            # Column might already exist, ignore
+            pass
+
         print("✅ Migrations table ready")
 
         # Get applied migrations
