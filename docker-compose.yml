@@ -53,6 +53,11 @@ services:
       - "8080:8080"
     environment:
       DATABASE_URL: postgresql://bot_user:bot_password@postgres:5432/tradingbot
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: tradingbot
+      DB_USER: bot_user
+      DB_PASSWORD: bot_password
       LOG_LEVEL: INFO
       PYTHONUNBUFFERED: "1"
     env_file:
