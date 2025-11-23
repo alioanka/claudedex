@@ -2,7 +2,7 @@ FROM redis:7-alpine
 
 # Install Python and cryptography for password decryption
 RUN apk add --no-cache python3 py3-pip && \
-    pip3 install --no-cache-dir cryptography && \
+    pip3 install --no-cache-dir --break-system-packages cryptography && \
     rm -rf /var/cache/apk/*
 
 # Copy and set entrypoint
