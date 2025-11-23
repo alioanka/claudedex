@@ -30,11 +30,14 @@ services:
       retries: 5
 
   redis:
-    image: redis:7-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile.redis
     container_name: trading-redis
     restart: unless-stopped
-    # SECURITY FIX: Add password authentication and bind to localhost only
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-change_me_in_production}
+    # SECURITY: Custom image with Python to decrypt REDIS_PASSWORD before starting
+    env_file:
+      - .env  # Load REDIS_PASSWORD and ENCRYPTION_KEY from .env
     volumes:
       - redis-data:/data
     ports:

@@ -53,6 +53,7 @@ SENSITIVE_KEYS = {
     'DATABASE_URL': 'PostgreSQL database connection URL',
     'DB_PASSWORD': 'Database password',
     'REDIS_URL': 'Redis cache connection URL',
+    'REDIS_PASSWORD': 'Redis authentication password',
 }
 
 async def import_env_secrets():
