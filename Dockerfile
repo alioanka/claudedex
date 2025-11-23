@@ -146,8 +146,13 @@ RUN python -c "import talib; print('✅ TA-Lib version:', talib.__version__)" &&
 
 COPY . .
 
+# Make entrypoint script executable
+RUN chmod +x scripts/docker-entrypoint.sh
+
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import sys; sys.exit(0)"
 
-CMD ["python", "main.py", "--mode", "production"]
+# Use entrypoint to run migrations before starting app
+ENTRYPOINT ["./scripts/docker-entrypoint.sh"]
+CMD ["main.py", "--mode", "production"]
