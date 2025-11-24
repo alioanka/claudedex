@@ -6,6 +6,17 @@ version: '3.8'
 # - If you accidentally wipe volumes:
 #   1. Run: docker exec -it trading-bot python scripts/import_env_secrets.py
 #   2. Admin user will be recreated with password: admin123
+#
+# 🏗️  MODULAR ARCHITECTURE:
+# - main.py: Orchestrator that manages all trading modules as separate processes
+# - main_dex.py: DEX Trading Module (EVM chains: ETH, BSC, Polygon, Arbitrum, Base)
+# - futures_trading/main_futures.py: Futures Trading Module (Binance/Bybit)
+# - solana_trading/main_solana.py: Solana Trading Module (Jupiter/Drift/Pump.fun)
+#
+# Enable/disable modules via .env file:
+# - DEX_MODULE_ENABLED=true/false
+# - FUTURES_MODULE_ENABLED=true/false
+# - SOLANA_MODULE_ENABLED=true/false
 
 services:
   postgres:
@@ -61,6 +72,11 @@ services:
       DB_PASSWORD: bot_password
       LOG_LEVEL: INFO
       PYTHONUNBUFFERED: "1"
+      # Module Enable/Disable Flags (Modular Architecture)
+      # Set to 'true' to enable each trading module
+      DEX_MODULE_ENABLED: ${DEX_MODULE_ENABLED:-true}
+      FUTURES_MODULE_ENABLED: ${FUTURES_MODULE_ENABLED:-false}
+      SOLANA_MODULE_ENABLED: ${SOLANA_MODULE_ENABLED:-false}
     env_file:
       - .env  # REDIS_URL and REDIS_PASSWORD are loaded from .env
     volumes:

@@ -153,7 +153,6 @@ class TradingBotApplication:
         self.alerts_system = None
         self.dashboard = None
 
-        # Phase 1: Modular Architecture
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
         
@@ -421,22 +420,6 @@ class TradingBotApplication:
             await self.engine.initialize()
             # --- FIX ENDS HERE ---
 
-            # === PHASE 1: Setup Module Manager ===
-            self.logger.info("Setting up modular architecture...")
-            try:
-                self.module_manager = await setup_modular_architecture(
-                    engine=self.engine,
-                    db_manager=self.db_manager,
-                    cache_manager=self.cache_manager,
-                    alert_manager=self.alerts_system,
-                    risk_manager=self.risk_manager
-                )
-                await self.module_manager.start()
-                self.logger.info(f"✅ Module manager started with {len(self.module_manager.modules)} module(s)")
-            except Exception as e:
-                self.logger.warning(f"Module manager setup failed (non-critical): {e}")
-                self.logger.warning("Continuing without modular architecture...")            # === END PHASE 1 ===
-
             self.dashboard = DashboardEndpoints(
                 host="0.0.0.0",
                 port=8080,
@@ -447,8 +430,7 @@ class TradingBotApplication:
                 risk_manager=self.risk_manager,
                 alerts_system=self.alerts_system,
                 config_manager=self.config_manager,
-                db_manager=self.db_manager,
-                module_manager=self.module_manager  # Phase 1: Module Manager integration
+                db_manager=self.db_manager
             )
             self.logger.info("Enhanced dashboard initialized")
             
@@ -603,8 +585,6 @@ class TradingBotApplication:
         """Graceful shutdown procedure"""
         try:
             self.logger.info("Initiating graceful shutdown...")
-
-            # Phase 1: Stop module manager first                self.logger.info("✅ Module manager stopped")
 
             if self.engine:
                 if self.mode == "production":
