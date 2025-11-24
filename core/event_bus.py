@@ -323,45 +323,44 @@ class EventBus:
     async def _handle_event(self, event: Event):
         """
         Handle a single event
-        
+
         Args:
             event: Event to handle
         """
         try:
             # Get subscribers for this event type
             subscribers = self.subscribers.get(event.event_type, [])
-            
+
             # Process subscribers by priority
             for subscription in subscribers:
                 try:
                     # Apply subscription filters
                     if subscription.filters and not self._apply_filters(event, subscription.filters):
                         continue
-                        
-                    # Call handler
+
+                    # Call handler with timeout to prevent hanging
                     if subscription.async_handler:
-                        await subscription.callback(event)
+                        # Add 5 second timeout to prevent callbacks from hanging forever
+                        try:
+                            await asyncio.wait_for(subscription.callback(event), timeout=5.0)
+                        except asyncio.TimeoutError:
+                            print(f"⚠️ Subscriber {subscription.subscriber_id} callback timed out after 5s")
+                            # Don't raise - continue processing other subscribers
                     else:
                         subscription.callback(event)
-                        
+
+                except asyncio.TimeoutError:
+                    # Already handled above
+                    pass
                 except Exception as e:
                     print(f"Subscriber {subscription.subscriber_id} error: {e}")
-                    
+
                     # Add to dead letter queue
                     self.dead_letter_queue.append((event, e))
-                    
-                    # Emit error event
-                    if event.event_type != EventType.ERROR_OCCURRED:  # Prevent infinite loop
-                        await self.emit(Event(
-                            event_type=EventType.ERROR_OCCURRED,
-                            data={
-                                'original_event': event.to_dict(),
-                                'error': str(e),
-                                'subscriber': subscription.subscriber_id
-                            },
-                            source='EventBus'
-                        ))
-                        
+
+                    # DON'T emit error events recursively - just log them
+                    # This prevents potential infinite loops and queue buildup
+
         except Exception as e:
             print(f"Event handling error: {e}")
             

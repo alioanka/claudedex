@@ -409,22 +409,23 @@ class TradingBotEngine:
     async def run(self):
         """Main engine loop"""
         try:
-            # Create concurrent tasks
+            # Create concurrent tasks with names for debugging hangs
             self.tasks = [
-                asyncio.create_task(self._monitor_new_pairs()),
-                asyncio.create_task(self._monitor_existing_positions()),
-                asyncio.create_task(self._process_opportunities()),
-                asyncio.create_task(self._monitor_mempool()),
-                asyncio.create_task(self._track_whales()),
-                asyncio.create_task(self._optimize_strategies()),
-                asyncio.create_task(self._retrain_models()),
-                asyncio.create_task(self._update_blacklists()),
-                asyncio.create_task(self._monitor_performance()),
-                asyncio.create_task(self._health_check()),
-                asyncio.create_task(self._monitor_wallet_balances()),
-                asyncio.create_task(self._monitor_positions_with_engine()),
+                asyncio.create_task(self._monitor_new_pairs(), name="monitor_new_pairs"),
+                asyncio.create_task(self._monitor_existing_positions(), name="monitor_positions"),
+                asyncio.create_task(self._process_opportunities(), name="process_opportunities"),
+                asyncio.create_task(self._monitor_mempool(), name="monitor_mempool"),
+                asyncio.create_task(self._track_whales(), name="track_whales"),
+                asyncio.create_task(self._optimize_strategies(), name="optimize_strategies"),
+                asyncio.create_task(self._retrain_models(), name="retrain_models"),
+                asyncio.create_task(self._update_blacklists(), name="update_blacklists"),
+                asyncio.create_task(self._monitor_performance(), name="monitor_performance"),
+                asyncio.create_task(self._health_check(), name="health_check"),
+                asyncio.create_task(self._monitor_wallet_balances(), name="monitor_wallets"),
+                asyncio.create_task(self._monitor_positions_with_engine(), name="monitor_positions_engine"),
+                asyncio.create_task(self._watchdog(), name="watchdog"),
 
-                
+
             ]
             
             # Wait for tasks
@@ -2763,6 +2764,39 @@ class TradingBotEngine:
     async def save_state(self):
         """Save current state"""
         await self._save_state()
+
+    async def _watchdog(self):
+        """Watchdog task to detect and log hanging tasks"""
+        logger.info("🐕 Watchdog started - monitoring for hangs every 60s")
+
+        while self.state == BotState.RUNNING:
+            try:
+                await asyncio.sleep(60)  # Check every minute
+
+                # Log task status
+                alive_tasks = [t for t in self.tasks if not t.done()]
+                done_tasks = [t for t in self.tasks if t.done()]
+
+                if done_tasks:
+                    logger.warning(f"⚠️ Watchdog: {len(done_tasks)} tasks have stopped!")
+                    for task in done_tasks:
+                        task_name = task.get_name()
+                        if task.exception():
+                            logger.error(f"  ❌ Task {task_name} crashed: {task.exception()}")
+                        else:
+                            logger.warning(f"  ⏹️ Task {task_name} completed unexpectedly")
+
+                logger.info(f"🐕 Watchdog: {len(alive_tasks)} tasks alive, {len(done_tasks)} stopped")
+
+                # Log event bus stats
+                event_stats = self.event_bus.get_statistics()
+                logger.info(f"  📊 EventBus: {event_stats['events_processed']} processed, "
+                           f"{event_stats['queue_size']} queued, "
+                           f"{event_stats['events_failed']} failed")
+
+            except Exception as e:
+                logger.error(f"Watchdog error: {e}")
+                await asyncio.sleep(60)
 
     async def _handle_new_pair(self, event: Event):
         """Handle new pair detected event"""
