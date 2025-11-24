@@ -376,7 +376,11 @@ class TradingBotEngine:
                     self.solana_executor = None
                         
             # Rest of initialization...
-            
+
+            # Start event bus processing
+            await self.event_bus.start()
+            logger.info("✅ Event bus started")
+
             # Setup event handlers
             self._setup_event_handlers()
             
@@ -394,12 +398,13 @@ class TradingBotEngine:
             
     def _setup_event_handlers(self):
         """Setup event bus handlers"""
-        self.event_bus.subscribe(EventType.NEW_PAIR_DETECTED, self._handle_new_pair)
-        self.event_bus.subscribe(EventType.WHALE_MOVEMENT, self._handle_whale_movement)
-        self.event_bus.subscribe(EventType.UNUSUAL_VOLUME, self._handle_unusual_volume)
-        self.event_bus.subscribe(EventType.RUG_PULL_DETECTED, self._handle_rug_pull)
-        self.event_bus.subscribe(EventType.POSITION_OPENED, self._handle_position_opened)
-        self.event_bus.subscribe(EventType.POSITION_CLOSED, self._handle_position_closed)
+        # Use subscribe_sync() for synchronous subscription with EventType enum
+        self.event_bus.subscribe_sync(EventType.NEW_PAIR_DETECTED, self._handle_new_pair)
+        self.event_bus.subscribe_sync(EventType.WHALE_MOVEMENT, self._handle_whale_movement)
+        self.event_bus.subscribe_sync(EventType.UNUSUAL_VOLUME, self._handle_unusual_volume)
+        self.event_bus.subscribe_sync(EventType.RUG_PULL_DETECTED, self._handle_rug_pull)
+        self.event_bus.subscribe_sync(EventType.POSITION_OPENED, self._handle_position_opened)
+        self.event_bus.subscribe_sync(EventType.POSITION_CLOSED, self._handle_position_closed)
         
     async def run(self):
         """Main engine loop"""
@@ -2352,7 +2357,14 @@ class TradingBotEngine:
         """
         try:
             logger.info("🧹 Starting engine cleanup...")
-            
+
+            # Stop event bus processing
+            try:
+                await self.event_bus.stop()
+                logger.info("✅ Event bus stopped")
+            except Exception as e:
+                logger.error(f"Error stopping event bus: {e}")
+
             # 1. Cleanup Solana executor
             if self.solana_executor:
                 try:
