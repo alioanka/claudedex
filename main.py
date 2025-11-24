@@ -46,6 +46,9 @@ class ModuleProcess:
         self.process: Optional[subprocess.Popen] = None
         self.restart_count = 0
         self.max_restarts = 3
+        # File handles for subprocess output (prevents PIPE buffer deadlock)
+        self._stdout_file = None
+        self._stderr_file = None
 
     def is_enabled(self) -> bool:
         """Check if module is enabled via environment variable"""
@@ -64,13 +67,30 @@ class ModuleProcess:
 
         try:
             logger.info(f"🚀 Starting {self.name} module...")
+
+            # Create log directory for module output
+            log_dir = Path("logs") / self.name.lower().replace(" ", "_")
+            log_dir.mkdir(parents=True, exist_ok=True)
+
+            # Open log files for subprocess stdout/stderr
+            # CRITICAL: Do NOT use subprocess.PIPE without reading from it!
+            # If the pipe buffer fills up (~64KB), the subprocess will block/freeze.
+            stdout_file = open(log_dir / "stdout.log", "a")
+            stderr_file = open(log_dir / "stderr.log", "a")
+
             self.process = subprocess.Popen(
                 [sys.executable, self.script_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=stdout_file,
+                stderr=stderr_file,
                 env=os.environ.copy()
             )
+
+            # Store file handles for cleanup
+            self._stdout_file = stdout_file
+            self._stderr_file = stderr_file
+
             logger.info(f"✅ {self.name} started (PID: {self.process.pid})")
+            logger.info(f"   Logs: {log_dir}/stdout.log, {log_dir}/stderr.log")
             return True
         except Exception as e:
             logger.error(f"❌ Failed to start {self.name}: {e}")
@@ -106,6 +126,18 @@ class ModuleProcess:
 
         except Exception as e:
             logger.error(f"Error stopping {self.name}: {e}")
+        finally:
+            # Close log file handles
+            if hasattr(self, '_stdout_file') and self._stdout_file:
+                try:
+                    self._stdout_file.close()
+                except:
+                    pass
+            if hasattr(self, '_stderr_file') and self._stderr_file:
+                try:
+                    self._stderr_file.close()
+                except:
+                    pass
 
     async def restart(self):
         """Restart the module"""
