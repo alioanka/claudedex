@@ -548,11 +548,18 @@ class TradingBotApplication:
                 tasks,
                 return_when=asyncio.FIRST_EXCEPTION
             )
-            
+
+            # Enhanced error logging to catch exact cause of task failures
+            import traceback
             for task in done:
                 if task.exception():
-                    self.logger.error(f"Task failed: {task.exception()}")
-                    
+                    task_name = task.get_name() if hasattr(task, 'get_name') else 'unknown'
+                    exc = task.exception()
+                    self.logger.error(f"Task '{task_name}' failed with: {exc}")
+                    # Log full traceback to identify exact cause of restart
+                    tb_lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
+                    self.logger.error(f"Full traceback:\n{''.join(tb_lines)}")
+
             for task in pending:
                 task.cancel()
                 
