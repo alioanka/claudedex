@@ -18,19 +18,61 @@ function initDashboard() {
     // Setup menu toggle
     const menuToggle = document.getElementById('menuToggle');
     const sidebar = document.getElementById('sidebar');
-    
+    const sidebarOverlay = document.getElementById('sidebarOverlay');
+
     if (menuToggle && sidebar) {
         menuToggle.addEventListener('click', () => {
-            sidebar.classList.toggle('collapsed');
-            // ✅ Store state in localStorage
-            localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+            // On mobile (< 1024px), toggle active class for slide-in menu
+            // On desktop, toggle collapsed class
+            if (window.innerWidth < 1024) {
+                sidebar.classList.toggle('active');
+                if (sidebarOverlay) {
+                    sidebarOverlay.classList.toggle('active');
+                }
+            } else {
+                sidebar.classList.toggle('collapsed');
+                localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+            }
         });
-        
-        // ✅ Restore sidebar state
-        const isCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
-        if (isCollapsed) {
-            sidebar.classList.add('collapsed');
+
+        // Close sidebar when clicking overlay (mobile)
+        if (sidebarOverlay) {
+            sidebarOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('active');
+                sidebarOverlay.classList.remove('active');
+            });
         }
+
+        // Close sidebar on mobile when clicking a link
+        const navLinks = sidebar.querySelectorAll('.nav-item a');
+        navLinks.forEach(link => {
+            link.addEventListener('click', () => {
+                if (window.innerWidth < 1024) {
+                    sidebar.classList.remove('active');
+                    if (sidebarOverlay) {
+                        sidebarOverlay.classList.remove('active');
+                    }
+                }
+            });
+        });
+
+        // Restore sidebar state (desktop only)
+        if (window.innerWidth >= 1024) {
+            const isCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+            if (isCollapsed) {
+                sidebar.classList.add('collapsed');
+            }
+        }
+
+        // Handle resize events
+        window.addEventListener('resize', () => {
+            if (window.innerWidth >= 1024) {
+                sidebar.classList.remove('active');
+                if (sidebarOverlay) {
+                    sidebarOverlay.classList.remove('active');
+                }
+            }
+        });
     }
     
     // Setup theme toggle
