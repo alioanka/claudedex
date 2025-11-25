@@ -1,0 +1,825 @@
+2025-11-24 21:27:04,685 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:27:04,686 - Orchestrator - INFO - 🚀 Trading Bot Orchestrator Starting
+2025-11-24 21:27:04,686 - Orchestrator - INFO - Time: 2025-11-24T21:27:04.686179
+2025-11-24 21:27:04,686 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:27:04,686 - Orchestrator - INFO - 
+2025-11-24 21:27:04,686 - Orchestrator - INFO - 🚀 Starting DEX Trading module...
+2025-11-24 21:27:04,687 - Orchestrator - INFO - ✅ DEX Trading started (PID: 10)
+2025-11-24 21:27:04,687 - Orchestrator - INFO -    Logs: logs/dex_trading/stdout.log, logs/dex_trading/stderr.log
+2025-11-24 21:27:04,687 - Orchestrator - INFO - ⊘ Futures Trading module is disabled (FUTURES_MODULE_ENABLED=false)
+2025-11-24 21:27:04,687 - Orchestrator - INFO - ⊘ Solana Trading module is disabled (SOLANA_MODULE_ENABLED=false)
+2025-11-24 21:27:04,688 - Orchestrator - INFO - 
+2025-11-24 21:27:04,688 - Orchestrator - INFO - ✅ Started 1/3 module(s)
+2025-11-24 21:27:04,688 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:32:04,745 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:32:04,746 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 21:32:04,747 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:32:05,749 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1282MB, Restarts: 0)
+2025-11-24 21:32:05,749 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 21:32:05,749 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 21:32:05,749 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:37:05,762 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:37:05,763 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 21:37:05,763 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:37:06,765 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1282MB, Restarts: 0)
+2025-11-24 21:37:06,765 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 21:37:06,765 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 21:37:06,766 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:42:06,780 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:42:06,781 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 21:42:06,781 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:42:07,783 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 2.0%, MEM: 1282MB, Restarts: 0)
+2025-11-24 21:42:07,783 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 21:42:07,784 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 21:42:07,784 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:47:07,792 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:47:07,793 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 21:47:07,793 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:47:08,794 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1282MB, Restarts: 0)
+2025-11-24 21:47:08,794 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 21:47:08,794 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 21:47:08,794 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:52:08,800 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:52:08,800 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 21:52:08,800 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:52:09,801 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1282MB, Restarts: 0)
+2025-11-24 21:52:09,801 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 21:52:09,801 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 21:52:09,801 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:57:09,857 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:57:09,857 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 21:57:09,857 - Orchestrator - INFO - ================================================================================
+2025-11-24 21:57:10,858 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1282MB, Restarts: 0)
+2025-11-24 21:57:10,859 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 21:57:10,859 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 21:57:10,859 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:02:10,919 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:02:10,920 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 22:02:10,920 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:02:11,921 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1282MB, Restarts: 0)
+2025-11-24 22:02:11,922 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 22:02:11,922 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 22:02:11,922 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:07:11,942 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:07:11,943 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 22:07:11,943 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:07:12,945 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1282MB, Restarts: 0)
+2025-11-24 22:07:12,945 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 22:07:12,945 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 22:07:12,945 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:12:12,969 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:12:12,969 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 22:12:12,969 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:12:13,971 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1282MB, Restarts: 0)
+2025-11-24 22:12:13,971 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 22:12:13,971 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 22:12:13,971 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:17:14,027 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:17:14,029 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 22:17:14,029 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:17:15,030 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1282MB, Restarts: 0)
+2025-11-24 22:17:15,031 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 22:17:15,031 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 22:17:15,031 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:22:15,044 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:22:15,045 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 22:22:15,045 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:22:16,046 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1282MB, Restarts: 0)
+2025-11-24 22:22:16,046 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 22:22:16,046 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 22:22:16,046 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:27:16,065 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:27:16,065 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 22:27:16,065 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:27:17,066 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1282MB, Restarts: 0)
+2025-11-24 22:27:17,067 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 22:27:17,067 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 22:27:17,067 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:32:17,074 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:32:17,074 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 22:32:17,074 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:32:18,075 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1282MB, Restarts: 0)
+2025-11-24 22:32:18,075 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 22:32:18,076 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 22:32:18,076 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:37:18,089 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:37:18,090 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 22:37:18,090 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:37:19,092 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1282MB, Restarts: 0)
+2025-11-24 22:37:19,092 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 22:37:19,092 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 22:37:19,092 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:42:19,097 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:42:19,098 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 22:42:19,098 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:42:20,100 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1282MB, Restarts: 0)
+2025-11-24 22:42:20,100 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 22:42:20,100 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 22:42:20,101 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:47:20,132 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:47:20,133 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 22:47:20,133 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:47:21,134 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1282MB, Restarts: 0)
+2025-11-24 22:47:21,134 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 22:47:21,134 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 22:47:21,134 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:52:21,169 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:52:21,169 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 22:52:21,169 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:52:22,170 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1282MB, Restarts: 0)
+2025-11-24 22:52:22,171 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 22:52:22,171 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 22:52:22,171 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:57:22,231 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:57:22,231 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 22:57:22,232 - Orchestrator - INFO - ================================================================================
+2025-11-24 22:57:23,232 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1282MB, Restarts: 0)
+2025-11-24 22:57:23,233 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 22:57:23,233 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 22:57:23,233 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:02:23,293 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:02:23,294 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 23:02:23,294 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:02:24,295 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1282MB, Restarts: 0)
+2025-11-24 23:02:24,295 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 23:02:24,295 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 23:02:24,295 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:07:24,331 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:07:24,332 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 23:07:24,332 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:07:25,334 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-24 23:07:25,335 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 23:07:25,335 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 23:07:25,335 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:12:25,348 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:12:25,349 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 23:12:25,349 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:12:26,351 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-24 23:12:26,351 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 23:12:26,351 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 23:12:26,351 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:17:26,379 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:17:26,380 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 23:17:26,380 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:17:27,381 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-24 23:17:27,382 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 23:17:27,382 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 23:17:27,382 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:22:27,443 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:22:27,444 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 23:22:27,444 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:22:28,446 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-24 23:22:28,446 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 23:22:28,446 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 23:22:28,446 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:27:28,452 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:27:28,453 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 23:27:28,453 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:27:29,454 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-24 23:27:29,454 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 23:27:29,454 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 23:27:29,454 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:32:29,507 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:32:29,507 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 23:32:29,508 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:32:30,508 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-24 23:32:30,509 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 23:32:30,509 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 23:32:30,509 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:37:30,564 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:37:30,565 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 23:37:30,565 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:37:31,566 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-24 23:37:31,566 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 23:37:31,566 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 23:37:31,566 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:42:31,586 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:42:31,586 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 23:42:31,586 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:42:32,587 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-24 23:42:32,587 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 23:42:32,587 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 23:42:32,587 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:47:32,593 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:47:32,594 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 23:47:32,594 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:47:33,595 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-24 23:47:33,595 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 23:47:33,595 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 23:47:33,595 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:52:33,610 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:52:33,611 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 23:52:33,611 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:52:34,613 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-24 23:52:34,613 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 23:52:34,613 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 23:52:34,613 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:57:34,668 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:57:34,668 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-24 23:57:34,668 - Orchestrator - INFO - ================================================================================
+2025-11-24 23:57:35,669 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-24 23:57:35,669 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-24 23:57:35,669 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-24 23:57:35,669 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:02:35,711 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:02:35,711 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 00:02:35,711 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:02:36,712 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 00:02:36,712 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 00:02:36,712 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 00:02:36,712 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:07:36,720 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:07:36,720 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 00:07:36,720 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:07:37,721 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 00:07:37,721 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 00:07:37,722 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 00:07:37,722 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:12:37,762 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:12:37,763 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 00:12:37,763 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:12:38,764 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 00:12:38,765 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 00:12:38,765 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 00:12:38,765 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:17:38,793 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:17:38,794 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 00:17:38,794 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:17:39,795 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 00:17:39,795 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 00:17:39,795 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 00:17:39,795 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:22:39,829 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:22:39,830 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 00:22:39,830 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:22:40,831 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 00:22:40,831 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 00:22:40,832 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 00:22:40,832 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:27:40,869 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:27:40,870 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 00:27:40,870 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:27:41,872 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 00:27:41,872 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 00:27:41,872 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 00:27:41,872 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:32:41,921 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:32:41,921 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 00:32:41,921 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:32:42,923 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 00:32:42,923 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 00:32:42,923 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 00:32:42,923 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:37:42,956 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:37:42,956 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 00:37:42,956 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:37:43,957 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 00:37:43,957 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 00:37:43,957 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 00:37:43,957 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:42:43,965 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:42:43,965 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 00:42:43,965 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:42:44,966 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 00:42:44,966 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 00:42:44,966 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 00:42:44,966 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:47:45,027 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:47:45,027 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 00:47:45,027 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:47:46,028 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 00:47:46,028 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 00:47:46,028 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 00:47:46,028 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:52:46,035 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:52:46,036 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 00:52:46,036 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:52:47,037 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 00:52:47,037 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 00:52:47,037 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 00:52:47,037 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:57:47,099 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:57:47,100 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 00:57:47,100 - Orchestrator - INFO - ================================================================================
+2025-11-25 00:57:48,102 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 00:57:48,102 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 00:57:48,102 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 00:57:48,102 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:02:48,132 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:02:48,132 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 01:02:48,132 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:02:49,133 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 01:02:49,134 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 01:02:49,134 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 01:02:49,134 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:07:49,173 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:07:49,173 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 01:07:49,173 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:07:50,174 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 01:07:50,174 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 01:07:50,174 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 01:07:50,174 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:12:50,215 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:12:50,216 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 01:12:50,216 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:12:51,218 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 01:12:51,218 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 01:12:51,218 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 01:12:51,218 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:17:51,235 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:17:51,236 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 01:17:51,236 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:17:52,237 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 01:17:52,237 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 01:17:52,237 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 01:17:52,237 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:22:52,293 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:22:52,294 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 01:22:52,295 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:22:53,296 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 01:22:53,297 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 01:22:53,297 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 01:22:53,297 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:27:53,310 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:27:53,310 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 01:27:53,310 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:27:54,311 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 01:27:54,311 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 01:27:54,311 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 01:27:54,311 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:32:54,373 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:32:54,373 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 01:32:54,373 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:32:55,374 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 01:32:55,374 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 01:32:55,374 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 01:32:55,374 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:37:55,430 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:37:55,431 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 01:37:55,431 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:37:56,432 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 01:37:56,432 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 01:37:56,432 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 01:37:56,432 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:42:56,452 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:42:56,453 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 01:42:56,453 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:42:57,454 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 01:42:57,454 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 01:42:57,454 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 01:42:57,454 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:47:57,475 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:47:57,476 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 01:47:57,476 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:47:58,477 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 01:47:58,477 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 01:47:58,477 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 01:47:58,477 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:52:58,488 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:52:58,489 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 01:52:58,489 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:52:59,491 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 01:52:59,491 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 01:52:59,491 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 01:52:59,491 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:57:59,552 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:57:59,553 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 01:57:59,553 - Orchestrator - INFO - ================================================================================
+2025-11-25 01:58:00,554 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 01:58:00,555 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 01:58:00,555 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 01:58:00,555 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:03:00,607 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:03:00,607 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 02:03:00,607 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:03:01,608 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 02:03:01,608 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 02:03:01,608 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 02:03:01,609 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:08:01,616 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:08:01,617 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 02:08:01,617 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:08:02,618 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 02:08:02,618 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 02:08:02,618 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 02:08:02,618 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:13:02,643 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:13:02,643 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 02:13:02,643 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:13:03,644 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 02:13:03,644 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 02:13:03,644 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 02:13:03,645 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:18:03,679 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:18:03,680 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 02:18:03,680 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:18:04,681 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 02:18:04,681 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 02:18:04,681 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 02:18:04,682 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:23:04,698 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:23:04,699 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 02:23:04,700 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:23:05,702 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 02:23:05,702 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 02:23:05,702 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 02:23:05,702 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:28:05,764 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:28:05,765 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 02:28:05,765 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:28:06,767 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 02:28:06,767 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 02:28:06,767 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 02:28:06,767 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:33:06,815 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:33:06,815 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 02:33:06,816 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:33:07,817 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 02:33:07,817 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 02:33:07,817 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 02:33:07,817 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:38:07,828 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:38:07,829 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 02:38:07,829 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:38:08,830 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 02:38:08,830 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 02:38:08,830 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 02:38:08,830 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:43:08,864 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:43:08,864 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 02:43:08,865 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:43:09,865 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 02:43:09,866 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 02:43:09,866 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 02:43:09,866 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:48:09,871 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:48:09,872 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 02:48:09,872 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:48:10,872 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 02:48:10,873 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 02:48:10,873 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 02:48:10,873 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:53:10,907 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:53:10,907 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 02:53:10,907 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:53:11,908 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 02:53:11,908 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 02:53:11,909 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 02:53:11,909 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:58:11,970 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:58:11,971 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 02:58:11,971 - Orchestrator - INFO - ================================================================================
+2025-11-25 02:58:12,973 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 02:58:12,973 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 02:58:12,973 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 02:58:12,973 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:03:13,022 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:03:13,022 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 03:03:13,022 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:03:14,023 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 03:03:14,023 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 03:03:14,023 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 03:03:14,023 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:08:14,084 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:08:14,084 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 03:08:14,084 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:08:15,085 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 03:08:15,086 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 03:08:15,086 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 03:08:15,086 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:13:15,096 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:13:15,096 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 03:13:15,096 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:13:16,097 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 03:13:16,098 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 03:13:16,098 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 03:13:16,098 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:18:16,132 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:18:16,133 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 03:18:16,133 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:18:17,134 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 03:18:17,134 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 03:18:17,134 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 03:18:17,134 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:23:17,146 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:23:17,148 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 03:23:17,148 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:23:18,150 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 03:23:18,150 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 03:23:18,150 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 03:23:18,150 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:28:18,209 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:28:18,209 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 03:28:18,209 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:28:19,210 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 03:28:19,210 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 03:28:19,210 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 03:28:19,210 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:33:19,232 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:33:19,232 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 03:33:19,232 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:33:20,233 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 03:33:20,233 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 03:33:20,234 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 03:33:20,234 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:38:20,279 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:38:20,279 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 03:38:20,279 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:38:21,280 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 03:38:21,280 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 03:38:21,280 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 03:38:21,281 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:43:21,314 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:43:21,314 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 03:43:21,314 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:43:22,315 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 03:43:22,315 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 03:43:22,315 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 03:43:22,315 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:48:22,376 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:48:22,377 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 03:48:22,377 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:48:23,379 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 03:48:23,379 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 03:48:23,379 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 03:48:23,379 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:53:23,385 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:53:23,385 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 03:53:23,386 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:53:24,386 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 03:53:24,387 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 03:53:24,387 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 03:53:24,387 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:58:24,388 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:58:24,389 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 03:58:24,389 - Orchestrator - INFO - ================================================================================
+2025-11-25 03:58:25,390 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 03:58:25,390 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 03:58:25,390 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 03:58:25,390 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:03:25,403 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:03:25,404 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 04:03:25,404 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:03:26,406 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 04:03:26,406 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 04:03:26,406 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 04:03:26,406 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:08:26,436 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:08:26,437 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 04:08:26,437 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:08:27,438 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 04:08:27,438 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 04:08:27,438 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 04:08:27,438 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:13:27,453 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:13:27,453 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 04:13:27,453 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:13:28,454 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 04:13:28,455 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 04:13:28,455 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 04:13:28,455 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:18:28,494 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:18:28,494 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 04:18:28,494 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:18:29,495 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 04:18:29,496 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 04:18:29,496 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 04:18:29,496 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:23:29,546 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:23:29,547 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 04:23:29,547 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:23:30,547 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 04:23:30,548 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 04:23:30,548 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 04:23:30,548 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:28:30,610 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:28:30,611 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 04:28:30,611 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:28:31,613 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 04:28:31,613 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 04:28:31,613 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 04:28:31,614 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:33:31,624 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:33:31,624 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 04:33:31,624 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:33:32,625 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 04:33:32,626 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 04:33:32,626 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 04:33:32,626 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:38:32,634 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:38:32,635 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 04:38:32,635 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:38:33,636 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 04:38:33,636 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 04:38:33,636 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 04:38:33,636 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:43:33,697 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:43:33,698 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 04:43:33,698 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:43:34,700 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 04:43:34,700 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 04:43:34,700 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 04:43:34,700 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:48:34,761 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:48:34,761 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 04:48:34,761 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:48:35,762 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 04:48:35,762 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 04:48:35,762 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 04:48:35,762 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:53:35,793 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:53:35,793 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 04:53:35,794 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:53:36,794 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 04:53:36,795 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 04:53:36,795 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 04:53:36,795 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:58:36,804 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:58:36,804 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 04:58:36,804 - Orchestrator - INFO - ================================================================================
+2025-11-25 04:58:37,805 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 04:58:37,806 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 04:58:37,806 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 04:58:37,806 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:03:37,817 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:03:37,817 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 05:03:37,817 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:03:38,818 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 05:03:38,819 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 05:03:38,819 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 05:03:38,819 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:08:38,853 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:08:38,853 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 05:08:38,854 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:08:39,856 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 05:08:39,856 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 05:08:39,856 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 05:08:39,856 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:13:39,909 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:13:39,910 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 05:13:39,910 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:13:40,912 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 05:13:40,912 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 05:13:40,912 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 05:13:40,913 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:18:40,964 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:18:40,965 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 05:18:40,966 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:18:41,967 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 05:18:41,967 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 05:18:41,967 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 05:18:41,967 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:23:41,994 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:23:41,995 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 05:23:41,995 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:23:42,996 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 05:23:42,996 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 05:23:42,996 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 05:23:42,996 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:28:43,012 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:28:43,013 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 05:28:43,013 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:28:44,014 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 2.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 05:28:44,014 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 05:28:44,014 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 05:28:44,014 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:33:44,062 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:33:44,062 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 05:33:44,062 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:33:45,064 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 05:33:45,064 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 05:33:45,064 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 05:33:45,064 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:38:45,121 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:38:45,122 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 05:38:45,123 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:38:46,125 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 05:38:46,125 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 05:38:46,125 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 05:38:46,125 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:43:46,134 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:43:46,135 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 05:43:46,135 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:43:47,137 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 05:43:47,137 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 05:43:47,137 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 05:43:47,137 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:48:47,151 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:48:47,152 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 05:48:47,152 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:48:48,153 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 05:48:48,153 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 05:48:48,153 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 05:48:48,153 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:53:48,214 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:53:48,214 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 05:53:48,214 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:53:49,216 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 05:53:49,216 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 05:53:49,216 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 05:53:49,216 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:58:49,237 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:58:49,238 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 05:58:49,238 - Orchestrator - INFO - ================================================================================
+2025-11-25 05:58:50,240 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 05:58:50,240 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 05:58:50,240 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 05:58:50,240 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:03:50,282 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:03:50,282 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 06:03:50,282 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:03:51,283 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 06:03:51,284 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 06:03:51,284 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 06:03:51,284 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:08:51,346 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:08:51,346 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 06:08:51,346 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:08:52,347 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 06:08:52,348 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 06:08:52,348 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 06:08:52,348 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:13:52,380 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:13:52,380 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 06:13:52,380 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:13:53,381 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 06:13:53,382 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 06:13:53,382 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 06:13:53,382 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:18:53,421 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:18:53,423 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 06:18:53,423 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:18:54,425 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 06:18:54,425 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 06:18:54,425 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 06:18:54,425 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:23:54,436 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:23:54,437 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 06:23:54,437 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:23:55,438 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 06:23:55,438 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 06:23:55,438 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 06:23:55,438 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:28:55,492 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:28:55,492 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 06:28:55,492 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:28:56,493 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 06:28:56,493 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 06:28:56,493 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 06:28:56,493 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:33:56,552 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:33:56,553 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 06:33:56,553 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:33:57,555 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 06:33:57,555 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 06:33:57,555 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 06:33:57,555 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:38:57,581 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:38:57,582 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 06:38:57,582 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:38:58,584 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 06:38:58,584 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 06:38:58,585 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 06:38:58,585 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:43:58,645 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:43:58,646 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 06:43:58,646 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:43:59,647 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 06:43:59,648 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 06:43:59,648 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 06:43:59,648 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:48:59,699 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:48:59,699 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 06:48:59,699 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:49:00,701 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 06:49:00,701 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 06:49:00,701 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 06:49:00,701 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:54:00,740 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:54:00,741 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 06:54:00,741 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:54:01,742 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 06:54:01,742 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 06:54:01,742 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 06:54:01,742 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:59:01,804 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:59:01,804 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 06:59:01,804 - Orchestrator - INFO - ================================================================================
+2025-11-25 06:59:02,806 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 06:59:02,807 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 06:59:02,807 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 06:59:02,807 - Orchestrator - INFO - ================================================================================
+2025-11-25 07:04:02,844 - Orchestrator - INFO - ================================================================================
+2025-11-25 07:04:02,845 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 07:04:02,845 - Orchestrator - INFO - ================================================================================
+2025-11-25 07:04:03,848 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 1.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 07:04:03,848 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 07:04:03,848 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 07:04:03,848 - Orchestrator - INFO - ================================================================================
+2025-11-25 07:09:03,908 - Orchestrator - INFO - ================================================================================
+2025-11-25 07:09:03,908 - Orchestrator - INFO - 📊 MODULE STATUS REPORT
+2025-11-25 07:09:03,908 - Orchestrator - INFO - ================================================================================
+2025-11-25 07:09:04,910 - Orchestrator - INFO -   DEX Trading          - RUNNING (PID: 10, CPU: 0.0%, MEM: 1323MB, Restarts: 0)
+2025-11-25 07:09:04,910 - Orchestrator - INFO -   Futures Trading      - DISABLED
+2025-11-25 07:09:04,910 - Orchestrator - INFO -   Solana Trading       - DISABLED
+2025-11-25 07:09:04,910 - Orchestrator - INFO - ================================================================================
