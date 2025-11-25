@@ -27,7 +27,7 @@
 
     /* Bot Control Section */
     .control-section {
-        background: var(--card-bg);
+        background: var(--bg-secondary);
         border: 1px solid var(--border-color);
         border-radius: 12px;
         padding: 20px;
@@ -87,7 +87,7 @@
     }
 
     .summary-card {
-        background: var(--card-bg);
+        background: var(--bg-secondary);
         border: 1px solid var(--border-color);
         border-radius: 12px;
         padding: 20px;
@@ -115,20 +115,20 @@
 
     .summary-change {
         font-size: 0.875rem;
-        color: var(--text-tertiary);
+        color: var(--text-muted);
     }
 
     .positive {
-        color: #10b981;
+        color: #10b981 !important;
     }
 
     .negative {
-        color: #ef4444;
+        color: #ef4444 !important;
     }
 
     /* Module Comparison Section */
     .section-card {
-        background: var(--card-bg);
+        background: var(--bg-secondary);
         border: 1px solid var(--border-color);
         border-radius: 12px;
         padding: 24px;
@@ -152,7 +152,7 @@
     }
 
     .module-card {
-        background: var(--metric-bg);
+        background: var(--bg-tertiary);
         border: 2px solid var(--border-color);
         border-radius: 10px;
         padding: 20px;
@@ -190,13 +190,13 @@
     }
 
     .status-running {
-        background: #d1fae5;
-        color: #065f46;
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
     }
 
     .status-stopped {
-        background: #e5e7eb;
-        color: #374151;
+        background: rgba(107, 114, 128, 0.2);
+        color: var(--text-secondary);
     }
 
     .module-metrics {
@@ -208,7 +208,7 @@
     .metric-box {
         text-align: center;
         padding: 10px;
-        background: var(--card-bg);
+        background: var(--bg-secondary);
         border-radius: 8px;
     }
 
@@ -238,10 +238,15 @@
         font-weight: 600;
         cursor: pointer;
         transition: all 0.3s;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
     }
 
     .view-btn:hover {
         background: #2563eb;
+        color: white;
     }
 
     /* Charts */
@@ -258,7 +263,7 @@
     }
 
     .wallet-card {
-        background: var(--metric-bg);
+        background: var(--bg-tertiary);
         border: 1px solid var(--border-color);
         border-radius: 8px;
         padding: 16px;
@@ -278,13 +283,18 @@
         color: var(--text-primary);
     }
 
-    [data-theme="dark"] {
-        --card-bg: #1f2937;
-        --border-color: #374151;
-        --text-primary: #f9fafb;
-        --text-secondary: #d1d5db;
-        --text-tertiary: #9ca3af;
-        --metric-bg: #111827;
+    .wallet-pnl {
+        font-size: 0.875rem;
+        font-weight: 600;
+        margin-top: 4px;
+    }
+
+    .wallet-pnl.positive {
+        color: #10b981;
+    }
+
+    .wallet-pnl.negative {
+        color: #ef4444;
     }
 </style>
 {% endblock %}
@@ -478,109 +488,304 @@
     <div class="section-card">
         <div class="section-title">
             <i class="fas fa-wallet"></i>
-            Wallet Balances
+            DEX Wallet Balances
+        </div>
+        <div class="wallet-grid" id="dex-wallets">
+            <div class="wallet-card" data-chain="ETHEREUM">
+                <div class="wallet-chain">Ethereum</div>
+                <div class="wallet-balance" id="bal-ethereum">$0.00</div>
+                <div class="wallet-pnl" id="pnl-ethereum"></div>
+            </div>
+            <div class="wallet-card" data-chain="BSC">
+                <div class="wallet-chain">BSC</div>
+                <div class="wallet-balance" id="bal-bsc">$0.00</div>
+                <div class="wallet-pnl" id="pnl-bsc"></div>
+            </div>
+            <div class="wallet-card" data-chain="POLYGON">
+                <div class="wallet-chain">Polygon</div>
+                <div class="wallet-balance" id="bal-polygon">$0.00</div>
+                <div class="wallet-pnl" id="pnl-polygon"></div>
+            </div>
+            <div class="wallet-card" data-chain="ARBITRUM">
+                <div class="wallet-chain">Arbitrum</div>
+                <div class="wallet-balance" id="bal-arbitrum">$0.00</div>
+                <div class="wallet-pnl" id="pnl-arbitrum"></div>
+            </div>
+            <div class="wallet-card" data-chain="BASE">
+                <div class="wallet-chain">Base</div>
+                <div class="wallet-balance" id="bal-base">$0.00</div>
+                <div class="wallet-pnl" id="pnl-base"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Solana Wallet Balance -->
+    <div class="section-card">
+        <div class="section-title">
+            <i class="fas fa-sun" style="color: #14f195;"></i>
+            Solana Wallet Balance
         </div>
         <div class="wallet-grid">
-            <div class="wallet-card">
-                <div class="wallet-chain">Ethereum</div>
-                <div class="wallet-balance">$0.00</div>
+            <div class="wallet-card" data-chain="SOLANA" style="border-color: #14f195;">
+                <div class="wallet-chain" style="color: #14f195;">Solana (SOL)</div>
+                <div class="wallet-balance" id="bal-solana">0.00 SOL</div>
+                <div class="wallet-pnl" id="pnl-solana"></div>
             </div>
             <div class="wallet-card">
-                <div class="wallet-chain">BSC</div>
-                <div class="wallet-balance">$0.00</div>
+                <div class="wallet-chain">Solana (USD)</div>
+                <div class="wallet-balance" id="bal-solana-usd">$0.00</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Futures Exchange Balance -->
+    <div class="section-card">
+        <div class="section-title">
+            <i class="fas fa-chart-line" style="color: #8b5cf6;"></i>
+            Futures Exchange Balance
+        </div>
+        <div class="wallet-grid" id="futures-wallets">
+            <div class="wallet-card" style="border-color: #8b5cf6;">
+                <div class="wallet-chain" style="color: #8b5cf6;">USDT Balance</div>
+                <div class="wallet-balance" id="bal-futures-usdt">$0.00</div>
             </div>
             <div class="wallet-card">
-                <div class="wallet-chain">Polygon</div>
-                <div class="wallet-balance">$0.00</div>
+                <div class="wallet-chain">Margin Used</div>
+                <div class="wallet-balance" id="bal-futures-margin">$0.00</div>
             </div>
             <div class="wallet-card">
-                <div class="wallet-chain">Arbitrum</div>
-                <div class="wallet-balance">$0.00</div>
+                <div class="wallet-chain">Unrealized P&L</div>
+                <div class="wallet-balance" id="bal-futures-pnl">$0.00</div>
             </div>
             <div class="wallet-card">
-                <div class="wallet-chain">Base</div>
-                <div class="wallet-balance">$0.00</div>
-            </div>
-            <div class="wallet-card">
-                <div class="wallet-chain">Solana</div>
-                <div class="wallet-balance">$0.00</div>
+                <div class="wallet-chain">Available</div>
+                <div class="wallet-balance" id="bal-futures-available">$0.00</div>
             </div>
         </div>
     </div>
 </div>
 
 <script>
-// P&L Comparison Chart
-const pnlCtx = document.getElementById('pnlComparisonChart').getContext('2d');
-new Chart(pnlCtx, {
-    type: 'bar',
-    data: {
-        labels: ['DEX Trading', 'Futures Trading', 'Solana Strategies'],
-        datasets: [{
-            label: 'P&L ($)',
-            data: [0, 0, 0],
-            backgroundColor: [
-                'rgba(59, 130, 246, 0.8)',
-                'rgba(139, 92, 246, 0.8)',
-                'rgba(16, 185, 129, 0.8)'
-            ],
-            borderColor: [
-                'rgb(59, 130, 246)',
-                'rgb(139, 92, 246)',
-                'rgb(16, 185, 129)'
-            ],
-            borderWidth: 2
-        }]
-    },
-    options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            legend: {
-                display: false
-            }
+// Store chart instances for updates
+let pnlChart = null;
+let winRateChart = null;
+
+// Initialize charts
+document.addEventListener('DOMContentLoaded', function() {
+    // P&L Comparison Chart
+    const pnlCtx = document.getElementById('pnlComparisonChart').getContext('2d');
+    pnlChart = new Chart(pnlCtx, {
+        type: 'bar',
+        data: {
+            labels: ['DEX Trading', 'Futures Trading', 'Solana Strategies'],
+            datasets: [{
+                label: 'P&L ($)',
+                data: [0, 0, 0],
+                backgroundColor: [
+                    'rgba(59, 130, 246, 0.8)',
+                    'rgba(139, 92, 246, 0.8)',
+                    'rgba(16, 185, 129, 0.8)'
+                ],
+                borderColor: [
+                    'rgb(59, 130, 246)',
+                    'rgb(139, 92, 246)',
+                    'rgb(16, 185, 129)'
+                ],
+                borderWidth: 2
+            }]
         },
-        scales: {
-            y: {
-                beginAtZero: true
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false }
+            },
+            scales: {
+                y: { beginAtZero: true }
             }
         }
-    }
+    });
+
+    // Win Rate Chart
+    const winRateCtx = document.getElementById('winRateChart').getContext('2d');
+    winRateChart = new Chart(winRateCtx, {
+        type: 'doughnut',
+        data: {
+            labels: ['DEX Trading', 'Futures Trading', 'Solana Strategies'],
+            datasets: [{
+                data: [33, 33, 34],
+                backgroundColor: [
+                    'rgba(59, 130, 246, 0.8)',
+                    'rgba(139, 92, 246, 0.8)',
+                    'rgba(16, 185, 129, 0.8)'
+                ],
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'bottom' }
+            }
+        }
+    });
+
+    // Initial data load
+    loadDashboardData();
+
+    // Auto-refresh data every 10 seconds
+    setInterval(loadDashboardData, 10000);
 });
 
-// Win Rate Chart
-const winRateCtx = document.getElementById('winRateChart').getContext('2d');
-new Chart(winRateCtx, {
-    type: 'doughnut',
-    data: {
-        labels: ['DEX Trading', 'Futures Trading', 'Solana Strategies'],
-        datasets: [{
-            data: [33, 33, 34],
-            backgroundColor: [
-                'rgba(59, 130, 246, 0.8)',
-                'rgba(139, 92, 246, 0.8)',
-                'rgba(16, 185, 129, 0.8)'
-            ],
-            borderWidth: 2
-        }]
-    },
-    options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            legend: {
-                position: 'bottom'
+// Load dashboard summary data
+async function loadDashboardData() {
+    try {
+        const response = await fetch('/api/dashboard/summary');
+        const result = await response.json();
+
+        if (result.success && result.data) {
+            const data = result.data;
+
+            // Update portfolio value
+            const portfolioValue = data.portfolio_value || data.total_value || 0;
+            document.getElementById('totalPortfolio').textContent = '$' + portfolioValue.toFixed(2);
+
+            // Update P&L
+            const totalPnl = data.total_pnl || data.net_profit || 0;
+            const pnlElem = document.getElementById('totalPnl');
+            pnlElem.textContent = '$' + totalPnl.toFixed(2);
+            pnlElem.className = totalPnl >= 0 ? 'summary-value positive' : 'summary-value negative';
+
+            // Calculate ROI
+            const roi = portfolioValue > 0 ? ((totalPnl / (portfolioValue - totalPnl)) * 100) : 0;
+            document.getElementById('pnlChange').textContent = roi.toFixed(2) + '% ROI';
+
+            // Update positions
+            const openPositions = data.open_positions || 0;
+            document.getElementById('totalPositions').textContent = openPositions;
+
+            // Update win rate
+            const winRate = data.win_rate || 0;
+            document.getElementById('winRate').textContent = 'Win Rate: ' + winRate.toFixed(1) + '%';
+        }
+    } catch (e) {
+        console.error('Error fetching dashboard data:', e);
+    }
+
+    // Load module-specific data
+    try {
+        const modResponse = await fetch('/api/modules');
+        const modResult = await modResponse.json();
+
+        if (modResult.success && modResult.data && modResult.data.modules) {
+            const modules = modResult.data.modules;
+
+            // Update module cards with status
+            updateModuleCard('dex', modules.dex_trading);
+            updateModuleCard('futures', modules.futures_trading);
+            updateModuleCard('solana', modules.solana_strategies);
+
+            // Update total trades from module data
+            let totalTrades = 0;
+            Object.values(modules).forEach(m => {
+                if (m && m.metrics) {
+                    totalTrades += m.metrics.total_trades || 0;
+                }
+            });
+            document.getElementById('totalTrades').textContent = totalTrades;
+        }
+    } catch (e) {
+        console.error('Error fetching module data:', e);
+    }
+
+    // Load wallet balances
+    try {
+        const walletResponse = await fetch('/api/wallets/balances');
+        const walletResult = await walletResponse.json();
+
+        if (walletResult.status === 'success' && walletResult.balances) {
+            const balances = walletResult.balances;
+
+            // Update DEX wallet balances
+            const chains = ['ETHEREUM', 'BSC', 'POLYGON', 'ARBITRUM', 'BASE'];
+            chains.forEach(chain => {
+                const bal = balances[chain];
+                if (bal) {
+                    const balElem = document.getElementById('bal-' + chain.toLowerCase());
+                    const pnlElem = document.getElementById('pnl-' + chain.toLowerCase());
+                    if (balElem) {
+                        balElem.textContent = '$' + bal.balance.toFixed(2);
+                    }
+                    if (pnlElem && bal.pnl !== 0) {
+                        const pnlClass = bal.pnl >= 0 ? 'positive' : 'negative';
+                        pnlElem.textContent = (bal.pnl >= 0 ? '+' : '') + '$' + bal.pnl.toFixed(2);
+                        pnlElem.className = 'wallet-pnl ' + pnlClass;
+                    }
+                }
+            });
+
+            // Update Solana balance
+            if (balances.SOLANA) {
+                const solBal = balances.SOLANA;
+                document.getElementById('bal-solana').textContent = solBal.balance.toFixed(4) + ' SOL';
+                document.getElementById('bal-solana-usd').textContent = '$' + (solBal.balance * 150).toFixed(2); // Placeholder price
+                if (solBal.pnl !== 0) {
+                    const pnlElem = document.getElementById('pnl-solana');
+                    pnlElem.textContent = (solBal.pnl >= 0 ? '+' : '') + solBal.pnl.toFixed(4) + ' SOL';
+                    pnlElem.className = 'wallet-pnl ' + (solBal.pnl >= 0 ? 'positive' : 'negative');
+                }
             }
         }
+    } catch (e) {
+        console.error('Error fetching wallet balances:', e);
     }
-});
+
+    // Load futures exchange balance (placeholder until futures module API is ready)
+    try {
+        const futuresResponse = await fetch('/api/futures/balance');
+        if (futuresResponse.ok) {
+            const futuresResult = await futuresResponse.json();
+            if (futuresResult.success && futuresResult.data) {
+                const data = futuresResult.data;
+                document.getElementById('bal-futures-usdt').textContent = '$' + (data.total_balance || 0).toFixed(2);
+                document.getElementById('bal-futures-margin').textContent = '$' + (data.margin_used || 0).toFixed(2);
+                document.getElementById('bal-futures-pnl').textContent = '$' + (data.unrealized_pnl || 0).toFixed(2);
+                document.getElementById('bal-futures-available').textContent = '$' + (data.available || 0).toFixed(2);
+            }
+        }
+    } catch (e) {
+        // Futures API not available yet
+    }
+}
+
+function updateModuleCard(prefix, moduleData) {
+    const card = document.querySelector(`.module-card[id="${prefix}-module"]`) ||
+                 document.querySelectorAll('.module-card')[prefix === 'dex' ? 0 : prefix === 'futures' ? 1 : 2];
+
+    if (!card || !moduleData) return;
+
+    // Update status badge
+    const statusBadge = card.querySelector('.module-status');
+    if (statusBadge) {
+        const status = moduleData.status || (moduleData.enabled ? 'RUNNING' : 'DISABLED');
+        statusBadge.textContent = status;
+        statusBadge.className = 'module-status status-' + (status === 'RUNNING' ? 'running' : 'stopped');
+    }
+
+    // Update card style
+    card.className = 'module-card ' + (moduleData.enabled ? 'active' : 'inactive');
+}
 
 // Bot Control Functions
 function startBot() {
     if (confirm('Start the trading bot?')) {
         fetch('/api/bot/start', { method: 'POST' })
             .then(r => r.json())
-            .then(data => alert(data.message || 'Bot started'))
+            .then(data => {
+                alert(data.message || 'Bot started');
+                loadDashboardData();
+            })
             .catch(e => alert('Error: ' + e.message));
     }
 }
@@ -589,7 +794,10 @@ function stopBot() {
     if (confirm('Stop the trading bot?')) {
         fetch('/api/bot/stop', { method: 'POST' })
             .then(r => r.json())
-            .then(data => alert(data.message || 'Bot stopped'))
+            .then(data => {
+                alert(data.message || 'Bot stopped');
+                loadDashboardData();
+            })
             .catch(e => alert('Error: ' + e.message));
     }
 }
@@ -598,7 +806,10 @@ function restartBot() {
     if (confirm('Restart the trading bot?')) {
         fetch('/api/bot/restart', { method: 'POST' })
             .then(r => r.json())
-            .then(data => alert(data.message || 'Bot restarting...'))
+            .then(data => {
+                alert(data.message || 'Bot restarting...');
+                setTimeout(loadDashboardData, 2000);
+            })
             .catch(e => alert('Error: ' + e.message));
     }
 }
@@ -607,33 +818,12 @@ function emergencyExit() {
     if (confirm('EMERGENCY EXIT: Close all positions immediately?')) {
         fetch('/api/bot/emergency-exit', { method: 'POST' })
             .then(r => r.json())
-            .then(data => alert(data.message || 'Emergency exit initiated'))
+            .then(data => {
+                alert(data.message || 'Emergency exit initiated');
+                loadDashboardData();
+            })
             .catch(e => alert('Error: ' + e.message));
     }
 }
-
-// Auto-refresh data every 10 seconds
-setInterval(() => {
-    fetch('/api/dashboard/summary')
-        .then(r => r.json())
-        .then(data => {
-            // Update summary stats
-            if (data.portfolio) {
-                document.getElementById('totalPortfolio').textContent = '$' + data.portfolio.total.toFixed(2);
-            }
-            if (data.pnl) {
-                document.getElementById('totalPnl').textContent = '$' + data.pnl.total.toFixed(2);
-                document.getElementById('totalPnl').className = data.pnl.total >= 0 ? 'summary-value positive' : 'summary-value negative';
-            }
-            if (data.positions) {
-                document.getElementById('totalPositions').textContent = data.positions.total;
-            }
-            if (data.trades) {
-                document.getElementById('totalTrades').textContent = data.trades.total;
-                document.getElementById('winRate').textContent = 'Win Rate: ' + data.trades.winRate + '%';
-            }
-        })
-        .catch(e => console.error('Error fetching dashboard data:', e));
-}, 10000);
 </script>
 {% endblock %}
