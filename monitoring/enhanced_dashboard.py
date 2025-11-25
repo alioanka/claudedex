@@ -296,7 +296,8 @@ class DashboardEndpoints:
         self.app.router.add_get('/backtest', self.backtest_page)
         self.app.router.add_get('/logs', self.logs_page)
         self.app.router.add_get('/analysis', self.analysis_page)
-        
+        self.app.router.add_get('/analytics', self.analytics_page)
+
         # API - Data endpoints
         self.app.router.add_get('/api/dashboard/summary', self.api_dashboard_summary)
         self.app.router.add_get('/api/logs', self.api_get_logs)
@@ -433,8 +434,12 @@ class DashboardEndpoints:
     # ==================== PAGE HANDLERS ====================
     
     async def index(self, request):
-        """Index page - redirect to dashboard"""
-        raise web.HTTPFound('/dashboard')
+        """Index page - render main dashboard with modules overview"""
+        template = self.jinja_env.get_template('index.html')
+        return web.Response(
+            text=template.render(page='main_dashboard'),
+            content_type='text/html'
+        )
     
     async def dashboard_page(self, request):
         """Main dashboard page"""
@@ -531,7 +536,15 @@ class DashboardEndpoints:
             text=template.render(page='analysis'),
             content_type='text/html'
         )
-    
+
+    async def analytics_page(self, request):
+        """Advanced analytics page"""
+        template = self.jinja_env.get_template('analytics.html')
+        return web.Response(
+            text=template.render(page='analytics'),
+            content_type='text/html'
+        )
+
     async def api_get_logs(self, request):
         """Get recent log entries from all available log files."""
         try:

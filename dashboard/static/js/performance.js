@@ -136,10 +136,21 @@ function createCumulativePnlChart(data) {
 }
 
 function createStrategyChart(data) {
+    // Map strategy names to be more user-friendly
+    const formatStrategyName = (name) => {
+        if (!name || name === 'unknown' || name === 'Unknown') {
+            return 'Unspecified';
+        }
+        // Capitalize and clean up strategy names
+        return name
+            .replace(/_/g, ' ')
+            .replace(/\b\w/g, c => c.toUpperCase());
+    };
+
     createChart('strategyChart', {
         type: 'bar',
         data: {
-            labels: data.map(d => d.strategy),
+            labels: data.map(d => formatStrategyName(d.strategy)),
             datasets: [{
                 label: 'P&L',
                 data: data.map(d => d.pnl),
