@@ -282,6 +282,20 @@
         font-weight: 700;
         color: var(--text-primary);
     }
+
+    .wallet-pnl {
+        font-size: 0.875rem;
+        font-weight: 600;
+        margin-top: 4px;
+    }
+
+    .wallet-pnl.positive {
+        color: #10b981;
+    }
+
+    .wallet-pnl.negative {
+        color: #ef4444;
+    }
 </style>
 {% endblock %}
 
@@ -474,32 +488,78 @@
     <div class="section-card">
         <div class="section-title">
             <i class="fas fa-wallet"></i>
-            Wallet Balances
+            DEX Wallet Balances
+        </div>
+        <div class="wallet-grid" id="dex-wallets">
+            <div class="wallet-card" data-chain="ETHEREUM">
+                <div class="wallet-chain">Ethereum</div>
+                <div class="wallet-balance" id="bal-ethereum">$0.00</div>
+                <div class="wallet-pnl" id="pnl-ethereum"></div>
+            </div>
+            <div class="wallet-card" data-chain="BSC">
+                <div class="wallet-chain">BSC</div>
+                <div class="wallet-balance" id="bal-bsc">$0.00</div>
+                <div class="wallet-pnl" id="pnl-bsc"></div>
+            </div>
+            <div class="wallet-card" data-chain="POLYGON">
+                <div class="wallet-chain">Polygon</div>
+                <div class="wallet-balance" id="bal-polygon">$0.00</div>
+                <div class="wallet-pnl" id="pnl-polygon"></div>
+            </div>
+            <div class="wallet-card" data-chain="ARBITRUM">
+                <div class="wallet-chain">Arbitrum</div>
+                <div class="wallet-balance" id="bal-arbitrum">$0.00</div>
+                <div class="wallet-pnl" id="pnl-arbitrum"></div>
+            </div>
+            <div class="wallet-card" data-chain="BASE">
+                <div class="wallet-chain">Base</div>
+                <div class="wallet-balance" id="bal-base">$0.00</div>
+                <div class="wallet-pnl" id="pnl-base"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Solana Wallet Balance -->
+    <div class="section-card">
+        <div class="section-title">
+            <i class="fas fa-sun" style="color: #14f195;"></i>
+            Solana Wallet Balance
         </div>
         <div class="wallet-grid">
-            <div class="wallet-card">
-                <div class="wallet-chain">Ethereum</div>
-                <div class="wallet-balance">$0.00</div>
+            <div class="wallet-card" data-chain="SOLANA" style="border-color: #14f195;">
+                <div class="wallet-chain" style="color: #14f195;">Solana (SOL)</div>
+                <div class="wallet-balance" id="bal-solana">0.00 SOL</div>
+                <div class="wallet-pnl" id="pnl-solana"></div>
             </div>
             <div class="wallet-card">
-                <div class="wallet-chain">BSC</div>
-                <div class="wallet-balance">$0.00</div>
+                <div class="wallet-chain">Solana (USD)</div>
+                <div class="wallet-balance" id="bal-solana-usd">$0.00</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Futures Exchange Balance -->
+    <div class="section-card">
+        <div class="section-title">
+            <i class="fas fa-chart-line" style="color: #8b5cf6;"></i>
+            Futures Exchange Balance
+        </div>
+        <div class="wallet-grid" id="futures-wallets">
+            <div class="wallet-card" style="border-color: #8b5cf6;">
+                <div class="wallet-chain" style="color: #8b5cf6;">USDT Balance</div>
+                <div class="wallet-balance" id="bal-futures-usdt">$0.00</div>
             </div>
             <div class="wallet-card">
-                <div class="wallet-chain">Polygon</div>
-                <div class="wallet-balance">$0.00</div>
+                <div class="wallet-chain">Margin Used</div>
+                <div class="wallet-balance" id="bal-futures-margin">$0.00</div>
             </div>
             <div class="wallet-card">
-                <div class="wallet-chain">Arbitrum</div>
-                <div class="wallet-balance">$0.00</div>
+                <div class="wallet-chain">Unrealized P&L</div>
+                <div class="wallet-balance" id="bal-futures-pnl">$0.00</div>
             </div>
             <div class="wallet-card">
-                <div class="wallet-chain">Base</div>
-                <div class="wallet-balance">$0.00</div>
-            </div>
-            <div class="wallet-card">
-                <div class="wallet-chain">Solana</div>
-                <div class="wallet-balance">$0.00</div>
+                <div class="wallet-chain">Available</div>
+                <div class="wallet-balance" id="bal-futures-available">$0.00</div>
             </div>
         </div>
     </div>
@@ -637,6 +697,65 @@ async function loadDashboardData() {
         }
     } catch (e) {
         console.error('Error fetching module data:', e);
+    }
+
+    // Load wallet balances
+    try {
+        const walletResponse = await fetch('/api/wallets/balances');
+        const walletResult = await walletResponse.json();
+
+        if (walletResult.status === 'success' && walletResult.balances) {
+            const balances = walletResult.balances;
+
+            // Update DEX wallet balances
+            const chains = ['ETHEREUM', 'BSC', 'POLYGON', 'ARBITRUM', 'BASE'];
+            chains.forEach(chain => {
+                const bal = balances[chain];
+                if (bal) {
+                    const balElem = document.getElementById('bal-' + chain.toLowerCase());
+                    const pnlElem = document.getElementById('pnl-' + chain.toLowerCase());
+                    if (balElem) {
+                        balElem.textContent = '$' + bal.balance.toFixed(2);
+                    }
+                    if (pnlElem && bal.pnl !== 0) {
+                        const pnlClass = bal.pnl >= 0 ? 'positive' : 'negative';
+                        pnlElem.textContent = (bal.pnl >= 0 ? '+' : '') + '$' + bal.pnl.toFixed(2);
+                        pnlElem.className = 'wallet-pnl ' + pnlClass;
+                    }
+                }
+            });
+
+            // Update Solana balance
+            if (balances.SOLANA) {
+                const solBal = balances.SOLANA;
+                document.getElementById('bal-solana').textContent = solBal.balance.toFixed(4) + ' SOL';
+                document.getElementById('bal-solana-usd').textContent = '$' + (solBal.balance * 150).toFixed(2); // Placeholder price
+                if (solBal.pnl !== 0) {
+                    const pnlElem = document.getElementById('pnl-solana');
+                    pnlElem.textContent = (solBal.pnl >= 0 ? '+' : '') + solBal.pnl.toFixed(4) + ' SOL';
+                    pnlElem.className = 'wallet-pnl ' + (solBal.pnl >= 0 ? 'positive' : 'negative');
+                }
+            }
+        }
+    } catch (e) {
+        console.error('Error fetching wallet balances:', e);
+    }
+
+    // Load futures exchange balance (placeholder until futures module API is ready)
+    try {
+        const futuresResponse = await fetch('/api/futures/balance');
+        if (futuresResponse.ok) {
+            const futuresResult = await futuresResponse.json();
+            if (futuresResult.success && futuresResult.data) {
+                const data = futuresResult.data;
+                document.getElementById('bal-futures-usdt').textContent = '$' + (data.total_balance || 0).toFixed(2);
+                document.getElementById('bal-futures-margin').textContent = '$' + (data.margin_used || 0).toFixed(2);
+                document.getElementById('bal-futures-pnl').textContent = '$' + (data.unrealized_pnl || 0).toFixed(2);
+                document.getElementById('bal-futures-available').textContent = '$' + (data.available || 0).toFixed(2);
+            }
+        }
+    } catch (e) {
+        // Futures API not available yet
     }
 }
 

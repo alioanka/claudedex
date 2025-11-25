@@ -97,12 +97,26 @@ class SolanaTradingEngine:
             # Create RPC client
             self.client = AsyncClient(self.rpc_url)
 
-            # Load wallet from private key
-            private_key = os.getenv('SOLANA_PRIVATE_KEY')
-            if not private_key:
+            # Load wallet from encrypted private key
+            encrypted_key = os.getenv('SOLANA_PRIVATE_KEY')
+            encryption_key = os.getenv('ENCRYPTION_KEY')
+
+            if not encrypted_key:
                 raise ValueError("SOLANA_PRIVATE_KEY required")
 
-            # Decode private key
+            # Decrypt private key if encrypted (starts with gAAAAAB for Fernet)
+            private_key = encrypted_key
+            if encrypted_key.startswith('gAAAAAB') and encryption_key:
+                try:
+                    from cryptography.fernet import Fernet
+                    f = Fernet(encryption_key.encode())
+                    private_key = f.decrypt(encrypted_key.encode()).decode()
+                    logger.info("✅ Successfully decrypted Solana private key")
+                except Exception as e:
+                    logger.error(f"Failed to decrypt Solana private key: {e}")
+                    raise ValueError("Cannot decrypt SOLANA_PRIVATE_KEY - check ENCRYPTION_KEY")
+
+            # Decode private key (base58 or hex format)
             try:
                 # Try base58 format first
                 key_bytes = base58.b58decode(private_key)
@@ -113,7 +127,7 @@ class SolanaTradingEngine:
                 self.wallet = Keypair.from_bytes(key_bytes)
 
             wallet_address = str(self.wallet.pubkey())
-            logger.info(f"✅ Wallet loaded: {wallet_address[:8]}...{wallet_address[-8:]}")
+            logger.info(f"✅ Solana wallet loaded: {wallet_address[:8]}...{wallet_address[-8:]}")
 
         except ImportError:
             logger.error("solana library not installed. Install: pip install solana solders")
