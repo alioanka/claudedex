@@ -707,11 +707,17 @@ class DashboardEndpoints:
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
             df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'], utc=True)
 
-            # --- FIX STARTS HERE: Use centralized strategy parsing ---
-            df['strategy'] = df['metadata'].apply(self._get_strategy_from_metadata)
+            # --- FIX: Use strategy column from DB, fallback to metadata if empty ---
+            def get_strategy(row):
+                # First try the direct strategy column from the database
+                if 'strategy' in row and row['strategy'] and row['strategy'] != 'unknown':
+                    return row['strategy']
+                # Fallback to extracting from metadata
+                return self._get_strategy_from_metadata(row.get('metadata'))
+
+            df['strategy'] = df.apply(get_strategy, axis=1)
             strategy_performance = df.groupby('strategy')['profit_loss'].sum().reset_index()
             strategy_performance.columns = ['strategy', 'total_pnl']
-            # --- FIX ENDS HERE ---
 
             # Profitability by hour
             df['hour'] = df['exit_timestamp'].dt.hour
@@ -2033,7 +2039,7 @@ class DashboardEndpoints:
             if not self.db:
                 return web.json_response({'error': 'Database not available'}, status=503)
 
-            query = "SELECT exit_timestamp, profit_loss, metadata FROM trades WHERE status = 'closed' ORDER BY exit_timestamp ASC;"
+            query = "SELECT exit_timestamp, profit_loss, strategy, metadata FROM trades WHERE status = 'closed' ORDER BY exit_timestamp ASC;"
             trades = await self.db.pool.fetch(query)
 
             if not trades:
@@ -2051,7 +2057,13 @@ class DashboardEndpoints:
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
             df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
 
-            df['strategy'] = df['metadata'].apply(self._get_strategy_from_metadata)
+            # Use strategy column from DB, fallback to metadata if empty
+            def get_strategy(row):
+                if 'strategy' in row and row['strategy'] and row['strategy'] != 'unknown':
+                    return row['strategy']
+                return self._get_strategy_from_metadata(row.get('metadata'))
+
+            df['strategy'] = df.apply(get_strategy, axis=1)
 
             # --- FIX STARTS HERE ---
             

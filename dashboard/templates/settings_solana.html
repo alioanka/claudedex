@@ -1,211 +1,789 @@
 {% extends "base.html" %}
 
-{% block title %}Settings - Solana Strategies Module{% endblock %}
+{% block title %}Solana Trading Settings{% endblock %}
 
-{% block content %}
-<div class="page-header">
-    <h1>Solana Strategies Settings</h1>
-    <div class="page-actions">
-        <button class="btn btn-secondary" id="revertAllSettings" disabled>
-            <i class="fas fa-undo"></i> Revert All
-        </button>
-        <button class="btn btn-primary" id="saveAllSettings">
-            <i class="fas fa-save"></i> Save All Changes
-        </button>
-    </div>
-</div>
+{% block extra_head %}
+<style>
+    .settings-container {
+        padding: 20px;
+        max-width: 1200px;
+        margin: 0 auto;
+    }
 
-<!-- Settings Tabs -->
-<div class="tabs">
-    <button class="tab-btn active category-tab" data-category="account">Account</button>
-    <button class="tab-btn category-tab" data-category="modules">📦 Modules</button>
-    <button class="tab-btn category-tab" data-category="general">General</button>
-    <button class="tab-btn category-tab" data-category="portfolio">Portfolio</button>
-    <button class="tab-btn category-tab" data-category="risk_management">Risk</button>
-    <button class="tab-btn category-tab" data-category="trading">Trading</button>
-    <button class="tab-btn category-tab" data-category="strategies">Strategies</button>
-    <button class="tab-btn category-tab" data-category="chain">Chains</button>
-    <button class="tab-btn category-tab" data-category="position_management">Positions</button>
-    <button class="tab-btn category-tab" data-category="api">API</button>
-    <button class="tab-btn category-tab" data-category="monitoring">Monitoring</button>
-    <button class="tab-btn category-tab" data-category="ml_models">ML Models</button>
-    <button class="tab-btn category-tab" data-category="feature_flags">Features</button>
-    <button class="tab-btn category-tab" data-category="sensitive">Sensitive</button>
-</div>
+    .settings-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 30px;
+        padding-bottom: 20px;
+        border-bottom: 2px solid var(--border-color);
+    }
 
-<!-- Settings Sections -->
-<div id="settings-container">
-    <div id="account-settings" class="settings-section card">
-        <div class="card-header"><h3 class="card-title">Account & Security</h3></div>
-        <div class="card-body">
-            <div class="setting-group">
-                <h4>Change Password</h4>
-                <form id="changePasswordForm" method="post" action="#" onsubmit="return false;">
-                    <div class="form-group">
-                        <label for="currentPassword">Current Password</label>
-                        <input type="password" id="currentPassword" name="currentPassword"
-                               class="form-control" required autocomplete="current-password">
-                    </div>
-                    <div class="form-group">
-                        <label for="newPassword">New Password</label>
-                        <input type="password" id="newPassword" name="newPassword"
-                               class="form-control" required minlength="8" autocomplete="new-password">
-                        <small class="form-text">Minimum 8 characters</small>
-                    </div>
-                    <div class="form-group">
-                        <label for="confirmPassword">Confirm New Password</label>
-                        <input type="password" id="confirmPassword" name="confirmPassword"
-                               class="form-control" required minlength="8" autocomplete="new-password">
-                    </div>
-                    <div class="form-actions">
-                        <button type="submit" class="btn btn-primary">
-                            <i class="fas fa-key"></i> Change Password
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-    <div id="modules-settings" class="settings-section card" style="display: none;">
-        <div class="card-header">
-            <h3 class="card-title">📦 Trading Modules</h3>
-            <p style="margin-top: 10px; font-size: 0.9em; color: #666;">
-                Manage independent trading modules (DEX, Futures, Arbitrage). Each module operates with its own wallet, capital allocation, and strategies.
-            </p>
-        </div>
-        <div class="card-body" id="modules-container">
-            <div style="text-align: center; padding: 40px;">
-                <i class="fas fa-spinner fa-spin" style="font-size: 2em; color: #667eea;"></i>
-                <p style="margin-top: 10px;">Loading modules...</p>
-            </div>
-        </div>
-    </div>
-    <div id="general-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">General Configuration</h3></div>
-        <div class="card-body" id="general-settings-form"></div>
-    </div>
-    <div id="portfolio-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Portfolio Configuration</h3></div>
-        <div class="card-body" id="portfolio-settings-form"></div>
-    </div>
-    <div id="risk_management-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Risk Management</h3></div>
-        <div class="card-body" id="risk_management-settings-form"></div>
-    </div>
-    <div id="trading-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Trading Configuration</h3></div>
-        <div class="card-body" id="trading-settings-form"></div>
-    </div>
-    <div id="strategies-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Trading Strategies Configuration</h3></div>
-        <div class="card-body" id="strategies-settings-form"></div>
-    </div>
-    <div id="chain-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Blockchain Chains</h3></div>
-        <div class="card-body" id="chain-settings-form"></div>
-    </div>
-    <div id="position_management-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Position Management</h3></div>
-        <div class="card-body" id="position_management-settings-form"></div>
-    </div>
-    <div id="api-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">API & Connections</h3></div>
-        <div class="card-body" id="api-settings-form"></div>
-    </div>
-    <div id="monitoring-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Monitoring & Logging</h3></div>
-        <div class="card-body" id="monitoring-settings-form"></div>
-    </div>
-    <div id="ml_models-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">ML Models Configuration</h3></div>
-        <div class="card-body" id="ml_models-settings-form"></div>
-    </div>
-    <div id="feature_flags-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Feature Flags</h3></div>
-        <div class="card-body" id="feature_flags-settings-form"></div>
-    </div>
-    <div id="sensitive-settings" class="settings-section card" style="display: none;">
-        <div class="card-header">
-            <h3 class="card-title">Sensitive Configuration (Encrypted)</h3>
-        </div>
-        <div class="card-body">
-            <div class="alert alert-warning">
-                <i class="fas fa-exclamation-triangle"></i>
-                <strong>Warning:</strong> This section contains encrypted sensitive data like API keys and private keys.
-                Only administrators can access this section.
-            </div>
+    .settings-title {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
 
-            <div class="form-actions" style="margin-bottom: 20px;">
-                <button class="btn btn-primary" id="addSensitiveConfigBtn">
-                    <i class="fas fa-plus"></i> Add New Sensitive Config
-                </button>
-            </div>
+    .settings-title i {
+        color: #14f195;
+    }
 
-            <div id="sensitive-configs-list">
-                <table class="table">
-                    <thead>
-                        <tr>
-                            <th>Key</th>
-                            <th>Description</th>
-                            <th>Last Rotated</th>
-                            <th>Rotation Interval</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="sensitive-configs-tbody">
-                        <tr>
-                            <td colspan="5" class="text-center">Loading...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-</div>
+    .settings-section {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+    }
 
-<!-- Add/Edit Sensitive Config Modal -->
-<div id="sensitiveConfigModal" class="modal" style="display: none;">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3 id="sensitiveConfigModalTitle">Add Sensitive Configuration</h3>
-            <button class="close-modal" id="closeSensitiveConfigModal">&times;</button>
-        </div>
-        <div class="modal-body">
-            <form id="sensitiveConfigForm">
-                <div class="form-group">
-                    <label for="sensitiveConfigKey">Key *</label>
-                    <input type="text" id="sensitiveConfigKey" class="form-control"
-                           placeholder="e.g., OPENAI_API_KEY, PRIVATE_KEY_ETH" required>
-                    <small class="form-text">Unique identifier for this configuration</small>
-                </div>
-                <div class="form-group">
-                    <label for="sensitiveConfigValue">Value *</label>
-                    <textarea id="sensitiveConfigValue" class="form-control" rows="3"
-                              placeholder="Enter sensitive value (will be encrypted)" required></textarea>
-                    <small class="form-text">This value will be encrypted before storage</small>
-                </div>
-                <div class="form-group">
-                    <label for="sensitiveConfigDescription">Description</label>
-                    <input type="text" id="sensitiveConfigDescription" class="form-control"
-                           placeholder="Optional description">
-                </div>
-                <div class="form-group">
-                    <label for="sensitiveConfigRotation">Rotation Interval (days)</label>
-                    <input type="number" id="sensitiveConfigRotation" class="form-control"
-                           value="30" min="1" max="365">
-                    <small class="form-text">Recommended rotation interval for this secret</small>
-                </div>
-            </form>
-        </div>
-        <div class="modal-footer">
-            <button class="btn btn-secondary" id="cancelSensitiveConfigBtn">Cancel</button>
-            <button class="btn btn-primary" id="saveSensitiveConfigBtn">Save</button>
-        </div>
-    </div>
-</div>
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--border-color);
+    }
 
+    .section-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .setting-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 20px;
+    }
+
+    .setting-item {
+        background: var(--bg-tertiary);
+        padding: 16px;
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+    }
+
+    .setting-label {
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .setting-description {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        margin-bottom: 12px;
+    }
+
+    .setting-input {
+        width: 100%;
+        padding: 10px 12px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        color: var(--text-primary);
+        font-size: 0.875rem;
+    }
+
+    .setting-input:focus {
+        outline: none;
+        border-color: #14f195;
+    }
+
+    .setting-select {
+        width: 100%;
+        padding: 10px 12px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        color: var(--text-primary);
+        font-size: 0.875rem;
+        cursor: pointer;
+    }
+
+    .toggle-switch {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .toggle-switch input[type="checkbox"] {
+        width: 48px;
+        height: 24px;
+        appearance: none;
+        background: var(--bg-tertiary);
+        border-radius: 12px;
+        position: relative;
+        cursor: pointer;
+        transition: background 0.3s;
+    }
+
+    .toggle-switch input[type="checkbox"]:checked {
+        background: #14f195;
+    }
+
+    .toggle-switch input[type="checkbox"]::before {
+        content: '';
+        position: absolute;
+        width: 20px;
+        height: 20px;
+        background: white;
+        border-radius: 50%;
+        top: 2px;
+        left: 2px;
+        transition: left 0.3s;
+    }
+
+    .toggle-switch input[type="checkbox"]:checked::before {
+        left: 26px;
+    }
+
+    .btn-save {
+        background: #14f195;
+        color: #000;
+        padding: 12px 24px;
+        border: none;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+
+    .btn-save:hover {
+        background: #0dd884;
+        transform: translateY(-2px);
+    }
+
+    .btn-reset {
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+        padding: 12px 24px;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+
+    .btn-reset:hover {
+        background: var(--bg-hover);
+    }
+
+    .warning-box {
+        background: rgba(245, 158, 11, 0.1);
+        border: 1px solid rgba(245, 158, 11, 0.3);
+        border-radius: 8px;
+        padding: 16px;
+        color: #f59e0b;
+        font-size: 0.875rem;
+        display: flex;
+        align-items: start;
+        gap: 12px;
+        margin-bottom: 20px;
+    }
+
+    .info-box {
+        background: rgba(20, 241, 149, 0.1);
+        border: 1px solid rgba(20, 241, 149, 0.3);
+        border-radius: 8px;
+        padding: 16px;
+        color: #14f195;
+        font-size: 0.875rem;
+        display: flex;
+        align-items: start;
+        gap: 12px;
+        margin-bottom: 20px;
+    }
+
+    .status-badge {
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .status-enabled {
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
+    }
+
+    .status-disabled {
+        background: rgba(107, 114, 128, 0.2);
+        color: var(--text-muted);
+    }
+
+    .strategy-card {
+        background: var(--bg-tertiary);
+        border: 2px solid var(--border-color);
+        border-radius: 10px;
+        padding: 20px;
+        margin-bottom: 16px;
+    }
+
+    .strategy-card.enabled {
+        border-color: #14f195;
+    }
+
+    .strategy-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+    }
+
+    .strategy-name {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .strategy-badge {
+        font-size: 0.65rem;
+        padding: 2px 8px;
+        border-radius: 4px;
+        background: rgba(20, 241, 149, 0.2);
+        color: #14f195;
+    }
+</style>
 {% endblock %}
 
-{% block extra_js %}
-<script src="/static/js/settings.js?v=4"></script>
+{% block content %}
+<div class="settings-container">
+    <!-- Header -->
+    <div class="settings-header">
+        <div class="settings-title">
+            <i class="fas fa-sun"></i>
+            Solana Trading Settings
+        </div>
+        <div style="display: flex; gap: 12px;">
+            <button class="btn-reset" onclick="resetSettings()">
+                <i class="fas fa-undo"></i> Reset to Defaults
+            </button>
+            <button class="btn-save" onclick="saveSettings()">
+                <i class="fas fa-save"></i> Save All Changes
+            </button>
+        </div>
+    </div>
+
+    <!-- Module Status -->
+    <div class="settings-section">
+        <div class="section-header">
+            <div class="section-title">
+                <i class="fas fa-power-off"></i>
+                Module Status
+            </div>
+            <span class="status-badge status-disabled" id="moduleStatus">DISABLED</span>
+        </div>
+
+        <div class="info-box">
+            <i class="fas fa-info-circle"></i>
+            <div>
+                <strong>Solana Trading:</strong> Trade on Solana using Jupiter swaps, Drift perpetuals, and Pump.fun sniping.
+                All private keys are stored encrypted in .env file.
+            </div>
+        </div>
+
+        <div class="setting-grid">
+            <div class="setting-item">
+                <label class="setting-label">
+                    <i class="fas fa-toggle-on"></i>
+                    Enable Solana Module
+                </label>
+                <div class="setting-description">Enable or disable the entire Solana trading module</div>
+                <div class="toggle-switch">
+                    <input type="checkbox" id="solana_enabled" name="solana_enabled">
+                    <span id="enabledLabel">Disabled</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- RPC Configuration -->
+    <div class="settings-section">
+        <div class="section-header">
+            <div class="section-title">
+                <i class="fas fa-server"></i>
+                RPC Configuration
+            </div>
+        </div>
+
+        <div class="info-box">
+            <i class="fas fa-info-circle"></i>
+            <div>
+                RPC URLs are configured in .env for security. The settings below control connection behavior.
+            </div>
+        </div>
+
+        <div class="setting-grid">
+            <div class="setting-item">
+                <label class="setting-label">Connection Timeout (seconds)</label>
+                <div class="setting-description">Timeout for RPC connections</div>
+                <input type="number" class="setting-input" id="solana_rpc_timeout" name="solana_rpc_timeout" value="30" min="5" max="120">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">Max Retries</label>
+                <div class="setting-description">Maximum RPC retry attempts before failover</div>
+                <input type="number" class="setting-input" id="solana_max_retries" name="solana_max_retries" value="3" min="1" max="10">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">Commitment Level</label>
+                <div class="setting-description">Transaction confirmation level</div>
+                <select class="setting-select" id="solana_commitment" name="solana_commitment">
+                    <option value="confirmed">Confirmed (Faster)</option>
+                    <option value="finalized">Finalized (Safer)</option>
+                    <option value="processed">Processed (Fastest)</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Capital & Position Sizing -->
+    <div class="settings-section">
+        <div class="section-header">
+            <div class="section-title">
+                <i class="fas fa-wallet"></i>
+                Capital & Position Sizing
+            </div>
+        </div>
+
+        <div class="setting-grid">
+            <div class="setting-item">
+                <label class="setting-label">Capital Allocation (SOL)</label>
+                <div class="setting-description">Total SOL allocated to Solana trading</div>
+                <input type="number" class="setting-input" id="solana_capital" name="solana_capital" value="10" min="0.1" step="0.1">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">Default Position Size (SOL)</label>
+                <div class="setting-description">Default size per trade in SOL</div>
+                <input type="number" class="setting-input" id="solana_position_size" name="solana_position_size" value="1" min="0.01" step="0.01">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">Max Concurrent Positions</label>
+                <div class="setting-description">Maximum open positions across all strategies</div>
+                <input type="number" class="setting-input" id="solana_max_positions" name="solana_max_positions" value="3" min="1" max="20">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">Min Position Size (SOL)</label>
+                <div class="setting-description">Minimum trade size</div>
+                <input type="number" class="setting-input" id="solana_min_position" name="solana_min_position" value="0.05" min="0.01" step="0.01">
+            </div>
+        </div>
+    </div>
+
+    <!-- Risk Management -->
+    <div class="settings-section">
+        <div class="section-header">
+            <div class="section-title">
+                <i class="fas fa-shield-alt"></i>
+                Risk Management
+            </div>
+        </div>
+
+        <div class="setting-grid">
+            <div class="setting-item">
+                <label class="setting-label">Stop Loss (%)</label>
+                <div class="setting-description">Default stop loss percentage</div>
+                <input type="number" class="setting-input" id="solana_stop_loss" name="solana_stop_loss" value="10" min="1" max="100" step="0.5">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">Take Profit (%)</label>
+                <div class="setting-description">Default take profit percentage</div>
+                <input type="number" class="setting-input" id="solana_take_profit" name="solana_take_profit" value="50" min="1" max="500" step="1">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">Daily Loss Limit (SOL)</label>
+                <div class="setting-description">Stop trading if daily loss exceeds this</div>
+                <input type="number" class="setting-input" id="solana_daily_loss_limit" name="solana_daily_loss_limit" value="5" min="0.1" step="0.1">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">Priority Fee (Micro Lamports)</label>
+                <div class="setting-description">Priority fee for faster transaction inclusion</div>
+                <input type="number" class="setting-input" id="solana_priority_fee" name="solana_priority_fee" value="10000" min="1000" step="1000">
+            </div>
+        </div>
+    </div>
+
+    <!-- Jupiter Strategy -->
+    <div class="settings-section">
+        <div class="section-header">
+            <div class="section-title">
+                <i class="fas fa-exchange-alt"></i>
+                Jupiter Strategy (Token Swaps)
+            </div>
+        </div>
+
+        <div class="strategy-card" id="jupiter-card">
+            <div class="strategy-header">
+                <div class="strategy-name">
+                    <span>Jupiter Aggregator</span>
+                    <span class="strategy-badge">SWAP</span>
+                </div>
+                <div class="toggle-switch">
+                    <input type="checkbox" id="solana_jupiter_enabled" name="solana_jupiter_enabled" checked>
+                    <span>Enabled</span>
+                </div>
+            </div>
+
+            <div class="setting-grid">
+                <div class="setting-item">
+                    <label class="setting-label">API Tier</label>
+                    <div class="setting-description">Jupiter API access tier</div>
+                    <select class="setting-select" id="solana_jupiter_tier" name="solana_jupiter_tier">
+                        <option value="lite">Lite (Free - 1 RPS)</option>
+                        <option value="public">Public (Standard)</option>
+                        <option value="ultra">Ultra (Premium)</option>
+                    </select>
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">Slippage (BPS)</label>
+                    <div class="setting-description">Maximum slippage in basis points (100 BPS = 1%)</div>
+                    <input type="number" class="setting-input" id="solana_jupiter_slippage" name="solana_jupiter_slippage" value="50" min="10" max="1000">
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">
+                        <i class="fas fa-toggle-on"></i>
+                        Auto-Route Selection
+                    </label>
+                    <div class="setting-description">Automatically select best swap route</div>
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="solana_jupiter_auto_route" name="solana_jupiter_auto_route" checked>
+                        <span>Enabled</span>
+                    </div>
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">
+                        <i class="fas fa-toggle-on"></i>
+                        Only Direct Routes
+                    </label>
+                    <div class="setting-description">Only use single-hop routes (less slippage)</div>
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="solana_jupiter_direct_only" name="solana_jupiter_direct_only">
+                        <span>Disabled</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Drift Strategy -->
+    <div class="settings-section">
+        <div class="section-header">
+            <div class="section-title">
+                <i class="fas fa-chart-line"></i>
+                Drift Strategy (Perpetuals)
+            </div>
+        </div>
+
+        <div class="strategy-card" id="drift-card">
+            <div class="strategy-header">
+                <div class="strategy-name">
+                    <span>Drift Protocol</span>
+                    <span class="strategy-badge">PERPS</span>
+                </div>
+                <div class="toggle-switch">
+                    <input type="checkbox" id="solana_drift_enabled" name="solana_drift_enabled">
+                    <span>Disabled</span>
+                </div>
+            </div>
+
+            <div class="setting-grid">
+                <div class="setting-item">
+                    <label class="setting-label">Default Leverage</label>
+                    <div class="setting-description">Default leverage for perpetual positions</div>
+                    <input type="number" class="setting-input" id="solana_drift_leverage" name="solana_drift_leverage" value="5" min="1" max="20">
+                </div>
+
+                <div class="setting-item" style="grid-column: span 2;">
+                    <label class="setting-label">Markets</label>
+                    <div class="setting-description">Comma-separated list of Drift markets to trade</div>
+                    <input type="text" class="setting-input" id="solana_drift_markets" name="solana_drift_markets" value="SOL-PERP,BTC-PERP,ETH-PERP" placeholder="SOL-PERP,BTC-PERP,ETH-PERP">
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">Margin Type</label>
+                    <div class="setting-description">Margin mode for positions</div>
+                    <select class="setting-select" id="solana_drift_margin" name="solana_drift_margin">
+                        <option value="cross">Cross Margin</option>
+                        <option value="isolated">Isolated Margin</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pump.fun Strategy -->
+    <div class="settings-section">
+        <div class="section-header">
+            <div class="section-title">
+                <i class="fas fa-rocket"></i>
+                Pump.fun Strategy (Token Sniping)
+            </div>
+        </div>
+
+        <div class="warning-box">
+            <i class="fas fa-exclamation-triangle"></i>
+            <div>
+                <strong>High Risk:</strong> Pump.fun sniping is extremely risky. Most new tokens lose value quickly.
+                Only use capital you can afford to lose completely.
+            </div>
+        </div>
+
+        <div class="strategy-card" id="pumpfun-card">
+            <div class="strategy-header">
+                <div class="strategy-name">
+                    <span>Pump.fun Sniper</span>
+                    <span class="strategy-badge">SNIPE</span>
+                </div>
+                <div class="toggle-switch">
+                    <input type="checkbox" id="solana_pumpfun_enabled" name="solana_pumpfun_enabled">
+                    <span>Disabled</span>
+                </div>
+            </div>
+
+            <div class="setting-grid">
+                <div class="setting-item">
+                    <label class="setting-label">Buy Amount (SOL)</label>
+                    <div class="setting-description">Amount of SOL to spend per snipe</div>
+                    <input type="number" class="setting-input" id="solana_pumpfun_buy_amount" name="solana_pumpfun_buy_amount" value="0.1" min="0.01" max="10" step="0.01">
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">Min Liquidity (SOL)</label>
+                    <div class="setting-description">Minimum liquidity required to snipe</div>
+                    <input type="number" class="setting-input" id="solana_pumpfun_min_liquidity" name="solana_pumpfun_min_liquidity" value="10" min="1" max="1000">
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">Max Token Age (seconds)</label>
+                    <div class="setting-description">Only snipe tokens newer than this</div>
+                    <input type="number" class="setting-input" id="solana_pumpfun_max_age" name="solana_pumpfun_max_age" value="300" min="30" max="3600">
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">Auto-Sell Delay (seconds)</label>
+                    <div class="setting-description">Auto-sell position after this time (0 = disabled)</div>
+                    <input type="number" class="setting-input" id="solana_pumpfun_auto_sell" name="solana_pumpfun_auto_sell" value="0" min="0" max="3600">
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">
+                        <i class="fas fa-toggle-on"></i>
+                        Use Jito Bundles
+                    </label>
+                    <div class="setting-description">Use Jito for MEV-protected transactions</div>
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="solana_pumpfun_jito" name="solana_pumpfun_jito" checked>
+                        <span>Enabled</span>
+                    </div>
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">Jito Tip (SOL)</label>
+                    <div class="setting-description">Tip amount for Jito bundles</div>
+                    <input type="number" class="setting-input" id="solana_pumpfun_jito_tip" name="solana_pumpfun_jito_tip" value="0.001" min="0.0001" max="0.1" step="0.0001">
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Load current settings
+async function loadSettings() {
+    try {
+        const response = await fetch('/api/settings/solana');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.settings) {
+                populateSettings(data.settings);
+            }
+        }
+    } catch (e) {
+        console.error('Failed to load settings:', e);
+    }
+}
+
+function populateSettings(settings) {
+    for (const [key, value] of Object.entries(settings)) {
+        const element = document.getElementById(key);
+        if (element) {
+            if (element.type === 'checkbox') {
+                element.checked = value;
+            } else {
+                element.value = value;
+            }
+        }
+    }
+    updateModuleStatus();
+    updateStrategyCards();
+}
+
+function updateModuleStatus() {
+    const enabled = document.getElementById('solana_enabled').checked;
+    const statusBadge = document.getElementById('moduleStatus');
+    const enabledLabel = document.getElementById('enabledLabel');
+
+    if (enabled) {
+        statusBadge.className = 'status-badge status-enabled';
+        statusBadge.textContent = 'ENABLED';
+        enabledLabel.textContent = 'Enabled';
+    } else {
+        statusBadge.className = 'status-badge status-disabled';
+        statusBadge.textContent = 'DISABLED';
+        enabledLabel.textContent = 'Disabled';
+    }
+}
+
+function updateStrategyCards() {
+    ['jupiter', 'drift', 'pumpfun'].forEach(strategy => {
+        const checkbox = document.getElementById(`solana_${strategy}_enabled`);
+        const card = document.getElementById(`${strategy}-card`);
+        if (checkbox && card) {
+            card.className = checkbox.checked ? 'strategy-card enabled' : 'strategy-card';
+        }
+    });
+}
+
+async function saveSettings() {
+    const settings = {};
+    const inputs = document.querySelectorAll('.setting-input, .setting-select, input[type="checkbox"]');
+
+    inputs.forEach(input => {
+        if (input.type === 'checkbox') {
+            settings[input.id] = input.checked;
+        } else if (input.type === 'number') {
+            settings[input.id] = parseFloat(input.value);
+        } else {
+            settings[input.id] = input.value;
+        }
+    });
+
+    try {
+        const response = await fetch('/api/settings/solana', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(settings)
+        });
+
+        if (response.ok) {
+            showToast('Settings saved successfully!', 'success');
+            updateModuleStatus();
+            updateStrategyCards();
+        } else {
+            const error = await response.json();
+            showToast('Failed to save settings: ' + (error.error || 'Unknown error'), 'error');
+        }
+    } catch (e) {
+        showToast('Error saving settings: ' + e.message, 'error');
+    }
+}
+
+function resetSettings() {
+    if (confirm('Reset all Solana settings to defaults?')) {
+        // Module
+        document.getElementById('solana_enabled').checked = false;
+
+        // RPC
+        document.getElementById('solana_rpc_timeout').value = 30;
+        document.getElementById('solana_max_retries').value = 3;
+        document.getElementById('solana_commitment').value = 'confirmed';
+
+        // Capital
+        document.getElementById('solana_capital').value = 10;
+        document.getElementById('solana_position_size').value = 1;
+        document.getElementById('solana_max_positions').value = 3;
+        document.getElementById('solana_min_position').value = 0.05;
+
+        // Risk
+        document.getElementById('solana_stop_loss').value = 10;
+        document.getElementById('solana_take_profit').value = 50;
+        document.getElementById('solana_daily_loss_limit').value = 5;
+        document.getElementById('solana_priority_fee').value = 10000;
+
+        // Jupiter
+        document.getElementById('solana_jupiter_enabled').checked = true;
+        document.getElementById('solana_jupiter_tier').value = 'lite';
+        document.getElementById('solana_jupiter_slippage').value = 50;
+        document.getElementById('solana_jupiter_auto_route').checked = true;
+        document.getElementById('solana_jupiter_direct_only').checked = false;
+
+        // Drift
+        document.getElementById('solana_drift_enabled').checked = false;
+        document.getElementById('solana_drift_leverage').value = 5;
+        document.getElementById('solana_drift_markets').value = 'SOL-PERP,BTC-PERP,ETH-PERP';
+        document.getElementById('solana_drift_margin').value = 'cross';
+
+        // Pump.fun
+        document.getElementById('solana_pumpfun_enabled').checked = false;
+        document.getElementById('solana_pumpfun_buy_amount').value = 0.1;
+        document.getElementById('solana_pumpfun_min_liquidity').value = 10;
+        document.getElementById('solana_pumpfun_max_age').value = 300;
+        document.getElementById('solana_pumpfun_auto_sell').value = 0;
+        document.getElementById('solana_pumpfun_jito').checked = true;
+        document.getElementById('solana_pumpfun_jito_tip').value = 0.001;
+
+        updateModuleStatus();
+        updateStrategyCards();
+        showToast('Settings reset to defaults', 'info');
+    }
+}
+
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.style.cssText = `
+        position: fixed;
+        top: 80px;
+        right: 20px;
+        padding: 16px 24px;
+        background: ${type === 'success' ? '#14f195' : type === 'error' ? '#ef4444' : '#3b82f6'};
+        color: ${type === 'success' ? '#000' : '#fff'};
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        z-index: 10000;
+        font-weight: 600;
+        animation: slideIn 0.3s ease-out;
+    `;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
+
+// Event listeners
+document.getElementById('solana_enabled').addEventListener('change', updateModuleStatus);
+['jupiter', 'drift', 'pumpfun'].forEach(strategy => {
+    const checkbox = document.getElementById(`solana_${strategy}_enabled`);
+    if (checkbox) {
+        checkbox.addEventListener('change', updateStrategyCards);
+    }
+});
+
+// Load settings on page load
+document.addEventListener('DOMContentLoaded', loadSettings);
+</script>
 {% endblock %}
