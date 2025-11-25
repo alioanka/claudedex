@@ -55,8 +55,8 @@
     }
 
     .summary-card {
-        background: var(--card-bg, #ffffff);
-        border: 1px solid var(--border-color, #e5e7eb);
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
         border-radius: 12px;
         padding: 20px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.05);
@@ -70,7 +70,7 @@
 
     .summary-label {
         font-size: 0.875rem;
-        color: var(--text-secondary, #6b7280);
+        color: var(--text-secondary);
         margin-bottom: 8px;
         font-weight: 500;
     }
@@ -78,13 +78,13 @@
     .summary-value {
         font-size: 2rem;
         font-weight: 700;
-        color: var(--text-primary, #111827);
+        color: var(--text-primary);
         margin-bottom: 4px;
     }
 
     .summary-subtitle {
         font-size: 0.813rem;
-        color: var(--text-tertiary, #9ca3af);
+        color: var(--text-muted);
     }
 
     .positive {
@@ -97,8 +97,8 @@
 
     /* Capital Allocation Chart */
     .capital-section {
-        background: var(--card-bg, #ffffff);
-        border: 1px solid var(--border-color, #e5e7eb);
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
         border-radius: 12px;
         padding: 24px;
         margin-bottom: 30px;
@@ -107,7 +107,7 @@
     .capital-title {
         font-size: 1.25rem;
         font-weight: 600;
-        color: var(--text-primary, #111827);
+        color: var(--text-primary);
         margin-bottom: 20px;
     }
 
@@ -117,7 +117,7 @@
         border-radius: 8px;
         overflow: hidden;
         margin-bottom: 20px;
-        border: 1px solid var(--border-color, #e5e7eb);
+        border: 1px solid var(--border-color);
     }
 
     .allocation-segment {
@@ -155,11 +155,11 @@
 
     .legend-name {
         font-weight: 500;
-        color: var(--text-primary, #111827);
+        color: var(--text-primary);
     }
 
     .legend-amount {
-        color: var(--text-secondary, #6b7280);
+        color: var(--text-secondary);
         font-size: 0.875rem;
     }
 
@@ -170,8 +170,8 @@
     }
 
     .module-card {
-        background: var(--card-bg, #ffffff);
-        border: 2px solid var(--border-color, #e5e7eb);
+        background: var(--bg-secondary);
+        border: 2px solid var(--border-color);
         border-radius: 12px;
         padding: 24px;
         transition: all 0.3s;
@@ -208,7 +208,7 @@
         align-items: flex-start;
         margin-bottom: 20px;
         padding-bottom: 16px;
-        border-bottom: 1px solid var(--border-color, #e5e7eb);
+        border-bottom: 1px solid var(--border-color);
     }
 
     .module-info {
@@ -218,13 +218,13 @@
     .module-name {
         font-size: 1.5rem;
         font-weight: 700;
-        color: var(--text-primary, #111827);
+        color: var(--text-primary);
         margin-bottom: 6px;
     }
 
     .module-type {
         font-size: 0.875rem;
-        color: var(--text-secondary, #6b7280);
+        color: var(--text-secondary);
         font-weight: 500;
     }
 
@@ -240,33 +240,33 @@
     }
 
     .status-running {
-        background: #d1fae5;
-        color: #065f46;
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
     }
 
     .status-stopped {
-        background: #e5e7eb;
-        color: #374151;
+        background: rgba(107, 114, 128, 0.2);
+        color: var(--text-secondary);
     }
 
     .status-disabled {
-        background: #f3f4f6;
-        color: #6b7280;
+        background: rgba(107, 114, 128, 0.2);
+        color: var(--text-muted);
     }
 
     .status-error {
-        background: #fee2e2;
-        color: #991b1b;
+        background: rgba(239, 68, 68, 0.2);
+        color: #ef4444;
     }
 
     .status-initializing {
-        background: #dbeafe;
-        color: #1e40af;
+        background: rgba(59, 130, 246, 0.2);
+        color: #3b82f6;
     }
 
     .status-paused {
-        background: #fef3c7;
-        color: #92400e;
+        background: rgba(245, 158, 11, 0.2);
+        color: #f59e0b;
     }
 
     /* Module Metrics Grid */
@@ -278,15 +278,15 @@
     }
 
     .metric-item {
-        background: var(--metric-bg, #f9fafb);
+        background: var(--bg-tertiary);
         padding: 14px;
         border-radius: 8px;
-        border: 1px solid var(--border-color, #e5e7eb);
+        border: 1px solid var(--border-color);
     }
 
     .metric-label {
         font-size: 0.75rem;
-        color: var(--text-secondary, #6b7280);
+        color: var(--text-secondary);
         text-transform: uppercase;
         letter-spacing: 0.5px;
         margin-bottom: 6px;
@@ -296,13 +296,13 @@
     .metric-value {
         font-size: 1.5rem;
         font-weight: 700;
-        color: var(--text-primary, #111827);
+        color: var(--text-primary);
         margin-bottom: 4px;
     }
 
     .metric-subtitle {
         font-size: 0.75rem;
-        color: var(--text-tertiary, #9ca3af);
+        color: var(--text-muted);
     }
 
     /* Module Actions */
@@ -393,8 +393,8 @@
     .empty-state {
         text-align: center;
         padding: 60px 20px;
-        background: var(--card-bg, #ffffff);
-        border: 2px dashed var(--border-color, #e5e7eb);
+        background: var(--bg-secondary);
+        border: 2px dashed var(--border-color);
         border-radius: 12px;
     }
 
@@ -406,12 +406,12 @@
     .empty-title {
         font-size: 1.5rem;
         font-weight: 600;
-        color: var(--text-primary, #111827);
+        color: var(--text-primary);
         margin-bottom: 8px;
     }
 
     .empty-text {
-        color: var(--text-secondary, #6b7280);
+        color: var(--text-secondary);
     }
 
     /* Loading Spinner */
@@ -429,46 +429,11 @@
         to { transform: rotate(360deg); }
     }
 
-    /* Dark mode adjustments */
-    [data-theme="dark"] {
-        --card-bg: #1f2937;
-        --border-color: #374151;
-        --text-primary: #f9fafb;
-        --text-secondary: #d1d5db;
-        --text-tertiary: #9ca3af;
-        --metric-bg: #111827;
-    }
-
-    [data-theme="dark"] .summary-card,
-    [data-theme="dark"] .capital-section,
-    [data-theme="dark"] .module-card {
-        background: var(--card-bg);
-    }
-
-    [data-theme="dark"] .status-running {
-        background: #064e3b;
-        color: #6ee7b7;
-    }
-
-    [data-theme="dark"] .status-stopped {
-        background: #374151;
-        color: #d1d5db;
-    }
-
-    [data-theme="dark"] .status-disabled {
-        background: #1f2937;
-        color: #9ca3af;
-    }
-
-    [data-theme="dark"] .status-error {
-        background: #7f1d1d;
-        color: #fca5a5;
-    }
-
-    [data-theme="dark"] .error-message {
-        background: #7f1d1d;
-        border-color: #991b1b;
-        color: #fca5a5;
+    /* Error message styling for dark theme */
+    .error-message {
+        background: rgba(239, 68, 68, 0.1);
+        border-color: rgba(239, 68, 68, 0.3);
+        color: #ef4444;
     }
 </style>
 {% endblock %}
