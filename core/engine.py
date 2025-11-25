@@ -864,8 +864,9 @@ class TradingBotEngine:
                 # Process top opportunities
                 for opportunity in self.pending_opportunities[:5]:  # Process top 5
                     # Check if we can take more positions
-                    can_open = self.portfolio_manager.can_open_position()
-                    
+                    # FIX: Added missing await - can_open_position() is async
+                    can_open = await self.portfolio_manager.can_open_position()
+
                     # ADD THIS DEBUG LOG:
                     logger.info(f"   Can open position? {can_open}")
                     
