@@ -293,8 +293,13 @@
         <div class="info-box">
             <i class="fas fa-info-circle"></i>
             <div>
-                <strong>Solana Trading:</strong> Trade on Solana using Jupiter swaps, Drift perpetuals, and Pump.fun sniping.
-                All private keys are stored encrypted in .env file.
+                <strong>Solana Trading Module:</strong> Trade on Solana using Jupiter swaps, Drift perpetuals, and Pump.fun sniping.
+                <br><br>
+                <strong>Wallet Configuration (in .env):</strong><br>
+                <code style="background: rgba(0,0,0,0.2); padding: 2px 6px; border-radius: 4px;">SOLANA_MODULE_PRIVATE_KEY</code> - Encrypted private key for Solana module<br>
+                <code style="background: rgba(0,0,0,0.2); padding: 2px 6px; border-radius: 4px;">SOLANA_MODULE_WALLET</code> - Wallet address for Solana module<br>
+                <br>
+                <em>Note: These are SEPARATE from DEX module's SOLANA_PRIVATE_KEY to allow independent performance tracking.</em>
             </div>
         </div>
 

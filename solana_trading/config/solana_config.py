@@ -16,8 +16,9 @@ class SolanaConfig:
         self.ws_url = os.getenv('SOLANA_WS_URL', 'wss://api.mainnet-beta.solana.com')
         self.commitment = os.getenv('SOLANA_COMMITMENT', 'confirmed')
 
-        # Wallet
-        self.private_key = os.getenv('SOLANA_PRIVATE_KEY', '')
+        # Wallet - SOLANA MODULE uses separate wallet from DEX module
+        self.private_key = os.getenv('SOLANA_MODULE_PRIVATE_KEY', '')
+        self.wallet_address = os.getenv('SOLANA_MODULE_WALLET', '')
 
         # Trading strategies
         default_strategies = 'jupiter,drift'
@@ -74,7 +75,8 @@ class SolanaConfig:
                 'max_age_seconds': self.pumpfun_max_age_seconds,
                 'buy_amount_sol': self.pumpfun_buy_amount_sol
             },
-            'has_wallet': bool(self.private_key)
+            'has_wallet': bool(self.private_key),
+            'wallet_address': self.wallet_address
         }
 
     def validate(self) -> List[str]:
@@ -82,7 +84,7 @@ class SolanaConfig:
         errors = []
 
         if not self.private_key:
-            errors.append("SOLANA_PRIVATE_KEY required")
+            errors.append("SOLANA_MODULE_PRIVATE_KEY required")
 
         if not self.rpc_url:
             errors.append("SOLANA_RPC_URL required")

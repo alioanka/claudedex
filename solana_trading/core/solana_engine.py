@@ -98,11 +98,12 @@ class SolanaTradingEngine:
             self.client = AsyncClient(self.rpc_url)
 
             # Load wallet from encrypted private key
-            encrypted_key = os.getenv('SOLANA_PRIVATE_KEY')
+            # IMPORTANT: Solana MODULE uses SOLANA_MODULE_PRIVATE_KEY (separate from DEX module's SOLANA_PRIVATE_KEY)
+            encrypted_key = os.getenv('SOLANA_MODULE_PRIVATE_KEY')
             encryption_key = os.getenv('ENCRYPTION_KEY')
 
             if not encrypted_key:
-                raise ValueError("SOLANA_PRIVATE_KEY required")
+                raise ValueError("SOLANA_MODULE_PRIVATE_KEY required for Solana trading module")
 
             # Decrypt private key if encrypted (starts with gAAAAAB for Fernet)
             private_key = encrypted_key
@@ -111,10 +112,10 @@ class SolanaTradingEngine:
                     from cryptography.fernet import Fernet
                     f = Fernet(encryption_key.encode())
                     private_key = f.decrypt(encrypted_key.encode()).decode()
-                    logger.info("✅ Successfully decrypted Solana private key")
+                    logger.info("✅ Successfully decrypted Solana module private key")
                 except Exception as e:
-                    logger.error(f"Failed to decrypt Solana private key: {e}")
-                    raise ValueError("Cannot decrypt SOLANA_PRIVATE_KEY - check ENCRYPTION_KEY")
+                    logger.error(f"Failed to decrypt Solana module private key: {e}")
+                    raise ValueError("Cannot decrypt SOLANA_MODULE_PRIVATE_KEY - check ENCRYPTION_KEY")
 
             # Decode private key (base58 or hex format)
             try:
