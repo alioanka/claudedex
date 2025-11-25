@@ -132,14 +132,20 @@ class DexScreenerCollector:
 
     async def initialize(self):
         """Initialize the collector"""
-        if not self.session:
+        if not self.session or self.session.closed:
             timeout = aiohttp.ClientTimeout(total=30)
             self.session = aiohttp.ClientSession(timeout=timeout)
-            
+
     async def close(self):
         """Close the collector"""
         if self.session and not self.session.closed:
             await self.session.close()
+            self.session = None  # Clear reference to allow recreation
+
+    async def _ensure_session(self):
+        """Ensure session is available and not closed"""
+        if not self.session or self.session.closed:
+            await self.initialize()
             
     async def _rate_limit(self):
         """Implement rate limiting"""
@@ -160,28 +166,30 @@ class DexScreenerCollector:
     async def _make_request(self, endpoint: str, params: Dict = None) -> Optional[Dict]:
         """
         Make API request with error handling
-        
+
         Args:
             endpoint: API endpoint (without base URL)
             params: Query parameters
-            
+
         Returns:
             Response data or None
         """
+        # Ensure session is available before making request
+        await self._ensure_session()
         await self._rate_limit()
-        
+
         # Remove any leading slashes from endpoint
         endpoint = endpoint.lstrip('/')
-        
+
         url = f"{self.base_url}/{endpoint}"
         headers = {}
-        
+
         if self.api_key:
             headers['X-API-KEY'] = self.api_key
-            
+
         try:
             self.stats['total_requests'] += 1
-            
+
             async with self.session.get(url, params=params, headers=headers) as response:
                 if response.status == 200:
                     self.stats['successful_requests'] += 1
@@ -191,16 +199,7 @@ class DexScreenerCollector:
                     self.stats['failed_requests'] += 1
                     print(f"API request failed: {response.status} - URL: {url}")
                     return None
-                    
-        except asyncio.TimeoutError:
-            self.stats['failed_requests'] += 1
-            print("Request timeout")
-            return None
-        except Exception as e:
-            self.stats['failed_requests'] += 1
-            print(f"Request error: {e}")
-            return None
-                    
+
         except asyncio.TimeoutError:
             self.stats['failed_requests'] += 1
             print("Request timeout")
