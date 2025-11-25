@@ -1191,30 +1191,71 @@ select.form-control {
 .gap-2 { gap: var(--spacing-md); }
 .gap-3 { gap: var(--spacing-lg); }
 
-/* Responsive */
-@media (max-width: 768px) {
+/* Responsive - Mobile Support */
+@media (max-width: 1024px) {
     .sidebar {
         transform: translateX(-100%);
+        z-index: 1000;
     }
-    
+
     .sidebar.active {
         transform: translateX(0);
     }
-    
+
     .main-content {
-        margin-left: 0;
+        margin-left: 0 !important;
     }
-    
+
+    /* Overlay when sidebar is open */
+    .sidebar-overlay {
+        display: none;
+        position: fixed;
+        top: var(--topnav-height);
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 999;
+    }
+
+    .sidebar-overlay.active {
+        display: block;
+    }
+}
+
+@media (max-width: 768px) {
     .nav-right {
         gap: var(--spacing-sm);
     }
-    
+
     .portfolio-value, .pnl-indicator {
         display: none;
     }
-    
+
     .notification-panel {
         width: 100%;
+    }
+
+    .top-nav {
+        padding: 0 var(--spacing-md);
+    }
+
+    .logo {
+        font-size: 1rem;
+    }
+
+    .logo span {
+        display: none;
+    }
+}
+
+@media (max-width: 480px) {
+    .theme-toggle {
+        display: none;
+    }
+
+    .top-nav h1.logo {
+        font-size: 0.9rem;
     }
 }
 

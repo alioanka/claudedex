@@ -5,8 +5,11 @@
 {% block extra_head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
+    /* Main Dashboard Container */
     .dashboard-container {
         padding: 20px;
+        max-width: 1600px;
+        margin: 0 auto;
     }
 
     .dashboard-header {
@@ -16,35 +19,38 @@
     .dashboard-title {
         font-size: 2rem;
         font-weight: 700;
-        color: var(--text-primary);
+        color: #e8eaed;
         margin-bottom: 8px;
     }
 
     .dashboard-subtitle {
-        color: var(--text-secondary);
+        color: #9aa0a6;
         font-size: 1rem;
     }
 
-    /* Bot Control Section */
+    /* Bot Control Section - Dark Blue Box */
     .control-section {
-        background: var(--bg-secondary);
-        border: 1px solid var(--border-color);
+        background: #1a1f2e;
+        border: 1px solid #2d3548;
         border-radius: 12px;
-        padding: 20px;
+        padding: 24px;
         margin-bottom: 24px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
     }
 
     .control-buttons {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
         gap: 12px;
     }
 
+    /* Bot Control Buttons - FIXED with explicit colors */
     .control-btn {
-        padding: 12px 20px;
+        padding: 14px 20px;
         border: none;
         border-radius: 8px;
         font-weight: 600;
+        font-size: 0.95rem;
         cursor: pointer;
         transition: all 0.3s;
         display: flex;
@@ -55,30 +61,30 @@
 
     .control-btn:hover {
         transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     }
 
     .btn-start {
-        background: #10b981;
-        color: white;
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+        color: #ffffff !important;
     }
 
     .btn-stop {
-        background: #ef4444;
-        color: white;
+        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
+        color: #ffffff !important;
     }
 
     .btn-restart {
-        background: #3b82f6;
-        color: white;
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
+        color: #ffffff !important;
     }
 
     .btn-emergency {
-        background: #dc2626;
-        color: white;
+        background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%) !important;
+        color: #ffffff !important;
     }
 
-    /* Summary Stats */
+    /* Summary Stats Cards - Dark Blue Box */
     .summary-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -87,21 +93,22 @@
     }
 
     .summary-card {
-        background: var(--bg-secondary);
-        border: 1px solid var(--border-color);
+        background: #1a1f2e;
+        border: 1px solid #2d3548;
         border-radius: 12px;
-        padding: 20px;
+        padding: 24px;
         transition: all 0.3s;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
     }
 
     .summary-card:hover {
         transform: translateY(-4px);
-        box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+        box-shadow: 0 8px 20px rgba(0,0,0,0.4);
     }
 
     .summary-label {
         font-size: 0.875rem;
-        color: var(--text-secondary);
+        color: #9aa0a6;
         margin-bottom: 8px;
         font-weight: 500;
     }
@@ -109,13 +116,13 @@
     .summary-value {
         font-size: 2rem;
         font-weight: 700;
-        color: var(--text-primary);
+        color: #e8eaed;
         margin-bottom: 4px;
     }
 
     .summary-change {
         font-size: 0.875rem;
-        color: var(--text-muted);
+        color: #6b7280;
     }
 
     .positive {
@@ -126,25 +133,33 @@
         color: #ef4444 !important;
     }
 
-    /* Module Comparison Section */
+    /* Section Cards - Dark Blue Box */
     .section-card {
-        background: var(--bg-secondary);
-        border: 1px solid var(--border-color);
+        background: #1a1f2e;
+        border: 1px solid #2d3548;
         border-radius: 12px;
         padding: 24px;
         margin-bottom: 24px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
     }
 
     .section-title {
         font-size: 1.25rem;
         font-weight: 600;
-        color: var(--text-primary);
+        color: #e8eaed;
         margin-bottom: 20px;
         display: flex;
         align-items: center;
         gap: 10px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid #2d3548;
     }
 
+    .section-title i {
+        color: #3b82f6;
+    }
+
+    /* Module Cards */
     .modules-comparison {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -152,16 +167,16 @@
     }
 
     .module-card {
-        background: var(--bg-tertiary);
-        border: 2px solid var(--border-color);
-        border-radius: 10px;
+        background: #242b3d;
+        border: 2px solid #2d3548;
+        border-radius: 12px;
         padding: 20px;
         transition: all 0.3s;
     }
 
     .module-card:hover {
         transform: translateY(-4px);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        box-shadow: 0 6px 16px rgba(0,0,0,0.3);
     }
 
     .module-card.active {
@@ -169,24 +184,25 @@
     }
 
     .module-card.inactive {
-        opacity: 0.6;
+        opacity: 0.7;
         border-color: #6b7280;
     }
 
     .module-name {
         font-size: 1.25rem;
         font-weight: 700;
-        color: var(--text-primary);
-        margin-bottom: 4px;
+        color: #e8eaed;
+        margin-bottom: 8px;
     }
 
     .module-status {
-        font-size: 0.875rem;
+        font-size: 0.75rem;
         margin-bottom: 16px;
         display: inline-block;
-        padding: 4px 10px;
+        padding: 4px 12px;
         border-radius: 12px;
         font-weight: 600;
+        text-transform: uppercase;
     }
 
     .status-running {
@@ -196,7 +212,7 @@
 
     .status-stopped {
         background: rgba(107, 114, 128, 0.2);
-        color: var(--text-secondary);
+        color: #9aa0a6;
     }
 
     .module-metrics {
@@ -207,21 +223,23 @@
 
     .metric-box {
         text-align: center;
-        padding: 10px;
-        background: var(--bg-secondary);
+        padding: 12px;
+        background: #1a1f2e;
         border-radius: 8px;
+        border: 1px solid #2d3548;
     }
 
     .metric-label {
         font-size: 0.75rem;
-        color: var(--text-secondary);
+        color: #9aa0a6;
         margin-bottom: 4px;
+        text-transform: uppercase;
     }
 
     .metric-value {
         font-size: 1.25rem;
         font-weight: 700;
-        color: var(--text-primary);
+        color: #e8eaed;
     }
 
     .module-action {
@@ -229,13 +247,15 @@
         text-align: center;
     }
 
+    /* View Module Buttons - FIXED cursor and styling */
     .view-btn {
-        padding: 8px 16px;
-        background: #3b82f6;
-        color: white;
+        padding: 10px 20px;
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        color: #ffffff !important;
         border: none;
-        border-radius: 6px;
+        border-radius: 8px;
         font-weight: 600;
+        font-size: 0.9rem;
         cursor: pointer;
         transition: all 0.3s;
         text-decoration: none;
@@ -245,42 +265,59 @@
     }
 
     .view-btn:hover {
-        background: #2563eb;
-        color: white;
+        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+        color: #ffffff !important;
     }
 
-    /* Charts */
+    /* Charts - FIXED minimum height */
     .chart-container {
         position: relative;
-        height: 300px;
+        height: 350px;
+        min-height: 300px;
         margin-top: 20px;
+        width: 100%;
     }
 
+    .chart-container canvas {
+        max-width: 100% !important;
+        height: 100% !important;
+    }
+
+    /* Wallet Grid - Dark Blue Boxes */
     .wallet-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
         gap: 16px;
     }
 
     .wallet-card {
-        background: var(--bg-tertiary);
-        border: 1px solid var(--border-color);
-        border-radius: 8px;
+        background: #242b3d;
+        border: 1px solid #2d3548;
+        border-radius: 10px;
         padding: 16px;
+        transition: all 0.3s;
+    }
+
+    .wallet-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     }
 
     .wallet-chain {
-        font-size: 0.875rem;
-        color: var(--text-secondary);
+        font-size: 0.75rem;
+        color: #9aa0a6;
         margin-bottom: 8px;
         font-weight: 600;
         text-transform: uppercase;
+        letter-spacing: 0.5px;
     }
 
     .wallet-balance {
-        font-size: 1.5rem;
+        font-size: 1.35rem;
         font-weight: 700;
-        color: var(--text-primary);
+        color: #e8eaed;
     }
 
     .wallet-pnl {
@@ -295,6 +332,25 @@
 
     .wallet-pnl.negative {
         color: #ef4444;
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+        .dashboard-container {
+            padding: 15px;
+        }
+
+        .summary-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .modules-comparison {
+            grid-template-columns: 1fr;
+        }
+
+        .chart-container {
+            height: 250px;
+        }
     }
 </style>
 {% endblock %}
