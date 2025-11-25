@@ -23,12 +23,23 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function createStrategyPerformanceChart(data) {
+        // Format strategy names to be user-friendly
+        const formatStrategyName = (name) => {
+            if (!name || name === 'unknown' || name === 'Unknown') {
+                return 'Unspecified';
+            }
+            return name
+                .replace(/_/g, ' ')
+                .replace(/\b\w/g, c => c.toUpperCase());
+        };
+
         const chartData = {
-            labels: data.map(d => d.strategy),
+            labels: data.map(d => formatStrategyName(d.strategy)),
             datasets: [{
                 label: 'Total P&L',
                 data: data.map(d => d.total_pnl),
-                backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                backgroundColor: data.map(d => d.total_pnl >= 0 ?
+                    'rgba(16, 185, 129, 0.8)' : 'rgba(239, 68, 68, 0.8)')
             }]
         };
 

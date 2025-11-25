@@ -94,6 +94,9 @@ class DashboardEndpoints:
         # Setup module routes if module manager available
         if self.module_manager:
             self._setup_module_routes()
+        else:
+            # Register fallback routes for module pages when module_manager is not available
+            self._setup_fallback_module_routes()
 
         # Setup analytics routes if analytics engine available
         if self.analytics_engine:
@@ -296,7 +299,8 @@ class DashboardEndpoints:
         self.app.router.add_get('/backtest', self.backtest_page)
         self.app.router.add_get('/logs', self.logs_page)
         self.app.router.add_get('/analysis', self.analysis_page)
-        
+        self.app.router.add_get('/analytics', self.analytics_page)
+
         # API - Data endpoints
         self.app.router.add_get('/api/dashboard/summary', self.api_dashboard_summary)
         self.app.router.add_get('/api/logs', self.api_get_logs)
@@ -417,6 +421,107 @@ class DashboardEndpoints:
             logger.error(f"Failed to setup analytics routes: {e}", exc_info=True)
             logger.warning("Module management will not be available")
 
+    def _setup_fallback_module_routes(self):
+        """Setup fallback routes for module pages when module_manager is not available"""
+        logger.info("Setting up fallback module routes (module_manager not available)")
+
+        # DEX Module Pages
+        self.app.router.add_get('/dex/dashboard', self._fallback_dex_dashboard)
+        self.app.router.add_get('/dex/settings', self._fallback_dex_settings)
+
+        # Futures Module Pages
+        self.app.router.add_get('/futures/dashboard', self._fallback_futures_dashboard)
+        self.app.router.add_get('/futures/positions', self._fallback_futures_positions)
+        self.app.router.add_get('/futures/trades', self._fallback_futures_trades)
+        self.app.router.add_get('/futures/performance', self._fallback_futures_performance)
+        self.app.router.add_get('/futures/settings', self._fallback_futures_settings)
+
+        # Solana Module Pages
+        self.app.router.add_get('/solana/dashboard', self._fallback_solana_dashboard)
+        self.app.router.add_get('/solana/positions', self._fallback_solana_positions)
+        self.app.router.add_get('/solana/trades', self._fallback_solana_trades)
+        self.app.router.add_get('/solana/performance', self._fallback_solana_performance)
+        self.app.router.add_get('/solana/settings', self._fallback_solana_settings)
+
+        # Module Control and Modules Pages
+        self.app.router.add_get('/module-control', self._fallback_module_control)
+        self.app.router.add_get('/modules', self._fallback_modules_page)
+
+        # API endpoints that return empty data when module_manager is unavailable
+        self.app.router.add_get('/api/modules', self._fallback_api_modules)
+
+        logger.info("✅ Fallback module routes registered")
+
+    # Fallback page handlers
+    async def _fallback_dex_dashboard(self, request):
+        template = self.jinja_env.get_template('dashboard.html')
+        return web.Response(text=template.render(page='dex_dashboard'), content_type='text/html')
+
+    async def _fallback_dex_settings(self, request):
+        template = self.jinja_env.get_template('settings_dex.html')
+        return web.Response(text=template.render(page='dex_settings'), content_type='text/html')
+
+    async def _fallback_futures_dashboard(self, request):
+        template = self.jinja_env.get_template('dashboard_futures.html')
+        return web.Response(text=template.render(page='futures_dashboard'), content_type='text/html')
+
+    async def _fallback_futures_positions(self, request):
+        template = self.jinja_env.get_template('positions_futures.html')
+        return web.Response(text=template.render(page='futures_positions'), content_type='text/html')
+
+    async def _fallback_futures_trades(self, request):
+        template = self.jinja_env.get_template('trades_futures.html')
+        return web.Response(text=template.render(page='futures_trades'), content_type='text/html')
+
+    async def _fallback_futures_performance(self, request):
+        template = self.jinja_env.get_template('performance_futures.html')
+        return web.Response(text=template.render(page='futures_performance'), content_type='text/html')
+
+    async def _fallback_futures_settings(self, request):
+        template = self.jinja_env.get_template('settings_futures.html')
+        return web.Response(text=template.render(page='futures_settings'), content_type='text/html')
+
+    async def _fallback_solana_dashboard(self, request):
+        template = self.jinja_env.get_template('dashboard_solana.html')
+        return web.Response(text=template.render(page='solana_dashboard'), content_type='text/html')
+
+    async def _fallback_solana_positions(self, request):
+        template = self.jinja_env.get_template('positions_solana.html')
+        return web.Response(text=template.render(page='solana_positions'), content_type='text/html')
+
+    async def _fallback_solana_trades(self, request):
+        template = self.jinja_env.get_template('trades_solana.html')
+        return web.Response(text=template.render(page='solana_trades'), content_type='text/html')
+
+    async def _fallback_solana_performance(self, request):
+        template = self.jinja_env.get_template('performance_solana.html')
+        return web.Response(text=template.render(page='solana_performance'), content_type='text/html')
+
+    async def _fallback_solana_settings(self, request):
+        template = self.jinja_env.get_template('settings_solana.html')
+        return web.Response(text=template.render(page='solana_settings'), content_type='text/html')
+
+    async def _fallback_module_control(self, request):
+        template = self.jinja_env.get_template('module_control.html')
+        return web.Response(text=template.render(page='module_control'), content_type='text/html')
+
+    async def _fallback_modules_page(self, request):
+        template = self.jinja_env.get_template('modules.html')
+        return web.Response(text=template.render(page='modules', modules=[], metrics={}), content_type='text/html')
+
+    async def _fallback_api_modules(self, request):
+        """Return empty module data when module_manager is not available"""
+        return web.json_response({
+            'success': True,
+            'data': {
+                'modules': {
+                    'dex_trading': {'name': 'DEX Trading', 'enabled': False, 'status': 'STOPPED'},
+                    'futures_trading': {'name': 'Futures Trading', 'enabled': False, 'status': 'STOPPED'},
+                    'solana_strategies': {'name': 'Solana Strategies', 'enabled': False, 'status': 'STOPPED'}
+                }
+            }
+        })
+
     def _setup_socketio(self):
         """Setup Socket.IO handlers"""
         
@@ -433,8 +538,12 @@ class DashboardEndpoints:
     # ==================== PAGE HANDLERS ====================
     
     async def index(self, request):
-        """Index page - redirect to dashboard"""
-        raise web.HTTPFound('/dashboard')
+        """Index page - render main dashboard with modules overview"""
+        template = self.jinja_env.get_template('index.html')
+        return web.Response(
+            text=template.render(page='main_dashboard'),
+            content_type='text/html'
+        )
     
     async def dashboard_page(self, request):
         """Main dashboard page"""
@@ -531,7 +640,15 @@ class DashboardEndpoints:
             text=template.render(page='analysis'),
             content_type='text/html'
         )
-    
+
+    async def analytics_page(self, request):
+        """Advanced analytics page"""
+        template = self.jinja_env.get_template('analytics.html')
+        return web.Response(
+            text=template.render(page='analytics'),
+            content_type='text/html'
+        )
+
     async def api_get_logs(self, request):
         """Get recent log entries from all available log files."""
         try:
