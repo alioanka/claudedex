@@ -514,14 +514,85 @@ class DashboardEndpoints:
         return web.Response(text=template.render(page='modules', modules=[], metrics={}), content_type='text/html')
 
     async def _fallback_api_modules(self, request):
-        """Return empty module data when module_manager is not available"""
+        """Return module data from .env settings and database"""
+        # Read module enabled status from .env
+        dex_enabled = os.getenv('DEX_MODULE_ENABLED', 'false').lower() == 'true'
+        futures_enabled = os.getenv('FUTURES_MODULE_ENABLED', 'false').lower() == 'true'
+        solana_enabled = os.getenv('SOLANA_MODULE_ENABLED', 'false').lower() == 'true'
+
+        # Get metrics from database
+        dex_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
+        futures_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
+        solana_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
+
+        if self.db:
+            try:
+                # Get trades by chain/module
+                trades = await self.db.get_recent_trades(limit=1000)
+                open_positions = await self.db.get_open_positions()
+
+                for trade in trades:
+                    chain = (trade.get('chain') or trade.get('network') or '').upper()
+                    pnl = float(trade.get('profit_loss') or 0) if trade.get('status') == 'closed' else 0
+
+                    if chain == 'SOLANA':
+                        solana_metrics['total_trades'] += 1
+                        solana_metrics['pnl'] += pnl
+                    elif chain in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM']:
+                        dex_metrics['total_trades'] += 1
+                        dex_metrics['pnl'] += pnl
+
+                # Count positions by chain
+                for pos in (open_positions or []):
+                    chain = (pos.get('chain') or pos.get('network') or '').upper()
+                    if chain == 'SOLANA':
+                        solana_metrics['positions'] += 1
+                    elif chain in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM']:
+                        dex_metrics['positions'] += 1
+
+                # Calculate win rates
+                dex_wins = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM'] and t.get('status') == 'closed' and float(t.get('profit_loss') or 0) > 0)
+                solana_wins = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() == 'SOLANA' and t.get('status') == 'closed' and float(t.get('profit_loss') or 0) > 0)
+
+                dex_closed = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM'] and t.get('status') == 'closed')
+                solana_closed = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() == 'SOLANA' and t.get('status') == 'closed')
+
+                dex_metrics['win_rate'] = (dex_wins / dex_closed * 100) if dex_closed > 0 else 0
+                solana_metrics['win_rate'] = (solana_wins / solana_closed * 100) if solana_closed > 0 else 0
+
+            except Exception as e:
+                logger.debug(f"Error getting module metrics: {e}")
+
+        # Get capital allocations from config
+        dex_capital = float(os.getenv('DEX_CAPITAL', 500))
+        futures_capital = float(os.getenv('FUTURES_CAPITAL', 300))
+        solana_capital = float(os.getenv('SOLANA_CAPITAL', 400))
+
         return web.json_response({
             'success': True,
             'data': {
                 'modules': {
-                    'dex_trading': {'name': 'DEX Trading', 'enabled': False, 'status': 'STOPPED'},
-                    'futures_trading': {'name': 'Futures Trading', 'enabled': False, 'status': 'STOPPED'},
-                    'solana_strategies': {'name': 'Solana Strategies', 'enabled': False, 'status': 'STOPPED'}
+                    'dex_trading': {
+                        'name': 'DEX Trading',
+                        'enabled': dex_enabled,
+                        'status': 'RUNNING' if dex_enabled else 'DISABLED',
+                        'capital': dex_capital,
+                        'metrics': dex_metrics
+                    },
+                    'futures_trading': {
+                        'name': 'Futures Trading',
+                        'enabled': futures_enabled,
+                        'status': 'RUNNING' if futures_enabled else 'DISABLED',
+                        'capital': futures_capital,
+                        'metrics': futures_metrics
+                    },
+                    'solana_strategies': {
+                        'name': 'Solana Strategies',
+                        'enabled': solana_enabled,
+                        'status': 'RUNNING' if solana_enabled else 'DISABLED',
+                        'capital': solana_capital,
+                        'metrics': solana_metrics
+                    }
                 }
             }
         })
@@ -1001,69 +1072,62 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
 
     async def api_dashboard_summary(self, request):
-        """Get dashboard summary data"""
+        """Get dashboard summary data from database"""
         try:
-            summary = {}
+            # Get initial balance from config
+            try:
+                from config.config_manager import PortfolioConfig
+                config = PortfolioConfig()
+                starting_balance = float(config.initial_balance or 400)
+            except Exception:
+                starting_balance = 400.0
 
-            # Get portfolio data if available
-            if self.portfolio:
-                # Get portfolio summary
-                portfolio_summary = self.engine.portfolio_manager.get_portfolio_summary()
-
-                # Get config with fallback
-                try:
-                    from config.config_manager import PortfolioConfig
-                    config = PortfolioConfig()
-                    default_balance = config.initial_balance
-                except Exception as e:
-                    logger.warning(f"Could not load PortfolioConfig: {e}, using default 400")
-                    default_balance = 400
-
-                summary = {
-                    'cash_balance': float(portfolio_summary.get('cash_balance', default_balance)),
-                    'positions_value': float(portfolio_summary.get('positions_value', 0)),
-                    'daily_pnl': float(portfolio_summary.get('daily_pnl', 0)),
-                    'sharpe_ratio': float(portfolio_summary.get('sharpe_ratio', 0)),
-                    'max_drawdown': float(portfolio_summary.get('max_drawdown', 0)),
-                }
-
-            # ✅ Get ACTUAL cumulative P&L and metrics from database
-            total_pnl = 0
-            win_rate = 0
+            # Initialize with defaults
+            total_pnl = 0.0
+            win_rate = 0.0
             open_positions_count = 0
+            total_trades = 0
 
+            # Get data from database
             if self.db:
                 try:
-                    perf_data = await self.db.get_performance_summary()
-                    if perf_data and 'total_pnl' in perf_data:
-                        total_pnl = float(perf_data.get('total_pnl', 0))
-                        win_rate = float(perf_data.get('win_rate', 0))
+                    # Get all trades for P&L calculation
+                    trades = await self.db.get_recent_trades(limit=1000)
+                    closed_trades = [t for t in trades if t.get('status') == 'closed' and t.get('profit_loss') is not None]
+
+                    total_pnl = sum(float(t.get('profit_loss', 0)) for t in closed_trades)
+                    total_trades = len(closed_trades)
+
+                    # Calculate win rate
+                    winning_trades = sum(1 for t in closed_trades if float(t.get('profit_loss', 0)) > 0)
+                    win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+
+                    # Get open positions
+                    open_positions = await self.db.get_open_positions()
+                    open_positions_count = len(open_positions) if open_positions else 0
+
                 except Exception as e:
-                    logger.error(f"Error getting performance data: {e}")
+                    logger.warning(f"Error getting data from database: {e}")
 
-            # Get actual open positions count from engine
-            if self.engine and hasattr(self.engine, 'active_positions'):
-                open_positions_count = len(self.engine.active_positions)
+            # Also check engine's active_positions as backup
+            if open_positions_count == 0 and self.engine and hasattr(self.engine, 'active_positions'):
+                open_positions_count = len(self.engine.active_positions) if self.engine.active_positions else 0
 
-            # Calculate portfolio value: starting balance + cumulative P&L
-            try:
-                config = PortfolioConfig()
-                starting_balance = config.initial_balance
-            except Exception:
-                starting_balance = 400
+            # Calculate portfolio value
             portfolio_value = starting_balance + total_pnl
 
-            # Update summary with calculated values
-            summary.update({
+            summary = {
                 'portfolio_value': portfolio_value,
                 'total_pnl': total_pnl,
                 'total_value': portfolio_value,
                 'net_profit': total_pnl,
                 'open_positions': open_positions_count,
-                'win_rate': win_rate,  # ✅ Now includes actual win rate
-                'pending_orders': len(self.orders.active_orders) if self.orders else 0,
-                'active_alerts': len(self.alerts.alerts_queue._queue) if self.alerts else 0
-            })
+                'win_rate': win_rate,
+                'total_trades': total_trades,
+                'starting_balance': starting_balance,
+                'pending_orders': 0,
+                'active_alerts': 0
+            }
 
             return web.json_response({
                 'success': True,
@@ -1792,161 +1856,110 @@ class DashboardEndpoints:
             })
 
     # ============================================================================
-    # FIND the api_wallet_balances method you added (around line 650-750)
-    # REPLACE THE ENTIRE METHOD with this corrected version:
+    # WALLET BALANCES API - Shows portfolio values by chain
     # ============================================================================
 
     async def api_wallet_balances(self, request):
-        """Get REAL wallet balances for all chains (on-chain + exchange)"""
+        """Get wallet balances by chain - shows portfolio values and real balances"""
         try:
             balances = {}
             total_value = 0
+            total_pnl = 0
 
-            # Approximate token prices (USD)
-            prices = {
-                'ETH': 3500,    # Ethereum
-                'BNB': 600,     # BSC
-                'MATIC': 0.80,  # Polygon
-                'ARB': 1.20,    # Arbitrum (uses ETH)
-                'ETH_BASE': 3500,  # Base (uses ETH)
-                'SOL': 200      # Solana
-            }
+            # Initialize chains with zero values
+            chains = ['ETHEREUM', 'BSC', 'POLYGON', 'ARBITRUM', 'BASE', 'SOLANA']
+            for chain in chains:
+                balances[chain] = {
+                    'balance': 0.0,
+                    'native_balance': 0.0,
+                    'native_symbol': 'ETH' if chain in ['ETHEREUM', 'ARBITRUM', 'BASE'] else ('BNB' if chain == 'BSC' else ('MATIC' if chain == 'POLYGON' else 'SOL')),
+                    'pnl': 0.0,
+                    'pnl_pct': 0.0,
+                    'positions': 0
+                }
 
-            # ========== DEX WALLET BALANCES (Real On-Chain) ==========
-            chains_config = {
-                'ETHEREUM': {'rpc_key': 'ethereum_rpc', 'native': 'ETH', 'price_key': 'ETH'},
-                'BSC': {'rpc_key': 'bsc_rpc', 'native': 'BNB', 'price_key': 'BNB'},
-                'POLYGON': {'rpc_key': 'polygon_rpc', 'native': 'MATIC', 'price_key': 'MATIC'},
-                'ARBITRUM': {'rpc_key': 'arbitrum_rpc', 'native': 'ETH', 'price_key': 'ETH'},
-                'BASE': {'rpc_key': 'base_rpc', 'native': 'ETH', 'price_key': 'ETH_BASE'},
-            }
-
-            # Get wallet address from config
-            wallet_address = None
-            if self.engine and hasattr(self.engine, 'config'):
-                wallet_address = self.engine.config.get('wallet_address')
-            if not wallet_address:
-                wallet_address = os.getenv('WALLET_ADDRESS')
-
-            for chain, config in chains_config.items():
+            # ========== GET PORTFOLIO VALUES FROM DATABASE ==========
+            if self.db:
                 try:
-                    native_balance = 0.0
-                    usd_balance = 0.0
+                    # Get open positions by chain
+                    open_positions = await self.db.get_open_positions()
+                    if open_positions:
+                        for pos in open_positions:
+                            chain = (pos.get('chain') or pos.get('network') or 'unknown').upper()
+                            if chain in balances:
+                                entry_value = float(pos.get('entry_value') or 0)
+                                current_value = float(pos.get('current_value') or entry_value)
+                                unrealized_pnl = float(pos.get('unrealized_pnl') or (current_value - entry_value))
 
-                    # Try to get real on-chain balance
-                    if self.engine and wallet_address:
-                        try:
-                            native_balance = await self.engine._get_chain_balance(chain.lower())
-                        except Exception as e:
-                            logger.debug(f"Could not get {chain} balance: {e}")
-                            native_balance = 0.0
+                                balances[chain]['balance'] += current_value
+                                balances[chain]['pnl'] += unrealized_pnl
+                                balances[chain]['positions'] += 1
+                                total_value += current_value
+                                total_pnl += unrealized_pnl
 
-                    # Calculate USD value
-                    price = prices.get(config['price_key'], 0)
-                    usd_balance = native_balance * price
-
-                    balances[chain] = {
-                        'balance': float(usd_balance),
-                        'native_balance': float(native_balance),
-                        'native_symbol': config['native'],
-                        'pnl': 0.0,
-                        'pnl_pct': 0.0,
-                        'positions': 0
-                    }
-                    total_value += usd_balance
+                    # Get realized P&L from closed trades by chain
+                    trades = await self.db.get_recent_trades(limit=500)
+                    if trades:
+                        for trade in trades:
+                            if trade.get('status') == 'closed':
+                                chain = (trade.get('chain') or trade.get('network') or 'unknown').upper()
+                                realized_pnl = float(trade.get('profit_loss') or 0)
+                                if chain in balances:
+                                    balances[chain]['pnl'] += realized_pnl
 
                 except Exception as e:
-                    logger.debug(f"Error getting {chain} balance: {e}")
-                    balances[chain] = {
-                        'balance': 0.0,
-                        'native_balance': 0.0,
-                        'native_symbol': config.get('native', '?'),
-                        'pnl': 0.0,
-                        'pnl_pct': 0.0,
-                        'positions': 0
-                    }
+                    logger.debug(f"Error getting positions from DB: {e}")
 
-            # ========== SOLANA WALLET BALANCES (Both wallets) ==========
-            # Helper function to get Solana balance via RPC
-            async def get_solana_balance_rpc(wallet_address: str) -> float:
-                if not wallet_address:
-                    return 0.0
-                try:
-                    import aiohttp
+            # ========== ALSO TRY REAL WALLET BALANCES (for live trading) ==========
+            prices = {'ETH': 3500, 'BNB': 600, 'MATIC': 0.80, 'SOL': 200}
+
+            # Try Solana RPC for real balance
+            try:
+                solana_wallet = os.getenv('SOLANA_WALLET')
+                if solana_wallet:
                     solana_rpc = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
                     async with aiohttp.ClientSession() as session:
-                        payload = {
-                            "jsonrpc": "2.0",
-                            "id": 1,
-                            "method": "getBalance",
-                            "params": [wallet_address]
-                        }
-                        async with session.post(solana_rpc, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        payload = {"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [solana_wallet]}
+                        async with session.post(solana_rpc, json=payload, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                             if resp.status == 200:
                                 data = await resp.json()
                                 lamports = data.get('result', {}).get('value', 0)
-                                return lamports / 1e9  # Convert lamports to SOL
-                except Exception as e:
-                    logger.debug(f"Could not get Solana balance for {wallet_address[:8]}...: {e}")
-                return 0.0
-
-            # Wallet 1: SOLANA_WALLET (Main DEX Solana wallet)
-            try:
-                sol_balance = 0.0
-                solana_wallet_1 = os.getenv('SOLANA_WALLET')
-                if solana_wallet_1:
-                    sol_balance = await get_solana_balance_rpc(solana_wallet_1)
-
-                sol_usd = sol_balance * prices['SOL']
-                balances['SOLANA'] = {
-                    'balance': float(sol_usd),
-                    'native_balance': float(sol_balance),
-                    'native_symbol': 'SOL',
-                    'wallet_address': solana_wallet_1[:8] + '...' if solana_wallet_1 else None,
-                    'pnl': 0.0,
-                    'pnl_pct': 0.0,
-                    'positions': 0
-                }
-                total_value += sol_usd
+                                sol_native = lamports / 1e9
+                                sol_usd = sol_native * prices['SOL']
+                                # Add real wallet balance to portfolio value
+                                if sol_native > 0:
+                                    balances['SOLANA']['native_balance'] = sol_native
+                                    # Only add real balance if no positions (avoid double counting)
+                                    if balances['SOLANA']['positions'] == 0:
+                                        balances['SOLANA']['balance'] = sol_usd
+                                        total_value += sol_usd
             except Exception as e:
-                logger.debug(f"Error getting SOLANA_WALLET balance: {e}")
-                balances['SOLANA'] = {
-                    'balance': 0.0,
-                    'native_balance': 0.0,
-                    'native_symbol': 'SOL',
-                    'pnl': 0.0,
-                    'pnl_pct': 0.0,
-                    'positions': 0
-                }
+                logger.debug(f"Could not get Solana real balance: {e}")
 
-            # Wallet 2: SOLANA_MODULE_WALLET (Separate Solana module wallet)
+            # ========== SOLANA MODULE WALLET ==========
             try:
-                sol_module_balance = 0.0
-                solana_wallet_2 = os.getenv('SOLANA_MODULE_WALLET')
-                if solana_wallet_2:
-                    sol_module_balance = await get_solana_balance_rpc(solana_wallet_2)
-
-                sol_module_usd = sol_module_balance * prices['SOL']
-                balances['SOLANA_MODULE'] = {
-                    'balance': float(sol_module_usd),
-                    'native_balance': float(sol_module_balance),
-                    'native_symbol': 'SOL',
-                    'wallet_address': solana_wallet_2[:8] + '...' if solana_wallet_2 else None,
-                    'pnl': 0.0,
-                    'pnl_pct': 0.0,
-                    'positions': 0
-                }
-                total_value += sol_module_usd
+                solana_module_wallet = os.getenv('SOLANA_MODULE_WALLET')
+                if solana_module_wallet:
+                    solana_rpc = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
+                    async with aiohttp.ClientSession() as session:
+                        payload = {"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [solana_module_wallet]}
+                        async with session.post(solana_rpc, json=payload, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                lamports = data.get('result', {}).get('value', 0)
+                                sol_native = lamports / 1e9
+                                sol_usd = sol_native * prices['SOL']
+                                balances['SOLANA_MODULE'] = {
+                                    'balance': sol_usd,
+                                    'native_balance': sol_native,
+                                    'native_symbol': 'SOL',
+                                    'pnl': 0.0,
+                                    'positions': 0
+                                }
+                                total_value += sol_usd
             except Exception as e:
-                logger.debug(f"Error getting SOLANA_MODULE_WALLET balance: {e}")
-                balances['SOLANA_MODULE'] = {
-                    'balance': 0.0,
-                    'native_balance': 0.0,
-                    'native_symbol': 'SOL',
-                    'pnl': 0.0,
-                    'pnl_pct': 0.0,
-                    'positions': 0
-                }
+                logger.debug(f"Could not get Solana Module balance: {e}")
+                balances['SOLANA_MODULE'] = {'balance': 0.0, 'native_balance': 0.0, 'native_symbol': 'SOL', 'pnl': 0.0, 'positions': 0}
 
             # ========== FUTURES EXCHANGE BALANCE ==========
             try:
@@ -1955,78 +1968,60 @@ class DashboardEndpoints:
                 futures_pnl = 0.0
                 futures_available = 0.0
 
-                # Try to get from Binance API
                 binance_key = os.getenv('BINANCE_API_KEY')
                 binance_secret = os.getenv('BINANCE_API_SECRET')
 
                 if binance_key and binance_secret:
-                    try:
-                        import aiohttp
-                        import hmac
-                        import hashlib
-                        import time
+                    import hmac
+                    import hashlib
+                    import time as time_module
 
-                        timestamp = int(time.time() * 1000)
-                        query_string = f"timestamp={timestamp}"
-                        signature = hmac.new(
-                            binance_secret.encode('utf-8'),
-                            query_string.encode('utf-8'),
-                            hashlib.sha256
-                        ).hexdigest()
+                    timestamp = int(time_module.time() * 1000)
+                    query_string = f"timestamp={timestamp}"
+                    signature = hmac.new(binance_secret.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
+                    url = f"https://fapi.binance.com/fapi/v2/balance?{query_string}&signature={signature}"
+                    headers = {'X-MBX-APIKEY': binance_key}
 
-                        url = f"https://fapi.binance.com/fapi/v2/balance?{query_string}&signature={signature}"
-                        headers = {'X-MBX-APIKEY': binance_key}
-
-                        async with aiohttp.ClientSession() as session:
-                            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                                if resp.status == 200:
-                                    data = await resp.json()
-                                    for asset in data:
-                                        if asset.get('asset') == 'USDT':
-                                            futures_balance = float(asset.get('balance', 0))
-                                            futures_available = float(asset.get('availableBalance', 0))
-                                            futures_pnl = float(asset.get('crossUnPnl', 0))
-                                            futures_margin = futures_balance - futures_available
-                                            break
-                    except Exception as e:
-                        logger.debug(f"Could not get Binance futures balance: {e}")
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                for asset in data:
+                                    if asset.get('asset') == 'USDT':
+                                        futures_balance = float(asset.get('balance', 0))
+                                        futures_available = float(asset.get('availableBalance', 0))
+                                        futures_pnl = float(asset.get('crossUnPnl', 0))
+                                        futures_margin = futures_balance - futures_available
+                                        break
 
                 balances['FUTURES'] = {
-                    'total_balance': float(futures_balance),
-                    'margin_used': float(futures_margin),
-                    'unrealized_pnl': float(futures_pnl),
-                    'available': float(futures_available),
-                    'balance': float(futures_balance),  # For compatibility
-                    'pnl': float(futures_pnl),
+                    'total_balance': futures_balance,
+                    'margin_used': futures_margin,
+                    'unrealized_pnl': futures_pnl,
+                    'available': futures_available,
+                    'balance': futures_balance,
+                    'pnl': futures_pnl,
                     'positions': 0
                 }
                 total_value += futures_balance
 
             except Exception as e:
                 logger.debug(f"Error getting futures balance: {e}")
-                balances['FUTURES'] = {
-                    'total_balance': 0.0,
-                    'margin_used': 0.0,
-                    'unrealized_pnl': 0.0,
-                    'available': 0.0,
-                    'balance': 0.0,
-                    'pnl': 0.0,
-                    'positions': 0
-                }
+                balances['FUTURES'] = {'total_balance': 0.0, 'margin_used': 0.0, 'unrealized_pnl': 0.0, 'available': 0.0, 'balance': 0.0, 'pnl': 0.0, 'positions': 0}
 
-            # ========== ADD POSITION COUNTS ==========
-            if self.engine and self.engine.active_positions:
-                for pos_id, position in self.engine.active_positions.items():
-                    chain = position.get('chain', 'unknown').upper()
-                    if chain in balances:
-                        balances[chain]['positions'] = balances[chain].get('positions', 0) + 1
+            # ========== CALCULATE P&L PERCENTAGE ==========
+            for chain in chains:
+                if balances[chain]['balance'] > 0 and balances[chain]['pnl'] != 0:
+                    cost_basis = balances[chain]['balance'] - balances[chain]['pnl']
+                    if cost_basis > 0:
+                        balances[chain]['pnl_pct'] = (balances[chain]['pnl'] / cost_basis) * 100
 
             # ========== TOTAL ==========
             balances['TOTAL'] = {
-                'balance': float(total_value),
-                'pnl': 0.0,
+                'balance': total_value,
+                'pnl': total_pnl,
                 'pnl_pct': 0.0,
-                'positions': len(self.engine.active_positions) if self.engine and self.engine.active_positions else 0
+                'positions': sum(balances[c].get('positions', 0) for c in chains)
             }
 
             return web.json_response({
@@ -2493,30 +2488,47 @@ class DashboardEndpoints:
             # Get real balance from historical P&L
             if self.db:
                 try:
+                    # Get initial balance from config
+                    initial_balance = 400.0  # Default
+                    if self.config_mgr:
+                        try:
+                            portfolio_config = self.config_mgr.get_portfolio_config()
+                            initial_balance = float(portfolio_config.initial_balance or 400.0)
+                        except:
+                            pass
+
                     # Calculate actual portfolio value from historical trades
                     trades = await self.db.get_recent_trades(limit=1000)
                     closed_trades = [t for t in trades if t.get('status') == 'closed' and t.get('profit_loss') is not None]
                     total_pnl = sum(float(t.get('profit_loss', 0)) for t in closed_trades)
 
                     # Starting balance + P&L = current portfolio value
-                    starting_balance = block_info.get('balance', 400)
-                    real_portfolio_value = starting_balance + total_pnl
+                    real_portfolio_value = initial_balance + total_pnl
 
-                    # Get value locked in open positions
+                    # Get value locked in open positions (use current_value if available)
                     open_positions = await self.db.get_open_positions()
-                    value_in_positions = sum(float(p.get('entry_value', 0)) for p in open_positions) if open_positions else 0
+                    value_in_positions = 0.0
+                    unrealized_pnl = 0.0
+                    if open_positions:
+                        for pos in open_positions:
+                            entry_val = float(pos.get('entry_value') or 0)
+                            current_val = float(pos.get('current_value') or entry_val)
+                            value_in_positions += entry_val
+                            unrealized_pnl += (current_val - entry_val)
 
-                    # Calculate real available balance
+                    # Calculate real available balance (what can be used to open new positions)
                     real_available = real_portfolio_value - value_in_positions
 
                     # Override with real values
                     block_info['balance'] = real_portfolio_value
                     block_info['available_balance'] = max(0, real_available)
                     block_info['value_in_positions'] = value_in_positions
+                    block_info['unrealized_pnl'] = unrealized_pnl
                     block_info['total_pnl'] = total_pnl
+                    block_info['initial_balance'] = initial_balance
 
                 except Exception as e:
-                    logger.debug(f"Could not calculate real balance: {e}")
+                    logger.warning(f"Could not calculate real balance: {e}")
 
             # Recalculate can_trade based on real data
             reasons = block_info.get('reasons', [])
