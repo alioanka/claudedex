@@ -5,6 +5,7 @@ Professional web-based monitoring, control, and analytics interface
 
 import asyncio
 import logging
+import os
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
@@ -12,6 +13,7 @@ from decimal import Decimal
 from enum import Enum
 import json
 import io
+import aiohttp
 from aiohttp import web
 import aiohttp_cors
 from aiohttp_sse import sse_response
