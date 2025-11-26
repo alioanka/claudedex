@@ -1885,9 +1885,11 @@ class DashboardEndpoints:
                 try:
                     # Get open positions by chain
                     open_positions = await self.db.get_open_positions()
+                    logger.info(f"Wallet API: Found {len(open_positions) if open_positions else 0} open positions")
                     if open_positions:
                         for pos in open_positions:
                             chain = (pos.get('chain') or pos.get('network') or 'unknown').upper()
+                            logger.debug(f"Position: {pos.get('symbol')} on {chain}, entry_value={pos.get('entry_value')}")
                             if chain in balances:
                                 entry_value = float(pos.get('entry_value') or 0)
                                 current_value = float(pos.get('current_value') or entry_value)
@@ -1910,7 +1912,9 @@ class DashboardEndpoints:
                                     balances[chain]['pnl'] += realized_pnl
 
                 except Exception as e:
-                    logger.debug(f"Error getting positions from DB: {e}")
+                    logger.warning(f"Error getting positions from DB: {e}")
+            else:
+                logger.warning("Wallet API: self.db is None - cannot fetch positions from database")
 
             # ========== ALSO TRY REAL WALLET BALANCES (for live trading) ==========
             prices = {'ETH': 3500, 'BNB': 600, 'MATIC': 0.80, 'SOL': 200}
