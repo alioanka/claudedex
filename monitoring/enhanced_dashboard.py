@@ -355,6 +355,10 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/strategy/parameters', self.api_get_strategy_params)
         self.app.router.add_post('/api/strategy/parameters', self.api_update_strategy_params)
         
+        # API - Portfolio Trading Block Management
+        self.app.router.add_get('/api/portfolio/block-status', self.api_get_block_status)
+        self.app.router.add_post('/api/portfolio/reset-block', self.api_reset_block)
+
         # SSE for real-time updates
         self.app.router.add_get('/api/stream', self.sse_handler)
         
@@ -2286,6 +2290,70 @@ class DashboardEndpoints:
                 }
             }, status=200)
     
+    # ==================== API - PORTFOLIO BLOCK MANAGEMENT ====================
+
+    async def api_get_block_status(self, request):
+        """Get detailed information about why trading is blocked"""
+        try:
+            if not self.portfolio:
+                return web.json_response({
+                    'success': False,
+                    'error': 'Portfolio manager not available'
+                }, status=503)
+
+            # Get block reason details
+            block_info = self.portfolio.get_block_reason()
+
+            return web.json_response({
+                'success': True,
+                'data': block_info
+            })
+
+        except Exception as e:
+            logger.error(f"Error getting block status: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    async def api_reset_block(self, request):
+        """Manually reset trading block (use with caution!)"""
+        try:
+            if not self.portfolio:
+                return web.json_response({
+                    'success': False,
+                    'error': 'Portfolio manager not available'
+                }, status=503)
+
+            # Get reason from request body if provided
+            try:
+                data = await request.json()
+                reason = data.get('reason', 'Manual reset via dashboard')
+            except:
+                reason = 'Manual reset via dashboard'
+
+            # Call the manual reset method
+            result = await self.portfolio.manual_reset_block(reason=reason)
+
+            if result.get('success'):
+                return web.json_response({
+                    'success': True,
+                    'message': result.get('message'),
+                    'data': result
+                })
+            else:
+                return web.json_response({
+                    'success': False,
+                    'error': result.get('error', 'Unknown error')
+                }, status=400)
+
+        except Exception as e:
+            logger.error(f"Error resetting block: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
     # ==================== API - SETTINGS ====================
 
     def _json_serializer(self, obj):
