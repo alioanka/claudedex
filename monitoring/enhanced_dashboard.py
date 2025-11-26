@@ -2463,8 +2463,80 @@ class DashboardEndpoints:
                     'error': 'Portfolio manager not available'
                 }, status=503)
 
-            # Get block reason details
+            # Get block reason details from portfolio manager
             block_info = self.portfolio.get_block_reason()
+
+            # ========== OVERRIDE WITH REAL DATA ==========
+            # Get actual open positions count from database
+            actual_positions_count = 0
+            if self.db:
+                try:
+                    positions = await self.db.get_open_positions()
+                    actual_positions_count = len(positions) if positions else 0
+                except Exception as e:
+                    logger.debug(f"Could not get positions from DB: {e}")
+
+            # Also check engine's active_positions
+            engine_positions_count = 0
+            if self.engine and hasattr(self.engine, 'active_positions'):
+                engine_positions_count = len(self.engine.active_positions) if self.engine.active_positions else 0
+
+            # Use the higher of the two counts (most accurate)
+            real_positions_count = max(actual_positions_count, engine_positions_count)
+
+            # Override portfolio manager's positions count with real count
+            block_info['positions_count'] = real_positions_count
+            block_info['positions_count_db'] = actual_positions_count
+            block_info['positions_count_engine'] = engine_positions_count
+
+            # ========== OVERRIDE BALANCE WITH REAL DATA ==========
+            # Get real balance from historical P&L
+            if self.db:
+                try:
+                    # Calculate actual portfolio value from historical trades
+                    trades = await self.db.get_recent_trades(limit=1000)
+                    closed_trades = [t for t in trades if t.get('status') == 'closed' and t.get('profit_loss') is not None]
+                    total_pnl = sum(float(t.get('profit_loss', 0)) for t in closed_trades)
+
+                    # Starting balance + P&L = current portfolio value
+                    starting_balance = block_info.get('balance', 400)
+                    real_portfolio_value = starting_balance + total_pnl
+
+                    # Get value locked in open positions
+                    open_positions = await self.db.get_open_positions()
+                    value_in_positions = sum(float(p.get('entry_value', 0)) for p in open_positions) if open_positions else 0
+
+                    # Calculate real available balance
+                    real_available = real_portfolio_value - value_in_positions
+
+                    # Override with real values
+                    block_info['balance'] = real_portfolio_value
+                    block_info['available_balance'] = max(0, real_available)
+                    block_info['value_in_positions'] = value_in_positions
+                    block_info['total_pnl'] = total_pnl
+
+                except Exception as e:
+                    logger.debug(f"Could not calculate real balance: {e}")
+
+            # Recalculate can_trade based on real data
+            reasons = block_info.get('reasons', [])
+            max_positions = block_info.get('max_positions', 10)
+            min_position_size = block_info.get('min_position_size', 5)
+            available_balance = block_info.get('available_balance', 0)
+
+            # Remove outdated reasons (will recalculate based on real data)
+            reasons = [r for r in reasons if 'Max positions' not in r and 'Insufficient balance' not in r]
+
+            # Add new reason if max positions reached
+            if real_positions_count >= max_positions:
+                reasons.append(f"Max positions reached: {real_positions_count}/{max_positions}")
+
+            # Add new reason if insufficient balance (based on real available balance)
+            if available_balance < min_position_size:
+                reasons.append(f"Insufficient balance: ${available_balance:.2f} < ${min_position_size:.2f} required")
+
+            block_info['reasons'] = reasons
+            block_info['can_trade'] = len(reasons) == 0
 
             return web.json_response({
                 'success': True,
