@@ -531,7 +531,6 @@ class DashboardEndpoints:
             try:
                 # Get trades by chain/module
                 trades = await self.db.get_recent_trades(limit=1000)
-                open_positions = await self.db.get_open_positions()
 
                 for trade in trades:
                     chain = (trade.get('chain') or trade.get('network') or '').upper()
@@ -544,13 +543,14 @@ class DashboardEndpoints:
                         dex_metrics['total_trades'] += 1
                         dex_metrics['pnl'] += pnl
 
-                # Count positions by chain
-                for pos in (open_positions or []):
-                    chain = (pos.get('chain') or pos.get('network') or '').upper()
-                    if chain == 'SOLANA':
-                        solana_metrics['positions'] += 1
-                    elif chain in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM']:
-                        dex_metrics['positions'] += 1
+                # Count positions by chain FROM ENGINE (same source as Open Positions API)
+                if self.engine and hasattr(self.engine, 'active_positions') and self.engine.active_positions:
+                    for token_addr, pos in self.engine.active_positions.items():
+                        chain = (pos.get('chain') or pos.get('network') or 'SOLANA').upper()
+                        if chain == 'SOLANA':
+                            solana_metrics['positions'] += 1
+                        elif chain in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM']:
+                            dex_metrics['positions'] += 1
 
                 # Calculate win rates
                 dex_wins = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM'] and t.get('status') == 'closed' and float(t.get('profit_loss') or 0) > 0)
@@ -1104,16 +1104,12 @@ class DashboardEndpoints:
                     winning_trades = sum(1 for t in closed_trades if float(t.get('profit_loss', 0)) > 0)
                     win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
 
-                    # Get open positions
-                    open_positions = await self.db.get_open_positions()
-                    open_positions_count = len(open_positions) if open_positions else 0
-
                 except Exception as e:
                     logger.warning(f"Error getting data from database: {e}")
 
-            # Also check engine's active_positions as backup
-            if open_positions_count == 0 and self.engine and hasattr(self.engine, 'active_positions'):
-                open_positions_count = len(self.engine.active_positions) if self.engine.active_positions else 0
+            # Get open positions from ENGINE (same source as Open Positions API)
+            if self.engine and hasattr(self.engine, 'active_positions') and self.engine.active_positions:
+                open_positions_count = len(self.engine.active_positions)
 
             # Calculate portfolio value
             portfolio_value = starting_balance + total_pnl
@@ -1880,26 +1876,40 @@ class DashboardEndpoints:
                     'positions': 0
                 }
 
-            # ========== GET PORTFOLIO VALUES FROM DATABASE ==========
+            # ========== GET PORTFOLIO VALUES FROM ENGINE (same source as Open Positions API) ==========
+            if self.engine and hasattr(self.engine, 'active_positions') and self.engine.active_positions:
+                try:
+                    active_positions_snapshot = dict(self.engine.active_positions.items())
+                    logger.info(f"Wallet API: Found {len(active_positions_snapshot)} open positions from engine")
+
+                    for token_address, pos in active_positions_snapshot.items():
+                        # Get chain from position
+                        chain = (pos.get('chain') or pos.get('network') or 'SOLANA').upper()
+                        logger.debug(f"Position: {pos.get('token_symbol')} on {chain}")
+
+                        if chain in balances:
+                            entry_price = float(pos.get('entry_price', 0))
+                            current_price = float(pos.get('current_price', entry_price))
+                            amount = float(pos.get('amount', 0))
+
+                            entry_value = amount * entry_price
+                            current_value = amount * current_price
+                            unrealized_pnl = current_value - entry_value
+
+                            balances[chain]['balance'] += current_value
+                            balances[chain]['pnl'] += unrealized_pnl
+                            balances[chain]['positions'] += 1
+                            total_value += current_value
+                            total_pnl += unrealized_pnl
+
+                except Exception as e:
+                    logger.warning(f"Error getting positions from engine: {e}")
+            else:
+                logger.warning("Wallet API: No active positions in engine")
+
+            # Also get realized P&L from closed trades
             if self.db:
                 try:
-                    # Get open positions by chain
-                    open_positions = await self.db.get_open_positions()
-                    if open_positions:
-                        for pos in open_positions:
-                            chain = (pos.get('chain') or pos.get('network') or 'unknown').upper()
-                            if chain in balances:
-                                entry_value = float(pos.get('entry_value') or 0)
-                                current_value = float(pos.get('current_value') or entry_value)
-                                unrealized_pnl = float(pos.get('unrealized_pnl') or (current_value - entry_value))
-
-                                balances[chain]['balance'] += current_value
-                                balances[chain]['pnl'] += unrealized_pnl
-                                balances[chain]['positions'] += 1
-                                total_value += current_value
-                                total_pnl += unrealized_pnl
-
-                    # Get realized P&L from closed trades by chain
                     trades = await self.db.get_recent_trades(limit=500)
                     if trades:
                         for trade in trades:
@@ -1908,12 +1918,27 @@ class DashboardEndpoints:
                                 realized_pnl = float(trade.get('profit_loss') or 0)
                                 if chain in balances:
                                     balances[chain]['pnl'] += realized_pnl
-
                 except Exception as e:
-                    logger.debug(f"Error getting positions from DB: {e}")
+                    logger.warning(f"Error getting closed trades: {e}")
 
-            # ========== ALSO TRY REAL WALLET BALANCES (for live trading) ==========
-            prices = {'ETH': 3500, 'BNB': 600, 'MATIC': 0.80, 'SOL': 200}
+            # ========== FETCH LIVE TOKEN PRICES ==========
+            prices = {'ETH': 3500, 'BNB': 600, 'MATIC': 0.80, 'SOL': 200}  # Fallback defaults
+            try:
+                async with aiohttp.ClientSession() as session:
+                    # CoinGecko API - free, no API key required
+                    url = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum,binancecoin,matic-network,solana&vs_currencies=usd"
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            prices = {
+                                'ETH': data.get('ethereum', {}).get('usd', 3500),
+                                'BNB': data.get('binancecoin', {}).get('usd', 600),
+                                'MATIC': data.get('matic-network', {}).get('usd', 0.80),
+                                'SOL': data.get('solana', {}).get('usd', 200)
+                            }
+                            logger.debug(f"Live prices: ETH=${prices['ETH']}, BNB=${prices['BNB']}, SOL=${prices['SOL']}")
+            except Exception as e:
+                logger.debug(f"Could not fetch live prices, using defaults: {e}")
 
             # Try Solana RPC for real balance
             try:
@@ -2507,14 +2532,16 @@ class DashboardEndpoints:
                     # Starting balance + P&L = current portfolio value
                     real_portfolio_value = initial_balance + total_pnl
 
-                    # Get value locked in open positions (use current_value if available)
-                    open_positions = await self.db.get_open_positions()
+                    # Get value locked in open positions from ENGINE (same source as Open Positions API)
                     value_in_positions = 0.0
                     unrealized_pnl = 0.0
-                    if open_positions:
-                        for pos in open_positions:
-                            entry_val = float(pos.get('entry_value') or 0)
-                            current_val = float(pos.get('current_value') or entry_val)
+                    if self.engine and hasattr(self.engine, 'active_positions') and self.engine.active_positions:
+                        for token_addr, pos in self.engine.active_positions.items():
+                            entry_price = float(pos.get('entry_price', 0))
+                            current_price = float(pos.get('current_price', entry_price))
+                            amount = float(pos.get('amount', 0))
+                            entry_val = amount * entry_price
+                            current_val = amount * current_price
                             value_in_positions += entry_val
                             unrealized_pnl += (current_val - entry_val)
 
