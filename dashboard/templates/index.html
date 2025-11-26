@@ -767,6 +767,30 @@ async function loadDashboardData() {
                 }
             });
             document.getElementById('totalTrades').textContent = totalTrades;
+
+            // Update P&L Comparison Chart
+            if (pnlChart) {
+                const dexPnl = modules.dex_trading?.metrics?.pnl || 0;
+                const futuresPnl = modules.futures_trading?.metrics?.pnl || 0;
+                const solanaPnl = modules.solana_strategies?.metrics?.pnl || 0;
+                pnlChart.data.datasets[0].data = [dexPnl, futuresPnl, solanaPnl];
+                pnlChart.update();
+            }
+
+            // Update Win Rate Chart
+            if (winRateChart) {
+                const dexWinRate = modules.dex_trading?.metrics?.win_rate || 0;
+                const futuresWinRate = modules.futures_trading?.metrics?.win_rate || 0;
+                const solanaWinRate = modules.solana_strategies?.metrics?.win_rate || 0;
+                // Ensure we have some data to display
+                const totalRate = dexWinRate + futuresWinRate + solanaWinRate;
+                if (totalRate > 0) {
+                    winRateChart.data.datasets[0].data = [dexWinRate, futuresWinRate, solanaWinRate];
+                } else {
+                    winRateChart.data.datasets[0].data = [33, 33, 34]; // Default equal split
+                }
+                winRateChart.update();
+            }
         }
     } catch (e) {
         console.error('Error fetching module data:', e);
