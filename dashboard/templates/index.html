@@ -2,8 +2,7 @@
 
 {% block title %}Main Dashboard - Trading Bot{% endblock %}
 
-{% block extra_head %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% block extra_css %}
 <style>
     /* Main Dashboard Container */
     .dashboard-container {
@@ -662,7 +661,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Win Rate Chart
+    // Win Rate Chart - Using aspectRatio to prevent shrinking
     const winRateCtx = document.getElementById('winRateChart').getContext('2d');
     winRateChart = new Chart(winRateCtx, {
         type: 'doughnut',
@@ -675,14 +674,23 @@ document.addEventListener('DOMContentLoaded', function() {
                     'rgba(139, 92, 246, 0.8)',
                     'rgba(16, 185, 129, 0.8)'
                 ],
-                borderWidth: 2
+                borderWidth: 2,
+                borderColor: '#1a1f2e'
             }]
         },
         options: {
             responsive: true,
-            maintainAspectRatio: false,
+            maintainAspectRatio: true,
+            aspectRatio: 2,
             plugins: {
-                legend: { position: 'bottom' }
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        color: '#e8eaed',
+                        padding: 20,
+                        font: { size: 12 }
+                    }
+                }
             }
         }
     });
