@@ -1921,8 +1921,24 @@ class DashboardEndpoints:
                 except Exception as e:
                     logger.warning(f"Error getting closed trades: {e}")
 
-            # ========== ALSO TRY REAL WALLET BALANCES (for live trading) ==========
-            prices = {'ETH': 3500, 'BNB': 600, 'MATIC': 0.80, 'SOL': 200}
+            # ========== FETCH LIVE TOKEN PRICES ==========
+            prices = {'ETH': 3500, 'BNB': 600, 'MATIC': 0.80, 'SOL': 200}  # Fallback defaults
+            try:
+                async with aiohttp.ClientSession() as session:
+                    # CoinGecko API - free, no API key required
+                    url = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum,binancecoin,matic-network,solana&vs_currencies=usd"
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            prices = {
+                                'ETH': data.get('ethereum', {}).get('usd', 3500),
+                                'BNB': data.get('binancecoin', {}).get('usd', 600),
+                                'MATIC': data.get('matic-network', {}).get('usd', 0.80),
+                                'SOL': data.get('solana', {}).get('usd', 200)
+                            }
+                            logger.debug(f"Live prices: ETH=${prices['ETH']}, BNB=${prices['BNB']}, SOL=${prices['SOL']}")
+            except Exception as e:
+                logger.debug(f"Could not fetch live prices, using defaults: {e}")
 
             # Try Solana RPC for real balance
             try:
