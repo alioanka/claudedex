@@ -1866,51 +1866,80 @@ class DashboardEndpoints:
                         'positions': 0
                     }
 
-            # ========== SOLANA WALLET BALANCE ==========
+            # ========== SOLANA WALLET BALANCES (Both wallets) ==========
+            # Helper function to get Solana balance via RPC
+            async def get_solana_balance_rpc(wallet_address: str) -> float:
+                if not wallet_address:
+                    return 0.0
+                try:
+                    import aiohttp
+                    solana_rpc = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
+                    async with aiohttp.ClientSession() as session:
+                        payload = {
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "getBalance",
+                            "params": [wallet_address]
+                        }
+                        async with session.post(solana_rpc, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                lamports = data.get('result', {}).get('value', 0)
+                                return lamports / 1e9  # Convert lamports to SOL
+                except Exception as e:
+                    logger.debug(f"Could not get Solana balance for {wallet_address[:8]}...: {e}")
+                return 0.0
+
+            # Wallet 1: SOLANA_WALLET (Main DEX Solana wallet)
             try:
                 sol_balance = 0.0
-                if self.engine and hasattr(self.engine, 'solana_executor') and self.engine.solana_executor:
-                    try:
-                        sol_balance = await self.engine.solana_executor.get_balance()
-                    except Exception as e:
-                        logger.debug(f"Could not get Solana balance from executor: {e}")
-
-                # Fallback: try direct RPC call
-                if sol_balance == 0:
-                    solana_wallet = os.getenv('SOLANA_WALLET_ADDRESS') or os.getenv('SOLANA_PUBLIC_KEY')
-                    if solana_wallet:
-                        try:
-                            import aiohttp
-                            solana_rpc = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
-                            async with aiohttp.ClientSession() as session:
-                                payload = {
-                                    "jsonrpc": "2.0",
-                                    "id": 1,
-                                    "method": "getBalance",
-                                    "params": [solana_wallet]
-                                }
-                                async with session.post(solana_rpc, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                                    if resp.status == 200:
-                                        data = await resp.json()
-                                        lamports = data.get('result', {}).get('value', 0)
-                                        sol_balance = lamports / 1e9  # Convert lamports to SOL
-                        except Exception as e:
-                            logger.debug(f"Could not get Solana balance via RPC: {e}")
+                solana_wallet_1 = os.getenv('SOLANA_WALLET')
+                if solana_wallet_1:
+                    sol_balance = await get_solana_balance_rpc(solana_wallet_1)
 
                 sol_usd = sol_balance * prices['SOL']
                 balances['SOLANA'] = {
                     'balance': float(sol_usd),
                     'native_balance': float(sol_balance),
                     'native_symbol': 'SOL',
+                    'wallet_address': solana_wallet_1[:8] + '...' if solana_wallet_1 else None,
                     'pnl': 0.0,
                     'pnl_pct': 0.0,
                     'positions': 0
                 }
                 total_value += sol_usd
-
             except Exception as e:
-                logger.debug(f"Error getting Solana balance: {e}")
+                logger.debug(f"Error getting SOLANA_WALLET balance: {e}")
                 balances['SOLANA'] = {
+                    'balance': 0.0,
+                    'native_balance': 0.0,
+                    'native_symbol': 'SOL',
+                    'pnl': 0.0,
+                    'pnl_pct': 0.0,
+                    'positions': 0
+                }
+
+            # Wallet 2: SOLANA_MODULE_WALLET (Separate Solana module wallet)
+            try:
+                sol_module_balance = 0.0
+                solana_wallet_2 = os.getenv('SOLANA_MODULE_WALLET')
+                if solana_wallet_2:
+                    sol_module_balance = await get_solana_balance_rpc(solana_wallet_2)
+
+                sol_module_usd = sol_module_balance * prices['SOL']
+                balances['SOLANA_MODULE'] = {
+                    'balance': float(sol_module_usd),
+                    'native_balance': float(sol_module_balance),
+                    'native_symbol': 'SOL',
+                    'wallet_address': solana_wallet_2[:8] + '...' if solana_wallet_2 else None,
+                    'pnl': 0.0,
+                    'pnl_pct': 0.0,
+                    'positions': 0
+                }
+                total_value += sol_module_usd
+            except Exception as e:
+                logger.debug(f"Error getting SOLANA_MODULE_WALLET balance: {e}")
+                balances['SOLANA_MODULE'] = {
                     'balance': 0.0,
                     'native_balance': 0.0,
                     'native_symbol': 'SOL',

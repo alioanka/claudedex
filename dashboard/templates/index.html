@@ -574,21 +574,30 @@
         </div>
     </div>
 
-    <!-- Solana Wallet Balance -->
+    <!-- Solana Wallet Balances (2 Wallets) -->
     <div class="section-card">
         <div class="section-title">
             <i class="fas fa-sun" style="color: #14f195;"></i>
-            Solana Wallet Balance
+            Solana Wallet Balances
         </div>
         <div class="wallet-grid">
+            <!-- Wallet 1: DEX Module Solana Wallet -->
             <div class="wallet-card" data-chain="SOLANA" style="border-color: #14f195;">
-                <div class="wallet-chain" style="color: #14f195;">Solana (SOL)</div>
+                <div class="wallet-chain" style="color: #14f195;">DEX Module (125QX...)</div>
                 <div class="wallet-balance" id="bal-solana">0.00 SOL</div>
-                <div class="wallet-pnl" id="pnl-solana"></div>
+                <div class="wallet-balance" id="bal-solana-usd" style="font-size: 0.9rem; color: #9aa0a6;">$0.00</div>
             </div>
-            <div class="wallet-card">
-                <div class="wallet-chain">Solana (USD)</div>
-                <div class="wallet-balance" id="bal-solana-usd">$0.00</div>
+            <!-- Wallet 2: Solana Strategies Module Wallet -->
+            <div class="wallet-card" data-chain="SOLANA_MODULE" style="border-color: #9945ff;">
+                <div class="wallet-chain" style="color: #9945ff;">Solana Module (237Uh...)</div>
+                <div class="wallet-balance" id="bal-solana-module">0.00 SOL</div>
+                <div class="wallet-balance" id="bal-solana-module-usd" style="font-size: 0.9rem; color: #9aa0a6;">$0.00</div>
+            </div>
+            <!-- Combined Total -->
+            <div class="wallet-card" style="border-color: #14f195; background: linear-gradient(135deg, rgba(20, 241, 149, 0.1), rgba(153, 69, 255, 0.1));">
+                <div class="wallet-chain" style="color: #e8eaed;">Total Solana</div>
+                <div class="wallet-balance" id="bal-solana-total">0.00 SOL</div>
+                <div class="wallet-balance" id="bal-solana-total-usd" style="font-size: 0.9rem; color: #9aa0a6;">$0.00</div>
             </div>
         </div>
     </div>
@@ -797,18 +806,35 @@ async function loadDashboardData() {
                 }
             });
 
-            // Update Solana balance
+            // Update Solana balances (Both wallets)
+            let totalSolNative = 0;
+            let totalSolUsd = 0;
+
+            // Wallet 1: SOLANA_WALLET (DEX Module)
             if (balances.SOLANA) {
                 const solBal = balances.SOLANA;
                 const nativeSol = solBal.native_balance || 0;
+                const usdSol = solBal.balance || 0;
                 document.getElementById('bal-solana').textContent = nativeSol.toFixed(4) + ' SOL';
-                document.getElementById('bal-solana-usd').textContent = '$' + (solBal.balance || 0).toFixed(2);
-                const pnlElem = document.getElementById('pnl-solana');
-                if (pnlElem && solBal.positions > 0) {
-                    pnlElem.textContent = solBal.positions + ' positions';
-                    pnlElem.className = 'wallet-pnl';
-                }
+                document.getElementById('bal-solana-usd').textContent = '$' + usdSol.toFixed(2);
+                totalSolNative += nativeSol;
+                totalSolUsd += usdSol;
             }
+
+            // Wallet 2: SOLANA_MODULE_WALLET (Solana Module)
+            if (balances.SOLANA_MODULE) {
+                const solModBal = balances.SOLANA_MODULE;
+                const nativeSolMod = solModBal.native_balance || 0;
+                const usdSolMod = solModBal.balance || 0;
+                document.getElementById('bal-solana-module').textContent = nativeSolMod.toFixed(4) + ' SOL';
+                document.getElementById('bal-solana-module-usd').textContent = '$' + usdSolMod.toFixed(2);
+                totalSolNative += nativeSolMod;
+                totalSolUsd += usdSolMod;
+            }
+
+            // Update Total Solana
+            document.getElementById('bal-solana-total').textContent = totalSolNative.toFixed(4) + ' SOL';
+            document.getElementById('bal-solana-total-usd').textContent = '$' + totalSolUsd.toFixed(2);
 
             // Update Futures balance from same API response
             if (balances.FUTURES) {
