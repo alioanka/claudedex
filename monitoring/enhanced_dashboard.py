@@ -1797,82 +1797,215 @@ class DashboardEndpoints:
     # ============================================================================
 
     async def api_wallet_balances(self, request):
-        """Get wallet balances for all chains"""
+        """Get REAL wallet balances for all chains (on-chain + exchange)"""
         try:
             balances = {}
             total_value = 0
-            total_pnl = 0
-            
-            # Get positions from engine.active_positions (portfolio.positions is empty)
+
+            # Approximate token prices (USD)
+            prices = {
+                'ETH': 3500,    # Ethereum
+                'BNB': 600,     # BSC
+                'MATIC': 0.80,  # Polygon
+                'ARB': 1.20,    # Arbitrum (uses ETH)
+                'ETH_BASE': 3500,  # Base (uses ETH)
+                'SOL': 200      # Solana
+            }
+
+            # ========== DEX WALLET BALANCES (Real On-Chain) ==========
+            chains_config = {
+                'ETHEREUM': {'rpc_key': 'ethereum_rpc', 'native': 'ETH', 'price_key': 'ETH'},
+                'BSC': {'rpc_key': 'bsc_rpc', 'native': 'BNB', 'price_key': 'BNB'},
+                'POLYGON': {'rpc_key': 'polygon_rpc', 'native': 'MATIC', 'price_key': 'MATIC'},
+                'ARBITRUM': {'rpc_key': 'arbitrum_rpc', 'native': 'ETH', 'price_key': 'ETH'},
+                'BASE': {'rpc_key': 'base_rpc', 'native': 'ETH', 'price_key': 'ETH_BASE'},
+            }
+
+            # Get wallet address from config
+            wallet_address = None
+            if self.engine and hasattr(self.engine, 'config'):
+                wallet_address = self.engine.config.get('wallet_address')
+            if not wallet_address:
+                wallet_address = os.getenv('WALLET_ADDRESS')
+
+            for chain, config in chains_config.items():
+                try:
+                    native_balance = 0.0
+                    usd_balance = 0.0
+
+                    # Try to get real on-chain balance
+                    if self.engine and wallet_address:
+                        try:
+                            native_balance = await self.engine._get_chain_balance(chain.lower())
+                        except Exception as e:
+                            logger.debug(f"Could not get {chain} balance: {e}")
+                            native_balance = 0.0
+
+                    # Calculate USD value
+                    price = prices.get(config['price_key'], 0)
+                    usd_balance = native_balance * price
+
+                    balances[chain] = {
+                        'balance': float(usd_balance),
+                        'native_balance': float(native_balance),
+                        'native_symbol': config['native'],
+                        'pnl': 0.0,
+                        'pnl_pct': 0.0,
+                        'positions': 0
+                    }
+                    total_value += usd_balance
+
+                except Exception as e:
+                    logger.debug(f"Error getting {chain} balance: {e}")
+                    balances[chain] = {
+                        'balance': 0.0,
+                        'native_balance': 0.0,
+                        'native_symbol': config.get('native', '?'),
+                        'pnl': 0.0,
+                        'pnl_pct': 0.0,
+                        'positions': 0
+                    }
+
+            # ========== SOLANA WALLET BALANCE ==========
+            try:
+                sol_balance = 0.0
+                if self.engine and hasattr(self.engine, 'solana_executor') and self.engine.solana_executor:
+                    try:
+                        sol_balance = await self.engine.solana_executor.get_balance()
+                    except Exception as e:
+                        logger.debug(f"Could not get Solana balance from executor: {e}")
+
+                # Fallback: try direct RPC call
+                if sol_balance == 0:
+                    solana_wallet = os.getenv('SOLANA_WALLET_ADDRESS') or os.getenv('SOLANA_PUBLIC_KEY')
+                    if solana_wallet:
+                        try:
+                            import aiohttp
+                            solana_rpc = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
+                            async with aiohttp.ClientSession() as session:
+                                payload = {
+                                    "jsonrpc": "2.0",
+                                    "id": 1,
+                                    "method": "getBalance",
+                                    "params": [solana_wallet]
+                                }
+                                async with session.post(solana_rpc, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                                    if resp.status == 200:
+                                        data = await resp.json()
+                                        lamports = data.get('result', {}).get('value', 0)
+                                        sol_balance = lamports / 1e9  # Convert lamports to SOL
+                        except Exception as e:
+                            logger.debug(f"Could not get Solana balance via RPC: {e}")
+
+                sol_usd = sol_balance * prices['SOL']
+                balances['SOLANA'] = {
+                    'balance': float(sol_usd),
+                    'native_balance': float(sol_balance),
+                    'native_symbol': 'SOL',
+                    'pnl': 0.0,
+                    'pnl_pct': 0.0,
+                    'positions': 0
+                }
+                total_value += sol_usd
+
+            except Exception as e:
+                logger.debug(f"Error getting Solana balance: {e}")
+                balances['SOLANA'] = {
+                    'balance': 0.0,
+                    'native_balance': 0.0,
+                    'native_symbol': 'SOL',
+                    'pnl': 0.0,
+                    'pnl_pct': 0.0,
+                    'positions': 0
+                }
+
+            # ========== FUTURES EXCHANGE BALANCE ==========
+            try:
+                futures_balance = 0.0
+                futures_margin = 0.0
+                futures_pnl = 0.0
+                futures_available = 0.0
+
+                # Try to get from Binance API
+                binance_key = os.getenv('BINANCE_API_KEY')
+                binance_secret = os.getenv('BINANCE_API_SECRET')
+
+                if binance_key and binance_secret:
+                    try:
+                        import aiohttp
+                        import hmac
+                        import hashlib
+                        import time
+
+                        timestamp = int(time.time() * 1000)
+                        query_string = f"timestamp={timestamp}"
+                        signature = hmac.new(
+                            binance_secret.encode('utf-8'),
+                            query_string.encode('utf-8'),
+                            hashlib.sha256
+                        ).hexdigest()
+
+                        url = f"https://fapi.binance.com/fapi/v2/balance?{query_string}&signature={signature}"
+                        headers = {'X-MBX-APIKEY': binance_key}
+
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                                if resp.status == 200:
+                                    data = await resp.json()
+                                    for asset in data:
+                                        if asset.get('asset') == 'USDT':
+                                            futures_balance = float(asset.get('balance', 0))
+                                            futures_available = float(asset.get('availableBalance', 0))
+                                            futures_pnl = float(asset.get('crossUnPnl', 0))
+                                            futures_margin = futures_balance - futures_available
+                                            break
+                    except Exception as e:
+                        logger.debug(f"Could not get Binance futures balance: {e}")
+
+                balances['FUTURES'] = {
+                    'total_balance': float(futures_balance),
+                    'margin_used': float(futures_margin),
+                    'unrealized_pnl': float(futures_pnl),
+                    'available': float(futures_available),
+                    'balance': float(futures_balance),  # For compatibility
+                    'pnl': float(futures_pnl),
+                    'positions': 0
+                }
+                total_value += futures_balance
+
+            except Exception as e:
+                logger.debug(f"Error getting futures balance: {e}")
+                balances['FUTURES'] = {
+                    'total_balance': 0.0,
+                    'margin_used': 0.0,
+                    'unrealized_pnl': 0.0,
+                    'available': 0.0,
+                    'balance': 0.0,
+                    'pnl': 0.0,
+                    'positions': 0
+                }
+
+            # ========== ADD POSITION COUNTS ==========
             if self.engine and self.engine.active_positions:
-                # Aggregate positions by chain
-                positions_by_chain = {}
                 for pos_id, position in self.engine.active_positions.items():
                     chain = position.get('chain', 'unknown').upper()
-                    if chain not in positions_by_chain:
-                        positions_by_chain[chain] = []
-                    positions_by_chain[chain].append(position)
-                
-                # Calculate metrics for each chain
-                for chain, positions in positions_by_chain.items():
-                    chain_value = 0
-                    chain_cost = 0
-                    
-                    for pos in positions:
-                        # Use correct field names from engine.py
-                        entry_price = float(pos.get('entry_price', 0))
-                        current_price = float(pos.get('current_price', entry_price))
-                        # Field is 'amount', not 'position_size'
-                        amount = float(pos.get('amount', 0))
-                        
-                        pos_cost = entry_price * amount
-                        pos_value = current_price * amount
-                        
-                        chain_value += pos_value
-                        chain_cost += pos_cost
-                    
-                    chain_pnl = chain_value - chain_cost
-                    chain_pnl_pct = (chain_pnl / chain_cost * 100) if chain_cost > 0 else 0
-                    
-                    balances[chain] = {
-                        'balance': float(chain_value),
-                        'pnl': float(chain_pnl),
-                        'pnl_pct': float(chain_pnl_pct),
-                        'positions': len(positions),
-                        'available': float(chain_value),
-                        'locked': 0.0
-                    }
-                    
-                    total_value += chain_value
-                    total_pnl += chain_pnl
-                
-                # Calculate overall stats
-                overall_pnl_pct = (total_pnl / (total_value - total_pnl) * 100) if (total_value - total_pnl) > 0 else 0
-                
-                # Add overall total
-                balances['TOTAL'] = {
-                    'balance': float(total_value),
-                    'pnl': float(total_pnl),
-                    'pnl_pct': float(overall_pnl_pct),
-                    'positions': len(self.engine.active_positions)
-                }
-            else:
-                # No positions - show initial balances
-                initial_per_chain = 100.0
-                balances = {
-                    'ETHEREUM': {'balance': initial_per_chain, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
-                    'BSC': {'balance': initial_per_chain, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
-                    'BASE': {'balance': initial_per_chain, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
-                    'SOLANA': {'balance': initial_per_chain, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0},
-                    'TOTAL': {'balance': 400.0, 'pnl': 0.0, 'pnl_pct': 0.0, 'positions': 0}
-                }
-            
+                    if chain in balances:
+                        balances[chain]['positions'] = balances[chain].get('positions', 0) + 1
+
+            # ========== TOTAL ==========
+            balances['TOTAL'] = {
+                'balance': float(total_value),
+                'pnl': 0.0,
+                'pnl_pct': 0.0,
+                'positions': len(self.engine.active_positions) if self.engine and self.engine.active_positions else 0
+            }
+
             return web.json_response({
                 'status': 'success',
                 'balances': balances,
                 'timestamp': datetime.now().isoformat()
             })
-            
+
         except Exception as e:
             logger.error(f"Error getting wallet balances: {e}", exc_info=True)
             return web.json_response({
