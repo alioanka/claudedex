@@ -2,7 +2,7 @@
 
 {% block title %}Settings - Module Control{% endblock %}
 
-{% block extra_head %}
+{% block extra_css %}
 <style>
     .settings-container {
         padding: 20px;
@@ -17,12 +17,19 @@
     .settings-title {
         font-size: 2rem;
         font-weight: 700;
-        color: var(--text-primary);
+        color: #e8eaed;
         margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .settings-title i {
+        color: #3b82f6;
     }
 
     .settings-subtitle {
-        color: var(--text-secondary);
+        color: #9aa0a6;
         font-size: 1rem;
     }
 
@@ -32,17 +39,19 @@
         gap: 24px;
     }
 
+    /* Dark Blue Card Background */
     .module-control-card {
-        background: var(--bg-secondary);
-        border: 2px solid var(--border-color);
+        background: #1a1f2e;
+        border: 2px solid #2d3548;
         border-radius: 12px;
         padding: 24px;
         transition: all 0.3s;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
     }
 
     .module-control-card:hover {
         transform: translateY(-4px);
-        box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+        box-shadow: 0 8px 20px rgba(0,0,0,0.4);
     }
 
     .module-control-card.running {
@@ -51,7 +60,7 @@
 
     .module-control-card.disabled {
         border-color: #6b7280;
-        opacity: 0.7;
+        opacity: 0.8;
     }
 
     .module-header {
@@ -59,61 +68,79 @@
         justify-content: space-between;
         align-items: center;
         margin-bottom: 20px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid #2d3548;
     }
 
     .module-name {
         font-size: 1.5rem;
         font-weight: 700;
-        color: var(--text-primary);
+        color: #e8eaed;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .module-name i {
+        color: #3b82f6;
     }
 
     .module-status-badge {
-        padding: 6px 12px;
+        padding: 6px 14px;
         border-radius: 20px;
         font-size: 0.75rem;
         font-weight: 600;
         text-transform: uppercase;
+        letter-spacing: 0.5px;
     }
 
+    /* Status badges - Dark theme compatible */
     .status-running {
-        background: #d1fae5;
-        color: #065f46;
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
     }
 
     .status-paused {
-        background: #fef3c7;
-        color: #92400e;
+        background: rgba(245, 158, 11, 0.2);
+        color: #f59e0b;
     }
 
     .status-stopped {
-        background: #fee2e2;
-        color: #991b1b;
+        background: rgba(239, 68, 68, 0.2);
+        color: #ef4444;
     }
 
     .status-disabled {
-        background: #e5e7eb;
-        color: #374151;
+        background: rgba(107, 114, 128, 0.2);
+        color: #9aa0a6;
     }
 
     .module-info {
         margin-bottom: 20px;
+        background: #242b3d;
+        border-radius: 8px;
+        padding: 12px;
     }
 
     .info-item {
         display: flex;
         justify-content: space-between;
-        padding: 8px 0;
-        border-bottom: 1px solid var(--border-color);
+        padding: 10px 0;
+        border-bottom: 1px solid #2d3548;
+    }
+
+    .info-item:last-child {
+        border-bottom: none;
     }
 
     .info-label {
-        color: var(--text-secondary);
+        color: #9aa0a6;
         font-size: 0.875rem;
         font-weight: 500;
     }
 
     .info-value {
-        color: var(--text-primary);
+        color: #e8eaed;
         font-weight: 600;
     }
 
@@ -123,11 +150,13 @@
         gap: 12px;
     }
 
+    /* Control Buttons - FIXED with explicit colors */
     .control-btn {
-        padding: 10px 16px;
+        padding: 12px 16px;
         border: none;
         border-radius: 8px;
         font-weight: 600;
+        font-size: 0.9rem;
         cursor: pointer;
         transition: all 0.3s;
         display: flex;
@@ -138,50 +167,50 @@
 
     .control-btn:hover:not(:disabled) {
         transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     }
 
     .control-btn:disabled {
-        opacity: 0.5;
+        opacity: 0.4;
         cursor: not-allowed;
     }
 
     .btn-enable {
-        background: #10b981;
-        color: white;
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+        color: #ffffff !important;
     }
 
     .btn-disable {
-        background: #ef4444;
-        color: white;
+        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
+        color: #ffffff !important;
     }
 
     .btn-pause {
-        background: #f59e0b;
-        color: white;
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important;
+        color: #ffffff !important;
     }
 
     .btn-start {
-        background: #3b82f6;
-        color: white;
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
+        color: #ffffff !important;
     }
 
     .toast {
         position: fixed;
         top: 80px;
         right: 20px;
-        background: var(--bg-secondary);
-        border: 1px solid var(--border-color);
+        background: #1a1f2e;
+        border: 1px solid #2d3548;
         border-radius: 8px;
         padding: 16px 20px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.4);
         z-index: 9999;
         display: flex;
         align-items: center;
         gap: 12px;
         min-width: 300px;
         animation: slideIn 0.3s ease-out;
-        color: var(--text-primary);
+        color: #e8eaed;
     }
 
     @keyframes slideIn {
@@ -203,25 +232,15 @@
         border-left: 4px solid #ef4444;
     }
 
-    /* Dark mode compatible status badges */
-    .theme-dark .status-running {
-        background: rgba(16, 185, 129, 0.2);
-        color: #10b981;
-    }
+    /* Responsive */
+    @media (max-width: 768px) {
+        .module-control-grid {
+            grid-template-columns: 1fr;
+        }
 
-    .theme-dark .status-stopped {
-        background: rgba(239, 68, 68, 0.2);
-        color: #ef4444;
-    }
-
-    .theme-dark .status-disabled {
-        background: rgba(107, 114, 128, 0.2);
-        color: var(--text-secondary);
-    }
-
-    .theme-dark .status-paused {
-        background: rgba(245, 158, 11, 0.2);
-        color: #f59e0b;
+        .control-buttons {
+            grid-template-columns: 1fr;
+        }
     }
 </style>
 {% endblock %}

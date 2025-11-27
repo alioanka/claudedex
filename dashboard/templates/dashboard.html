@@ -54,6 +54,27 @@
     </div>
 </div>
 
+<!-- Trading Block Status -->
+<div class="card" id="blockStatusCard" style="margin-bottom: 20px;">
+    <div class="card-header">
+        <h3 class="card-title">
+            <i class="fas fa-shield-alt"></i>
+            Trading Status
+        </h3>
+        <div class="card-actions">
+            <button class="btn btn-sm btn-secondary" onclick="refreshBlockStatus()">
+                <i class="fas fa-sync"></i> Refresh
+            </button>
+        </div>
+    </div>
+    <div class="card-body">
+        <div id="blockStatusContent">
+            <div class="text-center text-muted">
+                <i class="fas fa-spinner fa-spin"></i> Loading status...
+            </div>
+        </div>
+    </div>
+</div>
 
 <!-- Multi-Wallet Balances -->
 <div class="card">
@@ -453,11 +474,351 @@
     font-size: 0.75rem;
     color: var(--text-muted);
 }
+
+/* Block Status Styles */
+.block-status-container {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.block-status-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px;
+    border-radius: 8px;
+    background: var(--bg-tertiary);
+}
+
+.block-status-header.can-trade {
+    border-left: 4px solid #10b981;
+}
+
+.block-status-header.blocked {
+    border-left: 4px solid #ef4444;
+}
+
+.status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.status-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+}
+
+.status-icon.success {
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+}
+
+.status-icon.danger {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+
+.status-text {
+    display: flex;
+    flex-direction: column;
+}
+
+.status-label {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.status-value {
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.status-value.success {
+    color: #10b981;
+}
+
+.status-value.danger {
+    color: #ef4444;
+}
+
+.block-reasons {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 8px;
+    padding: 16px;
+}
+
+.block-reasons-title {
+    font-weight: 600;
+    color: #ef4444;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.block-reasons-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.block-reasons-list li {
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(239, 68, 68, 0.2);
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.block-reasons-list li:last-child {
+    border-bottom: none;
+}
+
+.block-reasons-list li i {
+    color: #ef4444;
+}
+
+.block-details {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+    margin-top: 16px;
+    padding: 16px;
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+}
+
+.block-detail-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+}
+
+.block-detail-label {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+.block-detail-value {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.reset-block-btn {
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    color: #ffffff;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.3s;
+}
+
+.reset-block-btn:hover {
+    background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+}
+
+.reset-block-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
 </style>
 {% endblock %}
 
 {% block extra_js %}
 <script>
+// ========================================
+// BLOCK STATUS MANAGEMENT
+// ========================================
+
+async function loadBlockStatus() {
+    try {
+        const response = await fetch('/api/portfolio/block-status');
+        const data = await response.json();
+
+        if (data.success) {
+            renderBlockStatus(data.data);
+        } else {
+            document.getElementById('blockStatusContent').innerHTML = `
+                <div class="text-center text-danger">
+                    <i class="fas fa-exclamation-triangle"></i> Failed to load status: ${data.error}
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('Error loading block status:', error);
+        document.getElementById('blockStatusContent').innerHTML = `
+            <div class="text-center text-muted">
+                <i class="fas fa-info-circle"></i> Block status unavailable (API not connected)
+            </div>
+        `;
+    }
+}
+
+function renderBlockStatus(data) {
+    const container = document.getElementById('blockStatusContent');
+    const canTrade = data.can_trade;
+    const reasons = data.reasons || [];
+
+    let html = '<div class="block-status-container">';
+
+    // Status Header
+    html += `
+        <div class="block-status-header ${canTrade ? 'can-trade' : 'blocked'}">
+            <div class="status-indicator">
+                <div class="status-icon ${canTrade ? 'success' : 'danger'}">
+                    <i class="fas fa-${canTrade ? 'check' : 'ban'}"></i>
+                </div>
+                <div class="status-text">
+                    <span class="status-label">Trading Status</span>
+                    <span class="status-value ${canTrade ? 'success' : 'danger'}">
+                        ${canTrade ? 'Active - Can Trade' : 'Blocked - Cannot Trade'}
+                    </span>
+                </div>
+            </div>
+            ${!canTrade ? `
+                <button class="reset-block-btn" onclick="resetTradingBlock()">
+                    <i class="fas fa-unlock"></i>
+                    Reset Block
+                </button>
+            ` : ''}
+        </div>
+    `;
+
+    // Block Reasons (if blocked)
+    if (!canTrade && reasons.length > 0) {
+        html += `
+            <div class="block-reasons">
+                <div class="block-reasons-title">
+                    <i class="fas fa-exclamation-circle"></i>
+                    Blocking Reasons
+                </div>
+                <ul class="block-reasons-list">
+                    ${reasons.map(reason => `
+                        <li>
+                            <i class="fas fa-times-circle"></i>
+                            ${reason}
+                        </li>
+                    `).join('')}
+                </ul>
+            </div>
+        `;
+    }
+
+    // Details Grid
+    html += `
+        <div class="block-details">
+            <div class="block-detail-item">
+                <span class="block-detail-label">Balance</span>
+                <span class="block-detail-value">$${(data.balance || 0).toFixed(2)}</span>
+            </div>
+            <div class="block-detail-item">
+                <span class="block-detail-label">Available</span>
+                <span class="block-detail-value">$${(data.available_balance || 0).toFixed(2)}</span>
+            </div>
+            <div class="block-detail-item">
+                <span class="block-detail-label">Min Position</span>
+                <span class="block-detail-value">$${(data.min_position_size || 5).toFixed(2)}</span>
+            </div>
+            <div class="block-detail-item">
+                <span class="block-detail-label">Positions</span>
+                <span class="block-detail-value">${data.positions_count || 0} / ${data.max_positions || 10}</span>
+            </div>
+            <div class="block-detail-item">
+                <span class="block-detail-label">Consecutive Losses</span>
+                <span class="block-detail-value ${(data.consecutive_losses || 0) >= 4 ? 'text-danger' : ''}">${data.consecutive_losses || 0}</span>
+            </div>
+            <div class="block-detail-item">
+                <span class="block-detail-label">Lifetime Blocks</span>
+                <span class="block-detail-value">${data.consecutive_losses_block_count || 0}</span>
+            </div>
+            <div class="block-detail-item">
+                <span class="block-detail-label">Risk Exposure</span>
+                <span class="block-detail-value">${((data.risk_exposure || 0) * 100).toFixed(1)}%</span>
+            </div>
+            <div class="block-detail-item">
+                <span class="block-detail-label">Max Risk</span>
+                <span class="block-detail-value">${((data.max_portfolio_risk || 0.25) * 100).toFixed(0)}%</span>
+            </div>
+        </div>
+    `;
+
+    // Block remaining time if applicable
+    if (data.block_remaining_hours && data.block_remaining_hours > 0) {
+        html += `
+            <div class="block-reasons" style="background: rgba(245, 158, 11, 0.1); border-color: rgba(245, 158, 11, 0.3);">
+                <div class="block-reasons-title" style="color: #f59e0b;">
+                    <i class="fas fa-clock"></i>
+                    Block Duration
+                </div>
+                <p style="margin: 0; color: var(--text-primary);">
+                    Trading blocked for <strong>${data.block_remaining_hours.toFixed(1)} more hours</strong>
+                    ${data.blocked_until ? `(until ${new Date(data.blocked_until).toLocaleTimeString()})` : ''}
+                </p>
+            </div>
+        `;
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+async function resetTradingBlock() {
+    if (!confirm('Are you sure you want to reset the trading block?\n\nThis will:\n- Clear consecutive losses counter\n- Remove any active time-based blocks\n\nNote: If the block is due to low balance, you need to add funds instead.')) {
+        return;
+    }
+
+    const reason = prompt('Enter reason for reset (optional):', 'Manual reset via dashboard');
+    if (reason === null) return; // User cancelled
+
+    try {
+        showToast('info', 'Resetting trading block...');
+
+        const response = await fetch('/api/portfolio/reset-block', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ reason: reason || 'Manual reset via dashboard' })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showToast('success', data.message || 'Trading block reset successfully');
+            // Reload block status
+            setTimeout(loadBlockStatus, 500);
+        } else {
+            showToast('error', data.error || 'Failed to reset block');
+        }
+    } catch (error) {
+        console.error('Error resetting block:', error);
+        showToast('error', 'Failed to reset block: ' + error.message);
+    }
+}
+
+function refreshBlockStatus() {
+    const content = document.getElementById('blockStatusContent');
+    content.innerHTML = '<div class="text-center text-muted"><i class="fas fa-spinner fa-spin"></i> Refreshing...</div>';
+    loadBlockStatus();
+}
+
 // Dashboard-specific JavaScript
 async function refreshDashboard() {
     showToast('info', 'Refreshing dashboard...');
@@ -985,6 +1346,7 @@ document.addEventListener('DOMContentLoaded', function() {
     loadPositions();
     loadOrders();
     loadInsights();  // ✅ Load performance insights
+    loadBlockStatus();  // ✅ Load trading block status
 
     // Add timeframe change listeners (these will reload specific charts)
     document.getElementById('portfolioTimeframe').addEventListener('change', loadPortfolioChart);
@@ -1012,6 +1374,11 @@ document.addEventListener('DOMContentLoaded', function() {
     // Insights refresh every 30 seconds
     setInterval(async () => {
         await loadInsights();
+    }, 30000);  // 30 seconds
+
+    // Block status refresh every 30 seconds
+    setInterval(async () => {
+        await loadBlockStatus();
     }, 30000);  // 30 seconds
 
     // ✅ DON'T refresh summary stats - they should only be loaded once

@@ -130,7 +130,12 @@ class PortfolioManager:
 
         self.consecutive_losses_blocked_at = None
         self.consecutive_losses_block_count = 0
-        self.last_daily_reset = None
+        self.last_daily_reset = datetime.utcnow()  # Initialize to now
+
+        # Daily loss tracking with release mechanism
+        self.daily_loss_blocked_at = None
+        self.daily_loss_block_duration_hours = config.get('daily_loss_block_duration_hours', 4)  # 4 hour block by default
+        self.today_trade_history = []  # Separate from all-time trade_history
 
         # Correlation tracking
         self.correlation_matrix = pd.DataFrame()
@@ -160,9 +165,9 @@ class PortfolioManager:
                     blocked_until = self.consecutive_losses_blocked_at + block_duration
                     remaining = (blocked_until - datetime.utcnow()).total_seconds() / 3600
                     if remaining > 0:
-                        print(f"🛑 Trading blocked. Remaining: {remaining:.1f}h")
+                        print(f"🛑 BLOCK: Consecutive losses block active. Remaining: {remaining:.1f}h (until {blocked_until.strftime('%H:%M UTC')})")
                         return False
-            
+
             # Check if should start new block
             max_losses = CONSECUTIVE_LOSSES.get('max_consecutive_losses', 6)
             if self.consecutive_losses >= max_losses:
@@ -171,28 +176,142 @@ class PortfolioManager:
                 else:
                     await self._start_consecutive_losses_block()
                     return False
-            
+
             # Check position count
             if len(self.positions) >= self.max_positions:
+                print(f"🛑 BLOCK: Max positions reached ({len(self.positions)}/{self.max_positions})")
                 return False
-                
+
             # Check available balance
-            if self.get_available_balance() < self.min_position_size:
+            available = self.get_available_balance()
+            if available < self.min_position_size:
+                print(f"🛑 BLOCK: Insufficient balance! Available: ${available:.2f}, Min required: ${self.min_position_size:.2f}, Total balance: ${self.balance:.2f}")
                 return False
-                
+
             # Check daily loss limit
             if self._check_daily_loss_limit():
+                daily_pnl = sum(t.get('pnl', 0) for t in self.trade_history if t.get('side') == 'sell')
+                print(f"🛑 BLOCK: Daily loss limit hit! Daily P&L: ${daily_pnl:.2f}, Limit: {self.daily_loss_limit*100:.0f}%")
                 return False
-                
+
             # Check total risk exposure
-            if self._calculate_total_risk() >= self.max_portfolio_risk:
+            current_risk = self._calculate_total_risk()
+            if current_risk >= self.max_portfolio_risk:
+                print(f"🛑 BLOCK: Max portfolio risk reached ({current_risk*100:.1f}% >= {self.max_portfolio_risk*100:.1f}%)")
                 return False
-                
+
             return True
-            
+
         except Exception as e:
             print(f"Position check error: {e}")
             return False
+
+    def get_block_reason(self) -> dict:
+        """Get detailed info about why trading is blocked (for debugging)"""
+        reasons = []
+        details = {
+            'can_trade': True,
+            'reasons': [],
+            'balance': self.balance,
+            'available_balance': self.get_available_balance(),
+            'min_position_size': self.min_position_size,
+            'positions_count': len(self.positions),
+            'max_positions': self.max_positions,
+            'consecutive_losses': self.consecutive_losses,
+            'consecutive_losses_blocked_at': str(self.consecutive_losses_blocked_at) if self.consecutive_losses_blocked_at else None,
+            'consecutive_losses_block_count': self.consecutive_losses_block_count,
+            'daily_loss_limit_hit': self._check_daily_loss_limit(),
+            'risk_exposure': self._calculate_total_risk(),
+            'max_portfolio_risk': self.max_portfolio_risk,
+        }
+
+        # Check consecutive losses block
+        if self.consecutive_losses_blocked_at:
+            block_duration = get_block_duration(self.consecutive_losses_block_count)
+            blocked_until = self.consecutive_losses_blocked_at + block_duration
+            remaining = (blocked_until - datetime.utcnow()).total_seconds() / 3600
+            if remaining > 0:
+                reasons.append(f"Consecutive losses block: {remaining:.1f}h remaining until {blocked_until.strftime('%H:%M UTC')}")
+                details['blocked_until'] = str(blocked_until)
+                details['block_remaining_hours'] = remaining
+
+        # Check position count
+        if len(self.positions) >= self.max_positions:
+            reasons.append(f"Max positions reached: {len(self.positions)}/{self.max_positions}")
+
+        # Check available balance
+        available = self.get_available_balance()
+        if available < self.min_position_size:
+            reasons.append(f"Insufficient balance: ${available:.2f} < ${self.min_position_size:.2f} required")
+
+        # Check daily loss limit with duration info
+        if self._check_daily_loss_limit():
+            if self.daily_loss_blocked_at:
+                block_end = self.daily_loss_blocked_at + timedelta(hours=self.daily_loss_block_duration_hours)
+                remaining = (block_end - datetime.utcnow()).total_seconds() / 3600
+                if remaining > 0:
+                    reasons.append(f"Daily loss limit hit: {remaining:.1f}h remaining until {block_end.strftime('%H:%M UTC')}")
+                    details['daily_loss_blocked_at'] = str(self.daily_loss_blocked_at)
+                    details['daily_loss_block_remaining_hours'] = remaining
+                    details['daily_loss_block_end'] = str(block_end)
+                else:
+                    reasons.append("Daily loss limit hit")
+            else:
+                reasons.append("Daily loss limit hit")
+
+        # Check risk exposure
+        if self._calculate_total_risk() >= self.max_portfolio_risk:
+            reasons.append(f"Max portfolio risk: {self._calculate_total_risk()*100:.1f}% >= {self.max_portfolio_risk*100:.1f}%")
+
+        details['reasons'] = reasons
+        details['can_trade'] = len(reasons) == 0
+
+        return details
+
+    async def manual_reset_block(self, reason: str = "Manual reset by user") -> dict:
+        """Manually reset ALL trading blocks (use with caution!)"""
+        try:
+            old_consecutive_losses = self.consecutive_losses
+            old_blocked_at = self.consecutive_losses_blocked_at
+            old_daily_blocked_at = self.daily_loss_blocked_at
+
+            # Reset consecutive losses block
+            self.consecutive_losses = 0
+            self.consecutive_losses_blocked_at = None
+
+            # Reset daily loss block
+            self.daily_loss_blocked_at = None
+            self.today_trade_history = []
+            self.last_daily_reset = datetime.utcnow()
+
+            # Save state
+            await self._save_block_state()
+
+            # Log the reset
+            print(f"⚠️ MANUAL RESET PERFORMED\n"
+                  f"   Reason: {reason}\n"
+                  f"   Previous consecutive_losses: {old_consecutive_losses}\n"
+                  f"   Previous consecutive_losses_blocked_at: {old_blocked_at}\n"
+                  f"   Previous daily_loss_blocked_at: {old_daily_blocked_at}\n"
+                  f"   Lifetime block count: {self.consecutive_losses_block_count}")
+
+            # Send alert if configured
+            if CONSECUTIVE_LOSSES.get('alert_on_reset') and self.alerts:
+                await self._send_reset_alert(old_consecutive_losses, reason)
+
+            return {
+                'success': True,
+                'message': f'Trading block manually reset. Previous consecutive losses: {old_consecutive_losses}',
+                'previous_consecutive_losses': old_consecutive_losses,
+                'previous_blocked_at': str(old_blocked_at) if old_blocked_at else None,
+                'lifetime_block_count': self.consecutive_losses_block_count,
+                'can_trade_now': await self.can_open_position()
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
             
     def get_available_balance(self) -> float:
         """Get available balance for trading (THREAD-SAFE)"""
@@ -452,6 +571,15 @@ class PortfolioManager:
             # Update trade history (use metrics lock)
             async with self.metrics_lock:
                 self.trade_history.append(trade)
+                self.today_trade_history.append(trade)  # Track daily trades for daily loss limit
+
+                # Update consecutive losses tracking
+                if trade.get('pnl', 0) < 0:
+                    self.consecutive_losses += 1
+                    print(f"📉 Consecutive losses: {self.consecutive_losses}")
+                else:
+                    self.consecutive_losses = 0
+                    print(f"📈 Win! Consecutive losses reset to 0")
 
             # Update performance metrics
             await self._update_performance_metrics()
@@ -850,12 +978,15 @@ class PortfolioManager:
             # Update trade history (use metrics lock)
             async with self.metrics_lock:
                 self.trade_history.append(trade)
+                self.today_trade_history.append(trade)  # Track daily trades for daily loss limit
 
                 # Update consecutive losses tracking
                 if realized_pnl < 0:
                     self.consecutive_losses += 1
+                    print(f"📉 Consecutive losses: {self.consecutive_losses}")
                 else:
                     self.consecutive_losses = 0
+                    print(f"📈 Win! Consecutive losses reset to 0")
 
             # Save state (outside locks to avoid deadlock)
             await self._save_block_state()
@@ -1026,11 +1157,47 @@ class PortfolioManager:
         return self._calculate_risk_exposure()
 
     def _check_daily_loss_limit(self) -> bool:
-        """Check if daily loss limit has been hit"""
-        # Simplified check
-        daily_pnl = sum(t.get('pnl', 0) for t in self.trade_history if t.get('side') == 'sell')
+        """Check if daily loss limit has been hit with auto-reset at midnight"""
+        # Auto-reset at midnight UTC
+        self._check_daily_reset()
+
+        # Check if daily loss block is active but expired
+        if self.daily_loss_blocked_at:
+            block_end = self.daily_loss_blocked_at + timedelta(hours=self.daily_loss_block_duration_hours)
+            if datetime.utcnow() >= block_end:
+                # Block expired, reset it
+                print(f"✅ Daily loss block expired after {self.daily_loss_block_duration_hours}h - resuming trading")
+                self.daily_loss_blocked_at = None
+                self.today_trade_history = []  # Reset today's trades after block expires
+                return False
+            else:
+                # Still blocked
+                return True
+
+        # Calculate today's P&L from today's trades only
+        daily_pnl = sum(t.get('pnl', 0) for t in self.today_trade_history if t.get('side') == 'sell')
         daily_loss = abs(daily_pnl) if daily_pnl < 0 else 0
-        return daily_loss > (self.balance * self.daily_loss_limit)
+
+        # Check if limit exceeded
+        if daily_loss > (self.balance * self.daily_loss_limit):
+            if not self.daily_loss_blocked_at:
+                # Start the block
+                self.daily_loss_blocked_at = datetime.utcnow()
+                print(f"🛑 Daily loss limit triggered! Loss: ${daily_loss:.2f}, Blocked for {self.daily_loss_block_duration_hours}h")
+            return True
+
+        return False
+
+    def _check_daily_reset(self):
+        """Reset daily metrics at midnight UTC"""
+        now = datetime.utcnow()
+        if self.last_daily_reset:
+            # Check if we've crossed midnight
+            if now.date() > self.last_daily_reset.date():
+                print(f"🌅 New day detected - resetting daily metrics")
+                self.today_trade_history = []
+                self.daily_loss_blocked_at = None  # Reset daily loss block at midnight
+                self.last_daily_reset = now
 
     async def _update_performance_metrics(self):
         """Update performance tracking metrics"""
@@ -1048,11 +1215,43 @@ class PortfolioManager:
         except Exception as e:
             print(f"Error updating performance metrics: {e}")
 
+    def get_statistics(self) -> Dict:
+        """Get trading statistics from trade history"""
+        try:
+            # Count trades
+            sell_trades = [t for t in self.trade_history if t.get('side') == 'sell']
+            total_trades = len(sell_trades)
+            winning_trades = sum(1 for t in sell_trades if t.get('pnl', 0) > 0)
+            losing_trades = sum(1 for t in sell_trades if t.get('pnl', 0) < 0)
+
+            return {
+                'total_trades': total_trades,
+                'winning_trades': winning_trades,
+                'losing_trades': losing_trades,
+                'win_rate': winning_trades / total_trades if total_trades > 0 else 0,
+                'consecutive_losses': self.consecutive_losses,
+                'current_balance': self.balance,
+                'initial_balance': self.initial_balance,
+                'total_pnl': self.balance - self.initial_balance
+            }
+        except Exception as e:
+            print(f"Error getting statistics: {e}")
+            return {
+                'total_trades': 0,
+                'winning_trades': 0,
+                'losing_trades': 0,
+                'win_rate': 0,
+                'consecutive_losses': 0,
+                'current_balance': self.balance,
+                'initial_balance': self.initial_balance,
+                'total_pnl': 0
+            }
+
     def log_current_performance(self):
         """Log current portfolio performance"""
         try:
             stats = self.get_statistics()
-            
+
             log_portfolio_update(
                 balance_before=float(self.initial_balance),
                 balance_after=float(self.balance),
@@ -1062,7 +1261,7 @@ class PortfolioManager:
                 total_pnl=float(self.balance - self.initial_balance)
             )
         except Exception as e:
-            logger.warning(f"Failed to log portfolio update: {e}")
+            print(f"Failed to log portfolio update: {e}")
 
 
     async def load_block_state(self):
@@ -1158,13 +1357,23 @@ class PortfolioManager:
         try:
             hours = block_duration.total_seconds() / 3600
             message = (
-                f"🛑 <b>Consecutive Losses Block</b>\n\n"
+                f"🛑 Consecutive Losses Block\n\n"
                 f"Losses: {self.consecutive_losses}\n"
                 f"Duration: {hours:.1f} hours\n"
                 f"Until: {blocked_until.strftime('%H:%M UTC')}\n"
                 f"Blocks: {self.consecutive_losses_block_count}"
             )
-            await self.alerts.send_alert(message, priority='high')
+            # AlertManager.send_alert signature: (alert_type: str, message: str, data: Dict)
+            await self.alerts.send_alert(
+                alert_type='CONSECUTIVE_LOSS',
+                message=message,
+                data={
+                    'consecutive_losses': self.consecutive_losses,
+                    'block_duration_hours': hours,
+                    'blocked_until': blocked_until.isoformat(),
+                    'lifetime_blocks': self.consecutive_losses_block_count
+                }
+            )
         except Exception as e:
             print(f"Error sending block alert: {e}")
 
@@ -1172,11 +1381,20 @@ class PortfolioManager:
         """Send telegram alert when reset occurs"""
         try:
             message = (
-                f"✅ <b>Consecutive Losses Reset</b>\n\n"
+                f"✅ Consecutive Losses Reset\n\n"
                 f"Reason: {reason}\n"
                 f"Previous: {old_count}\n"
                 f"Blocks: {self.consecutive_losses_block_count}"
             )
-            await self.alerts.send_alert(message, priority='medium')
+            # AlertManager.send_alert signature: (alert_type: str, message: str, data: Dict)
+            await self.alerts.send_alert(
+                alert_type='SYSTEM',
+                message=message,
+                data={
+                    'reason': reason,
+                    'previous_losses': old_count,
+                    'lifetime_blocks': self.consecutive_losses_block_count
+                }
+            )
         except Exception as e:
             print(f"Error sending reset alert: {e}")

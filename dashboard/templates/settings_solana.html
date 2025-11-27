@@ -2,7 +2,7 @@
 
 {% block title %}Solana Trading Settings{% endblock %}
 
-{% block extra_head %}
+{% block extra_css %}
 <style>
     .settings-container {
         padding: 20px;
@@ -16,13 +16,13 @@
         align-items: center;
         margin-bottom: 30px;
         padding-bottom: 20px;
-        border-bottom: 2px solid var(--border-color);
+        border-bottom: 2px solid #2d3548;
     }
 
     .settings-title {
         font-size: 2rem;
         font-weight: 700;
-        color: var(--text-primary);
+        color: #e8eaed;
         display: flex;
         align-items: center;
         gap: 12px;
@@ -32,12 +32,14 @@
         color: #14f195;
     }
 
+    /* Dark Blue Section Cards */
     .settings-section {
-        background: var(--bg-secondary);
-        border: 1px solid var(--border-color);
+        background: #1a1f2e;
+        border: 1px solid #2d3548;
         border-radius: 12px;
         padding: 24px;
         margin-bottom: 24px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
     }
 
     .section-header {
@@ -46,16 +48,20 @@
         align-items: center;
         margin-bottom: 20px;
         padding-bottom: 16px;
-        border-bottom: 1px solid var(--border-color);
+        border-bottom: 1px solid #2d3548;
     }
 
     .section-title {
         font-size: 1.25rem;
         font-weight: 600;
-        color: var(--text-primary);
+        color: #e8eaed;
         display: flex;
         align-items: center;
         gap: 10px;
+    }
+
+    .section-title i {
+        color: #14f195;
     }
 
     .setting-grid {
@@ -64,17 +70,18 @@
         gap: 20px;
     }
 
+    /* Setting Items - Darker Blue */
     .setting-item {
-        background: var(--bg-tertiary);
-        padding: 16px;
-        border-radius: 8px;
-        border: 1px solid var(--border-color);
+        background: #242b3d;
+        padding: 18px;
+        border-radius: 10px;
+        border: 1px solid #2d3548;
     }
 
     .setting-label {
-        font-size: 0.875rem;
+        font-size: 0.9rem;
         font-weight: 600;
-        color: var(--text-primary);
+        color: #e8eaed;
         margin-bottom: 8px;
         display: flex;
         align-items: center;
@@ -82,48 +89,56 @@
     }
 
     .setting-description {
-        font-size: 0.75rem;
-        color: var(--text-muted);
+        font-size: 0.8rem;
+        color: #9aa0a6;
         margin-bottom: 12px;
+        line-height: 1.4;
     }
 
     .setting-input {
         width: 100%;
-        padding: 10px 12px;
-        background: var(--bg-secondary);
-        border: 1px solid var(--border-color);
-        border-radius: 6px;
-        color: var(--text-primary);
-        font-size: 0.875rem;
+        padding: 12px 14px;
+        background: #1a1f2e;
+        border: 1px solid #2d3548;
+        border-radius: 8px;
+        color: #e8eaed;
+        font-size: 0.9rem;
     }
 
     .setting-input:focus {
         outline: none;
         border-color: #14f195;
+        box-shadow: 0 0 0 3px rgba(20, 241, 149, 0.2);
     }
 
     .setting-select {
         width: 100%;
-        padding: 10px 12px;
-        background: var(--bg-secondary);
-        border: 1px solid var(--border-color);
-        border-radius: 6px;
-        color: var(--text-primary);
-        font-size: 0.875rem;
+        padding: 12px 14px;
+        background: #1a1f2e;
+        border: 1px solid #2d3548;
+        border-radius: 8px;
+        color: #e8eaed;
+        font-size: 0.9rem;
         cursor: pointer;
+    }
+
+    .setting-select:focus {
+        outline: none;
+        border-color: #14f195;
     }
 
     .toggle-switch {
         display: flex;
         align-items: center;
         gap: 12px;
+        color: #9aa0a6;
     }
 
     .toggle-switch input[type="checkbox"] {
         width: 48px;
         height: 24px;
         appearance: none;
-        background: var(--bg-tertiary);
+        background: #2d3548;
         border-radius: 12px;
         position: relative;
         cursor: pointer;
@@ -150,9 +165,10 @@
         left: 26px;
     }
 
+    /* Buttons - Gradient Styling */
     .btn-save {
-        background: #14f195;
-        color: #000;
+        background: linear-gradient(135deg, #14f195 0%, #0dd884 100%);
+        color: #000000;
         padding: 12px 24px;
         border: none;
         border-radius: 8px;
@@ -162,15 +178,16 @@
     }
 
     .btn-save:hover {
-        background: #0dd884;
+        background: linear-gradient(135deg, #0dd884 0%, #0ac076 100%);
         transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(20, 241, 149, 0.4);
     }
 
     .btn-reset {
-        background: var(--bg-tertiary);
-        color: var(--text-primary);
+        background: #242b3d;
+        color: #e8eaed;
         padding: 12px 24px;
-        border: 1px solid var(--border-color);
+        border: 1px solid #2d3548;
         border-radius: 8px;
         font-weight: 600;
         cursor: pointer;
@@ -178,13 +195,14 @@
     }
 
     .btn-reset:hover {
-        background: var(--bg-hover);
+        background: #2d3548;
+        border-color: #3d4a5c;
     }
 
     .warning-box {
-        background: rgba(245, 158, 11, 0.1);
-        border: 1px solid rgba(245, 158, 11, 0.3);
-        border-radius: 8px;
+        background: rgba(245, 158, 11, 0.15);
+        border: 1px solid rgba(245, 158, 11, 0.4);
+        border-radius: 10px;
         padding: 16px;
         color: #f59e0b;
         font-size: 0.875rem;
@@ -195,9 +213,9 @@
     }
 
     .info-box {
-        background: rgba(20, 241, 149, 0.1);
-        border: 1px solid rgba(20, 241, 149, 0.3);
-        border-radius: 8px;
+        background: rgba(20, 241, 149, 0.15);
+        border: 1px solid rgba(20, 241, 149, 0.4);
+        border-radius: 10px;
         padding: 16px;
         color: #14f195;
         font-size: 0.875rem;
@@ -208,10 +226,12 @@
     }
 
     .status-badge {
-        padding: 4px 12px;
+        padding: 6px 14px;
         border-radius: 20px;
         font-size: 0.75rem;
         font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
     }
 
     .status-enabled {
@@ -221,15 +241,21 @@
 
     .status-disabled {
         background: rgba(107, 114, 128, 0.2);
-        color: var(--text-muted);
+        color: #9aa0a6;
     }
 
+    /* Strategy Cards */
     .strategy-card {
-        background: var(--bg-tertiary);
-        border: 2px solid var(--border-color);
-        border-radius: 10px;
+        background: #242b3d;
+        border: 2px solid #2d3548;
+        border-radius: 12px;
         padding: 20px;
         margin-bottom: 16px;
+        transition: all 0.3s;
+    }
+
+    .strategy-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     }
 
     .strategy-card.enabled {
@@ -241,23 +267,40 @@
         justify-content: space-between;
         align-items: center;
         margin-bottom: 16px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid #2d3548;
     }
 
     .strategy-name {
         font-size: 1.1rem;
         font-weight: 700;
-        color: var(--text-primary);
+        color: #e8eaed;
         display: flex;
         align-items: center;
         gap: 10px;
     }
 
     .strategy-badge {
-        font-size: 0.65rem;
-        padding: 2px 8px;
-        border-radius: 4px;
+        font-size: 0.7rem;
+        padding: 4px 10px;
+        border-radius: 6px;
         background: rgba(20, 241, 149, 0.2);
         color: #14f195;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .settings-header {
+            flex-direction: column;
+            gap: 16px;
+            align-items: flex-start;
+        }
+
+        .setting-grid {
+            grid-template-columns: 1fr;
+        }
     }
 </style>
 {% endblock %}

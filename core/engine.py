@@ -1066,6 +1066,13 @@ class TradingBotEngine:
                 async with self.positions_lock:
                     self.active_positions[token_address] = position
 
+                # ⚡ CRITICAL: Schedule immediate first check for this position
+                # Don't wait for the monitoring loop - check within 5 seconds
+                asyncio.create_task(
+                    self._immediate_position_check(token_address, token_symbol),
+                    name=f"immediate_check_{token_symbol}"
+                )
+
                 # ✅ NEW: Add to portfolio manager
                 if hasattr(self, 'portfolio_manager') and self.portfolio_manager:
                     try:
@@ -1310,6 +1317,12 @@ class TradingBotEngine:
                 async with self.positions_lock:
                     self.active_positions[opportunity.token_address] = position
 
+                # ⚡ CRITICAL: Schedule immediate first check for this position
+                asyncio.create_task(
+                    self._immediate_position_check(opportunity.token_address, token_symbol),
+                    name=f"immediate_check_{token_symbol}"
+                )
+
                 self.stats['total_trades'] += 1
                 self.stats['successful_trades'] += 1
 
@@ -1517,41 +1530,44 @@ class TradingBotEngine:
 
                 for token_address, position in positions_items:
                     try:
+                        position_symbol = position.get('token_symbol', 'UNKNOWN')
+
                         if token_address in price_data:
                             current_price = price_data[token_address]
-                            
-                            # ✅ FIX: Get token_symbol for THIS position (not reused from outer loop)
-                            position_symbol = position.get('token_symbol', 'UNKNOWN')
-                            
+
+                            # Reset failed price fetch counter on success
+                            position['_price_fetch_failures'] = 0
+                            position['_last_price_update'] = datetime.now()
+
                             from decimal import Decimal
                             position['current_price'] = Decimal(str(current_price))
                             position['current_value'] = Decimal(str(current_price)) * position['amount']
-                            
+
                             # Calculate P&L
                             entry_value = position['entry_price'] * position['amount']
                             current_value = position['current_value']
                             position['pnl'] = current_value - entry_value
                             position['pnl_percentage'] = float((current_value - entry_value) / entry_value * 100)
-                            
+
                             # Calculate holding time
                             holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
-                            
+
                             logger.info(
                                 f"  📈 {position_symbol} - "
                                 f"Entry: ${position['entry_price']:.8f}, Current: ${current_price:.8f}, "
                                 f"P&L: {position['pnl_percentage']:.2f}% (${position['pnl']:.2f}), "
                                 f"Time: {holding_time:.1f}min"
                             )
-                            
+
                             # Check exit conditions
                             should_exit, reason = await self._check_exit_conditions(position)
-                            
+
                             if should_exit:
                                 logger.info(
-                                    f"  🚪 EXIT SIGNAL for {token_symbol}: {reason}",
+                                    f"  🚪 EXIT SIGNAL for {position_symbol}: {reason}",
                                     extra={
                                         'token_address': token_address,
-                                        'symbol': token_symbol,
+                                        'symbol': position_symbol,
                                         'reason': reason
                                     }
                                 )
@@ -1563,16 +1579,44 @@ class TradingBotEngine:
                                         position.get('tracker_id', ''),
                                         {'current_price': current_price}
                                     )
-                        
+                        else:
+                            # ⚠️ CRITICAL: Price fetch failed - track failures for honeypot detection
+                            failures = position.get('_price_fetch_failures', 0) + 1
+                            position['_price_fetch_failures'] = failures
+
+                            holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
+                            last_price_update = position.get('_last_price_update', position['entry_time'])
+                            time_since_price = (datetime.now() - last_price_update).total_seconds() / 60
+
+                            logger.warning(
+                                f"  ⚠️ PRICE FETCH FAILED for {position_symbol} "
+                                f"(failures: {failures}, time since last price: {time_since_price:.1f}min, holding: {holding_time:.1f}min)"
+                            )
+
+                            # EMERGENCY CLOSE: After 3 consecutive price failures OR 5+ minutes without price
+                            # This protects against honeypot tokens that become untradeable
+                            max_price_failures = self.config.get('max_price_failures', 3)
+                            max_time_without_price_mins = self.config.get('max_time_without_price_mins', 5)
+
+                            if failures >= max_price_failures or time_since_price >= max_time_without_price_mins:
+                                logger.error(
+                                    f"  🚨 EMERGENCY CLOSE for {position_symbol} - "
+                                    f"Cannot get price data (possible honeypot/rug). "
+                                    f"Failures: {failures}, Time without price: {time_since_price:.1f}min"
+                                )
+                                # Mark as honeypot for future reference
+                                position['_suspected_honeypot'] = True
+                                position['_honeypot_reason'] = f"Price unavailable after {failures} attempts"
+                                await self._close_position(position, "emergency_no_price")
+
                     except Exception as e:
                         # ✅ FIX: Now all variables are guaranteed to be defined
                         logger.error(
                             f"Error monitoring position {token_address[:10] if token_address else 'unknown'} "
-                            f"({token_symbol or 'UNKNOWN'}): {e}",
+                            f"({position_symbol or 'UNKNOWN'}): {e}",
                             extra={
                                 'token_address': token_address,
-                                'symbol': token_symbol,
-                                'chain': chain,
+                                'symbol': position_symbol,
                                 'error': str(e)
                             },
                             exc_info=True
@@ -1620,8 +1664,28 @@ class TradingBotEngine:
                     except Exception as e:
                         logger.debug(f"Could not log strategy stats: {e}")
 
-                # Get interval from config
-                update_interval = self.config.get('position_update_interval_seconds', 10)
+                # CRITICAL: Use dynamic interval based on position age
+                # New positions need faster monitoring to catch rapid price drops
+                base_interval = self.config.get('position_update_interval_seconds', 10)
+
+                # Check if any position is "new" (less than 5 minutes old)
+                # Note: positions_snapshot here contains just position dicts (values), not (key, value) tuples
+                has_new_positions = False
+                for pos in positions_snapshot:
+                    entry_time = pos.get('entry_time')
+                    if entry_time:
+                        holding_mins = (datetime.now() - entry_time).total_seconds() / 60
+                        if holding_mins < 5:  # Position is less than 5 minutes old
+                            has_new_positions = True
+                            break
+
+                # Use rapid interval (3 sec) for new positions, normal interval (10 sec) otherwise
+                if has_new_positions:
+                    update_interval = 3  # Check every 3 seconds for new positions
+                    logger.debug(f"⚡ Rapid monitoring mode (new positions exist) - next check in {update_interval}s")
+                else:
+                    update_interval = base_interval
+
                 await asyncio.sleep(update_interval)
                 
             except Exception as e:
@@ -1631,6 +1695,85 @@ class TradingBotEngine:
                     exc_info=True
                 )
                 await asyncio.sleep(30)
+
+    async def _immediate_position_check(self, token_address: str, token_symbol: str):
+        """
+        ⚡ CRITICAL: Immediate first check for new positions
+        This runs independently of the main monitoring loop to catch rapid price drops
+        """
+        try:
+            # Wait 5 seconds to allow price data to propagate
+            await asyncio.sleep(5)
+
+            # Check every 5 seconds for the first 3 minutes
+            for check_num in range(36):  # 36 checks x 5 seconds = 3 minutes
+                # Check if position still exists
+                async with self.positions_lock:
+                    if token_address not in self.active_positions:
+                        logger.info(f"⚡ Immediate check: {token_symbol} no longer in active positions")
+                        return
+                    position = self.active_positions[token_address]
+
+                # Get current price
+                chain = position.get('chain', 'ethereum')
+                pair_address = position.get('metadata', {}).get('pair', {}).get('pair_address')
+
+                current_price = None
+                if pair_address:
+                    pair_data = await self.dex_collector.get_pair_data(pair_address=pair_address, chain=chain)
+                    if pair_data and 'price' in pair_data:
+                        current_price = float(pair_data['price'])
+
+                if not current_price:
+                    # Fallback
+                    current_price = await self.dex_collector.get_token_price(token_address=token_address, chain=chain)
+
+                if current_price:
+                    # Calculate P&L
+                    from decimal import Decimal
+                    entry_price = float(position['entry_price'])
+                    pnl_percentage = ((current_price - entry_price) / entry_price) * 100
+
+                    # Check stop loss (immediate trigger if hit)
+                    stop_loss_pct = -position.get('stop_loss_percentage', 0.12) * 100
+
+                    if check_num == 0 or check_num % 6 == 0:  # Log every 30 seconds
+                        logger.info(
+                            f"⚡ Rapid check #{check_num+1} for {token_symbol}: "
+                            f"P&L {pnl_percentage:+.2f}% (stop @ {stop_loss_pct:.0f}%)"
+                        )
+
+                    if pnl_percentage <= stop_loss_pct:
+                        logger.warning(
+                            f"🚨 RAPID STOP LOSS TRIGGERED for {token_symbol}! "
+                            f"P&L: {pnl_percentage:.2f}% at check #{check_num+1}"
+                        )
+                        # Update position with current price before closing
+                        position['current_price'] = Decimal(str(current_price))
+                        position['pnl_percentage'] = pnl_percentage
+                        await self._close_position(position, "stop_loss_rapid")
+                        return
+
+                    # Check take profit too
+                    take_profit_pct = position.get('take_profit_percentage', 0.3) * 100
+                    if pnl_percentage >= take_profit_pct:
+                        logger.info(
+                            f"✅ RAPID TAKE PROFIT for {token_symbol}! "
+                            f"P&L: {pnl_percentage:.2f}% at check #{check_num+1}"
+                        )
+                        position['current_price'] = Decimal(str(current_price))
+                        position['pnl_percentage'] = pnl_percentage
+                        await self._close_position(position, "take_profit_rapid")
+                        return
+                else:
+                    logger.warning(f"⚡ Rapid check #{check_num+1}: Could not get price for {token_symbol}")
+
+                await asyncio.sleep(5)
+
+            logger.info(f"⚡ Rapid monitoring complete for {token_symbol} (position handed to main loop)")
+
+        except Exception as e:
+            logger.error(f"Error in immediate position check for {token_symbol}: {e}", exc_info=True)
 
 
     async def _calculate_position_size(
