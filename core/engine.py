@@ -1517,41 +1517,44 @@ class TradingBotEngine:
 
                 for token_address, position in positions_items:
                     try:
+                        position_symbol = position.get('token_symbol', 'UNKNOWN')
+
                         if token_address in price_data:
                             current_price = price_data[token_address]
-                            
-                            # ✅ FIX: Get token_symbol for THIS position (not reused from outer loop)
-                            position_symbol = position.get('token_symbol', 'UNKNOWN')
-                            
+
+                            # Reset failed price fetch counter on success
+                            position['_price_fetch_failures'] = 0
+                            position['_last_price_update'] = datetime.now()
+
                             from decimal import Decimal
                             position['current_price'] = Decimal(str(current_price))
                             position['current_value'] = Decimal(str(current_price)) * position['amount']
-                            
+
                             # Calculate P&L
                             entry_value = position['entry_price'] * position['amount']
                             current_value = position['current_value']
                             position['pnl'] = current_value - entry_value
                             position['pnl_percentage'] = float((current_value - entry_value) / entry_value * 100)
-                            
+
                             # Calculate holding time
                             holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
-                            
+
                             logger.info(
                                 f"  📈 {position_symbol} - "
                                 f"Entry: ${position['entry_price']:.8f}, Current: ${current_price:.8f}, "
                                 f"P&L: {position['pnl_percentage']:.2f}% (${position['pnl']:.2f}), "
                                 f"Time: {holding_time:.1f}min"
                             )
-                            
+
                             # Check exit conditions
                             should_exit, reason = await self._check_exit_conditions(position)
-                            
+
                             if should_exit:
                                 logger.info(
-                                    f"  🚪 EXIT SIGNAL for {token_symbol}: {reason}",
+                                    f"  🚪 EXIT SIGNAL for {position_symbol}: {reason}",
                                     extra={
                                         'token_address': token_address,
-                                        'symbol': token_symbol,
+                                        'symbol': position_symbol,
                                         'reason': reason
                                     }
                                 )
@@ -1563,16 +1566,44 @@ class TradingBotEngine:
                                         position.get('tracker_id', ''),
                                         {'current_price': current_price}
                                     )
-                        
+                        else:
+                            # ⚠️ CRITICAL: Price fetch failed - track failures for honeypot detection
+                            failures = position.get('_price_fetch_failures', 0) + 1
+                            position['_price_fetch_failures'] = failures
+
+                            holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
+                            last_price_update = position.get('_last_price_update', position['entry_time'])
+                            time_since_price = (datetime.now() - last_price_update).total_seconds() / 60
+
+                            logger.warning(
+                                f"  ⚠️ PRICE FETCH FAILED for {position_symbol} "
+                                f"(failures: {failures}, time since last price: {time_since_price:.1f}min, holding: {holding_time:.1f}min)"
+                            )
+
+                            # EMERGENCY CLOSE: After 3 consecutive price failures OR 5+ minutes without price
+                            # This protects against honeypot tokens that become untradeable
+                            max_price_failures = self.config.get('max_price_failures', 3)
+                            max_time_without_price_mins = self.config.get('max_time_without_price_mins', 5)
+
+                            if failures >= max_price_failures or time_since_price >= max_time_without_price_mins:
+                                logger.error(
+                                    f"  🚨 EMERGENCY CLOSE for {position_symbol} - "
+                                    f"Cannot get price data (possible honeypot/rug). "
+                                    f"Failures: {failures}, Time without price: {time_since_price:.1f}min"
+                                )
+                                # Mark as honeypot for future reference
+                                position['_suspected_honeypot'] = True
+                                position['_honeypot_reason'] = f"Price unavailable after {failures} attempts"
+                                await self._close_position(position, "emergency_no_price")
+
                     except Exception as e:
                         # ✅ FIX: Now all variables are guaranteed to be defined
                         logger.error(
                             f"Error monitoring position {token_address[:10] if token_address else 'unknown'} "
-                            f"({token_symbol or 'UNKNOWN'}): {e}",
+                            f"({position_symbol or 'UNKNOWN'}): {e}",
                             extra={
                                 'token_address': token_address,
-                                'symbol': token_symbol,
-                                'chain': chain,
+                                'symbol': position_symbol,
                                 'error': str(e)
                             },
                             exc_info=True
