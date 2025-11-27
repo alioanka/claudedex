@@ -665,8 +665,133 @@
 let pnlChart = null;
 let winRateChart = null;
 
+// ========================================
+// DEDICATED WALLET BALANCE LOADING
+// ========================================
+async function loadWalletBalances() {
+    try {
+        const response = await fetch('/api/wallets/balances');
+        const result = await response.json();
+
+        console.log('Wallet API response:', result);
+
+        if (result.status === 'success' && result.balances) {
+            const balances = result.balances;
+
+            // Update DEX wallet balances
+            const chains = ['ETHEREUM', 'BSC', 'POLYGON', 'ARBITRUM', 'BASE'];
+            chains.forEach(chain => {
+                const bal = balances[chain];
+                if (bal) {
+                    const balElem = document.getElementById('bal-' + chain.toLowerCase());
+                    const pnlElem = document.getElementById('pnl-' + chain.toLowerCase());
+
+                    if (balElem) {
+                        balElem.textContent = '$' + (bal.balance || 0).toFixed(2);
+                    }
+                    if (pnlElem) {
+                        const nativeBalance = bal.native_balance || 0;
+                        const symbol = bal.native_symbol || '';
+                        if (nativeBalance > 0) {
+                            pnlElem.textContent = nativeBalance.toFixed(4) + ' ' + symbol;
+                            pnlElem.className = 'wallet-pnl';
+                        } else {
+                            pnlElem.textContent = '0 ' + symbol;
+                            pnlElem.className = 'wallet-pnl';
+                        }
+                    }
+                }
+            });
+
+            // Update Solana balances
+            let totalSolNative = 0;
+            let totalSolUsd = 0;
+
+            if (balances.SOLANA) {
+                const solBal = balances.SOLANA;
+                const nativeSol = solBal.native_balance || 0;
+                const usdSol = solBal.balance || 0;
+                const balSolana = document.getElementById('bal-solana');
+                const balSolanaUsd = document.getElementById('bal-solana-usd');
+                if (balSolana) balSolana.textContent = nativeSol.toFixed(4) + ' SOL';
+                if (balSolanaUsd) balSolanaUsd.textContent = '$' + usdSol.toFixed(2);
+                totalSolNative += nativeSol;
+                totalSolUsd += usdSol;
+            }
+
+            if (balances.SOLANA_MODULE) {
+                const solModBal = balances.SOLANA_MODULE;
+                const nativeSolMod = solModBal.native_balance || 0;
+                const usdSolMod = solModBal.balance || 0;
+                const balSolMod = document.getElementById('bal-solana-module');
+                const balSolModUsd = document.getElementById('bal-solana-module-usd');
+                if (balSolMod) balSolMod.textContent = nativeSolMod.toFixed(4) + ' SOL';
+                if (balSolModUsd) balSolModUsd.textContent = '$' + usdSolMod.toFixed(2);
+                totalSolNative += nativeSolMod;
+                totalSolUsd += usdSolMod;
+            }
+
+            // Update Total Solana
+            const balSolTotal = document.getElementById('bal-solana-total');
+            const balSolTotalUsd = document.getElementById('bal-solana-total-usd');
+            if (balSolTotal) balSolTotal.textContent = totalSolNative.toFixed(4) + ' SOL';
+            if (balSolTotalUsd) balSolTotalUsd.textContent = '$' + totalSolUsd.toFixed(2);
+
+            // Update Futures balance
+            if (balances.FUTURES) {
+                const fut = balances.FUTURES;
+                const balFutUsdt = document.getElementById('bal-futures-usdt');
+                const balFutMargin = document.getElementById('bal-futures-margin');
+                const balFutPnl = document.getElementById('bal-futures-pnl');
+                const balFutAvail = document.getElementById('bal-futures-available');
+                if (balFutUsdt) balFutUsdt.textContent = '$' + (fut.total_balance || 0).toFixed(2);
+                if (balFutMargin) balFutMargin.textContent = '$' + (fut.margin_used || 0).toFixed(2);
+                if (balFutPnl) balFutPnl.textContent = '$' + (fut.unrealized_pnl || 0).toFixed(2);
+                if (balFutAvail) balFutAvail.textContent = '$' + (fut.available || 0).toFixed(2);
+            }
+
+            // Update Spot balance
+            if (balances.SPOT) {
+                const spot = balances.SPOT;
+                const balSpotTotal = document.getElementById('bal-spot-total');
+                const balSpotAssets = document.getElementById('bal-spot-assets');
+                if (balSpotTotal) balSpotTotal.textContent = '$' + (spot.total_balance || 0).toFixed(2);
+                if (balSpotAssets && spot.assets && spot.assets.length > 0) {
+                    const assetsStr = spot.assets
+                        .sort((a, b) => b.usd_value - a.usd_value)
+                        .slice(0, 5)
+                        .map(a => a.asset + ': $' + a.usd_value.toFixed(2))
+                        .join(' | ');
+                    balSpotAssets.textContent = assetsStr;
+                } else if (balSpotAssets) {
+                    balSpotAssets.textContent = 'No assets';
+                }
+            }
+
+            // Update Exchange Total
+            if (balances.EXCHANGE_TOTAL) {
+                const balExchTotal = document.getElementById('bal-exchange-total');
+                if (balExchTotal) balExchTotal.textContent = '$' + (balances.EXCHANGE_TOTAL.total || 0).toFixed(2);
+            }
+
+            // Update total portfolio value
+            if (balances.TOTAL) {
+                const totalPortfolio = document.getElementById('totalPortfolio');
+                if (totalPortfolio) totalPortfolio.textContent = '$' + (balances.TOTAL.balance || 0).toFixed(2);
+            }
+        }
+    } catch (e) {
+        console.error('Error loading wallet balances:', e);
+    }
+}
+
 // Initialize charts
 document.addEventListener('DOMContentLoaded', function() {
+    // Load wallet balances immediately
+    loadWalletBalances();
+
+    // Auto-refresh wallet balances every 15 seconds
+    setInterval(loadWalletBalances, 15000);
     // P&L Comparison Chart
     const pnlCtx = document.getElementById('pnlComparisonChart').getContext('2d');
     pnlChart = new Chart(pnlCtx, {
@@ -827,110 +952,7 @@ async function loadDashboardData() {
         console.error('Error fetching module data:', e);
     }
 
-    // Load wallet balances (real on-chain balances)
-    try {
-        const walletResponse = await fetch('/api/wallets/balances');
-        const walletResult = await walletResponse.json();
-
-        if (walletResult.status === 'success' && walletResult.balances) {
-            const balances = walletResult.balances;
-
-            // Update DEX wallet balances with native amounts
-            const chains = ['ETHEREUM', 'BSC', 'POLYGON', 'ARBITRUM', 'BASE'];
-            chains.forEach(chain => {
-                const bal = balances[chain];
-                if (bal) {
-                    const balElem = document.getElementById('bal-' + chain.toLowerCase());
-                    const pnlElem = document.getElementById('pnl-' + chain.toLowerCase());
-                    if (balElem) {
-                        // Show USD value
-                        balElem.textContent = '$' + (bal.balance || 0).toFixed(2);
-                    }
-                    // Show native balance in pnl element as secondary info
-                    if (pnlElem) {
-                        const nativeBalance = bal.native_balance || 0;
-                        const symbol = bal.native_symbol || '';
-                        if (nativeBalance > 0) {
-                            pnlElem.textContent = nativeBalance.toFixed(4) + ' ' + symbol;
-                            pnlElem.className = 'wallet-pnl';
-                        } else {
-                            pnlElem.textContent = '0 ' + symbol;
-                            pnlElem.className = 'wallet-pnl text-muted';
-                        }
-                    }
-                }
-            });
-
-            // Update Solana balances (Both wallets)
-            let totalSolNative = 0;
-            let totalSolUsd = 0;
-
-            // Wallet 1: SOLANA_WALLET (DEX Module)
-            if (balances.SOLANA) {
-                const solBal = balances.SOLANA;
-                const nativeSol = solBal.native_balance || 0;
-                const usdSol = solBal.balance || 0;
-                document.getElementById('bal-solana').textContent = nativeSol.toFixed(4) + ' SOL';
-                document.getElementById('bal-solana-usd').textContent = '$' + usdSol.toFixed(2);
-                totalSolNative += nativeSol;
-                totalSolUsd += usdSol;
-            }
-
-            // Wallet 2: SOLANA_MODULE_WALLET (Solana Module)
-            if (balances.SOLANA_MODULE) {
-                const solModBal = balances.SOLANA_MODULE;
-                const nativeSolMod = solModBal.native_balance || 0;
-                const usdSolMod = solModBal.balance || 0;
-                document.getElementById('bal-solana-module').textContent = nativeSolMod.toFixed(4) + ' SOL';
-                document.getElementById('bal-solana-module-usd').textContent = '$' + usdSolMod.toFixed(2);
-                totalSolNative += nativeSolMod;
-                totalSolUsd += usdSolMod;
-            }
-
-            // Update Total Solana
-            document.getElementById('bal-solana-total').textContent = totalSolNative.toFixed(4) + ' SOL';
-            document.getElementById('bal-solana-total-usd').textContent = '$' + totalSolUsd.toFixed(2);
-
-            // Update Futures balance from same API response
-            if (balances.FUTURES) {
-                const fut = balances.FUTURES;
-                document.getElementById('bal-futures-usdt').textContent = '$' + (fut.total_balance || 0).toFixed(2);
-                document.getElementById('bal-futures-margin').textContent = '$' + (fut.margin_used || 0).toFixed(2);
-                document.getElementById('bal-futures-pnl').textContent = '$' + (fut.unrealized_pnl || 0).toFixed(2);
-                document.getElementById('bal-futures-available').textContent = '$' + (fut.available || 0).toFixed(2);
-            }
-
-            // Update Spot balance
-            if (balances.SPOT) {
-                const spot = balances.SPOT;
-                document.getElementById('bal-spot-total').textContent = '$' + (spot.total_balance || 0).toFixed(2);
-
-                // Show spot assets breakdown
-                if (spot.assets && spot.assets.length > 0) {
-                    const assetsStr = spot.assets
-                        .sort((a, b) => b.usd_value - a.usd_value)
-                        .slice(0, 5)  // Show top 5 assets
-                        .map(a => a.asset + ': $' + a.usd_value.toFixed(2))
-                        .join(' | ');
-                    document.getElementById('bal-spot-assets').textContent = assetsStr;
-                } else {
-                    document.getElementById('bal-spot-assets').textContent = 'No assets';
-                }
-            }
-
-            // Update Exchange Total
-            if (balances.EXCHANGE_TOTAL) {
-                document.getElementById('bal-exchange-total').textContent = '$' + (balances.EXCHANGE_TOTAL.total || 0).toFixed(2);
-            }
-
-            // Update total portfolio value from real balances
-            if (balances.TOTAL) {
-                document.getElementById('totalPortfolio').textContent = '$' + (balances.TOTAL.balance || 0).toFixed(2);
-            }
-        }
-    } catch (e) {
-        console.error('Error fetching wallet balances:', e);
-    }
+    // Wallet balances are handled by dedicated loadWalletBalances() function
 }
 
 function updateModuleCard(prefix, moduleData) {
