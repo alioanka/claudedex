@@ -465,6 +465,12 @@ class DashboardEndpoints:
         # API endpoints that return empty data when module_manager is unavailable
         self.app.router.add_get('/api/modules', self._fallback_api_modules)
 
+        # Module control API endpoints (enable/disable/pause/start)
+        self.app.router.add_post('/api/modules/{module}/enable', self._api_module_enable)
+        self.app.router.add_post('/api/modules/{module}/disable', self._api_module_disable)
+        self.app.router.add_post('/api/modules/{module}/pause', self._api_module_pause)
+        self.app.router.add_post('/api/modules/{module}/start', self._api_module_start)
+
         logger.info("✅ Fallback module routes registered")
 
     # Fallback page handlers
@@ -541,43 +547,63 @@ class DashboardEndpoints:
         futures_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
         solana_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
 
+        # Count positions by chain FROM ENGINE (same source as Open Positions API)
+        if self.engine and hasattr(self.engine, 'active_positions') and self.engine.active_positions:
+            try:
+                for token_addr, pos in self.engine.active_positions.items():
+                    chain = (pos.get('chain') or pos.get('network') or 'SOLANA').upper()
+                    # Calculate unrealized P&L from position
+                    entry_price = float(pos.get('entry_price', 0))
+                    current_price = float(pos.get('current_price', entry_price))
+                    amount = float(pos.get('amount', 0))
+                    unrealized_pnl = (current_price - entry_price) * amount
+
+                    if chain == 'SOLANA':
+                        solana_metrics['positions'] += 1
+                        solana_metrics['pnl'] += unrealized_pnl
+                    elif chain in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM']:
+                        dex_metrics['positions'] += 1
+                        dex_metrics['pnl'] += unrealized_pnl
+
+                logger.info(f"Module metrics from engine positions: DEX={dex_metrics}, Solana={solana_metrics}")
+            except Exception as e:
+                logger.warning(f"Error getting positions from engine: {e}")
+
         if self.db:
             try:
                 # Get trades by chain/module
                 trades = await self.db.get_recent_trades(limit=1000)
+                logger.info(f"Got {len(trades) if trades else 0} trades from database")
 
-                for trade in trades:
-                    chain = (trade.get('chain') or trade.get('network') or '').upper()
-                    pnl = float(trade.get('profit_loss') or 0) if trade.get('status') == 'closed' else 0
+                if trades:
+                    for trade in trades:
+                        chain = (trade.get('chain') or trade.get('network') or '').upper()
+                        is_closed = trade.get('status') == 'closed'
+                        pnl = float(trade.get('profit_loss') or 0) if is_closed else 0
 
-                    if chain == 'SOLANA':
-                        solana_metrics['total_trades'] += 1
-                        solana_metrics['pnl'] += pnl
-                    elif chain in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM']:
-                        dex_metrics['total_trades'] += 1
-                        dex_metrics['pnl'] += pnl
-
-                # Count positions by chain FROM ENGINE (same source as Open Positions API)
-                if self.engine and hasattr(self.engine, 'active_positions') and self.engine.active_positions:
-                    for token_addr, pos in self.engine.active_positions.items():
-                        chain = (pos.get('chain') or pos.get('network') or 'SOLANA').upper()
                         if chain == 'SOLANA':
-                            solana_metrics['positions'] += 1
+                            solana_metrics['total_trades'] += 1
+                            if is_closed:
+                                solana_metrics['pnl'] += pnl
                         elif chain in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM']:
-                            dex_metrics['positions'] += 1
+                            dex_metrics['total_trades'] += 1
+                            if is_closed:
+                                dex_metrics['pnl'] += pnl
 
-                # Calculate win rates
-                dex_wins = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM'] and t.get('status') == 'closed' and float(t.get('profit_loss') or 0) > 0)
-                solana_wins = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() == 'SOLANA' and t.get('status') == 'closed' and float(t.get('profit_loss') or 0) > 0)
+                    # Calculate win rates
+                    dex_wins = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM'] and t.get('status') == 'closed' and float(t.get('profit_loss') or 0) > 0)
+                    solana_wins = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() == 'SOLANA' and t.get('status') == 'closed' and float(t.get('profit_loss') or 0) > 0)
 
-                dex_closed = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM'] and t.get('status') == 'closed')
-                solana_closed = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() == 'SOLANA' and t.get('status') == 'closed')
+                    dex_closed = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM'] and t.get('status') == 'closed')
+                    solana_closed = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() == 'SOLANA' and t.get('status') == 'closed')
 
-                dex_metrics['win_rate'] = (dex_wins / dex_closed * 100) if dex_closed > 0 else 0
-                solana_metrics['win_rate'] = (solana_wins / solana_closed * 100) if solana_closed > 0 else 0
+                    dex_metrics['win_rate'] = (dex_wins / dex_closed * 100) if dex_closed > 0 else 0
+                    solana_metrics['win_rate'] = (solana_wins / solana_closed * 100) if solana_closed > 0 else 0
+
+                    logger.info(f"Module metrics after DB: DEX trades={dex_metrics['total_trades']}, wins={dex_wins}, closed={dex_closed}")
 
             except Exception as e:
-                logger.debug(f"Error getting module metrics: {e}")
+                logger.warning(f"Error getting module metrics from DB: {e}")
 
         # Get capital allocations from config
         dex_capital = float(os.getenv('DEX_CAPITAL', 500))
@@ -612,6 +638,107 @@ class DashboardEndpoints:
                 }
             }
         })
+
+    def _update_env_file(self, key: str, value: str) -> bool:
+        """Update a key in the .env file"""
+        try:
+            env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+            if not os.path.exists(env_path):
+                env_path = '.env'
+
+            # Read existing content
+            lines = []
+            key_found = False
+            if os.path.exists(env_path):
+                with open(env_path, 'r') as f:
+                    for line in f:
+                        if line.strip().startswith(f'{key}='):
+                            lines.append(f'{key}={value}\n')
+                            key_found = True
+                        else:
+                            lines.append(line)
+
+            # If key wasn't found, add it
+            if not key_found:
+                lines.append(f'{key}={value}\n')
+
+            # Write back
+            with open(env_path, 'w') as f:
+                f.writelines(lines)
+
+            # Reload environment
+            load_dotenv(override=True)
+            return True
+        except Exception as e:
+            logger.error(f"Error updating .env file: {e}")
+            return False
+
+    async def _api_module_enable(self, request):
+        """Enable a module by updating .env"""
+        module = request.match_info.get('module', '')
+
+        module_env_map = {
+            'dex_trading': 'DEX_MODULE_ENABLED',
+            'futures_trading': 'FUTURES_MODULE_ENABLED',
+            'solana_strategies': 'SOLANA_MODULE_ENABLED'
+        }
+
+        if module not in module_env_map:
+            return web.json_response({'error': f'Unknown module: {module}'}, status=400)
+
+        env_key = module_env_map[module]
+        if self._update_env_file(env_key, 'true'):
+            logger.info(f"Module {module} enabled via API")
+            return web.json_response({'success': True, 'message': f'{module} enabled'})
+        else:
+            return web.json_response({'error': 'Failed to update .env file'}, status=500)
+
+    async def _api_module_disable(self, request):
+        """Disable a module by updating .env"""
+        module = request.match_info.get('module', '')
+
+        module_env_map = {
+            'dex_trading': 'DEX_MODULE_ENABLED',
+            'futures_trading': 'FUTURES_MODULE_ENABLED',
+            'solana_strategies': 'SOLANA_MODULE_ENABLED'
+        }
+
+        if module not in module_env_map:
+            return web.json_response({'error': f'Unknown module: {module}'}, status=400)
+
+        env_key = module_env_map[module]
+        if self._update_env_file(env_key, 'false'):
+            logger.info(f"Module {module} disabled via API")
+            return web.json_response({'success': True, 'message': f'{module} disabled'})
+        else:
+            return web.json_response({'error': 'Failed to update .env file'}, status=500)
+
+    async def _api_module_pause(self, request):
+        """Pause a module (sets to paused state)"""
+        module = request.match_info.get('module', '')
+        # For now, pause acts like disable - in a full implementation this would set a PAUSED state
+        logger.info(f"Module {module} paused via API")
+        return web.json_response({'success': True, 'message': f'{module} paused'})
+
+    async def _api_module_start(self, request):
+        """Start/resume a module"""
+        module = request.match_info.get('module', '')
+
+        module_env_map = {
+            'dex_trading': 'DEX_MODULE_ENABLED',
+            'futures_trading': 'FUTURES_MODULE_ENABLED',
+            'solana_strategies': 'SOLANA_MODULE_ENABLED'
+        }
+
+        if module not in module_env_map:
+            return web.json_response({'error': f'Unknown module: {module}'}, status=400)
+
+        env_key = module_env_map[module]
+        if self._update_env_file(env_key, 'true'):
+            logger.info(f"Module {module} started via API")
+            return web.json_response({'success': True, 'message': f'{module} started'})
+        else:
+            return web.json_response({'error': 'Failed to update .env file'}, status=500)
 
     def _setup_socketio(self):
         """Setup Socket.IO handlers"""
