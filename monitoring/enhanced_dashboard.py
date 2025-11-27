@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 from typing import Dict, List, Optional, Any
+from dotenv import load_dotenv
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -525,10 +526,15 @@ class DashboardEndpoints:
 
     async def _fallback_api_modules(self, request):
         """Return module data from .env settings and database"""
+        # Reload .env to get latest values
+        load_dotenv(override=True)
+
         # Read module enabled status from .env
         dex_enabled = os.getenv('DEX_MODULE_ENABLED', 'false').lower() == 'true'
         futures_enabled = os.getenv('FUTURES_MODULE_ENABLED', 'false').lower() == 'true'
         solana_enabled = os.getenv('SOLANA_MODULE_ENABLED', 'false').lower() == 'true'
+
+        logger.debug(f"Module status from .env: DEX={dex_enabled}, Futures={futures_enabled}, Solana={solana_enabled}")
 
         # Get metrics from database
         dex_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}

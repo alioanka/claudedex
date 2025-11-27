@@ -426,25 +426,25 @@
         </div>
         <div class="modules-comparison" id="modulesComparison">
             <!-- DEX Module -->
-            <div class="module-card active">
+            <div class="module-card active" id="dex-module">
                 <div class="module-name">DEX Trading</div>
-                <span class="module-status status-running">RUNNING</span>
+                <span class="module-status status-running" id="dex-status">RUNNING</span>
                 <div class="module-metrics">
                     <div class="metric-box">
                         <div class="metric-label">Capital</div>
-                        <div class="metric-value">$500</div>
+                        <div class="metric-value" id="dex-capital">$500</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">P&L</div>
-                        <div class="metric-value positive">$0.00</div>
+                        <div class="metric-value" id="dex-pnl">$0.00</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Positions</div>
-                        <div class="metric-value">0</div>
+                        <div class="metric-value" id="dex-positions">0</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Win Rate</div>
-                        <div class="metric-value">0%</div>
+                        <div class="metric-value" id="dex-winrate">0%</div>
                     </div>
                 </div>
                 <div class="module-action">
@@ -456,25 +456,25 @@
             </div>
 
             <!-- Futures Module -->
-            <div class="module-card inactive">
+            <div class="module-card inactive" id="futures-module">
                 <div class="module-name">Futures Trading</div>
-                <span class="module-status status-stopped">DISABLED</span>
+                <span class="module-status status-stopped" id="futures-status">DISABLED</span>
                 <div class="module-metrics">
                     <div class="metric-box">
                         <div class="metric-label">Capital</div>
-                        <div class="metric-value">$300</div>
+                        <div class="metric-value" id="futures-capital">$300</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">P&L</div>
-                        <div class="metric-value">$0.00</div>
+                        <div class="metric-value" id="futures-pnl">$0.00</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Positions</div>
-                        <div class="metric-value">0</div>
+                        <div class="metric-value" id="futures-positions">0</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Win Rate</div>
-                        <div class="metric-value">0%</div>
+                        <div class="metric-value" id="futures-winrate">0%</div>
                     </div>
                 </div>
                 <div class="module-action">
@@ -486,25 +486,25 @@
             </div>
 
             <!-- Solana Module -->
-            <div class="module-card active">
+            <div class="module-card inactive" id="solana-module">
                 <div class="module-name">Solana Strategies</div>
-                <span class="module-status status-running">RUNNING</span>
+                <span class="module-status status-stopped" id="solana-status">DISABLED</span>
                 <div class="module-metrics">
                     <div class="metric-box">
                         <div class="metric-label">Capital</div>
-                        <div class="metric-value">$400</div>
+                        <div class="metric-value" id="solana-capital">$400</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">P&L</div>
-                        <div class="metric-value">$0.00</div>
+                        <div class="metric-value" id="solana-pnl">$0.00</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Positions</div>
-                        <div class="metric-value">0</div>
+                        <div class="metric-value" id="solana-positions">0</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Win Rate</div>
-                        <div class="metric-value">0%</div>
+                        <div class="metric-value" id="solana-winrate">0%</div>
                     </div>
                 </div>
                 <div class="module-action">
@@ -1049,21 +1049,49 @@ async function loadDashboardData() {
 }
 
 function updateModuleCard(prefix, moduleData) {
-    const card = document.querySelector(`.module-card[id="${prefix}-module"]`) ||
-                 document.querySelectorAll('.module-card')[prefix === 'dex' ? 0 : prefix === 'futures' ? 1 : 2];
+    if (!moduleData) return;
 
-    if (!card || !moduleData) return;
+    const card = document.getElementById(prefix + '-module');
+    if (!card) return;
 
     // Update status badge
-    const statusBadge = card.querySelector('.module-status');
-    if (statusBadge) {
-        const status = moduleData.status || (moduleData.enabled ? 'RUNNING' : 'DISABLED');
-        statusBadge.textContent = status;
-        statusBadge.className = 'module-status status-' + (status === 'RUNNING' ? 'running' : 'stopped');
+    const status = moduleData.status || (moduleData.enabled ? 'RUNNING' : 'DISABLED');
+    const statusEl = document.getElementById(prefix + '-status');
+    if (statusEl) {
+        statusEl.textContent = status;
+        statusEl.className = 'module-status status-' + (status === 'RUNNING' ? 'running' : 'stopped');
     }
 
-    // Update card style
+    // Update card style based on enabled status
     card.className = 'module-card ' + (moduleData.enabled ? 'active' : 'inactive');
+
+    // Update Capital
+    const capitalEl = document.getElementById(prefix + '-capital');
+    if (capitalEl) {
+        capitalEl.textContent = '$' + (moduleData.capital || 0).toFixed(0);
+    }
+
+    // Update P&L
+    const pnlEl = document.getElementById(prefix + '-pnl');
+    if (pnlEl && moduleData.metrics) {
+        const pnl = moduleData.metrics.pnl || 0;
+        pnlEl.textContent = '$' + pnl.toFixed(2);
+        pnlEl.className = 'metric-value ' + (pnl >= 0 ? 'positive' : 'negative');
+    }
+
+    // Update Positions
+    const posEl = document.getElementById(prefix + '-positions');
+    if (posEl && moduleData.metrics) {
+        posEl.textContent = moduleData.metrics.positions || 0;
+    }
+
+    // Update Win Rate
+    const winrateEl = document.getElementById(prefix + '-winrate');
+    if (winrateEl && moduleData.metrics) {
+        winrateEl.textContent = (moduleData.metrics.win_rate || 0).toFixed(1) + '%';
+    }
+
+    console.log(`Updated ${prefix} module:`, moduleData);
 }
 
 // Bot Control Functions
