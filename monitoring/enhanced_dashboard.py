@@ -2479,14 +2479,22 @@ class DashboardEndpoints:
     async def api_get_block_status(self, request):
         """Get detailed information about why trading is blocked"""
         try:
-            if not self.portfolio:
+            # CRITICAL FIX: Use engine's portfolio manager (the one actually updated by trades)
+            # The self.portfolio passed from main_dex is a DIFFERENT instance than engine.portfolio_manager
+            portfolio_mgr = None
+            if self.engine and hasattr(self.engine, 'portfolio_manager'):
+                portfolio_mgr = self.engine.portfolio_manager
+            elif self.portfolio:
+                portfolio_mgr = self.portfolio  # Fallback to passed-in portfolio
+
+            if not portfolio_mgr:
                 return web.json_response({
                     'success': False,
                     'error': 'Portfolio manager not available'
                 }, status=503)
 
             # Get block reason details from portfolio manager
-            block_info = self.portfolio.get_block_reason()
+            block_info = portfolio_mgr.get_block_reason()
 
             # ========== OVERRIDE WITH REAL DATA ==========
             # Get actual open positions count from database
@@ -2601,7 +2609,14 @@ class DashboardEndpoints:
     async def api_reset_block(self, request):
         """Manually reset trading block (use with caution!)"""
         try:
-            if not self.portfolio:
+            # CRITICAL FIX: Use engine's portfolio manager (same as api_get_block_status)
+            portfolio_mgr = None
+            if self.engine and hasattr(self.engine, 'portfolio_manager'):
+                portfolio_mgr = self.engine.portfolio_manager
+            elif self.portfolio:
+                portfolio_mgr = self.portfolio
+
+            if not portfolio_mgr:
                 return web.json_response({
                     'success': False,
                     'error': 'Portfolio manager not available'
@@ -2615,7 +2630,7 @@ class DashboardEndpoints:
                 reason = 'Manual reset via dashboard'
 
             # Call the manual reset method
-            result = await self.portfolio.manual_reset_block(reason=reason)
+            result = await portfolio_mgr.manual_reset_block(reason=reason)
 
             if result.get('success'):
                 return web.json_response({
