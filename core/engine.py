@@ -1669,12 +1669,15 @@ class TradingBotEngine:
                 base_interval = self.config.get('position_update_interval_seconds', 10)
 
                 # Check if any position is "new" (less than 5 minutes old)
+                # Note: positions_snapshot here contains just position dicts (values), not (key, value) tuples
                 has_new_positions = False
-                for token_addr, pos in positions_snapshot:
-                    holding_mins = (datetime.now() - pos['entry_time']).total_seconds() / 60
-                    if holding_mins < 5:  # Position is less than 5 minutes old
-                        has_new_positions = True
-                        break
+                for pos in positions_snapshot:
+                    entry_time = pos.get('entry_time')
+                    if entry_time:
+                        holding_mins = (datetime.now() - entry_time).total_seconds() / 60
+                        if holding_mins < 5:  # Position is less than 5 minutes old
+                            has_new_positions = True
+                            break
 
                 # Use rapid interval (3 sec) for new positions, normal interval (10 sec) otherwise
                 if has_new_positions:
