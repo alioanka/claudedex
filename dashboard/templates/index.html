@@ -774,14 +774,100 @@ async function loadWalletBalances() {
                 if (balExchTotal) balExchTotal.textContent = '$' + (balances.EXCHANGE_TOTAL.total || 0).toFixed(2);
             }
 
-            // Update total portfolio value
+            // Update total portfolio value and summary stats
             if (balances.TOTAL) {
                 const totalPortfolio = document.getElementById('totalPortfolio');
                 if (totalPortfolio) totalPortfolio.textContent = '$' + (balances.TOTAL.balance || 0).toFixed(2);
+
+                // Update Active Positions count
+                const totalPositions = document.getElementById('totalPositions');
+                if (totalPositions) totalPositions.textContent = balances.TOTAL.positions || 0;
+
+                // Update Total P&L from wallet balances
+                const totalPnl = document.getElementById('totalPnl');
+                const pnlChange = document.getElementById('pnlChange');
+                if (totalPnl) {
+                    const pnl = balances.TOTAL.pnl || 0;
+                    totalPnl.textContent = '$' + pnl.toFixed(2);
+                    totalPnl.className = pnl >= 0 ? 'summary-value positive' : 'summary-value negative';
+
+                    // Calculate ROI
+                    const portfolioValue = balances.TOTAL.balance || 0;
+                    const costBasis = portfolioValue - pnl;
+                    const roi = costBasis > 0 ? (pnl / costBasis) * 100 : 0;
+                    if (pnlChange) pnlChange.textContent = roi.toFixed(2) + '% ROI';
+                }
+            }
+
+            // Calculate total P&L from all chains
+            let totalChainPnl = 0;
+            const chainList = ['ETHEREUM', 'BSC', 'POLYGON', 'ARBITRUM', 'BASE', 'SOLANA'];
+            chainList.forEach(chain => {
+                if (balances[chain] && balances[chain].pnl) {
+                    totalChainPnl += balances[chain].pnl;
+                }
+            });
+
+            // Update Total P&L display with chain P&L if available
+            if (Math.abs(totalChainPnl) > 0.01) {
+                const totalPnl = document.getElementById('totalPnl');
+                const pnlChange = document.getElementById('pnlChange');
+                if (totalPnl) {
+                    totalPnl.textContent = '$' + totalChainPnl.toFixed(2);
+                    totalPnl.className = totalChainPnl >= 0 ? 'summary-value positive' : 'summary-value negative';
+
+                    const portfolioValue = balances.TOTAL?.balance || 0;
+                    const costBasis = portfolioValue - totalChainPnl;
+                    const roi = costBasis > 0 ? (totalChainPnl / costBasis) * 100 : 0;
+                    if (pnlChange) pnlChange.textContent = roi.toFixed(2) + '% ROI';
+                }
             }
         }
     } catch (e) {
         console.error('Error loading wallet balances:', e);
+    }
+}
+
+// ========================================
+// FETCH PERFORMANCE METRICS (Total Trades, Win Rate)
+// ========================================
+async function loadPerformanceMetrics() {
+    try {
+        const response = await fetch('/api/performance/metrics');
+        const result = await response.json();
+
+        if (result.success && result.data) {
+            const hist = result.data.historical || result.data || {};
+
+            // Update Total Trades
+            const totalTradesEl = document.getElementById('totalTrades');
+            if (totalTradesEl) {
+                totalTradesEl.textContent = hist.total_trades || 0;
+            }
+
+            // Update Win Rate
+            const winRateEl = document.getElementById('winRate');
+            if (winRateEl) {
+                const winRate = hist.win_rate || 0;
+                winRateEl.textContent = 'Win Rate: ' + winRate.toFixed(1) + '%';
+            }
+
+            // If we have historical P&L, use it for Total P&L
+            if (hist.total_pnl && Math.abs(hist.total_pnl) > 0.01) {
+                const totalPnlEl = document.getElementById('totalPnl');
+                const pnlChangeEl = document.getElementById('pnlChange');
+                if (totalPnlEl) {
+                    totalPnlEl.textContent = '$' + hist.total_pnl.toFixed(2);
+                    totalPnlEl.className = hist.total_pnl >= 0 ? 'summary-value positive' : 'summary-value negative';
+                }
+                if (pnlChangeEl) {
+                    const roi = hist.roi || 0;
+                    pnlChangeEl.textContent = roi.toFixed(2) + '% ROI';
+                }
+            }
+        }
+    } catch (e) {
+        console.error('Error loading performance metrics:', e);
     }
 }
 
@@ -790,8 +876,15 @@ document.addEventListener('DOMContentLoaded', function() {
     // Load wallet balances immediately
     loadWalletBalances();
 
+    // Load performance metrics (trades, win rate)
+    loadPerformanceMetrics();
+
     // Auto-refresh wallet balances every 15 seconds
     setInterval(loadWalletBalances, 15000);
+
+    // Auto-refresh performance metrics every 30 seconds
+    setInterval(loadPerformanceMetrics, 30000);
+
     // P&L Comparison Chart
     const pnlCtx = document.getElementById('pnlComparisonChart').getContext('2d');
     pnlChart = new Chart(pnlCtx, {

@@ -1972,6 +1972,12 @@ class DashboardEndpoints:
                 # Use a single session for all requests to reduce overhead
                 prices = self._price_cache.copy()  # Start with cached prices
 
+                # Pre-load cached native balances as defaults (so failures don't reset to 0)
+                if self._wallet_cache:
+                    for chain in chains:
+                        if chain in self._wallet_cache and self._wallet_cache[chain].get('native_balance', 0) > 0:
+                            balances[chain]['native_balance'] = self._wallet_cache[chain]['native_balance']
+
                 try:
                     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
                         # ===== FETCH PRICES (once) =====
@@ -2001,41 +2007,64 @@ class DashboardEndpoints:
                         # Main Solana wallet
                         solana_wallet = os.getenv('SOLANA_WALLET')
                         if solana_wallet:
+                            sol_fetched = False
                             try:
                                 payload = {"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [solana_wallet]}
-                                async with session.post(solana_rpc, json=payload, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                                async with session.post(solana_rpc, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                                     if resp.status == 200:
                                         data = await resp.json()
-                                        lamports = data.get('result', {}).get('value', 0)
-                                        sol_native = lamports / 1e9
-                                        sol_usd = sol_native * prices['SOL']
-                                        if sol_native > 0:
+                                        if 'error' not in data:
+                                            lamports = data.get('result', {}).get('value', 0)
+                                            sol_native = lamports / 1e9
+                                            sol_usd = sol_native * prices['SOL']
                                             balances['SOLANA']['native_balance'] = sol_native
                                             if balances['SOLANA']['positions'] == 0:
                                                 balances['SOLANA']['balance'] = sol_usd
                                                 total_value += sol_usd
+                                            sol_fetched = True
+                                        else:
+                                            logger.warning(f"Solana RPC error: {data.get('error')}")
                             except Exception as e:
-                                logger.debug(f"Solana wallet fetch failed: {e}")
+                                logger.warning(f"Solana wallet fetch failed: {e}")
+
+                            # Fallback to cached value if fetch failed
+                            if not sol_fetched and self._wallet_cache and 'SOLANA' in self._wallet_cache:
+                                cached_sol = self._wallet_cache['SOLANA']
+                                if cached_sol.get('native_balance', 0) > 0:
+                                    balances['SOLANA']['native_balance'] = cached_sol['native_balance']
+                                    if balances['SOLANA']['positions'] == 0:
+                                        balances['SOLANA']['balance'] = cached_sol['native_balance'] * prices['SOL']
+                                        total_value += balances['SOLANA']['balance']
 
                         # Solana module wallet
                         solana_module_wallet = os.getenv('SOLANA_MODULE_WALLET')
                         if solana_module_wallet:
+                            sol_mod_fetched = False
                             try:
                                 payload = {"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [solana_module_wallet]}
-                                async with session.post(solana_rpc, json=payload, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                                async with session.post(solana_rpc, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                                     if resp.status == 200:
                                         data = await resp.json()
-                                        lamports = data.get('result', {}).get('value', 0)
-                                        sol_native = lamports / 1e9
-                                        sol_usd = sol_native * prices['SOL']
-                                        balances['SOLANA_MODULE'] = {
-                                            'balance': sol_usd, 'native_balance': sol_native,
-                                            'native_symbol': 'SOL', 'pnl': 0.0, 'positions': 0
-                                        }
-                                        total_value += sol_usd
+                                        if 'error' not in data:
+                                            lamports = data.get('result', {}).get('value', 0)
+                                            sol_native = lamports / 1e9
+                                            sol_usd = sol_native * prices['SOL']
+                                            balances['SOLANA_MODULE'] = {
+                                                'balance': sol_usd, 'native_balance': sol_native,
+                                                'native_symbol': 'SOL', 'pnl': 0.0, 'positions': 0
+                                            }
+                                            total_value += sol_usd
+                                            sol_mod_fetched = True
                             except Exception as e:
-                                logger.debug(f"Solana module fetch failed: {e}")
-                                balances['SOLANA_MODULE'] = {'balance': 0.0, 'native_balance': 0.0, 'native_symbol': 'SOL', 'pnl': 0.0, 'positions': 0}
+                                logger.warning(f"Solana module fetch failed: {e}")
+
+                            if not sol_mod_fetched:
+                                # Use cached or default
+                                if self._wallet_cache and 'SOLANA_MODULE' in self._wallet_cache:
+                                    balances['SOLANA_MODULE'] = self._wallet_cache['SOLANA_MODULE'].copy()
+                                    total_value += balances['SOLANA_MODULE'].get('balance', 0)
+                                else:
+                                    balances['SOLANA_MODULE'] = {'balance': 0.0, 'native_balance': 0.0, 'native_symbol': 'SOL', 'pnl': 0.0, 'positions': 0}
                         else:
                             balances['SOLANA_MODULE'] = {'balance': 0.0, 'native_balance': 0.0, 'native_symbol': 'SOL', 'pnl': 0.0, 'positions': 0}
 
@@ -2051,23 +2080,35 @@ class DashboardEndpoints:
                             }
 
                             for chain, rpc_url in evm_rpcs.items():
+                                chain_fetched = False
                                 try:
                                     payload = {"jsonrpc": "2.0", "id": 1, "method": "eth_getBalance", "params": [wallet_address, "latest"]}
-                                    async with session.post(rpc_url, json=payload, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                                    async with session.post(rpc_url, json=payload, timeout=aiohttp.ClientTimeout(total=8)) as resp:
                                         if resp.status == 200:
                                             data = await resp.json()
-                                            hex_balance = data.get('result', '0x0')
-                                            if hex_balance and hex_balance != '0x0':
-                                                wei_balance = int(hex_balance, 16)
-                                                native_balance = wei_balance / 1e18
-                                                if native_balance > 0:
-                                                    usd_value = native_balance * chain_prices.get(chain, 0)
-                                                    balances[chain]['native_balance'] = native_balance
-                                                    if balances[chain]['positions'] == 0:
-                                                        balances[chain]['balance'] = usd_value
-                                                        total_value += usd_value
+                                            if 'error' not in data:
+                                                hex_balance = data.get('result', '0x0')
+                                                if hex_balance and hex_balance != '0x0':
+                                                    wei_balance = int(hex_balance, 16)
+                                                    native_balance = wei_balance / 1e18
+                                                    if native_balance > 0:
+                                                        usd_value = native_balance * chain_prices.get(chain, 0)
+                                                        balances[chain]['native_balance'] = native_balance
+                                                        if balances[chain]['positions'] == 0:
+                                                            balances[chain]['balance'] = usd_value
+                                                            total_value += usd_value
+                                                        chain_fetched = True
                                 except Exception as e:
                                     logger.debug(f"{chain} balance fetch failed: {e}")
+
+                                # Fallback to cached value if fetch failed
+                                if not chain_fetched and self._wallet_cache and chain in self._wallet_cache:
+                                    cached_chain = self._wallet_cache[chain]
+                                    if cached_chain.get('native_balance', 0) > 0:
+                                        balances[chain]['native_balance'] = cached_chain['native_balance']
+                                        if balances[chain]['positions'] == 0:
+                                            balances[chain]['balance'] = cached_chain['native_balance'] * chain_prices.get(chain, 0)
+                                            total_value += balances[chain]['balance']
 
                         # ===== EXCHANGE BALANCES =====
                         import hmac
@@ -2076,6 +2117,7 @@ class DashboardEndpoints:
 
                         futures_balance = spot_balance = futures_margin = futures_pnl = futures_available = 0.0
                         spot_assets = []
+                        exchange_fetched = False
 
                         binance_key = os.getenv('BINANCE_API_KEY')
                         binance_secret = os.getenv('BINANCE_API_SECRET')
@@ -2089,17 +2131,21 @@ class DashboardEndpoints:
                                 query_string = f"timestamp={timestamp}"
                                 signature = hmac.new(binance_secret.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
                                 url = f"https://fapi.binance.com/fapi/v2/balance?{query_string}&signature={signature}"
-                                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                                     if resp.status == 200:
-                                        for asset in await resp.json():
+                                        resp_data = await resp.json()
+                                        for asset in resp_data:
                                             if asset.get('asset') == 'USDT':
                                                 futures_balance = float(asset.get('balance', 0))
                                                 futures_available = float(asset.get('availableBalance', 0))
                                                 futures_pnl = float(asset.get('crossUnPnl', 0))
                                                 futures_margin = futures_balance - futures_available
+                                                exchange_fetched = True
                                                 break
+                                    else:
+                                        logger.warning(f"Binance futures API returned status {resp.status}")
                             except Exception as e:
-                                logger.debug(f"Binance futures fetch failed: {e}")
+                                logger.warning(f"Binance futures fetch failed: {e}")
 
                             # Spot
                             try:
@@ -2107,9 +2153,10 @@ class DashboardEndpoints:
                                 query_string = f"timestamp={timestamp}"
                                 signature = hmac.new(binance_secret.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
                                 url = f"https://api.binance.com/api/v3/account?{query_string}&signature={signature}"
-                                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                                     if resp.status == 200:
-                                        for bal in (await resp.json()).get('balances', []):
+                                        resp_data = await resp.json()
+                                        for bal in resp_data.get('balances', []):
                                             total_amt = float(bal.get('free', 0)) + float(bal.get('locked', 0))
                                             asset_name = bal.get('asset', '')
                                             if total_amt > 0:
@@ -2127,13 +2174,34 @@ class DashboardEndpoints:
                                                 if usd_value >= 1:
                                                     spot_balance += usd_value
                                                     spot_assets.append({'asset': asset_name, 'total': total_amt, 'usd_value': usd_value})
+                                                    exchange_fetched = True
+                                    else:
+                                        logger.warning(f"Binance spot API returned status {resp.status}")
                             except Exception as e:
-                                logger.debug(f"Binance spot fetch failed: {e}")
+                                logger.warning(f"Binance spot fetch failed: {e}")
 
-                        balances['FUTURES'] = {'total_balance': futures_balance, 'margin_used': futures_margin, 'unrealized_pnl': futures_pnl, 'available': futures_available, 'balance': futures_balance, 'pnl': futures_pnl, 'positions': 0}
-                        balances['SPOT'] = {'total_balance': spot_balance, 'assets': spot_assets, 'balance': spot_balance}
-                        balances['EXCHANGE_TOTAL'] = {'futures': futures_balance, 'spot': spot_balance, 'total': futures_balance + spot_balance}
-                        total_value += futures_balance + spot_balance
+                        # Set exchange balances (or use cached if fetch failed)
+                        if exchange_fetched or not self._wallet_cache:
+                            balances['FUTURES'] = {'total_balance': futures_balance, 'margin_used': futures_margin, 'unrealized_pnl': futures_pnl, 'available': futures_available, 'balance': futures_balance, 'pnl': futures_pnl, 'positions': 0}
+                            balances['SPOT'] = {'total_balance': spot_balance, 'assets': spot_assets, 'balance': spot_balance}
+                            balances['EXCHANGE_TOTAL'] = {'futures': futures_balance, 'spot': spot_balance, 'total': futures_balance + spot_balance}
+                            total_value += futures_balance + spot_balance
+                        else:
+                            # Use cached exchange values
+                            if 'FUTURES' in self._wallet_cache:
+                                balances['FUTURES'] = self._wallet_cache['FUTURES'].copy()
+                                total_value += balances['FUTURES'].get('balance', 0)
+                            else:
+                                balances['FUTURES'] = {'total_balance': 0, 'margin_used': 0, 'unrealized_pnl': 0, 'available': 0, 'balance': 0, 'pnl': 0, 'positions': 0}
+                            if 'SPOT' in self._wallet_cache:
+                                balances['SPOT'] = self._wallet_cache['SPOT'].copy()
+                                total_value += balances['SPOT'].get('balance', 0)
+                            else:
+                                balances['SPOT'] = {'total_balance': 0, 'assets': [], 'balance': 0}
+                            if 'EXCHANGE_TOTAL' in self._wallet_cache:
+                                balances['EXCHANGE_TOTAL'] = self._wallet_cache['EXCHANGE_TOTAL'].copy()
+                            else:
+                                balances['EXCHANGE_TOTAL'] = {'futures': 0, 'spot': 0, 'total': 0}
 
                 except Exception as e:
                     logger.error(f"Error fetching blockchain balances: {e}")
