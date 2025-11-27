@@ -396,6 +396,78 @@
 </div>
 
 <script>
+// Load module status from API on page load
+document.addEventListener('DOMContentLoaded', async function() {
+    await loadModuleStatus();
+});
+
+async function loadModuleStatus() {
+    try {
+        const response = await fetch('/api/modules');
+        const result = await response.json();
+
+        if (result.success && result.data && result.data.modules) {
+            const modules = result.data.modules;
+
+            // Update DEX module
+            updateModuleControlCard('dex', modules.dex_trading);
+
+            // Update Futures module
+            updateModuleControlCard('futures', modules.futures_trading);
+
+            // Update Solana module
+            updateModuleControlCard('solana', modules.solana_strategies);
+        }
+    } catch (e) {
+        console.error('Error loading module status:', e);
+    }
+}
+
+function updateModuleControlCard(prefix, moduleData) {
+    if (!moduleData) return;
+
+    const card = document.getElementById(prefix + '-card');
+    const statusBadge = document.getElementById(prefix + '-status');
+    const enableBtn = document.getElementById(prefix + '-enable');
+    const disableBtn = document.getElementById(prefix + '-disable');
+    const pauseBtn = document.getElementById(prefix + '-pause');
+    const startBtn = document.getElementById(prefix + '-start');
+
+    const isEnabled = moduleData.enabled;
+    const status = moduleData.status || (isEnabled ? 'RUNNING' : 'DISABLED');
+
+    // Update card class
+    if (card) {
+        card.className = 'module-control-card ' + (isEnabled ? 'running' : 'disabled');
+    }
+
+    // Update status badge
+    if (statusBadge) {
+        statusBadge.textContent = status;
+        statusBadge.className = 'module-status-badge status-' + (isEnabled ? 'running' : 'disabled');
+    }
+
+    // Update Capital display
+    const capitalEl = card?.querySelector('.info-value');
+    if (capitalEl && moduleData.capital) {
+        capitalEl.textContent = '$' + moduleData.capital.toFixed(2);
+    }
+
+    // Update Status text in info
+    const statusInfoEl = card?.querySelectorAll('.info-value')[1];
+    if (statusInfoEl) {
+        statusInfoEl.textContent = isEnabled ? 'Active' : 'Disabled';
+    }
+
+    // Update button states
+    if (enableBtn) enableBtn.disabled = isEnabled;
+    if (disableBtn) disableBtn.disabled = !isEnabled;
+    if (pauseBtn) pauseBtn.disabled = !isEnabled;
+    if (startBtn) startBtn.disabled = isEnabled;
+
+    console.log(`Updated ${prefix} control card:`, moduleData);
+}
+
 function showToast(message, type = 'success') {
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
