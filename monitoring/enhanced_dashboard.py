@@ -1988,39 +1988,146 @@ class DashboardEndpoints:
                 logger.debug(f"Could not get Solana Module balance: {e}")
                 balances['SOLANA_MODULE'] = {'balance': 0.0, 'native_balance': 0.0, 'native_symbol': 'SOL', 'pnl': 0.0, 'positions': 0}
 
-            # ========== FUTURES EXCHANGE BALANCE ==========
+            # ========== EVM WALLET BALANCES (ETH, BSC, POLYGON, ARBITRUM, BASE) ==========
+            # Fetch real wallet balance from blockchain when no positions exist
             try:
+                wallet_address = os.getenv('WALLET_ADDRESS')
+                if wallet_address:
+                    # RPC URLs for each chain
+                    evm_rpcs = {
+                        'ETHEREUM': os.getenv('ETH_RPC_URL', 'https://eth.llamarpc.com'),
+                        'BSC': os.getenv('BSC_RPC_URL', 'https://bsc-dataseed1.binance.org'),
+                        'POLYGON': os.getenv('POLYGON_RPC_URL', 'https://polygon-rpc.com'),
+                        'ARBITRUM': os.getenv('ARBITRUM_RPC_URL', 'https://arb1.arbitrum.io/rpc'),
+                        'BASE': os.getenv('BASE_RPC_URL', 'https://mainnet.base.org')
+                    }
+
+                    # Native token prices (already fetched above)
+                    chain_prices = {
+                        'ETHEREUM': prices.get('ETH', 3500),
+                        'BSC': prices.get('BNB', 600),
+                        'POLYGON': prices.get('MATIC', 0.80),
+                        'ARBITRUM': prices.get('ETH', 3500),  # Arbitrum uses ETH
+                        'BASE': prices.get('ETH', 3500)  # Base uses ETH
+                    }
+
+                    async with aiohttp.ClientSession() as session:
+                        for chain, rpc_url in evm_rpcs.items():
+                            try:
+                                # eth_getBalance RPC call
+                                payload = {
+                                    "jsonrpc": "2.0",
+                                    "id": 1,
+                                    "method": "eth_getBalance",
+                                    "params": [wallet_address, "latest"]
+                                }
+                                async with session.post(rpc_url, json=payload, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                                    if resp.status == 200:
+                                        data = await resp.json()
+                                        hex_balance = data.get('result', '0x0')
+                                        wei_balance = int(hex_balance, 16)
+                                        native_balance = wei_balance / 1e18  # Convert from wei to native token
+
+                                        if native_balance > 0:
+                                            usd_value = native_balance * chain_prices.get(chain, 0)
+                                            balances[chain]['native_balance'] = native_balance
+
+                                            # Only add real balance if no positions (avoid double counting)
+                                            if balances[chain]['positions'] == 0:
+                                                balances[chain]['balance'] = usd_value
+                                                total_value += usd_value
+                                                logger.debug(f"Real {chain} balance: {native_balance:.6f} = ${usd_value:.2f}")
+                            except Exception as chain_err:
+                                logger.debug(f"Could not get {chain} balance: {chain_err}")
+            except Exception as e:
+                logger.debug(f"Could not get EVM wallet balances: {e}")
+
+            # ========== EXCHANGE BALANCES (SPOT + FUTURES) ==========
+            try:
+                import hmac
+                import hashlib
+                import time as time_module
+
                 futures_balance = 0.0
                 futures_margin = 0.0
                 futures_pnl = 0.0
                 futures_available = 0.0
+                spot_balance = 0.0
+                spot_assets = []
 
                 binance_key = os.getenv('BINANCE_API_KEY')
                 binance_secret = os.getenv('BINANCE_API_SECRET')
 
                 if binance_key and binance_secret:
-                    import hmac
-                    import hashlib
-                    import time as time_module
-
-                    timestamp = int(time_module.time() * 1000)
-                    query_string = f"timestamp={timestamp}"
-                    signature = hmac.new(binance_secret.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
-                    url = f"https://fapi.binance.com/fapi/v2/balance?{query_string}&signature={signature}"
-                    headers = {'X-MBX-APIKEY': binance_key}
-
                     async with aiohttp.ClientSession() as session:
-                        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                            if resp.status == 200:
-                                data = await resp.json()
-                                for asset in data:
-                                    if asset.get('asset') == 'USDT':
-                                        futures_balance = float(asset.get('balance', 0))
-                                        futures_available = float(asset.get('availableBalance', 0))
-                                        futures_pnl = float(asset.get('crossUnPnl', 0))
-                                        futures_margin = futures_balance - futures_available
-                                        break
+                        headers = {'X-MBX-APIKEY': binance_key}
 
+                        # ===== BINANCE FUTURES BALANCE =====
+                        try:
+                            timestamp = int(time_module.time() * 1000)
+                            query_string = f"timestamp={timestamp}"
+                            signature = hmac.new(binance_secret.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
+                            url = f"https://fapi.binance.com/fapi/v2/balance?{query_string}&signature={signature}"
+
+                            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                                if resp.status == 200:
+                                    data = await resp.json()
+                                    for asset in data:
+                                        if asset.get('asset') == 'USDT':
+                                            futures_balance = float(asset.get('balance', 0))
+                                            futures_available = float(asset.get('availableBalance', 0))
+                                            futures_pnl = float(asset.get('crossUnPnl', 0))
+                                            futures_margin = futures_balance - futures_available
+                                            break
+                        except Exception as e:
+                            logger.debug(f"Error getting Binance futures: {e}")
+
+                        # ===== BINANCE SPOT BALANCE =====
+                        try:
+                            timestamp = int(time_module.time() * 1000)
+                            query_string = f"timestamp={timestamp}"
+                            signature = hmac.new(binance_secret.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
+                            url = f"https://api.binance.com/api/v3/account?{query_string}&signature={signature}"
+
+                            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                                if resp.status == 200:
+                                    data = await resp.json()
+                                    spot_balances_raw = data.get('balances', [])
+
+                                    # Get significant spot balances (> $1 value)
+                                    for bal in spot_balances_raw:
+                                        free = float(bal.get('free', 0))
+                                        locked = float(bal.get('locked', 0))
+                                        total = free + locked
+                                        asset_name = bal.get('asset', '')
+
+                                        if total > 0:
+                                            # Convert to USD (approximate for common stables)
+                                            usd_value = 0
+                                            if asset_name in ['USDT', 'USDC', 'BUSD', 'DAI', 'TUSD']:
+                                                usd_value = total
+                                            elif asset_name == 'BTC':
+                                                usd_value = total * 95000  # Approximate BTC price
+                                            elif asset_name == 'ETH':
+                                                usd_value = total * prices.get('ETH', 3500)
+                                            elif asset_name == 'BNB':
+                                                usd_value = total * prices.get('BNB', 600)
+                                            elif asset_name == 'SOL':
+                                                usd_value = total * prices.get('SOL', 200)
+
+                                            if usd_value >= 1:  # Only show if worth $1+
+                                                spot_balance += usd_value
+                                                spot_assets.append({
+                                                    'asset': asset_name,
+                                                    'free': free,
+                                                    'locked': locked,
+                                                    'total': total,
+                                                    'usd_value': usd_value
+                                                })
+                        except Exception as e:
+                            logger.debug(f"Error getting Binance spot: {e}")
+
+                # Store combined exchange data
                 balances['FUTURES'] = {
                     'total_balance': futures_balance,
                     'margin_used': futures_margin,
@@ -2030,11 +2137,23 @@ class DashboardEndpoints:
                     'pnl': futures_pnl,
                     'positions': 0
                 }
-                total_value += futures_balance
+                balances['SPOT'] = {
+                    'total_balance': spot_balance,
+                    'assets': spot_assets,
+                    'balance': spot_balance
+                }
+                balances['EXCHANGE_TOTAL'] = {
+                    'futures': futures_balance,
+                    'spot': spot_balance,
+                    'total': futures_balance + spot_balance
+                }
+                total_value += futures_balance + spot_balance
 
             except Exception as e:
-                logger.debug(f"Error getting futures balance: {e}")
+                logger.debug(f"Error getting exchange balances: {e}")
                 balances['FUTURES'] = {'total_balance': 0.0, 'margin_used': 0.0, 'unrealized_pnl': 0.0, 'available': 0.0, 'balance': 0.0, 'pnl': 0.0, 'positions': 0}
+                balances['SPOT'] = {'total_balance': 0.0, 'assets': [], 'balance': 0.0}
+                balances['EXCHANGE_TOTAL'] = {'futures': 0.0, 'spot': 0.0, 'total': 0.0}
 
             # ========== CALCULATE P&L PERCENTAGE ==========
             for chain in chains:

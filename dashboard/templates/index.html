@@ -602,28 +602,59 @@
         </div>
     </div>
 
-    <!-- Futures Exchange Balance -->
+    <!-- Exchange Balances (Futures + Spot) -->
     <div class="section-card">
         <div class="section-title">
-            <i class="fas fa-chart-line" style="color: #8b5cf6;"></i>
-            Futures Exchange Balance
+            <i class="fas fa-exchange-alt" style="color: #8b5cf6;"></i>
+            Exchange Balances (Binance)
         </div>
-        <div class="wallet-grid" id="futures-wallets">
-            <div class="wallet-card" style="border-color: #8b5cf6;">
-                <div class="wallet-chain" style="color: #8b5cf6;">USDT Balance</div>
-                <div class="wallet-balance" id="bal-futures-usdt">$0.00</div>
+        <!-- Futures Section -->
+        <div style="margin-bottom: 16px;">
+            <div style="font-size: 0.9rem; color: #9aa0a6; margin-bottom: 8px; font-weight: 600;">
+                <i class="fas fa-chart-line" style="color: #8b5cf6;"></i> Futures Account
             </div>
-            <div class="wallet-card">
-                <div class="wallet-chain">Margin Used</div>
-                <div class="wallet-balance" id="bal-futures-margin">$0.00</div>
+            <div class="wallet-grid" id="futures-wallets">
+                <div class="wallet-card" style="border-color: #8b5cf6;">
+                    <div class="wallet-chain" style="color: #8b5cf6;">USDT Balance</div>
+                    <div class="wallet-balance" id="bal-futures-usdt">$0.00</div>
+                </div>
+                <div class="wallet-card">
+                    <div class="wallet-chain">Margin Used</div>
+                    <div class="wallet-balance" id="bal-futures-margin">$0.00</div>
+                </div>
+                <div class="wallet-card">
+                    <div class="wallet-chain">Unrealized P&L</div>
+                    <div class="wallet-balance" id="bal-futures-pnl">$0.00</div>
+                </div>
+                <div class="wallet-card">
+                    <div class="wallet-chain">Available</div>
+                    <div class="wallet-balance" id="bal-futures-available">$0.00</div>
+                </div>
             </div>
-            <div class="wallet-card">
-                <div class="wallet-chain">Unrealized P&L</div>
-                <div class="wallet-balance" id="bal-futures-pnl">$0.00</div>
+        </div>
+        <!-- Spot Section -->
+        <div>
+            <div style="font-size: 0.9rem; color: #9aa0a6; margin-bottom: 8px; font-weight: 600;">
+                <i class="fas fa-wallet" style="color: #f59e0b;"></i> Spot Account
             </div>
-            <div class="wallet-card">
-                <div class="wallet-chain">Available</div>
-                <div class="wallet-balance" id="bal-futures-available">$0.00</div>
+            <div class="wallet-grid" id="spot-wallets">
+                <div class="wallet-card" style="border-color: #f59e0b;">
+                    <div class="wallet-chain" style="color: #f59e0b;">Total Spot Value</div>
+                    <div class="wallet-balance" id="bal-spot-total">$0.00</div>
+                </div>
+                <div class="wallet-card" id="spot-assets-card" style="grid-column: span 3;">
+                    <div class="wallet-chain">Assets</div>
+                    <div class="wallet-balance" id="bal-spot-assets" style="font-size: 0.85rem;">-</div>
+                </div>
+            </div>
+        </div>
+        <!-- Exchange Total -->
+        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #2d3548;">
+            <div class="wallet-grid">
+                <div class="wallet-card" style="border-color: #10b981; background: rgba(16, 185, 129, 0.1);">
+                    <div class="wallet-chain" style="color: #10b981;">Total Exchange Balance</div>
+                    <div class="wallet-balance" id="bal-exchange-total">$0.00</div>
+                </div>
             </div>
         </div>
     </div>
@@ -867,6 +898,29 @@ async function loadDashboardData() {
                 document.getElementById('bal-futures-margin').textContent = '$' + (fut.margin_used || 0).toFixed(2);
                 document.getElementById('bal-futures-pnl').textContent = '$' + (fut.unrealized_pnl || 0).toFixed(2);
                 document.getElementById('bal-futures-available').textContent = '$' + (fut.available || 0).toFixed(2);
+            }
+
+            // Update Spot balance
+            if (balances.SPOT) {
+                const spot = balances.SPOT;
+                document.getElementById('bal-spot-total').textContent = '$' + (spot.total_balance || 0).toFixed(2);
+
+                // Show spot assets breakdown
+                if (spot.assets && spot.assets.length > 0) {
+                    const assetsStr = spot.assets
+                        .sort((a, b) => b.usd_value - a.usd_value)
+                        .slice(0, 5)  // Show top 5 assets
+                        .map(a => a.asset + ': $' + a.usd_value.toFixed(2))
+                        .join(' | ');
+                    document.getElementById('bal-spot-assets').textContent = assetsStr;
+                } else {
+                    document.getElementById('bal-spot-assets').textContent = 'No assets';
+                }
+            }
+
+            // Update Exchange Total
+            if (balances.EXCHANGE_TOTAL) {
+                document.getElementById('bal-exchange-total').textContent = '$' + (balances.EXCHANGE_TOTAL.total || 0).toFixed(2);
             }
 
             // Update total portfolio value from real balances
