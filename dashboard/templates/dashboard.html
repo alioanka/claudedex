@@ -133,6 +133,27 @@
                 </div>
             </div>
 
+            <!-- Arbitrum -->
+            <div class="balance-card">
+                <div class="balance-header">
+                    <span class="chain-icon" style="background: #28A0F0;">
+                        <i class="fas fa-bolt"></i>
+                    </span>
+                    <span class="chain-name">Arbitrum</span>
+                </div>
+                <div class="balance-value" id="arbitrum-balance">$0.00</div>
+                <div class="balance-stats">
+                    <div class="balance-stat">
+                        <span class="label">P&L:</span>
+                        <span class="value" id="arbitrum-pnl">$0.00</span>
+                    </div>
+                    <div class="balance-stat">
+                        <span class="label">Positions:</span>
+                        <span class="value" id="arbitrum-positions">0</span>
+                    </div>
+                </div>
+            </div>
+
             <!-- Base -->
             <div class="balance-card">
                 <div class="balance-header">
@@ -1235,12 +1256,12 @@ async function loadWalletBalances() {
 
 function updateBalanceDisplay(balances) {
     // Update individual chains
-    const chains = ['ETHEREUM', 'BSC', 'BASE', 'SOLANA'];
-    
+    const chains = ['ETHEREUM', 'BSC', 'ARBITRUM', 'BASE', 'SOLANA'];
+
     chains.forEach(chain => {
         const chainData = balances[chain];
         if (!chainData) return;
-        
+
         const chainKey = chain.toLowerCase().replace('ethereum', 'eth');
         
         // Update balance
