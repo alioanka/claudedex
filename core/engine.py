@@ -1066,6 +1066,13 @@ class TradingBotEngine:
                 async with self.positions_lock:
                     self.active_positions[token_address] = position
 
+                # ⚡ CRITICAL: Schedule immediate first check for this position
+                # Don't wait for the monitoring loop - check within 5 seconds
+                asyncio.create_task(
+                    self._immediate_position_check(token_address, token_symbol),
+                    name=f"immediate_check_{token_symbol}"
+                )
+
                 # ✅ NEW: Add to portfolio manager
                 if hasattr(self, 'portfolio_manager') and self.portfolio_manager:
                     try:
@@ -1309,6 +1316,12 @@ class TradingBotEngine:
                 # CRITICAL FIX (P1): Protect with lock to prevent race conditions
                 async with self.positions_lock:
                     self.active_positions[opportunity.token_address] = position
+
+                # ⚡ CRITICAL: Schedule immediate first check for this position
+                asyncio.create_task(
+                    self._immediate_position_check(opportunity.token_address, token_symbol),
+                    name=f"immediate_check_{token_symbol}"
+                )
 
                 self.stats['total_trades'] += 1
                 self.stats['successful_trades'] += 1
@@ -1651,8 +1664,25 @@ class TradingBotEngine:
                     except Exception as e:
                         logger.debug(f"Could not log strategy stats: {e}")
 
-                # Get interval from config
-                update_interval = self.config.get('position_update_interval_seconds', 10)
+                # CRITICAL: Use dynamic interval based on position age
+                # New positions need faster monitoring to catch rapid price drops
+                base_interval = self.config.get('position_update_interval_seconds', 10)
+
+                # Check if any position is "new" (less than 5 minutes old)
+                has_new_positions = False
+                for token_addr, pos in positions_snapshot:
+                    holding_mins = (datetime.now() - pos['entry_time']).total_seconds() / 60
+                    if holding_mins < 5:  # Position is less than 5 minutes old
+                        has_new_positions = True
+                        break
+
+                # Use rapid interval (3 sec) for new positions, normal interval (10 sec) otherwise
+                if has_new_positions:
+                    update_interval = 3  # Check every 3 seconds for new positions
+                    logger.debug(f"⚡ Rapid monitoring mode (new positions exist) - next check in {update_interval}s")
+                else:
+                    update_interval = base_interval
+
                 await asyncio.sleep(update_interval)
                 
             except Exception as e:
@@ -1662,6 +1692,85 @@ class TradingBotEngine:
                     exc_info=True
                 )
                 await asyncio.sleep(30)
+
+    async def _immediate_position_check(self, token_address: str, token_symbol: str):
+        """
+        ⚡ CRITICAL: Immediate first check for new positions
+        This runs independently of the main monitoring loop to catch rapid price drops
+        """
+        try:
+            # Wait 5 seconds to allow price data to propagate
+            await asyncio.sleep(5)
+
+            # Check every 5 seconds for the first 3 minutes
+            for check_num in range(36):  # 36 checks x 5 seconds = 3 minutes
+                # Check if position still exists
+                async with self.positions_lock:
+                    if token_address not in self.active_positions:
+                        logger.info(f"⚡ Immediate check: {token_symbol} no longer in active positions")
+                        return
+                    position = self.active_positions[token_address]
+
+                # Get current price
+                chain = position.get('chain', 'ethereum')
+                pair_address = position.get('metadata', {}).get('pair', {}).get('pair_address')
+
+                current_price = None
+                if pair_address:
+                    pair_data = await self.dex_collector.get_pair_data(pair_address=pair_address, chain=chain)
+                    if pair_data and 'price' in pair_data:
+                        current_price = float(pair_data['price'])
+
+                if not current_price:
+                    # Fallback
+                    current_price = await self.dex_collector.get_token_price(token_address=token_address, chain=chain)
+
+                if current_price:
+                    # Calculate P&L
+                    from decimal import Decimal
+                    entry_price = float(position['entry_price'])
+                    pnl_percentage = ((current_price - entry_price) / entry_price) * 100
+
+                    # Check stop loss (immediate trigger if hit)
+                    stop_loss_pct = -position.get('stop_loss_percentage', 0.12) * 100
+
+                    if check_num == 0 or check_num % 6 == 0:  # Log every 30 seconds
+                        logger.info(
+                            f"⚡ Rapid check #{check_num+1} for {token_symbol}: "
+                            f"P&L {pnl_percentage:+.2f}% (stop @ {stop_loss_pct:.0f}%)"
+                        )
+
+                    if pnl_percentage <= stop_loss_pct:
+                        logger.warning(
+                            f"🚨 RAPID STOP LOSS TRIGGERED for {token_symbol}! "
+                            f"P&L: {pnl_percentage:.2f}% at check #{check_num+1}"
+                        )
+                        # Update position with current price before closing
+                        position['current_price'] = Decimal(str(current_price))
+                        position['pnl_percentage'] = pnl_percentage
+                        await self._close_position(position, "stop_loss_rapid")
+                        return
+
+                    # Check take profit too
+                    take_profit_pct = position.get('take_profit_percentage', 0.3) * 100
+                    if pnl_percentage >= take_profit_pct:
+                        logger.info(
+                            f"✅ RAPID TAKE PROFIT for {token_symbol}! "
+                            f"P&L: {pnl_percentage:.2f}% at check #{check_num+1}"
+                        )
+                        position['current_price'] = Decimal(str(current_price))
+                        position['pnl_percentage'] = pnl_percentage
+                        await self._close_position(position, "take_profit_rapid")
+                        return
+                else:
+                    logger.warning(f"⚡ Rapid check #{check_num+1}: Could not get price for {token_symbol}")
+
+                await asyncio.sleep(5)
+
+            logger.info(f"⚡ Rapid monitoring complete for {token_symbol} (position handed to main loop)")
+
+        except Exception as e:
+            logger.error(f"Error in immediate position check for {token_symbol}: {e}", exc_info=True)
 
 
     async def _calculate_position_size(
