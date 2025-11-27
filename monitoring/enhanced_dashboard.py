@@ -2560,24 +2560,31 @@ class DashboardEndpoints:
                     logger.warning(f"Could not calculate real balance: {e}")
 
             # Recalculate can_trade based on real data
-            reasons = block_info.get('reasons', [])
+            # CRITICAL: Preserve original reasons from portfolio manager (consecutive losses, daily loss limit, etc.)
+            original_reasons = block_info.get('reasons', [])
+            original_can_trade = block_info.get('can_trade', True)
             max_positions = block_info.get('max_positions', 10)
             min_position_size = block_info.get('min_position_size', 5)
             available_balance = block_info.get('available_balance', 0)
 
-            # Remove outdated reasons (will recalculate based on real data)
-            reasons = [r for r in reasons if 'Max positions' not in r and 'Insufficient balance' not in r]
+            # Keep non-position/balance reasons intact (consecutive losses, daily loss, risk exposure)
+            preserved_reasons = [r for r in original_reasons if 'Max positions' not in r and 'Insufficient balance' not in r]
 
-            # Add new reason if max positions reached
+            # Re-check position limit with real count
             if real_positions_count >= max_positions:
-                reasons.append(f"Max positions reached: {real_positions_count}/{max_positions}")
+                preserved_reasons.append(f"Max positions reached: {real_positions_count}/{max_positions}")
 
-            # Add new reason if insufficient balance (based on real available balance)
+            # Re-check balance with real available balance
             if available_balance < min_position_size:
-                reasons.append(f"Insufficient balance: ${available_balance:.2f} < ${min_position_size:.2f} required")
+                preserved_reasons.append(f"Insufficient balance: ${available_balance:.2f} < ${min_position_size:.2f} required")
 
-            block_info['reasons'] = reasons
-            block_info['can_trade'] = len(reasons) == 0
+            block_info['reasons'] = preserved_reasons
+            # CRITICAL: can_trade is False if ANY reason exists
+            block_info['can_trade'] = len(preserved_reasons) == 0
+
+            # Log block status for debugging
+            if not block_info['can_trade']:
+                logger.info(f"Trading BLOCKED - Reasons: {preserved_reasons}")
 
             return web.json_response({
                 'success': True,
