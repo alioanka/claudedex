@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 from typing import Dict, List, Optional, Any
+from dotenv import load_dotenv
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -88,6 +89,14 @@ class DashboardEndpoints:
             loader=FileSystemLoader('dashboard/templates'),
             autoescape=select_autoescape(['html', 'xml'])
         )
+
+        # ========== WALLET BALANCE CACHING ==========
+        # Cache wallet balances to prevent instability from intermittent RPC failures
+        self._wallet_cache = {}
+        self._wallet_cache_time = None
+        self._wallet_cache_ttl = 60  # Cache for 60 seconds
+        self._price_cache = {'ETH': 3500, 'BNB': 600, 'MATIC': 0.80, 'SOL': 200}
+        self._price_cache_time = None
 
         # Setup routes
         self._setup_routes()
@@ -456,6 +465,12 @@ class DashboardEndpoints:
         # API endpoints that return empty data when module_manager is unavailable
         self.app.router.add_get('/api/modules', self._fallback_api_modules)
 
+        # Module control API endpoints (enable/disable/pause/start)
+        self.app.router.add_post('/api/modules/{module}/enable', self._api_module_enable)
+        self.app.router.add_post('/api/modules/{module}/disable', self._api_module_disable)
+        self.app.router.add_post('/api/modules/{module}/pause', self._api_module_pause)
+        self.app.router.add_post('/api/modules/{module}/start', self._api_module_start)
+
         logger.info("✅ Fallback module routes registered")
 
     # Fallback page handlers
@@ -517,58 +532,147 @@ class DashboardEndpoints:
 
     async def _fallback_api_modules(self, request):
         """Return module data from .env settings and database"""
-        # Read module enabled status from .env
-        dex_enabled = os.getenv('DEX_MODULE_ENABLED', 'false').lower() == 'true'
+        # Reload .env from the correct path to get latest values
+        env_path = self._get_env_file_path()
+        if os.path.exists(env_path):
+            load_dotenv(env_path, override=True)
+            logger.info(f"Loaded .env from: {env_path}")
+        else:
+            logger.warning(f".env file not found at: {env_path}")
+
+        # Read module enabled status from .env (default to DEX enabled, others disabled)
+        dex_enabled = os.getenv('DEX_MODULE_ENABLED', 'true').lower() == 'true'
         futures_enabled = os.getenv('FUTURES_MODULE_ENABLED', 'false').lower() == 'true'
         solana_enabled = os.getenv('SOLANA_MODULE_ENABLED', 'false').lower() == 'true'
+
+        logger.info(f"Module status from env: DEX={dex_enabled}, Futures={futures_enabled}, Solana={solana_enabled}")
 
         # Get metrics from database
         dex_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
         futures_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
         solana_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
 
+        # Count positions by chain FROM ENGINE (same source as Open Positions API)
+        if self.engine and hasattr(self.engine, 'active_positions') and self.engine.active_positions:
+            try:
+                for token_addr, pos in self.engine.active_positions.items():
+                    chain = (pos.get('chain') or pos.get('network') or 'SOLANA').upper()
+                    # Calculate unrealized P&L from position
+                    entry_price = float(pos.get('entry_price', 0))
+                    current_price = float(pos.get('current_price', entry_price))
+                    amount = float(pos.get('amount', 0))
+                    unrealized_pnl = (current_price - entry_price) * amount
+
+                    if chain == 'SOLANA':
+                        solana_metrics['positions'] += 1
+                        solana_metrics['pnl'] += unrealized_pnl
+                    elif chain in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM']:
+                        dex_metrics['positions'] += 1
+                        dex_metrics['pnl'] += unrealized_pnl
+
+                logger.info(f"Module metrics from engine positions: DEX={dex_metrics}, Solana={solana_metrics}")
+            except Exception as e:
+                logger.warning(f"Error getting positions from engine: {e}")
+
         if self.db:
             try:
                 # Get trades by chain/module
                 trades = await self.db.get_recent_trades(limit=1000)
+                logger.info(f"Got {len(trades) if trades else 0} trades from database")
 
-                for trade in trades:
-                    chain = (trade.get('chain') or trade.get('network') or '').upper()
-                    pnl = float(trade.get('profit_loss') or 0) if trade.get('status') == 'closed' else 0
+                # Define chain mappings - handle various formats
+                SOLANA_CHAINS = {'SOLANA', 'SOL'}
+                DEX_CHAINS = {'ETHEREUM', 'ETH', 'BSC', 'BNB', 'BASE', 'POLYGON', 'MATIC', 'ARBITRUM', 'ARB', 'AVALANCHE', 'AVAX', 'FANTOM', 'FTM'}
 
-                    if chain == 'SOLANA':
-                        solana_metrics['total_trades'] += 1
-                        solana_metrics['pnl'] += pnl
-                    elif chain in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM']:
-                        dex_metrics['total_trades'] += 1
-                        dex_metrics['pnl'] += pnl
+                if trades:
+                    # Log unique chains for debugging
+                    unique_chains = set((t.get('chain') or t.get('network') or 'UNKNOWN') for t in trades)
+                    logger.info(f"Unique chains in trades: {unique_chains}")
 
-                # Count positions by chain FROM ENGINE (same source as Open Positions API)
-                if self.engine and hasattr(self.engine, 'active_positions') and self.engine.active_positions:
-                    for token_addr, pos in self.engine.active_positions.items():
-                        chain = (pos.get('chain') or pos.get('network') or 'SOLANA').upper()
-                        if chain == 'SOLANA':
-                            solana_metrics['positions'] += 1
-                        elif chain in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM']:
-                            dex_metrics['positions'] += 1
+                    closed_trades = [t for t in trades if t.get('status') == 'closed']
+                    logger.info(f"Closed trades: {len(closed_trades)} out of {len(trades)}")
 
-                # Calculate win rates
-                dex_wins = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM'] and t.get('status') == 'closed' and float(t.get('profit_loss') or 0) > 0)
-                solana_wins = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() == 'SOLANA' and t.get('status') == 'closed' and float(t.get('profit_loss') or 0) > 0)
+                    for trade in trades:
+                        chain = (trade.get('chain') or trade.get('network') or '').upper()
+                        is_closed = trade.get('status') == 'closed'
+                        pnl = float(trade.get('profit_loss') or 0) if is_closed else 0
 
-                dex_closed = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM'] and t.get('status') == 'closed')
-                solana_closed = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() == 'SOLANA' and t.get('status') == 'closed')
+                        if chain in SOLANA_CHAINS:
+                            solana_metrics['total_trades'] += 1
+                            if is_closed:
+                                solana_metrics['pnl'] += pnl
+                        elif chain in DEX_CHAINS or chain:  # Count any non-empty chain as DEX if not Solana
+                            dex_metrics['total_trades'] += 1
+                            if is_closed:
+                                dex_metrics['pnl'] += pnl
 
-                dex_metrics['win_rate'] = (dex_wins / dex_closed * 100) if dex_closed > 0 else 0
-                solana_metrics['win_rate'] = (solana_wins / solana_closed * 100) if solana_closed > 0 else 0
+                    # Calculate win rates
+                    dex_wins = 0
+                    dex_closed = 0
+                    solana_wins = 0
+                    solana_closed = 0
+
+                    for t in trades:
+                        chain = (t.get('chain') or t.get('network') or '').upper()
+                        is_closed = t.get('status') == 'closed'
+                        is_win = is_closed and float(t.get('profit_loss') or 0) > 0
+
+                        if chain in SOLANA_CHAINS:
+                            if is_closed:
+                                solana_closed += 1
+                                if is_win:
+                                    solana_wins += 1
+                        elif chain in DEX_CHAINS or chain:
+                            if is_closed:
+                                dex_closed += 1
+                                if is_win:
+                                    dex_wins += 1
+
+                    dex_metrics['win_rate'] = (dex_wins / dex_closed * 100) if dex_closed > 0 else 0
+                    solana_metrics['win_rate'] = (solana_wins / solana_closed * 100) if solana_closed > 0 else 0
+
+                    logger.info(f"Module metrics: DEX trades={dex_metrics['total_trades']}, closed={dex_closed}, wins={dex_wins}, pnl={dex_metrics['pnl']:.2f}")
+                    logger.info(f"Module metrics: Solana trades={solana_metrics['total_trades']}, closed={solana_closed}, wins={solana_wins}, pnl={solana_metrics['pnl']:.2f}")
 
             except Exception as e:
-                logger.debug(f"Error getting module metrics: {e}")
+                logger.error(f"Error getting module metrics from DB: {e}", exc_info=True)
 
-        # Get capital allocations from config
-        dex_capital = float(os.getenv('DEX_CAPITAL', 500))
-        futures_capital = float(os.getenv('FUTURES_CAPITAL', 300))
-        solana_capital = float(os.getenv('SOLANA_CAPITAL', 400))
+        # Get capital allocations from module config files
+        dex_capital = 500.0  # Default
+        futures_capital = 300.0  # Default
+        solana_capital = 400.0  # Default
+
+        try:
+            import yaml
+            config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'modules')
+
+            # Read DEX config
+            dex_config_path = os.path.join(config_dir, 'dex_trading.yaml')
+            if os.path.exists(dex_config_path):
+                with open(dex_config_path, 'r') as f:
+                    dex_config = yaml.safe_load(f)
+                    if dex_config and 'capital' in dex_config:
+                        dex_capital = float(dex_config['capital'].get('allocation', 500.0))
+
+            # Read Futures config
+            futures_config_path = os.path.join(config_dir, 'futures_trading.yaml')
+            if os.path.exists(futures_config_path):
+                with open(futures_config_path, 'r') as f:
+                    futures_config = yaml.safe_load(f)
+                    if futures_config and 'capital' in futures_config:
+                        futures_capital = float(futures_config['capital'].get('allocation', 300.0))
+
+            # Read Solana config
+            solana_config_path = os.path.join(config_dir, 'solana_strategies.yaml')
+            if os.path.exists(solana_config_path):
+                with open(solana_config_path, 'r') as f:
+                    solana_config = yaml.safe_load(f)
+                    if solana_config and 'capital' in solana_config:
+                        solana_capital = float(solana_config['capital'].get('allocation', 400.0))
+
+            logger.info(f"Capital from config: DEX=${dex_capital}, Futures=${futures_capital}, Solana=${solana_capital}")
+        except Exception as e:
+            logger.warning(f"Error reading module config files: {e}")
 
         return web.json_response({
             'success': True,
@@ -598,6 +702,141 @@ class DashboardEndpoints:
                 }
             }
         })
+
+    def _get_env_file_path(self) -> str:
+        """Get the absolute path to the .env file in the project root"""
+        # Get project root from monitoring directory (go up one level)
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env_path = os.path.join(project_root, '.env')
+        logger.debug(f"Using .env file at: {env_path}")
+        return env_path
+
+    def _update_env_file(self, key: str, value: str) -> bool:
+        """Update a key in the .env file"""
+        try:
+            env_path = self._get_env_file_path()
+            logger.info(f"Updating .env file at: {env_path}, setting {key}={value}")
+
+            # Read existing content or create default if file doesn't exist
+            lines = []
+            key_found = False
+
+            if os.path.exists(env_path):
+                with open(env_path, 'r') as f:
+                    for line in f:
+                        if line.strip().startswith(f'{key}='):
+                            lines.append(f'{key}={value}\n')
+                            key_found = True
+                        else:
+                            lines.append(line)
+            else:
+                # Create default .env with all module settings
+                logger.info(f"Creating new .env file at: {env_path}")
+                lines = [
+                    "# Trading Module Configuration\n",
+                    "DEX_MODULE_ENABLED=true\n",
+                    "FUTURES_MODULE_ENABLED=false\n",
+                    "SOLANA_MODULE_ENABLED=false\n",
+                    "\n",
+                    "# Environment\n",
+                    "ENVIRONMENT=development\n",
+                    "DEBUG=false\n",
+                ]
+                # Check if the key we're setting is in the defaults
+                for i, line in enumerate(lines):
+                    if line.strip().startswith(f'{key}='):
+                        lines[i] = f'{key}={value}\n'
+                        key_found = True
+                        break
+
+            # If key wasn't found, add it
+            if not key_found:
+                lines.append(f'{key}={value}\n')
+
+            # Write back
+            with open(env_path, 'w') as f:
+                f.writelines(lines)
+
+            logger.info(f"Successfully wrote .env file with {key}={value}")
+
+            # Reload environment variables
+            load_dotenv(env_path, override=True)
+
+            # Also update os.environ directly for immediate effect
+            os.environ[key] = value
+            logger.info(f"Environment variable {key} set to: {os.environ.get(key)}")
+
+            return True
+        except Exception as e:
+            logger.error(f"Error updating .env file: {e}", exc_info=True)
+            return False
+
+    async def _api_module_enable(self, request):
+        """Enable a module by updating .env"""
+        module = request.match_info.get('module', '')
+
+        module_env_map = {
+            'dex_trading': 'DEX_MODULE_ENABLED',
+            'futures_trading': 'FUTURES_MODULE_ENABLED',
+            'solana_strategies': 'SOLANA_MODULE_ENABLED'
+        }
+
+        if module not in module_env_map:
+            return web.json_response({'error': f'Unknown module: {module}'}, status=400)
+
+        env_key = module_env_map[module]
+        if self._update_env_file(env_key, 'true'):
+            logger.info(f"Module {module} enabled via API")
+            return web.json_response({'success': True, 'message': f'{module} enabled'})
+        else:
+            return web.json_response({'error': 'Failed to update .env file'}, status=500)
+
+    async def _api_module_disable(self, request):
+        """Disable a module by updating .env"""
+        module = request.match_info.get('module', '')
+
+        module_env_map = {
+            'dex_trading': 'DEX_MODULE_ENABLED',
+            'futures_trading': 'FUTURES_MODULE_ENABLED',
+            'solana_strategies': 'SOLANA_MODULE_ENABLED'
+        }
+
+        if module not in module_env_map:
+            return web.json_response({'error': f'Unknown module: {module}'}, status=400)
+
+        env_key = module_env_map[module]
+        if self._update_env_file(env_key, 'false'):
+            logger.info(f"Module {module} disabled via API")
+            return web.json_response({'success': True, 'message': f'{module} disabled'})
+        else:
+            return web.json_response({'error': 'Failed to update .env file'}, status=500)
+
+    async def _api_module_pause(self, request):
+        """Pause a module (sets to paused state)"""
+        module = request.match_info.get('module', '')
+        # For now, pause acts like disable - in a full implementation this would set a PAUSED state
+        logger.info(f"Module {module} paused via API")
+        return web.json_response({'success': True, 'message': f'{module} paused'})
+
+    async def _api_module_start(self, request):
+        """Start/resume a module"""
+        module = request.match_info.get('module', '')
+
+        module_env_map = {
+            'dex_trading': 'DEX_MODULE_ENABLED',
+            'futures_trading': 'FUTURES_MODULE_ENABLED',
+            'solana_strategies': 'SOLANA_MODULE_ENABLED'
+        }
+
+        if module not in module_env_map:
+            return web.json_response({'error': f'Unknown module: {module}'}, status=400)
+
+        env_key = module_env_map[module]
+        if self._update_env_file(env_key, 'true'):
+            logger.info(f"Module {module} started via API")
+            return web.json_response({'success': True, 'message': f'{module} started'})
+        else:
+            return web.json_response({'error': 'Failed to update .env file'}, status=500)
 
     def _setup_socketio(self):
         """Setup Socket.IO handlers"""
@@ -1858,11 +2097,16 @@ class DashboardEndpoints:
     # ============================================================================
 
     async def api_wallet_balances(self, request):
-        """Get wallet balances by chain - shows portfolio values and real balances"""
+        """Get wallet balances by chain - shows portfolio values and real balances
+
+        Uses caching to prevent instability from intermittent RPC failures.
+        Blockchain balances are cached for 60 seconds.
+        """
         try:
             balances = {}
             total_value = 0
             total_pnl = 0
+            now = datetime.now()
 
             # Initialize chains with zero values
             chains = ['ETHEREUM', 'BSC', 'POLYGON', 'ARBITRUM', 'BASE', 'SOLANA']
@@ -1880,12 +2124,9 @@ class DashboardEndpoints:
             if self.engine and hasattr(self.engine, 'active_positions') and self.engine.active_positions:
                 try:
                     active_positions_snapshot = dict(self.engine.active_positions.items())
-                    logger.info(f"Wallet API: Found {len(active_positions_snapshot)} open positions from engine")
 
                     for token_address, pos in active_positions_snapshot.items():
-                        # Get chain from position
                         chain = (pos.get('chain') or pos.get('network') or 'SOLANA').upper()
-                        logger.debug(f"Position: {pos.get('token_symbol')} on {chain}")
 
                         if chain in balances:
                             entry_price = float(pos.get('entry_price', 0))
@@ -1904,8 +2145,6 @@ class DashboardEndpoints:
 
                 except Exception as e:
                     logger.warning(f"Error getting positions from engine: {e}")
-            else:
-                logger.warning("Wallet API: No active positions in engine")
 
             # Also get realized P&L from closed trades
             if self.db:
@@ -1921,120 +2160,291 @@ class DashboardEndpoints:
                 except Exception as e:
                     logger.warning(f"Error getting closed trades: {e}")
 
-            # ========== FETCH LIVE TOKEN PRICES ==========
-            prices = {'ETH': 3500, 'BNB': 600, 'MATIC': 0.80, 'SOL': 200}  # Fallback defaults
-            try:
-                async with aiohttp.ClientSession() as session:
-                    # CoinGecko API - free, no API key required
-                    url = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum,binancecoin,matic-network,solana&vs_currencies=usd"
-                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            prices = {
-                                'ETH': data.get('ethereum', {}).get('usd', 3500),
-                                'BNB': data.get('binancecoin', {}).get('usd', 600),
-                                'MATIC': data.get('matic-network', {}).get('usd', 0.80),
-                                'SOL': data.get('solana', {}).get('usd', 200)
-                            }
-                            logger.debug(f"Live prices: ETH=${prices['ETH']}, BNB=${prices['BNB']}, SOL=${prices['SOL']}")
-            except Exception as e:
-                logger.debug(f"Could not fetch live prices, using defaults: {e}")
+            # ========== CHECK CACHE - Only fetch blockchain balances every 60 seconds ==========
+            cache_valid = (
+                self._wallet_cache_time and
+                (now - self._wallet_cache_time).total_seconds() < self._wallet_cache_ttl and
+                self._wallet_cache
+            )
 
-            # Try Solana RPC for real balance
-            try:
-                solana_wallet = os.getenv('SOLANA_WALLET')
-                if solana_wallet:
-                    solana_rpc = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
-                    async with aiohttp.ClientSession() as session:
-                        payload = {"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [solana_wallet]}
-                        async with session.post(solana_rpc, json=payload, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                            if resp.status == 200:
-                                data = await resp.json()
-                                lamports = data.get('result', {}).get('value', 0)
-                                sol_native = lamports / 1e9
-                                sol_usd = sol_native * prices['SOL']
-                                # Add real wallet balance to portfolio value
-                                if sol_native > 0:
-                                    balances['SOLANA']['native_balance'] = sol_native
-                                    # Only add real balance if no positions (avoid double counting)
+            if cache_valid:
+                # Use cached blockchain balances
+                cached = self._wallet_cache
+                prices = self._price_cache
+
+                # Apply cached native balances to chains without positions
+                for chain in chains:
+                    if balances[chain]['positions'] == 0:
+                        cached_chain = cached.get(chain, {})
+                        if cached_chain.get('native_balance', 0) > 0:
+                            balances[chain]['native_balance'] = cached_chain['native_balance']
+                            balances[chain]['balance'] = cached_chain.get('balance', 0)
+                            total_value += balances[chain]['balance']
+
+                # Apply cached Solana module
+                if 'SOLANA_MODULE' in cached:
+                    balances['SOLANA_MODULE'] = cached['SOLANA_MODULE']
+                    total_value += cached['SOLANA_MODULE'].get('balance', 0)
+                else:
+                    balances['SOLANA_MODULE'] = {'balance': 0.0, 'native_balance': 0.0, 'native_symbol': 'SOL', 'pnl': 0.0, 'positions': 0}
+
+                # Apply cached exchange balances
+                if 'FUTURES' in cached:
+                    balances['FUTURES'] = cached['FUTURES']
+                    total_value += cached['FUTURES'].get('balance', 0)
+                if 'SPOT' in cached:
+                    balances['SPOT'] = cached['SPOT']
+                    total_value += cached['SPOT'].get('balance', 0)
+                if 'EXCHANGE_TOTAL' in cached:
+                    balances['EXCHANGE_TOTAL'] = cached['EXCHANGE_TOTAL']
+
+            else:
+                # ========== FETCH FRESH DATA FROM BLOCKCHAIN ==========
+                # Use a single session for all requests to reduce overhead
+                prices = self._price_cache.copy()  # Start with cached prices
+
+                # Pre-load cached native balances as defaults (so failures don't reset to 0)
+                if self._wallet_cache:
+                    for chain in chains:
+                        if chain in self._wallet_cache and self._wallet_cache[chain].get('native_balance', 0) > 0:
+                            balances[chain]['native_balance'] = self._wallet_cache[chain]['native_balance']
+
+                try:
+                    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+                        # ===== FETCH PRICES (once) =====
+                        try:
+                            url = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum,binancecoin,matic-network,solana&vs_currencies=usd"
+                            async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                                if resp.status == 200:
+                                    data = await resp.json()
+                                    prices = {
+                                        'ETH': data.get('ethereum', {}).get('usd', self._price_cache.get('ETH', 3500)),
+                                        'BNB': data.get('binancecoin', {}).get('usd', self._price_cache.get('BNB', 600)),
+                                        'MATIC': data.get('matic-network', {}).get('usd', self._price_cache.get('MATIC', 0.80)),
+                                        'SOL': data.get('solana', {}).get('usd', self._price_cache.get('SOL', 200))
+                                    }
+                                    self._price_cache = prices  # Update cache
+                        except Exception as e:
+                            logger.debug(f"Price fetch failed, using cache: {e}")
+
+                        chain_prices = {
+                            'ETHEREUM': prices['ETH'], 'BSC': prices['BNB'], 'POLYGON': prices['MATIC'],
+                            'ARBITRUM': prices['ETH'], 'BASE': prices['ETH']
+                        }
+
+                        # ===== SOLANA WALLETS =====
+                        solana_rpc = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
+
+                        # Main Solana wallet
+                        solana_wallet = os.getenv('SOLANA_WALLET')
+                        if solana_wallet:
+                            sol_fetched = False
+                            try:
+                                payload = {"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [solana_wallet]}
+                                async with session.post(solana_rpc, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                                    if resp.status == 200:
+                                        data = await resp.json()
+                                        if 'error' not in data:
+                                            lamports = data.get('result', {}).get('value', 0)
+                                            sol_native = lamports / 1e9
+                                            sol_usd = sol_native * prices['SOL']
+                                            balances['SOLANA']['native_balance'] = sol_native
+                                            if balances['SOLANA']['positions'] == 0:
+                                                balances['SOLANA']['balance'] = sol_usd
+                                                total_value += sol_usd
+                                            sol_fetched = True
+                                        else:
+                                            logger.warning(f"Solana RPC error: {data.get('error')}")
+                            except Exception as e:
+                                logger.warning(f"Solana wallet fetch failed: {e}")
+
+                            # Fallback to cached value if fetch failed
+                            if not sol_fetched and self._wallet_cache and 'SOLANA' in self._wallet_cache:
+                                cached_sol = self._wallet_cache['SOLANA']
+                                if cached_sol.get('native_balance', 0) > 0:
+                                    balances['SOLANA']['native_balance'] = cached_sol['native_balance']
                                     if balances['SOLANA']['positions'] == 0:
-                                        balances['SOLANA']['balance'] = sol_usd
-                                        total_value += sol_usd
-            except Exception as e:
-                logger.debug(f"Could not get Solana real balance: {e}")
+                                        balances['SOLANA']['balance'] = cached_sol['native_balance'] * prices['SOL']
+                                        total_value += balances['SOLANA']['balance']
 
-            # ========== SOLANA MODULE WALLET ==========
-            try:
-                solana_module_wallet = os.getenv('SOLANA_MODULE_WALLET')
-                if solana_module_wallet:
-                    solana_rpc = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
-                    async with aiohttp.ClientSession() as session:
-                        payload = {"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [solana_module_wallet]}
-                        async with session.post(solana_rpc, json=payload, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                            if resp.status == 200:
-                                data = await resp.json()
-                                lamports = data.get('result', {}).get('value', 0)
-                                sol_native = lamports / 1e9
-                                sol_usd = sol_native * prices['SOL']
-                                balances['SOLANA_MODULE'] = {
-                                    'balance': sol_usd,
-                                    'native_balance': sol_native,
-                                    'native_symbol': 'SOL',
-                                    'pnl': 0.0,
-                                    'positions': 0
-                                }
-                                total_value += sol_usd
-            except Exception as e:
-                logger.debug(f"Could not get Solana Module balance: {e}")
-                balances['SOLANA_MODULE'] = {'balance': 0.0, 'native_balance': 0.0, 'native_symbol': 'SOL', 'pnl': 0.0, 'positions': 0}
+                        # Solana module wallet
+                        solana_module_wallet = os.getenv('SOLANA_MODULE_WALLET')
+                        if solana_module_wallet:
+                            sol_mod_fetched = False
+                            try:
+                                payload = {"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [solana_module_wallet]}
+                                async with session.post(solana_rpc, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                                    if resp.status == 200:
+                                        data = await resp.json()
+                                        if 'error' not in data:
+                                            lamports = data.get('result', {}).get('value', 0)
+                                            sol_native = lamports / 1e9
+                                            sol_usd = sol_native * prices['SOL']
+                                            balances['SOLANA_MODULE'] = {
+                                                'balance': sol_usd, 'native_balance': sol_native,
+                                                'native_symbol': 'SOL', 'pnl': 0.0, 'positions': 0
+                                            }
+                                            total_value += sol_usd
+                                            sol_mod_fetched = True
+                            except Exception as e:
+                                logger.warning(f"Solana module fetch failed: {e}")
 
-            # ========== FUTURES EXCHANGE BALANCE ==========
-            try:
-                futures_balance = 0.0
-                futures_margin = 0.0
-                futures_pnl = 0.0
-                futures_available = 0.0
+                            if not sol_mod_fetched:
+                                # Use cached or default
+                                if self._wallet_cache and 'SOLANA_MODULE' in self._wallet_cache:
+                                    balances['SOLANA_MODULE'] = self._wallet_cache['SOLANA_MODULE'].copy()
+                                    total_value += balances['SOLANA_MODULE'].get('balance', 0)
+                                else:
+                                    balances['SOLANA_MODULE'] = {'balance': 0.0, 'native_balance': 0.0, 'native_symbol': 'SOL', 'pnl': 0.0, 'positions': 0}
+                        else:
+                            balances['SOLANA_MODULE'] = {'balance': 0.0, 'native_balance': 0.0, 'native_symbol': 'SOL', 'pnl': 0.0, 'positions': 0}
 
-                binance_key = os.getenv('BINANCE_API_KEY')
-                binance_secret = os.getenv('BINANCE_API_SECRET')
+                        # ===== EVM WALLETS =====
+                        wallet_address = os.getenv('WALLET_ADDRESS')
+                        if wallet_address:
+                            evm_rpcs = {
+                                'ETHEREUM': os.getenv('ETH_RPC_URL', 'https://eth.llamarpc.com'),
+                                'BSC': os.getenv('BSC_RPC_URL', 'https://bsc-dataseed1.binance.org'),
+                                'POLYGON': os.getenv('POLYGON_RPC_URL', 'https://polygon-rpc.com'),
+                                'ARBITRUM': os.getenv('ARBITRUM_RPC_URL', 'https://arb1.arbitrum.io/rpc'),
+                                'BASE': os.getenv('BASE_RPC_URL', 'https://mainnet.base.org')
+                            }
 
-                if binance_key and binance_secret:
-                    import hmac
-                    import hashlib
-                    import time as time_module
+                            for chain, rpc_url in evm_rpcs.items():
+                                chain_fetched = False
+                                try:
+                                    payload = {"jsonrpc": "2.0", "id": 1, "method": "eth_getBalance", "params": [wallet_address, "latest"]}
+                                    async with session.post(rpc_url, json=payload, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                                        if resp.status == 200:
+                                            data = await resp.json()
+                                            if 'error' not in data:
+                                                hex_balance = data.get('result', '0x0')
+                                                if hex_balance and hex_balance != '0x0':
+                                                    wei_balance = int(hex_balance, 16)
+                                                    native_balance = wei_balance / 1e18
+                                                    if native_balance > 0:
+                                                        usd_value = native_balance * chain_prices.get(chain, 0)
+                                                        balances[chain]['native_balance'] = native_balance
+                                                        if balances[chain]['positions'] == 0:
+                                                            balances[chain]['balance'] = usd_value
+                                                            total_value += usd_value
+                                                        chain_fetched = True
+                                except Exception as e:
+                                    logger.debug(f"{chain} balance fetch failed: {e}")
 
-                    timestamp = int(time_module.time() * 1000)
-                    query_string = f"timestamp={timestamp}"
-                    signature = hmac.new(binance_secret.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
-                    url = f"https://fapi.binance.com/fapi/v2/balance?{query_string}&signature={signature}"
-                    headers = {'X-MBX-APIKEY': binance_key}
+                                # Fallback to cached value if fetch failed
+                                if not chain_fetched and self._wallet_cache and chain in self._wallet_cache:
+                                    cached_chain = self._wallet_cache[chain]
+                                    if cached_chain.get('native_balance', 0) > 0:
+                                        balances[chain]['native_balance'] = cached_chain['native_balance']
+                                        if balances[chain]['positions'] == 0:
+                                            balances[chain]['balance'] = cached_chain['native_balance'] * chain_prices.get(chain, 0)
+                                            total_value += balances[chain]['balance']
 
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                            if resp.status == 200:
-                                data = await resp.json()
-                                for asset in data:
-                                    if asset.get('asset') == 'USDT':
-                                        futures_balance = float(asset.get('balance', 0))
-                                        futures_available = float(asset.get('availableBalance', 0))
-                                        futures_pnl = float(asset.get('crossUnPnl', 0))
-                                        futures_margin = futures_balance - futures_available
-                                        break
+                        # ===== EXCHANGE BALANCES =====
+                        import hmac
+                        import hashlib
+                        import time as time_module
 
-                balances['FUTURES'] = {
-                    'total_balance': futures_balance,
-                    'margin_used': futures_margin,
-                    'unrealized_pnl': futures_pnl,
-                    'available': futures_available,
-                    'balance': futures_balance,
-                    'pnl': futures_pnl,
-                    'positions': 0
-                }
-                total_value += futures_balance
+                        futures_balance = spot_balance = futures_margin = futures_pnl = futures_available = 0.0
+                        spot_assets = []
+                        exchange_fetched = False
 
-            except Exception as e:
-                logger.debug(f"Error getting futures balance: {e}")
-                balances['FUTURES'] = {'total_balance': 0.0, 'margin_used': 0.0, 'unrealized_pnl': 0.0, 'available': 0.0, 'balance': 0.0, 'pnl': 0.0, 'positions': 0}
+                        binance_key = os.getenv('BINANCE_API_KEY')
+                        binance_secret = os.getenv('BINANCE_API_SECRET')
+
+                        if binance_key and binance_secret:
+                            headers = {'X-MBX-APIKEY': binance_key}
+
+                            # Futures
+                            try:
+                                timestamp = int(time_module.time() * 1000)
+                                query_string = f"timestamp={timestamp}"
+                                signature = hmac.new(binance_secret.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
+                                url = f"https://fapi.binance.com/fapi/v2/balance?{query_string}&signature={signature}"
+                                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                                    if resp.status == 200:
+                                        resp_data = await resp.json()
+                                        for asset in resp_data:
+                                            if asset.get('asset') == 'USDT':
+                                                futures_balance = float(asset.get('balance', 0))
+                                                futures_available = float(asset.get('availableBalance', 0))
+                                                futures_pnl = float(asset.get('crossUnPnl', 0))
+                                                futures_margin = futures_balance - futures_available
+                                                exchange_fetched = True
+                                                break
+                                    else:
+                                        logger.warning(f"Binance futures API returned status {resp.status}")
+                            except Exception as e:
+                                logger.warning(f"Binance futures fetch failed: {e}")
+
+                            # Spot
+                            try:
+                                timestamp = int(time_module.time() * 1000)
+                                query_string = f"timestamp={timestamp}"
+                                signature = hmac.new(binance_secret.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
+                                url = f"https://api.binance.com/api/v3/account?{query_string}&signature={signature}"
+                                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                                    if resp.status == 200:
+                                        resp_data = await resp.json()
+                                        for bal in resp_data.get('balances', []):
+                                            total_amt = float(bal.get('free', 0)) + float(bal.get('locked', 0))
+                                            asset_name = bal.get('asset', '')
+                                            if total_amt > 0:
+                                                usd_value = 0
+                                                if asset_name in ['USDT', 'USDC', 'BUSD', 'DAI', 'TUSD']:
+                                                    usd_value = total_amt
+                                                elif asset_name == 'BTC':
+                                                    usd_value = total_amt * 95000
+                                                elif asset_name == 'ETH':
+                                                    usd_value = total_amt * prices['ETH']
+                                                elif asset_name == 'BNB':
+                                                    usd_value = total_amt * prices['BNB']
+                                                elif asset_name == 'SOL':
+                                                    usd_value = total_amt * prices['SOL']
+                                                if usd_value >= 1:
+                                                    spot_balance += usd_value
+                                                    spot_assets.append({'asset': asset_name, 'total': total_amt, 'usd_value': usd_value})
+                                                    exchange_fetched = True
+                                    else:
+                                        logger.warning(f"Binance spot API returned status {resp.status}")
+                            except Exception as e:
+                                logger.warning(f"Binance spot fetch failed: {e}")
+
+                        # Set exchange balances (or use cached if fetch failed)
+                        if exchange_fetched or not self._wallet_cache:
+                            balances['FUTURES'] = {'total_balance': futures_balance, 'margin_used': futures_margin, 'unrealized_pnl': futures_pnl, 'available': futures_available, 'balance': futures_balance, 'pnl': futures_pnl, 'positions': 0}
+                            balances['SPOT'] = {'total_balance': spot_balance, 'assets': spot_assets, 'balance': spot_balance}
+                            balances['EXCHANGE_TOTAL'] = {'futures': futures_balance, 'spot': spot_balance, 'total': futures_balance + spot_balance}
+                            total_value += futures_balance + spot_balance
+                        else:
+                            # Use cached exchange values
+                            if 'FUTURES' in self._wallet_cache:
+                                balances['FUTURES'] = self._wallet_cache['FUTURES'].copy()
+                                total_value += balances['FUTURES'].get('balance', 0)
+                            else:
+                                balances['FUTURES'] = {'total_balance': 0, 'margin_used': 0, 'unrealized_pnl': 0, 'available': 0, 'balance': 0, 'pnl': 0, 'positions': 0}
+                            if 'SPOT' in self._wallet_cache:
+                                balances['SPOT'] = self._wallet_cache['SPOT'].copy()
+                                total_value += balances['SPOT'].get('balance', 0)
+                            else:
+                                balances['SPOT'] = {'total_balance': 0, 'assets': [], 'balance': 0}
+                            if 'EXCHANGE_TOTAL' in self._wallet_cache:
+                                balances['EXCHANGE_TOTAL'] = self._wallet_cache['EXCHANGE_TOTAL'].copy()
+                            else:
+                                balances['EXCHANGE_TOTAL'] = {'futures': 0, 'spot': 0, 'total': 0}
+
+                except Exception as e:
+                    logger.error(f"Error fetching blockchain balances: {e}")
+                    # Use cached values if fetch fails
+                    if self._wallet_cache:
+                        for key in ['SOLANA_MODULE', 'FUTURES', 'SPOT', 'EXCHANGE_TOTAL']:
+                            if key in self._wallet_cache:
+                                balances[key] = self._wallet_cache[key]
+
+                # ===== UPDATE CACHE =====
+                self._wallet_cache = {k: v.copy() if isinstance(v, dict) else v for k, v in balances.items()}
+                self._wallet_cache_time = now
 
             # ========== CALCULATE P&L PERCENTAGE ==========
             for chain in chains:

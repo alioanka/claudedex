@@ -426,25 +426,25 @@
         </div>
         <div class="modules-comparison" id="modulesComparison">
             <!-- DEX Module -->
-            <div class="module-card active">
+            <div class="module-card active" id="dex-module">
                 <div class="module-name">DEX Trading</div>
-                <span class="module-status status-running">RUNNING</span>
+                <span class="module-status status-running" id="dex-status">RUNNING</span>
                 <div class="module-metrics">
                     <div class="metric-box">
                         <div class="metric-label">Capital</div>
-                        <div class="metric-value">$500</div>
+                        <div class="metric-value" id="dex-capital">$500</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">P&L</div>
-                        <div class="metric-value positive">$0.00</div>
+                        <div class="metric-value" id="dex-pnl">$0.00</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Positions</div>
-                        <div class="metric-value">0</div>
+                        <div class="metric-value" id="dex-positions">0</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Win Rate</div>
-                        <div class="metric-value">0%</div>
+                        <div class="metric-value" id="dex-winrate">0%</div>
                     </div>
                 </div>
                 <div class="module-action">
@@ -456,25 +456,25 @@
             </div>
 
             <!-- Futures Module -->
-            <div class="module-card inactive">
+            <div class="module-card inactive" id="futures-module">
                 <div class="module-name">Futures Trading</div>
-                <span class="module-status status-stopped">DISABLED</span>
+                <span class="module-status status-stopped" id="futures-status">DISABLED</span>
                 <div class="module-metrics">
                     <div class="metric-box">
                         <div class="metric-label">Capital</div>
-                        <div class="metric-value">$300</div>
+                        <div class="metric-value" id="futures-capital">$300</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">P&L</div>
-                        <div class="metric-value">$0.00</div>
+                        <div class="metric-value" id="futures-pnl">$0.00</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Positions</div>
-                        <div class="metric-value">0</div>
+                        <div class="metric-value" id="futures-positions">0</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Win Rate</div>
-                        <div class="metric-value">0%</div>
+                        <div class="metric-value" id="futures-winrate">0%</div>
                     </div>
                 </div>
                 <div class="module-action">
@@ -486,25 +486,25 @@
             </div>
 
             <!-- Solana Module -->
-            <div class="module-card active">
+            <div class="module-card inactive" id="solana-module">
                 <div class="module-name">Solana Strategies</div>
-                <span class="module-status status-running">RUNNING</span>
+                <span class="module-status status-stopped" id="solana-status">DISABLED</span>
                 <div class="module-metrics">
                     <div class="metric-box">
                         <div class="metric-label">Capital</div>
-                        <div class="metric-value">$400</div>
+                        <div class="metric-value" id="solana-capital">$400</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">P&L</div>
-                        <div class="metric-value">$0.00</div>
+                        <div class="metric-value" id="solana-pnl">$0.00</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Positions</div>
-                        <div class="metric-value">0</div>
+                        <div class="metric-value" id="solana-positions">0</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Win Rate</div>
-                        <div class="metric-value">0%</div>
+                        <div class="metric-value" id="solana-winrate">0%</div>
                     </div>
                 </div>
                 <div class="module-action">
@@ -602,28 +602,59 @@
         </div>
     </div>
 
-    <!-- Futures Exchange Balance -->
+    <!-- Exchange Balances (Futures + Spot) -->
     <div class="section-card">
         <div class="section-title">
-            <i class="fas fa-chart-line" style="color: #8b5cf6;"></i>
-            Futures Exchange Balance
+            <i class="fas fa-exchange-alt" style="color: #8b5cf6;"></i>
+            Exchange Balances (Binance)
         </div>
-        <div class="wallet-grid" id="futures-wallets">
-            <div class="wallet-card" style="border-color: #8b5cf6;">
-                <div class="wallet-chain" style="color: #8b5cf6;">USDT Balance</div>
-                <div class="wallet-balance" id="bal-futures-usdt">$0.00</div>
+        <!-- Futures Section -->
+        <div style="margin-bottom: 16px;">
+            <div style="font-size: 0.9rem; color: #9aa0a6; margin-bottom: 8px; font-weight: 600;">
+                <i class="fas fa-chart-line" style="color: #8b5cf6;"></i> Futures Account
             </div>
-            <div class="wallet-card">
-                <div class="wallet-chain">Margin Used</div>
-                <div class="wallet-balance" id="bal-futures-margin">$0.00</div>
+            <div class="wallet-grid" id="futures-wallets">
+                <div class="wallet-card" style="border-color: #8b5cf6;">
+                    <div class="wallet-chain" style="color: #8b5cf6;">USDT Balance</div>
+                    <div class="wallet-balance" id="bal-futures-usdt">$0.00</div>
+                </div>
+                <div class="wallet-card">
+                    <div class="wallet-chain">Margin Used</div>
+                    <div class="wallet-balance" id="bal-futures-margin">$0.00</div>
+                </div>
+                <div class="wallet-card">
+                    <div class="wallet-chain">Unrealized P&L</div>
+                    <div class="wallet-balance" id="bal-futures-pnl">$0.00</div>
+                </div>
+                <div class="wallet-card">
+                    <div class="wallet-chain">Available</div>
+                    <div class="wallet-balance" id="bal-futures-available">$0.00</div>
+                </div>
             </div>
-            <div class="wallet-card">
-                <div class="wallet-chain">Unrealized P&L</div>
-                <div class="wallet-balance" id="bal-futures-pnl">$0.00</div>
+        </div>
+        <!-- Spot Section -->
+        <div>
+            <div style="font-size: 0.9rem; color: #9aa0a6; margin-bottom: 8px; font-weight: 600;">
+                <i class="fas fa-wallet" style="color: #f59e0b;"></i> Spot Account
             </div>
-            <div class="wallet-card">
-                <div class="wallet-chain">Available</div>
-                <div class="wallet-balance" id="bal-futures-available">$0.00</div>
+            <div class="wallet-grid" id="spot-wallets">
+                <div class="wallet-card" style="border-color: #f59e0b;">
+                    <div class="wallet-chain" style="color: #f59e0b;">Total Spot Value</div>
+                    <div class="wallet-balance" id="bal-spot-total">$0.00</div>
+                </div>
+                <div class="wallet-card" id="spot-assets-card" style="grid-column: span 3;">
+                    <div class="wallet-chain">Assets</div>
+                    <div class="wallet-balance" id="bal-spot-assets" style="font-size: 0.85rem;">-</div>
+                </div>
+            </div>
+        </div>
+        <!-- Exchange Total -->
+        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #2d3548;">
+            <div class="wallet-grid">
+                <div class="wallet-card" style="border-color: #10b981; background: rgba(16, 185, 129, 0.1);">
+                    <div class="wallet-chain" style="color: #10b981;">Total Exchange Balance</div>
+                    <div class="wallet-balance" id="bal-exchange-total">$0.00</div>
+                </div>
             </div>
         </div>
     </div>
@@ -634,8 +665,226 @@
 let pnlChart = null;
 let winRateChart = null;
 
+// ========================================
+// DEDICATED WALLET BALANCE LOADING
+// ========================================
+async function loadWalletBalances() {
+    try {
+        const response = await fetch('/api/wallets/balances');
+        const result = await response.json();
+
+        console.log('Wallet API response:', result);
+
+        if (result.status === 'success' && result.balances) {
+            const balances = result.balances;
+
+            // Update DEX wallet balances
+            const chains = ['ETHEREUM', 'BSC', 'POLYGON', 'ARBITRUM', 'BASE'];
+            chains.forEach(chain => {
+                const bal = balances[chain];
+                if (bal) {
+                    const balElem = document.getElementById('bal-' + chain.toLowerCase());
+                    const pnlElem = document.getElementById('pnl-' + chain.toLowerCase());
+
+                    if (balElem) {
+                        balElem.textContent = '$' + (bal.balance || 0).toFixed(2);
+                    }
+                    if (pnlElem) {
+                        const nativeBalance = bal.native_balance || 0;
+                        const symbol = bal.native_symbol || '';
+                        if (nativeBalance > 0) {
+                            pnlElem.textContent = nativeBalance.toFixed(4) + ' ' + symbol;
+                            pnlElem.className = 'wallet-pnl';
+                        } else {
+                            pnlElem.textContent = '0 ' + symbol;
+                            pnlElem.className = 'wallet-pnl';
+                        }
+                    }
+                }
+            });
+
+            // Update Solana balances
+            let totalSolNative = 0;
+            let totalSolUsd = 0;
+
+            if (balances.SOLANA) {
+                const solBal = balances.SOLANA;
+                const nativeSol = solBal.native_balance || 0;
+                const usdSol = solBal.balance || 0;
+                const balSolana = document.getElementById('bal-solana');
+                const balSolanaUsd = document.getElementById('bal-solana-usd');
+                if (balSolana) balSolana.textContent = nativeSol.toFixed(4) + ' SOL';
+                if (balSolanaUsd) balSolanaUsd.textContent = '$' + usdSol.toFixed(2);
+                totalSolNative += nativeSol;
+                totalSolUsd += usdSol;
+            }
+
+            if (balances.SOLANA_MODULE) {
+                const solModBal = balances.SOLANA_MODULE;
+                const nativeSolMod = solModBal.native_balance || 0;
+                const usdSolMod = solModBal.balance || 0;
+                const balSolMod = document.getElementById('bal-solana-module');
+                const balSolModUsd = document.getElementById('bal-solana-module-usd');
+                if (balSolMod) balSolMod.textContent = nativeSolMod.toFixed(4) + ' SOL';
+                if (balSolModUsd) balSolModUsd.textContent = '$' + usdSolMod.toFixed(2);
+                totalSolNative += nativeSolMod;
+                totalSolUsd += usdSolMod;
+            }
+
+            // Update Total Solana
+            const balSolTotal = document.getElementById('bal-solana-total');
+            const balSolTotalUsd = document.getElementById('bal-solana-total-usd');
+            if (balSolTotal) balSolTotal.textContent = totalSolNative.toFixed(4) + ' SOL';
+            if (balSolTotalUsd) balSolTotalUsd.textContent = '$' + totalSolUsd.toFixed(2);
+
+            // Update Futures balance
+            if (balances.FUTURES) {
+                const fut = balances.FUTURES;
+                const balFutUsdt = document.getElementById('bal-futures-usdt');
+                const balFutMargin = document.getElementById('bal-futures-margin');
+                const balFutPnl = document.getElementById('bal-futures-pnl');
+                const balFutAvail = document.getElementById('bal-futures-available');
+                if (balFutUsdt) balFutUsdt.textContent = '$' + (fut.total_balance || 0).toFixed(2);
+                if (balFutMargin) balFutMargin.textContent = '$' + (fut.margin_used || 0).toFixed(2);
+                if (balFutPnl) balFutPnl.textContent = '$' + (fut.unrealized_pnl || 0).toFixed(2);
+                if (balFutAvail) balFutAvail.textContent = '$' + (fut.available || 0).toFixed(2);
+            }
+
+            // Update Spot balance
+            if (balances.SPOT) {
+                const spot = balances.SPOT;
+                const balSpotTotal = document.getElementById('bal-spot-total');
+                const balSpotAssets = document.getElementById('bal-spot-assets');
+                if (balSpotTotal) balSpotTotal.textContent = '$' + (spot.total_balance || 0).toFixed(2);
+                if (balSpotAssets && spot.assets && spot.assets.length > 0) {
+                    const assetsStr = spot.assets
+                        .sort((a, b) => b.usd_value - a.usd_value)
+                        .slice(0, 5)
+                        .map(a => a.asset + ': $' + a.usd_value.toFixed(2))
+                        .join(' | ');
+                    balSpotAssets.textContent = assetsStr;
+                } else if (balSpotAssets) {
+                    balSpotAssets.textContent = 'No assets';
+                }
+            }
+
+            // Update Exchange Total
+            if (balances.EXCHANGE_TOTAL) {
+                const balExchTotal = document.getElementById('bal-exchange-total');
+                if (balExchTotal) balExchTotal.textContent = '$' + (balances.EXCHANGE_TOTAL.total || 0).toFixed(2);
+            }
+
+            // Update total portfolio value and summary stats
+            if (balances.TOTAL) {
+                const totalPortfolio = document.getElementById('totalPortfolio');
+                if (totalPortfolio) totalPortfolio.textContent = '$' + (balances.TOTAL.balance || 0).toFixed(2);
+
+                // Update Active Positions count
+                const totalPositions = document.getElementById('totalPositions');
+                if (totalPositions) totalPositions.textContent = balances.TOTAL.positions || 0;
+
+                // Update Total P&L from wallet balances
+                const totalPnl = document.getElementById('totalPnl');
+                const pnlChange = document.getElementById('pnlChange');
+                if (totalPnl) {
+                    const pnl = balances.TOTAL.pnl || 0;
+                    totalPnl.textContent = '$' + pnl.toFixed(2);
+                    totalPnl.className = pnl >= 0 ? 'summary-value positive' : 'summary-value negative';
+
+                    // Calculate ROI
+                    const portfolioValue = balances.TOTAL.balance || 0;
+                    const costBasis = portfolioValue - pnl;
+                    const roi = costBasis > 0 ? (pnl / costBasis) * 100 : 0;
+                    if (pnlChange) pnlChange.textContent = roi.toFixed(2) + '% ROI';
+                }
+            }
+
+            // Calculate total P&L from all chains
+            let totalChainPnl = 0;
+            const chainList = ['ETHEREUM', 'BSC', 'POLYGON', 'ARBITRUM', 'BASE', 'SOLANA'];
+            chainList.forEach(chain => {
+                if (balances[chain] && balances[chain].pnl) {
+                    totalChainPnl += balances[chain].pnl;
+                }
+            });
+
+            // Update Total P&L display with chain P&L if available
+            if (Math.abs(totalChainPnl) > 0.01) {
+                const totalPnl = document.getElementById('totalPnl');
+                const pnlChange = document.getElementById('pnlChange');
+                if (totalPnl) {
+                    totalPnl.textContent = '$' + totalChainPnl.toFixed(2);
+                    totalPnl.className = totalChainPnl >= 0 ? 'summary-value positive' : 'summary-value negative';
+
+                    const portfolioValue = balances.TOTAL?.balance || 0;
+                    const costBasis = portfolioValue - totalChainPnl;
+                    const roi = costBasis > 0 ? (totalChainPnl / costBasis) * 100 : 0;
+                    if (pnlChange) pnlChange.textContent = roi.toFixed(2) + '% ROI';
+                }
+            }
+        }
+    } catch (e) {
+        console.error('Error loading wallet balances:', e);
+    }
+}
+
+// ========================================
+// FETCH PERFORMANCE METRICS (Total Trades, Win Rate)
+// ========================================
+async function loadPerformanceMetrics() {
+    try {
+        const response = await fetch('/api/performance/metrics');
+        const result = await response.json();
+
+        if (result.success && result.data) {
+            const hist = result.data.historical || result.data || {};
+
+            // Update Total Trades
+            const totalTradesEl = document.getElementById('totalTrades');
+            if (totalTradesEl) {
+                totalTradesEl.textContent = hist.total_trades || 0;
+            }
+
+            // Update Win Rate
+            const winRateEl = document.getElementById('winRate');
+            if (winRateEl) {
+                const winRate = hist.win_rate || 0;
+                winRateEl.textContent = 'Win Rate: ' + winRate.toFixed(1) + '%';
+            }
+
+            // If we have historical P&L, use it for Total P&L
+            if (hist.total_pnl && Math.abs(hist.total_pnl) > 0.01) {
+                const totalPnlEl = document.getElementById('totalPnl');
+                const pnlChangeEl = document.getElementById('pnlChange');
+                if (totalPnlEl) {
+                    totalPnlEl.textContent = '$' + hist.total_pnl.toFixed(2);
+                    totalPnlEl.className = hist.total_pnl >= 0 ? 'summary-value positive' : 'summary-value negative';
+                }
+                if (pnlChangeEl) {
+                    const roi = hist.roi || 0;
+                    pnlChangeEl.textContent = roi.toFixed(2) + '% ROI';
+                }
+            }
+        }
+    } catch (e) {
+        console.error('Error loading performance metrics:', e);
+    }
+}
+
 // Initialize charts
 document.addEventListener('DOMContentLoaded', function() {
+    // Load wallet balances immediately
+    loadWalletBalances();
+
+    // Load performance metrics (trades, win rate)
+    loadPerformanceMetrics();
+
+    // Auto-refresh wallet balances every 15 seconds
+    setInterval(loadWalletBalances, 15000);
+
+    // Auto-refresh performance metrics every 30 seconds
+    setInterval(loadPerformanceMetrics, 30000);
+
     // P&L Comparison Chart
     const pnlCtx = document.getElementById('pnlComparisonChart').getContext('2d');
     pnlChart = new Chart(pnlCtx, {
@@ -670,34 +919,42 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Win Rate Chart - Using aspectRatio to prevent shrinking
+    // Win Rate Chart - Changed to BAR chart for better win rate visualization
     const winRateCtx = document.getElementById('winRateChart').getContext('2d');
     winRateChart = new Chart(winRateCtx, {
-        type: 'doughnut',
+        type: 'bar',
         data: {
             labels: ['DEX Trading', 'Futures Trading', 'Solana Strategies'],
             datasets: [{
-                data: [33, 33, 34],
+                label: 'Win Rate (%)',
+                data: [0, 0, 0],
                 backgroundColor: [
                     'rgba(59, 130, 246, 0.8)',
                     'rgba(139, 92, 246, 0.8)',
                     'rgba(16, 185, 129, 0.8)'
                 ],
-                borderWidth: 2,
-                borderColor: '#1a1f2e'
+                borderColor: [
+                    'rgb(59, 130, 246)',
+                    'rgb(139, 92, 246)',
+                    'rgb(16, 185, 129)'
+                ],
+                borderWidth: 2
             }]
         },
         options: {
             responsive: true,
-            maintainAspectRatio: true,
-            aspectRatio: 2,
+            maintainAspectRatio: false,
             plugins: {
-                legend: {
-                    position: 'bottom',
-                    labels: {
-                        color: '#e8eaed',
-                        padding: 20,
-                        font: { size: 12 }
+                legend: { display: false }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 100,
+                    ticks: {
+                        callback: function(value) {
+                            return value + '%';
+                        }
                     }
                 }
             }
@@ -768,6 +1025,9 @@ async function loadDashboardData() {
             });
             document.getElementById('totalTrades').textContent = totalTrades;
 
+            // Log module data for debugging
+            console.log('Modules API response:', modules);
+
             // Update P&L Comparison Chart
             if (pnlChart) {
                 const dexPnl = modules.dex_trading?.metrics?.pnl || 0;
@@ -775,126 +1035,70 @@ async function loadDashboardData() {
                 const solanaPnl = modules.solana_strategies?.metrics?.pnl || 0;
                 pnlChart.data.datasets[0].data = [dexPnl, futuresPnl, solanaPnl];
                 pnlChart.update();
+                console.log('P&L Chart updated:', {dex: dexPnl, futures: futuresPnl, solana: solanaPnl});
             }
 
-            // Update Win Rate Chart
+            // Update Win Rate Chart (now a bar chart showing actual percentages)
             if (winRateChart) {
                 const dexWinRate = modules.dex_trading?.metrics?.win_rate || 0;
                 const futuresWinRate = modules.futures_trading?.metrics?.win_rate || 0;
                 const solanaWinRate = modules.solana_strategies?.metrics?.win_rate || 0;
-                // Ensure we have some data to display
-                const totalRate = dexWinRate + futuresWinRate + solanaWinRate;
-                if (totalRate > 0) {
-                    winRateChart.data.datasets[0].data = [dexWinRate, futuresWinRate, solanaWinRate];
-                } else {
-                    winRateChart.data.datasets[0].data = [33, 33, 34]; // Default equal split
-                }
+                winRateChart.data.datasets[0].data = [dexWinRate, futuresWinRate, solanaWinRate];
                 winRateChart.update();
+                console.log('Win Rate Chart updated:', {dex: dexWinRate, futures: futuresWinRate, solana: solanaWinRate});
             }
         }
     } catch (e) {
         console.error('Error fetching module data:', e);
     }
 
-    // Load wallet balances (real on-chain balances)
-    try {
-        const walletResponse = await fetch('/api/wallets/balances');
-        const walletResult = await walletResponse.json();
-
-        if (walletResult.status === 'success' && walletResult.balances) {
-            const balances = walletResult.balances;
-
-            // Update DEX wallet balances with native amounts
-            const chains = ['ETHEREUM', 'BSC', 'POLYGON', 'ARBITRUM', 'BASE'];
-            chains.forEach(chain => {
-                const bal = balances[chain];
-                if (bal) {
-                    const balElem = document.getElementById('bal-' + chain.toLowerCase());
-                    const pnlElem = document.getElementById('pnl-' + chain.toLowerCase());
-                    if (balElem) {
-                        // Show USD value
-                        balElem.textContent = '$' + (bal.balance || 0).toFixed(2);
-                    }
-                    // Show native balance in pnl element as secondary info
-                    if (pnlElem) {
-                        const nativeBalance = bal.native_balance || 0;
-                        const symbol = bal.native_symbol || '';
-                        if (nativeBalance > 0) {
-                            pnlElem.textContent = nativeBalance.toFixed(4) + ' ' + symbol;
-                            pnlElem.className = 'wallet-pnl';
-                        } else {
-                            pnlElem.textContent = '0 ' + symbol;
-                            pnlElem.className = 'wallet-pnl text-muted';
-                        }
-                    }
-                }
-            });
-
-            // Update Solana balances (Both wallets)
-            let totalSolNative = 0;
-            let totalSolUsd = 0;
-
-            // Wallet 1: SOLANA_WALLET (DEX Module)
-            if (balances.SOLANA) {
-                const solBal = balances.SOLANA;
-                const nativeSol = solBal.native_balance || 0;
-                const usdSol = solBal.balance || 0;
-                document.getElementById('bal-solana').textContent = nativeSol.toFixed(4) + ' SOL';
-                document.getElementById('bal-solana-usd').textContent = '$' + usdSol.toFixed(2);
-                totalSolNative += nativeSol;
-                totalSolUsd += usdSol;
-            }
-
-            // Wallet 2: SOLANA_MODULE_WALLET (Solana Module)
-            if (balances.SOLANA_MODULE) {
-                const solModBal = balances.SOLANA_MODULE;
-                const nativeSolMod = solModBal.native_balance || 0;
-                const usdSolMod = solModBal.balance || 0;
-                document.getElementById('bal-solana-module').textContent = nativeSolMod.toFixed(4) + ' SOL';
-                document.getElementById('bal-solana-module-usd').textContent = '$' + usdSolMod.toFixed(2);
-                totalSolNative += nativeSolMod;
-                totalSolUsd += usdSolMod;
-            }
-
-            // Update Total Solana
-            document.getElementById('bal-solana-total').textContent = totalSolNative.toFixed(4) + ' SOL';
-            document.getElementById('bal-solana-total-usd').textContent = '$' + totalSolUsd.toFixed(2);
-
-            // Update Futures balance from same API response
-            if (balances.FUTURES) {
-                const fut = balances.FUTURES;
-                document.getElementById('bal-futures-usdt').textContent = '$' + (fut.total_balance || 0).toFixed(2);
-                document.getElementById('bal-futures-margin').textContent = '$' + (fut.margin_used || 0).toFixed(2);
-                document.getElementById('bal-futures-pnl').textContent = '$' + (fut.unrealized_pnl || 0).toFixed(2);
-                document.getElementById('bal-futures-available').textContent = '$' + (fut.available || 0).toFixed(2);
-            }
-
-            // Update total portfolio value from real balances
-            if (balances.TOTAL) {
-                document.getElementById('totalPortfolio').textContent = '$' + (balances.TOTAL.balance || 0).toFixed(2);
-            }
-        }
-    } catch (e) {
-        console.error('Error fetching wallet balances:', e);
-    }
+    // Wallet balances are handled by dedicated loadWalletBalances() function
 }
 
 function updateModuleCard(prefix, moduleData) {
-    const card = document.querySelector(`.module-card[id="${prefix}-module"]`) ||
-                 document.querySelectorAll('.module-card')[prefix === 'dex' ? 0 : prefix === 'futures' ? 1 : 2];
+    if (!moduleData) return;
 
-    if (!card || !moduleData) return;
+    const card = document.getElementById(prefix + '-module');
+    if (!card) return;
 
     // Update status badge
-    const statusBadge = card.querySelector('.module-status');
-    if (statusBadge) {
-        const status = moduleData.status || (moduleData.enabled ? 'RUNNING' : 'DISABLED');
-        statusBadge.textContent = status;
-        statusBadge.className = 'module-status status-' + (status === 'RUNNING' ? 'running' : 'stopped');
+    const status = moduleData.status || (moduleData.enabled ? 'RUNNING' : 'DISABLED');
+    const statusEl = document.getElementById(prefix + '-status');
+    if (statusEl) {
+        statusEl.textContent = status;
+        statusEl.className = 'module-status status-' + (status === 'RUNNING' ? 'running' : 'stopped');
     }
 
-    // Update card style
+    // Update card style based on enabled status
     card.className = 'module-card ' + (moduleData.enabled ? 'active' : 'inactive');
+
+    // Update Capital
+    const capitalEl = document.getElementById(prefix + '-capital');
+    if (capitalEl) {
+        capitalEl.textContent = '$' + (moduleData.capital || 0).toFixed(0);
+    }
+
+    // Update P&L
+    const pnlEl = document.getElementById(prefix + '-pnl');
+    if (pnlEl && moduleData.metrics) {
+        const pnl = moduleData.metrics.pnl || 0;
+        pnlEl.textContent = '$' + pnl.toFixed(2);
+        pnlEl.className = 'metric-value ' + (pnl >= 0 ? 'positive' : 'negative');
+    }
+
+    // Update Positions
+    const posEl = document.getElementById(prefix + '-positions');
+    if (posEl && moduleData.metrics) {
+        posEl.textContent = moduleData.metrics.positions || 0;
+    }
+
+    // Update Win Rate
+    const winrateEl = document.getElementById(prefix + '-winrate');
+    if (winrateEl && moduleData.metrics) {
+        winrateEl.textContent = (moduleData.metrics.win_rate || 0).toFixed(1) + '%';
+    }
+
+    console.log(`Updated ${prefix} module:`, moduleData);
 }
 
 // Bot Control Functions
