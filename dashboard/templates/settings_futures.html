@@ -289,7 +289,14 @@
                 <i class="fas fa-power-off"></i>
                 Module Status
             </div>
-            <span class="status-badge status-disabled" id="moduleStatus">DISABLED</span>
+            <span class="status-badge status-disabled" id="moduleStatus">CHECKING...</span>
+        </div>
+
+        <div class="info-box" id="runningInfo" style="display: none; background: #d1fae5; border-color: #10b981;">
+            <i class="fas fa-check-circle" style="color: #10b981;"></i>
+            <div id="runningInfoText">
+                <strong>Module Running:</strong> The Futures module is currently active.
+            </div>
         </div>
 
         <div class="warning-box">
@@ -304,12 +311,12 @@
             <div class="setting-item">
                 <label class="setting-label">
                     <i class="fas fa-toggle-on"></i>
-                    Enable Futures Module
+                    Enable Futures Module (requires .env update)
                 </label>
-                <div class="setting-description">Enable or disable the entire futures trading module</div>
+                <div class="setting-description">Module enable/disable is controlled by FUTURES_MODULE_ENABLED in .env file</div>
                 <div class="toggle-switch">
-                    <input type="checkbox" id="futures_enabled" name="futures_enabled">
-                    <span id="enabledLabel">Disabled</span>
+                    <input type="checkbox" id="futures_enabled" name="futures_enabled" disabled>
+                    <span id="enabledLabel">Loading...</span>
                 </div>
             </div>
         </div>
@@ -664,6 +671,9 @@
 // Load current settings
 async function loadSettings() {
     try {
+        // First check the actual module status
+        await checkModuleRunningStatus();
+
         const response = await fetch('/api/settings/futures');
         if (response.ok) {
             const data = await response.json();
@@ -673,6 +683,52 @@ async function loadSettings() {
         }
     } catch (e) {
         console.error('Failed to load settings:', e);
+    }
+}
+
+// Check if the module is actually running
+async function checkModuleRunningStatus() {
+    try {
+        const response = await fetch('/api/simulator/data');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.futures && data.futures.status === 'Active') {
+                // Module is running
+                const statusBadge = document.getElementById('moduleStatus');
+                const enabledCheckbox = document.getElementById('futures_enabled');
+                const enabledLabel = document.getElementById('enabledLabel');
+                const runningInfo = document.getElementById('runningInfo');
+                const runningInfoText = document.getElementById('runningInfoText');
+
+                statusBadge.className = 'status-badge status-enabled';
+                statusBadge.textContent = 'RUNNING';
+                enabledCheckbox.checked = true;
+                enabledLabel.textContent = 'Running';
+                runningInfo.style.display = 'flex';
+
+                // Show mode info
+                const mode = data.futures.mode || 'DRY_RUN';
+                const network = data.futures.network || 'TESTNET';
+                const exchange = data.futures.exchange || 'BINANCE';
+                const positions = data.futures.active_positions || 0;
+                runningInfoText.innerHTML = `<strong>Module Running:</strong> ${exchange} ${network} - ${mode} mode | ${positions} active position(s)`;
+                return;
+            }
+        }
+
+        // Module not running
+        const statusBadge = document.getElementById('moduleStatus');
+        const enabledLabel = document.getElementById('enabledLabel');
+        statusBadge.className = 'status-badge status-disabled';
+        statusBadge.textContent = 'OFFLINE';
+        enabledLabel.textContent = 'Not Running';
+    } catch (e) {
+        console.log('Could not check module status:', e);
+        const statusBadge = document.getElementById('moduleStatus');
+        const enabledLabel = document.getElementById('enabledLabel');
+        statusBadge.className = 'status-badge status-disabled';
+        statusBadge.textContent = 'OFFLINE';
+        enabledLabel.textContent = 'Not Running';
     }
 }
 
@@ -691,19 +747,8 @@ function populateSettings(settings) {
 }
 
 function updateModuleStatus() {
-    const enabled = document.getElementById('futures_enabled').checked;
-    const statusBadge = document.getElementById('moduleStatus');
-    const enabledLabel = document.getElementById('enabledLabel');
-
-    if (enabled) {
-        statusBadge.className = 'status-badge status-enabled';
-        statusBadge.textContent = 'ENABLED';
-        enabledLabel.textContent = 'Enabled';
-    } else {
-        statusBadge.className = 'status-badge status-disabled';
-        statusBadge.textContent = 'DISABLED';
-        enabledLabel.textContent = 'Disabled';
-    }
+    // Module status is now determined by checkModuleRunningStatus()
+    // This function is kept for compatibility but does not override running status
 }
 
 async function saveSettings() {
@@ -790,10 +835,10 @@ function showToast(message, type = 'info') {
     setTimeout(() => toast.remove(), 3000);
 }
 
-// Event listeners
-document.getElementById('futures_enabled').addEventListener('change', updateModuleStatus);
-
 // Load settings on page load
 document.addEventListener('DOMContentLoaded', loadSettings);
+
+// Refresh module status every 30 seconds
+setInterval(checkModuleRunningStatus, 30000);
 </script>
 {% endblock %}
