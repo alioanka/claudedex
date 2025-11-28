@@ -311,6 +311,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/logs', self.logs_page)
         self.app.router.add_get('/analysis', self.analysis_page)
         self.app.router.add_get('/analytics', self.analytics_page)
+        self.app.router.add_get('/simulator', self.simulator_page)
 
         # API - Data endpoints
         self.app.router.add_get('/api/dashboard/summary', self.api_dashboard_summary)
@@ -327,7 +328,11 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/alerts/recent', self.api_recent_alerts)
         self.app.router.add_get('/api/risk/metrics', self.api_risk_metrics)
         self.app.router.add_get('/api/wallets/balances', self.api_wallet_balances)
-        
+
+        # API - Simulator
+        self.app.router.add_get('/api/simulator/data', self.api_simulator_data)
+        self.app.router.add_get('/api/simulator/export', self.api_simulator_export)
+
         # API - Bot control
         self.app.router.add_post('/api/bot/start', self.api_bot_start)
         self.app.router.add_post('/api/bot/stop', self.api_bot_stop)
@@ -964,6 +969,122 @@ class DashboardEndpoints:
             text=template.render(page='analytics'),
             content_type='text/html'
         )
+
+    async def simulator_page(self, request):
+        """Trade simulator page for dry-run validation"""
+        template = self.jinja_env.get_template('simulator.html')
+        return web.Response(
+            text=template.render(page='simulator'),
+            content_type='text/html'
+        )
+
+    async def api_simulator_data(self, request):
+        """Get simulator data from all modules"""
+        try:
+            import aiohttp
+            simulator_data = {
+                'futures': None,
+                'solana': None,
+                'dex': None
+            }
+
+            # Try to fetch from Futures module health endpoint
+            try:
+                futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'http://localhost:{futures_port}/stats', timeout=2) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            simulator_data['futures'] = data
+                            simulator_data['futures']['status'] = 'Active'
+            except Exception:
+                simulator_data['futures'] = {'status': 'Offline', 'mode': 'Unknown'}
+
+            # Try to fetch from Solana module health endpoint
+            try:
+                solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'http://localhost:{solana_port}/stats', timeout=2) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            simulator_data['solana'] = data
+                            simulator_data['solana']['status'] = 'Active'
+            except Exception:
+                simulator_data['solana'] = {'status': 'Offline', 'mode': 'Unknown'}
+
+            # Get DEX data from trading engine if available
+            if self.trading_engine:
+                try:
+                    stats = self.trading_engine.get_stats()
+                    dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
+                    simulator_data['dex'] = {
+                        'status': 'Active' if self.trading_engine.is_running else 'Stopped',
+                        'mode': 'DRY_RUN' if dry_run else 'LIVE',
+                        'total_trades': stats.get('total_trades', 0),
+                        'winning_trades': stats.get('winning_trades', 0),
+                        'total_pnl': stats.get('total_pnl', 0),
+                        'win_rate': stats.get('win_rate', '0%'),
+                        'trades': []
+                    }
+                except Exception:
+                    pass
+
+            return web.json_response(simulator_data)
+
+        except Exception as e:
+            logger.error(f"Error fetching simulator data: {e}")
+            return web.json_response({'error': str(e)}, status=500)
+
+    async def api_simulator_export(self, request):
+        """Export simulator data as JSON file"""
+        try:
+            import aiohttp
+            from datetime import datetime
+
+            export_data = {
+                'exported_at': datetime.now().isoformat(),
+                'futures': {},
+                'solana': {},
+                'dex': {}
+            }
+
+            # Fetch data from modules
+            try:
+                futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'http://localhost:{futures_port}/stats', timeout=2) as resp:
+                        if resp.status == 200:
+                            export_data['futures'] = await resp.json()
+            except Exception:
+                pass
+
+            try:
+                solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'http://localhost:{solana_port}/stats', timeout=2) as resp:
+                        if resp.status == 200:
+                            export_data['solana'] = await resp.json()
+            except Exception:
+                pass
+
+            if self.trading_engine:
+                try:
+                    export_data['dex'] = self.trading_engine.get_stats()
+                except Exception:
+                    pass
+
+            # Return as downloadable JSON
+            return web.Response(
+                body=json.dumps(export_data, indent=2, default=str),
+                content_type='application/json',
+                headers={
+                    'Content-Disposition': f'attachment; filename="simulator_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json"'
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"Error exporting simulator data: {e}")
+            return web.json_response({'error': str(e)}, status=500)
 
     async def api_get_logs(self, request):
         """Get recent log entries from all available log files."""

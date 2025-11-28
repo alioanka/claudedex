@@ -8,6 +8,7 @@ Features:
 - Drift Protocol perpetuals
 - Pump.fun token sniping
 - Real-time price monitoring
+- HTTP health/metrics endpoints for monitoring
 """
 
 import asyncio
@@ -19,6 +20,8 @@ from dotenv import load_dotenv
 import logging
 from datetime import datetime
 import argparse
+import json
+from aiohttp import web
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -41,6 +44,104 @@ logging.basicConfig(
 logger = logging.getLogger("SolanaTrading")
 
 
+class HealthServer:
+    """HTTP server for health and metrics endpoints"""
+
+    def __init__(self, app: 'SolanaTradingApplication', host: str = "0.0.0.0", port: int = 8082):
+        self.app = app
+        self.host = host
+        self.port = port
+        self.web_app = web.Application()
+        self._setup_routes()
+        self.runner = None
+
+    def _setup_routes(self):
+        """Setup HTTP routes"""
+        self.web_app.router.add_get('/health', self.health_handler)
+        self.web_app.router.add_get('/healthz', self.health_handler)  # Kubernetes standard
+        self.web_app.router.add_get('/ready', self.ready_handler)
+        self.web_app.router.add_get('/metrics', self.metrics_handler)
+        self.web_app.router.add_get('/stats', self.stats_handler)
+
+    async def health_handler(self, request):
+        """Liveness probe endpoint"""
+        if self.app.engine:
+            health = await self.app.engine.get_health()
+            status = 200 if health.get('status') == 'healthy' else 503
+            return web.json_response(health, status=status)
+        return web.json_response({'status': 'initializing'}, status=503)
+
+    async def ready_handler(self, request):
+        """Readiness probe endpoint"""
+        if self.app.engine and self.app.engine.is_running:
+            health = await self.app.engine.get_health()
+            if health.get('rpc_connected') and health.get('risk_can_trade'):
+                return web.json_response({'ready': True, **health}, status=200)
+        return web.json_response({'ready': False}, status=503)
+
+    async def metrics_handler(self, request):
+        """Prometheus-style metrics endpoint"""
+        metrics = []
+        if self.app.engine:
+            stats = await self.app.engine.get_stats()
+            health = await self.app.engine.get_health()
+
+            # Trading metrics
+            metrics.append(f'solana_trades_total {stats.get("total_trades", 0)}')
+            metrics.append(f'solana_winning_trades {stats.get("winning_trades", 0)}')
+            metrics.append(f'solana_losing_trades {stats.get("losing_trades", 0)}')
+            metrics.append(f'solana_active_positions {stats.get("active_positions", 0)}')
+            metrics.append(f'solana_daily_trades {stats.get("daily_trades", 0)}')
+
+            # PnL metrics (extract numeric value)
+            total_pnl = stats.get("total_pnl", "0.0000 SOL").split()[0]
+            daily_pnl = stats.get("daily_pnl", "0.0000 SOL").split()[0]
+            metrics.append(f'solana_total_pnl_sol {float(total_pnl)}')
+            metrics.append(f'solana_daily_pnl_sol {float(daily_pnl)}')
+
+            # Health metrics
+            metrics.append(f'solana_engine_running {1 if health.get("engine_running") else 0}')
+            metrics.append(f'solana_rpc_connected {1 if health.get("rpc_connected") else 0}')
+            metrics.append(f'solana_dry_run {1 if health.get("dry_run") else 0}')
+            metrics.append(f'solana_risk_can_trade {1 if health.get("risk_can_trade") else 0}')
+            metrics.append(f'solana_wallet_balance_sol {health.get("wallet_balance_sol", 0)}')
+
+            # RPC latency metrics
+            latencies = health.get('rpc_latencies', {})
+            for rpc_url, latency in latencies.items():
+                # Sanitize RPC URL for Prometheus label
+                safe_url = rpc_url[:30].replace('/', '_').replace(':', '_').replace('.', '_')
+                metrics.append(f'solana_rpc_latency_ms{{rpc="{safe_url}"}} {latency}')
+
+        return web.Response(text='\n'.join(metrics), content_type='text/plain')
+
+    async def stats_handler(self, request):
+        """Full statistics endpoint"""
+        if self.app.engine:
+            stats = await self.app.engine.get_stats()
+            health = await self.app.engine.get_health()
+            return web.json_response({
+                'module': 'solana',
+                'stats': stats,
+                'health': health,
+                'timestamp': datetime.now().isoformat()
+            })
+        return web.json_response({'error': 'Engine not initialized'}, status=503)
+
+    async def start(self):
+        """Start the HTTP server"""
+        self.runner = web.AppRunner(self.web_app)
+        await self.runner.setup()
+        site = web.TCPSite(self.runner, self.host, self.port)
+        await site.start()
+        logger.info(f"📡 Health server started on http://{self.host}:{self.port}")
+
+    async def stop(self):
+        """Stop the HTTP server"""
+        if self.runner:
+            await self.runner.cleanup()
+
+
 class SolanaTradingApplication:
     """Main application class for Solana trading"""
 
@@ -53,6 +154,7 @@ class SolanaTradingApplication:
         """
         self.mode = mode
         self.engine = None
+        self.health_server = None
         self.shutdown_event = asyncio.Event()
         self.logger = logger
 
@@ -64,6 +166,7 @@ class SolanaTradingApplication:
         self.rpc_url = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
         self.strategies = os.getenv('SOLANA_STRATEGIES', 'jupiter,drift').split(',')
         self.max_positions = int(os.getenv('SOLANA_MAX_POSITIONS', '3'))
+        self.health_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
 
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
@@ -106,6 +209,10 @@ class SolanaTradingApplication:
         try:
             self.logger.info("Starting Solana Trading Bot...")
             await self.initialize()
+
+            # Start health server
+            self.health_server = HealthServer(self, port=self.health_port)
+            await self.health_server.start()
 
             self.logger.info("🎯 Starting Solana trading engine...")
 
@@ -156,6 +263,11 @@ class SolanaTradingApplication:
         """Graceful shutdown procedure"""
         try:
             self.logger.info("Initiating graceful shutdown...")
+
+            # Stop health server first
+            if self.health_server:
+                self.logger.info("Stopping health server...")
+                await self.health_server.stop()
 
             if self.engine:
                 if self.mode == "production":

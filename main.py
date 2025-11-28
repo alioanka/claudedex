@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 import logging
 from datetime import datetime
 import subprocess
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import psutil
 
 # Load environment variables
@@ -39,21 +39,94 @@ logger = logging.getLogger("Orchestrator")
 class ModuleProcess:
     """Represents a trading module process"""
 
-    def __init__(self, name: str, script_path: str, enabled_env_var: str):
+    # Required secrets per module
+    REQUIRED_SECRETS = {
+        'dex': [
+            ('PRIVATE_KEY', 'EVM private key for DEX trading'),
+            ('ENCRYPTION_KEY', 'Encryption key for decrypting secrets'),
+        ],
+        'futures': [
+            ('ENCRYPTION_KEY', 'Encryption key for decrypting secrets'),
+            # Binance OR Bybit keys required (checked dynamically)
+        ],
+        'solana': [
+            ('SOLANA_MODULE_PRIVATE_KEY', 'Solana module private key'),
+            ('ENCRYPTION_KEY', 'Encryption key for decrypting secrets'),
+        ]
+    }
+
+    def __init__(self, name: str, script_path: str, enabled_env_var: str, module_key: str = None):
         self.name = name
         self.script_path = script_path
         self.enabled_env_var = enabled_env_var
+        self.module_key = module_key or name.lower().replace(' ', '_').replace('trading', '').strip('_')
         self.process: Optional[subprocess.Popen] = None
         self.restart_count = 0
         self.max_restarts = 3
         # File handles for subprocess output (prevents PIPE buffer deadlock)
         self._stdout_file = None
         self._stderr_file = None
+        # Validation state
+        self.validation_errors: List[str] = []
+        self.is_validated = False
 
     def is_enabled(self) -> bool:
         """Check if module is enabled via environment variable"""
         enabled = os.getenv(self.enabled_env_var, 'false').lower()
         return enabled in ('true', '1', 'yes')
+
+    def validate_secrets(self) -> Tuple[bool, List[str]]:
+        """
+        Validate that all required secrets are present for this module.
+        Returns (is_valid, list_of_missing_secrets)
+        """
+        errors = []
+        module_key = self.module_key
+
+        # Get base required secrets
+        required = self.REQUIRED_SECRETS.get(module_key, [])
+
+        for secret_name, description in required:
+            value = os.getenv(secret_name)
+            if not value or value.strip() == '':
+                errors.append(f"Missing {secret_name}: {description}")
+
+        # Special validation for futures module (needs Binance OR Bybit keys)
+        if module_key == 'futures':
+            exchange = os.getenv('FUTURES_EXCHANGE', 'binance').lower()
+            testnet = os.getenv('FUTURES_TESTNET', 'true').lower() in ('true', '1', 'yes')
+
+            if exchange == 'binance':
+                if testnet:
+                    if not os.getenv('BINANCE_TESTNET_API_KEY'):
+                        errors.append("Missing BINANCE_TESTNET_API_KEY: Required for Binance testnet")
+                    if not os.getenv('BINANCE_TESTNET_API_SECRET'):
+                        errors.append("Missing BINANCE_TESTNET_API_SECRET: Required for Binance testnet")
+                else:
+                    if not os.getenv('BINANCE_API_KEY'):
+                        errors.append("Missing BINANCE_API_KEY: Required for Binance mainnet")
+                    if not os.getenv('BINANCE_API_SECRET'):
+                        errors.append("Missing BINANCE_API_SECRET: Required for Binance mainnet")
+            elif exchange == 'bybit':
+                if testnet:
+                    if not os.getenv('BYBIT_TESTNET_API_KEY'):
+                        errors.append("Missing BYBIT_TESTNET_API_KEY: Required for Bybit testnet")
+                    if not os.getenv('BYBIT_TESTNET_API_SECRET'):
+                        errors.append("Missing BYBIT_TESTNET_API_SECRET: Required for Bybit testnet")
+                else:
+                    if not os.getenv('BYBIT_API_KEY'):
+                        errors.append("Missing BYBIT_API_KEY: Required for Bybit mainnet")
+                    if not os.getenv('BYBIT_API_SECRET'):
+                        errors.append("Missing BYBIT_API_SECRET: Required for Bybit mainnet")
+
+        # Special validation for Solana module
+        if module_key == 'solana':
+            if not os.getenv('SOLANA_RPC_URL') and not os.getenv('SOLANA_RPC_URLS'):
+                errors.append("Missing SOLANA_RPC_URL: Required for Solana trading")
+
+        self.validation_errors = errors
+        self.is_validated = len(errors) == 0
+        return self.is_validated, errors
 
     async def start(self):
         """Start the module process"""
@@ -63,6 +136,15 @@ class ModuleProcess:
 
         if not Path(self.script_path).exists():
             logger.error(f"❌ {self.name} script not found: {self.script_path}")
+            return False
+
+        # Validate required secrets before starting
+        is_valid, errors = self.validate_secrets()
+        if not is_valid:
+            logger.error(f"❌ {self.name} module BLOCKED - Missing required secrets:")
+            for error in errors:
+                logger.error(f"   • {error}")
+            logger.error(f"   ⚠️  Configure the missing secrets in .env and restart")
             return False
 
         try:
@@ -165,19 +247,22 @@ class TradingBotOrchestrator:
         self.modules['dex'] = ModuleProcess(
             name="DEX Trading",
             script_path="main_dex.py",
-            enabled_env_var="DEX_MODULE_ENABLED"
+            enabled_env_var="DEX_MODULE_ENABLED",
+            module_key="dex"
         )
 
         self.modules['futures'] = ModuleProcess(
             name="Futures Trading",
             script_path="futures_trading/main_futures.py",
-            enabled_env_var="FUTURES_MODULE_ENABLED"
+            enabled_env_var="FUTURES_MODULE_ENABLED",
+            module_key="futures"
         )
 
         self.modules['solana'] = ModuleProcess(
             name="Solana Trading",
             script_path="solana_trading/main_solana.py",
-            enabled_env_var="SOLANA_MODULE_ENABLED"
+            enabled_env_var="SOLANA_MODULE_ENABLED",
+            module_key="solana"
         )
 
         # Setup signal handlers
