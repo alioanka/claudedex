@@ -1083,7 +1083,7 @@ class DashboardEndpoints:
                                 profit_loss_percentage,
                                 entry_timestamp,
                                 exit_timestamp,
-                                hold_duration_seconds,
+                                EXTRACT(EPOCH FROM (exit_timestamp - entry_timestamp))::integer as duration_seconds,
                                 gas_fee,
                                 status,
                                 metadata
@@ -1112,7 +1112,7 @@ class DashboardEndpoints:
                                 'pnl': float(record['profit_loss']) if record['profit_loss'] else 0,
                                 'pnl_pct': f"{float(record['profit_loss_percentage']):.2f}%" if record['profit_loss_percentage'] else '0%',
                                 'fees': float(record['gas_fee']) if record['gas_fee'] else 0,
-                                'duration_seconds': record['hold_duration_seconds'] or 0,
+                                'duration_seconds': record['duration_seconds'] or 0,
                                 'time': record['exit_timestamp'].isoformat() if record['exit_timestamp'] else None,
                                 'is_simulated': dry_run
                             })
