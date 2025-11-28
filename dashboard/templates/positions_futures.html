@@ -121,12 +121,77 @@
     <div class="section-card">
         <div class="section-title">
             <i class="fas fa-chart-line"></i>
-            Open Positions
+            Open Positions (<span id="position-count">0</span>)
         </div>
-        <div class="empty-state">
+        <div id="positions-empty" class="empty-state">
             <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
             <p>No active futures positions.</p>
         </div>
+        <table class="position-table" id="positions-table" style="display: none;">
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Side</th>
+                    <th>Entry Price</th>
+                    <th>Current Price</th>
+                    <th>P&L ($)</th>
+                    <th>P&L (%)</th>
+                </tr>
+            </thead>
+            <tbody id="positionsTableBody">
+            </tbody>
+        </table>
     </div>
 </div>
+
+<script>
+async function loadPositions() {
+    try {
+        const response = await fetch('/api/simulator/data');
+        if (!response.ok) throw new Error('Failed to fetch data');
+        const data = await response.json();
+
+        if (data.futures && data.futures.positions) {
+            updatePositions(data.futures.positions);
+        }
+    } catch (error) {
+        console.error('Error loading positions:', error);
+    }
+}
+
+function updatePositions(positions) {
+    const tableBody = document.getElementById('positionsTableBody');
+    const emptyState = document.getElementById('positions-empty');
+    const table = document.getElementById('positions-table');
+    const countEl = document.getElementById('position-count');
+
+    countEl.textContent = positions.length;
+
+    if (positions.length === 0) {
+        emptyState.style.display = 'block';
+        table.style.display = 'none';
+        return;
+    }
+
+    emptyState.style.display = 'none';
+    table.style.display = 'table';
+
+    tableBody.innerHTML = positions.map(pos => `
+        <tr>
+            <td><strong>${pos.symbol}</strong></td>
+            <td><span class="badge badge-${pos.side}">${pos.side.toUpperCase()}</span></td>
+            <td>$${parseFloat(pos.entry).toLocaleString()}</td>
+            <td>$${parseFloat(pos.current).toLocaleString()}</td>
+            <td class="${parseFloat(pos.pnl_usd.replace('$', '')) >= 0 ? 'positive' : 'negative'}">${pos.pnl_usd}</td>
+            <td class="${parseFloat(pos.pnl_pct) >= 0 ? 'positive' : 'negative'}">${pos.pnl_pct}</td>
+        </tr>
+    `).join('');
+}
+
+// Load on page load
+loadPositions();
+
+// Auto-refresh every 5 seconds
+setInterval(loadPositions, 5000);
+</script>
 {% endblock %}
