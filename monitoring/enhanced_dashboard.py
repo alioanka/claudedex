@@ -346,6 +346,12 @@ class DashboardEndpoints:
         self.app.router.add_post('/api/settings/revert', self.api_revert_settings)
         self.app.router.add_get('/api/settings/history', self.api_settings_history)
 
+        # API - Module-specific Settings (database-backed)
+        self.app.router.add_get('/api/settings/futures', self.api_get_futures_settings)
+        self.app.router.add_post('/api/settings/futures', self.api_save_futures_settings)
+        self.app.router.add_get('/api/settings/solana', self.api_get_solana_settings)
+        self.app.router.add_post('/api/settings/solana', self.api_save_solana_settings)
+
         # API - Sensitive Configuration (Admin only)
         self.app.router.add_get('/api/settings/sensitive/list', require_auth(require_admin(self.api_list_sensitive_configs)))
         self.app.router.add_get('/api/settings/sensitive/{key}', require_auth(require_admin(self.api_get_sensitive_config)))
@@ -1083,7 +1089,7 @@ class DashboardEndpoints:
                                 profit_loss_percentage,
                                 entry_timestamp,
                                 exit_timestamp,
-                                hold_duration_seconds,
+                                EXTRACT(EPOCH FROM (exit_timestamp - entry_timestamp))::integer as duration_seconds,
                                 gas_fee,
                                 status,
                                 metadata
@@ -1112,7 +1118,7 @@ class DashboardEndpoints:
                                 'pnl': float(record['profit_loss']) if record['profit_loss'] else 0,
                                 'pnl_pct': f"{float(record['profit_loss_percentage']):.2f}%" if record['profit_loss_percentage'] else '0%',
                                 'fees': float(record['gas_fee']) if record['gas_fee'] else 0,
-                                'duration_seconds': record['hold_duration_seconds'] or 0,
+                                'duration_seconds': record['duration_seconds'] or 0,
                                 'time': record['exit_timestamp'].isoformat() if record['exit_timestamp'] else None,
                                 'is_simulated': dry_run
                             })
@@ -3439,6 +3445,264 @@ class DashboardEndpoints:
                 'success': False,
                 'error': str(e)
             }, status=500)
+
+    async def api_get_futures_settings(self, request):
+        """Get all futures module settings from database"""
+        try:
+            if not self.db_pool:
+                return web.json_response({'error': 'Database not available'}, status=503)
+
+            settings = {}
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT config_type, key, value, value_type
+                    FROM config_settings
+                    WHERE config_type LIKE 'futures_%'
+                    ORDER BY config_type, key
+                """)
+
+                for row in rows:
+                    key = row['key']
+                    value = row['value']
+                    value_type = row['value_type']
+
+                    # Convert value based on type
+                    if value_type == 'int':
+                        settings[f"futures_{key}"] = int(value)
+                    elif value_type == 'float':
+                        settings[f"futures_{key}"] = float(value)
+                    elif value_type == 'bool':
+                        settings[f"futures_{key}"] = value.lower() in ('true', '1', 'yes')
+                    else:
+                        settings[f"futures_{key}"] = value
+
+            # Add API key availability flags (don't expose actual keys)
+            import os
+            settings['_has_binance_api'] = bool(os.getenv('BINANCE_TESTNET_API_KEY') or os.getenv('BINANCE_API_KEY'))
+            settings['_has_bybit_api'] = bool(os.getenv('BYBIT_TESTNET_API_KEY') or os.getenv('BYBIT_API_KEY'))
+
+            return web.json_response({
+                'success': True,
+                'settings': settings
+            })
+        except Exception as e:
+            logger.error(f"Error getting futures settings: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    async def api_save_futures_settings(self, request):
+        """Save futures module settings to database"""
+        try:
+            if not self.db_pool:
+                return web.json_response({'error': 'Database not available'}, status=503)
+
+            data = await request.json()
+            user_id = request.get('user_id', None)  # From auth middleware if available
+
+            async with self.db_pool.acquire() as conn:
+                for key, value in data.items():
+                    # Remove futures_ prefix if present
+                    clean_key = key.replace('futures_', '') if key.startswith('futures_') else key
+
+                    # Determine config_type from key
+                    config_type = self._get_futures_config_type(clean_key)
+                    if not config_type:
+                        continue
+
+                    # Determine value type
+                    if isinstance(value, bool):
+                        value_type = 'bool'
+                        value_str = str(value).lower()
+                    elif isinstance(value, int):
+                        value_type = 'int'
+                        value_str = str(value)
+                    elif isinstance(value, float):
+                        value_type = 'float'
+                        value_str = str(value)
+                    else:
+                        value_type = 'string'
+                        value_str = str(value)
+
+                    # Get old value for history
+                    old_row = await conn.fetchrow("""
+                        SELECT value FROM config_settings
+                        WHERE config_type = $1 AND key = $2
+                    """, config_type, clean_key)
+                    old_value = old_row['value'] if old_row else None
+
+                    # Update or insert
+                    await conn.execute("""
+                        INSERT INTO config_settings (config_type, key, value, value_type, updated_by)
+                        VALUES ($1, $2, $3, $4, $5)
+                        ON CONFLICT (config_type, key) DO UPDATE
+                        SET value = $3, value_type = $4, updated_by = $5, updated_at = NOW()
+                    """, config_type, clean_key, value_str, value_type, user_id)
+
+                    # Log to history if changed
+                    if old_value != value_str:
+                        await conn.execute("""
+                            INSERT INTO config_history (config_type, key, old_value, new_value, change_source, changed_by)
+                            VALUES ($1, $2, $3, $4, 'api', $5)
+                        """, config_type, clean_key, old_value, value_str, user_id)
+
+            return web.json_response({'success': True, 'message': 'Settings saved'})
+        except Exception as e:
+            logger.error(f"Error saving futures settings: {e}", exc_info=True)
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    def _get_futures_config_type(self, key: str) -> str:
+        """Map a setting key to its config_type"""
+        type_map = {
+            'enabled': 'futures_general', 'exchange': 'futures_general', 'testnet': 'futures_general',
+            'trading_mode': 'futures_general', 'contract_type': 'futures_general',
+            'capital_allocation': 'futures_position', 'capital': 'futures_position',
+            'position_size_usd': 'futures_position', 'max_position_pct': 'futures_position',
+            'max_positions': 'futures_position', 'min_trade_size': 'futures_position',
+            'default_leverage': 'futures_leverage', 'leverage': 'futures_leverage',
+            'max_leverage': 'futures_leverage', 'margin_mode': 'futures_leverage',
+            'stop_loss_pct': 'futures_risk', 'stop_loss': 'futures_risk',
+            'take_profit_pct': 'futures_risk', 'take_profit': 'futures_risk',
+            'max_daily_loss_usd': 'futures_risk', 'daily_loss_limit': 'futures_risk',
+            'max_daily_loss_pct': 'futures_risk', 'liquidation_buffer': 'futures_risk',
+            'trailing_stop_enabled': 'futures_risk', 'trailing_stop': 'futures_risk',
+            'trailing_stop_distance': 'futures_risk', 'trailing_distance': 'futures_risk',
+            'max_consecutive_losses': 'futures_risk',
+            'allowed_pairs': 'futures_pairs', 'both_directions': 'futures_pairs',
+            'preferred_direction': 'futures_pairs',
+            'rsi_oversold': 'futures_strategy', 'rsi_overbought': 'futures_strategy',
+            'rsi_weak_oversold': 'futures_strategy', 'rsi_weak_overbought': 'futures_strategy',
+            'min_signal_score': 'futures_strategy', 'verbose_signals': 'futures_strategy',
+            'cooldown_minutes': 'futures_strategy',
+            'funding_arbitrage_enabled': 'futures_funding', 'funding_arb': 'futures_funding',
+            'max_funding_rate': 'futures_funding',
+        }
+        return type_map.get(key)
+
+    async def api_get_solana_settings(self, request):
+        """Get all solana module settings from database"""
+        try:
+            if not self.db_pool:
+                return web.json_response({'error': 'Database not available'}, status=503)
+
+            settings = {}
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT config_type, key, value, value_type
+                    FROM config_settings
+                    WHERE config_type LIKE 'solana_%'
+                    ORDER BY config_type, key
+                """)
+
+                for row in rows:
+                    key = row['key']
+                    value = row['value']
+                    value_type = row['value_type']
+
+                    # Convert value based on type
+                    if value_type == 'int':
+                        settings[f"solana_{key}"] = int(value)
+                    elif value_type == 'float':
+                        settings[f"solana_{key}"] = float(value)
+                    elif value_type == 'bool':
+                        settings[f"solana_{key}"] = value.lower() in ('true', '1', 'yes')
+                    else:
+                        settings[f"solana_{key}"] = value
+
+            # Add API key availability flags
+            import os
+            settings['_has_solana_wallet'] = bool(os.getenv('SOLANA_WALLET') or os.getenv('SOLANA_MODULE_WALLET'))
+            settings['_has_jupiter_api'] = bool(os.getenv('JUPITER_API_KEY'))
+            settings['_has_helius_api'] = bool(os.getenv('HELIUS_API_KEY'))
+
+            return web.json_response({
+                'success': True,
+                'settings': settings
+            })
+        except Exception as e:
+            logger.error(f"Error getting solana settings: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    async def api_save_solana_settings(self, request):
+        """Save solana module settings to database"""
+        try:
+            if not self.db_pool:
+                return web.json_response({'error': 'Database not available'}, status=503)
+
+            data = await request.json()
+            user_id = request.get('user_id', None)
+
+            async with self.db_pool.acquire() as conn:
+                for key, value in data.items():
+                    clean_key = key.replace('solana_', '') if key.startswith('solana_') else key
+                    config_type = self._get_solana_config_type(clean_key)
+                    if not config_type:
+                        continue
+
+                    if isinstance(value, bool):
+                        value_type = 'bool'
+                        value_str = str(value).lower()
+                    elif isinstance(value, int):
+                        value_type = 'int'
+                        value_str = str(value)
+                    elif isinstance(value, float):
+                        value_type = 'float'
+                        value_str = str(value)
+                    else:
+                        value_type = 'string'
+                        value_str = str(value)
+
+                    old_row = await conn.fetchrow("""
+                        SELECT value FROM config_settings
+                        WHERE config_type = $1 AND key = $2
+                    """, config_type, clean_key)
+                    old_value = old_row['value'] if old_row else None
+
+                    await conn.execute("""
+                        INSERT INTO config_settings (config_type, key, value, value_type, updated_by)
+                        VALUES ($1, $2, $3, $4, $5)
+                        ON CONFLICT (config_type, key) DO UPDATE
+                        SET value = $3, value_type = $4, updated_by = $5, updated_at = NOW()
+                    """, config_type, clean_key, value_str, value_type, user_id)
+
+                    if old_value != value_str:
+                        await conn.execute("""
+                            INSERT INTO config_history (config_type, key, old_value, new_value, change_source, changed_by)
+                            VALUES ($1, $2, $3, $4, 'api', $5)
+                        """, config_type, clean_key, old_value, value_str, user_id)
+
+            return web.json_response({'success': True, 'message': 'Settings saved'})
+        except Exception as e:
+            logger.error(f"Error saving solana settings: {e}", exc_info=True)
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    def _get_solana_config_type(self, key: str) -> str:
+        """Map a solana setting key to its config_type"""
+        type_map = {
+            'enabled': 'solana_general', 'strategies': 'solana_general',
+            'capital_allocation_sol': 'solana_position', 'position_size_sol': 'solana_position',
+            'max_positions': 'solana_position',
+            'stop_loss_pct': 'solana_risk', 'take_profit_pct': 'solana_risk',
+            'max_daily_loss_sol': 'solana_risk',
+            'priority_fee': 'solana_tx', 'compute_unit_price': 'solana_tx',
+            'compute_unit_limit': 'solana_tx',
+            'slippage_bps': 'solana_jupiter', 'api_tier': 'solana_jupiter',
+            'leverage': 'solana_drift', 'markets': 'solana_drift',
+            'min_liquidity': 'solana_pumpfun', 'max_age_seconds': 'solana_pumpfun',
+            'buy_amount_sol': 'solana_pumpfun',
+        }
+        # Handle enabled flags for sub-strategies
+        if key.startswith('jupiter_'):
+            return 'solana_jupiter'
+        if key.startswith('drift_'):
+            return 'solana_drift'
+        if key.startswith('pumpfun_'):
+            return 'solana_pumpfun'
+        return type_map.get(key)
 
     async def api_list_sensitive_configs(self, request):
         """List all sensitive configuration keys (admin only)"""

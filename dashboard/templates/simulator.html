@@ -570,18 +570,29 @@ function updateModuleCard(module, data) {
         return;
     }
 
+    console.log(`Updating ${module} card with data:`, data); // Debug log
+
     document.getElementById(`${module}SimStatus`).textContent = data.status || 'Active';
 
     const badge = document.getElementById(`${module}ModeBadge`);
-    if (data.mode === 'DRY_RUN') {
+    const mode = (data.mode || '').toUpperCase();
+
+    if (mode === 'DRY_RUN') {
         badge.textContent = 'DRY RUN';
         badge.className = 'badge dry-run';
-    } else if (data.mode === 'TESTNET') {
+    } else if (mode === 'TESTNET') {
         badge.textContent = 'TESTNET';
         badge.className = 'badge testnet';
-    } else if (data.mode === 'LIVE') {
+    } else if (mode === 'LIVE') {
         badge.textContent = 'LIVE';
         badge.className = 'badge live';
+    } else if (mode) {
+        // Show whatever mode is returned
+        badge.textContent = mode;
+        badge.className = 'badge';
+    } else {
+        badge.textContent = 'Unknown';
+        badge.className = 'badge offline';
     }
 
     document.getElementById(`${module}SimTrades`).textContent = data.total_trades || 0;
