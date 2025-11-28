@@ -532,15 +532,20 @@ class DashboardEndpoints:
 
     async def _fallback_api_modules(self, request):
         """Return module data from .env settings and database"""
-        # Reload .env to get latest values
-        load_dotenv(override=True)
+        # Reload .env from the correct path to get latest values
+        env_path = self._get_env_file_path()
+        if os.path.exists(env_path):
+            load_dotenv(env_path, override=True)
+            logger.info(f"Loaded .env from: {env_path}")
+        else:
+            logger.warning(f".env file not found at: {env_path}")
 
-        # Read module enabled status from .env
-        dex_enabled = os.getenv('DEX_MODULE_ENABLED', 'false').lower() == 'true'
+        # Read module enabled status from .env (default to DEX enabled, others disabled)
+        dex_enabled = os.getenv('DEX_MODULE_ENABLED', 'true').lower() == 'true'
         futures_enabled = os.getenv('FUTURES_MODULE_ENABLED', 'false').lower() == 'true'
         solana_enabled = os.getenv('SOLANA_MODULE_ENABLED', 'false').lower() == 'true'
 
-        logger.debug(f"Module status from .env: DEX={dex_enabled}, Futures={futures_enabled}, Solana={solana_enabled}")
+        logger.info(f"Module status from env: DEX={dex_enabled}, Futures={futures_enabled}, Solana={solana_enabled}")
 
         # Get metrics from database
         dex_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
@@ -605,10 +610,42 @@ class DashboardEndpoints:
             except Exception as e:
                 logger.warning(f"Error getting module metrics from DB: {e}")
 
-        # Get capital allocations from config
-        dex_capital = float(os.getenv('DEX_CAPITAL', 500))
-        futures_capital = float(os.getenv('FUTURES_CAPITAL', 300))
-        solana_capital = float(os.getenv('SOLANA_CAPITAL', 400))
+        # Get capital allocations from module config files
+        dex_capital = 500.0  # Default
+        futures_capital = 300.0  # Default
+        solana_capital = 400.0  # Default
+
+        try:
+            import yaml
+            config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'modules')
+
+            # Read DEX config
+            dex_config_path = os.path.join(config_dir, 'dex_trading.yaml')
+            if os.path.exists(dex_config_path):
+                with open(dex_config_path, 'r') as f:
+                    dex_config = yaml.safe_load(f)
+                    if dex_config and 'capital' in dex_config:
+                        dex_capital = float(dex_config['capital'].get('allocation', 500.0))
+
+            # Read Futures config
+            futures_config_path = os.path.join(config_dir, 'futures_trading.yaml')
+            if os.path.exists(futures_config_path):
+                with open(futures_config_path, 'r') as f:
+                    futures_config = yaml.safe_load(f)
+                    if futures_config and 'capital' in futures_config:
+                        futures_capital = float(futures_config['capital'].get('allocation', 300.0))
+
+            # Read Solana config
+            solana_config_path = os.path.join(config_dir, 'solana_strategies.yaml')
+            if os.path.exists(solana_config_path):
+                with open(solana_config_path, 'r') as f:
+                    solana_config = yaml.safe_load(f)
+                    if solana_config and 'capital' in solana_config:
+                        solana_capital = float(solana_config['capital'].get('allocation', 400.0))
+
+            logger.info(f"Capital from config: DEX=${dex_capital}, Futures=${futures_capital}, Solana=${solana_capital}")
+        except Exception as e:
+            logger.warning(f"Error reading module config files: {e}")
 
         return web.json_response({
             'success': True,
@@ -639,16 +676,24 @@ class DashboardEndpoints:
             }
         })
 
+    def _get_env_file_path(self) -> str:
+        """Get the absolute path to the .env file in the project root"""
+        # Get project root from monitoring directory (go up one level)
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env_path = os.path.join(project_root, '.env')
+        logger.debug(f"Using .env file at: {env_path}")
+        return env_path
+
     def _update_env_file(self, key: str, value: str) -> bool:
         """Update a key in the .env file"""
         try:
-            env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
-            if not os.path.exists(env_path):
-                env_path = '.env'
+            env_path = self._get_env_file_path()
+            logger.info(f"Updating .env file at: {env_path}, setting {key}={value}")
 
-            # Read existing content
+            # Read existing content or create default if file doesn't exist
             lines = []
             key_found = False
+
             if os.path.exists(env_path):
                 with open(env_path, 'r') as f:
                     for line in f:
@@ -657,6 +702,25 @@ class DashboardEndpoints:
                             key_found = True
                         else:
                             lines.append(line)
+            else:
+                # Create default .env with all module settings
+                logger.info(f"Creating new .env file at: {env_path}")
+                lines = [
+                    "# Trading Module Configuration\n",
+                    "DEX_MODULE_ENABLED=true\n",
+                    "FUTURES_MODULE_ENABLED=false\n",
+                    "SOLANA_MODULE_ENABLED=false\n",
+                    "\n",
+                    "# Environment\n",
+                    "ENVIRONMENT=development\n",
+                    "DEBUG=false\n",
+                ]
+                # Check if the key we're setting is in the defaults
+                for i, line in enumerate(lines):
+                    if line.strip().startswith(f'{key}='):
+                        lines[i] = f'{key}={value}\n'
+                        key_found = True
+                        break
 
             # If key wasn't found, add it
             if not key_found:
@@ -666,11 +730,18 @@ class DashboardEndpoints:
             with open(env_path, 'w') as f:
                 f.writelines(lines)
 
-            # Reload environment
-            load_dotenv(override=True)
+            logger.info(f"Successfully wrote .env file with {key}={value}")
+
+            # Reload environment variables
+            load_dotenv(env_path, override=True)
+
+            # Also update os.environ directly for immediate effect
+            os.environ[key] = value
+            logger.info(f"Environment variable {key} set to: {os.environ.get(key)}")
+
             return True
         except Exception as e:
-            logger.error(f"Error updating .env file: {e}")
+            logger.error(f"Error updating .env file: {e}", exc_info=True)
             return False
 
     async def _api_module_enable(self, request):
