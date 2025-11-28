@@ -1015,10 +1015,13 @@ class DashboardEndpoints:
             # Get DEX data from trading engine if available
             if hasattr(self, 'engine') and self.engine:
                 try:
-                    stats = self.engine.get_stats()
+                    # get_stats() is async
+                    stats = await self.engine.get_stats()
                     dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
+                    # Check engine state (not is_running)
+                    is_active = hasattr(self.engine, 'state') and self.engine.state.value == 'running'
                     simulator_data['dex'] = {
-                        'status': 'Active' if self.engine.is_running else 'Stopped',
+                        'status': 'Active' if is_active else 'Stopped',
                         'mode': 'DRY_RUN' if dry_run else 'LIVE',
                         'total_trades': stats.get('total_trades', 0),
                         'winning_trades': stats.get('winning_trades', 0),
@@ -1069,7 +1072,7 @@ class DashboardEndpoints:
 
             if hasattr(self, 'engine') and self.engine:
                 try:
-                    export_data['dex'] = self.engine.get_stats()
+                    export_data['dex'] = await self.engine.get_stats()
                 except Exception:
                     pass
 
