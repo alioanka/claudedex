@@ -461,13 +461,12 @@ let equityChart = null;
 let radarChart = null;
 let distributionChart = null;
 let chartsInitialized = false;
-let refreshInterval = null;
 
-// Initialize on page load
+// Initialize on page load - NO auto-refresh to prevent chart shaking
 document.addEventListener('DOMContentLoaded', function() {
     refreshSimulator();
-    // Only auto-refresh stats, not charts (to prevent shaking)
-    refreshInterval = setInterval(refreshStatsOnly, 60000); // Auto-refresh every 60s
+    // Auto-refresh completely disabled to prevent chart issues
+    // Users can click "Refresh" button to update
 });
 
 async function refreshSimulator() {
@@ -476,23 +475,22 @@ async function refreshSimulator() {
         if (!response.ok) throw new Error('Failed to fetch simulator data');
 
         const data = await response.json();
-        updateSimulatorUI(data, true); // true = update charts
+        console.log('Simulator data received:', data); // Debug log
+        updateSimulatorUI(data, true);
     } catch (error) {
         console.error('Error refreshing simulator:', error);
         showToast('Failed to refresh simulator data', 'error');
     }
 }
 
-async function refreshStatsOnly() {
-    try {
-        const response = await fetch('/api/simulator/data');
-        if (!response.ok) return;
-
-        const data = await response.json();
-        updateSimulatorUI(data, false); // false = don't update charts
-    } catch (error) {
-        console.error('Error refreshing stats:', error);
-    }
+// Helper to parse P&L values that might have $ prefix
+function parsePnL(value) {
+    if (value === null || value === undefined) return 0;
+    if (typeof value === 'number') return value;
+    // Remove $ and any other non-numeric characters except - and .
+    const cleaned = String(value).replace(/[^0-9.-]/g, '');
+    const parsed = parseFloat(cleaned);
+    return isNaN(parsed) ? 0 : parsed;
 }
 
 function updateSimulatorUI(data, updateCharts = true) {
@@ -525,10 +523,12 @@ function updateSimulatorUI(data, updateCharts = true) {
     const totalTrades = (data.futures?.total_trades || 0) + (data.solana?.total_trades || 0) + (data.dex?.total_trades || 0);
     document.getElementById('totalSimTrades').textContent = totalTrades;
 
-    // Calculate total P&L (normalize to USD)
-    const futuresPnl = parseFloat(data.futures?.total_pnl?.replace(/[^0-9.-]/g, '') || 0);
-    const solanaPnl = parseFloat(data.solana?.total_pnl?.replace(/[^0-9.-]/g, '') || 0) * (data.solana?.sol_price || 200);
-    const dexPnl = parseFloat(data.dex?.total_pnl || 0);
+    // Calculate total P&L (normalize to USD) - use parsePnL helper
+    const futuresPnl = parsePnL(data.futures?.total_pnl);
+    const solanaPnlRaw = parsePnL(data.solana?.total_pnl);
+    const solPrice = parseFloat(String(data.solana?.sol_price).replace(/[^0-9.]/g, '')) || 200;
+    const solanaPnl = solanaPnlRaw * solPrice;
+    const dexPnl = parsePnL(data.dex?.total_pnl);
     const totalPnl = futuresPnl + solanaPnl + dexPnl;
 
     const pnlElement = document.getElementById('totalSimPnl');
@@ -886,12 +886,21 @@ function updatePnLDistribution(data) {
 
 function updateTradeLog(data) {
     const tbody = document.getElementById('simTradeLog');
+    if (!tbody) {
+        console.error('Trade log tbody not found');
+        return;
+    }
+
+    // Debug: log what we're getting
+    console.log('DEX trades count:', data.dex?.trades?.length || 0);
 
     const allTrades = [
         ...(data.futures?.trades || []).map(t => ({...t, module: 'Futures'})),
         ...(data.solana?.trades || []).map(t => ({...t, module: 'Solana'})),
         ...(data.dex?.trades || []).map(t => ({...t, module: 'DEX'}))
     ].sort((a, b) => new Date(b.time || b.closed_at || 0) - new Date(a.time || a.closed_at || 0));
+
+    console.log('Total trades for log:', allTrades.length);
 
     if (allTrades.length === 0) {
         tbody.innerHTML = `
@@ -905,7 +914,7 @@ function updateTradeLog(data) {
     }
 
     tbody.innerHTML = allTrades.slice(0, 50).map(trade => {
-        const pnl = parseFloat(trade.pnl || trade.net_pnl || 0);
+        const pnl = parsePnL(trade.pnl || trade.net_pnl);
         const pnlClass = pnl >= 0 ? 'text-success' : 'text-danger';
         const pnlPct = trade.pnl_pct || '0%';
 
@@ -915,9 +924,9 @@ function updateTradeLog(data) {
                 <td><span class="badge badge-sm">${trade.module}</span></td>
                 <td>${trade.symbol || trade.token_symbol || 'N/A'}</td>
                 <td>${trade.side || 'N/A'}</td>
-                <td>$${parseFloat(trade.entry_price || 0).toFixed(4)}</td>
-                <td>$${parseFloat(trade.exit_price || 0).toFixed(4)}</td>
-                <td>${trade.size || trade.amount || 'N/A'}</td>
+                <td>$${parseFloat(trade.entry_price || 0).toFixed(6)}</td>
+                <td>$${parseFloat(trade.exit_price || 0).toFixed(6)}</td>
+                <td>${parseFloat(trade.size || trade.amount || 0).toFixed(4)}</td>
                 <td class="${pnlClass}">$${pnl.toFixed(2)}</td>
                 <td class="${pnlClass}">${pnlPct}</td>
                 <td>$${parseFloat(trade.fees || 0).toFixed(4)}</td>
