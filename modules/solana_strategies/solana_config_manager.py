@@ -149,10 +149,12 @@ class SolanaConfigManager:
         """
         env_config = {}
 
-        # Solana-specific environment variables
+        # Solana Module uses dedicated wallet (separate from DEX Module's Solana wallet)
+        # SOLANA_PRIVATE_KEY/SOLANA_WALLET = DEX Module (Solana chain trading)
+        # SOLANA_MODULE_PRIVATE_KEY/SOLANA_MODULE_WALLET = Solana Module (Jupiter/Drift/Pump.fun)
         sensitive_keys = [
-            'SOLANA_PRIVATE_KEY',
-            'SOLANA_WALLET',
+            'SOLANA_MODULE_PRIVATE_KEY',
+            'SOLANA_MODULE_WALLET',
             'SOLANA_RPC_URL',
             'SOLANA_RPC_URLS',
             'SOLANA_BACKUP_RPCS',
@@ -334,8 +336,9 @@ class SolanaConfigManager:
             all_config[config_type.value] = config_obj.dict()
 
         # Add environment config indicators (without exposing secrets)
-        all_config['_has_solana_wallet'] = bool(os.getenv('SOLANA_WALLET'))
-        all_config['_has_solana_private_key'] = bool(os.getenv('SOLANA_PRIVATE_KEY'))
+        # Solana Module uses dedicated wallet (SOLANA_MODULE_*)
+        all_config['_has_solana_wallet'] = bool(os.getenv('SOLANA_MODULE_WALLET'))
+        all_config['_has_solana_private_key'] = bool(os.getenv('SOLANA_MODULE_PRIVATE_KEY'))
         all_config['_has_solana_rpc'] = bool(os.getenv('SOLANA_RPC_URL'))
 
         return all_config

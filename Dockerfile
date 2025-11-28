@@ -52,6 +52,11 @@ RUN pip install --no-cache-dir \
     driftpy==0.8.80 \
     && echo "✅ DriftPy SDK installed"
 
+# Install CCXT for Futures trading
+RUN pip install --no-cache-dir \
+    ccxt==4.4.26 \
+    && echo "✅ CCXT exchange library installed"
+
 # Install Ethereum Web3 libraries
 RUN pip install --no-cache-dir \
     web3==6.20.4 \
