@@ -919,34 +919,42 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Win Rate Chart - Using aspectRatio to prevent shrinking
+    // Win Rate Chart - Changed to BAR chart for better win rate visualization
     const winRateCtx = document.getElementById('winRateChart').getContext('2d');
     winRateChart = new Chart(winRateCtx, {
-        type: 'doughnut',
+        type: 'bar',
         data: {
             labels: ['DEX Trading', 'Futures Trading', 'Solana Strategies'],
             datasets: [{
-                data: [33, 33, 34],
+                label: 'Win Rate (%)',
+                data: [0, 0, 0],
                 backgroundColor: [
                     'rgba(59, 130, 246, 0.8)',
                     'rgba(139, 92, 246, 0.8)',
                     'rgba(16, 185, 129, 0.8)'
                 ],
-                borderWidth: 2,
-                borderColor: '#1a1f2e'
+                borderColor: [
+                    'rgb(59, 130, 246)',
+                    'rgb(139, 92, 246)',
+                    'rgb(16, 185, 129)'
+                ],
+                borderWidth: 2
             }]
         },
         options: {
             responsive: true,
-            maintainAspectRatio: true,
-            aspectRatio: 2,
+            maintainAspectRatio: false,
             plugins: {
-                legend: {
-                    position: 'bottom',
-                    labels: {
-                        color: '#e8eaed',
-                        padding: 20,
-                        font: { size: 12 }
+                legend: { display: false }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 100,
+                    ticks: {
+                        callback: function(value) {
+                            return value + '%';
+                        }
                     }
                 }
             }
@@ -1017,6 +1025,9 @@ async function loadDashboardData() {
             });
             document.getElementById('totalTrades').textContent = totalTrades;
 
+            // Log module data for debugging
+            console.log('Modules API response:', modules);
+
             // Update P&L Comparison Chart
             if (pnlChart) {
                 const dexPnl = modules.dex_trading?.metrics?.pnl || 0;
@@ -1024,21 +1035,17 @@ async function loadDashboardData() {
                 const solanaPnl = modules.solana_strategies?.metrics?.pnl || 0;
                 pnlChart.data.datasets[0].data = [dexPnl, futuresPnl, solanaPnl];
                 pnlChart.update();
+                console.log('P&L Chart updated:', {dex: dexPnl, futures: futuresPnl, solana: solanaPnl});
             }
 
-            // Update Win Rate Chart
+            // Update Win Rate Chart (now a bar chart showing actual percentages)
             if (winRateChart) {
                 const dexWinRate = modules.dex_trading?.metrics?.win_rate || 0;
                 const futuresWinRate = modules.futures_trading?.metrics?.win_rate || 0;
                 const solanaWinRate = modules.solana_strategies?.metrics?.win_rate || 0;
-                // Ensure we have some data to display
-                const totalRate = dexWinRate + futuresWinRate + solanaWinRate;
-                if (totalRate > 0) {
-                    winRateChart.data.datasets[0].data = [dexWinRate, futuresWinRate, solanaWinRate];
-                } else {
-                    winRateChart.data.datasets[0].data = [33, 33, 34]; // Default equal split
-                }
+                winRateChart.data.datasets[0].data = [dexWinRate, futuresWinRate, solanaWinRate];
                 winRateChart.update();
+                console.log('Win Rate Chart updated:', {dex: dexWinRate, futures: futuresWinRate, solana: solanaWinRate});
             }
         }
     } catch (e) {
