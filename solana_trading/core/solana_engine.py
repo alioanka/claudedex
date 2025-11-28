@@ -27,6 +27,13 @@ import base58
 import uuid
 import json
 import aiohttp
+import sys
+from pathlib import Path
+
+# Add project root for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from core.pnl_tracker import PnLTracker, TradeRecord
 
 logger = logging.getLogger("SolanaTradingEngine")
 
@@ -440,6 +447,12 @@ class SolanaTradingEngine:
         self.losing_trades = 0
         self.total_pnl_sol = 0.0
         self.total_fees = 0.0
+
+        # PnL Tracker for Sharpe/Sortino calculations
+        self.pnl_tracker = PnLTracker(
+            initial_capital=self.position_size_sol * self.max_positions,
+            currency="SOL"
+        )
 
         # Log configuration
         mode_str = "DRY_RUN (SIMULATED)" if self.dry_run else "LIVE TRADING"
@@ -930,6 +943,26 @@ class SolanaTradingEngine:
                 self.losing_trades += 1
                 self.risk_metrics.consecutive_losses += 1
 
+            # Record trade in PnL tracker for Sharpe/Sortino calculations
+            net_pnl = pnl_sol - position.fees_paid
+            trade_record = TradeRecord(
+                trade_id=trade.trade_id,
+                symbol=position.token_symbol,
+                side=position.side.value,
+                entry_price=position.entry_price,
+                exit_price=position.current_price,
+                size=position.amount,
+                pnl=pnl_sol,
+                fees=position.fees_paid,
+                net_pnl=net_pnl,
+                pnl_pct=pnl_pct,
+                entry_time=position.opened_at,
+                exit_time=datetime.now(),
+                duration_seconds=int((datetime.now() - position.opened_at).total_seconds()),
+                is_simulated=position.is_simulated
+            )
+            self.pnl_tracker.record_trade(trade_record)
+
             # Remove position
             del self.active_positions[token_mint]
 
@@ -973,6 +1006,13 @@ class SolanaTradingEngine:
                 'pnl_pct': f"{pos.unrealized_pnl_pct:.2f}%"
             })
 
+        # Get advanced metrics from PnL tracker
+        sharpe = self.pnl_tracker.get_sharpe_ratio()
+        sortino = self.pnl_tracker.get_sortino_ratio()
+        calmar = self.pnl_tracker.get_calmar_ratio()
+        profit_factor = self.pnl_tracker.get_profit_factor()
+        max_drawdown = self.pnl_tracker.get_max_drawdown()
+
         return {
             'mode': 'DRY_RUN' if self.dry_run else 'LIVE',
             'strategies': ', '.join(s.value for s in self.strategies),
@@ -986,7 +1026,12 @@ class SolanaTradingEngine:
             'risk_level': self.risk_metrics.risk_level,
             'active_positions': len(self.active_positions),
             'positions': positions_summary,
-            'sol_price': f"${self.sol_price_usd:.2f}"
+            'sol_price': f"${self.sol_price_usd:.2f}",
+            'sharpe_ratio': f"{sharpe:.2f}" if sharpe else "N/A",
+            'sortino_ratio': f"{sortino:.2f}" if sortino else "N/A",
+            'calmar_ratio': f"{calmar:.2f}" if calmar else "N/A",
+            'profit_factor': f"{profit_factor:.2f}" if profit_factor else "N/A",
+            'max_drawdown': f"{max_drawdown:.2f}%" if max_drawdown else "N/A"
         }
 
     async def get_health(self) -> Dict:

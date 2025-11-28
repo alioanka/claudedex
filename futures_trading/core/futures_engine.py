@@ -24,6 +24,13 @@ from enum import Enum
 import os
 import uuid
 import json
+import sys
+from pathlib import Path
+
+# Add project root for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from core.pnl_tracker import PnLTracker, TradeRecord
 
 logger = logging.getLogger("FuturesTradingEngine")
 
@@ -244,6 +251,12 @@ class FuturesTradingEngine:
         self.losing_trades = 0
         self.total_pnl = 0.0
         self.total_fees = 0.0
+
+        # PnL Tracker for Sharpe/Sortino calculations
+        self.pnl_tracker = PnLTracker(
+            initial_capital=self.position_size_usd * self.max_positions,
+            currency="USD"
+        )
 
         # Logging mode info
         mode_str = "DRY_RUN (SIMULATED)" if self.dry_run else "LIVE TRADING"
@@ -866,6 +879,25 @@ class FuturesTradingEngine:
             )
             self.trade_history.append(trade)
 
+            # Record in PnL tracker for Sharpe/Sortino calculations
+            trade_record = TradeRecord(
+                trade_id=trade.trade_id,
+                symbol=symbol,
+                side=position.side.value,
+                entry_price=position.entry_price,
+                exit_price=position.current_price,
+                size=position.size,
+                pnl=pnl_usd,
+                fees=total_fees,
+                net_pnl=net_pnl,
+                pnl_pct=leveraged_pnl_pct,
+                entry_time=position.opened_at,
+                exit_time=datetime.now(),
+                duration_seconds=int((datetime.now() - position.opened_at).total_seconds()),
+                is_simulated=position.is_simulated
+            )
+            self.pnl_tracker.record_trade(trade_record)
+
             # Update stats
             self.total_trades += 1
             self.total_pnl += net_pnl
@@ -940,6 +972,13 @@ class FuturesTradingEngine:
                 'pnl_usd': f"${pos.unrealized_pnl:.2f}"
             })
 
+        # Get advanced metrics from PnL tracker
+        pnl_snapshot = self.pnl_tracker.get_snapshot()
+
+        # Calculate unrealized PnL for all open positions
+        unrealized_pnl = sum(pos.unrealized_pnl for pos in self.active_positions.values())
+        self.pnl_tracker.update_unrealized_pnl(unrealized_pnl)
+
         return {
             'mode': 'DRY_RUN' if self.dry_run else 'LIVE',
             'network': 'TESTNET' if self.testnet else 'MAINNET',
@@ -951,9 +990,25 @@ class FuturesTradingEngine:
             'win_rate': f"{win_rate:.1f}%",
             'total_pnl': f"${self.total_pnl:.2f}",
             'total_fees': f"${self.total_fees:.2f}",
+            'net_pnl': f"${pnl_snapshot.net_pnl:.2f}",
+            'unrealized_pnl': f"${unrealized_pnl:.2f}",
             'daily_pnl': f"${self.risk_metrics.daily_pnl:.2f}",
             'daily_trades': self.risk_metrics.daily_trades,
             'risk_level': self.risk_metrics.risk_level,
+            # Advanced metrics from PnL tracker
+            'sharpe_ratio': pnl_snapshot.sharpe_ratio,
+            'sortino_ratio': pnl_snapshot.sortino_ratio,
+            'calmar_ratio': pnl_snapshot.calmar_ratio,
+            'profit_factor': pnl_snapshot.profit_factor,
+            'max_drawdown': f"${pnl_snapshot.max_drawdown:.2f}",
+            'max_drawdown_pct': f"{pnl_snapshot.max_drawdown_pct:.1f}%",
+            'avg_win': f"${pnl_snapshot.avg_win:.2f}",
+            'avg_loss': f"${pnl_snapshot.avg_loss:.2f}",
+            'best_trade': f"${pnl_snapshot.best_trade:.2f}",
+            'worst_trade': f"${pnl_snapshot.worst_trade:.2f}",
+            'current_streak': pnl_snapshot.current_streak,
+            'max_win_streak': pnl_snapshot.max_win_streak,
+            'max_loss_streak': pnl_snapshot.max_loss_streak,
             'active_positions': len(self.active_positions),
             'positions': positions_summary
         }
