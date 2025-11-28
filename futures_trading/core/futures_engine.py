@@ -69,6 +69,18 @@ class TechnicalSignals:
     macd_signal: SignalStrength = SignalStrength.NEUTRAL
     volume_ratio: float = 1.0  # Current volume / Average volume
     volume_signal: SignalStrength = SignalStrength.NEUTRAL
+    # Bollinger Bands
+    bb_upper: float = 0.0
+    bb_lower: float = 0.0
+    bb_middle: float = 0.0
+    bb_signal: SignalStrength = SignalStrength.NEUTRAL
+    bb_position: str = "middle"  # above_upper, below_lower, middle
+    # EMA Crossover
+    ema_9: float = 0.0
+    ema_21: float = 0.0
+    ema_signal: SignalStrength = SignalStrength.NEUTRAL
+    ema_crossover: str = "none"  # golden_cross, death_cross, none
+    # Price action
     price_change_1h: float = 0.0
     price_change_24h: float = 0.0
     trend: str = "sideways"  # uptrend, downtrend, sideways
@@ -78,18 +90,22 @@ class TechnicalSignals:
     @property
     def overall_signal(self) -> SignalStrength:
         """Calculate overall signal from all indicators"""
+        # Now includes 5 indicators: RSI, MACD, Volume, Bollinger Bands, EMA
         score = (
             self.rsi_signal.value +
             self.macd_signal.value +
-            self.volume_signal.value
+            self.volume_signal.value +
+            self.bb_signal.value +
+            self.ema_signal.value
         )
-        if score >= 4:
+        # Adjusted thresholds for 5 indicators (max score now -10 to +10)
+        if score >= 5:
             return SignalStrength.STRONG_BUY
-        elif score >= 2:
+        elif score >= 3:
             return SignalStrength.BUY
-        elif score <= -4:
+        elif score <= -5:
             return SignalStrength.STRONG_SELL
-        elif score <= -2:
+        elif score <= -3:
             return SignalStrength.SELL
         return SignalStrength.NEUTRAL
 
@@ -223,6 +239,19 @@ class FuturesTradingEngine:
         self.take_profit_pct = float(os.getenv('FUTURES_TAKE_PROFIT_PCT', '10.0'))
         self.max_daily_loss = float(os.getenv('FUTURES_MAX_DAILY_LOSS_USD', '500'))
 
+        # Strategy parameters - Configurable thresholds
+        # RSI thresholds (lower = more conservative, default is strict)
+        self.rsi_oversold = float(os.getenv('FUTURES_RSI_OVERSOLD', '30'))  # Below = STRONG_BUY
+        self.rsi_overbought = float(os.getenv('FUTURES_RSI_OVERBOUGHT', '70'))  # Above = STRONG_SELL
+        self.rsi_weak_oversold = float(os.getenv('FUTURES_RSI_WEAK_OVERSOLD', '40'))  # Below = BUY
+        self.rsi_weak_overbought = float(os.getenv('FUTURES_RSI_WEAK_OVERBOUGHT', '60'))  # Above = SELL
+
+        # Minimum signal score to enter (default 4 = STRONG only, 2 = BUY/SELL allowed)
+        self.min_signal_score = int(os.getenv('FUTURES_MIN_SIGNAL_SCORE', '4'))
+
+        # Enable verbose signal logging
+        self.verbose_signals = os.getenv('FUTURES_VERBOSE_SIGNALS', 'true').lower() in ('true', '1', 'yes')
+
         # Trading state
         self.active_positions: Dict[str, Position] = {}
         self.pending_orders: Dict[str, Dict] = {}
@@ -268,6 +297,13 @@ class FuturesTradingEngine:
         logger.info(f"  Leverage: {leverage}x")
         logger.info(f"  Position size: ${self.position_size_usd}")
         logger.info(f"  Symbols: {', '.join(self.symbols)}")
+        logger.info(f"  Strategy Settings:")
+        logger.info(f"    RSI Oversold (STRONG_BUY): < {self.rsi_oversold}")
+        logger.info(f"    RSI Overbought (STRONG_SELL): > {self.rsi_overbought}")
+        logger.info(f"    RSI Weak Oversold (BUY): < {self.rsi_weak_oversold}")
+        logger.info(f"    RSI Weak Overbought (SELL): > {self.rsi_weak_overbought}")
+        logger.info(f"    Min Signal Score: {self.min_signal_score} (4=STRONG only, 2=BUY/SELL)")
+        logger.info(f"    Verbose Signals: {self.verbose_signals}")
 
     async def initialize(self):
         """Initialize exchange connections and components"""
@@ -564,38 +600,84 @@ class FuturesTradingEngine:
     async def _scan_opportunities(self):
         """Scan for new trading opportunities"""
         if len(self.active_positions) >= self.max_positions:
+            if self.verbose_signals:
+                logger.debug(f"⏸️ At max positions ({self.max_positions}), skipping scan")
             return  # Already at max positions
+
+        if self.verbose_signals:
+            logger.info(f"🔍 Scanning {len(self.symbols)} symbols for opportunities: {', '.join(self.symbols)}")
 
         for symbol in self.symbols:
             try:
                 # Skip if already have position
                 if symbol in self.active_positions:
+                    if self.verbose_signals:
+                        logger.debug(f"  {symbol}: Skipped - already have open position")
                     continue
 
                 # Check cooldown
                 if symbol in self.symbol_cooldowns:
                     if datetime.now() < self.symbol_cooldowns[symbol]:
+                        remaining = (self.symbol_cooldowns[symbol] - datetime.now()).seconds
+                        if self.verbose_signals:
+                            logger.debug(f"  {symbol}: Skipped - cooldown ({remaining}s remaining)")
                         continue
 
                 # Check if symbol exists on exchange
                 if symbol not in self.exchange_client.markets:
+                    if self.verbose_signals:
+                        logger.warning(f"  {symbol}: Skipped - not found on exchange")
                     continue
 
                 # Get technical signals
                 signals = await self._get_technical_signals(symbol)
                 if not signals:
+                    if self.verbose_signals:
+                        logger.debug(f"  {symbol}: Skipped - could not calculate signals")
                     continue
 
-                # Determine entry based on signals
+                # Calculate combined signal score (now 5 indicators)
+                signal_score = (
+                    signals.rsi_signal.value +
+                    signals.macd_signal.value +
+                    signals.volume_signal.value +
+                    signals.bb_signal.value +
+                    signals.ema_signal.value
+                )
+
+                # Log detailed signal analysis
+                if self.verbose_signals:
+                    logger.info(f"  📊 {symbol} Signal Analysis:")
+                    logger.info(f"     RSI: {signals.rsi:.1f} → {signals.rsi_signal.name} ({signals.rsi_signal.value:+d})")
+                    logger.info(f"     MACD: {signals.macd_histogram:.6f} → {signals.macd_signal.name} ({signals.macd_signal.value:+d})")
+                    logger.info(f"     Volume: {signals.volume_ratio:.2f}x → {signals.volume_signal.name} ({signals.volume_signal.value:+d})")
+                    logger.info(f"     Bollinger: {signals.bb_position} → {signals.bb_signal.name} ({signals.bb_signal.value:+d})")
+                    logger.info(f"     EMA: {signals.ema_crossover} → {signals.ema_signal.name} ({signals.ema_signal.value:+d})")
+                    logger.info(f"     Trend: {signals.trend}, 1h: {signals.price_change_1h:+.2f}%, 24h: {signals.price_change_24h:+.2f}%")
+                    logger.info(f"     Combined Score: {signal_score:+d} (min required: ±{self.min_signal_score})")
+
+                # Determine entry based on signals using configurable min_signal_score
                 entry_side = None
-                if signals.overall_signal == SignalStrength.STRONG_BUY:
+                if signal_score >= self.min_signal_score:
                     entry_side = TradeSide.LONG
-                elif signals.overall_signal == SignalStrength.STRONG_SELL:
+                    if self.verbose_signals:
+                        logger.info(f"     ✅ LONG signal triggered (score {signal_score} >= {self.min_signal_score})")
+                elif signal_score <= -self.min_signal_score:
                     entry_side = TradeSide.SHORT
+                    if self.verbose_signals:
+                        logger.info(f"     ✅ SHORT signal triggered (score {signal_score} <= -{self.min_signal_score})")
+                else:
+                    if self.verbose_signals:
+                        if signal_score > 0:
+                            logger.info(f"     ❌ REJECTED: Bullish but weak (score {signal_score} < {self.min_signal_score})")
+                        elif signal_score < 0:
+                            logger.info(f"     ❌ REJECTED: Bearish but weak (score {signal_score} > -{self.min_signal_score})")
+                        else:
+                            logger.info(f"     ❌ REJECTED: Neutral market conditions (score = 0)")
 
                 if entry_side:
                     logger.info(f"📈 Signal detected: {symbol} {entry_side.value.upper()}")
-                    logger.info(f"   RSI: {signals.rsi:.1f}, MACD: {signals.macd_histogram:.4f}, Volume: {signals.volume_ratio:.2f}x")
+                    logger.info(f"   RSI: {signals.rsi:.1f}, MACD: {signals.macd_histogram:.6f}, Volume: {signals.volume_ratio:.2f}x")
 
                     await self._open_position(symbol, entry_side, signals)
 
@@ -620,16 +702,16 @@ class FuturesTradingEngine:
 
             signals = TechnicalSignals()
 
-            # Calculate RSI (14-period)
+            # Calculate RSI (14-period) using configurable thresholds
             rsi = self._calculate_rsi(closes, 14)
             signals.rsi = rsi
-            if rsi < 30:
+            if rsi < self.rsi_oversold:
                 signals.rsi_signal = SignalStrength.STRONG_BUY
-            elif rsi < 40:
+            elif rsi < self.rsi_weak_oversold:
                 signals.rsi_signal = SignalStrength.BUY
-            elif rsi > 70:
+            elif rsi > self.rsi_overbought:
                 signals.rsi_signal = SignalStrength.STRONG_SELL
-            elif rsi > 60:
+            elif rsi > self.rsi_weak_overbought:
                 signals.rsi_signal = SignalStrength.SELL
 
             # Calculate MACD
@@ -661,6 +743,60 @@ class FuturesTradingEngine:
                     signals.volume_signal = SignalStrength.BUY
                 elif signals.macd_signal.value < 0:
                     signals.volume_signal = SignalStrength.SELL
+
+            # Calculate Bollinger Bands (20-period, 2 std dev)
+            bb_period = 20
+            if len(closes) >= bb_period:
+                bb_sma = sum(closes[-bb_period:]) / bb_period
+                variance = sum((x - bb_sma) ** 2 for x in closes[-bb_period:]) / bb_period
+                bb_std = variance ** 0.5
+                signals.bb_middle = bb_sma
+                signals.bb_upper = bb_sma + (2 * bb_std)
+                signals.bb_lower = bb_sma - (2 * bb_std)
+
+                current_price = closes[-1]
+                # Determine Bollinger position and signal
+                if current_price <= signals.bb_lower:
+                    signals.bb_position = "below_lower"
+                    signals.bb_signal = SignalStrength.STRONG_BUY  # Oversold, expect bounce
+                elif current_price >= signals.bb_upper:
+                    signals.bb_position = "above_upper"
+                    signals.bb_signal = SignalStrength.STRONG_SELL  # Overbought, expect pullback
+                elif current_price < signals.bb_middle:
+                    signals.bb_position = "lower_half"
+                    signals.bb_signal = SignalStrength.BUY  # Below middle, slight bullish
+                elif current_price > signals.bb_middle:
+                    signals.bb_position = "upper_half"
+                    signals.bb_signal = SignalStrength.SELL  # Above middle, slight bearish
+                else:
+                    signals.bb_position = "middle"
+                    signals.bb_signal = SignalStrength.NEUTRAL
+
+            # Calculate EMA Crossover (9 and 21 period)
+            if len(closes) >= 21:
+                signals.ema_9 = self._calculate_ema(closes, 9)
+                signals.ema_21 = self._calculate_ema(closes, 21)
+
+                # Also calculate previous values to detect crossover
+                prev_ema_9 = self._calculate_ema(closes[:-1], 9)
+                prev_ema_21 = self._calculate_ema(closes[:-1], 21)
+
+                # Detect crossover
+                if signals.ema_9 > signals.ema_21 and prev_ema_9 <= prev_ema_21:
+                    signals.ema_crossover = "golden_cross"
+                    signals.ema_signal = SignalStrength.STRONG_BUY
+                elif signals.ema_9 < signals.ema_21 and prev_ema_9 >= prev_ema_21:
+                    signals.ema_crossover = "death_cross"
+                    signals.ema_signal = SignalStrength.STRONG_SELL
+                elif signals.ema_9 > signals.ema_21:
+                    signals.ema_crossover = "bullish"
+                    signals.ema_signal = SignalStrength.BUY
+                elif signals.ema_9 < signals.ema_21:
+                    signals.ema_crossover = "bearish"
+                    signals.ema_signal = SignalStrength.SELL
+                else:
+                    signals.ema_crossover = "neutral"
+                    signals.ema_signal = SignalStrength.NEUTRAL
 
             # Price changes
             signals.price_change_1h = ((closes[-1] - closes[-2]) / closes[-2]) * 100 if len(closes) >= 2 else 0
@@ -726,6 +862,16 @@ class FuturesTradingEngine:
         histogram = macd_line - signal_line
 
         return macd_line, signal_line, histogram
+
+    def _calculate_ema(self, data: List[float], period: int) -> float:
+        """Calculate Exponential Moving Average"""
+        if len(data) < period:
+            return sum(data) / len(data) if data else 0
+        multiplier = 2 / (period + 1)
+        ema_value = sum(data[:period]) / period
+        for price in data[period:]:
+            ema_value = (price - ema_value) * multiplier + ema_value
+        return ema_value
 
     async def _open_position(self, symbol: str, side: TradeSide, signals: TechnicalSignals):
         """Open a new position"""
