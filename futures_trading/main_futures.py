@@ -9,6 +9,13 @@ Features:
 - Position monitoring and auto-liquidation protection
 - Technical indicator-based strategies
 - HTTP health/metrics endpoints for monitoring
+- Database-backed configuration via FuturesConfigManager
+
+Configuration Architecture:
+- All trading parameters are stored in the database (config_settings table)
+- Only sensitive data (API keys, secrets) is read from .env
+- Settings page writes/reads from database via API endpoints
+- Config changes take effect without restart (hot-reload)
 """
 
 import asyncio
@@ -22,6 +29,7 @@ from datetime import datetime
 import argparse
 import json
 from aiohttp import web
+import asyncpg
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -150,15 +158,14 @@ class FuturesTradingApplication:
         self.health_server = None
         self.shutdown_event = asyncio.Event()
         self.logger = logger
+        self.db_pool = None
+        self.config_manager = None
 
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
 
-        # Module config
-        self.exchange = os.getenv('FUTURES_EXCHANGE', 'binance')  # binance or bybit
-        self.leverage = int(os.getenv('FUTURES_LEVERAGE', '10'))
-        self.max_positions = int(os.getenv('FUTURES_MAX_POSITIONS', '5'))
+        # Health server port (from .env since it's infrastructure config)
         self.health_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
 
     def _signal_handler(self, signum, frame):
@@ -166,25 +173,57 @@ class FuturesTradingApplication:
         self.logger.warning(f"Received signal {signum}, initiating graceful shutdown...")
         self.shutdown_event.set()
 
+    async def _init_database(self):
+        """Initialize database connection pool"""
+        try:
+            db_url = os.getenv('DATABASE_URL', os.getenv('DB_URL'))
+            if db_url:
+                self.db_pool = await asyncpg.create_pool(
+                    db_url,
+                    min_size=1,
+                    max_size=5,
+                    command_timeout=60
+                )
+                self.logger.info("✅ Database connection pool created")
+            else:
+                self.logger.warning("⚠️ No DATABASE_URL, using default configuration")
+        except Exception as e:
+            self.logger.error(f"Failed to connect to database: {e}")
+            self.logger.warning("Using default configuration")
+
     async def initialize(self):
         """Initialize all components"""
         try:
             self.logger.info("=" * 80)
             self.logger.info("🚀 Futures Trading Bot Starting...")
             self.logger.info(f"Mode: {self.mode}")
-            self.logger.info(f"Exchange: {self.exchange.upper()}")
-            self.logger.info(f"Leverage: {self.leverage}x")
             self.logger.info(f"Time: {datetime.now().isoformat()}")
             self.logger.info("=" * 80)
+
+            # Initialize database connection
+            await self._init_database()
+
+            # Initialize config manager (loads settings from database)
+            from modules.futures_trading.futures_config_manager import FuturesConfigManager
+            self.config_manager = FuturesConfigManager(db_pool=self.db_pool)
+            await self.config_manager.initialize()
+
+            # Get configuration from database
+            general_config = self.config_manager.get_general()
+            leverage_config = self.config_manager.get_leverage()
+            position_config = self.config_manager.get_position()
+
+            self.logger.info(f"Exchange: {general_config.exchange.upper()}")
+            self.logger.info(f"Testnet: {general_config.testnet}")
+            self.logger.info(f"Leverage: {leverage_config.default_leverage}x")
+            self.logger.info(f"Max Positions: {position_config.max_positions}")
 
             # Import futures engine
             from futures_trading.core.futures_engine import FuturesTradingEngine
 
-            # Initialize engine
+            # Initialize engine with config manager
             self.engine = FuturesTradingEngine(
-                exchange=self.exchange,
-                leverage=self.leverage,
-                max_positions=self.max_positions,
+                config_manager=self.config_manager,
                 mode=self.mode
             )
 
@@ -269,6 +308,11 @@ class FuturesTradingApplication:
 
                 self.logger.info("Stopping engine...")
                 await self.engine.shutdown()
+
+            # Close database pool
+            if self.db_pool:
+                self.logger.info("Closing database pool...")
+                await self.db_pool.close()
 
             self.logger.info("✅ Shutdown complete")
 

@@ -188,7 +188,14 @@ class RiskMetrics:
 
 
 class FuturesTradingEngine:
-    """Core futures trading engine with full implementation"""
+    """
+    Core futures trading engine with full implementation
+
+    Configuration Architecture:
+    - Receives config from FuturesConfigManager (database-backed)
+    - Only sensitive data (API keys) comes from .env via config manager
+    - Trading parameters are loaded from database and can be changed without restart
+    """
 
     # Trading fees (maker/taker)
     BINANCE_MAKER_FEE = 0.0002  # 0.02%
@@ -201,56 +208,84 @@ class FuturesTradingEngine:
 
     def __init__(
         self,
-        exchange: str = "binance",
-        leverage: int = 10,
-        max_positions: int = 5,
+        config_manager=None,
         mode: str = "production"
     ):
         """
-        Initialize futures trading engine
+        Initialize futures trading engine with database-backed configuration
 
         Args:
-            exchange: Exchange name (binance or bybit)
-            leverage: Trading leverage (1-125)
-            max_positions: Maximum concurrent positions
+            config_manager: FuturesConfigManager instance (loads from database)
             mode: Operating mode
         """
-        self.exchange = exchange.lower()
-        self.leverage = leverage
-        self.max_positions = max_positions
+        self.config_manager = config_manager
         self.mode = mode
         self.is_running = False
 
-        # DRY_RUN mode - CRITICAL: Check environment variable
+        # Load configuration from config manager (database)
+        if config_manager:
+            general_config = config_manager.get_general()
+            position_config = config_manager.get_position()
+            leverage_config = config_manager.get_leverage()
+            risk_config = config_manager.get_risk()
+            pairs_config = config_manager.get_pairs()
+            strategy_config = config_manager.get_strategy()
+
+            # General settings
+            self.exchange = general_config.exchange.lower()
+            self.testnet = general_config.testnet
+
+            # Position settings
+            self.max_positions = position_config.max_positions
+            self.position_size_usd = position_config.position_size_usd
+
+            # Leverage settings
+            self.leverage = leverage_config.default_leverage
+
+            # Risk settings
+            self.stop_loss_pct = -abs(risk_config.stop_loss_pct)  # Ensure negative
+            self.take_profit_pct = abs(risk_config.take_profit_pct)  # Ensure positive
+            self.max_daily_loss = risk_config.max_daily_loss_usd
+            self.cooldown_duration = timedelta(minutes=strategy_config.cooldown_minutes)
+
+            # Pairs settings
+            self.symbols = pairs_config.pairs_list
+
+            # Strategy settings
+            self.signal_timeframe = strategy_config.signal_timeframe
+            self.scan_interval_seconds = strategy_config.scan_interval_seconds
+            self.rsi_oversold = strategy_config.rsi_oversold
+            self.rsi_overbought = strategy_config.rsi_overbought
+            self.rsi_weak_oversold = strategy_config.rsi_weak_oversold
+            self.rsi_weak_overbought = strategy_config.rsi_weak_overbought
+            self.min_signal_score = strategy_config.min_signal_score
+            self.verbose_signals = strategy_config.verbose_signals
+
+        else:
+            # Fallback to defaults if no config manager (should not happen in production)
+            logger.warning("⚠️ No config manager provided, using defaults")
+            self.exchange = "binance"
+            self.testnet = True
+            self.max_positions = 5
+            self.position_size_usd = 100.0
+            self.leverage = 10
+            self.stop_loss_pct = -5.0
+            self.take_profit_pct = 10.0
+            self.max_daily_loss = 500.0
+            self.symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"]
+            self.signal_timeframe = "15m"  # 15-minute candles for faster signals
+            self.scan_interval_seconds = 30  # Scan every 30 seconds
+            self.rsi_oversold = 30.0
+            self.rsi_overbought = 70.0
+            self.rsi_weak_oversold = 40.0
+            self.rsi_weak_overbought = 60.0
+            self.min_signal_score = 3  # Lower threshold for more signals
+            self.verbose_signals = True
+            self.cooldown_duration = timedelta(minutes=5)
+
+        # DRY_RUN mode - CRITICAL: Check environment variable (global safety setting)
         dry_run_env = os.getenv('DRY_RUN', 'true').strip().lower()
         self.dry_run = dry_run_env in ('true', '1', 'yes')
-
-        # Testnet mode
-        testnet_env = os.getenv('FUTURES_TESTNET', 'true').strip().lower()
-        self.testnet = testnet_env in ('true', '1', 'yes')
-
-        # Trading configuration from environment
-        self.position_size_usd = float(os.getenv('FUTURES_POSITION_SIZE_USD', '100'))
-        self.symbols = os.getenv('FUTURES_SYMBOLS', 'BTC/USDT,ETH/USDT,SOL/USDT').split(',')
-        self.symbols = [s.strip() for s in self.symbols]
-
-        # Risk parameters
-        self.stop_loss_pct = float(os.getenv('FUTURES_STOP_LOSS_PCT', '-5.0'))
-        self.take_profit_pct = float(os.getenv('FUTURES_TAKE_PROFIT_PCT', '10.0'))
-        self.max_daily_loss = float(os.getenv('FUTURES_MAX_DAILY_LOSS_USD', '500'))
-
-        # Strategy parameters - Configurable thresholds
-        # RSI thresholds (lower = more conservative, default is strict)
-        self.rsi_oversold = float(os.getenv('FUTURES_RSI_OVERSOLD', '30'))  # Below = STRONG_BUY
-        self.rsi_overbought = float(os.getenv('FUTURES_RSI_OVERBOUGHT', '70'))  # Above = STRONG_SELL
-        self.rsi_weak_oversold = float(os.getenv('FUTURES_RSI_WEAK_OVERSOLD', '40'))  # Below = BUY
-        self.rsi_weak_overbought = float(os.getenv('FUTURES_RSI_WEAK_OVERBOUGHT', '60'))  # Above = SELL
-
-        # Minimum signal score to enter (default 4 = STRONG only, 2 = BUY/SELL allowed)
-        self.min_signal_score = int(os.getenv('FUTURES_MIN_SIGNAL_SCORE', '4'))
-
-        # Enable verbose signal logging
-        self.verbose_signals = os.getenv('FUTURES_VERBOSE_SIGNALS', 'true').lower() in ('true', '1', 'yes')
 
         # Trading state
         self.active_positions: Dict[str, Position] = {}
@@ -259,7 +294,6 @@ class FuturesTradingEngine:
 
         # Cooldowns (symbol -> next_trade_time)
         self.symbol_cooldowns: Dict[str, datetime] = {}
-        self.cooldown_duration = timedelta(minutes=5)  # 5 minute cooldown after closing position
 
         # Exchange client
         self.exchange_client = None
@@ -291,13 +325,15 @@ class FuturesTradingEngine:
         mode_str = "DRY_RUN (SIMULATED)" if self.dry_run else "LIVE TRADING"
         net_str = "TESTNET" if self.testnet else "MAINNET"
         logger.info(f"Futures engine initialized:")
-        logger.info(f"  Exchange: {exchange.upper()}")
+        logger.info(f"  Exchange: {self.exchange.upper()}")
         logger.info(f"  Mode: {mode_str}")
         logger.info(f"  Network: {net_str}")
-        logger.info(f"  Leverage: {leverage}x")
+        logger.info(f"  Leverage: {self.leverage}x")
         logger.info(f"  Position size: ${self.position_size_usd}")
         logger.info(f"  Symbols: {', '.join(self.symbols)}")
         logger.info(f"  Strategy Settings:")
+        logger.info(f"    Signal Timeframe: {self.signal_timeframe}")
+        logger.info(f"    Scan Interval: {self.scan_interval_seconds}s")
         logger.info(f"    RSI Oversold (STRONG_BUY): < {self.rsi_oversold}")
         logger.info(f"    RSI Overbought (STRONG_SELL): > {self.rsi_overbought}")
         logger.info(f"    RSI Weak Oversold (BUY): < {self.rsi_weak_oversold}")
@@ -335,16 +371,24 @@ class FuturesTradingEngine:
         try:
             import ccxt.async_support as ccxt
 
-            # Select API keys based on testnet mode
+            # Get API credentials from config manager (reads from .env)
+            if self.config_manager:
+                credentials = self.config_manager.get_api_credentials('binance', self.testnet)
+                api_key = credentials.get('api_key')
+                api_secret = credentials.get('api_secret')
+            else:
+                # Fallback to direct env read
+                if self.testnet:
+                    api_key = os.getenv('BINANCE_TESTNET_API_KEY')
+                    api_secret = os.getenv('BINANCE_TESTNET_API_SECRET')
+                else:
+                    api_key = os.getenv('BINANCE_API_KEY')
+                    api_secret = os.getenv('BINANCE_API_SECRET')
+
+            sandbox_mode = self.testnet
             if self.testnet:
-                api_key = os.getenv('BINANCE_TESTNET_API_KEY')
-                api_secret = os.getenv('BINANCE_TESTNET_API_SECRET')
-                sandbox_mode = True
                 logger.info("Using Binance TESTNET")
             else:
-                api_key = os.getenv('BINANCE_API_KEY')
-                api_secret = os.getenv('BINANCE_API_SECRET')
-                sandbox_mode = False
                 logger.info("Using Binance MAINNET")
 
             if not api_key or not api_secret:
@@ -380,16 +424,24 @@ class FuturesTradingEngine:
         try:
             import ccxt.async_support as ccxt
 
-            # Select API keys based on testnet mode
+            # Get API credentials from config manager (reads from .env)
+            if self.config_manager:
+                credentials = self.config_manager.get_api_credentials('bybit', self.testnet)
+                api_key = credentials.get('api_key')
+                api_secret = credentials.get('api_secret')
+            else:
+                # Fallback to direct env read
+                if self.testnet:
+                    api_key = os.getenv('BYBIT_TESTNET_API_KEY')
+                    api_secret = os.getenv('BYBIT_TESTNET_API_SECRET')
+                else:
+                    api_key = os.getenv('BYBIT_API_KEY')
+                    api_secret = os.getenv('BYBIT_API_SECRET')
+
+            sandbox_mode = self.testnet
             if self.testnet:
-                api_key = os.getenv('BYBIT_TESTNET_API_KEY')
-                api_secret = os.getenv('BYBIT_TESTNET_API_SECRET')
-                sandbox_mode = True
                 logger.info("Using Bybit TESTNET")
             else:
-                api_key = os.getenv('BYBIT_API_KEY')
-                api_secret = os.getenv('BYBIT_API_SECRET')
-                sandbox_mode = False
                 logger.info("Using Bybit MAINNET")
 
             if not api_key or not api_secret:
@@ -484,12 +536,12 @@ class FuturesTradingEngine:
                     # Main trading logic
                     await self._trading_cycle()
 
-                    # Wait before next cycle
-                    await asyncio.sleep(10)
+                    # Wait before next cycle (configurable scan interval)
+                    await asyncio.sleep(self.scan_interval_seconds)
 
                 except Exception as e:
                     logger.error(f"Error in trading cycle: {e}", exc_info=True)
-                    await asyncio.sleep(30)
+                    await asyncio.sleep(self.scan_interval_seconds * 3)  # Longer wait on error
 
         except Exception as e:
             logger.error(f"Critical error in trading engine: {e}", exc_info=True)
@@ -688,10 +740,10 @@ class FuturesTradingEngine:
                 logger.error(f"Error scanning {symbol}: {e}")
 
     async def _get_technical_signals(self, symbol: str) -> Optional[TechnicalSignals]:
-        """Calculate technical indicators for a symbol"""
+        """Calculate technical indicators for a symbol using configurable timeframe"""
         try:
-            # Fetch OHLCV data
-            ohlcv = await self.exchange_client.fetch_ohlcv(symbol, '1h', limit=100)
+            # Fetch OHLCV data using configured timeframe (default: 15m for faster signals)
+            ohlcv = await self.exchange_client.fetch_ohlcv(symbol, self.signal_timeframe, limit=100)
             if len(ohlcv) < 50:
                 return None
 
