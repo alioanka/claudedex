@@ -533,6 +533,102 @@
         </div>
     </div>
 
+    <!-- Strategy Settings -->
+    <div class="settings-section">
+        <div class="section-header">
+            <div class="section-title">
+                <i class="fas fa-chart-line"></i>
+                Strategy Settings
+            </div>
+        </div>
+
+        <div class="alert-warning" style="background: #433d1e; border: 1px solid #6b5e22; padding: 12px; border-radius: 8px; margin-bottom: 16px;">
+            <i class="fas fa-lightbulb" style="color: #f5c518;"></i>
+            <span style="color: #e8eaed;">For paper trading, use a shorter timeframe (5m or 15m) and lower signal score (2-3) to collect more simulated trade data.</span>
+        </div>
+
+        <div class="setting-grid">
+            <div class="setting-item">
+                <label class="setting-label">
+                    <i class="fas fa-clock"></i>
+                    Signal Timeframe
+                </label>
+                <div class="setting-description">Candle timeframe for technical analysis (shorter = more signals)</div>
+                <select class="setting-select" id="futures_signal_timeframe" name="futures_signal_timeframe">
+                    <option value="1m">1 Minute</option>
+                    <option value="5m">5 Minutes</option>
+                    <option value="15m" selected>15 Minutes (Recommended for Paper)</option>
+                    <option value="30m">30 Minutes</option>
+                    <option value="1h">1 Hour</option>
+                    <option value="4h">4 Hours</option>
+                </select>
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">
+                    <i class="fas fa-sync"></i>
+                    Scan Interval (seconds)
+                </label>
+                <div class="setting-description">How often to scan for trading opportunities</div>
+                <input type="number" class="setting-input" id="futures_scan_interval_seconds" name="futures_scan_interval_seconds" value="30" min="10" max="300" step="5">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">
+                    <i class="fas fa-star"></i>
+                    Min Signal Score
+                </label>
+                <div class="setting-description">Minimum combined score to trigger trade (1-6, lower = more trades)</div>
+                <input type="number" class="setting-input" id="futures_min_signal_score" name="futures_min_signal_score" value="3" min="1" max="6" step="1">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">
+                    <i class="fas fa-hourglass-half"></i>
+                    Cooldown (minutes)
+                </label>
+                <div class="setting-description">Wait time after closing a position before opening a new one</div>
+                <input type="number" class="setting-input" id="futures_cooldown_minutes" name="futures_cooldown_minutes" value="5" min="0" max="60" step="1">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">RSI Oversold (Strong Buy)</label>
+                <div class="setting-description">RSI below this triggers STRONG_BUY signal</div>
+                <input type="number" class="setting-input" id="futures_rsi_oversold" name="futures_rsi_oversold" value="30" min="10" max="50" step="1">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">RSI Overbought (Strong Sell)</label>
+                <div class="setting-description">RSI above this triggers STRONG_SELL signal</div>
+                <input type="number" class="setting-input" id="futures_rsi_overbought" name="futures_rsi_overbought" value="70" min="50" max="90" step="1">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">RSI Weak Oversold (Buy)</label>
+                <div class="setting-description">RSI below this triggers BUY signal</div>
+                <input type="number" class="setting-input" id="futures_rsi_weak_oversold" name="futures_rsi_weak_oversold" value="40" min="20" max="50" step="1">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">RSI Weak Overbought (Sell)</label>
+                <div class="setting-description">RSI above this triggers SELL signal</div>
+                <input type="number" class="setting-input" id="futures_rsi_weak_overbought" name="futures_rsi_weak_overbought" value="60" min="50" max="80" step="1">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">
+                    <i class="fas fa-toggle-on"></i>
+                    Verbose Signal Logging
+                </label>
+                <div class="setting-description">Log detailed signal analysis for each scan</div>
+                <div class="toggle-switch">
+                    <input type="checkbox" id="futures_verbose_signals" name="futures_verbose_signals" checked>
+                    <span>Enabled</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Funding Rate Settings -->
     <div class="settings-section">
         <div class="section-header">

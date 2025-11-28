@@ -82,11 +82,13 @@ class FuturesPairsConfig(BaseModel):
 
 class FuturesStrategyConfig(BaseModel):
     """Strategy parameters configuration"""
+    signal_timeframe: str = "15m"  # Timeframe for signal analysis: 1m, 5m, 15m, 30m, 1h, 4h
+    scan_interval_seconds: int = 30  # How often to scan for opportunities
     rsi_oversold: float = 30.0
     rsi_overbought: float = 70.0
     rsi_weak_oversold: float = 40.0
     rsi_weak_overbought: float = 60.0
-    min_signal_score: int = 4
+    min_signal_score: int = 3  # Lowered default for more signals (was 4)
     verbose_signals: bool = True
     cooldown_minutes: int = 5
 
@@ -464,8 +466,14 @@ class FuturesConfigManager:
             'allowed_pairs': FuturesConfigType.PAIRS,
             'both_directions': FuturesConfigType.PAIRS,
             'preferred_direction': FuturesConfigType.PAIRS,
+            'signal_timeframe': FuturesConfigType.STRATEGY,
+            'timeframe': FuturesConfigType.STRATEGY,  # alias
+            'scan_interval_seconds': FuturesConfigType.STRATEGY,
+            'scan_interval': FuturesConfigType.STRATEGY,  # alias
             'rsi_oversold': FuturesConfigType.STRATEGY,
             'rsi_overbought': FuturesConfigType.STRATEGY,
+            'rsi_weak_oversold': FuturesConfigType.STRATEGY,
+            'rsi_weak_overbought': FuturesConfigType.STRATEGY,
             'min_signal_score': FuturesConfigType.STRATEGY,
             'verbose_signals': FuturesConfigType.STRATEGY,
             'cooldown_minutes': FuturesConfigType.STRATEGY,
@@ -511,6 +519,8 @@ class FuturesConfigManager:
             'trailing_stop': 'trailing_stop_enabled',
             'trailing_distance': 'trailing_stop_distance',
             'funding_arb': 'funding_arbitrage_enabled',
+            'timeframe': 'signal_timeframe',
+            'scan_interval': 'scan_interval_seconds',
         }
         return aliases.get(key, key)
 

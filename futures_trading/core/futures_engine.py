@@ -252,6 +252,8 @@ class FuturesTradingEngine:
             self.symbols = pairs_config.pairs_list
 
             # Strategy settings
+            self.signal_timeframe = strategy_config.signal_timeframe
+            self.scan_interval_seconds = strategy_config.scan_interval_seconds
             self.rsi_oversold = strategy_config.rsi_oversold
             self.rsi_overbought = strategy_config.rsi_overbought
             self.rsi_weak_oversold = strategy_config.rsi_weak_oversold
@@ -271,11 +273,13 @@ class FuturesTradingEngine:
             self.take_profit_pct = 10.0
             self.max_daily_loss = 500.0
             self.symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"]
+            self.signal_timeframe = "15m"  # 15-minute candles for faster signals
+            self.scan_interval_seconds = 30  # Scan every 30 seconds
             self.rsi_oversold = 30.0
             self.rsi_overbought = 70.0
             self.rsi_weak_oversold = 40.0
             self.rsi_weak_overbought = 60.0
-            self.min_signal_score = 4
+            self.min_signal_score = 3  # Lower threshold for more signals
             self.verbose_signals = True
             self.cooldown_duration = timedelta(minutes=5)
 
@@ -328,6 +332,8 @@ class FuturesTradingEngine:
         logger.info(f"  Position size: ${self.position_size_usd}")
         logger.info(f"  Symbols: {', '.join(self.symbols)}")
         logger.info(f"  Strategy Settings:")
+        logger.info(f"    Signal Timeframe: {self.signal_timeframe}")
+        logger.info(f"    Scan Interval: {self.scan_interval_seconds}s")
         logger.info(f"    RSI Oversold (STRONG_BUY): < {self.rsi_oversold}")
         logger.info(f"    RSI Overbought (STRONG_SELL): > {self.rsi_overbought}")
         logger.info(f"    RSI Weak Oversold (BUY): < {self.rsi_weak_oversold}")
@@ -530,12 +536,12 @@ class FuturesTradingEngine:
                     # Main trading logic
                     await self._trading_cycle()
 
-                    # Wait before next cycle
-                    await asyncio.sleep(10)
+                    # Wait before next cycle (configurable scan interval)
+                    await asyncio.sleep(self.scan_interval_seconds)
 
                 except Exception as e:
                     logger.error(f"Error in trading cycle: {e}", exc_info=True)
-                    await asyncio.sleep(30)
+                    await asyncio.sleep(self.scan_interval_seconds * 3)  # Longer wait on error
 
         except Exception as e:
             logger.error(f"Critical error in trading engine: {e}", exc_info=True)
@@ -734,10 +740,10 @@ class FuturesTradingEngine:
                 logger.error(f"Error scanning {symbol}: {e}")
 
     async def _get_technical_signals(self, symbol: str) -> Optional[TechnicalSignals]:
-        """Calculate technical indicators for a symbol"""
+        """Calculate technical indicators for a symbol using configurable timeframe"""
         try:
-            # Fetch OHLCV data
-            ohlcv = await self.exchange_client.fetch_ohlcv(symbol, '1h', limit=100)
+            # Fetch OHLCV data using configured timeframe (default: 15m for faster signals)
+            ohlcv = await self.exchange_client.fetch_ohlcv(symbol, self.signal_timeframe, limit=100)
             if len(ohlcv) < 50:
                 return None
 
