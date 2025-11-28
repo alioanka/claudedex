@@ -41,7 +41,8 @@ class DriftHelper:
             private_key: Base58-encoded Solana private key
         """
         self.rpc_url = rpc_url or os.getenv('SOLANA_RPC_URL')
-        self.private_key = private_key or os.getenv('SOLANA_PRIVATE_KEY')
+        # Solana Module uses dedicated wallet (SOLANA_MODULE_PRIVATE_KEY)
+        self.private_key = private_key or os.getenv('SOLANA_MODULE_PRIVATE_KEY')
 
         # Drift client (will be initialized when needed)
         self.drift_client = None
