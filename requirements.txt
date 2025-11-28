@@ -13,6 +13,9 @@ solders==0.27.1
 base58==2.1.1
 driftpy==0.8.80
 
+# Futures Trading (CCXT)
+ccxt==4.4.26
+
 
 
 # Web3 and Blockchain

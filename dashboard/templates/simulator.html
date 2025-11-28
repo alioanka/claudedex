@@ -460,11 +460,14 @@ let simulatorData = {
 let equityChart = null;
 let radarChart = null;
 let distributionChart = null;
+let chartsInitialized = false;
+let refreshInterval = null;
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     refreshSimulator();
-    setInterval(refreshSimulator, 30000); // Auto-refresh every 30s
+    // Only auto-refresh stats, not charts (to prevent shaking)
+    refreshInterval = setInterval(refreshStatsOnly, 60000); // Auto-refresh every 60s
 });
 
 async function refreshSimulator() {
@@ -473,14 +476,26 @@ async function refreshSimulator() {
         if (!response.ok) throw new Error('Failed to fetch simulator data');
 
         const data = await response.json();
-        updateSimulatorUI(data);
+        updateSimulatorUI(data, true); // true = update charts
     } catch (error) {
         console.error('Error refreshing simulator:', error);
         showToast('Failed to refresh simulator data', 'error');
     }
 }
 
-function updateSimulatorUI(data) {
+async function refreshStatsOnly() {
+    try {
+        const response = await fetch('/api/simulator/data');
+        if (!response.ok) return;
+
+        const data = await response.json();
+        updateSimulatorUI(data, false); // false = don't update charts
+    } catch (error) {
+        console.error('Error refreshing stats:', error);
+    }
+}
+
+function updateSimulatorUI(data, updateCharts = true) {
     // Update dry run banner
     const dryRunStatus = document.getElementById('dryRunStatus');
     const activeDryRun = [];
@@ -533,10 +548,12 @@ function updateSimulatorUI(data) {
     // Update validation metrics
     updateValidationMetrics(data);
 
-    // Update charts
-    updateEquityCurve(data);
-    updateRiskRadar(data);
-    updatePnLDistribution(data);
+    // Update charts only on manual refresh or first load
+    if (updateCharts) {
+        updateEquityCurve(data);
+        updateRiskRadar(data);
+        updatePnLDistribution(data);
+    }
 
     // Update trade log
     updateTradeLog(data);

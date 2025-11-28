@@ -979,7 +979,7 @@ class DashboardEndpoints:
         )
 
     async def api_simulator_data(self, request):
-        """Get simulator data from all modules"""
+        """Get simulator data from all modules including historical trades from DB"""
         try:
             import aiohttp
             simulator_data = {
@@ -1012,25 +1012,117 @@ class DashboardEndpoints:
             except Exception:
                 simulator_data['solana'] = {'status': 'Offline', 'mode': 'Unknown'}
 
-            # Get DEX data from trading engine if available
+            # Get DEX data from database (historical trades)
+            dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
+            dex_data = {
+                'status': 'Offline',
+                'mode': 'DRY_RUN' if dry_run else 'LIVE',
+                'total_trades': 0,
+                'winning_trades': 0,
+                'losing_trades': 0,
+                'total_pnl': 0,
+                'win_rate': '0%',
+                'trades': []
+            }
+
+            # Check if engine is running
             if hasattr(self, 'engine') and self.engine:
                 try:
-                    # get_stats() is async
-                    stats = await self.engine.get_stats()
-                    dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
-                    # Check engine state (not is_running)
                     is_active = hasattr(self.engine, 'state') and self.engine.state.value == 'running'
-                    simulator_data['dex'] = {
-                        'status': 'Active' if is_active else 'Stopped',
-                        'mode': 'DRY_RUN' if dry_run else 'LIVE',
-                        'total_trades': stats.get('total_trades', 0),
-                        'winning_trades': stats.get('winning_trades', 0),
-                        'total_pnl': stats.get('total_pnl', 0),
-                        'win_rate': stats.get('win_rate', '0%'),
-                        'trades': []
-                    }
+                    dex_data['status'] = 'Active' if is_active else 'Stopped'
+                except Exception:
+                    pass
+
+            # Fetch historical trades from database
+            if self.db and self.db.pool:
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        # Get trade statistics
+                        stats = await conn.fetchrow("""
+                            SELECT
+                                COUNT(*) as total_trades,
+                                COUNT(*) FILTER (WHERE profit_loss > 0) as winning_trades,
+                                COUNT(*) FILTER (WHERE profit_loss <= 0) as losing_trades,
+                                COALESCE(SUM(profit_loss), 0) as total_pnl,
+                                COALESCE(SUM(CASE WHEN profit_loss > 0 THEN profit_loss ELSE 0 END), 0) as gross_profit,
+                                COALESCE(SUM(CASE WHEN profit_loss < 0 THEN ABS(profit_loss) ELSE 0 END), 0) as gross_loss
+                            FROM trades
+                            WHERE status = 'closed'
+                        """)
+
+                        if stats:
+                            total = stats['total_trades'] or 0
+                            wins = stats['winning_trades'] or 0
+                            losses = stats['losing_trades'] or 0
+                            pnl = float(stats['total_pnl'] or 0)
+                            gross_profit = float(stats['gross_profit'] or 0)
+                            gross_loss = float(stats['gross_loss'] or 0)
+
+                            win_rate = (wins / total * 100) if total > 0 else 0
+                            profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else 0
+
+                            dex_data['total_trades'] = total
+                            dex_data['winning_trades'] = wins
+                            dex_data['losing_trades'] = losses
+                            dex_data['total_pnl'] = f"${pnl:.2f}"
+                            dex_data['win_rate'] = f"{win_rate:.1f}%"
+                            dex_data['profit_factor'] = f"{profit_factor:.2f}"
+
+                        # Fetch recent trades for charts/log (last 100)
+                        trades_records = await conn.fetch("""
+                            SELECT
+                                trade_id,
+                                token_address,
+                                chain,
+                                side,
+                                entry_price,
+                                exit_price,
+                                amount,
+                                usd_value,
+                                profit_loss,
+                                profit_loss_percentage,
+                                entry_timestamp,
+                                exit_timestamp,
+                                hold_duration_seconds,
+                                gas_fee,
+                                status,
+                                metadata
+                            FROM trades
+                            WHERE status = 'closed'
+                            ORDER BY exit_timestamp DESC
+                            LIMIT 100
+                        """)
+
+                        trades_list = []
+                        for record in trades_records:
+                            metadata = record['metadata'] or {}
+                            if isinstance(metadata, str):
+                                try:
+                                    metadata = json.loads(metadata)
+                                except:
+                                    metadata = {}
+
+                            trades_list.append({
+                                'trade_id': record['trade_id'],
+                                'symbol': metadata.get('token_symbol', record['token_address'][:8] + '...'),
+                                'side': record['side'],
+                                'entry_price': float(record['entry_price']) if record['entry_price'] else 0,
+                                'exit_price': float(record['exit_price']) if record['exit_price'] else 0,
+                                'size': float(record['amount']) if record['amount'] else 0,
+                                'pnl': float(record['profit_loss']) if record['profit_loss'] else 0,
+                                'pnl_pct': f"{float(record['profit_loss_percentage']):.2f}%" if record['profit_loss_percentage'] else '0%',
+                                'fees': float(record['gas_fee']) if record['gas_fee'] else 0,
+                                'duration_seconds': record['hold_duration_seconds'] or 0,
+                                'time': record['exit_timestamp'].isoformat() if record['exit_timestamp'] else None,
+                                'is_simulated': dry_run
+                            })
+
+                        dex_data['trades'] = trades_list
+
                 except Exception as e:
-                    logger.debug(f"Could not get DEX stats: {e}")
+                    logger.error(f"Error fetching DEX trades from DB: {e}")
+
+            simulator_data['dex'] = dex_data
 
             return web.json_response(simulator_data)
 
