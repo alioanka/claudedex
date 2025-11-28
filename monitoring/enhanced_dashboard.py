@@ -580,35 +580,62 @@ class DashboardEndpoints:
                 trades = await self.db.get_recent_trades(limit=1000)
                 logger.info(f"Got {len(trades) if trades else 0} trades from database")
 
+                # Define chain mappings - handle various formats
+                SOLANA_CHAINS = {'SOLANA', 'SOL'}
+                DEX_CHAINS = {'ETHEREUM', 'ETH', 'BSC', 'BNB', 'BASE', 'POLYGON', 'MATIC', 'ARBITRUM', 'ARB', 'AVALANCHE', 'AVAX', 'FANTOM', 'FTM'}
+
                 if trades:
+                    # Log unique chains for debugging
+                    unique_chains = set((t.get('chain') or t.get('network') or 'UNKNOWN') for t in trades)
+                    logger.info(f"Unique chains in trades: {unique_chains}")
+
+                    closed_trades = [t for t in trades if t.get('status') == 'closed']
+                    logger.info(f"Closed trades: {len(closed_trades)} out of {len(trades)}")
+
                     for trade in trades:
                         chain = (trade.get('chain') or trade.get('network') or '').upper()
                         is_closed = trade.get('status') == 'closed'
                         pnl = float(trade.get('profit_loss') or 0) if is_closed else 0
 
-                        if chain == 'SOLANA':
+                        if chain in SOLANA_CHAINS:
                             solana_metrics['total_trades'] += 1
                             if is_closed:
                                 solana_metrics['pnl'] += pnl
-                        elif chain in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM']:
+                        elif chain in DEX_CHAINS or chain:  # Count any non-empty chain as DEX if not Solana
                             dex_metrics['total_trades'] += 1
                             if is_closed:
                                 dex_metrics['pnl'] += pnl
 
                     # Calculate win rates
-                    dex_wins = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM'] and t.get('status') == 'closed' and float(t.get('profit_loss') or 0) > 0)
-                    solana_wins = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() == 'SOLANA' and t.get('status') == 'closed' and float(t.get('profit_loss') or 0) > 0)
+                    dex_wins = 0
+                    dex_closed = 0
+                    solana_wins = 0
+                    solana_closed = 0
 
-                    dex_closed = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() in ['ETHEREUM', 'BSC', 'BASE', 'POLYGON', 'ARBITRUM'] and t.get('status') == 'closed')
-                    solana_closed = sum(1 for t in trades if (t.get('chain') or t.get('network') or '').upper() == 'SOLANA' and t.get('status') == 'closed')
+                    for t in trades:
+                        chain = (t.get('chain') or t.get('network') or '').upper()
+                        is_closed = t.get('status') == 'closed'
+                        is_win = is_closed and float(t.get('profit_loss') or 0) > 0
+
+                        if chain in SOLANA_CHAINS:
+                            if is_closed:
+                                solana_closed += 1
+                                if is_win:
+                                    solana_wins += 1
+                        elif chain in DEX_CHAINS or chain:
+                            if is_closed:
+                                dex_closed += 1
+                                if is_win:
+                                    dex_wins += 1
 
                     dex_metrics['win_rate'] = (dex_wins / dex_closed * 100) if dex_closed > 0 else 0
                     solana_metrics['win_rate'] = (solana_wins / solana_closed * 100) if solana_closed > 0 else 0
 
-                    logger.info(f"Module metrics after DB: DEX trades={dex_metrics['total_trades']}, wins={dex_wins}, closed={dex_closed}")
+                    logger.info(f"Module metrics: DEX trades={dex_metrics['total_trades']}, closed={dex_closed}, wins={dex_wins}, pnl={dex_metrics['pnl']:.2f}")
+                    logger.info(f"Module metrics: Solana trades={solana_metrics['total_trades']}, closed={solana_closed}, wins={solana_wins}, pnl={solana_metrics['pnl']:.2f}")
 
             except Exception as e:
-                logger.warning(f"Error getting module metrics from DB: {e}")
+                logger.error(f"Error getting module metrics from DB: {e}", exc_info=True)
 
         # Get capital allocations from module config files
         dex_capital = 500.0  # Default
