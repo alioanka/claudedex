@@ -558,6 +558,35 @@ class DashboardEndpoints:
 
         logger.info(f"Module status from env: DEX={dex_enabled}, Futures={futures_enabled}, Solana={solana_enabled}")
 
+        # Check if Futures and Solana modules are actually running by contacting their health endpoints
+        import aiohttp
+        futures_running = False
+        solana_running = False
+        futures_health_data = {}
+        solana_health_data = {}
+
+        try:
+            futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{futures_port}/health', timeout=2) as resp:
+                    if resp.status == 200:
+                        futures_running = True
+                        futures_health_data = await resp.json()
+                        logger.info(f"Futures module is running: {futures_health_data}")
+        except Exception as e:
+            logger.debug(f"Futures module not reachable: {e}")
+
+        try:
+            solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{solana_port}/health', timeout=2) as resp:
+                    if resp.status == 200:
+                        solana_running = True
+                        solana_health_data = await resp.json()
+                        logger.info(f"Solana module is running: {solana_health_data}")
+        except Exception as e:
+            logger.debug(f"Solana module not reachable: {e}")
+
         # Get metrics from database
         dex_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
         futures_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
@@ -685,6 +714,26 @@ class DashboardEndpoints:
         except Exception as e:
             logger.warning(f"Error reading module config files: {e}")
 
+        # Determine actual status for each module
+        # DEX: RUNNING if enabled (DEX runs in same process as dashboard)
+        dex_status = 'RUNNING' if dex_enabled else 'DISABLED'
+
+        # Futures: Check if actually running via health endpoint
+        if futures_running:
+            futures_status = 'RUNNING'
+        elif futures_enabled:
+            futures_status = 'ENABLED'  # Enabled but not running
+        else:
+            futures_status = 'DISABLED'
+
+        # Solana: Check if actually running via health endpoint
+        if solana_running:
+            solana_status = 'RUNNING'
+        elif solana_enabled:
+            solana_status = 'ENABLED'  # Enabled but not running
+        else:
+            solana_status = 'DISABLED'
+
         return web.json_response({
             'success': True,
             'data': {
@@ -692,23 +741,25 @@ class DashboardEndpoints:
                     'dex_trading': {
                         'name': 'DEX Trading',
                         'enabled': dex_enabled,
-                        'status': 'RUNNING' if dex_enabled else 'DISABLED',
+                        'status': dex_status,
                         'capital': dex_capital,
                         'metrics': dex_metrics
                     },
                     'futures_trading': {
                         'name': 'Futures Trading',
                         'enabled': futures_enabled,
-                        'status': 'RUNNING' if futures_enabled else 'DISABLED',
+                        'status': futures_status,
                         'capital': futures_capital,
-                        'metrics': futures_metrics
+                        'metrics': futures_metrics,
+                        'health': futures_health_data
                     },
                     'solana_strategies': {
                         'name': 'Solana Strategies',
                         'enabled': solana_enabled,
-                        'status': 'RUNNING' if solana_enabled else 'DISABLED',
+                        'status': solana_status,
                         'capital': solana_capital,
-                        'metrics': solana_metrics
+                        'metrics': solana_metrics,
+                        'health': solana_health_data
                     }
                 }
             }
@@ -995,6 +1046,8 @@ class DashboardEndpoints:
             }
 
             # Try to fetch from Futures module health endpoint
+            dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
+            futures_enabled = os.getenv('FUTURES_MODULE_ENABLED', 'false').lower() == 'true'
             try:
                 futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
                 async with aiohttp.ClientSession() as session:
@@ -1004,9 +1057,19 @@ class DashboardEndpoints:
                             simulator_data['futures'] = data
                             simulator_data['futures']['status'] = 'Active'
             except Exception:
-                simulator_data['futures'] = {'status': 'Offline', 'mode': 'Unknown'}
+                # Fallback: use env variables to determine mode (like DEX does)
+                simulator_data['futures'] = {
+                    'status': 'Offline' if not futures_enabled else 'Starting',
+                    'mode': 'DRY_RUN' if dry_run else 'LIVE',
+                    'total_trades': 0,
+                    'winning_trades': 0,
+                    'losing_trades': 0,
+                    'total_pnl': '$0.00',
+                    'win_rate': '0%'
+                }
 
             # Try to fetch from Solana module health endpoint
+            solana_enabled = os.getenv('SOLANA_MODULE_ENABLED', 'false').lower() == 'true'
             try:
                 solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
                 async with aiohttp.ClientSession() as session:
@@ -1016,10 +1079,19 @@ class DashboardEndpoints:
                             simulator_data['solana'] = data
                             simulator_data['solana']['status'] = 'Active'
             except Exception:
-                simulator_data['solana'] = {'status': 'Offline', 'mode': 'Unknown'}
+                # Fallback: use env variables to determine mode (like DEX does)
+                simulator_data['solana'] = {
+                    'status': 'Offline' if not solana_enabled else 'Starting',
+                    'mode': 'DRY_RUN' if dry_run else 'LIVE',
+                    'total_trades': 0,
+                    'winning_trades': 0,
+                    'losing_trades': 0,
+                    'total_pnl': '$0.00',
+                    'win_rate': '0%'
+                }
 
             # Get DEX data from database (historical trades)
-            dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
+            # dry_run already defined above
             dex_data = {
                 'status': 'Offline',
                 'mode': 'DRY_RUN' if dry_run else 'LIVE',
