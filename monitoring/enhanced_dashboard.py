@@ -1013,12 +1013,12 @@ class DashboardEndpoints:
                 simulator_data['solana'] = {'status': 'Offline', 'mode': 'Unknown'}
 
             # Get DEX data from trading engine if available
-            if self.trading_engine:
+            if hasattr(self, 'engine') and self.engine:
                 try:
-                    stats = self.trading_engine.get_stats()
+                    stats = self.engine.get_stats()
                     dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
                     simulator_data['dex'] = {
-                        'status': 'Active' if self.trading_engine.is_running else 'Stopped',
+                        'status': 'Active' if self.engine.is_running else 'Stopped',
                         'mode': 'DRY_RUN' if dry_run else 'LIVE',
                         'total_trades': stats.get('total_trades', 0),
                         'winning_trades': stats.get('winning_trades', 0),
@@ -1026,8 +1026,8 @@ class DashboardEndpoints:
                         'win_rate': stats.get('win_rate', '0%'),
                         'trades': []
                     }
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Could not get DEX stats: {e}")
 
             return web.json_response(simulator_data)
 
@@ -1067,9 +1067,9 @@ class DashboardEndpoints:
             except Exception:
                 pass
 
-            if self.trading_engine:
+            if hasattr(self, 'engine') and self.engine:
                 try:
-                    export_data['dex'] = self.trading_engine.get_stats()
+                    export_data['dex'] = self.engine.get_stats()
                 except Exception:
                     pass
 
