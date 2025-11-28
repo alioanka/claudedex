@@ -317,12 +317,16 @@
             <!-- Risk Metrics Radar Chart -->
             <div>
                 <h4 class="text-center mb-3">Risk-Adjusted Performance</h4>
-                <canvas id="riskMetricsRadar" height="250"></canvas>
+                <div style="position: relative; height: 250px; width: 100%;">
+                    <canvas id="riskMetricsRadar"></canvas>
+                </div>
             </div>
             <!-- P&L Distribution -->
             <div>
                 <h4 class="text-center mb-3">P&L Distribution</h4>
-                <canvas id="pnlDistribution" height="250"></canvas>
+                <div style="position: relative; height: 250px; width: 100%;">
+                    <canvas id="pnlDistribution"></canvas>
+                </div>
             </div>
         </div>
     </div>
@@ -566,42 +570,56 @@ function updateModuleCard(module, data) {
     document.getElementById(`${module}SimTrades`).textContent = data.total_trades || 0;
     document.getElementById(`${module}SimPnl`).textContent = data.total_pnl || '$0.00';
 
-    if (data.sharpe_ratio) {
-        document.getElementById(`${module}Sharpe`).textContent = data.sharpe_ratio;
+    // Update advanced metrics if elements exist
+    const sharpeEl = document.getElementById(`${module}Sharpe`);
+    const sortinoEl = document.getElementById(`${module}Sortino`);
+    const maxDDEl = document.getElementById(`${module}MaxDD`);
+
+    if (sharpeEl && data.sharpe_ratio) {
+        sharpeEl.textContent = data.sharpe_ratio;
     }
-    if (data.sortino_ratio) {
-        document.getElementById(`${module}Sortino`).textContent = data.sortino_ratio;
+    if (sortinoEl && data.sortino_ratio) {
+        sortinoEl.textContent = data.sortino_ratio;
     }
-    if (data.max_drawdown) {
-        document.getElementById(`${module}MaxDD`).textContent = data.max_drawdown;
+    if (maxDDEl && data.max_drawdown) {
+        maxDDEl.textContent = data.max_drawdown;
+    }
+
+    // DEX-specific fields
+    if (module === 'dex') {
+        const winRateEl = document.getElementById('dexWinRate');
+        if (winRateEl) winRateEl.textContent = data.win_rate || '0%';
     }
 }
 
 function updateValidationMetrics(data) {
+    // Check if any module is active
+    const hasActiveModule = data.dex?.mode || data.futures?.mode || data.solana?.mode;
+
     // Price accuracy based on having real price feeds
-    const priceAccuracy = data.futures?.mode ? '98.5%' : '--';
+    const priceAccuracy = hasActiveModule ? '98.5%' : '--';
     document.getElementById('priceAccuracy').textContent = priceAccuracy;
 
     // Slippage model (based on configured slippage)
-    const slippageModel = data.futures?.mode || data.solana?.mode ? 'Active' : '--';
+    const slippageModel = hasActiveModule ? 'Active' : '--';
     document.getElementById('slippageModel').textContent = slippageModel;
 
     // Fee estimation
-    const feeEstimation = data.futures?.mode || data.solana?.mode ? 'Active' : '--';
+    const feeEstimation = hasActiveModule ? 'Active' : '--';
     document.getElementById('feeEstimation').textContent = feeEstimation;
 
     // Latency simulation
-    const latencySimulation = 'Simulated';
+    const latencySimulation = hasActiveModule ? 'Simulated' : '--';
     document.getElementById('latencySimulation').textContent = latencySimulation;
 
     // Calculate validation score
     let score = 0;
     let factors = 0;
 
+    if (data.dex?.mode === 'DRY_RUN') { score += 25; factors++; }
     if (data.futures?.mode === 'DRY_RUN') { score += 25; factors++; }
     if (data.solana?.mode === 'DRY_RUN') { score += 25; factors++; }
-    if (data.futures?.sharpe_ratio && data.futures.sharpe_ratio !== 'N/A') { score += 25; factors++; }
-    if (data.solana?.sharpe_ratio && data.solana.sharpe_ratio !== 'N/A') { score += 25; factors++; }
+    if (data.dex?.total_trades > 0) { score += 25; factors++; }
 
     const validationScore = factors > 0 ? Math.round(score / factors * 4) : 0;
     document.getElementById('validationScore').textContent = validationScore > 0 ? `${validationScore}%` : 'N/A';
@@ -676,9 +694,17 @@ function updateEquityCurve(data) {
 }
 
 function updateRiskRadar(data) {
-    const ctx = document.getElementById('riskMetricsRadar').getContext('2d');
+    const canvas = document.getElementById('riskMetricsRadar');
+    if (!canvas) return;
 
-    // Extract metrics
+    const ctx = canvas.getContext('2d');
+
+    // Extract DEX metrics (primary since it's the enabled module)
+    const dexWinRate = parseFloat(data.dex?.win_rate) || 0;
+    const dexTrades = data.dex?.total_trades || 0;
+    const dexWins = data.dex?.winning_trades || 0;
+
+    // Extract other module metrics
     const futureSharpe = parseFloat(data.futures?.sharpe_ratio) || 0;
     const futureSortino = parseFloat(data.futures?.sortino_ratio) || 0;
     const solanaSharpe = parseFloat(data.solana?.sharpe_ratio) || 0;
@@ -686,39 +712,76 @@ function updateRiskRadar(data) {
 
     if (radarChart) {
         radarChart.destroy();
+        radarChart = null;
+    }
+
+    // Build datasets based on active modules
+    const datasets = [];
+
+    if (data.dex?.mode) {
+        datasets.push({
+            label: 'DEX',
+            data: [
+                50, // No Sharpe for DEX yet
+                50, // No Sortino for DEX yet
+                dexWinRate,
+                dexTrades > 0 ? Math.min((dexWins / dexTrades) * 100, 100) : 0,
+                dexTrades > 10 ? 70 : 30
+            ],
+            borderColor: '#f59e0b',
+            backgroundColor: 'rgba(245, 158, 11, 0.2)'
+        });
+    }
+
+    if (data.futures?.mode) {
+        datasets.push({
+            label: 'Futures',
+            data: [
+                Math.min(futureSharpe * 50, 100),
+                Math.min(futureSortino * 50, 100),
+                parseFloat(data.futures?.win_rate) || 0,
+                Math.min((parseFloat(data.futures?.profit_factor) || 0) * 30, 100),
+                50
+            ],
+            borderColor: '#3b82f6',
+            backgroundColor: 'rgba(59, 130, 246, 0.2)'
+        });
+    }
+
+    if (data.solana?.mode) {
+        datasets.push({
+            label: 'Solana',
+            data: [
+                Math.min(solanaSharpe * 50, 100),
+                Math.min(solanaSortino * 50, 100),
+                parseFloat(data.solana?.win_rate) || 0,
+                Math.min((parseFloat(data.solana?.profit_factor) || 0) * 30, 100),
+                50
+            ],
+            borderColor: '#10b981',
+            backgroundColor: 'rgba(16, 185, 129, 0.2)'
+        });
+    }
+
+    // Default dataset if none active
+    if (datasets.length === 0) {
+        datasets.push({
+            label: 'No Data',
+            data: [0, 0, 0, 0, 0],
+            borderColor: '#64748b',
+            backgroundColor: 'rgba(100, 116, 139, 0.2)'
+        });
     }
 
     radarChart = new Chart(ctx, {
         type: 'radar',
         data: {
             labels: ['Sharpe', 'Sortino', 'Win Rate', 'Profit Factor', 'Consistency'],
-            datasets: [{
-                label: 'Futures',
-                data: [
-                    Math.min(futureSharpe * 50, 100),
-                    Math.min(futureSortino * 50, 100),
-                    parseFloat(data.futures?.win_rate) || 0,
-                    Math.min((parseFloat(data.futures?.profit_factor) || 0) * 30, 100),
-                    50
-                ],
-                borderColor: '#3b82f6',
-                backgroundColor: 'rgba(59, 130, 246, 0.2)'
-            }, {
-                label: 'Solana',
-                data: [
-                    Math.min(solanaSharpe * 50, 100),
-                    Math.min(solanaSortino * 50, 100),
-                    parseFloat(data.solana?.win_rate) || 0,
-                    Math.min((parseFloat(data.solana?.profit_factor) || 0) * 30, 100),
-                    50
-                ],
-                borderColor: '#10b981',
-                backgroundColor: 'rgba(16, 185, 129, 0.2)'
-            }]
+            datasets: datasets
         },
         options: {
             responsive: true,
-            maintainAspectRatio: false,
+            maintainAspectRatio: true,
             plugins: {
                 legend: {
                     labels: { color: '#94a3b8' }
@@ -728,7 +791,9 @@ function updateRiskRadar(data) {
                 r: {
                     grid: { color: 'rgba(148, 163, 184, 0.1)' },
                     pointLabels: { color: '#94a3b8' },
-                    ticks: { display: false }
+                    ticks: { display: false },
+                    suggestedMin: 0,
+                    suggestedMax: 100
                 }
             }
         }
@@ -736,12 +801,16 @@ function updateRiskRadar(data) {
 }
 
 function updatePnLDistribution(data) {
-    const ctx = document.getElementById('pnlDistribution').getContext('2d');
+    const canvas = document.getElementById('pnlDistribution');
+    if (!canvas) return;
 
-    // Generate distribution data
+    const ctx = canvas.getContext('2d');
+
+    // Generate distribution data - include DEX trades
     const allPnls = [
         ...(data.futures?.trades || []).map(t => parseFloat(t.pnl || t.net_pnl || 0)),
-        ...(data.solana?.trades || []).map(t => parseFloat(t.pnl || t.net_pnl || 0))
+        ...(data.solana?.trades || []).map(t => parseFloat(t.pnl || t.net_pnl || 0)),
+        ...(data.dex?.trades || []).map(t => parseFloat(t.pnl || t.net_pnl || 0))
     ];
 
     // Create histogram bins
@@ -759,6 +828,7 @@ function updatePnLDistribution(data) {
 
     if (distributionChart) {
         distributionChart.destroy();
+        distributionChart = null;
     }
 
     distributionChart = new Chart(ctx, {
@@ -779,7 +849,7 @@ function updatePnLDistribution(data) {
         },
         options: {
             responsive: true,
-            maintainAspectRatio: false,
+            maintainAspectRatio: true,
             plugins: {
                 legend: { display: false }
             },
