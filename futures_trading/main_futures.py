@@ -63,18 +63,18 @@ formatter = logging.Formatter(log_format)
 root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
 
-# 1. Main log file - all logs
-main_handler = logging.FileHandler(log_dir / 'futures_trading.log')
+# 1. Main log file - all logs (UTF-8 encoding for emoji support)
+main_handler = logging.FileHandler(log_dir / 'futures_trading.log', encoding='utf-8')
 main_handler.setLevel(logging.INFO)
 main_handler.setFormatter(formatter)
 
 # 2. Errors log file - only ERROR and WARNING
-error_handler = logging.FileHandler(log_dir / 'futures_errors.log')
+error_handler = logging.FileHandler(log_dir / 'futures_errors.log', encoding='utf-8')
 error_handler.setLevel(logging.WARNING)
 error_handler.setFormatter(formatter)
 
 # 3. Trades log file - only trade-related messages
-trades_handler = logging.FileHandler(log_dir / 'futures_trades.log')
+trades_handler = logging.FileHandler(log_dir / 'futures_trades.log', encoding='utf-8')
 trades_handler.setLevel(logging.INFO)
 trades_handler.setFormatter(formatter)
 trades_handler.addFilter(TradeLogFilter())

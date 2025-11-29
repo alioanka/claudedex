@@ -98,6 +98,12 @@ class DashboardEndpoints:
         self._price_cache = {'ETH': 3500, 'BNB': 600, 'MATIC': 0.80, 'SOL': 200}
         self._price_cache_time = None
 
+        # ========== SIMULATOR DATA CACHING ==========
+        # Cache simulator data to prevent rapid polling of module /stats endpoints
+        self._simulator_cache = None
+        self._simulator_cache_time = None
+        self._simulator_cache_ttl = 3  # Cache for 3 seconds
+
         # Setup routes
         self._setup_routes()
         self._setup_socketio()
@@ -1039,6 +1045,14 @@ class DashboardEndpoints:
         """Get simulator data from all modules including historical trades from DB"""
         try:
             import aiohttp
+            from time import time
+
+            # Check cache first to prevent rapid polling of module /stats endpoints
+            if (self._simulator_cache is not None and
+                self._simulator_cache_time is not None and
+                (time() - self._simulator_cache_time) < self._simulator_cache_ttl):
+                return web.json_response(self._simulator_cache)
+
             simulator_data = {
                 'futures': None,
                 'solana': None,
@@ -1213,6 +1227,11 @@ class DashboardEndpoints:
                     logger.error(f"Error fetching DEX trades from DB: {e}")
 
             simulator_data['dex'] = dex_data
+
+            # Cache the result to prevent rapid polling
+            from time import time
+            self._simulator_cache = simulator_data
+            self._simulator_cache_time = time()
 
             return web.json_response(simulator_data)
 
