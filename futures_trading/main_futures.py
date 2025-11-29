@@ -37,18 +37,59 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Load environment variables
 load_dotenv()
 
-# Configure futures-specific logging
+# Configure futures-specific logging with multiple log files
 log_dir = Path("logs/futures")
 log_dir.mkdir(parents=True, exist_ok=True)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_dir / 'futures_trading.log'),
-        logging.StreamHandler()
+# Custom filter for trade-related messages
+class TradeLogFilter(logging.Filter):
+    """Filter to capture only trade-related log messages"""
+    TRADE_KEYWORDS = [
+        'position', 'trade', 'pnl', 'p&l', 'entry', 'exit', 'close',
+        'open', 'long', 'short', 'stop_loss', 'take_profit', 'liquidation',
+        'order', 'executed', 'simulated', 'signal', 'win', 'loss',
+        'daily pnl', 'stats', '📊', '🟢', '🔴', '🔵', '📈', '✅'
     ]
-)
+
+    def filter(self, record):
+        msg = record.getMessage().lower()
+        return any(keyword in msg for keyword in self.TRADE_KEYWORDS)
+
+# Log format
+log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+formatter = logging.Formatter(log_format)
+
+# Root logger setup
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+
+# 1. Main log file - all logs (UTF-8 encoding for emoji support)
+main_handler = logging.FileHandler(log_dir / 'futures_trading.log', encoding='utf-8')
+main_handler.setLevel(logging.INFO)
+main_handler.setFormatter(formatter)
+
+# 2. Errors log file - only ERROR and WARNING
+error_handler = logging.FileHandler(log_dir / 'futures_errors.log', encoding='utf-8')
+error_handler.setLevel(logging.WARNING)
+error_handler.setFormatter(formatter)
+
+# 3. Trades log file - only trade-related messages
+trades_handler = logging.FileHandler(log_dir / 'futures_trades.log', encoding='utf-8')
+trades_handler.setLevel(logging.INFO)
+trades_handler.setFormatter(formatter)
+trades_handler.addFilter(TradeLogFilter())
+
+# 4. Console handler
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(formatter)
+
+# Add all handlers to root logger
+root_logger.addHandler(main_handler)
+root_logger.addHandler(error_handler)
+root_logger.addHandler(trades_handler)
+root_logger.addHandler(console_handler)
+
 logger = logging.getLogger("FuturesTrading")
 
 
@@ -221,10 +262,11 @@ class FuturesTradingApplication:
             # Import futures engine
             from futures_trading.core.futures_engine import FuturesTradingEngine
 
-            # Initialize engine with config manager
+            # Initialize engine with config manager and database pool
             self.engine = FuturesTradingEngine(
                 config_manager=self.config_manager,
-                mode=self.mode
+                mode=self.mode,
+                db_pool=self.db_pool
             )
 
             await self.engine.initialize()
