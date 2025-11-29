@@ -209,7 +209,8 @@ class FuturesTradingEngine:
     def __init__(
         self,
         config_manager=None,
-        mode: str = "production"
+        mode: str = "production",
+        db_pool=None
     ):
         """
         Initialize futures trading engine with database-backed configuration
@@ -217,10 +218,12 @@ class FuturesTradingEngine:
         Args:
             config_manager: FuturesConfigManager instance (loads from database)
             mode: Operating mode
+            db_pool: asyncpg connection pool for trade persistence
         """
         self.config_manager = config_manager
         self.mode = mode
         self.is_running = False
+        self.db_pool = db_pool  # Database connection pool for trade persistence
 
         # Load configuration from config manager (database)
         if config_manager:
@@ -362,9 +365,100 @@ class FuturesTradingEngine:
 
             logger.info("✅ Exchange connection initialized")
 
+            # Load historical trade stats from database
+            await self._load_stats_from_db()
+
         except Exception as e:
             logger.error(f"Failed to initialize engine: {e}")
             raise
+
+    async def _load_stats_from_db(self):
+        """Load historical trade statistics from database"""
+        if not self.db_pool:
+            logger.debug("No database pool available, skipping stats load")
+            return
+
+        try:
+            async with self.db_pool.acquire() as conn:
+                # Load trade statistics
+                row = await conn.fetchrow("""
+                    SELECT
+                        COUNT(*) as total_trades,
+                        COALESCE(SUM(CASE WHEN net_pnl > 0 THEN 1 ELSE 0 END), 0) as winning_trades,
+                        COALESCE(SUM(CASE WHEN net_pnl <= 0 THEN 1 ELSE 0 END), 0) as losing_trades,
+                        COALESCE(SUM(net_pnl), 0) as total_pnl,
+                        COALESCE(SUM(fees), 0) as total_fees
+                    FROM futures_trades
+                    WHERE is_simulated = $1
+                      AND exchange = $2
+                      AND network = $3
+                """, self.dry_run, self.exchange, 'testnet' if self.testnet else 'mainnet')
+
+                if row and row['total_trades'] > 0:
+                    self.total_trades = row['total_trades']
+                    self.winning_trades = row['winning_trades']
+                    self.losing_trades = row['losing_trades']
+                    self.total_pnl = float(row['total_pnl'])
+                    self.total_fees = float(row['total_fees'])
+                    logger.info(f"📊 Loaded trade history from DB: {self.total_trades} trades, {self.winning_trades} wins, ${self.total_pnl:.2f} P&L")
+
+                # Load today's stats for risk management
+                today_row = await conn.fetchrow("""
+                    SELECT
+                        COUNT(*) as daily_trades,
+                        COALESCE(SUM(net_pnl), 0) as daily_pnl
+                    FROM futures_trades
+                    WHERE is_simulated = $1
+                      AND exchange = $2
+                      AND network = $3
+                      AND DATE(exit_time) = CURRENT_DATE
+                """, self.dry_run, self.exchange, 'testnet' if self.testnet else 'mainnet')
+
+                if today_row:
+                    self.risk_metrics.daily_trades = today_row['daily_trades']
+                    self.risk_metrics.daily_pnl = float(today_row['daily_pnl'])
+
+        except Exception as e:
+            logger.warning(f"Could not load stats from DB: {e}")
+
+    async def _save_trade_to_db(self, trade: Trade):
+        """Save a closed trade to the database"""
+        if not self.db_pool:
+            logger.debug("No database pool available, trade not persisted")
+            return
+
+        try:
+            async with self.db_pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO futures_trades (
+                        symbol, side, entry_price, exit_price, size, notional_value,
+                        leverage, pnl, pnl_pct, fees, net_pnl, exit_reason,
+                        entry_time, exit_time, duration_seconds, is_simulated,
+                        exchange, network
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                """,
+                    trade.symbol,
+                    trade.side.value,
+                    trade.entry_price,
+                    trade.exit_price,
+                    trade.size,
+                    trade.notional_value,
+                    trade.leverage,
+                    trade.pnl,
+                    trade.pnl_pct,
+                    trade.fees,
+                    trade.pnl - trade.fees,  # net_pnl
+                    trade.close_reason,
+                    trade.opened_at,
+                    trade.closed_at,
+                    int((trade.closed_at - trade.opened_at).total_seconds()),
+                    trade.is_simulated,
+                    self.exchange,
+                    'testnet' if self.testnet else 'mainnet'
+                )
+                logger.debug(f"💾 Trade saved to DB: {trade.symbol} {trade.side.value} P&L: ${trade.pnl:.2f}")
+        except Exception as e:
+            logger.error(f"Failed to save trade to DB: {e}")
 
     async def _init_binance(self):
         """Initialize Binance Futures client"""
@@ -1095,6 +1189,9 @@ class FuturesTradingEngine:
                 is_simulated=position.is_simulated
             )
             self.pnl_tracker.record_trade(trade_record)
+
+            # Save trade to database for persistence across restarts
+            await self._save_trade_to_db(trade)
 
             # Update stats
             self.total_trades += 1

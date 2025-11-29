@@ -60,6 +60,7 @@ seed_phrase.txt
 *.sqlite
 *.sqlite3
 *.sql
+!migrations/*.sql
 data/*.db
 postgres-data/
 mysql-data/
