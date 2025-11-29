@@ -41,19 +41,30 @@ load_dotenv()
 log_dir = Path("logs/futures")
 log_dir.mkdir(parents=True, exist_ok=True)
 
-# Custom filter for trade-related messages
+# Custom filter for trade-related messages (positions and stats only, not signal analysis)
 class TradeLogFilter(logging.Filter):
-    """Filter to capture only trade-related log messages"""
-    TRADE_KEYWORDS = [
-        'position', 'trade', 'pnl', 'p&l', 'entry', 'exit', 'close',
-        'open', 'long', 'short', 'stop_loss', 'take_profit', 'liquidation',
-        'order', 'executed', 'simulated', 'signal', 'win', 'loss',
-        'daily pnl', 'stats', '📊', '🟢', '🔴', '🔵', '📈', '✅'
+    """Filter to capture only actual trade events (opened, closed, stats)"""
+    # Keywords that indicate actual trade events
+    INCLUDE_KEYWORDS = [
+        'opened position', 'closed position', 'position opened', 'position closed',
+        'entry price', 'exit price', 'stop loss hit', 'take profit hit',
+        'liquidation', 'daily pnl', 'daily stats', 'trading stats',
+        'total trades', 'win rate', 'total pnl', 'net pnl',
+        '✅ opened', '✅ closed', '🎯', '💰', '📉 closed'
+    ]
+    # Keywords that should be excluded even if they contain trade-related words
+    EXCLUDE_KEYWORDS = [
+        'signal analysis', 'scanning', 'rejected', 'combined score',
+        'rsi:', 'macd:', 'volume:', 'bollinger:', 'ema:', 'trend:'
     ]
 
     def filter(self, record):
         msg = record.getMessage().lower()
-        return any(keyword in msg for keyword in self.TRADE_KEYWORDS)
+        # First check exclusions
+        if any(excl in msg for excl in self.EXCLUDE_KEYWORDS):
+            return False
+        # Then check inclusions
+        return any(incl in msg for incl in self.INCLUDE_KEYWORDS)
 
 # Log format
 log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'

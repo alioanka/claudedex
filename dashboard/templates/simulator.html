@@ -240,7 +240,7 @@
             Simulated Equity Curve
         </h3>
         <div class="card-actions">
-            <select class="form-control form-control-sm" id="equityModuleSelect" onchange="updateEquityCurve()">
+            <select class="form-control form-control-sm" id="equityModuleSelect" onchange="onEquityCurveModuleChange()">
                 <option value="all">All Modules</option>
                 <option value="futures">Futures Only</option>
                 <option value="solana">Solana Only</option>
@@ -475,7 +475,6 @@ async function refreshSimulator() {
         if (!response.ok) throw new Error('Failed to fetch simulator data');
 
         const data = await response.json();
-        console.log('Simulator data received:', data); // Debug log
         updateSimulatorUI(data, true);
     } catch (error) {
         console.error('Error refreshing simulator:', error);
@@ -583,7 +582,6 @@ function updateModuleCard(module, data) {
 
     // Handle nested structure from /stats endpoint (data.stats contains actual stats)
     const stats = data.stats || data;
-    console.log(`Updating ${module} card with stats:`, stats); // Debug log
 
     document.getElementById(`${module}SimStatus`).textContent = data.status || stats.status || 'Active';
 
@@ -1052,8 +1050,8 @@ function filterSimTrades() {
     refreshSimulator();
 }
 
-function updateEquityCurve() {
-    // Re-render with selected module
+function onEquityCurveModuleChange() {
+    // Re-render with selected module (called from dropdown)
     refreshSimulator();
 }
 
