@@ -493,20 +493,31 @@ function parsePnL(value) {
     return isNaN(parsed) ? 0 : parsed;
 }
 
+// Helper to extract stats from nested structure
+function getStats(moduleData) {
+    if (!moduleData) return null;
+    return moduleData.stats || moduleData;
+}
+
 function updateSimulatorUI(data, updateCharts = true) {
+    // Extract stats from nested structures
+    const futuresStats = getStats(data.futures);
+    const solanaStats = getStats(data.solana);
+    const dexStats = getStats(data.dex);
+
     // Update dry run banner
     const dryRunStatus = document.getElementById('dryRunStatus');
     const activeDryRun = [];
     const activeLive = [];
 
-    if (data.futures?.mode === 'DRY_RUN') activeDryRun.push('Futures');
-    else if (data.futures?.mode === 'LIVE') activeLive.push('Futures');
+    if (futuresStats?.mode === 'DRY_RUN') activeDryRun.push('Futures');
+    else if (futuresStats?.mode === 'LIVE') activeLive.push('Futures');
 
-    if (data.solana?.mode === 'DRY_RUN') activeDryRun.push('Solana');
-    else if (data.solana?.mode === 'LIVE') activeLive.push('Solana');
+    if (solanaStats?.mode === 'DRY_RUN') activeDryRun.push('Solana');
+    else if (solanaStats?.mode === 'LIVE') activeLive.push('Solana');
 
-    if (data.dex?.mode === 'DRY_RUN') activeDryRun.push('DEX');
-    else if (data.dex?.mode === 'LIVE') activeLive.push('DEX');
+    if (dexStats?.mode === 'DRY_RUN') activeDryRun.push('DEX');
+    else if (dexStats?.mode === 'LIVE') activeLive.push('DEX');
 
     if (activeDryRun.length > 0) {
         dryRunStatus.innerHTML = `<strong>DRY_RUN Mode Active:</strong> ${activeDryRun.join(', ')} - All trades are simulated`;
@@ -520,15 +531,15 @@ function updateSimulatorUI(data, updateCharts = true) {
     }
 
     // Update summary cards
-    const totalTrades = (data.futures?.total_trades || 0) + (data.solana?.total_trades || 0) + (data.dex?.total_trades || 0);
+    const totalTrades = (futuresStats?.total_trades || 0) + (solanaStats?.total_trades || 0) + (dexStats?.total_trades || 0);
     document.getElementById('totalSimTrades').textContent = totalTrades;
 
     // Calculate total P&L (normalize to USD) - use parsePnL helper
-    const futuresPnl = parsePnL(data.futures?.total_pnl);
-    const solanaPnlRaw = parsePnL(data.solana?.total_pnl);
-    const solPrice = parseFloat(String(data.solana?.sol_price).replace(/[^0-9.]/g, '')) || 200;
+    const futuresPnl = parsePnL(futuresStats?.total_pnl || futuresStats?.net_pnl);
+    const solanaPnlRaw = parsePnL(solanaStats?.total_pnl);
+    const solPrice = parseFloat(String(solanaStats?.sol_price).replace(/[^0-9.]/g, '')) || 200;
     const solanaPnl = solanaPnlRaw * solPrice;
-    const dexPnl = parsePnL(data.dex?.total_pnl);
+    const dexPnl = parsePnL(dexStats?.total_pnl);
     const totalPnl = futuresPnl + solanaPnl + dexPnl;
 
     const pnlElement = document.getElementById('totalSimPnl');
@@ -536,7 +547,7 @@ function updateSimulatorUI(data, updateCharts = true) {
     pnlElement.className = totalPnl >= 0 ? 'stat-value text-success' : 'stat-value text-danger';
 
     // Calculate overall win rate
-    const totalWins = (data.futures?.winning_trades || 0) + (data.solana?.winning_trades || 0) + (data.dex?.winning_trades || 0);
+    const totalWins = (futuresStats?.winning_trades || 0) + (solanaStats?.winning_trades || 0) + (dexStats?.winning_trades || 0);
     const winRate = totalTrades > 0 ? ((totalWins / totalTrades) * 100).toFixed(1) : 0;
     document.getElementById('simWinRate').textContent = `${winRate}%`;
 
@@ -570,12 +581,14 @@ function updateModuleCard(module, data) {
         return;
     }
 
-    console.log(`Updating ${module} card with data:`, data); // Debug log
+    // Handle nested structure from /stats endpoint (data.stats contains actual stats)
+    const stats = data.stats || data;
+    console.log(`Updating ${module} card with stats:`, stats); // Debug log
 
-    document.getElementById(`${module}SimStatus`).textContent = data.status || 'Active';
+    document.getElementById(`${module}SimStatus`).textContent = data.status || stats.status || 'Active';
 
     const badge = document.getElementById(`${module}ModeBadge`);
-    const mode = (data.mode || '').toUpperCase();
+    const mode = (stats.mode || data.mode || '').toUpperCase();
 
     if (mode === 'DRY_RUN') {
         badge.textContent = 'DRY RUN';
@@ -595,34 +608,45 @@ function updateModuleCard(module, data) {
         badge.className = 'badge offline';
     }
 
-    document.getElementById(`${module}SimTrades`).textContent = data.total_trades || 0;
-    document.getElementById(`${module}SimPnl`).textContent = data.total_pnl || '$0.00';
+    document.getElementById(`${module}SimTrades`).textContent = stats.total_trades || 0;
+    document.getElementById(`${module}SimPnl`).textContent = stats.total_pnl || stats.net_pnl || '$0.00';
 
     // Update advanced metrics if elements exist
     const sharpeEl = document.getElementById(`${module}Sharpe`);
     const sortinoEl = document.getElementById(`${module}Sortino`);
     const maxDDEl = document.getElementById(`${module}MaxDD`);
 
-    if (sharpeEl && data.sharpe_ratio) {
-        sharpeEl.textContent = data.sharpe_ratio;
+    if (sharpeEl) {
+        sharpeEl.textContent = stats.sharpe_ratio !== undefined ? stats.sharpe_ratio : 'N/A';
     }
-    if (sortinoEl && data.sortino_ratio) {
-        sortinoEl.textContent = data.sortino_ratio;
+    if (sortinoEl) {
+        sortinoEl.textContent = stats.sortino_ratio !== undefined ? stats.sortino_ratio : 'N/A';
     }
-    if (maxDDEl && data.max_drawdown) {
-        maxDDEl.textContent = data.max_drawdown;
+    if (maxDDEl) {
+        maxDDEl.textContent = stats.max_drawdown || stats.max_drawdown_pct || 'N/A';
     }
 
     // DEX-specific fields
     if (module === 'dex') {
         const winRateEl = document.getElementById('dexWinRate');
-        if (winRateEl) winRateEl.textContent = data.win_rate || '0%';
+        if (winRateEl) winRateEl.textContent = stats.win_rate || '0%';
+    }
+
+    // Futures-specific fields - add win rate if available
+    if (module === 'futures') {
+        const winRateEl = document.getElementById('futuresWinRate');
+        if (winRateEl) winRateEl.textContent = stats.win_rate || '0%';
     }
 }
 
 function updateValidationMetrics(data) {
+    // Extract stats from nested structures
+    const futuresStats = getStats(data.futures);
+    const solanaStats = getStats(data.solana);
+    const dexStats = getStats(data.dex);
+
     // Check if any module is active
-    const hasActiveModule = data.dex?.mode || data.futures?.mode || data.solana?.mode;
+    const hasActiveModule = dexStats?.mode || futuresStats?.mode || solanaStats?.mode;
 
     // Price accuracy based on having real price feeds
     const priceAccuracy = hasActiveModule ? '98.5%' : '--';
@@ -644,10 +668,10 @@ function updateValidationMetrics(data) {
     let score = 0;
     let factors = 0;
 
-    if (data.dex?.mode === 'DRY_RUN') { score += 25; factors++; }
-    if (data.futures?.mode === 'DRY_RUN') { score += 25; factors++; }
-    if (data.solana?.mode === 'DRY_RUN') { score += 25; factors++; }
-    if (data.dex?.total_trades > 0) { score += 25; factors++; }
+    if (dexStats?.mode === 'DRY_RUN') { score += 25; factors++; }
+    if (futuresStats?.mode === 'DRY_RUN') { score += 25; factors++; }
+    if (solanaStats?.mode === 'DRY_RUN') { score += 25; factors++; }
+    if (dexStats?.total_trades > 0) { score += 25; factors++; }
 
     const validationScore = factors > 0 ? Math.round(score / factors * 4) : 0;
     document.getElementById('validationScore').textContent = validationScore > 0 ? `${validationScore}%` : 'N/A';
@@ -656,15 +680,20 @@ function updateValidationMetrics(data) {
 function updateEquityCurve(data) {
     const ctx = document.getElementById('simulatedEquityChart').getContext('2d');
 
+    // Extract stats from nested structures
+    const futuresStats = getStats(data.futures);
+    const solanaStats = getStats(data.solana);
+    const dexStats = getStats(data.dex);
+
     // Generate sample equity curve data
     const labels = [];
     const equityData = [];
     let equity = 10000;
 
     const allTrades = [
-        ...(data.futures?.trades || []).map(t => ({...t, module: 'Futures'})),
-        ...(data.solana?.trades || []).map(t => ({...t, module: 'Solana'})),
-        ...(data.dex?.trades || []).map(t => ({...t, module: 'DEX'}))
+        ...(futuresStats?.trades || []).map(t => ({...t, module: 'Futures'})),
+        ...(solanaStats?.trades || []).map(t => ({...t, module: 'Solana'})),
+        ...(dexStats?.trades || []).map(t => ({...t, module: 'DEX'}))
     ].sort((a, b) => new Date(a.time || a.closed_at) - new Date(b.time || b.closed_at));
 
     if (allTrades.length === 0) {
@@ -727,16 +756,21 @@ function updateRiskRadar(data) {
 
     const ctx = canvas.getContext('2d');
 
+    // Extract stats from nested structures
+    const futuresStats = getStats(data.futures);
+    const solanaStats = getStats(data.solana);
+    const dexStats = getStats(data.dex);
+
     // Extract DEX metrics (primary since it's the enabled module)
-    const dexWinRate = parseFloat(data.dex?.win_rate) || 0;
-    const dexTrades = data.dex?.total_trades || 0;
-    const dexWins = data.dex?.winning_trades || 0;
+    const dexWinRate = parseFloat(dexStats?.win_rate) || 0;
+    const dexTrades = dexStats?.total_trades || 0;
+    const dexWins = dexStats?.winning_trades || 0;
 
     // Extract other module metrics
-    const futureSharpe = parseFloat(data.futures?.sharpe_ratio) || 0;
-    const futureSortino = parseFloat(data.futures?.sortino_ratio) || 0;
-    const solanaSharpe = parseFloat(data.solana?.sharpe_ratio) || 0;
-    const solanaSortino = parseFloat(data.solana?.sortino_ratio) || 0;
+    const futureSharpe = parseFloat(futuresStats?.sharpe_ratio) || 0;
+    const futureSortino = parseFloat(futuresStats?.sortino_ratio) || 0;
+    const solanaSharpe = parseFloat(solanaStats?.sharpe_ratio) || 0;
+    const solanaSortino = parseFloat(solanaStats?.sortino_ratio) || 0;
 
     if (radarChart) {
         radarChart.destroy();
@@ -746,7 +780,7 @@ function updateRiskRadar(data) {
     // Build datasets based on active modules
     const datasets = [];
 
-    if (data.dex?.mode) {
+    if (dexStats?.mode) {
         datasets.push({
             label: 'DEX',
             data: [
@@ -761,14 +795,14 @@ function updateRiskRadar(data) {
         });
     }
 
-    if (data.futures?.mode) {
+    if (futuresStats?.mode) {
         datasets.push({
             label: 'Futures',
             data: [
                 Math.min(futureSharpe * 50, 100),
                 Math.min(futureSortino * 50, 100),
-                parseFloat(data.futures?.win_rate) || 0,
-                Math.min((parseFloat(data.futures?.profit_factor) || 0) * 30, 100),
+                parseFloat(futuresStats?.win_rate) || 0,
+                Math.min((parseFloat(futuresStats?.profit_factor) || 0) * 30, 100),
                 50
             ],
             borderColor: '#3b82f6',
@@ -776,14 +810,14 @@ function updateRiskRadar(data) {
         });
     }
 
-    if (data.solana?.mode) {
+    if (solanaStats?.mode) {
         datasets.push({
             label: 'Solana',
             data: [
                 Math.min(solanaSharpe * 50, 100),
                 Math.min(solanaSortino * 50, 100),
-                parseFloat(data.solana?.win_rate) || 0,
-                Math.min((parseFloat(data.solana?.profit_factor) || 0) * 30, 100),
+                parseFloat(solanaStats?.win_rate) || 0,
+                Math.min((parseFloat(solanaStats?.profit_factor) || 0) * 30, 100),
                 50
             ],
             borderColor: '#10b981',
@@ -834,11 +868,16 @@ function updatePnLDistribution(data) {
 
     const ctx = canvas.getContext('2d');
 
+    // Extract stats from nested structures
+    const futuresStats = getStats(data.futures);
+    const solanaStats = getStats(data.solana);
+    const dexStats = getStats(data.dex);
+
     // Generate distribution data - include DEX trades
     const allPnls = [
-        ...(data.futures?.trades || []).map(t => parseFloat(t.pnl || t.net_pnl || 0)),
-        ...(data.solana?.trades || []).map(t => parseFloat(t.pnl || t.net_pnl || 0)),
-        ...(data.dex?.trades || []).map(t => parseFloat(t.pnl || t.net_pnl || 0))
+        ...(futuresStats?.trades || []).map(t => parseFloat(t.pnl || t.net_pnl || 0)),
+        ...(solanaStats?.trades || []).map(t => parseFloat(t.pnl || t.net_pnl || 0)),
+        ...(dexStats?.trades || []).map(t => parseFloat(t.pnl || t.net_pnl || 0))
     ];
 
     // Create histogram bins
@@ -902,13 +941,18 @@ function updateTradeLog(data) {
         return;
     }
 
+    // Extract stats from nested structures
+    const futuresStats = getStats(data.futures);
+    const solanaStats = getStats(data.solana);
+    const dexStats = getStats(data.dex);
+
     // Debug: log what we're getting
-    console.log('DEX trades count:', data.dex?.trades?.length || 0);
+    console.log('DEX trades count:', dexStats?.trades?.length || 0);
 
     const allTrades = [
-        ...(data.futures?.trades || []).map(t => ({...t, module: 'Futures'})),
-        ...(data.solana?.trades || []).map(t => ({...t, module: 'Solana'})),
-        ...(data.dex?.trades || []).map(t => ({...t, module: 'DEX'}))
+        ...(futuresStats?.trades || []).map(t => ({...t, module: 'Futures'})),
+        ...(solanaStats?.trades || []).map(t => ({...t, module: 'Solana'})),
+        ...(dexStats?.trades || []).map(t => ({...t, module: 'DEX'}))
     ].sort((a, b) => new Date(b.time || b.closed_at || 0) - new Date(a.time || a.closed_at || 0));
 
     console.log('Total trades for log:', allTrades.length);
@@ -952,28 +996,32 @@ function checkValidationWarnings(data) {
     const warningsCard = document.getElementById('validationWarnings');
     const warningsList = document.getElementById('warningsList');
 
+    // Extract stats from nested structures
+    const futuresStats = getStats(data.futures);
+    const solanaStats = getStats(data.solana);
+
     // Check for live mode without proper validation
-    if (data.futures?.mode === 'LIVE' && (data.futures?.total_trades || 0) < 10) {
+    if (futuresStats?.mode === 'LIVE' && (futuresStats?.total_trades || 0) < 10) {
         warnings.push('Futures module is in LIVE mode with less than 10 simulated trades. Consider more DRY_RUN testing.');
     }
 
-    if (data.solana?.mode === 'LIVE' && (data.solana?.total_trades || 0) < 10) {
+    if (solanaStats?.mode === 'LIVE' && (solanaStats?.total_trades || 0) < 10) {
         warnings.push('Solana module is in LIVE mode with less than 10 simulated trades. Consider more DRY_RUN testing.');
     }
 
     // Check for negative Sharpe
-    const futureSharpe = parseFloat(data.futures?.sharpe_ratio);
+    const futureSharpe = parseFloat(futuresStats?.sharpe_ratio);
     if (futureSharpe < 0) {
         warnings.push(`Futures Sharpe ratio is negative (${futureSharpe.toFixed(2)}). Strategy may need adjustment.`);
     }
 
-    const solanaSharpe = parseFloat(data.solana?.sharpe_ratio);
+    const solanaSharpe = parseFloat(solanaStats?.sharpe_ratio);
     if (solanaSharpe < 0) {
         warnings.push(`Solana Sharpe ratio is negative (${solanaSharpe.toFixed(2)}). Strategy may need adjustment.`);
     }
 
     // Check for high drawdown
-    const futuresDD = parseFloat(data.futures?.max_drawdown?.replace('%', ''));
+    const futuresDD = parseFloat((futuresStats?.max_drawdown || futuresStats?.max_drawdown_pct || '0')?.replace('%', ''));
     if (futuresDD > 20) {
         warnings.push(`Futures max drawdown is high (${futuresDD}%). Consider tighter risk controls.`);
     }

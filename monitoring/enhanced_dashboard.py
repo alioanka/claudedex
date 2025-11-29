@@ -1051,12 +1051,18 @@ class DashboardEndpoints:
             try:
                 futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(f'http://localhost:{futures_port}/stats', timeout=2) as resp:
+                    async with session.get(f'http://localhost:{futures_port}/stats', timeout=5) as resp:
                         if resp.status == 200:
                             data = await resp.json()
-                            simulator_data['futures'] = data
+                            # Extract stats from nested structure
+                            if 'stats' in data:
+                                simulator_data['futures'] = data['stats']
+                            else:
+                                simulator_data['futures'] = data
                             simulator_data['futures']['status'] = 'Active'
-            except Exception:
+                            logger.debug(f"Futures stats fetched: {simulator_data['futures']}")
+            except Exception as e:
+                logger.warning(f"Could not fetch futures stats: {e}")
                 # Fallback: use env variables to determine mode (like DEX does)
                 simulator_data['futures'] = {
                     'status': 'Offline' if not futures_enabled else 'Starting',
@@ -1073,12 +1079,18 @@ class DashboardEndpoints:
             try:
                 solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(f'http://localhost:{solana_port}/stats', timeout=2) as resp:
+                    async with session.get(f'http://localhost:{solana_port}/stats', timeout=5) as resp:
                         if resp.status == 200:
                             data = await resp.json()
-                            simulator_data['solana'] = data
+                            # Extract stats from nested structure
+                            if 'stats' in data:
+                                simulator_data['solana'] = data['stats']
+                            else:
+                                simulator_data['solana'] = data
                             simulator_data['solana']['status'] = 'Active'
-            except Exception:
+                            logger.debug(f"Solana stats fetched: {simulator_data['solana']}")
+            except Exception as e:
+                logger.debug(f"Could not fetch solana stats: {e}")
                 # Fallback: use env variables to determine mode (like DEX does)
                 simulator_data['solana'] = {
                     'status': 'Offline' if not solana_enabled else 'Starting',
