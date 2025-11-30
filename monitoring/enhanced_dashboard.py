@@ -585,6 +585,26 @@ class DashboardEndpoints:
                         futures_running = True
                         futures_health_data = await resp.json()
                         logger.info(f"Futures module is running: {futures_health_data}")
+
+                # Also fetch stats to get metrics
+                if futures_running:
+                    async with session.get(f'http://localhost:{futures_port}/stats', timeout=5) as resp:
+                        if resp.status == 200:
+                            stats_data = await resp.json()
+                            stats = stats_data.get('stats', stats_data)
+                            futures_metrics['total_trades'] = stats.get('total_trades', 0)
+                            futures_metrics['positions'] = stats.get('active_positions', 0)
+                            # Parse PnL which may be a string like "$-0.76"
+                            net_pnl = stats.get('net_pnl', '$0.00')
+                            if isinstance(net_pnl, str):
+                                net_pnl = float(net_pnl.replace('$', '').replace(',', ''))
+                            futures_metrics['pnl'] = net_pnl
+                            # Parse win rate which may be a string like "33.3%"
+                            win_rate = stats.get('win_rate', '0%')
+                            if isinstance(win_rate, str):
+                                win_rate = float(win_rate.replace('%', ''))
+                            futures_metrics['win_rate'] = win_rate
+                            logger.info(f"Futures metrics from stats: {futures_metrics}")
         except Exception as e:
             logger.debug(f"Futures module not reachable: {e}")
 
@@ -1094,6 +1114,50 @@ class DashboardEndpoints:
                     'win_rate': '0%'
                 }
 
+            # Fetch futures trades from database for trade log
+            if self.db and self.db.pool:
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        futures_trades = await conn.fetch("""
+                            SELECT
+                                id, symbol, side, entry_price, exit_price, size,
+                                notional_value, leverage, pnl, pnl_pct, fees, net_pnl,
+                                exit_reason, entry_time, exit_time, duration_seconds,
+                                is_simulated, exchange, network
+                            FROM futures_trades
+                            ORDER BY exit_time DESC
+                            LIMIT 100
+                        """)
+
+                        trades_list = []
+                        for record in futures_trades:
+                            trades_list.append({
+                                'trade_id': str(record['id']),
+                                'symbol': record['symbol'],
+                                'side': record['side'],
+                                'entry_price': float(record['entry_price']),
+                                'exit_price': float(record['exit_price']),
+                                'size': float(record['size']),
+                                'pnl': float(record['net_pnl'] or record['pnl']),
+                                'pnl_pct': float(record['pnl_pct']),
+                                'fees': float(record['fees']),
+                                'duration_seconds': record['duration_seconds'] or 0,
+                                'time': record['exit_time'].isoformat() if record['exit_time'] else None,
+                                'exit_reason': record['exit_reason'],
+                                'is_simulated': record['is_simulated'],
+                                'module': 'futures'
+                            })
+
+                        # Initialize futures data if not already set
+                        if simulator_data['futures'] is None:
+                            simulator_data['futures'] = {}
+                        simulator_data['futures']['trades'] = trades_list
+                except Exception as e:
+                    logger.warning(f"Could not fetch futures trades from DB: {e}")
+                    if simulator_data['futures'] is None:
+                        simulator_data['futures'] = {}
+                    simulator_data['futures']['trades'] = []
+
             # Try to fetch from Solana module health endpoint
             solana_enabled = os.getenv('SOLANA_MODULE_ENABLED', 'false').lower() == 'true'
             try:
@@ -1220,11 +1284,13 @@ class DashboardEndpoints:
                                 'exit_price': float(record['exit_price']) if record['exit_price'] else 0,
                                 'size': float(record['amount']) if record['amount'] else 0,
                                 'pnl': float(record['profit_loss']) if record['profit_loss'] else 0,
-                                'pnl_pct': f"{float(record['profit_loss_percentage']):.2f}%" if record['profit_loss_percentage'] else '0%',
+                                'pnl_pct': float(record['profit_loss_percentage']) if record['profit_loss_percentage'] else 0,
                                 'fees': float(record['gas_fee']) if record['gas_fee'] else 0,
                                 'duration_seconds': record['duration_seconds'] or 0,
                                 'time': record['exit_timestamp'].isoformat() if record['exit_timestamp'] else None,
-                                'is_simulated': dry_run
+                                'exit_reason': metadata.get('exit_reason', 'signal'),
+                                'is_simulated': dry_run,
+                                'module': 'dex'
                             })
 
                         dex_data['trades'] = trades_list
@@ -1644,7 +1710,7 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
 
     async def api_dashboard_summary(self, request):
-        """Get dashboard summary data from database"""
+        """Get dashboard summary data from database including all modules"""
         try:
             # Get initial balance from config
             try:
@@ -1659,8 +1725,9 @@ class DashboardEndpoints:
             win_rate = 0.0
             open_positions_count = 0
             total_trades = 0
+            winning_trades_count = 0
 
-            # Get data from database
+            # Get DEX data from database
             if self.db:
                 try:
                     # Get all trades for P&L calculation
@@ -1671,15 +1738,47 @@ class DashboardEndpoints:
                     total_trades = len(closed_trades)
 
                     # Calculate win rate
-                    winning_trades = sum(1 for t in closed_trades if float(t.get('profit_loss', 0)) > 0)
-                    win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+                    winning_trades_count = sum(1 for t in closed_trades if float(t.get('profit_loss', 0)) > 0)
 
                 except Exception as e:
                     logger.warning(f"Error getting data from database: {e}")
 
-            # Get open positions from ENGINE (same source as Open Positions API)
+            # Get DEX open positions from ENGINE
             if self.engine and hasattr(self.engine, 'active_positions') and self.engine.active_positions:
                 open_positions_count = len(self.engine.active_positions)
+
+            # Get Futures module data
+            futures_pnl = 0.0
+            futures_trades = 0
+            futures_positions = 0
+            futures_winning = 0
+            try:
+                futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'http://localhost:{futures_port}/stats', timeout=5) as resp:
+                        if resp.status == 200:
+                            stats_data = await resp.json()
+                            stats = stats_data.get('stats', stats_data)
+                            futures_trades = stats.get('total_trades', 0)
+                            futures_positions = stats.get('active_positions', 0)
+                            futures_winning = stats.get('winning_trades', 0)
+                            # Parse PnL which may be a string like "$-0.76"
+                            net_pnl = stats.get('net_pnl', '$0.00')
+                            if isinstance(net_pnl, str):
+                                net_pnl = float(net_pnl.replace('$', '').replace(',', ''))
+                            futures_pnl = net_pnl
+                            logger.debug(f"Futures summary: trades={futures_trades}, pnl={futures_pnl}, positions={futures_positions}")
+            except Exception as e:
+                logger.debug(f"Could not fetch futures stats for summary: {e}")
+
+            # Combine totals
+            total_pnl += futures_pnl
+            total_trades += futures_trades
+            open_positions_count += futures_positions
+            winning_trades_count += futures_winning
+
+            # Calculate combined win rate
+            win_rate = (winning_trades_count / total_trades * 100) if total_trades > 0 else 0
 
             # Calculate portfolio value
             portfolio_value = starting_balance + total_pnl

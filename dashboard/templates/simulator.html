@@ -499,6 +499,9 @@ function getStats(moduleData) {
 }
 
 function updateSimulatorUI(data, updateCharts = true) {
+    // Cache the data for equity curve module filtering
+    simulatorData = data;
+
     // Extract stats from nested structures
     const futuresStats = getStats(data.futures);
     const solanaStats = getStats(data.solana);
@@ -1066,7 +1069,15 @@ function filterAndRenderTrades() {
     tbody.innerHTML = filteredTrades.slice(0, 50).map(trade => {
         const pnl = parsePnL(trade.pnl || trade.net_pnl);
         const pnlClass = pnl >= 0 ? 'text-success' : 'text-danger';
-        const pnlPct = trade.pnl_pct || '0%';
+        // Handle pnl_pct as number or string with %
+        let pnlPctVal = trade.pnl_pct;
+        if (typeof pnlPctVal === 'number') {
+            pnlPctVal = pnlPctVal.toFixed(2) + '%';
+        } else if (typeof pnlPctVal === 'string' && !pnlPctVal.includes('%')) {
+            pnlPctVal = parseFloat(pnlPctVal || 0).toFixed(2) + '%';
+        } else if (!pnlPctVal) {
+            pnlPctVal = '0.00%';
+        }
         const exitReason = formatExitReason(trade.close_reason || trade.exit_reason || 'unknown');
 
         return `
@@ -1079,7 +1090,7 @@ function filterAndRenderTrades() {
                 <td>$${parseFloat(trade.exit_price || 0).toFixed(6)}</td>
                 <td>${parseFloat(trade.size || trade.amount || 0).toFixed(4)}</td>
                 <td class="${pnlClass}">$${pnl.toFixed(2)}</td>
-                <td class="${pnlClass}">${pnlPct}</td>
+                <td class="${pnlClass}">${pnlPctVal}</td>
                 <td>${exitReason}</td>
                 <td>${formatDuration(trade.duration_seconds)}</td>
             </tr>
