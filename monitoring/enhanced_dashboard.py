@@ -363,7 +363,13 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/settings/sensitive/{key}', require_auth(require_admin(self.api_get_sensitive_config)))
         self.app.router.add_post('/api/settings/sensitive', require_auth(require_admin(self.api_set_sensitive_config)))
         self.app.router.add_delete('/api/settings/sensitive/{key}', require_auth(require_admin(self.api_delete_sensitive_config)))
-        
+
+        # API - Futures Position Management (proxy to Futures module)
+        self.app.router.add_get('/api/futures/positions', self.api_futures_positions)
+        self.app.router.add_get('/api/futures/trades', self.api_futures_trades)
+        self.app.router.add_post('/api/futures/position/close', self.api_futures_close_position)
+        self.app.router.add_post('/api/futures/positions/close-all', self.api_futures_close_all_positions)
+
         # API - Trading controls
         self.app.router.add_post('/api/trade/execute', self.api_execute_trade)
         self.app.router.add_post('/api/position/close', self.api_close_position)
@@ -4062,7 +4068,100 @@ class DashboardEndpoints:
                 'success': False,
                 'error': str(e)
             }, status=500)
-    
+
+    # ========== FUTURES POSITION MANAGEMENT ==========
+
+    async def api_futures_positions(self, request):
+        """Get all futures positions from the Futures module"""
+        try:
+            futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{futures_port}/positions', timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return web.json_response(data)
+                    else:
+                        return web.json_response({
+                            'success': False,
+                            'error': f'Futures module returned status {resp.status}'
+                        }, status=resp.status)
+        except Exception as e:
+            logger.error(f"Error fetching futures positions: {e}")
+            return web.json_response({
+                'success': False,
+                'error': f'Futures module not available: {str(e)}'
+            }, status=503)
+
+    async def api_futures_trades(self, request):
+        """Get recent futures trades from the Futures module"""
+        try:
+            limit = request.query.get('limit', '50')
+            futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{futures_port}/trades?limit={limit}', timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return web.json_response(data)
+                    else:
+                        return web.json_response({
+                            'success': False,
+                            'error': f'Futures module returned status {resp.status}'
+                        }, status=resp.status)
+        except Exception as e:
+            logger.error(f"Error fetching futures trades: {e}")
+            return web.json_response({
+                'success': False,
+                'error': f'Futures module not available: {str(e)}'
+            }, status=503)
+
+    async def api_futures_close_position(self, request):
+        """Close a specific futures position"""
+        try:
+            data = await request.json()
+            symbol = data.get('symbol')
+
+            if not symbol:
+                return web.json_response({
+                    'success': False,
+                    'error': 'Symbol is required'
+                }, status=400)
+
+            futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f'http://localhost:{futures_port}/position/close',
+                    json={'symbol': symbol},
+                    timeout=10
+                ) as resp:
+                    data = await resp.json()
+                    return web.json_response(data, status=resp.status)
+
+        except Exception as e:
+            logger.error(f"Error closing futures position: {e}")
+            return web.json_response({
+                'success': False,
+                'error': f'Futures module not available: {str(e)}'
+            }, status=503)
+
+    async def api_futures_close_all_positions(self, request):
+        """Close all futures positions"""
+        try:
+            futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f'http://localhost:{futures_port}/positions/close-all',
+                    timeout=30
+                ) as resp:
+                    data = await resp.json()
+                    return web.json_response(data, status=resp.status)
+
+        except Exception as e:
+            logger.error(f"Error closing all futures positions: {e}")
+            return web.json_response({
+                'success': False,
+                'error': f'Futures module not available: {str(e)}'
+            }, status=503)
+
     async def api_modify_position(self, request):
         """Modify position (stop loss, take profit)"""
         try:

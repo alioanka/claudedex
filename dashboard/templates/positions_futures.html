@@ -98,6 +98,69 @@
         color: var(--text-secondary);
     }
 
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s;
+    }
+
+    .btn-danger {
+        background: #ef4444;
+        color: white;
+    }
+
+    .btn-danger:hover {
+        background: #dc2626;
+    }
+
+    .btn-danger:disabled {
+        background: #9ca3af;
+        cursor: not-allowed;
+    }
+
+    .btn-warning {
+        background: #f59e0b;
+        color: white;
+    }
+
+    .btn-warning:hover {
+        background: #d97706;
+    }
+
+    .btn-sm {
+        padding: 4px 10px;
+        font-size: 0.75rem;
+    }
+
+    .header-actions {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+    }
+
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .price-levels {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+    }
+
+    .price-levels .sl { color: #ef4444; }
+    .price-levels .tp { color: #10b981; }
+    .price-levels .tsl { color: #8b5cf6; }
+
     [data-theme="dark"] {
         --card-bg: #1f2937;
         --border-color: #374151;
@@ -119,9 +182,17 @@
     </div>
 
     <div class="section-card">
-        <div class="section-title">
-            <i class="fas fa-chart-line"></i>
-            Open Positions (<span id="position-count">0</span>)
+        <div class="section-header">
+            <div class="section-title" style="margin-bottom: 0;">
+                <i class="fas fa-chart-line"></i>
+                Open Positions (<span id="position-count">0</span>)
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-danger" id="closeAllBtn" onclick="closeAllPositions()" disabled>
+                    <i class="fas fa-times-circle"></i>
+                    Close All Positions
+                </button>
+            </div>
         </div>
         <div id="positions-empty" class="empty-state">
             <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
@@ -134,8 +205,10 @@
                     <th>Side</th>
                     <th>Entry Price</th>
                     <th>Current Price</th>
+                    <th>SL / TP / TSL</th>
                     <th>P&L ($)</th>
                     <th>P&L (%)</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody id="positionsTableBody">
@@ -147,12 +220,20 @@
 <script>
 async function loadPositions() {
     try {
-        const response = await fetch('/api/simulator/data');
-        if (!response.ok) throw new Error('Failed to fetch data');
+        // Use the new dedicated positions endpoint for full details
+        const response = await fetch('/api/futures/positions');
+        if (!response.ok) throw new Error('Failed to fetch positions');
         const data = await response.json();
 
-        if (data.futures && data.futures.positions) {
-            updatePositions(data.futures.positions);
+        if (data.success && data.positions) {
+            updatePositions(data.positions);
+        } else {
+            // Fallback to simulator data
+            const simResponse = await fetch('/api/simulator/data');
+            const simData = await simResponse.json();
+            if (simData.futures && simData.futures.positions) {
+                updatePositions(simData.futures.positions);
+            }
         }
     } catch (error) {
         console.error('Error loading positions:', error);
@@ -164,8 +245,10 @@ function updatePositions(positions) {
     const emptyState = document.getElementById('positions-empty');
     const table = document.getElementById('positions-table');
     const countEl = document.getElementById('position-count');
+    const closeAllBtn = document.getElementById('closeAllBtn');
 
     countEl.textContent = positions.length;
+    closeAllBtn.disabled = positions.length === 0;
 
     if (positions.length === 0) {
         emptyState.style.display = 'block';
@@ -176,16 +259,107 @@ function updatePositions(positions) {
     emptyState.style.display = 'none';
     table.style.display = 'table';
 
-    tableBody.innerHTML = positions.map(pos => `
-        <tr>
-            <td><strong>${pos.symbol}</strong></td>
-            <td><span class="badge badge-${pos.side}">${pos.side.toUpperCase()}</span></td>
-            <td>$${parseFloat(pos.entry).toLocaleString()}</td>
-            <td>$${parseFloat(pos.current).toLocaleString()}</td>
-            <td class="${parseFloat(pos.pnl_usd.replace('$', '')) >= 0 ? 'positive' : 'negative'}">${pos.pnl_usd}</td>
-            <td class="${parseFloat(pos.pnl_pct) >= 0 ? 'positive' : 'negative'}">${pos.pnl_pct}</td>
-        </tr>
-    `).join('');
+    tableBody.innerHTML = positions.map(pos => {
+        // Handle both old format (from simulator) and new format (from positions endpoint)
+        const symbol = pos.symbol;
+        const side = pos.side;
+        const entryPrice = pos.entry_price || pos.entry;
+        const currentPrice = pos.current_price || pos.current;
+        const stopLoss = pos.stop_loss;
+        const takeProfit = pos.take_profit;
+        const trailingStop = pos.trailing_stop;
+        const pnlUsd = pos.unrealized_pnl !== undefined ? pos.unrealized_pnl : parseFloat((pos.pnl_usd || '0').replace('$', ''));
+        const pnlPct = pos.unrealized_pnl_pct !== undefined ? pos.unrealized_pnl_pct : parseFloat(pos.pnl_pct || 0);
+
+        // Format SL/TP/TSL
+        const slText = stopLoss ? `<span class="sl">SL: $${parseFloat(stopLoss).toLocaleString()}</span>` : '<span class="sl">-</span>';
+        const tpText = takeProfit ? `<span class="tp">TP: $${parseFloat(takeProfit).toLocaleString()}</span>` : '<span class="tp">-</span>';
+        const tslText = trailingStop ? `<span class="tsl">TSL: ${trailingStop}%</span>` : '<span class="tsl">-</span>';
+
+        return `
+            <tr data-symbol="${symbol}">
+                <td><strong>${symbol}</strong></td>
+                <td><span class="badge badge-${side}">${side.toUpperCase()}</span></td>
+                <td>$${parseFloat(entryPrice).toLocaleString()}</td>
+                <td>$${parseFloat(currentPrice).toLocaleString()}</td>
+                <td class="price-levels">${slText}<br>${tpText}<br>${tslText}</td>
+                <td class="${pnlUsd >= 0 ? 'positive' : 'negative'}">$${pnlUsd.toFixed(2)}</td>
+                <td class="${pnlPct >= 0 ? 'positive' : 'negative'}">${pnlPct.toFixed(2)}%</td>
+                <td>
+                    <button class="btn btn-danger btn-sm" onclick="closePosition('${symbol}')" title="Close Position">
+                        <i class="fas fa-times"></i> Close
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+async function closePosition(symbol) {
+    if (!confirm(`Are you sure you want to close the ${symbol} position?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/futures/position/close', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol: symbol })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showToast('success', data.message || `Position ${symbol} closed successfully`);
+            loadPositions(); // Refresh the list
+        } else {
+            showToast('error', data.error || 'Failed to close position');
+        }
+    } catch (error) {
+        console.error('Error closing position:', error);
+        showToast('error', 'Failed to close position: ' + error.message);
+    }
+}
+
+async function closeAllPositions() {
+    if (!confirm('Are you sure you want to close ALL futures positions? This action cannot be undone.')) {
+        return;
+    }
+
+    const closeAllBtn = document.getElementById('closeAllBtn');
+    closeAllBtn.disabled = true;
+    closeAllBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Closing...';
+
+    try {
+        const response = await fetch('/api/futures/positions/close-all', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showToast('success', data.message || 'All positions closed successfully');
+            loadPositions(); // Refresh the list
+        } else {
+            showToast('error', data.error || 'Failed to close positions');
+        }
+    } catch (error) {
+        console.error('Error closing all positions:', error);
+        showToast('error', 'Failed to close positions: ' + error.message);
+    } finally {
+        closeAllBtn.innerHTML = '<i class="fas fa-times-circle"></i> Close All Positions';
+        loadPositions(); // Refresh to update button state
+    }
+}
+
+// Toast notification helper (if not already defined globally)
+function showToast(type, message) {
+    if (typeof window.showToast === 'function') {
+        window.showToast(type, message);
+    } else {
+        alert(message);
+    }
 }
 
 // Load on page load

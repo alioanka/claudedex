@@ -324,6 +324,16 @@ class FuturesTradingEngine:
             currency="USD"
         )
 
+        # Telegram alerts
+        self.telegram_alerts = None
+        try:
+            from futures_trading.core.futures_alerts import FuturesTelegramAlerts
+            self.telegram_alerts = FuturesTelegramAlerts()
+            if self.telegram_alerts.enabled:
+                logger.info("✅ Telegram alerts enabled for Futures module")
+        except ImportError as e:
+            logger.warning(f"Telegram alerts not available: {e}")
+
         # Logging mode info
         mode_str = "DRY_RUN (SIMULATED)" if self.dry_run else "LIVE TRADING"
         net_str = "TESTNET" if self.testnet else "MAINNET"
@@ -1105,6 +1115,27 @@ class FuturesTradingEngine:
             logger.info(f"✅ Position opened: {symbol} {side.value.upper()}")
             logger.info(f"   Active positions: {len(self.active_positions)}/{self.max_positions}")
 
+            # Send Telegram entry alert
+            if self.telegram_alerts and self.telegram_alerts.enabled:
+                try:
+                    from futures_trading.core.futures_alerts import FuturesTradeAlert
+                    alert = FuturesTradeAlert(
+                        symbol=symbol,
+                        side=side.value,
+                        action='entry',
+                        entry_price=position.entry_price,
+                        size=position.size,
+                        leverage=position.leverage,
+                        stop_loss=position.stop_loss,
+                        take_profit=position.take_profit,
+                        trailing_stop=position.metadata.get('trailing_stop'),
+                        is_simulated=position.is_simulated,
+                        exchange=self.exchange
+                    )
+                    await self.telegram_alerts.send_entry_alert(alert)
+                except Exception as e:
+                    logger.warning(f"Failed to send Telegram entry alert: {e}")
+
         except Exception as e:
             logger.error(f"Error opening position {symbol}: {e}")
 
@@ -1223,6 +1254,28 @@ class FuturesTradingEngine:
             logger.info(f"   PnL: ${net_pnl:.2f} ({leveraged_pnl_pct:.2f}%)")
             logger.info(f"   Fees: ${total_fees:.2f}")
             logger.info(f"   Daily PnL: ${self.risk_metrics.daily_pnl:.2f}")
+
+            # Send Telegram exit alert
+            if self.telegram_alerts and self.telegram_alerts.enabled:
+                try:
+                    from futures_trading.core.futures_alerts import FuturesTradeAlert
+                    alert = FuturesTradeAlert(
+                        symbol=symbol,
+                        side=position.side.value,
+                        action=reason,  # 'take_profit', 'stop_loss', 'manual_close', etc.
+                        entry_price=position.entry_price,
+                        exit_price=position.current_price,
+                        size=position.size,
+                        leverage=position.leverage,
+                        pnl=net_pnl,
+                        pnl_pct=leveraged_pnl_pct,
+                        reason=reason,
+                        is_simulated=position.is_simulated,
+                        exchange=self.exchange
+                    )
+                    await self.telegram_alerts.send_exit_alert(alert)
+                except Exception as e:
+                    logger.warning(f"Failed to send Telegram exit alert: {e}")
 
         except Exception as e:
             logger.error(f"Error closing position {symbol}: {e}")

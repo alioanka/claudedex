@@ -50,12 +50,16 @@ class TradeLogFilter(logging.Filter):
         'entry price', 'exit price', 'stop loss hit', 'take profit hit',
         'liquidation', 'daily pnl', 'daily stats', 'trading stats',
         'total trades', 'win rate', 'total pnl', 'net pnl',
-        '✅ opened', '✅ closed', '🎯', '💰', '📉 closed'
+        '✅ opened', '✅ closed', '🎯', '💰', '📉 closed',
+        'unrealized p&l', 'max drawdown', 'active positions',
+        'reason:', 'entry:', 'pnl:', 'fees:',
+        '📊 daily stats', '=====', 'futures trading module'
     ]
     # Keywords that should be excluded even if they contain trade-related words
     EXCLUDE_KEYWORDS = [
         'signal analysis', 'scanning', 'rejected', 'combined score',
-        'rsi:', 'macd:', 'volume:', 'bollinger:', 'ema:', 'trend:'
+        'rsi:', 'macd:', 'volume:', 'bollinger:', 'ema:', 'trend:',
+        'analyzing', 'fetching candles', 'checking', 'evaluating'
     ]
 
     def filter(self, record):
@@ -122,6 +126,10 @@ class HealthServer:
         self.web_app.router.add_get('/ready', self.ready_handler)
         self.web_app.router.add_get('/metrics', self.metrics_handler)
         self.web_app.router.add_get('/stats', self.stats_handler)
+        self.web_app.router.add_get('/positions', self.positions_handler)
+        self.web_app.router.add_get('/trades', self.trades_handler)
+        self.web_app.router.add_post('/position/close', self.close_position_handler)
+        self.web_app.router.add_post('/positions/close-all', self.close_all_positions_handler)
 
     async def health_handler(self, request):
         """Liveness probe endpoint"""
@@ -180,6 +188,134 @@ class HealthServer:
                 'timestamp': datetime.now().isoformat()
             })
         return web.json_response({'error': 'Engine not initialized'}, status=503)
+
+    async def positions_handler(self, request):
+        """Get all active positions with full details"""
+        if self.app.engine:
+            positions = []
+            for symbol, pos in self.app.engine.active_positions.items():
+                positions.append({
+                    'position_id': pos.position_id,
+                    'symbol': pos.symbol,
+                    'side': pos.side.value,
+                    'entry_price': pos.entry_price,
+                    'current_price': pos.current_price,
+                    'size': pos.size,
+                    'notional_value': pos.notional_value,
+                    'leverage': pos.leverage,
+                    'stop_loss': pos.stop_loss,
+                    'take_profit': pos.take_profit,
+                    'trailing_stop': pos.metadata.get('trailing_stop'),
+                    'liquidation_price': pos.liquidation_price,
+                    'unrealized_pnl': pos.unrealized_pnl,
+                    'unrealized_pnl_pct': pos.unrealized_pnl_pct,
+                    'opened_at': pos.opened_at.isoformat(),
+                    'is_simulated': pos.is_simulated
+                })
+            return web.json_response({
+                'success': True,
+                'positions': positions,
+                'count': len(positions)
+            })
+        return web.json_response({'error': 'Engine not initialized'}, status=503)
+
+    async def trades_handler(self, request):
+        """Get recent closed trades"""
+        if self.app.engine:
+            # Get limit from query params, default to 50
+            limit = int(request.query.get('limit', 50))
+            trades = []
+            for trade in self.app.engine.trade_history[-limit:]:
+                trades.append({
+                    'trade_id': trade.trade_id,
+                    'symbol': trade.symbol,
+                    'side': trade.side.value,
+                    'entry_price': trade.entry_price,
+                    'exit_price': trade.exit_price,
+                    'size': trade.size,
+                    'notional_value': trade.notional_value,
+                    'leverage': trade.leverage,
+                    'pnl': trade.pnl,
+                    'pnl_pct': trade.pnl_pct,
+                    'fees': trade.fees,
+                    'opened_at': trade.opened_at.isoformat(),
+                    'closed_at': trade.closed_at.isoformat(),
+                    'close_reason': trade.close_reason,
+                    'is_simulated': trade.is_simulated
+                })
+            return web.json_response({
+                'success': True,
+                'trades': trades,
+                'count': len(trades)
+            })
+        return web.json_response({'error': 'Engine not initialized'}, status=503)
+
+    async def close_position_handler(self, request):
+        """Close a specific position"""
+        if not self.app.engine:
+            return web.json_response({'error': 'Engine not initialized'}, status=503)
+
+        try:
+            data = await request.json()
+            symbol = data.get('symbol')
+
+            if not symbol:
+                return web.json_response({
+                    'success': False,
+                    'error': 'Symbol is required'
+                }, status=400)
+
+            if symbol not in self.app.engine.active_positions:
+                return web.json_response({
+                    'success': False,
+                    'error': f'No active position for {symbol}'
+                }, status=404)
+
+            # Close the position
+            await self.app.engine._close_position(symbol, "manual_close")
+            logger.info(f"✅ Position {symbol} closed via API")
+
+            return web.json_response({
+                'success': True,
+                'message': f'Position {symbol} closed successfully'
+            })
+
+        except Exception as e:
+            logger.error(f"Error closing position: {e}")
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    async def close_all_positions_handler(self, request):
+        """Close all active positions"""
+        if not self.app.engine:
+            return web.json_response({'error': 'Engine not initialized'}, status=503)
+
+        try:
+            positions_count = len(self.app.engine.active_positions)
+
+            if positions_count == 0:
+                return web.json_response({
+                    'success': True,
+                    'message': 'No positions to close'
+                })
+
+            # Close all positions
+            await self.app.engine.close_all_positions()
+            logger.info(f"✅ All {positions_count} positions closed via API")
+
+            return web.json_response({
+                'success': True,
+                'message': f'Closed {positions_count} positions successfully'
+            })
+
+        except Exception as e:
+            logger.error(f"Error closing all positions: {e}")
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
 
     async def start(self):
         """Start the HTTP server"""
@@ -331,7 +467,17 @@ class FuturesTradingApplication:
             try:
                 if self.engine:
                     stats = await self.engine.get_stats()
-                    self.logger.info(f"📊 Futures Stats: {stats}")
+                    # Log in a format that TradeLogFilter will capture for futures_trades.log
+                    self.logger.info("=" * 60)
+                    self.logger.info("📊 DAILY STATS - Futures Trading Module")
+                    self.logger.info(f"   Total Trades: {stats.get('total_trades', 0)}")
+                    self.logger.info(f"   Win Rate: {stats.get('win_rate', '0%')}")
+                    self.logger.info(f"   Total PnL: {stats.get('net_pnl', '$0.00')}")
+                    self.logger.info(f"   Daily PnL: {stats.get('daily_pnl', '$0.00')}")
+                    self.logger.info(f"   Active Positions: {stats.get('active_positions', 0)}")
+                    self.logger.info(f"   Unrealized P&L: {stats.get('unrealized_pnl', '$0.00')}")
+                    self.logger.info(f"   Max Drawdown: {stats.get('max_drawdown_pct', '0%')}")
+                    self.logger.info("=" * 60)
 
                 await asyncio.sleep(120)  # Report every 2 minutes
 
@@ -355,9 +501,17 @@ class FuturesTradingApplication:
                 await self.health_server.stop()
 
             if self.engine:
-                if self.mode == "production":
-                    self.logger.info("Closing all open positions...")
+                # Check if we should close positions on shutdown
+                close_on_shutdown = os.getenv('CLOSE_POSITIONS_ON_SHUTDOWN', 'false').lower() == 'true'
+
+                if self.mode == "production" and close_on_shutdown:
+                    self.logger.info("Closing all open positions (CLOSE_POSITIONS_ON_SHUTDOWN=true)...")
                     await self.engine.close_all_positions()
+                elif self.mode == "production":
+                    active_count = len(self.engine.active_positions) if self.engine.active_positions else 0
+                    if active_count > 0:
+                        self.logger.warning(f"⚠️ Keeping {active_count} positions open on shutdown")
+                        self.logger.warning("Set CLOSE_POSITIONS_ON_SHUTDOWN=true to close positions on restart")
 
                 self.logger.info("Stopping engine...")
                 await self.engine.shutdown()
