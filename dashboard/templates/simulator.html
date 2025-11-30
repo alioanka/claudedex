@@ -288,13 +288,13 @@
                         <th>Size</th>
                         <th>P&L</th>
                         <th>P&L %</th>
-                        <th>Fees</th>
+                        <th>Exit Reason</th>
                         <th>Duration</th>
                     </tr>
                 </thead>
                 <tbody id="simTradeLog">
                     <tr>
-                        <td colspan="11" class="text-center text-muted">
+                        <td colspan="12" class="text-center text-muted">
                             No simulated trades yet. Run in DRY_RUN mode to see trades.
                         </td>
                     </tr>
@@ -675,53 +675,99 @@ function updateValidationMetrics(data) {
     document.getElementById('validationScore').textContent = validationScore > 0 ? `${validationScore}%` : 'N/A';
 }
 
-function updateEquityCurve(data) {
+async function updateEquityCurve(data) {
     const ctx = document.getElementById('simulatedEquityChart').getContext('2d');
+    const moduleFilter = document.getElementById('equityModuleSelect')?.value || 'all';
 
     // Extract stats from nested structures
     const futuresStats = getStats(data.futures);
     const solanaStats = getStats(data.solana);
     const dexStats = getStats(data.dex);
 
-    // Generate sample equity curve data
+    // Collect trades based on selected module
+    let allTrades = [];
+
+    if (moduleFilter === 'all' || moduleFilter === 'futures') {
+        allTrades = allTrades.concat((futuresStats?.trades || []).map(t => ({...t, module: 'futures', moduleLabel: 'Futures'})));
+    }
+    if (moduleFilter === 'all' || moduleFilter === 'solana') {
+        allTrades = allTrades.concat((solanaStats?.trades || []).map(t => ({...t, module: 'solana', moduleLabel: 'Solana'})));
+    }
+    if (moduleFilter === 'all' || moduleFilter === 'dex') {
+        allTrades = allTrades.concat((dexStats?.trades || []).map(t => ({...t, module: 'dex', moduleLabel: 'DEX'})));
+    }
+
+    // Also fetch Futures trades from dedicated endpoint for better data
+    if (moduleFilter === 'all' || moduleFilter === 'futures') {
+        try {
+            const futuresResponse = await fetch('/api/futures/trades?limit=50');
+            if (futuresResponse.ok) {
+                const futuresData = await futuresResponse.json();
+                if (futuresData.success && futuresData.trades) {
+                    const existingIds = new Set(allTrades.filter(t => t.module === 'futures').map(t => t.trade_id));
+                    const newTrades = futuresData.trades
+                        .filter(t => !existingIds.has(t.trade_id))
+                        .map(t => ({...t, module: 'futures', moduleLabel: 'Futures'}));
+                    allTrades = allTrades.concat(newTrades);
+                }
+            }
+        } catch (e) {
+            console.debug('Could not fetch futures trades for equity curve:', e);
+        }
+    }
+
+    // Sort by time (oldest first for cumulative calculation)
+    allTrades.sort((a, b) => new Date(a.time || a.closed_at || 0) - new Date(b.time || b.closed_at || 0));
+
+    // Generate equity curve data
     const labels = [];
     const equityData = [];
-    let equity = 10000;
-
-    const allTrades = [
-        ...(futuresStats?.trades || []).map(t => ({...t, module: 'Futures'})),
-        ...(solanaStats?.trades || []).map(t => ({...t, module: 'Solana'})),
-        ...(dexStats?.trades || []).map(t => ({...t, module: 'DEX'}))
-    ].sort((a, b) => new Date(a.time || a.closed_at) - new Date(b.time || b.closed_at));
+    let equity = 10000; // Starting capital
 
     if (allTrades.length === 0) {
-        // Show baseline
+        // Show baseline when no trades
         for (let i = 0; i < 10; i++) {
             labels.push(`T${i}`);
             equityData.push(10000);
         }
     } else {
+        // Calculate cumulative equity from trades
         allTrades.forEach((trade, i) => {
             const pnl = parseFloat(trade.pnl || trade.net_pnl || 0);
             equity += pnl;
-            labels.push(trade.time || trade.closed_at || `Trade ${i+1}`);
+            const timestamp = trade.time || trade.closed_at;
+            const label = timestamp ? new Date(timestamp).toLocaleDateString() : `Trade ${i+1}`;
+            labels.push(label);
             equityData.push(equity);
         });
     }
 
+    // Module-specific chart colors
+    const colorMap = {
+        'all': { border: '#3b82f6', bg: 'rgba(59, 130, 246, 0.1)' },
+        'futures': { border: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.1)' },
+        'solana': { border: '#10b981', bg: 'rgba(16, 185, 129, 0.1)' },
+        'dex': { border: '#f59e0b', bg: 'rgba(245, 158, 11, 0.1)' }
+    };
+    const colors = colorMap[moduleFilter] || colorMap['all'];
+
     if (equityChart) {
         equityChart.destroy();
     }
+
+    const moduleLabel = moduleFilter === 'all' ? 'All Modules' :
+                       moduleFilter === 'futures' ? 'Futures' :
+                       moduleFilter === 'solana' ? 'Solana' : 'DEX';
 
     equityChart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: labels.slice(-50), // Last 50 data points
             datasets: [{
-                label: 'Simulated Equity',
+                label: `${moduleLabel} Equity`,
                 data: equityData.slice(-50),
-                borderColor: '#3b82f6',
-                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                borderColor: colors.border,
+                backgroundColor: colors.bg,
                 fill: true,
                 tension: 0.4
             }]
@@ -932,7 +978,10 @@ function updatePnLDistribution(data) {
     });
 }
 
-function updateTradeLog(data) {
+// Store all trades globally for filtering
+let allSimulatedTrades = [];
+
+async function updateTradeLog(data) {
     const tbody = document.getElementById('simTradeLog');
     if (!tbody) {
         console.error('Trade log tbody not found');
@@ -944,37 +993,86 @@ function updateTradeLog(data) {
     const solanaStats = getStats(data.solana);
     const dexStats = getStats(data.dex);
 
-    // Debug: log what we're getting
-    console.log('DEX trades count:', dexStats?.trades?.length || 0);
+    // Collect trades from all modules
+    let allTrades = [
+        ...(futuresStats?.trades || []).map(t => ({...t, module: 'futures', moduleLabel: 'Futures'})),
+        ...(solanaStats?.trades || []).map(t => ({...t, module: 'solana', moduleLabel: 'Solana'})),
+        ...(dexStats?.trades || []).map(t => ({...t, module: 'dex', moduleLabel: 'DEX'}))
+    ];
 
-    const allTrades = [
-        ...(futuresStats?.trades || []).map(t => ({...t, module: 'Futures'})),
-        ...(solanaStats?.trades || []).map(t => ({...t, module: 'Solana'})),
-        ...(dexStats?.trades || []).map(t => ({...t, module: 'DEX'}))
-    ].sort((a, b) => new Date(b.time || b.closed_at || 0) - new Date(a.time || a.closed_at || 0));
+    // Also fetch Futures trades from the dedicated endpoint for more complete data
+    try {
+        const futuresResponse = await fetch('/api/futures/trades?limit=50');
+        if (futuresResponse.ok) {
+            const futuresData = await futuresResponse.json();
+            if (futuresData.success && futuresData.trades) {
+                // Add futures trades if not already present
+                const existingIds = new Set(allTrades.filter(t => t.module === 'futures').map(t => t.trade_id));
+                const newFuturesTrades = futuresData.trades
+                    .filter(t => !existingIds.has(t.trade_id))
+                    .map(t => ({...t, module: 'futures', moduleLabel: 'Futures'}));
+                allTrades = [...allTrades, ...newFuturesTrades];
+            }
+        }
+    } catch (e) {
+        console.debug('Could not fetch futures trades:', e);
+    }
 
-    console.log('Total trades for log:', allTrades.length);
+    // Sort by time
+    allTrades.sort((a, b) => new Date(b.time || b.closed_at || 0) - new Date(a.time || a.closed_at || 0));
 
-    if (allTrades.length === 0) {
+    // Store globally for filtering
+    allSimulatedTrades = allTrades;
+
+    // Apply filters and render
+    filterAndRenderTrades();
+}
+
+function filterAndRenderTrades() {
+    const tbody = document.getElementById('simTradeLog');
+    if (!tbody) return;
+
+    const moduleFilter = document.getElementById('tradeModuleFilter')?.value || 'all';
+    const resultFilter = document.getElementById('tradeResultFilter')?.value || 'all';
+
+    // Apply filters
+    let filteredTrades = allSimulatedTrades.filter(trade => {
+        // Module filter
+        if (moduleFilter !== 'all' && trade.module !== moduleFilter) {
+            return false;
+        }
+
+        // Result filter
+        if (resultFilter !== 'all') {
+            const pnl = parsePnL(trade.pnl || trade.net_pnl);
+            if (resultFilter === 'win' && pnl < 0) return false;
+            if (resultFilter === 'loss' && pnl >= 0) return false;
+        }
+
+        return true;
+    });
+
+    if (filteredTrades.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="11" class="text-center text-muted">
-                    No simulated trades yet. Run in DRY_RUN mode to see trades.
+                <td colspan="12" class="text-center text-muted">
+                    No trades match the selected filters.
                 </td>
             </tr>
         `;
         return;
     }
 
-    tbody.innerHTML = allTrades.slice(0, 50).map(trade => {
+    tbody.innerHTML = filteredTrades.slice(0, 50).map(trade => {
         const pnl = parsePnL(trade.pnl || trade.net_pnl);
         const pnlClass = pnl >= 0 ? 'text-success' : 'text-danger';
         const pnlPct = trade.pnl_pct || '0%';
+        const exitReason = formatExitReason(trade.close_reason || trade.exit_reason || 'unknown');
 
         return `
             <tr>
                 <td>${formatTime(trade.time || trade.closed_at)}</td>
-                <td><span class="badge badge-sm">${trade.module}</span></td>
+                <td><span class="badge badge-sm badge-${trade.module}">${trade.moduleLabel}</span></td>
                 <td>${trade.symbol || trade.token_symbol || 'N/A'}</td>
                 <td>${trade.side || 'N/A'}</td>
                 <td>$${parseFloat(trade.entry_price || 0).toFixed(6)}</td>
@@ -982,11 +1080,26 @@ function updateTradeLog(data) {
                 <td>${parseFloat(trade.size || trade.amount || 0).toFixed(4)}</td>
                 <td class="${pnlClass}">$${pnl.toFixed(2)}</td>
                 <td class="${pnlClass}">${pnlPct}</td>
-                <td>$${parseFloat(trade.fees || 0).toFixed(4)}</td>
+                <td>${exitReason}</td>
                 <td>${formatDuration(trade.duration_seconds)}</td>
             </tr>
         `;
     }).join('');
+}
+
+function formatExitReason(reason) {
+    const reasonMap = {
+        'take_profit': { label: 'TP Hit', class: 'badge-success' },
+        'stop_loss': { label: 'SL Hit', class: 'badge-danger' },
+        'trailing_stop': { label: 'TSL Hit', class: 'badge-warning' },
+        'manual_close': { label: 'Manual', class: 'badge-info' },
+        'signal': { label: 'Signal', class: 'badge-secondary' },
+        'liquidation': { label: 'Liquidated', class: 'badge-danger' },
+        'timeout': { label: 'Timeout', class: 'badge-secondary' },
+        'unknown': { label: '-', class: '' }
+    };
+    const info = reasonMap[reason] || reasonMap['unknown'];
+    return info.class ? `<span class="badge badge-sm ${info.class}">${info.label}</span>` : info.label;
 }
 
 function checkValidationWarnings(data) {
@@ -1046,13 +1159,18 @@ function formatDuration(seconds) {
 }
 
 function filterSimTrades() {
-    // Re-fetch with filters
-    refreshSimulator();
+    // Apply filters without re-fetching (client-side filtering)
+    filterAndRenderTrades();
 }
 
 function onEquityCurveModuleChange() {
-    // Re-render with selected module (called from dropdown)
-    refreshSimulator();
+    // Re-render the equity curve with selected module without full refresh
+    // Use cached simulator data if available
+    if (simulatorData && (simulatorData.futures || simulatorData.solana || simulatorData.dex)) {
+        updateEquityCurve(simulatorData);
+    } else {
+        refreshSimulator();
+    }
 }
 
 async function exportSimulatedTrades() {
