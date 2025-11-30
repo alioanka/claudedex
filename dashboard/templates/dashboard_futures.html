@@ -308,11 +308,13 @@
                 <tr>
                     <th>Symbol</th>
                     <th>Side</th>
-                    <th>Entry Price</th>
-                    <th>Current Price</th>
+                    <th>Size</th>
+                    <th>Value</th>
+                    <th>Leverage</th>
+                    <th>Entry</th>
+                    <th>Current</th>
                     <th>SL / TP / TSL</th>
                     <th>P&L</th>
-                    <th>P&L %</th>
                     <th>Actions</th>
                 </tr>
             </thead>
@@ -394,16 +396,27 @@ const pnlChart = new Chart(ctx, {
 // Fetch futures data from API
 async function loadFuturesData() {
     try {
-        const response = await fetch('/api/simulator/data');
-        if (!response.ok) throw new Error('Failed to fetch data');
-        const data = await response.json();
-
-        if (data.futures) {
-            updateStats(data.futures);
-            updatePositions(data.futures.positions || []);
+        // Fetch stats from simulator data
+        const statsResponse = await fetch('/api/simulator/data');
+        if (statsResponse.ok) {
+            const data = await statsResponse.json();
+            if (data.futures) {
+                updateStats(data.futures);
+            }
         }
 
-        // Also load trades for the performance chart
+        // Fetch positions directly from futures module for full details (SL/TP/TSL)
+        const posResponse = await fetch('/api/futures/positions');
+        if (posResponse.ok) {
+            const posData = await posResponse.json();
+            if (posData.success && posData.positions) {
+                updatePositions(posData.positions);
+            } else {
+                updatePositions([]);
+            }
+        }
+
+        // Load trades for the performance chart
         await loadPerformanceChart();
     } catch (error) {
         console.error('Error loading futures data:', error);
@@ -496,30 +509,35 @@ function updatePositions(positions) {
     tableBody.innerHTML = positions.map(pos => {
         const symbol = pos.symbol;
         const side = pos.side;
-        const entryPrice = pos.entry_price || pos.entry;
-        const currentPrice = pos.current_price || pos.current;
+        const size = pos.size || 0;
+        const notionalValue = pos.notional_value || 0;
+        const leverage = pos.leverage || 1;
+        const entryPrice = pos.entry_price || pos.entry || 0;
+        const currentPrice = pos.current_price || pos.current || 0;
         const stopLoss = pos.stop_loss;
         const takeProfit = pos.take_profit;
         const trailingStop = pos.trailing_stop;
         const pnlUsd = pos.unrealized_pnl !== undefined ? pos.unrealized_pnl : parseFloat((pos.pnl_usd || '0').replace('$', ''));
         const pnlPct = pos.unrealized_pnl_pct !== undefined ? pos.unrealized_pnl_pct : parseFloat(pos.pnl_pct || 0);
 
-        const slText = stopLoss ? `<span class="sl">SL: $${parseFloat(stopLoss).toLocaleString()}</span>` : '<span class="sl">-</span>';
-        const tpText = takeProfit ? `<span class="tp">TP: $${parseFloat(takeProfit).toLocaleString()}</span>` : '<span class="tp">-</span>';
-        const tslText = trailingStop ? `<span class="tsl">TSL: ${trailingStop}%</span>` : '<span class="tsl">-</span>';
+        const slText = stopLoss ? `<span class="sl">$${parseFloat(stopLoss).toLocaleString()}</span>` : '-';
+        const tpText = takeProfit ? `<span class="tp">$${parseFloat(takeProfit).toLocaleString()}</span>` : '-';
+        const tslText = trailingStop ? `<span class="tsl">${trailingStop}%</span>` : '-';
 
         return `
             <tr>
                 <td><strong>${symbol}</strong></td>
                 <td><span class="badge badge-${side}">${side.toUpperCase()}</span></td>
+                <td>${parseFloat(size).toFixed(6)}</td>
+                <td>$${parseFloat(notionalValue).toFixed(2)}</td>
+                <td>${leverage}x</td>
                 <td>$${parseFloat(entryPrice).toLocaleString()}</td>
                 <td>$${parseFloat(currentPrice).toLocaleString()}</td>
-                <td class="price-levels">${slText}<br>${tpText}<br>${tslText}</td>
-                <td class="${pnlUsd >= 0 ? 'positive' : 'negative'}">$${pnlUsd.toFixed(2)}</td>
-                <td class="${pnlPct >= 0 ? 'positive' : 'negative'}">${pnlPct.toFixed(2)}%</td>
+                <td class="price-levels">${slText} / ${tpText} / ${tslText}</td>
+                <td class="${pnlUsd >= 0 ? 'positive' : 'negative'}">$${pnlUsd.toFixed(2)} (${pnlPct.toFixed(2)}%)</td>
                 <td>
-                    <button class="btn btn-danger btn-sm" onclick="closePosition('${symbol}')">
-                        <i class="fas fa-times"></i>
+                    <button class="btn btn-danger btn-sm" onclick="closePosition('${symbol}')" title="Close Position">
+                        <i class="fas fa-times"></i> Close
                     </button>
                 </td>
             </tr>

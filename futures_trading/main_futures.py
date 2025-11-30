@@ -220,11 +220,58 @@ class HealthServer:
         return web.json_response({'error': 'Engine not initialized'}, status=503)
 
     async def trades_handler(self, request):
-        """Get recent closed trades"""
-        if self.app.engine:
-            # Get limit from query params, default to 50
-            limit = int(request.query.get('limit', 50))
-            trades = []
+        """Get recent closed trades from database"""
+        if not self.app.engine:
+            return web.json_response({'error': 'Engine not initialized'}, status=503)
+
+        # Get limit from query params, default to 50
+        limit = int(request.query.get('limit', 50))
+        trades = []
+
+        # First try to get from database for persistence
+        if self.app.db_pool:
+            try:
+                async with self.app.db_pool.acquire() as conn:
+                    records = await conn.fetch("""
+                        SELECT
+                            id, symbol, side, entry_price, exit_price, size,
+                            notional_value, leverage, pnl, pnl_pct, fees, net_pnl,
+                            exit_reason, entry_time, exit_time, duration_seconds,
+                            is_simulated, exchange, network
+                        FROM futures_trades
+                        WHERE is_simulated = $1
+                          AND exchange = $2
+                          AND network = $3
+                        ORDER BY exit_time DESC
+                        LIMIT $4
+                    """, self.app.engine.dry_run, self.app.engine.exchange,
+                    'testnet' if self.app.engine.testnet else 'mainnet', limit)
+
+                    for record in records:
+                        trades.append({
+                            'trade_id': str(record['id']),
+                            'symbol': record['symbol'],
+                            'side': record['side'],
+                            'entry_price': float(record['entry_price']),
+                            'exit_price': float(record['exit_price']),
+                            'size': float(record['size']),
+                            'notional_value': float(record['notional_value']),
+                            'leverage': record['leverage'],
+                            'pnl': float(record['pnl']),
+                            'pnl_pct': float(record['pnl_pct']),
+                            'fees': float(record['fees']),
+                            'net_pnl': float(record['net_pnl']),
+                            'opened_at': record['entry_time'].isoformat() if record['entry_time'] else None,
+                            'closed_at': record['exit_time'].isoformat() if record['exit_time'] else None,
+                            'close_reason': record['exit_reason'],
+                            'is_simulated': record['is_simulated'],
+                            'duration_seconds': record['duration_seconds']
+                        })
+            except Exception as e:
+                logger.warning(f"Could not fetch trades from DB: {e}")
+
+        # Fallback to in-memory trade history if DB failed
+        if not trades and self.app.engine.trade_history:
             for trade in self.app.engine.trade_history[-limit:]:
                 trades.append({
                     'trade_id': trade.trade_id,
@@ -243,12 +290,12 @@ class HealthServer:
                     'close_reason': trade.close_reason,
                     'is_simulated': trade.is_simulated
                 })
-            return web.json_response({
-                'success': True,
-                'trades': trades,
-                'count': len(trades)
-            })
-        return web.json_response({'error': 'Engine not initialized'}, status=503)
+
+        return web.json_response({
+            'success': True,
+            'trades': trades,
+            'count': len(trades)
+        })
 
     async def close_position_handler(self, request):
         """Close a specific position"""
