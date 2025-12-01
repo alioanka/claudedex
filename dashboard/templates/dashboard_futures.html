@@ -9,6 +9,73 @@
         padding: 20px;
     }
 
+    .trading-status-banner {
+        background: linear-gradient(135deg, #f97316 0%, #dc2626 100%);
+        border-radius: 12px;
+        padding: 16px 24px;
+        margin-bottom: 24px;
+        color: white;
+    }
+
+    .trading-status-banner.hidden {
+        display: none;
+    }
+
+    .trading-status-banner .status-content {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        flex-wrap: wrap;
+    }
+
+    .trading-status-banner .status-icon {
+        font-size: 2rem;
+        opacity: 0.9;
+    }
+
+    .trading-status-banner .status-info {
+        flex: 1;
+        min-width: 200px;
+    }
+
+    .trading-status-banner .status-title {
+        font-size: 1.25rem;
+        font-weight: 700;
+        margin-bottom: 4px;
+    }
+
+    .trading-status-banner .status-reason {
+        font-size: 0.95rem;
+        opacity: 0.9;
+    }
+
+    .trading-status-banner .status-details {
+        font-size: 0.85rem;
+        opacity: 0.8;
+        margin-top: 4px;
+    }
+
+    .trading-status-banner .status-actions {
+        display: flex;
+        gap: 12px;
+    }
+
+    .trading-status-banner .btn-warning {
+        background: rgba(255,255,255,0.2);
+        border: 1px solid rgba(255,255,255,0.4);
+        color: white;
+    }
+
+    .trading-status-banner .btn-danger {
+        background: rgba(0,0,0,0.2);
+        border: 1px solid rgba(255,255,255,0.3);
+        color: white;
+    }
+
+    .trading-status-banner .btn:hover {
+        background: rgba(255,255,255,0.3);
+    }
+
     .dashboard-header {
         display: flex;
         justify-content: space-between;
@@ -237,6 +304,28 @@
         </div>
     </div>
 
+    <!-- Trading Status Banner -->
+    <div id="trading-status-banner" class="trading-status-banner hidden">
+        <div class="status-content">
+            <div class="status-icon">
+                <i class="fas fa-exclamation-triangle"></i>
+            </div>
+            <div class="status-info">
+                <div class="status-title">Trading Blocked</div>
+                <div class="status-reason" id="block-reason">Daily loss limit reached</div>
+                <div class="status-details" id="block-details">Daily P&L: $0.00 / Limit: $0.00</div>
+            </div>
+            <div class="status-actions">
+                <button class="btn btn-warning btn-sm" onclick="unblockTrading('daily')">
+                    <i class="fas fa-redo"></i> Reset Daily Loss
+                </button>
+                <button class="btn btn-danger btn-sm" onclick="unblockTrading('all')">
+                    <i class="fas fa-unlock"></i> Unblock All
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Key Metrics -->
     <div class="stats-grid">
         <div class="stat-card">
@@ -415,6 +504,9 @@ async function loadFuturesData() {
                 updatePositions([]);
             }
         }
+
+        // Check trading status (blocked/unblocked)
+        await checkTradingStatus();
 
         // Load trades for the performance chart
         await loadPerformanceChart();
@@ -609,6 +701,66 @@ function formatExitReason(reason) {
     };
     const info = reasonMap[reason] || reasonMap['unknown'];
     return `<span class="exit-reason ${info.class}">${info.label}</span>`;
+}
+
+// Check trading status (blocked/unblocked)
+async function checkTradingStatus() {
+    try {
+        const response = await fetch('/api/futures/trading/status');
+        if (!response.ok) return;
+
+        const data = await response.json();
+        if (!data.success) return;
+
+        const banner = document.getElementById('trading-status-banner');
+        const reasonEl = document.getElementById('block-reason');
+        const detailsEl = document.getElementById('block-details');
+
+        if (data.trading_blocked) {
+            banner.classList.remove('hidden');
+
+            // Determine block reason
+            let reason = 'Risk limit reached';
+            if (data.daily_pnl <= -data.daily_loss_limit) {
+                reason = 'Daily loss limit reached';
+            } else if (data.consecutive_losses >= data.max_consecutive_losses) {
+                reason = `${data.consecutive_losses} consecutive losses`;
+            }
+            reasonEl.textContent = reason;
+
+            // Show details
+            detailsEl.textContent = `Daily P&L: $${data.daily_pnl.toFixed(2)} | Limit: $${data.daily_loss_limit.toFixed(2)} | Consecutive Losses: ${data.consecutive_losses}`;
+        } else {
+            banner.classList.add('hidden');
+        }
+    } catch (error) {
+        console.debug('Could not check trading status:', error);
+    }
+}
+
+// Unblock trading
+async function unblockTrading(resetType) {
+    if (!confirm(`Reset ${resetType === 'all' ? 'daily loss AND consecutive losses' : 'daily loss'} and unblock trading?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/futures/trading/unblock', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reset_type: resetType })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            alert(`Trading unblocked! Previous daily P&L: $${data.previous_daily_pnl?.toFixed(2) || '0.00'}`);
+            loadFuturesData();
+        } else {
+            alert('Error: ' + (data.error || 'Failed to unblock trading'));
+        }
+    } catch (error) {
+        alert('Failed to unblock trading: ' + error.message);
+    }
 }
 
 async function closePosition(symbol) {

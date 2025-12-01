@@ -241,6 +241,7 @@ class FuturesTradingEngine:
             # Position settings
             self.max_positions = position_config.max_positions
             self.position_size_usd = position_config.position_size_usd
+            self.capital_allocation = position_config.capital_allocation
 
             # Leverage settings
             self.leverage = leverage_config.default_leverage
@@ -248,7 +249,16 @@ class FuturesTradingEngine:
             # Risk settings
             self.stop_loss_pct = -abs(risk_config.stop_loss_pct)  # Ensure negative
             self.take_profit_pct = abs(risk_config.take_profit_pct)  # Ensure positive
-            self.max_daily_loss = risk_config.max_daily_loss_usd
+
+            # Calculate max_daily_loss_usd from percentage and capital
+            # If max_daily_loss_pct is set (from UI), use that. Otherwise use max_daily_loss_usd directly.
+            if risk_config.max_daily_loss_pct and risk_config.max_daily_loss_pct > 0:
+                self.max_daily_loss = self.capital_allocation * (risk_config.max_daily_loss_pct / 100)
+                logger.info(f"Daily loss limit: ${self.max_daily_loss:.2f} ({risk_config.max_daily_loss_pct}% of ${self.capital_allocation})")
+            else:
+                self.max_daily_loss = risk_config.max_daily_loss_usd
+                logger.info(f"Daily loss limit: ${self.max_daily_loss:.2f} (fixed USD)")
+
             self.cooldown_duration = timedelta(minutes=strategy_config.cooldown_minutes)
 
             # Pairs settings
@@ -300,6 +310,7 @@ class FuturesTradingEngine:
 
         # Exchange client
         self.exchange_client = None
+        self.price_client = None  # Mainnet client for accurate prices in DRY_RUN mode
 
         # Risk metrics
         self.risk_metrics = RiskMetrics(
@@ -515,6 +526,39 @@ class FuturesTradingEngine:
             # Load markets
             await self.exchange_client.load_markets()
             logger.info(f"✅ Loaded {len(self.exchange_client.markets)} markets")
+
+            # Create mainnet price client for accurate prices (especially in DRY_RUN mode)
+            # This ensures we always get live prices from mainnet, regardless of testnet setting
+            if self.dry_run or self.testnet:
+                try:
+                    # Use mainnet credentials if available, otherwise create public client
+                    mainnet_key = os.getenv('BINANCE_API_KEY')
+                    mainnet_secret = os.getenv('BINANCE_API_SECRET')
+
+                    if mainnet_key and mainnet_secret:
+                        self.price_client = ccxt.binance({
+                            'apiKey': mainnet_key,
+                            'secret': mainnet_secret,
+                            'enableRateLimit': True,
+                            'options': {
+                                'defaultType': 'future',
+                                'adjustForTimeDifference': True,
+                            }
+                        })
+                    else:
+                        # Public client without credentials (can still fetch prices)
+                        self.price_client = ccxt.binance({
+                            'enableRateLimit': True,
+                            'options': {
+                                'defaultType': 'future',
+                            }
+                        })
+
+                    await self.price_client.load_markets()
+                    logger.info("✅ Mainnet price client initialized for accurate live prices")
+                except Exception as e:
+                    logger.warning(f"Could not initialize mainnet price client: {e}")
+                    self.price_client = None
 
         except ImportError:
             logger.error("ccxt library not installed. Install: pip install ccxt")
@@ -1286,11 +1330,21 @@ class FuturesTradingEngine:
         pass
 
     async def _get_ticker(self, symbol: str) -> Optional[Dict]:
-        """Get current ticker for symbol"""
+        """Get current ticker for symbol - uses mainnet price client when available"""
         try:
-            ticker = await self.exchange_client.fetch_ticker(symbol)
+            # Use mainnet price client for accurate prices (especially in testnet/DRY_RUN mode)
+            client = self.price_client if self.price_client else self.exchange_client
+            ticker = await client.fetch_ticker(symbol)
             return ticker
         except Exception as e:
+            # Fallback to exchange_client if price_client fails
+            if self.price_client and client == self.price_client:
+                try:
+                    ticker = await self.exchange_client.fetch_ticker(symbol)
+                    return ticker
+                except Exception as e2:
+                    logger.error(f"Error fetching ticker for {symbol} from both clients: {e}, {e2}")
+                    return None
             logger.error(f"Error fetching ticker for {symbol}: {e}")
             return None
 
