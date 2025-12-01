@@ -130,6 +130,8 @@ class HealthServer:
         self.web_app.router.add_get('/trades', self.trades_handler)
         self.web_app.router.add_post('/position/close', self.close_position_handler)
         self.web_app.router.add_post('/positions/close-all', self.close_all_positions_handler)
+        self.web_app.router.add_post('/trading/unblock', self.unblock_trading_handler)
+        self.web_app.router.add_get('/trading/status', self.trading_status_handler)
 
     async def health_handler(self, request):
         """Liveness probe endpoint"""
@@ -201,11 +203,16 @@ class HealthServer:
                     'entry_price': pos.entry_price,
                     'current_price': pos.current_price,
                     'size': pos.size,
+                    'original_size': pos.original_size,
                     'notional_value': pos.notional_value,
                     'leverage': pos.leverage,
                     'stop_loss': pos.stop_loss,
                     'take_profit': pos.take_profit,
+                    'tp_levels': pos.tp_levels,  # Multiple TP levels with hit status
                     'trailing_stop': pos.metadata.get('trailing_stop'),
+                    'trailing_stop_price': pos.trailing_stop_price,
+                    'highest_price': pos.highest_price,
+                    'lowest_price': pos.lowest_price,
                     'liquidation_price': pos.liquidation_price,
                     'unrealized_pnl': pos.unrealized_pnl,
                     'unrealized_pnl_pct': pos.unrealized_pnl_pct,
@@ -359,6 +366,65 @@ class HealthServer:
 
         except Exception as e:
             logger.error(f"Error closing all positions: {e}")
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    async def trading_status_handler(self, request):
+        """Get current trading status including block status"""
+        if not self.app.engine:
+            return web.json_response({'error': 'Engine not initialized'}, status=503)
+
+        risk = self.app.engine.risk_metrics
+
+        return web.json_response({
+            'success': True,
+            'trading_blocked': not risk.can_trade,
+            'block_reasons': [],
+            'daily_pnl': risk.daily_pnl,
+            'daily_loss_limit': risk.daily_loss_limit,
+            'consecutive_losses': risk.consecutive_losses,
+            'max_consecutive_losses': 5,
+            'risk_level': risk.risk_level,
+            'daily_trades': risk.daily_trades,
+            'can_trade': risk.can_trade
+        })
+
+    async def unblock_trading_handler(self, request):
+        """Reset daily loss and unblock trading"""
+        if not self.app.engine:
+            return web.json_response({'error': 'Engine not initialized'}, status=503)
+
+        try:
+            data = await request.json() if request.content_length else {}
+            reset_type = data.get('reset_type', 'all')  # 'daily', 'consecutive', 'all'
+
+            risk = self.app.engine.risk_metrics
+            old_daily_pnl = risk.daily_pnl
+            old_consecutive = risk.consecutive_losses
+
+            if reset_type in ['daily', 'all']:
+                risk.daily_pnl = 0.0
+                risk.daily_trades = 0
+                logger.info(f"🔓 Daily PnL reset from ${old_daily_pnl:.2f} to $0.00")
+
+            if reset_type in ['consecutive', 'all']:
+                risk.consecutive_losses = 0
+                logger.info(f"🔓 Consecutive losses reset from {old_consecutive} to 0")
+
+            risk.last_reset = datetime.now()
+
+            return web.json_response({
+                'success': True,
+                'message': f'Trading unblocked ({reset_type} reset)',
+                'previous_daily_pnl': old_daily_pnl,
+                'previous_consecutive_losses': old_consecutive,
+                'can_trade': risk.can_trade
+            })
+
+        except Exception as e:
+            logger.error(f"Error unblocking trading: {e}")
             return web.json_response({
                 'success': False,
                 'error': str(e)

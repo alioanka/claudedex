@@ -379,17 +379,19 @@
             </div>
         </div>
 
+        <div class="info-box">
+            <i class="fas fa-info-circle"></i>
+            <div>
+                <strong>Position Sizing Formula:</strong> Capital × Position% = Margin, then Margin × Leverage = Notional Position.
+                Example: $300 × 15% = $45 margin × 10x = $450 notional position.
+            </div>
+        </div>
+
         <div class="setting-grid">
             <div class="setting-item">
                 <label class="setting-label">Capital Allocation (USDT)</label>
                 <div class="setting-description">Total capital allocated to futures trading</div>
                 <input type="number" class="setting-input" id="futures_capital" name="futures_capital" value="300" min="10" step="10">
-            </div>
-
-            <div class="setting-item">
-                <label class="setting-label">Max Position Size (%)</label>
-                <div class="setting-description">Maximum percentage of capital per trade</div>
-                <input type="number" class="setting-input" id="futures_max_position_pct" name="futures_max_position_pct" value="10" min="1" max="100" step="1">
             </div>
 
             <div class="setting-item">
@@ -400,8 +402,53 @@
 
             <div class="setting-item">
                 <label class="setting-label">Minimum Trade Size (USDT)</label>
-                <div class="setting-description">Minimum size for any futures trade</div>
+                <div class="setting-description">Minimum notional size for any futures trade</div>
                 <input type="number" class="setting-input" id="futures_min_trade_size" name="futures_min_trade_size" value="10" min="1" step="1">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">Max Position Size (USDT)</label>
+                <div class="setting-description">Maximum notional size cap regardless of percentage</div>
+                <input type="number" class="setting-input" id="futures_max_position_usd" name="futures_max_position_usd" value="500" min="10" step="10">
+            </div>
+        </div>
+
+        <!-- Dynamic Position Sizing Sub-section -->
+        <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid #2d3548;">
+            <h4 style="color: #a78bfa; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+                <i class="fas fa-sliders-h"></i>
+                Dynamic Position Sizing
+            </h4>
+            <div class="setting-grid">
+                <div class="setting-item">
+                    <label class="setting-label">
+                        <i class="fas fa-toggle-on"></i>
+                        Enable Dynamic Sizing
+                    </label>
+                    <div class="setting-description">Adjust position size based on signal strength (stronger signals = larger positions)</div>
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="futures_dynamic_position_sizing" name="futures_dynamic_position_sizing" checked>
+                        <span>Enabled</span>
+                    </div>
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">Static Position Size (%)</label>
+                    <div class="setting-description">Fixed % of capital when dynamic sizing is disabled</div>
+                    <input type="number" class="setting-input" id="futures_static_position_pct" name="futures_static_position_pct" value="15" min="1" max="50" step="1">
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">Min Position Size (%)</label>
+                    <div class="setting-description">Minimum % of capital for weak signals</div>
+                    <input type="number" class="setting-input" id="futures_min_position_pct" name="futures_min_position_pct" value="5" min="1" max="50" step="1">
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">Max Position Size (%)</label>
+                    <div class="setting-description">Maximum % of capital for strong signals</div>
+                    <input type="number" class="setting-input" id="futures_max_position_pct" name="futures_max_position_pct" value="20" min="1" max="100" step="1">
+                </div>
             </div>
         </div>
     </div>
@@ -496,6 +543,110 @@
                 <label class="setting-label">Trailing Stop Distance (%)</label>
                 <div class="setting-description">Distance for trailing stop from current price</div>
                 <input type="number" class="setting-input" id="futures_trailing_distance" name="futures_trailing_distance" value="1.5" min="0.1" max="20" step="0.1">
+            </div>
+        </div>
+    </div>
+
+    <!-- Multiple Take Profits -->
+    <div class="settings-section">
+        <div class="section-header">
+            <div class="section-title">
+                <i class="fas fa-layer-group"></i>
+                Multiple Take Profits
+            </div>
+        </div>
+
+        <div class="info-box">
+            <i class="fas fa-info-circle"></i>
+            <div>
+                <strong>Partial Position Closes:</strong> Configure up to 4 take profit levels. Each TP closes a percentage of the position.
+                Set Size% to 0 to disable a TP level. Example: TP1=25% at 2%, TP2=25% at 4%, TP3=25% at 6%, TP4=25% at 10%.
+            </div>
+        </div>
+
+        <div class="setting-grid">
+            <!-- TP1 -->
+            <div class="setting-item">
+                <label class="setting-label" style="color: #10b981;">
+                    <i class="fas fa-flag"></i>
+                    TP1 Price (%)
+                </label>
+                <div class="setting-description">First take profit at this % price move</div>
+                <input type="number" class="setting-input" id="futures_tp1_pct" name="futures_tp1_pct" value="2" min="0.1" max="50" step="0.1">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label" style="color: #10b981;">
+                    <i class="fas fa-percentage"></i>
+                    TP1 Size (%)
+                </label>
+                <div class="setting-description">Close this % of position at TP1</div>
+                <input type="number" class="setting-input" id="futures_tp1_size_pct" name="futures_tp1_size_pct" value="25" min="0" max="100" step="5">
+            </div>
+
+            <!-- TP2 -->
+            <div class="setting-item">
+                <label class="setting-label" style="color: #3b82f6;">
+                    <i class="fas fa-flag"></i>
+                    TP2 Price (%)
+                </label>
+                <div class="setting-description">Second take profit at this % price move</div>
+                <input type="number" class="setting-input" id="futures_tp2_pct" name="futures_tp2_pct" value="4" min="0.1" max="50" step="0.1">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label" style="color: #3b82f6;">
+                    <i class="fas fa-percentage"></i>
+                    TP2 Size (%)
+                </label>
+                <div class="setting-description">Close this % of position at TP2</div>
+                <input type="number" class="setting-input" id="futures_tp2_size_pct" name="futures_tp2_size_pct" value="25" min="0" max="100" step="5">
+            </div>
+
+            <!-- TP3 -->
+            <div class="setting-item">
+                <label class="setting-label" style="color: #f59e0b;">
+                    <i class="fas fa-flag"></i>
+                    TP3 Price (%)
+                </label>
+                <div class="setting-description">Third take profit at this % price move</div>
+                <input type="number" class="setting-input" id="futures_tp3_pct" name="futures_tp3_pct" value="6" min="0.1" max="50" step="0.1">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label" style="color: #f59e0b;">
+                    <i class="fas fa-percentage"></i>
+                    TP3 Size (%)
+                </label>
+                <div class="setting-description">Close this % of position at TP3</div>
+                <input type="number" class="setting-input" id="futures_tp3_size_pct" name="futures_tp3_size_pct" value="25" min="0" max="100" step="5">
+            </div>
+
+            <!-- TP4 -->
+            <div class="setting-item">
+                <label class="setting-label" style="color: #ef4444;">
+                    <i class="fas fa-flag"></i>
+                    TP4 Price (%)
+                </label>
+                <div class="setting-description">Final take profit at this % price move</div>
+                <input type="number" class="setting-input" id="futures_tp4_pct" name="futures_tp4_pct" value="10" min="0.1" max="100" step="0.1">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label" style="color: #ef4444;">
+                    <i class="fas fa-percentage"></i>
+                    TP4 Size (%)
+                </label>
+                <div class="setting-description">Close remaining % at TP4 (set to 0 to disable)</div>
+                <input type="number" class="setting-input" id="futures_tp4_size_pct" name="futures_tp4_size_pct" value="25" min="0" max="100" step="5">
+            </div>
+        </div>
+
+        <div class="warning-box" style="margin-top: 16px;">
+            <i class="fas fa-calculator"></i>
+            <div>
+                <strong>Size Total:</strong> <span id="tp_size_total">100%</span> - All TP sizes should add up to 100% to close the full position.
+                If total is less than 100%, remaining position stays open until SL or signal reversal.
             </div>
         </div>
     </div>
@@ -744,6 +895,10 @@ function populateSettings(settings) {
         }
     }
     updateModuleStatus();
+    // Update TP size total after loading settings
+    if (typeof updateTpSizeTotal === 'function') {
+        updateTpSizeTotal();
+    }
 }
 
 function updateModuleStatus() {
@@ -792,28 +947,77 @@ function resetSettings() {
         document.getElementById('futures_trading_mode').value = 'paper';
         document.getElementById('futures_contract_type').value = 'perpetual';
         document.getElementById('futures_capital').value = 300;
-        document.getElementById('futures_max_position_pct').value = 10;
         document.getElementById('futures_max_positions').value = 3;
         document.getElementById('futures_min_trade_size').value = 10;
+        document.getElementById('futures_max_position_usd').value = 500;
+        // Dynamic position sizing
+        document.getElementById('futures_dynamic_position_sizing').checked = true;
+        document.getElementById('futures_static_position_pct').value = 15;
+        document.getElementById('futures_min_position_pct').value = 5;
+        document.getElementById('futures_max_position_pct').value = 20;
+        // Leverage
         document.getElementById('futures_leverage').value = 5;
         document.getElementById('futures_max_leverage').value = 10;
         document.getElementById('futures_margin_mode').value = 'isolated';
+        // Risk
         document.getElementById('futures_stop_loss').value = 2;
         document.getElementById('futures_take_profit').value = 4;
         document.getElementById('futures_daily_loss_limit').value = 5;
         document.getElementById('futures_liquidation_buffer').value = 20;
         document.getElementById('futures_trailing_stop').checked = true;
         document.getElementById('futures_trailing_distance').value = 1.5;
+        // Multiple TPs
+        document.getElementById('futures_tp1_pct').value = 2;
+        document.getElementById('futures_tp1_size_pct').value = 25;
+        document.getElementById('futures_tp2_pct').value = 4;
+        document.getElementById('futures_tp2_size_pct').value = 25;
+        document.getElementById('futures_tp3_pct').value = 6;
+        document.getElementById('futures_tp3_size_pct').value = 25;
+        document.getElementById('futures_tp4_pct').value = 10;
+        document.getElementById('futures_tp4_size_pct').value = 25;
+        // Trading pairs
         document.getElementById('futures_allowed_pairs').value = 'BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT';
         document.getElementById('futures_both_directions').checked = true;
         document.getElementById('futures_preferred_direction').value = 'both';
+        // Funding
         document.getElementById('futures_funding_arb').checked = false;
         document.getElementById('futures_max_funding_rate').value = 0.1;
 
         updateModuleStatus();
+        updateTpSizeTotal();
         showToast('Settings reset to defaults', 'info');
     }
 }
+
+// Calculate and display TP size total
+function updateTpSizeTotal() {
+    const tp1 = parseFloat(document.getElementById('futures_tp1_size_pct').value) || 0;
+    const tp2 = parseFloat(document.getElementById('futures_tp2_size_pct').value) || 0;
+    const tp3 = parseFloat(document.getElementById('futures_tp3_size_pct').value) || 0;
+    const tp4 = parseFloat(document.getElementById('futures_tp4_size_pct').value) || 0;
+    const total = tp1 + tp2 + tp3 + tp4;
+
+    const totalEl = document.getElementById('tp_size_total');
+    totalEl.textContent = total + '%';
+
+    if (total === 100) {
+        totalEl.style.color = '#10b981';  // Green
+    } else if (total > 100) {
+        totalEl.style.color = '#ef4444';  // Red
+    } else {
+        totalEl.style.color = '#f59e0b';  // Orange (less than 100%)
+    }
+}
+
+// Add event listeners for TP size inputs
+document.addEventListener('DOMContentLoaded', function() {
+    ['futures_tp1_size_pct', 'futures_tp2_size_pct', 'futures_tp3_size_pct', 'futures_tp4_size_pct'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('input', updateTpSizeTotal);
+        }
+    });
+});
 
 function showToast(message, type = 'info') {
     const toast = document.createElement('div');

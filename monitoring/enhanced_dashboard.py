@@ -369,6 +369,8 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/futures/trades', self.api_futures_trades)
         self.app.router.add_post('/api/futures/position/close', self.api_futures_close_position)
         self.app.router.add_post('/api/futures/positions/close-all', self.api_futures_close_all_positions)
+        self.app.router.add_get('/api/futures/trading/status', self.api_futures_trading_status)
+        self.app.router.add_post('/api/futures/trading/unblock', self.api_futures_trading_unblock)
 
         # API - Trading controls
         self.app.router.add_post('/api/trade/execute', self.api_execute_trade)
@@ -3709,10 +3711,29 @@ class DashboardEndpoints:
             data = await request.json()
             user_id = request.get('user_id', None)  # From auth middleware if available
 
+            # Key mapping from UI field names to config field names
+            key_mapping = {
+                'daily_loss_limit': 'max_daily_loss_pct',  # UI uses % field
+                'stop_loss': 'stop_loss_pct',
+                'take_profit': 'take_profit_pct',
+                'trailing_stop': 'trailing_stop_enabled',
+                'trailing_distance': 'trailing_stop_distance',
+                'leverage': 'default_leverage',
+                'capital': 'capital_allocation',
+                'funding_arb': 'funding_arbitrage_enabled',
+                'signal_timeframe': 'signal_timeframe',
+                'scan_interval': 'scan_interval_seconds',
+                'signal_score': 'min_signal_score',
+                'cooldown': 'cooldown_minutes',
+            }
+
             async with self.db_pool.acquire() as conn:
                 for key, value in data.items():
                     # Remove futures_ prefix if present
                     clean_key = key.replace('futures_', '') if key.startswith('futures_') else key
+
+                    # Apply key mapping
+                    clean_key = key_mapping.get(clean_key, clean_key)
 
                     # Determine config_type from key
                     config_type = self._get_futures_config_type(clean_key)
@@ -4256,6 +4277,49 @@ class DashboardEndpoints:
 
         except Exception as e:
             logger.error(f"Error closing all futures positions: {e}")
+            return web.json_response({
+                'success': False,
+                'error': f'Futures module not available: {str(e)}'
+            }, status=503)
+
+    async def api_futures_trading_status(self, request):
+        """Get futures trading status including block status"""
+        try:
+            futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{futures_port}/trading/status', timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return web.json_response(data)
+                    else:
+                        return web.json_response({
+                            'success': False,
+                            'error': f'Futures module returned status {resp.status}'
+                        }, status=resp.status)
+        except Exception as e:
+            logger.error(f"Error fetching futures trading status: {e}")
+            return web.json_response({
+                'success': False,
+                'error': f'Futures module not available: {str(e)}'
+            }, status=503)
+
+    async def api_futures_trading_unblock(self, request):
+        """Unblock futures trading by resetting daily loss/consecutive losses"""
+        try:
+            futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+            data = await request.json() if request.content_length else {}
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f'http://localhost:{futures_port}/trading/unblock',
+                    json=data,
+                    timeout=5
+                ) as resp:
+                    result = await resp.json()
+                    return web.json_response(result, status=resp.status)
+
+        except Exception as e:
+            logger.error(f"Error unblocking futures trading: {e}")
             return web.json_response({
                 'success': False,
                 'error': f'Futures module not available: {str(e)}'
