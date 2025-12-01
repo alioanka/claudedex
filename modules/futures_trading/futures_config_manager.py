@@ -43,8 +43,14 @@ class FuturesGeneralConfig(BaseModel):
 class FuturesPositionConfig(BaseModel):
     """Position sizing configuration"""
     capital_allocation: float = 300.0
-    position_size_usd: float = 100.0
-    max_position_pct: float = 10.0
+    # Dynamic position sizing
+    dynamic_position_sizing: bool = True  # Enable/disable dynamic sizing
+    min_position_pct: float = 5.0  # Minimum position size as % of capital
+    max_position_pct: float = 20.0  # Maximum position size as % of capital
+    max_position_usd: float = 500.0  # Maximum position size in USD (cap)
+    # Static position sizing (when dynamic is disabled)
+    static_position_pct: float = 15.0  # Fixed position size as % of capital
+    position_size_usd: float = 100.0  # Legacy: fixed USD position size (deprecated)
     max_positions: int = 5
     min_trade_size: float = 10.0
 
@@ -58,10 +64,23 @@ class FuturesLeverageConfig(BaseModel):
 
 class FuturesRiskConfig(BaseModel):
     """Risk management configuration"""
-    stop_loss_pct: float = 5.0
-    take_profit_pct: float = 10.0
+    stop_loss_pct: float = 2.0  # Price move % to trigger SL
+    # Multiple Take Profits
+    # TP prices as % above/below entry (for price targets)
+    tp1_pct: float = 2.0  # First TP at 2% profit
+    tp2_pct: float = 4.0  # Second TP at 4% profit
+    tp3_pct: float = 6.0  # Third TP at 6% profit
+    tp4_pct: float = 10.0  # Fourth TP at 10% profit
+    # TP sizes as % of position to close at each level (should sum to 100 for all used TPs)
+    tp1_size_pct: float = 25.0  # Close 25% at TP1
+    tp2_size_pct: float = 25.0  # Close 25% at TP2
+    tp3_size_pct: float = 25.0  # Close 25% at TP3
+    tp4_size_pct: float = 25.0  # Close remaining 25% at TP4
+    # Legacy single TP (deprecated, use tp1_pct instead)
+    take_profit_pct: float = 4.0
+    # Daily loss limits
     max_daily_loss_usd: float = 500.0
-    max_daily_loss_pct: float = 10.0
+    max_daily_loss_pct: float = 5.0
     liquidation_buffer: float = 20.0
     trailing_stop_enabled: bool = True
     trailing_stop_distance: float = 1.5
@@ -442,30 +461,54 @@ class FuturesConfigManager:
             'testnet': FuturesConfigType.GENERAL,
             'trading_mode': FuturesConfigType.GENERAL,  # alias for testnet
             'contract_type': FuturesConfigType.GENERAL,
+            # Position settings
             'capital': FuturesConfigType.POSITION,  # alias for capital_allocation
             'capital_allocation': FuturesConfigType.POSITION,
             'position_size_usd': FuturesConfigType.POSITION,
             'max_position_pct': FuturesConfigType.POSITION,
             'max_positions': FuturesConfigType.POSITION,
             'min_trade_size': FuturesConfigType.POSITION,
+            # Dynamic position sizing
+            'dynamic_position_sizing': FuturesConfigType.POSITION,
+            'min_position_pct': FuturesConfigType.POSITION,
+            'max_position_usd': FuturesConfigType.POSITION,
+            'static_position_pct': FuturesConfigType.POSITION,
+            # Leverage settings
             'leverage': FuturesConfigType.LEVERAGE,  # alias for default_leverage
             'default_leverage': FuturesConfigType.LEVERAGE,
             'max_leverage': FuturesConfigType.LEVERAGE,
             'margin_mode': FuturesConfigType.LEVERAGE,
+            # Risk settings - SL
             'stop_loss': FuturesConfigType.RISK,  # alias
             'stop_loss_pct': FuturesConfigType.RISK,
+            # Risk settings - Legacy single TP
             'take_profit': FuturesConfigType.RISK,  # alias
             'take_profit_pct': FuturesConfigType.RISK,
+            # Risk settings - Multiple TPs
+            'tp1_pct': FuturesConfigType.RISK,
+            'tp2_pct': FuturesConfigType.RISK,
+            'tp3_pct': FuturesConfigType.RISK,
+            'tp4_pct': FuturesConfigType.RISK,
+            'tp1_size_pct': FuturesConfigType.RISK,
+            'tp2_size_pct': FuturesConfigType.RISK,
+            'tp3_size_pct': FuturesConfigType.RISK,
+            'tp4_size_pct': FuturesConfigType.RISK,
+            # Risk settings - Daily loss
             'daily_loss_limit': FuturesConfigType.RISK,  # alias
             'max_daily_loss_usd': FuturesConfigType.RISK,
+            'max_daily_loss_pct': FuturesConfigType.RISK,
+            'max_consecutive_losses': FuturesConfigType.RISK,
             'liquidation_buffer': FuturesConfigType.RISK,
+            # Risk settings - Trailing stop
             'trailing_stop': FuturesConfigType.RISK,  # alias
             'trailing_stop_enabled': FuturesConfigType.RISK,
             'trailing_distance': FuturesConfigType.RISK,  # alias
             'trailing_stop_distance': FuturesConfigType.RISK,
+            # Pairs settings
             'allowed_pairs': FuturesConfigType.PAIRS,
             'both_directions': FuturesConfigType.PAIRS,
             'preferred_direction': FuturesConfigType.PAIRS,
+            # Strategy settings
             'signal_timeframe': FuturesConfigType.STRATEGY,
             'timeframe': FuturesConfigType.STRATEGY,  # alias
             'scan_interval_seconds': FuturesConfigType.STRATEGY,
@@ -477,6 +520,7 @@ class FuturesConfigManager:
             'min_signal_score': FuturesConfigType.STRATEGY,
             'verbose_signals': FuturesConfigType.STRATEGY,
             'cooldown_minutes': FuturesConfigType.STRATEGY,
+            # Funding settings
             'funding_arb': FuturesConfigType.FUNDING,  # alias
             'funding_arbitrage_enabled': FuturesConfigType.FUNDING,
             'max_funding_rate': FuturesConfigType.FUNDING,
