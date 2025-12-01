@@ -262,6 +262,37 @@
     .price-levels .tp { color: #10b981; }
     .price-levels .tsl { color: #8b5cf6; }
 
+    .tp-levels-container {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        font-size: 0.7rem;
+    }
+
+    .tp-level {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .tp-level.hit {
+        text-decoration: line-through;
+        opacity: 0.5;
+    }
+
+    .tp-badge {
+        display: inline-block;
+        padding: 1px 4px;
+        border-radius: 3px;
+        font-weight: 600;
+        font-size: 0.6rem;
+    }
+
+    .tp-badge.tp1 { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .tp-badge.tp2 { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+    .tp-badge.tp3 { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .tp-badge.tp4 { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+
     .exit-reason {
         font-size: 0.75rem;
         padding: 2px 6px;
@@ -402,7 +433,8 @@
                     <th>Leverage</th>
                     <th>Entry</th>
                     <th>Current</th>
-                    <th>SL / TP / TSL</th>
+                    <th>SL</th>
+                    <th>Take Profits</th>
                     <th>P&L</th>
                     <th>Actions</th>
                 </tr>
@@ -607,14 +639,35 @@ function updatePositions(positions) {
         const entryPrice = pos.entry_price || pos.entry || 0;
         const currentPrice = pos.current_price || pos.current || 0;
         const stopLoss = pos.stop_loss;
-        const takeProfit = pos.take_profit;
-        const trailingStop = pos.trailing_stop;
+        const tpLevels = pos.tp_levels || [];
         const pnlUsd = pos.unrealized_pnl !== undefined ? pos.unrealized_pnl : parseFloat((pos.pnl_usd || '0').replace('$', ''));
         const pnlPct = pos.unrealized_pnl_pct !== undefined ? pos.unrealized_pnl_pct : parseFloat(pos.pnl_pct || 0);
 
-        const slText = stopLoss ? `<span class="sl">$${parseFloat(stopLoss).toLocaleString()}</span>` : '-';
-        const tpText = takeProfit ? `<span class="tp">$${parseFloat(takeProfit).toLocaleString()}</span>` : '-';
-        const tslText = trailingStop ? `<span class="tsl">${trailingStop}%</span>` : '-';
+        const slText = stopLoss ? `<span class="sl">$${parseFloat(stopLoss).toFixed(4)}</span>` : '-';
+
+        // Build TP levels display
+        let tpHtml = '';
+        if (tpLevels.length > 0) {
+            tpHtml = '<div class="tp-levels-container">';
+            tpLevels.forEach(tp => {
+                const hitClass = tp.hit ? 'hit' : '';
+                const icon = tp.hit ? '✓' : '○';
+                tpHtml += `
+                    <div class="tp-level ${hitClass}">
+                        <span class="tp-badge tp${tp.level}">TP${tp.level}</span>
+                        <span>$${parseFloat(tp.price).toFixed(4)}</span>
+                        <span style="color: #9ca3af;">(${tp.size_pct}%)</span>
+                        <span>${icon}</span>
+                    </div>
+                `;
+            });
+            tpHtml += '</div>';
+        } else if (pos.take_profit) {
+            // Fallback to single TP if no tp_levels
+            tpHtml = `<span class="tp">$${parseFloat(pos.take_profit).toFixed(4)}</span>`;
+        } else {
+            tpHtml = '-';
+        }
 
         return `
             <tr>
@@ -625,7 +678,8 @@ function updatePositions(positions) {
                 <td>${leverage}x</td>
                 <td>$${parseFloat(entryPrice).toLocaleString()}</td>
                 <td>$${parseFloat(currentPrice).toLocaleString()}</td>
-                <td class="price-levels">${slText} / ${tpText} / ${tslText}</td>
+                <td class="price-levels">${slText}</td>
+                <td>${tpHtml}</td>
                 <td class="${pnlUsd >= 0 ? 'positive' : 'negative'}">$${pnlUsd.toFixed(2)} (${pnlPct.toFixed(2)}%)</td>
                 <td>
                     <button class="btn btn-danger btn-sm" onclick="closePosition('${symbol}')" title="Close Position">
