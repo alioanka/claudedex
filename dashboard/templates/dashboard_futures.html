@@ -293,6 +293,21 @@
     .tp-badge.tp3 { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
     .tp-badge.tp4 { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
 
+    .sl-tsl-container {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        font-size: 0.75rem;
+    }
+
+    .sl-tsl-container .sl {
+        color: #ef4444;
+    }
+
+    .sl-tsl-container .tsl {
+        color: #8b5cf6;
+    }
+
     .exit-reason {
         font-size: 0.75rem;
         padding: 2px 6px;
@@ -433,7 +448,7 @@
                     <th>Leverage</th>
                     <th>Entry</th>
                     <th>Current</th>
-                    <th>SL</th>
+                    <th>SL / TSL</th>
                     <th>Take Profits</th>
                     <th>P&L</th>
                     <th>Actions</th>
@@ -639,11 +654,30 @@ function updatePositions(positions) {
         const entryPrice = pos.entry_price || pos.entry || 0;
         const currentPrice = pos.current_price || pos.current || 0;
         const stopLoss = pos.stop_loss;
+        const trailingStopPrice = pos.trailing_stop_price;
+        const trailingStopEnabled = pos.trailing_stop;
+        const highestPrice = pos.highest_price;
+        const lowestPrice = pos.lowest_price;
         const tpLevels = pos.tp_levels || [];
         const pnlUsd = pos.unrealized_pnl !== undefined ? pos.unrealized_pnl : parseFloat((pos.pnl_usd || '0').replace('$', ''));
         const pnlPct = pos.unrealized_pnl_pct !== undefined ? pos.unrealized_pnl_pct : parseFloat(pos.pnl_pct || 0);
 
-        const slText = stopLoss ? `<span class="sl">$${parseFloat(stopLoss).toFixed(4)}</span>` : '-';
+        // Build SL/TSL display
+        let slTslHtml = '<div class="sl-tsl-container">';
+        if (stopLoss) {
+            slTslHtml += `<div><span class="sl">SL: $${parseFloat(stopLoss).toFixed(4)}</span></div>`;
+        }
+        if (trailingStopPrice) {
+            slTslHtml += `<div><span class="tsl">TSL: $${parseFloat(trailingStopPrice).toFixed(4)}</span></div>`;
+        } else if (trailingStopEnabled) {
+            // TSL enabled but not yet active (price hasn't moved enough)
+            const trackPrice = side === 'long' ? highestPrice : lowestPrice;
+            slTslHtml += `<div><span class="tsl" style="opacity: 0.6;">TSL: waiting</span></div>`;
+        }
+        slTslHtml += '</div>';
+        if (slTslHtml === '<div class="sl-tsl-container"></div>') {
+            slTslHtml = '-';
+        }
 
         // Build TP levels display
         let tpHtml = '';
@@ -678,7 +712,7 @@ function updatePositions(positions) {
                 <td>${leverage}x</td>
                 <td>$${parseFloat(entryPrice).toLocaleString()}</td>
                 <td>$${parseFloat(currentPrice).toLocaleString()}</td>
-                <td class="price-levels">${slText}</td>
+                <td class="price-levels">${slTslHtml}</td>
                 <td>${tpHtml}</td>
                 <td class="${pnlUsd >= 0 ? 'positive' : 'negative'}">$${pnlUsd.toFixed(2)} (${pnlPct.toFixed(2)}%)</td>
                 <td>
