@@ -814,14 +814,21 @@ class FuturesTradingEngine:
 
     async def _check_exit_conditions(self, position: Position) -> Optional[str]:
         """Check if position should be closed and return reason"""
-        pnl_pct = position.unrealized_pnl_pct
+        leveraged_pnl_pct = position.unrealized_pnl_pct  # This is leveraged PnL %
 
-        # Stop loss check
-        if pnl_pct <= self.stop_loss_pct:
+        # Un-leverage to get actual price change percentage for SL/TP comparison
+        # stop_loss_pct and take_profit_pct are price movement percentages (not leveraged)
+        actual_price_change_pct = leveraged_pnl_pct / position.leverage if position.leverage > 0 else leveraged_pnl_pct
+
+        # Stop loss check - stop_loss_pct is stored as positive (e.g., 2.0)
+        # SL triggers when price moves against position by >= stop_loss_pct
+        # Example: if stop_loss_pct=2.0, SL triggers when price drops 2% (for LONG)
+        if actual_price_change_pct <= -self.stop_loss_pct:
             return "stop_loss"
 
-        # Take profit check
-        if pnl_pct >= self.take_profit_pct:
+        # Take profit check (legacy single TP - backup if no tp_levels)
+        # TP triggers when price moves in favor by >= take_profit_pct
+        if actual_price_change_pct >= self.take_profit_pct:
             return "take_profit"
 
         # Liquidation protection (close at 80% of liquidation price)
@@ -1418,10 +1425,15 @@ class FuturesTradingEngine:
                 take_profit_price = tp_levels[0]['price'] if tp_levels else current_price * (1 - self.take_profit_pct / 100)
                 liquidation_price = current_price * (1 + 0.9 / self.leverage)
 
-            logger.info(f"Position {symbol} {side.value}: Entry=${current_price:.4f}, Size=${notional:.2f}, SL=${stop_loss_price:.4f} ({sl_pct}%)")
+            # Log detailed entry with SL and TP levels for debugging
+            logger.info(f"📊 Opening {symbol} {side.value.upper()}: Entry=${current_price:.4f}, Size=${notional:.2f}, Leverage={self.leverage}x")
+            logger.info(f"   🛑 STOP LOSS: ${stop_loss_price:.4f} ({sl_pct}% price move = {sl_pct * self.leverage}% PnL)")
             if tp_levels:
-                tp_str = ", ".join([f"TP{i+1}=${tp['price']:.4f}({tp['size_pct']}%)" for i, tp in enumerate(tp_levels)])
-                logger.info(f"   Take Profits: {tp_str}")
+                logger.info(f"   🎯 TAKE PROFITS:")
+                for tp in tp_levels:
+                    logger.info(f"      TP{tp['level']}: ${tp['price']:.4f} ({tp['pct']}% price move, close {tp['size_pct']}%)")
+            else:
+                logger.info(f"   🎯 TAKE PROFIT: ${take_profit_price:.4f}")
 
             # Create position object
             position = Position(
@@ -1614,13 +1626,16 @@ class FuturesTradingEngine:
             # Set cooldown
             self.symbol_cooldowns[symbol] = datetime.now() + self.cooldown_duration
 
-            # Log result
+            # Log result with detailed information
             pnl_emoji = "🟢" if net_pnl > 0 else "🔴"
             sim_tag = "[DRY_RUN] " if position.is_simulated else ""
             logger.info(f"{pnl_emoji} {sim_tag}Position closed: {symbol}")
             logger.info(f"   Reason: {reason}")
-            logger.info(f"   Entry: ${position.entry_price:.2f} → Exit: ${position.current_price:.2f}")
-            logger.info(f"   PnL: ${net_pnl:.2f} ({leveraged_pnl_pct:.2f}%)")
+            logger.info(f"   Entry: ${position.entry_price:.4f} → Exit: ${position.current_price:.4f}")
+            logger.info(f"   Price Change: {pnl_pct:+.4f}%")
+            logger.info(f"   PnL (with {position.leverage}x leverage): ${net_pnl:.2f} ({leveraged_pnl_pct:+.2f}%)")
+            if reason == "stop_loss":
+                logger.info(f"   SL Trigger: Price moved {pnl_pct:.2f}% <= -{self.stop_loss_pct}% threshold")
             logger.info(f"   Fees: ${total_fees:.2f}")
             logger.info(f"   Daily PnL: ${self.risk_metrics.daily_pnl:.2f}")
 
