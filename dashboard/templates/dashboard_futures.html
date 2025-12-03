@@ -913,16 +913,17 @@ async function closePosition(symbol) {
         const data = await response.json();
         if (data.success) {
             alert(data.message);
-        } else if (response.status === 404) {
-            // Position already closed
-            alert(`Position ${symbol} may have already been closed by the system.`);
+        } else if (response.status === 404 || data.already_closed) {
+            // Position already closed by system (TP/SL hit)
+            alert(`Position ${symbol} was already closed by the trading system (likely TP/SL hit). Refreshing data...`);
         } else {
             alert('Error: ' + data.error);
         }
     } catch (error) {
-        alert('Failed to close position: ' + error.message);
+        console.error('Failed to close position:', error);
+        alert('Connection error. The position may still be open. Refreshing...');
     } finally {
-        // Always refresh
+        // Always refresh to show current state
         loadFuturesData();
     }
 }
