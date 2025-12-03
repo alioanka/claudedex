@@ -799,9 +799,11 @@ class FuturesTradingEngine:
                 tp_hit = await self._check_tp_levels(position, current_price)
                 if tp_hit:
                     # Partial close was executed, position may still be open
-                    if position.size <= 0:
-                        # All TPs hit, fully closed
-                        del self.active_positions[symbol]
+                    # Use tolerance for floating-point comparison
+                    if position.size <= 1e-8:
+                        # All TPs hit, fully closed - remove from active positions
+                        if symbol in self.active_positions:
+                            del self.active_positions[symbol]
                         continue
 
                 # Check exit conditions (SL, liquidation protection, signal reversal)
@@ -826,9 +828,10 @@ class FuturesTradingEngine:
         if actual_price_change_pct <= -self.stop_loss_pct:
             return "stop_loss"
 
-        # Take profit check (legacy single TP - backup if no tp_levels)
+        # Take profit check (legacy single TP - only if NOT using multiple tp_levels)
+        # Skip this check if position has tp_levels (handled by partial TPs)
         # TP triggers when price moves in favor by >= take_profit_pct
-        if actual_price_change_pct >= self.take_profit_pct:
+        if not position.tp_levels and actual_price_change_pct >= self.take_profit_pct:
             return "take_profit"
 
         # Liquidation protection (close at 80% of liquidation price)
@@ -945,8 +948,12 @@ class FuturesTradingEngine:
     async def _get_technical_signals(self, symbol: str) -> Optional[TechnicalSignals]:
         """Calculate technical indicators for a symbol using configurable timeframe"""
         try:
+            # Use mainnet price_client for accurate live prices (especially in DRY_RUN/testnet mode)
+            # This ensures we always get real market data, not testnet data
+            client = self.price_client if self.price_client else self.exchange_client
+
             # Fetch OHLCV data using configured timeframe (default: 15m for faster signals)
-            ohlcv = await self.exchange_client.fetch_ohlcv(symbol, self.signal_timeframe, limit=100)
+            ohlcv = await client.fetch_ohlcv(symbol, self.signal_timeframe, limit=100)
             if len(ohlcv) < 50:
                 return None
 
@@ -1378,11 +1385,14 @@ class FuturesTradingEngine:
             logger.info(f"   Closed: {close_pct:.1f}%, Remaining: {remaining_pct:.1f}%")
             logger.info(f"   PnL: ${net_pnl:.2f} ({leveraged_pnl_pct:.2f}%)")
 
-            # Check if fully closed
-            if position.size <= 0:
+            # Check if fully closed (use tolerance for floating-point comparison)
+            if position.size <= 1e-8:
                 logger.info(f"✅ Position {symbol} fully closed through TPs")
                 self.total_trades += 1
                 self.symbol_cooldowns[symbol] = datetime.now() + self.cooldown_duration
+                # Clean up position from active positions to prevent double-close
+                if symbol in self.active_positions:
+                    del self.active_positions[symbol]
 
         except Exception as e:
             logger.error(f"Error in partial close {symbol}: {e}")
@@ -1425,15 +1435,12 @@ class FuturesTradingEngine:
                 take_profit_price = tp_levels[0]['price'] if tp_levels else current_price * (1 - self.take_profit_pct / 100)
                 liquidation_price = current_price * (1 + 0.9 / self.leverage)
 
-            # Log detailed entry with SL and TP levels for debugging
-            logger.info(f"📊 Opening {symbol} {side.value.upper()}: Entry=${current_price:.4f}, Size=${notional:.2f}, Leverage={self.leverage}x")
-            logger.info(f"   🛑 STOP LOSS: ${stop_loss_price:.4f} ({sl_pct}% price move = {sl_pct * self.leverage}% PnL)")
+            # Log detailed entry with SL and TP levels for trade log (cleaner format)
+            tp_str = ""
             if tp_levels:
-                logger.info(f"   🎯 TAKE PROFITS:")
-                for tp in tp_levels:
-                    logger.info(f"      TP{tp['level']}: ${tp['price']:.4f} ({tp['pct']}% price move, close {tp['size_pct']}%)")
+                tp_str = f"TP1:${tp_levels[0]['price']:.2f} | TP2:${tp_levels[1]['price']:.2f} | TP3:${tp_levels[2]['price']:.2f} | TP4:${tp_levels[3]['price']:.2f}"
             else:
-                logger.info(f"   🎯 TAKE PROFIT: ${take_profit_price:.4f}")
+                tp_str = f"${take_profit_price:.2f}"
 
             # Create position object
             position = Position(
@@ -1493,7 +1500,11 @@ class FuturesTradingEngine:
             self.active_positions[symbol] = position
             self.risk_metrics.current_exposure += notional
 
+            # Log trade entry with SL/TP details (captured by TradeLogFilter for futures_trades.log)
             logger.info(f"✅ Position opened: {symbol} {side.value.upper()}")
+            logger.info(f"   Entry: ${current_price:.4f}, Notional: ${notional:.2f}, Leverage: {self.leverage}x")
+            logger.info(f"   🛑 Stop Loss: ${stop_loss_price:.4f} ({sl_pct:.1f}%)")
+            logger.info(f"   📈 Take Profit: {tp_str}")
             logger.info(f"   Active positions: {len(self.active_positions)}/{self.max_positions}")
 
             # Send Telegram entry alert
