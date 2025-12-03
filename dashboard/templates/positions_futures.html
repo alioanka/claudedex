@@ -435,9 +435,11 @@ async function closePosition(symbol) {
 
         if (data.success) {
             showToast('success', data.message || `Position ${symbol} closed successfully`);
-        } else if (response.status === 404) {
-            // Position not found - likely already closed
-            showToast('info', `Position ${symbol} may have already been closed. Refreshing...`);
+        } else if (response.status === 404 || data.already_closed) {
+            // Position not found - show debug info
+            const activeList = data.active_positions ? data.active_positions.join(', ') : 'unknown';
+            console.error(`Close failed - Symbol: '${symbol}', Active: [${activeList}]`);
+            showToast('warning', `Position ${symbol} not found. Active: ${activeList}`);
         } else {
             showToast('error', data.error || 'Failed to close position');
         }

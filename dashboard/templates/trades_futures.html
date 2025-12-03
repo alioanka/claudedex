@@ -72,11 +72,33 @@
         color: var(--text-primary);
         font-size: 0.875rem;
         min-width: 140px;
+        /* Ensure dropdown options are readable */
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239ca3af' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 10px center;
+        padding-right: 30px;
+    }
+
+    .filter-select option {
+        background: #1f2937;
+        color: #f9fafb;
+        padding: 8px;
     }
 
     .filter-select:focus, .filter-input:focus {
         outline: none;
         border-color: #8b5cf6;
+    }
+
+    /* Light mode option styling */
+    @media (prefers-color-scheme: light) {
+        .filter-select option {
+            background: #ffffff;
+            color: #111827;
+        }
     }
 
     .filter-btn {
@@ -326,12 +348,30 @@
         --metric-bg: #111827;
     }
 
+    [data-theme="dark"] .filter-select,
+    [data-theme="dark"] .filter-input {
+        background-color: #111827;
+        color: #f9fafb;
+        border-color: #374151;
+    }
+
+    [data-theme="dark"] .filter-select option {
+        background-color: #1f2937;
+        color: #f9fafb;
+    }
+
     [data-theme="dark"] .badge-long { background: #065f46; color: #d1fae5; }
     [data-theme="dark"] .badge-short { background: #991b1b; color: #fee2e2; }
     [data-theme="dark"] .exit-reason.tp_hit { background: #065f46; color: #d1fae5; }
     [data-theme="dark"] .exit-reason.sl_hit { background: #991b1b; color: #fee2e2; }
     [data-theme="dark"] .exit-reason.tsl_hit { background: #5b21b6; color: #ede9fe; }
     [data-theme="dark"] .exit-reason.manual { background: #92400e; color: #fef3c7; }
+
+    /* Force dark colors on select options (browser-specific) */
+    .filter-select option {
+        background-color: #1f2937 !important;
+        color: #f9fafb !important;
+    }
 </style>
 {% endblock %}
 

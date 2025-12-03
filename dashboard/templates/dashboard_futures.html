@@ -914,8 +914,10 @@ async function closePosition(symbol) {
         if (data.success) {
             alert(data.message);
         } else if (response.status === 404 || data.already_closed) {
-            // Position already closed by system (TP/SL hit)
-            alert(`Position ${symbol} was already closed by the trading system (likely TP/SL hit). Refreshing data...`);
+            // Position not found - show debug info
+            const activeList = data.active_positions ? data.active_positions.join(', ') : 'unknown';
+            console.error(`Close failed - Symbol: '${symbol}', Active: [${activeList}]`);
+            alert(`Position ${symbol} not found.\n\nActive positions: ${activeList}\n\nThe position may have been closed by TP/SL hit.`);
         } else {
             alert('Error: ' + data.error);
         }

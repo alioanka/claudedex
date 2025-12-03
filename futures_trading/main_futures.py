@@ -318,9 +318,16 @@ class HealthServer:
             data = await request.json()
             symbol = data.get('symbol')
 
+            # Clean the symbol - strip whitespace
+            if symbol:
+                symbol = symbol.strip()
+
             # Debug logging to trace position lookup
             active_keys = list(self.app.engine.active_positions.keys())
-            logger.info(f"🔍 Close position request: symbol='{symbol}', active_positions={active_keys}")
+            logger.info(f"🔍 Close position request: symbol='{symbol}' (len={len(symbol) if symbol else 0})")
+            logger.info(f"🔍 Active positions: {active_keys}")
+            for key in active_keys:
+                logger.info(f"🔍   Key: '{key}' (len={len(key)}), match={key == symbol}")
 
             if not symbol:
                 return web.json_response({
@@ -328,20 +335,34 @@ class HealthServer:
                     'error': 'Symbol is required'
                 }, status=400)
 
-            if symbol not in self.app.engine.active_positions:
+            # Try exact match first
+            matched_symbol = None
+            if symbol in self.app.engine.active_positions:
+                matched_symbol = symbol
+            else:
+                # Try case-insensitive match as fallback
+                for key in self.app.engine.active_positions.keys():
+                    if key.upper() == symbol.upper():
+                        matched_symbol = key
+                        logger.info(f"🔍 Found case-insensitive match: '{key}' for '{symbol}'")
+                        break
+
+            if not matched_symbol:
+                logger.warning(f"❌ Position {symbol} not found. Active: {active_keys}")
                 return web.json_response({
                     'success': False,
-                    'error': f'Position {symbol} not found in active positions. It may have already been closed by TP/SL hit or the trading system.',
-                    'already_closed': True
+                    'error': f'Position {symbol} not found in active positions. Active positions: {active_keys}',
+                    'already_closed': True,
+                    'active_positions': active_keys
                 }, status=404)
 
-            # Close the position
-            await self.app.engine._close_position(symbol, "manual_close")
-            logger.info(f"✅ Position {symbol} closed via API")
+            # Close the position using the matched symbol
+            await self.app.engine._close_position(matched_symbol, "manual_close")
+            logger.info(f"✅ Position {matched_symbol} closed via API")
 
             return web.json_response({
                 'success': True,
-                'message': f'Position {symbol} closed successfully'
+                'message': f'Position {matched_symbol} closed successfully'
             })
 
         except Exception as e:
