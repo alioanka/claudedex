@@ -9,6 +9,73 @@
         padding: 20px;
     }
 
+    .trading-status-banner {
+        background: linear-gradient(135deg, #f97316 0%, #dc2626 100%);
+        border-radius: 12px;
+        padding: 16px 24px;
+        margin-bottom: 24px;
+        color: white;
+    }
+
+    .trading-status-banner.hidden {
+        display: none;
+    }
+
+    .trading-status-banner .status-content {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        flex-wrap: wrap;
+    }
+
+    .trading-status-banner .status-icon {
+        font-size: 2rem;
+        opacity: 0.9;
+    }
+
+    .trading-status-banner .status-info {
+        flex: 1;
+        min-width: 200px;
+    }
+
+    .trading-status-banner .status-title {
+        font-size: 1.25rem;
+        font-weight: 700;
+        margin-bottom: 4px;
+    }
+
+    .trading-status-banner .status-reason {
+        font-size: 0.95rem;
+        opacity: 0.9;
+    }
+
+    .trading-status-banner .status-details {
+        font-size: 0.85rem;
+        opacity: 0.8;
+        margin-top: 4px;
+    }
+
+    .trading-status-banner .status-actions {
+        display: flex;
+        gap: 12px;
+    }
+
+    .trading-status-banner .btn-warning {
+        background: rgba(255,255,255,0.2);
+        border: 1px solid rgba(255,255,255,0.4);
+        color: white;
+    }
+
+    .trading-status-banner .btn-danger {
+        background: rgba(0,0,0,0.2);
+        border: 1px solid rgba(255,255,255,0.3);
+        color: white;
+    }
+
+    .trading-status-banner .btn:hover {
+        background: rgba(255,255,255,0.3);
+    }
+
     .dashboard-header {
         display: flex;
         justify-content: space-between;
@@ -147,6 +214,112 @@
         color: var(--text-secondary);
     }
 
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s;
+    }
+
+    .btn-danger {
+        background: #ef4444;
+        color: white;
+    }
+
+    .btn-danger:hover {
+        background: #dc2626;
+    }
+
+    .btn-danger:disabled {
+        background: #9ca3af;
+        cursor: not-allowed;
+    }
+
+    .btn-sm {
+        padding: 4px 10px;
+        font-size: 0.75rem;
+    }
+
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .price-levels {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+    }
+
+    .price-levels .sl { color: #ef4444; }
+    .price-levels .tp { color: #10b981; }
+    .price-levels .tsl { color: #8b5cf6; }
+
+    .tp-levels-container {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        font-size: 0.7rem;
+    }
+
+    .tp-level {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .tp-level.hit {
+        text-decoration: line-through;
+        opacity: 0.5;
+    }
+
+    .tp-badge {
+        display: inline-block;
+        padding: 1px 4px;
+        border-radius: 3px;
+        font-weight: 600;
+        font-size: 0.6rem;
+    }
+
+    .tp-badge.tp1 { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .tp-badge.tp2 { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+    .tp-badge.tp3 { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .tp-badge.tp4 { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+
+    .sl-tsl-container {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        font-size: 0.75rem;
+    }
+
+    .sl-tsl-container .sl {
+        color: #ef4444;
+    }
+
+    .sl-tsl-container .tsl {
+        color: #8b5cf6;
+    }
+
+    .exit-reason {
+        font-size: 0.75rem;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: var(--metric-bg);
+    }
+
+    .exit-reason.tp_hit { background: #d1fae5; color: #065f46; }
+    .exit-reason.sl_hit { background: #fee2e2; color: #991b1b; }
+    .exit-reason.tsl_hit { background: #ede9fe; color: #5b21b6; }
+    .exit-reason.manual { background: #fef3c7; color: #92400e; }
+
     [data-theme="dark"] {
         --card-bg: #1f2937;
         --border-color: #374151;
@@ -177,42 +350,64 @@
         </div>
     </div>
 
+    <!-- Trading Status Banner -->
+    <div id="trading-status-banner" class="trading-status-banner hidden">
+        <div class="status-content">
+            <div class="status-icon">
+                <i class="fas fa-exclamation-triangle"></i>
+            </div>
+            <div class="status-info">
+                <div class="status-title">Trading Blocked</div>
+                <div class="status-reason" id="block-reason">Daily loss limit reached</div>
+                <div class="status-details" id="block-details">Daily P&L: $0.00 / Limit: $0.00</div>
+            </div>
+            <div class="status-actions">
+                <button class="btn btn-warning btn-sm" onclick="unblockTrading('daily')">
+                    <i class="fas fa-redo"></i> Reset Daily Loss
+                </button>
+                <button class="btn btn-danger btn-sm" onclick="unblockTrading('all')">
+                    <i class="fas fa-unlock"></i> Unblock All
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Key Metrics -->
     <div class="stats-grid">
         <div class="stat-card">
             <div class="stat-label">Capital Allocated</div>
-            <div class="stat-value">$300.00</div>
-            <div class="stat-change">Used: $0.00 (0%)</div>
+            <div class="stat-value" id="stat-capital">$300.00</div>
+            <div class="stat-change" id="stat-capital-used">Used: $0.00 (0%)</div>
         </div>
 
         <div class="stat-card">
             <div class="stat-label">Total P&L</div>
-            <div class="stat-value positive">$0.00</div>
-            <div class="stat-change positive">0.00% ROI</div>
+            <div class="stat-value" id="stat-pnl">$0.00</div>
+            <div class="stat-change" id="stat-roi">0.00% ROI</div>
         </div>
 
         <div class="stat-card">
             <div class="stat-label">Active Positions</div>
-            <div class="stat-value">0</div>
-            <div class="stat-change">0 Long | 0 Short</div>
+            <div class="stat-value" id="stat-positions">0</div>
+            <div class="stat-change" id="stat-positions-breakdown">0 Long | 0 Short</div>
         </div>
 
         <div class="stat-card">
-            <div class="stat-label">Total Leverage</div>
-            <div class="stat-value">0x</div>
-            <div class="stat-change">Max: 10x</div>
+            <div class="stat-label">Mode / Network</div>
+            <div class="stat-value" id="stat-mode">--</div>
+            <div class="stat-change" id="stat-network">--</div>
         </div>
 
         <div class="stat-card">
-            <div class="stat-label">Funding Rate</div>
-            <div class="stat-value">0.000%</div>
-            <div class="stat-change">8h rate</div>
+            <div class="stat-label">Unrealized P&L</div>
+            <div class="stat-value" id="stat-unrealized">$0.00</div>
+            <div class="stat-change" id="stat-daily-pnl">Daily: $0.00</div>
         </div>
 
         <div class="stat-card">
             <div class="stat-label">Win Rate</div>
-            <div class="stat-value">0%</div>
-            <div class="stat-change">0 wins / 0 losses</div>
+            <div class="stat-value" id="stat-winrate">0%</div>
+            <div class="stat-change" id="stat-winloss">0 wins / 0 losses</div>
         </div>
     </div>
 
@@ -229,51 +424,74 @@
 
     <!-- Active Positions -->
     <div class="section-card">
-        <div class="section-title">
-            <i class="fas fa-wallet"></i>
-            Active Futures Positions
+        <div class="section-header">
+            <div class="section-title" style="margin-bottom: 0;">
+                <i class="fas fa-wallet"></i>
+                Active Futures Positions (<span id="position-count">0</span>)
+            </div>
+            <button class="btn btn-danger" id="closeAllBtn" onclick="closeAllPositions()" disabled>
+                <i class="fas fa-times-circle"></i>
+                Close All
+            </button>
         </div>
-        <div class="empty-state">
+        <div id="positions-empty" class="empty-state">
             <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
             <p>No active positions. Futures positions will appear here once trading begins.</p>
         </div>
-        <!-- Uncomment when positions are available
-        <table class="position-table">
+        <table class="position-table" id="positions-table" style="display: none;">
             <thead>
                 <tr>
                     <th>Symbol</th>
                     <th>Side</th>
                     <th>Size</th>
+                    <th>Value</th>
                     <th>Leverage</th>
-                    <th>Entry Price</th>
-                    <th>Mark Price</th>
+                    <th>Entry</th>
+                    <th>Current</th>
+                    <th>SL / TSL</th>
+                    <th>Take Profits</th>
                     <th>P&L</th>
-                    <th>P&L %</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
-            <tbody id="positionsTable">
+            <tbody id="positionsTableBody">
             </tbody>
         </table>
-        -->
     </div>
 
     <!-- Recent Trades -->
     <div class="section-card">
         <div class="section-title">
             <i class="fas fa-history"></i>
-            Recent Trades
+            Recent Trades (<span id="trades-count">0</span>)
         </div>
-        <div class="empty-state">
+        <div id="trades-empty" class="empty-state">
             <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
             <p>No trades yet. Trade history will appear here once trading begins.</p>
         </div>
+        <table class="position-table" id="trades-table" style="display: none;">
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Side</th>
+                    <th>Entry</th>
+                    <th>Exit</th>
+                    <th>P&L</th>
+                    <th>P&L %</th>
+                    <th>Exit Reason</th>
+                    <th>Time</th>
+                </tr>
+            </thead>
+            <tbody id="tradesTableBody">
+            </tbody>
+        </table>
     </div>
 </div>
 
 <script>
 // P&L Chart
 const ctx = document.getElementById('pnlChart').getContext('2d');
-new Chart(ctx, {
+const pnlChart = new Chart(ctx, {
     type: 'line',
     data: {
         labels: [],
@@ -310,5 +528,381 @@ new Chart(ctx, {
         }
     }
 });
+
+// Fetch futures data from API
+async function loadFuturesData() {
+    try {
+        // Fetch stats from simulator data
+        const statsResponse = await fetch('/api/simulator/data');
+        if (statsResponse.ok) {
+            const data = await statsResponse.json();
+            if (data.futures) {
+                updateStats(data.futures);
+            }
+        }
+
+        // Fetch positions directly from futures module for full details (SL/TP/TSL)
+        const posResponse = await fetch('/api/futures/positions');
+        if (posResponse.ok) {
+            const posData = await posResponse.json();
+            if (posData.success && posData.positions) {
+                updatePositions(posData.positions);
+            } else {
+                updatePositions([]);
+            }
+        }
+
+        // Check trading status (blocked/unblocked)
+        await checkTradingStatus();
+
+        // Load trades for the performance chart
+        await loadPerformanceChart();
+    } catch (error) {
+        console.error('Error loading futures data:', error);
+    }
+}
+
+// Load and update Performance History chart
+async function loadPerformanceChart() {
+    try {
+        const response = await fetch('/api/futures/trades?limit=50');
+        if (!response.ok) return;
+        const data = await response.json();
+
+        if (data.success && data.trades && data.trades.length > 0) {
+            // Calculate cumulative P&L from trades
+            const trades = data.trades.slice().reverse(); // Oldest first
+            let cumPnl = 0;
+            const labels = [];
+            const pnlData = [];
+
+            trades.forEach((trade, index) => {
+                cumPnl += parseFloat(trade.pnl || 0);
+                labels.push(`Trade ${index + 1}`);
+                pnlData.push(cumPnl);
+            });
+
+            // Update chart
+            pnlChart.data.labels = labels;
+            pnlChart.data.datasets[0].data = pnlData;
+            pnlChart.update();
+        }
+    } catch (error) {
+        console.debug('Could not load performance chart:', error);
+    }
+}
+
+function updateStats(stats) {
+    // Mode and Network
+    document.getElementById('stat-mode').textContent = stats.mode || 'DRY_RUN';
+    document.getElementById('stat-network').textContent = `${stats.exchange || 'BINANCE'} ${stats.network || 'TESTNET'}`;
+
+    // P&L
+    const netPnl = stats.net_pnl || '$0.00';
+    const pnlEl = document.getElementById('stat-pnl');
+    pnlEl.textContent = netPnl;
+    pnlEl.className = 'stat-value ' + (parseFloat(netPnl.replace('$', '')) >= 0 ? 'positive' : 'negative');
+
+    // Active Positions
+    document.getElementById('stat-positions').textContent = stats.active_positions || 0;
+
+    // Calculate long/short breakdown
+    const positions = stats.positions || [];
+    const longs = positions.filter(p => p.side === 'long').length;
+    const shorts = positions.filter(p => p.side === 'short').length;
+    document.getElementById('stat-positions-breakdown').textContent = `${longs} Long | ${shorts} Short`;
+
+    // Unrealized P&L
+    const unrealized = stats.unrealized_pnl || '$0.00';
+    const unrealizedEl = document.getElementById('stat-unrealized');
+    unrealizedEl.textContent = unrealized;
+    unrealizedEl.className = 'stat-value ' + (parseFloat(unrealized.replace('$', '')) >= 0 ? 'positive' : 'negative');
+
+    // Daily P&L
+    document.getElementById('stat-daily-pnl').textContent = `Daily: ${stats.daily_pnl || '$0.00'}`;
+
+    // Win Rate
+    document.getElementById('stat-winrate').textContent = stats.win_rate || '0%';
+    document.getElementById('stat-winloss').textContent = `${stats.winning_trades || 0} wins / ${stats.losing_trades || 0} losses`;
+}
+
+function updatePositions(positions) {
+    const tableBody = document.getElementById('positionsTableBody');
+    const emptyState = document.getElementById('positions-empty');
+    const table = document.getElementById('positions-table');
+    const countEl = document.getElementById('position-count');
+    const closeAllBtn = document.getElementById('closeAllBtn');
+
+    countEl.textContent = positions.length;
+    closeAllBtn.disabled = positions.length === 0;
+
+    if (positions.length === 0) {
+        emptyState.style.display = 'block';
+        table.style.display = 'none';
+        return;
+    }
+
+    emptyState.style.display = 'none';
+    table.style.display = 'table';
+
+    tableBody.innerHTML = positions.map(pos => {
+        const symbol = pos.symbol;
+        const side = pos.side;
+        const size = pos.size || 0;
+        const notionalValue = pos.notional_value || 0;
+        const leverage = pos.leverage || 1;
+        const entryPrice = pos.entry_price || pos.entry || 0;
+        const currentPrice = pos.current_price || pos.current || 0;
+        const stopLoss = pos.stop_loss;
+        const trailingStopPrice = pos.trailing_stop_price;
+        const trailingStopEnabled = pos.trailing_stop;
+        const highestPrice = pos.highest_price;
+        const lowestPrice = pos.lowest_price;
+        const tpLevels = pos.tp_levels || [];
+        const pnlUsd = pos.unrealized_pnl !== undefined ? pos.unrealized_pnl : parseFloat((pos.pnl_usd || '0').replace('$', ''));
+        const pnlPct = pos.unrealized_pnl_pct !== undefined ? pos.unrealized_pnl_pct : parseFloat(pos.pnl_pct || 0);
+
+        // Build SL/TSL display
+        let slTslHtml = '<div class="sl-tsl-container">';
+        if (stopLoss) {
+            slTslHtml += `<div><span class="sl">SL: $${parseFloat(stopLoss).toFixed(4)}</span></div>`;
+        }
+        if (trailingStopPrice) {
+            slTslHtml += `<div><span class="tsl">TSL: $${parseFloat(trailingStopPrice).toFixed(4)}</span></div>`;
+        } else if (trailingStopEnabled) {
+            // TSL enabled but not yet active (price hasn't moved enough)
+            const trackPrice = side === 'long' ? highestPrice : lowestPrice;
+            slTslHtml += `<div><span class="tsl" style="opacity: 0.6;">TSL: waiting</span></div>`;
+        }
+        slTslHtml += '</div>';
+        if (slTslHtml === '<div class="sl-tsl-container"></div>') {
+            slTslHtml = '-';
+        }
+
+        // Build TP levels display
+        let tpHtml = '';
+        if (tpLevels.length > 0) {
+            tpHtml = '<div class="tp-levels-container">';
+            tpLevels.forEach(tp => {
+                const hitClass = tp.hit ? 'hit' : '';
+                const icon = tp.hit ? '✓' : '○';
+                tpHtml += `
+                    <div class="tp-level ${hitClass}">
+                        <span class="tp-badge tp${tp.level}">TP${tp.level}</span>
+                        <span>$${parseFloat(tp.price).toFixed(4)}</span>
+                        <span style="color: #9ca3af;">(${tp.size_pct}%)</span>
+                        <span>${icon}</span>
+                    </div>
+                `;
+            });
+            tpHtml += '</div>';
+        } else if (pos.take_profit) {
+            // Fallback to single TP if no tp_levels
+            tpHtml = `<span class="tp">$${parseFloat(pos.take_profit).toFixed(4)}</span>`;
+        } else {
+            tpHtml = '-';
+        }
+
+        return `
+            <tr>
+                <td><strong>${symbol}</strong></td>
+                <td><span class="badge badge-${side}">${side.toUpperCase()}</span></td>
+                <td>${parseFloat(size).toFixed(6)}</td>
+                <td>$${parseFloat(notionalValue).toFixed(2)}</td>
+                <td>${leverage}x</td>
+                <td>$${parseFloat(entryPrice).toLocaleString()}</td>
+                <td>$${parseFloat(currentPrice).toLocaleString()}</td>
+                <td class="price-levels">${slTslHtml}</td>
+                <td>${tpHtml}</td>
+                <td class="${pnlUsd >= 0 ? 'positive' : 'negative'}">$${pnlUsd.toFixed(2)} (${pnlPct.toFixed(2)}%)</td>
+                <td>
+                    <button class="btn btn-danger btn-sm" onclick="closePosition('${symbol}')" title="Close Position">
+                        <i class="fas fa-times"></i> Close
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Load and display recent trades
+async function loadRecentTrades() {
+    try {
+        const response = await fetch('/api/futures/trades?limit=10');
+        if (!response.ok) throw new Error('Failed to fetch trades');
+        const data = await response.json();
+
+        if (data.success && data.trades) {
+            updateTrades(data.trades);
+        }
+    } catch (error) {
+        console.error('Error loading trades:', error);
+    }
+}
+
+function updateTrades(trades) {
+    const tableBody = document.getElementById('tradesTableBody');
+    const emptyState = document.getElementById('trades-empty');
+    const table = document.getElementById('trades-table');
+    const countEl = document.getElementById('trades-count');
+
+    countEl.textContent = trades.length;
+
+    if (trades.length === 0) {
+        emptyState.style.display = 'block';
+        table.style.display = 'none';
+        return;
+    }
+
+    emptyState.style.display = 'none';
+    table.style.display = 'table';
+
+    tableBody.innerHTML = trades.map(trade => {
+        const pnl = trade.pnl || 0;
+        const pnlPct = trade.pnl_pct || 0;
+        const exitReason = formatExitReason(trade.close_reason || trade.exit_reason || 'unknown');
+        const closedAt = new Date(trade.closed_at).toLocaleString();
+
+        return `
+            <tr>
+                <td><strong>${trade.symbol}</strong></td>
+                <td><span class="badge badge-${trade.side}">${trade.side.toUpperCase()}</span></td>
+                <td>$${parseFloat(trade.entry_price).toLocaleString()}</td>
+                <td>$${parseFloat(trade.exit_price).toLocaleString()}</td>
+                <td class="${pnl >= 0 ? 'positive' : 'negative'}">$${pnl.toFixed(2)}</td>
+                <td class="${pnlPct >= 0 ? 'positive' : 'negative'}">${pnlPct.toFixed(2)}%</td>
+                <td>${exitReason}</td>
+                <td>${closedAt}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function formatExitReason(reason) {
+    const reasonMap = {
+        'take_profit': { label: 'TP Hit', class: 'tp_hit' },
+        'stop_loss': { label: 'SL Hit', class: 'sl_hit' },
+        'trailing_stop': { label: 'TSL Hit', class: 'tsl_hit' },
+        'manual_close': { label: 'Manual', class: 'manual' },
+        'signal': { label: 'Signal', class: '' },
+        'unknown': { label: 'Unknown', class: '' }
+    };
+    const info = reasonMap[reason] || reasonMap['unknown'];
+    return `<span class="exit-reason ${info.class}">${info.label}</span>`;
+}
+
+// Check trading status (blocked/unblocked)
+async function checkTradingStatus() {
+    try {
+        const response = await fetch('/api/futures/trading/status');
+        if (!response.ok) return;
+
+        const data = await response.json();
+        if (!data.success) return;
+
+        const banner = document.getElementById('trading-status-banner');
+        const reasonEl = document.getElementById('block-reason');
+        const detailsEl = document.getElementById('block-details');
+
+        if (data.trading_blocked) {
+            banner.classList.remove('hidden');
+
+            // Determine block reason
+            let reason = 'Risk limit reached';
+            if (data.daily_pnl <= -data.daily_loss_limit) {
+                reason = 'Daily loss limit reached';
+            } else if (data.consecutive_losses >= data.max_consecutive_losses) {
+                reason = `${data.consecutive_losses} consecutive losses`;
+            }
+            reasonEl.textContent = reason;
+
+            // Show details
+            detailsEl.textContent = `Daily P&L: $${data.daily_pnl.toFixed(2)} | Limit: $${data.daily_loss_limit.toFixed(2)} | Consecutive Losses: ${data.consecutive_losses}`;
+        } else {
+            banner.classList.add('hidden');
+        }
+    } catch (error) {
+        console.debug('Could not check trading status:', error);
+    }
+}
+
+// Unblock trading
+async function unblockTrading(resetType) {
+    if (!confirm(`Reset ${resetType === 'all' ? 'daily loss AND consecutive losses' : 'daily loss'} and unblock trading?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/futures/trading/unblock', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reset_type: resetType })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            alert(`Trading unblocked! Previous daily P&L: $${data.previous_daily_pnl?.toFixed(2) || '0.00'}`);
+            loadFuturesData();
+        } else {
+            alert('Error: ' + (data.error || 'Failed to unblock trading'));
+        }
+    } catch (error) {
+        alert('Failed to unblock trading: ' + error.message);
+    }
+}
+
+async function closePosition(symbol) {
+    if (!confirm(`Close position ${symbol}?`)) return;
+
+    try {
+        const response = await fetch('/api/futures/position/close', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol })
+        });
+        const data = await response.json();
+        if (data.success) {
+            alert(data.message);
+            loadFuturesData();
+        } else {
+            alert('Error: ' + data.error);
+        }
+    } catch (error) {
+        alert('Failed to close position: ' + error.message);
+    }
+}
+
+async function closeAllPositions() {
+    if (!confirm('Close ALL positions?')) return;
+
+    const btn = document.getElementById('closeAllBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
+    try {
+        const response = await fetch('/api/futures/positions/close-all', { method: 'POST' });
+        const data = await response.json();
+        if (data.success) {
+            alert(data.message);
+        } else {
+            alert('Error: ' + data.error);
+        }
+    } catch (error) {
+        alert('Failed: ' + error.message);
+    } finally {
+        btn.innerHTML = '<i class="fas fa-times-circle"></i> Close All';
+        loadFuturesData();
+    }
+}
+
+// Load data on page load
+loadFuturesData();
+loadRecentTrades();
+
+// Auto-refresh every 10 seconds
+setInterval(() => {
+    loadFuturesData();
+    loadRecentTrades();
+}, 10000);
 </script>
 {% endblock %}

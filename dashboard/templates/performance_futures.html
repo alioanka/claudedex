@@ -98,19 +98,51 @@
     <div class="stats-grid">
         <div class="stat-card">
             <div class="stat-label">Win Rate</div>
-            <div class="stat-value">0%</div>
+            <div class="stat-value" id="stat-winrate">0%</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Profit Factor</div>
-            <div class="stat-value">0.00</div>
+            <div class="stat-value" id="stat-profit-factor">0.00</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Sharpe Ratio</div>
-            <div class="stat-value">0.00</div>
+            <div class="stat-value" id="stat-sharpe">0.00</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Max Drawdown</div>
-            <div class="stat-value">0.00%</div>
+            <div class="stat-value" id="stat-drawdown">0.00%</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Sortino Ratio</div>
+            <div class="stat-value" id="stat-sortino">0.00</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Calmar Ratio</div>
+            <div class="stat-value" id="stat-calmar">0.00</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Avg Win</div>
+            <div class="stat-value positive" id="stat-avg-win">$0.00</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Avg Loss</div>
+            <div class="stat-value negative" id="stat-avg-loss">$0.00</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Best Trade</div>
+            <div class="stat-value positive" id="stat-best-trade">$0.00</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Worst Trade</div>
+            <div class="stat-value negative" id="stat-worst-trade">$0.00</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Current Streak</div>
+            <div class="stat-value" id="stat-streak">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Max Win Streak</div>
+            <div class="stat-value" id="stat-max-win-streak">0</div>
         </div>
     </div>
 
@@ -127,7 +159,7 @@
 
 <script>
 const ctx = document.getElementById('equityChart').getContext('2d');
-new Chart(ctx, {
+const equityChart = new Chart(ctx, {
     type: 'line',
     data: {
         labels: [],
@@ -150,5 +182,40 @@ new Chart(ctx, {
         }
     }
 });
+
+async function loadPerformance() {
+    try {
+        const response = await fetch('/api/simulator/data');
+        if (!response.ok) throw new Error('Failed to fetch data');
+        const data = await response.json();
+
+        if (data.futures) {
+            updateStats(data.futures);
+        }
+    } catch (error) {
+        console.error('Error loading performance:', error);
+    }
+}
+
+function updateStats(stats) {
+    document.getElementById('stat-winrate').textContent = stats.win_rate || '0%';
+    document.getElementById('stat-profit-factor').textContent = (stats.profit_factor || 0).toFixed(2);
+    document.getElementById('stat-sharpe').textContent = (stats.sharpe_ratio || 0).toFixed(2);
+    document.getElementById('stat-drawdown').textContent = stats.max_drawdown_pct || '0.0%';
+    document.getElementById('stat-sortino').textContent = (stats.sortino_ratio || 0).toFixed(2);
+    document.getElementById('stat-calmar').textContent = (stats.calmar_ratio || 0).toFixed(2);
+    document.getElementById('stat-avg-win').textContent = stats.avg_win || '$0.00';
+    document.getElementById('stat-avg-loss').textContent = stats.avg_loss || '$0.00';
+    document.getElementById('stat-best-trade').textContent = stats.best_trade || '$0.00';
+    document.getElementById('stat-worst-trade').textContent = stats.worst_trade || '$0.00';
+    document.getElementById('stat-streak').textContent = stats.current_streak || 0;
+    document.getElementById('stat-max-win-streak').textContent = stats.max_win_streak || 0;
+}
+
+// Load on page load
+loadPerformance();
+
+// Auto-refresh every 10 seconds
+setInterval(loadPerformance, 10000);
 </script>
 {% endblock %}

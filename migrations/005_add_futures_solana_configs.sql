@@ -54,11 +54,13 @@ ON CONFLICT (config_type, key) DO NOTHING;
 
 -- Futures Strategy Settings
 INSERT INTO config_settings (config_type, key, value, value_type, description, is_editable, requires_restart) VALUES
+('futures_strategy', 'signal_timeframe', '15m', 'string', 'Candle timeframe for signals: 1m, 5m, 15m, 30m, 1h, 4h', TRUE, FALSE),
+('futures_strategy', 'scan_interval_seconds', '30', 'int', 'How often to scan for opportunities (seconds)', TRUE, FALSE),
 ('futures_strategy', 'rsi_oversold', '30', 'float', 'RSI oversold threshold (STRONG_BUY)', TRUE, FALSE),
 ('futures_strategy', 'rsi_overbought', '70', 'float', 'RSI overbought threshold (STRONG_SELL)', TRUE, FALSE),
 ('futures_strategy', 'rsi_weak_oversold', '40', 'float', 'RSI weak oversold threshold (BUY)', TRUE, FALSE),
 ('futures_strategy', 'rsi_weak_overbought', '60', 'float', 'RSI weak overbought threshold (SELL)', TRUE, FALSE),
-('futures_strategy', 'min_signal_score', '4', 'int', 'Minimum signal score to enter (1-6)', TRUE, FALSE),
+('futures_strategy', 'min_signal_score', '3', 'int', 'Minimum signal score to enter (1-6, lower=more trades)', TRUE, FALSE),
 ('futures_strategy', 'verbose_signals', 'true', 'bool', 'Log detailed signal analysis', TRUE, FALSE),
 ('futures_strategy', 'cooldown_minutes', '5', 'int', 'Cooldown after closing position', TRUE, FALSE)
 ON CONFLICT (config_type, key) DO NOTHING;
@@ -132,6 +134,8 @@ INSERT INTO config_validation_rules (config_type, key, validation_type, validati
 ('futures_leverage', 'max_leverage', 'range', '{"min": 1, "max": 125}', 'Max leverage must be between 1x and 125x'),
 ('futures_risk', 'stop_loss_pct', 'range', '{"min": 0.1, "max": 50}', 'Stop loss must be between 0.1% and 50%'),
 ('futures_risk', 'take_profit_pct', 'range', '{"min": 0.1, "max": 500}', 'Take profit must be between 0.1% and 500%'),
+('futures_strategy', 'signal_timeframe', 'enum', '{"values": ["1m", "5m", "15m", "30m", "1h", "4h"]}', 'Invalid timeframe'),
+('futures_strategy', 'scan_interval_seconds', 'range', '{"min": 10, "max": 300}', 'Scan interval must be between 10 and 300 seconds'),
 ('futures_strategy', 'min_signal_score', 'range', '{"min": 1, "max": 10}', 'Signal score must be between 1 and 10'),
 ('futures_general', 'exchange', 'enum', '{"values": ["binance", "bybit", "okx", "bitget"]}', 'Invalid exchange'),
 ('futures_leverage', 'margin_mode', 'enum', '{"values": ["isolated", "cross"]}', 'Invalid margin mode')

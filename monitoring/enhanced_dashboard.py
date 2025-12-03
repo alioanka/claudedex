@@ -98,6 +98,12 @@ class DashboardEndpoints:
         self._price_cache = {'ETH': 3500, 'BNB': 600, 'MATIC': 0.80, 'SOL': 200}
         self._price_cache_time = None
 
+        # ========== SIMULATOR DATA CACHING ==========
+        # Cache simulator data to prevent rapid polling of module /stats endpoints
+        self._simulator_cache = None
+        self._simulator_cache_time = None
+        self._simulator_cache_ttl = 3  # Cache for 3 seconds
+
         # Setup routes
         self._setup_routes()
         self._setup_socketio()
@@ -357,7 +363,15 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/settings/sensitive/{key}', require_auth(require_admin(self.api_get_sensitive_config)))
         self.app.router.add_post('/api/settings/sensitive', require_auth(require_admin(self.api_set_sensitive_config)))
         self.app.router.add_delete('/api/settings/sensitive/{key}', require_auth(require_admin(self.api_delete_sensitive_config)))
-        
+
+        # API - Futures Position Management (proxy to Futures module)
+        self.app.router.add_get('/api/futures/positions', self.api_futures_positions)
+        self.app.router.add_get('/api/futures/trades', self.api_futures_trades)
+        self.app.router.add_post('/api/futures/position/close', self.api_futures_close_position)
+        self.app.router.add_post('/api/futures/positions/close-all', self.api_futures_close_all_positions)
+        self.app.router.add_get('/api/futures/trading/status', self.api_futures_trading_status)
+        self.app.router.add_post('/api/futures/trading/unblock', self.api_futures_trading_unblock)
+
         # API - Trading controls
         self.app.router.add_post('/api/trade/execute', self.api_execute_trade)
         self.app.router.add_post('/api/position/close', self.api_close_position)
@@ -558,6 +572,55 @@ class DashboardEndpoints:
 
         logger.info(f"Module status from env: DEX={dex_enabled}, Futures={futures_enabled}, Solana={solana_enabled}")
 
+        # Check if Futures and Solana modules are actually running by contacting their health endpoints
+        import aiohttp
+        futures_running = False
+        solana_running = False
+        futures_health_data = {}
+        solana_health_data = {}
+
+        try:
+            futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{futures_port}/health', timeout=2) as resp:
+                    if resp.status == 200:
+                        futures_running = True
+                        futures_health_data = await resp.json()
+                        logger.info(f"Futures module is running: {futures_health_data}")
+
+                # Also fetch stats to get metrics
+                if futures_running:
+                    async with session.get(f'http://localhost:{futures_port}/stats', timeout=5) as resp:
+                        if resp.status == 200:
+                            stats_data = await resp.json()
+                            stats = stats_data.get('stats', stats_data)
+                            futures_metrics['total_trades'] = stats.get('total_trades', 0)
+                            futures_metrics['positions'] = stats.get('active_positions', 0)
+                            # Parse PnL which may be a string like "$-0.76"
+                            net_pnl = stats.get('net_pnl', '$0.00')
+                            if isinstance(net_pnl, str):
+                                net_pnl = float(net_pnl.replace('$', '').replace(',', ''))
+                            futures_metrics['pnl'] = net_pnl
+                            # Parse win rate which may be a string like "33.3%"
+                            win_rate = stats.get('win_rate', '0%')
+                            if isinstance(win_rate, str):
+                                win_rate = float(win_rate.replace('%', ''))
+                            futures_metrics['win_rate'] = win_rate
+                            logger.info(f"Futures metrics from stats: {futures_metrics}")
+        except Exception as e:
+            logger.debug(f"Futures module not reachable: {e}")
+
+        try:
+            solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{solana_port}/health', timeout=2) as resp:
+                    if resp.status == 200:
+                        solana_running = True
+                        solana_health_data = await resp.json()
+                        logger.info(f"Solana module is running: {solana_health_data}")
+        except Exception as e:
+            logger.debug(f"Solana module not reachable: {e}")
+
         # Get metrics from database
         dex_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
         futures_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
@@ -685,6 +748,26 @@ class DashboardEndpoints:
         except Exception as e:
             logger.warning(f"Error reading module config files: {e}")
 
+        # Determine actual status for each module
+        # DEX: RUNNING if enabled (DEX runs in same process as dashboard)
+        dex_status = 'RUNNING' if dex_enabled else 'DISABLED'
+
+        # Futures: Check if actually running via health endpoint
+        if futures_running:
+            futures_status = 'RUNNING'
+        elif futures_enabled:
+            futures_status = 'ENABLED'  # Enabled but not running
+        else:
+            futures_status = 'DISABLED'
+
+        # Solana: Check if actually running via health endpoint
+        if solana_running:
+            solana_status = 'RUNNING'
+        elif solana_enabled:
+            solana_status = 'ENABLED'  # Enabled but not running
+        else:
+            solana_status = 'DISABLED'
+
         return web.json_response({
             'success': True,
             'data': {
@@ -692,23 +775,25 @@ class DashboardEndpoints:
                     'dex_trading': {
                         'name': 'DEX Trading',
                         'enabled': dex_enabled,
-                        'status': 'RUNNING' if dex_enabled else 'DISABLED',
+                        'status': dex_status,
                         'capital': dex_capital,
                         'metrics': dex_metrics
                     },
                     'futures_trading': {
                         'name': 'Futures Trading',
                         'enabled': futures_enabled,
-                        'status': 'RUNNING' if futures_enabled else 'DISABLED',
+                        'status': futures_status,
                         'capital': futures_capital,
-                        'metrics': futures_metrics
+                        'metrics': futures_metrics,
+                        'health': futures_health_data
                     },
                     'solana_strategies': {
                         'name': 'Solana Strategies',
                         'enabled': solana_enabled,
-                        'status': 'RUNNING' if solana_enabled else 'DISABLED',
+                        'status': solana_status,
                         'capital': solana_capital,
-                        'metrics': solana_metrics
+                        'metrics': solana_metrics,
+                        'health': solana_health_data
                     }
                 }
             }
@@ -988,6 +1073,14 @@ class DashboardEndpoints:
         """Get simulator data from all modules including historical trades from DB"""
         try:
             import aiohttp
+            from time import time
+
+            # Check cache first to prevent rapid polling of module /stats endpoints
+            if (self._simulator_cache is not None and
+                self._simulator_cache_time is not None and
+                (time() - self._simulator_cache_time) < self._simulator_cache_ttl):
+                return web.json_response(self._simulator_cache)
+
             simulator_data = {
                 'futures': None,
                 'solana': None,
@@ -995,31 +1088,108 @@ class DashboardEndpoints:
             }
 
             # Try to fetch from Futures module health endpoint
+            dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
+            futures_enabled = os.getenv('FUTURES_MODULE_ENABLED', 'false').lower() == 'true'
             try:
                 futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(f'http://localhost:{futures_port}/stats', timeout=2) as resp:
+                    async with session.get(f'http://localhost:{futures_port}/stats', timeout=5) as resp:
                         if resp.status == 200:
                             data = await resp.json()
-                            simulator_data['futures'] = data
+                            # Extract stats from nested structure
+                            if 'stats' in data:
+                                simulator_data['futures'] = data['stats']
+                            else:
+                                simulator_data['futures'] = data
                             simulator_data['futures']['status'] = 'Active'
-            except Exception:
-                simulator_data['futures'] = {'status': 'Offline', 'mode': 'Unknown'}
+                            logger.debug(f"Futures stats fetched: {simulator_data['futures']}")
+            except Exception as e:
+                logger.warning(f"Could not fetch futures stats: {e}")
+                # Fallback: use env variables to determine mode (like DEX does)
+                simulator_data['futures'] = {
+                    'status': 'Offline' if not futures_enabled else 'Starting',
+                    'mode': 'DRY_RUN' if dry_run else 'LIVE',
+                    'total_trades': 0,
+                    'winning_trades': 0,
+                    'losing_trades': 0,
+                    'total_pnl': '$0.00',
+                    'win_rate': '0%'
+                }
+
+            # Fetch futures trades from database for trade log
+            if self.db and self.db.pool:
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        futures_trades = await conn.fetch("""
+                            SELECT
+                                id, symbol, side, entry_price, exit_price, size,
+                                notional_value, leverage, pnl, pnl_pct, fees, net_pnl,
+                                exit_reason, entry_time, exit_time, duration_seconds,
+                                is_simulated, exchange, network
+                            FROM futures_trades
+                            ORDER BY exit_time DESC
+                            LIMIT 100
+                        """)
+
+                        trades_list = []
+                        for record in futures_trades:
+                            trades_list.append({
+                                'trade_id': str(record['id']),
+                                'symbol': record['symbol'],
+                                'side': record['side'],
+                                'entry_price': float(record['entry_price']),
+                                'exit_price': float(record['exit_price']),
+                                'size': float(record['size']),
+                                'pnl': float(record['net_pnl'] or record['pnl']),
+                                'pnl_pct': float(record['pnl_pct']),
+                                'fees': float(record['fees']),
+                                'duration_seconds': record['duration_seconds'] or 0,
+                                'time': record['exit_time'].isoformat() if record['exit_time'] else None,
+                                'exit_reason': record['exit_reason'],
+                                'is_simulated': record['is_simulated'],
+                                'module': 'futures'
+                            })
+
+                        # Initialize futures data if not already set
+                        if simulator_data['futures'] is None:
+                            simulator_data['futures'] = {}
+                        simulator_data['futures']['trades'] = trades_list
+                except Exception as e:
+                    logger.warning(f"Could not fetch futures trades from DB: {e}")
+                    if simulator_data['futures'] is None:
+                        simulator_data['futures'] = {}
+                    simulator_data['futures']['trades'] = []
 
             # Try to fetch from Solana module health endpoint
+            solana_enabled = os.getenv('SOLANA_MODULE_ENABLED', 'false').lower() == 'true'
             try:
                 solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(f'http://localhost:{solana_port}/stats', timeout=2) as resp:
+                    async with session.get(f'http://localhost:{solana_port}/stats', timeout=5) as resp:
                         if resp.status == 200:
                             data = await resp.json()
-                            simulator_data['solana'] = data
+                            # Extract stats from nested structure
+                            if 'stats' in data:
+                                simulator_data['solana'] = data['stats']
+                            else:
+                                simulator_data['solana'] = data
                             simulator_data['solana']['status'] = 'Active'
-            except Exception:
-                simulator_data['solana'] = {'status': 'Offline', 'mode': 'Unknown'}
+                            logger.debug(f"Solana stats fetched: {simulator_data['solana']}")
+            except Exception as e:
+                logger.debug(f"Could not fetch solana stats: {e}")
+                # Fallback: use env variables to determine mode (like DEX does)
+                simulator_data['solana'] = {
+                    'status': 'Offline' if not solana_enabled else 'Starting',
+                    'mode': 'DRY_RUN' if dry_run else 'LIVE',
+                    'total_trades': 0,
+                    'winning_trades': 0,
+                    'losing_trades': 0,
+                    'total_pnl': '$0.00',
+                    'win_rate': '0%'
+                }
 
             # Get DEX data from database (historical trades)
-            dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
+            # dry_run already defined above
             dex_data = {
                 'status': 'Offline',
                 'mode': 'DRY_RUN' if dry_run else 'LIVE',
@@ -1116,11 +1286,13 @@ class DashboardEndpoints:
                                 'exit_price': float(record['exit_price']) if record['exit_price'] else 0,
                                 'size': float(record['amount']) if record['amount'] else 0,
                                 'pnl': float(record['profit_loss']) if record['profit_loss'] else 0,
-                                'pnl_pct': f"{float(record['profit_loss_percentage']):.2f}%" if record['profit_loss_percentage'] else '0%',
+                                'pnl_pct': float(record['profit_loss_percentage']) if record['profit_loss_percentage'] else 0,
                                 'fees': float(record['gas_fee']) if record['gas_fee'] else 0,
                                 'duration_seconds': record['duration_seconds'] or 0,
                                 'time': record['exit_timestamp'].isoformat() if record['exit_timestamp'] else None,
-                                'is_simulated': dry_run
+                                'exit_reason': metadata.get('exit_reason', 'signal'),
+                                'is_simulated': dry_run,
+                                'module': 'dex'
                             })
 
                         dex_data['trades'] = trades_list
@@ -1129,6 +1301,11 @@ class DashboardEndpoints:
                     logger.error(f"Error fetching DEX trades from DB: {e}")
 
             simulator_data['dex'] = dex_data
+
+            # Cache the result to prevent rapid polling
+            from time import time
+            self._simulator_cache = simulator_data
+            self._simulator_cache_time = time()
 
             return web.json_response(simulator_data)
 
@@ -1535,7 +1712,7 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
 
     async def api_dashboard_summary(self, request):
-        """Get dashboard summary data from database"""
+        """Get dashboard summary data from database including all modules"""
         try:
             # Get initial balance from config
             try:
@@ -1550,8 +1727,9 @@ class DashboardEndpoints:
             win_rate = 0.0
             open_positions_count = 0
             total_trades = 0
+            winning_trades_count = 0
 
-            # Get data from database
+            # Get DEX data from database
             if self.db:
                 try:
                     # Get all trades for P&L calculation
@@ -1562,15 +1740,47 @@ class DashboardEndpoints:
                     total_trades = len(closed_trades)
 
                     # Calculate win rate
-                    winning_trades = sum(1 for t in closed_trades if float(t.get('profit_loss', 0)) > 0)
-                    win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+                    winning_trades_count = sum(1 for t in closed_trades if float(t.get('profit_loss', 0)) > 0)
 
                 except Exception as e:
                     logger.warning(f"Error getting data from database: {e}")
 
-            # Get open positions from ENGINE (same source as Open Positions API)
+            # Get DEX open positions from ENGINE
             if self.engine and hasattr(self.engine, 'active_positions') and self.engine.active_positions:
                 open_positions_count = len(self.engine.active_positions)
+
+            # Get Futures module data
+            futures_pnl = 0.0
+            futures_trades = 0
+            futures_positions = 0
+            futures_winning = 0
+            try:
+                futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'http://localhost:{futures_port}/stats', timeout=5) as resp:
+                        if resp.status == 200:
+                            stats_data = await resp.json()
+                            stats = stats_data.get('stats', stats_data)
+                            futures_trades = stats.get('total_trades', 0)
+                            futures_positions = stats.get('active_positions', 0)
+                            futures_winning = stats.get('winning_trades', 0)
+                            # Parse PnL which may be a string like "$-0.76"
+                            net_pnl = stats.get('net_pnl', '$0.00')
+                            if isinstance(net_pnl, str):
+                                net_pnl = float(net_pnl.replace('$', '').replace(',', ''))
+                            futures_pnl = net_pnl
+                            logger.debug(f"Futures summary: trades={futures_trades}, pnl={futures_pnl}, positions={futures_positions}")
+            except Exception as e:
+                logger.debug(f"Could not fetch futures stats for summary: {e}")
+
+            # Combine totals
+            total_pnl += futures_pnl
+            total_trades += futures_trades
+            open_positions_count += futures_positions
+            winning_trades_count += futures_winning
+
+            # Calculate combined win rate
+            win_rate = (winning_trades_count / total_trades * 100) if total_trades > 0 else 0
 
             # Calculate portfolio value
             portfolio_value = starting_balance + total_pnl
@@ -3501,10 +3711,29 @@ class DashboardEndpoints:
             data = await request.json()
             user_id = request.get('user_id', None)  # From auth middleware if available
 
+            # Key mapping from UI field names to config field names
+            key_mapping = {
+                'daily_loss_limit': 'max_daily_loss_pct',  # UI uses % field
+                'stop_loss': 'stop_loss_pct',
+                'take_profit': 'take_profit_pct',
+                'trailing_stop': 'trailing_stop_enabled',
+                'trailing_distance': 'trailing_stop_distance',
+                'leverage': 'default_leverage',
+                'capital': 'capital_allocation',
+                'funding_arb': 'funding_arbitrage_enabled',
+                'signal_timeframe': 'signal_timeframe',
+                'scan_interval': 'scan_interval_seconds',
+                'signal_score': 'min_signal_score',
+                'cooldown': 'cooldown_minutes',
+            }
+
             async with self.db_pool.acquire() as conn:
                 for key, value in data.items():
                     # Remove futures_ prefix if present
                     clean_key = key.replace('futures_', '') if key.startswith('futures_') else key
+
+                    # Apply key mapping
+                    clean_key = key_mapping.get(clean_key, clean_key)
 
                     # Determine config_type from key
                     config_type = self._get_futures_config_type(clean_key)
@@ -3959,7 +4188,143 @@ class DashboardEndpoints:
                 'success': False,
                 'error': str(e)
             }, status=500)
-    
+
+    # ========== FUTURES POSITION MANAGEMENT ==========
+
+    async def api_futures_positions(self, request):
+        """Get all futures positions from the Futures module"""
+        try:
+            futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{futures_port}/positions', timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return web.json_response(data)
+                    else:
+                        return web.json_response({
+                            'success': False,
+                            'error': f'Futures module returned status {resp.status}'
+                        }, status=resp.status)
+        except Exception as e:
+            logger.error(f"Error fetching futures positions: {e}")
+            return web.json_response({
+                'success': False,
+                'error': f'Futures module not available: {str(e)}'
+            }, status=503)
+
+    async def api_futures_trades(self, request):
+        """Get recent futures trades from the Futures module"""
+        try:
+            limit = request.query.get('limit', '50')
+            futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{futures_port}/trades?limit={limit}', timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return web.json_response(data)
+                    else:
+                        return web.json_response({
+                            'success': False,
+                            'error': f'Futures module returned status {resp.status}'
+                        }, status=resp.status)
+        except Exception as e:
+            logger.error(f"Error fetching futures trades: {e}")
+            return web.json_response({
+                'success': False,
+                'error': f'Futures module not available: {str(e)}'
+            }, status=503)
+
+    async def api_futures_close_position(self, request):
+        """Close a specific futures position"""
+        try:
+            data = await request.json()
+            symbol = data.get('symbol')
+
+            if not symbol:
+                return web.json_response({
+                    'success': False,
+                    'error': 'Symbol is required'
+                }, status=400)
+
+            futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f'http://localhost:{futures_port}/position/close',
+                    json={'symbol': symbol},
+                    timeout=10
+                ) as resp:
+                    data = await resp.json()
+                    return web.json_response(data, status=resp.status)
+
+        except Exception as e:
+            logger.error(f"Error closing futures position: {e}")
+            return web.json_response({
+                'success': False,
+                'error': f'Futures module not available: {str(e)}'
+            }, status=503)
+
+    async def api_futures_close_all_positions(self, request):
+        """Close all futures positions"""
+        try:
+            futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f'http://localhost:{futures_port}/positions/close-all',
+                    timeout=30
+                ) as resp:
+                    data = await resp.json()
+                    return web.json_response(data, status=resp.status)
+
+        except Exception as e:
+            logger.error(f"Error closing all futures positions: {e}")
+            return web.json_response({
+                'success': False,
+                'error': f'Futures module not available: {str(e)}'
+            }, status=503)
+
+    async def api_futures_trading_status(self, request):
+        """Get futures trading status including block status"""
+        try:
+            futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{futures_port}/trading/status', timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return web.json_response(data)
+                    else:
+                        return web.json_response({
+                            'success': False,
+                            'error': f'Futures module returned status {resp.status}'
+                        }, status=resp.status)
+        except Exception as e:
+            logger.error(f"Error fetching futures trading status: {e}")
+            return web.json_response({
+                'success': False,
+                'error': f'Futures module not available: {str(e)}'
+            }, status=503)
+
+    async def api_futures_trading_unblock(self, request):
+        """Unblock futures trading by resetting daily loss/consecutive losses"""
+        try:
+            futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+            data = await request.json() if request.content_length else {}
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f'http://localhost:{futures_port}/trading/unblock',
+                    json=data,
+                    timeout=5
+                ) as resp:
+                    result = await resp.json()
+                    return web.json_response(result, status=resp.status)
+
+        except Exception as e:
+            logger.error(f"Error unblocking futures trading: {e}")
+            return web.json_response({
+                'success': False,
+                'error': f'Futures module not available: {str(e)}'
+            }, status=503)
+
     async def api_modify_position(self, request):
         """Modify position (stop loss, take profit)"""
         try:

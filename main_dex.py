@@ -594,13 +594,21 @@ class TradingBotApplication:
             self.logger.info("Initiating graceful shutdown...")
 
             if self.engine:
-                if self.mode == "production":
-                    self.logger.info("Closing all open positions...")
+                # Check if we should close positions on shutdown
+                close_on_shutdown = os.getenv('CLOSE_POSITIONS_ON_SHUTDOWN', 'false').lower() == 'true'
+
+                if self.mode == "production" and close_on_shutdown:
+                    self.logger.info("Closing all open positions (CLOSE_POSITIONS_ON_SHUTDOWN=true)...")
                     await self.engine.emergency_close_all_positions()
-                    
+                elif self.mode == "production":
+                    active_count = len(self.engine.positions) if hasattr(self.engine, 'positions') and self.engine.positions else 0
+                    if active_count > 0:
+                        self.logger.warning(f"⚠️ Keeping {active_count} DEX positions open on shutdown")
+                        self.logger.warning("Set CLOSE_POSITIONS_ON_SHUTDOWN=true to close positions on restart")
+
                 self.logger.info("Saving system state...")
                 await self.engine.save_state()
-                
+
                 await self.engine.shutdown()
                 
             await close_all_connections()

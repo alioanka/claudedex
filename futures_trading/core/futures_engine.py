@@ -130,6 +130,14 @@ class Position:
     opened_at: datetime = field(default_factory=datetime.now)
     is_simulated: bool = False  # True if DRY_RUN
     metadata: Dict = field(default_factory=dict)
+    # Multiple TP levels: [{'level': 1, 'price': 1.05, 'pct': 2.0, 'size_pct': 25.0, 'hit': False}, ...]
+    tp_levels: List[Dict] = field(default_factory=list)
+    # Original size to track partial closes
+    original_size: float = 0.0
+    # Trailing stop tracking
+    trailing_stop_price: Optional[float] = None
+    highest_price: Optional[float] = None  # For LONG: track highest since entry
+    lowest_price: Optional[float] = None   # For SHORT: track lowest since entry
 
 
 @dataclass
@@ -188,7 +196,14 @@ class RiskMetrics:
 
 
 class FuturesTradingEngine:
-    """Core futures trading engine with full implementation"""
+    """
+    Core futures trading engine with full implementation
+
+    Configuration Architecture:
+    - Receives config from FuturesConfigManager (database-backed)
+    - Only sensitive data (API keys) comes from .env via config manager
+    - Trading parameters are loaded from database and can be changed without restart
+    """
 
     # Trading fees (maker/taker)
     BINANCE_MAKER_FEE = 0.0002  # 0.02%
@@ -201,56 +216,120 @@ class FuturesTradingEngine:
 
     def __init__(
         self,
-        exchange: str = "binance",
-        leverage: int = 10,
-        max_positions: int = 5,
-        mode: str = "production"
+        config_manager=None,
+        mode: str = "production",
+        db_pool=None
     ):
         """
-        Initialize futures trading engine
+        Initialize futures trading engine with database-backed configuration
 
         Args:
-            exchange: Exchange name (binance or bybit)
-            leverage: Trading leverage (1-125)
-            max_positions: Maximum concurrent positions
+            config_manager: FuturesConfigManager instance (loads from database)
             mode: Operating mode
+            db_pool: asyncpg connection pool for trade persistence
         """
-        self.exchange = exchange.lower()
-        self.leverage = leverage
-        self.max_positions = max_positions
+        self.config_manager = config_manager
         self.mode = mode
         self.is_running = False
+        self.db_pool = db_pool  # Database connection pool for trade persistence
 
-        # DRY_RUN mode - CRITICAL: Check environment variable
+        # Load configuration from config manager (database)
+        if config_manager:
+            general_config = config_manager.get_general()
+            position_config = config_manager.get_position()
+            leverage_config = config_manager.get_leverage()
+            risk_config = config_manager.get_risk()
+            pairs_config = config_manager.get_pairs()
+            strategy_config = config_manager.get_strategy()
+
+            # General settings
+            self.exchange = general_config.exchange.lower()
+            self.testnet = general_config.testnet
+
+            # Position settings
+            self.max_positions = position_config.max_positions
+            self.capital_allocation = position_config.capital_allocation
+
+            # Dynamic position sizing settings
+            self.dynamic_position_sizing = getattr(position_config, 'dynamic_position_sizing', True)
+            self.min_position_pct = getattr(position_config, 'min_position_pct', 5.0)
+            self.max_position_pct = getattr(position_config, 'max_position_pct', 20.0)
+            self.max_position_usd = getattr(position_config, 'max_position_usd', 500.0)
+            self.static_position_pct = getattr(position_config, 'static_position_pct', 15.0)
+            self.position_size_usd = position_config.position_size_usd  # Legacy fallback
+            self.min_trade_size = getattr(position_config, 'min_trade_size', 10.0)
+
+            # Leverage settings
+            self.leverage = leverage_config.default_leverage
+            self.max_leverage = getattr(leverage_config, 'max_leverage', 20)
+
+            # Risk settings - SL/TP as price percentages
+            self.stop_loss_pct = abs(risk_config.stop_loss_pct)  # Store as positive
+            self.take_profit_pct = abs(risk_config.take_profit_pct)  # Legacy single TP
+
+            # Multiple Take Profit settings
+            self.tp1_pct = getattr(risk_config, 'tp1_pct', 2.0)
+            self.tp2_pct = getattr(risk_config, 'tp2_pct', 4.0)
+            self.tp3_pct = getattr(risk_config, 'tp3_pct', 6.0)
+            self.tp4_pct = getattr(risk_config, 'tp4_pct', 10.0)
+            self.tp1_size_pct = getattr(risk_config, 'tp1_size_pct', 25.0)
+            self.tp2_size_pct = getattr(risk_config, 'tp2_size_pct', 25.0)
+            self.tp3_size_pct = getattr(risk_config, 'tp3_size_pct', 25.0)
+            self.tp4_size_pct = getattr(risk_config, 'tp4_size_pct', 25.0)
+
+            # Trailing stop
+            self.trailing_stop_enabled = getattr(risk_config, 'trailing_stop_enabled', True)
+            self.trailing_stop_distance = getattr(risk_config, 'trailing_stop_distance', 1.5)
+
+            # Calculate max_daily_loss_usd from percentage and capital
+            # If max_daily_loss_pct is set (from UI), use that. Otherwise use max_daily_loss_usd directly.
+            if risk_config.max_daily_loss_pct and risk_config.max_daily_loss_pct > 0:
+                self.max_daily_loss = self.capital_allocation * (risk_config.max_daily_loss_pct / 100)
+                logger.info(f"Daily loss limit: ${self.max_daily_loss:.2f} ({risk_config.max_daily_loss_pct}% of ${self.capital_allocation})")
+            else:
+                self.max_daily_loss = risk_config.max_daily_loss_usd
+                logger.info(f"Daily loss limit: ${self.max_daily_loss:.2f} (fixed USD)")
+
+            self.cooldown_duration = timedelta(minutes=strategy_config.cooldown_minutes)
+
+            # Pairs settings
+            self.symbols = pairs_config.pairs_list
+
+            # Strategy settings
+            self.signal_timeframe = strategy_config.signal_timeframe
+            self.scan_interval_seconds = strategy_config.scan_interval_seconds
+            self.rsi_oversold = strategy_config.rsi_oversold
+            self.rsi_overbought = strategy_config.rsi_overbought
+            self.rsi_weak_oversold = strategy_config.rsi_weak_oversold
+            self.rsi_weak_overbought = strategy_config.rsi_weak_overbought
+            self.min_signal_score = strategy_config.min_signal_score
+            self.verbose_signals = strategy_config.verbose_signals
+
+        else:
+            # Fallback to defaults if no config manager (should not happen in production)
+            logger.warning("⚠️ No config manager provided, using defaults")
+            self.exchange = "binance"
+            self.testnet = True
+            self.max_positions = 5
+            self.position_size_usd = 100.0
+            self.leverage = 10
+            self.stop_loss_pct = -5.0
+            self.take_profit_pct = 10.0
+            self.max_daily_loss = 500.0
+            self.symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"]
+            self.signal_timeframe = "15m"  # 15-minute candles for faster signals
+            self.scan_interval_seconds = 30  # Scan every 30 seconds
+            self.rsi_oversold = 30.0
+            self.rsi_overbought = 70.0
+            self.rsi_weak_oversold = 40.0
+            self.rsi_weak_overbought = 60.0
+            self.min_signal_score = 3  # Lower threshold for more signals
+            self.verbose_signals = True
+            self.cooldown_duration = timedelta(minutes=5)
+
+        # DRY_RUN mode - CRITICAL: Check environment variable (global safety setting)
         dry_run_env = os.getenv('DRY_RUN', 'true').strip().lower()
         self.dry_run = dry_run_env in ('true', '1', 'yes')
-
-        # Testnet mode
-        testnet_env = os.getenv('FUTURES_TESTNET', 'true').strip().lower()
-        self.testnet = testnet_env in ('true', '1', 'yes')
-
-        # Trading configuration from environment
-        self.position_size_usd = float(os.getenv('FUTURES_POSITION_SIZE_USD', '100'))
-        self.symbols = os.getenv('FUTURES_SYMBOLS', 'BTC/USDT,ETH/USDT,SOL/USDT').split(',')
-        self.symbols = [s.strip() for s in self.symbols]
-
-        # Risk parameters
-        self.stop_loss_pct = float(os.getenv('FUTURES_STOP_LOSS_PCT', '-5.0'))
-        self.take_profit_pct = float(os.getenv('FUTURES_TAKE_PROFIT_PCT', '10.0'))
-        self.max_daily_loss = float(os.getenv('FUTURES_MAX_DAILY_LOSS_USD', '500'))
-
-        # Strategy parameters - Configurable thresholds
-        # RSI thresholds (lower = more conservative, default is strict)
-        self.rsi_oversold = float(os.getenv('FUTURES_RSI_OVERSOLD', '30'))  # Below = STRONG_BUY
-        self.rsi_overbought = float(os.getenv('FUTURES_RSI_OVERBOUGHT', '70'))  # Above = STRONG_SELL
-        self.rsi_weak_oversold = float(os.getenv('FUTURES_RSI_WEAK_OVERSOLD', '40'))  # Below = BUY
-        self.rsi_weak_overbought = float(os.getenv('FUTURES_RSI_WEAK_OVERBOUGHT', '60'))  # Above = SELL
-
-        # Minimum signal score to enter (default 4 = STRONG only, 2 = BUY/SELL allowed)
-        self.min_signal_score = int(os.getenv('FUTURES_MIN_SIGNAL_SCORE', '4'))
-
-        # Enable verbose signal logging
-        self.verbose_signals = os.getenv('FUTURES_VERBOSE_SIGNALS', 'true').lower() in ('true', '1', 'yes')
 
         # Trading state
         self.active_positions: Dict[str, Position] = {}
@@ -259,10 +338,10 @@ class FuturesTradingEngine:
 
         # Cooldowns (symbol -> next_trade_time)
         self.symbol_cooldowns: Dict[str, datetime] = {}
-        self.cooldown_duration = timedelta(minutes=5)  # 5 minute cooldown after closing position
 
         # Exchange client
         self.exchange_client = None
+        self.price_client = None  # Mainnet client for accurate prices in DRY_RUN mode
 
         # Risk metrics
         self.risk_metrics = RiskMetrics(
@@ -287,17 +366,29 @@ class FuturesTradingEngine:
             currency="USD"
         )
 
+        # Telegram alerts
+        self.telegram_alerts = None
+        try:
+            from futures_trading.core.futures_alerts import FuturesTelegramAlerts
+            self.telegram_alerts = FuturesTelegramAlerts()
+            if self.telegram_alerts.enabled:
+                logger.info("✅ Telegram alerts enabled for Futures module")
+        except ImportError as e:
+            logger.warning(f"Telegram alerts not available: {e}")
+
         # Logging mode info
         mode_str = "DRY_RUN (SIMULATED)" if self.dry_run else "LIVE TRADING"
         net_str = "TESTNET" if self.testnet else "MAINNET"
         logger.info(f"Futures engine initialized:")
-        logger.info(f"  Exchange: {exchange.upper()}")
+        logger.info(f"  Exchange: {self.exchange.upper()}")
         logger.info(f"  Mode: {mode_str}")
         logger.info(f"  Network: {net_str}")
-        logger.info(f"  Leverage: {leverage}x")
+        logger.info(f"  Leverage: {self.leverage}x")
         logger.info(f"  Position size: ${self.position_size_usd}")
         logger.info(f"  Symbols: {', '.join(self.symbols)}")
         logger.info(f"  Strategy Settings:")
+        logger.info(f"    Signal Timeframe: {self.signal_timeframe}")
+        logger.info(f"    Scan Interval: {self.scan_interval_seconds}s")
         logger.info(f"    RSI Oversold (STRONG_BUY): < {self.rsi_oversold}")
         logger.info(f"    RSI Overbought (STRONG_SELL): > {self.rsi_overbought}")
         logger.info(f"    RSI Weak Oversold (BUY): < {self.rsi_weak_oversold}")
@@ -326,25 +417,124 @@ class FuturesTradingEngine:
 
             logger.info("✅ Exchange connection initialized")
 
+            # Load historical trade stats from database
+            await self._load_stats_from_db()
+
         except Exception as e:
             logger.error(f"Failed to initialize engine: {e}")
             raise
+
+    async def _load_stats_from_db(self):
+        """Load historical trade statistics from database"""
+        if not self.db_pool:
+            logger.debug("No database pool available, skipping stats load")
+            return
+
+        try:
+            async with self.db_pool.acquire() as conn:
+                # Load trade statistics
+                row = await conn.fetchrow("""
+                    SELECT
+                        COUNT(*) as total_trades,
+                        COALESCE(SUM(CASE WHEN net_pnl > 0 THEN 1 ELSE 0 END), 0) as winning_trades,
+                        COALESCE(SUM(CASE WHEN net_pnl <= 0 THEN 1 ELSE 0 END), 0) as losing_trades,
+                        COALESCE(SUM(net_pnl), 0) as total_pnl,
+                        COALESCE(SUM(fees), 0) as total_fees
+                    FROM futures_trades
+                    WHERE is_simulated = $1
+                      AND exchange = $2
+                      AND network = $3
+                """, self.dry_run, self.exchange, 'testnet' if self.testnet else 'mainnet')
+
+                if row and row['total_trades'] > 0:
+                    self.total_trades = row['total_trades']
+                    self.winning_trades = row['winning_trades']
+                    self.losing_trades = row['losing_trades']
+                    self.total_pnl = float(row['total_pnl'])
+                    self.total_fees = float(row['total_fees'])
+                    logger.info(f"📊 Loaded trade history from DB: {self.total_trades} trades, {self.winning_trades} wins, ${self.total_pnl:.2f} P&L")
+
+                # Load today's stats for risk management
+                today_row = await conn.fetchrow("""
+                    SELECT
+                        COUNT(*) as daily_trades,
+                        COALESCE(SUM(net_pnl), 0) as daily_pnl
+                    FROM futures_trades
+                    WHERE is_simulated = $1
+                      AND exchange = $2
+                      AND network = $3
+                      AND DATE(exit_time) = CURRENT_DATE
+                """, self.dry_run, self.exchange, 'testnet' if self.testnet else 'mainnet')
+
+                if today_row:
+                    self.risk_metrics.daily_trades = today_row['daily_trades']
+                    self.risk_metrics.daily_pnl = float(today_row['daily_pnl'])
+
+        except Exception as e:
+            logger.warning(f"Could not load stats from DB: {e}")
+
+    async def _save_trade_to_db(self, trade: Trade):
+        """Save a closed trade to the database"""
+        if not self.db_pool:
+            logger.debug("No database pool available, trade not persisted")
+            return
+
+        try:
+            async with self.db_pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO futures_trades (
+                        symbol, side, entry_price, exit_price, size, notional_value,
+                        leverage, pnl, pnl_pct, fees, net_pnl, exit_reason,
+                        entry_time, exit_time, duration_seconds, is_simulated,
+                        exchange, network
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                """,
+                    trade.symbol,
+                    trade.side.value,
+                    trade.entry_price,
+                    trade.exit_price,
+                    trade.size,
+                    trade.notional_value,
+                    trade.leverage,
+                    trade.pnl,
+                    trade.pnl_pct,
+                    trade.fees,
+                    trade.pnl - trade.fees,  # net_pnl
+                    trade.close_reason,
+                    trade.opened_at,
+                    trade.closed_at,
+                    int((trade.closed_at - trade.opened_at).total_seconds()),
+                    trade.is_simulated,
+                    self.exchange,
+                    'testnet' if self.testnet else 'mainnet'
+                )
+                logger.debug(f"💾 Trade saved to DB: {trade.symbol} {trade.side.value} P&L: ${trade.pnl:.2f}")
+        except Exception as e:
+            logger.error(f"Failed to save trade to DB: {e}")
 
     async def _init_binance(self):
         """Initialize Binance Futures client"""
         try:
             import ccxt.async_support as ccxt
 
-            # Select API keys based on testnet mode
+            # Get API credentials from config manager (reads from .env)
+            if self.config_manager:
+                credentials = self.config_manager.get_api_credentials('binance', self.testnet)
+                api_key = credentials.get('api_key')
+                api_secret = credentials.get('api_secret')
+            else:
+                # Fallback to direct env read
+                if self.testnet:
+                    api_key = os.getenv('BINANCE_TESTNET_API_KEY')
+                    api_secret = os.getenv('BINANCE_TESTNET_API_SECRET')
+                else:
+                    api_key = os.getenv('BINANCE_API_KEY')
+                    api_secret = os.getenv('BINANCE_API_SECRET')
+
+            sandbox_mode = self.testnet
             if self.testnet:
-                api_key = os.getenv('BINANCE_TESTNET_API_KEY')
-                api_secret = os.getenv('BINANCE_TESTNET_API_SECRET')
-                sandbox_mode = True
                 logger.info("Using Binance TESTNET")
             else:
-                api_key = os.getenv('BINANCE_API_KEY')
-                api_secret = os.getenv('BINANCE_API_SECRET')
-                sandbox_mode = False
                 logger.info("Using Binance MAINNET")
 
             if not api_key or not api_secret:
@@ -368,6 +558,39 @@ class FuturesTradingEngine:
             await self.exchange_client.load_markets()
             logger.info(f"✅ Loaded {len(self.exchange_client.markets)} markets")
 
+            # Create mainnet price client for accurate prices (especially in DRY_RUN mode)
+            # This ensures we always get live prices from mainnet, regardless of testnet setting
+            if self.dry_run or self.testnet:
+                try:
+                    # Use mainnet credentials if available, otherwise create public client
+                    mainnet_key = os.getenv('BINANCE_API_KEY')
+                    mainnet_secret = os.getenv('BINANCE_API_SECRET')
+
+                    if mainnet_key and mainnet_secret:
+                        self.price_client = ccxt.binance({
+                            'apiKey': mainnet_key,
+                            'secret': mainnet_secret,
+                            'enableRateLimit': True,
+                            'options': {
+                                'defaultType': 'future',
+                                'adjustForTimeDifference': True,
+                            }
+                        })
+                    else:
+                        # Public client without credentials (can still fetch prices)
+                        self.price_client = ccxt.binance({
+                            'enableRateLimit': True,
+                            'options': {
+                                'defaultType': 'future',
+                            }
+                        })
+
+                    await self.price_client.load_markets()
+                    logger.info("✅ Mainnet price client initialized for accurate live prices")
+                except Exception as e:
+                    logger.warning(f"Could not initialize mainnet price client: {e}")
+                    self.price_client = None
+
         except ImportError:
             logger.error("ccxt library not installed. Install: pip install ccxt")
             raise
@@ -380,16 +603,24 @@ class FuturesTradingEngine:
         try:
             import ccxt.async_support as ccxt
 
-            # Select API keys based on testnet mode
+            # Get API credentials from config manager (reads from .env)
+            if self.config_manager:
+                credentials = self.config_manager.get_api_credentials('bybit', self.testnet)
+                api_key = credentials.get('api_key')
+                api_secret = credentials.get('api_secret')
+            else:
+                # Fallback to direct env read
+                if self.testnet:
+                    api_key = os.getenv('BYBIT_TESTNET_API_KEY')
+                    api_secret = os.getenv('BYBIT_TESTNET_API_SECRET')
+                else:
+                    api_key = os.getenv('BYBIT_API_KEY')
+                    api_secret = os.getenv('BYBIT_API_SECRET')
+
+            sandbox_mode = self.testnet
             if self.testnet:
-                api_key = os.getenv('BYBIT_TESTNET_API_KEY')
-                api_secret = os.getenv('BYBIT_TESTNET_API_SECRET')
-                sandbox_mode = True
                 logger.info("Using Bybit TESTNET")
             else:
-                api_key = os.getenv('BYBIT_API_KEY')
-                api_secret = os.getenv('BYBIT_API_SECRET')
-                sandbox_mode = False
                 logger.info("Using Bybit MAINNET")
 
             if not api_key or not api_secret:
@@ -484,12 +715,12 @@ class FuturesTradingEngine:
                     # Main trading logic
                     await self._trading_cycle()
 
-                    # Wait before next cycle
-                    await asyncio.sleep(10)
+                    # Wait before next cycle (configurable scan interval)
+                    await asyncio.sleep(self.scan_interval_seconds)
 
                 except Exception as e:
                     logger.error(f"Error in trading cycle: {e}", exc_info=True)
-                    await asyncio.sleep(30)
+                    await asyncio.sleep(self.scan_interval_seconds * 3)  # Longer wait on error
 
         except Exception as e:
             logger.error(f"Critical error in trading engine: {e}", exc_info=True)
@@ -529,7 +760,7 @@ class FuturesTradingEngine:
             logger.error(f"Error in trading cycle: {e}")
 
     async def _monitor_positions(self):
-        """Monitor active positions for exit signals"""
+        """Monitor active positions for exit signals and partial TPs"""
         if not self.active_positions:
             return
 
@@ -542,6 +773,14 @@ class FuturesTradingEngine:
 
                 current_price = float(ticker['last'])
                 position.current_price = current_price
+
+                # Update high/low tracking for trailing stop
+                if position.side == TradeSide.LONG:
+                    if position.highest_price is None or current_price > position.highest_price:
+                        position.highest_price = current_price
+                else:
+                    if position.lowest_price is None or current_price < position.lowest_price:
+                        position.lowest_price = current_price
 
                 # Calculate PnL
                 if position.side == TradeSide.LONG:
@@ -556,7 +795,16 @@ class FuturesTradingEngine:
                 # Calculate PnL in USD
                 position.unrealized_pnl = position.notional_value * (pnl_pct / 100)
 
-                # Check exit conditions
+                # Check for partial TP hits first
+                tp_hit = await self._check_tp_levels(position, current_price)
+                if tp_hit:
+                    # Partial close was executed, position may still be open
+                    if position.size <= 0:
+                        # All TPs hit, fully closed
+                        del self.active_positions[symbol]
+                        continue
+
+                # Check exit conditions (SL, liquidation protection, signal reversal)
                 exit_reason = await self._check_exit_conditions(position)
                 if exit_reason:
                     await self._close_position(symbol, exit_reason)
@@ -566,14 +814,21 @@ class FuturesTradingEngine:
 
     async def _check_exit_conditions(self, position: Position) -> Optional[str]:
         """Check if position should be closed and return reason"""
-        pnl_pct = position.unrealized_pnl_pct
+        leveraged_pnl_pct = position.unrealized_pnl_pct  # This is leveraged PnL %
 
-        # Stop loss check
-        if pnl_pct <= self.stop_loss_pct:
+        # Un-leverage to get actual price change percentage for SL/TP comparison
+        # stop_loss_pct and take_profit_pct are price movement percentages (not leveraged)
+        actual_price_change_pct = leveraged_pnl_pct / position.leverage if position.leverage > 0 else leveraged_pnl_pct
+
+        # Stop loss check - stop_loss_pct is stored as positive (e.g., 2.0)
+        # SL triggers when price moves against position by >= stop_loss_pct
+        # Example: if stop_loss_pct=2.0, SL triggers when price drops 2% (for LONG)
+        if actual_price_change_pct <= -self.stop_loss_pct:
             return "stop_loss"
 
-        # Take profit check
-        if pnl_pct >= self.take_profit_pct:
+        # Take profit check (legacy single TP - backup if no tp_levels)
+        # TP triggers when price moves in favor by >= take_profit_pct
+        if actual_price_change_pct >= self.take_profit_pct:
             return "take_profit"
 
         # Liquidation protection (close at 80% of liquidation price)
@@ -688,10 +943,10 @@ class FuturesTradingEngine:
                 logger.error(f"Error scanning {symbol}: {e}")
 
     async def _get_technical_signals(self, symbol: str) -> Optional[TechnicalSignals]:
-        """Calculate technical indicators for a symbol"""
+        """Calculate technical indicators for a symbol using configurable timeframe"""
         try:
-            # Fetch OHLCV data
-            ohlcv = await self.exchange_client.fetch_ohlcv(symbol, '1h', limit=100)
+            # Fetch OHLCV data using configured timeframe (default: 15m for faster signals)
+            ohlcv = await self.exchange_client.fetch_ohlcv(symbol, self.signal_timeframe, limit=100)
             if len(ohlcv) < 50:
                 return None
 
@@ -873,8 +1128,267 @@ class FuturesTradingEngine:
             ema_value = (price - ema_value) * multiplier + ema_value
         return ema_value
 
+    def _calculate_position_size(self, signals: TechnicalSignals) -> float:
+        """
+        Calculate position size based on dynamic or static settings
+
+        Dynamic sizing: Adjusts position size based on signal strength
+        - Stronger signals → larger positions (up to max_position_pct)
+        - Weaker signals → smaller positions (down to min_position_pct)
+
+        Static sizing: Uses fixed percentage of capital
+
+        Returns: Position size in USD (notional value before leverage)
+        """
+        if not self.dynamic_position_sizing:
+            # Static position sizing: Capital × Position%
+            # Example: $300 × 15% = $45 margin
+            position_margin = self.capital_allocation * (self.static_position_pct / 100)
+            notional = position_margin * self.leverage  # Apply leverage for notional
+            logger.debug(f"Static sizing: ${position_margin:.2f} margin × {self.leverage}x = ${notional:.2f} notional")
+        else:
+            # Dynamic position sizing based on signal strength
+            # Signal score ranges from 1-6 (higher = stronger signal)
+            signal_score = getattr(signals, 'combined_score', 3) if signals else 3
+
+            # Map signal score to position percentage
+            # Score 1-2: min_position_pct
+            # Score 3-4: mid-range
+            # Score 5-6: max_position_pct
+            min_pct = self.min_position_pct
+            max_pct = self.max_position_pct
+
+            # Linear interpolation based on score (1-6 range)
+            score_normalized = max(0, min(1, (signal_score - 1) / 5))  # 0 to 1
+            position_pct = min_pct + (max_pct - min_pct) * score_normalized
+
+            position_margin = self.capital_allocation * (position_pct / 100)
+            notional = position_margin * self.leverage
+
+            logger.debug(f"Dynamic sizing: Signal={signal_score}, {position_pct:.1f}% = ${position_margin:.2f} margin × {self.leverage}x = ${notional:.2f} notional")
+
+        # Apply max USD cap
+        if notional > self.max_position_usd:
+            notional = self.max_position_usd
+            logger.debug(f"Position capped at max ${self.max_position_usd:.2f}")
+
+        return notional
+
+    def _calculate_tp_levels(self, entry_price: float, side: TradeSide) -> List[Dict]:
+        """
+        Calculate multiple take profit levels
+
+        Returns list of TP levels with price and size percentage:
+        [{'price': 1.05, 'pct': 2.0, 'size_pct': 25.0}, ...]
+        """
+        tp_levels = []
+
+        # Define TP configs: (price_pct, size_pct)
+        tp_configs = [
+            (self.tp1_pct, self.tp1_size_pct),
+            (self.tp2_pct, self.tp2_size_pct),
+            (self.tp3_pct, self.tp3_size_pct),
+            (self.tp4_pct, self.tp4_size_pct),
+        ]
+
+        cumulative_size = 0.0
+
+        for i, (price_pct, size_pct) in enumerate(tp_configs):
+            # Skip if size is 0 or we've already allocated 100%
+            if size_pct <= 0 or cumulative_size >= 100:
+                continue
+
+            # Calculate price based on side
+            if side == TradeSide.LONG:
+                tp_price = entry_price * (1 + price_pct / 100)
+            else:
+                tp_price = entry_price * (1 - price_pct / 100)
+
+            tp_levels.append({
+                'level': i + 1,
+                'price': tp_price,
+                'pct': price_pct,
+                'size_pct': size_pct,
+                'hit': False
+            })
+
+            cumulative_size += size_pct
+
+        return tp_levels
+
+    async def _check_tp_levels(self, position: Position, current_price: float) -> bool:
+        """
+        Check if any TP level has been hit and execute partial close
+
+        Args:
+            position: Position to check
+            current_price: Current market price
+
+        Returns:
+            bool: True if a TP was hit (partial close executed)
+        """
+        if not position.tp_levels:
+            return False
+
+        for tp in position.tp_levels:
+            if tp['hit']:
+                continue  # Already hit this TP
+
+            tp_price = tp['price']
+
+            # Check if TP is hit based on side
+            if position.side == TradeSide.LONG:
+                tp_hit = current_price >= tp_price
+            else:  # SHORT
+                tp_hit = current_price <= tp_price
+
+            if tp_hit:
+                # Execute partial close
+                close_size_pct = tp['size_pct']
+                close_size = position.original_size * (close_size_pct / 100)
+
+                # Don't close more than remaining size
+                close_size = min(close_size, position.size)
+
+                if close_size > 0:
+                    logger.info(f"🎯 TP{tp['level']} hit for {position.symbol}! Price: ${current_price:.4f} >= TP: ${tp_price:.4f}")
+                    logger.info(f"   Closing {close_size_pct}% of position ({close_size:.6f} units)")
+
+                    await self._partial_close_position(position, close_size, f"take_profit_{tp['level']}")
+
+                    # Mark as hit
+                    tp['hit'] = True
+
+                    return True
+
+        return False
+
+    async def _partial_close_position(self, position: Position, close_size: float, reason: str):
+        """
+        Execute a partial close of a position
+
+        Args:
+            position: Position to partially close
+            close_size: Size to close (in base currency)
+            reason: Reason for the partial close
+        """
+        symbol = position.symbol
+
+        try:
+            # Calculate close value
+            close_notional = close_size * position.current_price
+            close_pct = (close_size / position.original_size) * 100
+
+            # Calculate PnL for this portion
+            if position.side == TradeSide.LONG:
+                pnl_pct = ((position.current_price - position.entry_price) / position.entry_price) * 100
+            else:
+                pnl_pct = ((position.entry_price - position.current_price) / position.entry_price) * 100
+
+            leveraged_pnl_pct = pnl_pct * position.leverage
+            pnl_usd = close_notional * (pnl_pct / 100)
+
+            # Calculate fees for this portion
+            fee_rate = self.BINANCE_TAKER_FEE if self.exchange == 'binance' else self.BYBIT_TAKER_FEE
+            exit_fee = close_notional * fee_rate
+            net_pnl = pnl_usd - exit_fee
+
+            # Execute partial close (or simulate)
+            if self.dry_run:
+                logger.info(f"🔵 [DRY_RUN] Partial close {symbol} ({reason})")
+                logger.info(f"   Closed: {close_size:.6f} ({close_pct:.1f}%), PnL: ${net_pnl:.2f}")
+            else:
+                # Execute real partial close order
+                close_side = 'sell' if position.side == TradeSide.LONG else 'buy'
+                try:
+                    order = await self.exchange_client.create_market_order(
+                        symbol=symbol,
+                        side=close_side,
+                        amount=close_size,
+                        params={'reduceOnly': True}
+                    )
+                    logger.info(f"🎯 Partial close {symbol} - Order ID: {order['id']}")
+                except Exception as e:
+                    logger.error(f"❌ Partial close order failed: {e}")
+                    return
+
+            # Update position size
+            position.size -= close_size
+            position.notional_value = position.size * position.entry_price
+
+            # Update stats
+            self.total_pnl += net_pnl
+            self.total_fees += exit_fee
+            self.risk_metrics.daily_pnl += net_pnl
+
+            if net_pnl > 0:
+                self.winning_trades += 1
+                self.risk_metrics.consecutive_losses = 0
+            else:
+                self.losing_trades += 1
+                self.risk_metrics.consecutive_losses += 1
+
+            # Record partial trade in history
+            partial_trade = Trade(
+                trade_id=str(uuid.uuid4()),
+                symbol=symbol,
+                side=position.side,
+                entry_price=position.entry_price,
+                exit_price=position.current_price,
+                size=close_size,
+                notional_value=close_notional,
+                leverage=position.leverage,
+                pnl=net_pnl,
+                pnl_pct=leveraged_pnl_pct,
+                fees=exit_fee,
+                opened_at=position.opened_at,
+                closed_at=datetime.now(),
+                close_reason=reason,
+                is_simulated=position.is_simulated
+            )
+            self.trade_history.append(partial_trade)
+            await self._save_trade_to_db(partial_trade)
+
+            # Send Telegram alert for partial TP
+            if self.telegram_alerts and self.telegram_alerts.enabled:
+                try:
+                    from futures_trading.core.futures_alerts import FuturesTradeAlert
+                    alert = FuturesTradeAlert(
+                        symbol=symbol,
+                        side=position.side.value,
+                        action=reason,
+                        entry_price=position.entry_price,
+                        exit_price=position.current_price,
+                        size=close_size,
+                        leverage=position.leverage,
+                        pnl=net_pnl,
+                        pnl_pct=leveraged_pnl_pct,
+                        reason=f"Partial close ({close_pct:.0f}%)",
+                        is_simulated=position.is_simulated,
+                        exchange=self.exchange
+                    )
+                    await self.telegram_alerts.send_exit_alert(alert)
+                except Exception as e:
+                    logger.warning(f"Failed to send Telegram partial close alert: {e}")
+
+            # Log result
+            pnl_emoji = "🟢" if net_pnl > 0 else "🔴"
+            remaining_pct = (position.size / position.original_size) * 100 if position.original_size > 0 else 0
+            logger.info(f"{pnl_emoji} Partial close: {symbol} {reason}")
+            logger.info(f"   Closed: {close_pct:.1f}%, Remaining: {remaining_pct:.1f}%")
+            logger.info(f"   PnL: ${net_pnl:.2f} ({leveraged_pnl_pct:.2f}%)")
+
+            # Check if fully closed
+            if position.size <= 0:
+                logger.info(f"✅ Position {symbol} fully closed through TPs")
+                self.total_trades += 1
+                self.symbol_cooldowns[symbol] = datetime.now() + self.cooldown_duration
+
+        except Exception as e:
+            logger.error(f"Error in partial close {symbol}: {e}")
+
     async def _open_position(self, symbol: str, side: TradeSide, signals: TechnicalSignals):
-        """Open a new position"""
+        """Open a new position with dynamic sizing and multiple TPs"""
         try:
             # Get current price
             ticker = await self._get_ticker(symbol)
@@ -883,24 +1397,43 @@ class FuturesTradingEngine:
 
             current_price = float(ticker['last'])
 
-            # Calculate position size
-            size = self.position_size_usd / current_price
-            notional = self.position_size_usd
+            # Calculate position size based on settings
+            notional = self._calculate_position_size(signals)
+            size = notional / current_price
+
+            # Ensure minimum trade size
+            if notional < self.min_trade_size:
+                logger.debug(f"Position size ${notional:.2f} below minimum ${self.min_trade_size}, skipping")
+                return
 
             # Calculate fees (estimate)
             fee_rate = self.BINANCE_TAKER_FEE if self.exchange == 'binance' else self.BYBIT_TAKER_FEE
             estimated_fees = notional * fee_rate * 2  # Entry + exit
 
-            # Calculate stop loss and take profit prices
+            # Calculate stop loss price (SL% is price move %)
+            sl_pct = abs(self.stop_loss_pct)
+
+            # Calculate multiple take profit levels
+            tp_levels = self._calculate_tp_levels(current_price, side)
+
             if side == TradeSide.LONG:
-                stop_loss_price = current_price * (1 + self.stop_loss_pct / 100 / self.leverage)
-                take_profit_price = current_price * (1 + self.take_profit_pct / 100 / self.leverage)
-                # Liquidation estimate (simplified)
+                stop_loss_price = current_price * (1 - sl_pct / 100)
+                take_profit_price = tp_levels[0]['price'] if tp_levels else current_price * (1 + self.take_profit_pct / 100)
                 liquidation_price = current_price * (1 - 0.9 / self.leverage)
             else:
-                stop_loss_price = current_price * (1 - self.stop_loss_pct / 100 / self.leverage)
-                take_profit_price = current_price * (1 - self.take_profit_pct / 100 / self.leverage)
+                stop_loss_price = current_price * (1 + sl_pct / 100)
+                take_profit_price = tp_levels[0]['price'] if tp_levels else current_price * (1 - self.take_profit_pct / 100)
                 liquidation_price = current_price * (1 + 0.9 / self.leverage)
+
+            # Log detailed entry with SL and TP levels for debugging
+            logger.info(f"📊 Opening {symbol} {side.value.upper()}: Entry=${current_price:.4f}, Size=${notional:.2f}, Leverage={self.leverage}x")
+            logger.info(f"   🛑 STOP LOSS: ${stop_loss_price:.4f} ({sl_pct}% price move = {sl_pct * self.leverage}% PnL)")
+            if tp_levels:
+                logger.info(f"   🎯 TAKE PROFITS:")
+                for tp in tp_levels:
+                    logger.info(f"      TP{tp['level']}: ${tp['price']:.4f} ({tp['pct']}% price move, close {tp['size_pct']}%)")
+            else:
+                logger.info(f"   🎯 TAKE PROFIT: ${take_profit_price:.4f}")
 
             # Create position object
             position = Position(
@@ -922,7 +1455,11 @@ class FuturesTradingEngine:
                     'macd': signals.macd_histogram,
                     'volume_ratio': signals.volume_ratio,
                     'trend': signals.trend
-                }}
+                }},
+                tp_levels=tp_levels,
+                original_size=size,
+                highest_price=current_price if side == TradeSide.LONG else None,
+                lowest_price=current_price if side == TradeSide.SHORT else None
             )
 
             # Execute order (or simulate)
@@ -958,6 +1495,27 @@ class FuturesTradingEngine:
 
             logger.info(f"✅ Position opened: {symbol} {side.value.upper()}")
             logger.info(f"   Active positions: {len(self.active_positions)}/{self.max_positions}")
+
+            # Send Telegram entry alert
+            if self.telegram_alerts and self.telegram_alerts.enabled:
+                try:
+                    from futures_trading.core.futures_alerts import FuturesTradeAlert
+                    alert = FuturesTradeAlert(
+                        symbol=symbol,
+                        side=side.value,
+                        action='entry',
+                        entry_price=position.entry_price,
+                        size=position.size,
+                        leverage=position.leverage,
+                        stop_loss=position.stop_loss,
+                        take_profit=position.take_profit,
+                        trailing_stop=position.metadata.get('trailing_stop'),
+                        is_simulated=position.is_simulated,
+                        exchange=self.exchange
+                    )
+                    await self.telegram_alerts.send_entry_alert(alert)
+                except Exception as e:
+                    logger.warning(f"Failed to send Telegram entry alert: {e}")
 
         except Exception as e:
             logger.error(f"Error opening position {symbol}: {e}")
@@ -1044,6 +1602,9 @@ class FuturesTradingEngine:
             )
             self.pnl_tracker.record_trade(trade_record)
 
+            # Save trade to database for persistence across restarts
+            await self._save_trade_to_db(trade)
+
             # Update stats
             self.total_trades += 1
             self.total_pnl += net_pnl
@@ -1065,15 +1626,40 @@ class FuturesTradingEngine:
             # Set cooldown
             self.symbol_cooldowns[symbol] = datetime.now() + self.cooldown_duration
 
-            # Log result
+            # Log result with detailed information
             pnl_emoji = "🟢" if net_pnl > 0 else "🔴"
             sim_tag = "[DRY_RUN] " if position.is_simulated else ""
             logger.info(f"{pnl_emoji} {sim_tag}Position closed: {symbol}")
             logger.info(f"   Reason: {reason}")
-            logger.info(f"   Entry: ${position.entry_price:.2f} → Exit: ${position.current_price:.2f}")
-            logger.info(f"   PnL: ${net_pnl:.2f} ({leveraged_pnl_pct:.2f}%)")
+            logger.info(f"   Entry: ${position.entry_price:.4f} → Exit: ${position.current_price:.4f}")
+            logger.info(f"   Price Change: {pnl_pct:+.4f}%")
+            logger.info(f"   PnL (with {position.leverage}x leverage): ${net_pnl:.2f} ({leveraged_pnl_pct:+.2f}%)")
+            if reason == "stop_loss":
+                logger.info(f"   SL Trigger: Price moved {pnl_pct:.2f}% <= -{self.stop_loss_pct}% threshold")
             logger.info(f"   Fees: ${total_fees:.2f}")
             logger.info(f"   Daily PnL: ${self.risk_metrics.daily_pnl:.2f}")
+
+            # Send Telegram exit alert
+            if self.telegram_alerts and self.telegram_alerts.enabled:
+                try:
+                    from futures_trading.core.futures_alerts import FuturesTradeAlert
+                    alert = FuturesTradeAlert(
+                        symbol=symbol,
+                        side=position.side.value,
+                        action=reason,  # 'take_profit', 'stop_loss', 'manual_close', etc.
+                        entry_price=position.entry_price,
+                        exit_price=position.current_price,
+                        size=position.size,
+                        leverage=position.leverage,
+                        pnl=net_pnl,
+                        pnl_pct=leveraged_pnl_pct,
+                        reason=reason,
+                        is_simulated=position.is_simulated,
+                        exchange=self.exchange
+                    )
+                    await self.telegram_alerts.send_exit_alert(alert)
+                except Exception as e:
+                    logger.warning(f"Failed to send Telegram exit alert: {e}")
 
         except Exception as e:
             logger.error(f"Error closing position {symbol}: {e}")
@@ -1084,11 +1670,21 @@ class FuturesTradingEngine:
         pass
 
     async def _get_ticker(self, symbol: str) -> Optional[Dict]:
-        """Get current ticker for symbol"""
+        """Get current ticker for symbol - uses mainnet price client when available"""
         try:
-            ticker = await self.exchange_client.fetch_ticker(symbol)
+            # Use mainnet price client for accurate prices (especially in testnet/DRY_RUN mode)
+            client = self.price_client if self.price_client else self.exchange_client
+            ticker = await client.fetch_ticker(symbol)
             return ticker
         except Exception as e:
+            # Fallback to exchange_client if price_client fails
+            if self.price_client and client == self.price_client:
+                try:
+                    ticker = await self.exchange_client.fetch_ticker(symbol)
+                    return ticker
+                except Exception as e2:
+                    logger.error(f"Error fetching ticker for {symbol} from both clients: {e}, {e2}")
+                    return None
             logger.error(f"Error fetching ticker for {symbol}: {e}")
             return None
 
