@@ -4240,6 +4240,9 @@ class DashboardEndpoints:
             data = await request.json()
             symbol = data.get('symbol')
 
+            # Debug logging to trace symbol through proxy
+            logger.info(f"🔍 Proxying close request for symbol: '{symbol}'")
+
             if not symbol:
                 return web.json_response({
                     'success': False,
@@ -4253,8 +4256,9 @@ class DashboardEndpoints:
                     json={'symbol': symbol},
                     timeout=10
                 ) as resp:
-                    data = await resp.json()
-                    return web.json_response(data, status=resp.status)
+                    response_data = await resp.json()
+                    logger.info(f"🔍 Futures module response: status={resp.status}, data={response_data}")
+                    return web.json_response(response_data, status=resp.status)
 
         except Exception as e:
             logger.error(f"Error closing futures position: {e}")

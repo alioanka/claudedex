@@ -12,7 +12,7 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 30px;
+        margin-bottom: 20px;
         flex-wrap: wrap;
         gap: 16px;
     }
@@ -32,6 +32,109 @@
     .header-actions {
         display: flex;
         gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    /* Filter Section */
+    .filters-section {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 16px 20px;
+        margin-bottom: 20px;
+    }
+
+    .filters-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        align-items: flex-end;
+    }
+
+    .filter-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .filter-label {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .filter-select, .filter-input {
+        background: var(--metric-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 8px 12px;
+        color: var(--text-primary);
+        font-size: 0.875rem;
+        min-width: 140px;
+    }
+
+    .filter-select:focus, .filter-input:focus {
+        outline: none;
+        border-color: #8b5cf6;
+    }
+
+    .filter-btn {
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s;
+    }
+
+    .filter-btn-primary {
+        background: #8b5cf6;
+        color: white;
+    }
+
+    .filter-btn-primary:hover {
+        background: #7c3aed;
+    }
+
+    .filter-btn-secondary {
+        background: #6b7280;
+        color: white;
+    }
+
+    .filter-btn-secondary:hover {
+        background: #4b5563;
+    }
+
+    .active-filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border-color);
+    }
+
+    .filter-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: rgba(139, 92, 246, 0.1);
+        color: #8b5cf6;
+        padding: 4px 10px;
+        border-radius: 16px;
+        font-size: 0.75rem;
+        font-weight: 500;
+    }
+
+    .filter-tag-remove {
+        cursor: pointer;
+        opacity: 0.7;
+    }
+
+    .filter-tag-remove:hover {
+        opacity: 1;
     }
 
     .section-card {
@@ -60,7 +163,7 @@
 
     .stats-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
         gap: 16px;
         margin-bottom: 24px;
     }
@@ -95,7 +198,7 @@
     .trades-table {
         width: 100%;
         border-collapse: collapse;
-        min-width: 900px;
+        min-width: 1100px;
     }
 
     .trades-table th {
@@ -107,6 +210,22 @@
         font-size: 0.75rem;
         text-transform: uppercase;
         white-space: nowrap;
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .trades-table th:hover {
+        background: var(--border-color);
+    }
+
+    .trades-table th .sort-icon {
+        margin-left: 4px;
+        opacity: 0.5;
+    }
+
+    .trades-table th.sorted-asc .sort-icon,
+    .trades-table th.sorted-desc .sort-icon {
+        opacity: 1;
     }
 
     .trades-table td {
@@ -159,6 +278,46 @@
     .btn-secondary { background: #6b7280; color: white; }
     .btn-secondary:hover { background: #4b5563; }
 
+    /* Pagination */
+    .pagination {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 8px;
+        margin-top: 20px;
+        flex-wrap: wrap;
+    }
+
+    .pagination-btn {
+        padding: 8px 12px;
+        border-radius: 6px;
+        border: 1px solid var(--border-color);
+        background: var(--card-bg);
+        color: var(--text-primary);
+        cursor: pointer;
+        font-size: 0.875rem;
+    }
+
+    .pagination-btn:hover {
+        background: var(--metric-bg);
+    }
+
+    .pagination-btn.active {
+        background: #8b5cf6;
+        color: white;
+        border-color: #8b5cf6;
+    }
+
+    .pagination-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .pagination-info {
+        color: var(--text-secondary);
+        font-size: 0.875rem;
+    }
+
     [data-theme="dark"] {
         --card-bg: #1f2937;
         --border-color: #374151;
@@ -166,6 +325,13 @@
         --text-secondary: #d1d5db;
         --metric-bg: #111827;
     }
+
+    [data-theme="dark"] .badge-long { background: #065f46; color: #d1fae5; }
+    [data-theme="dark"] .badge-short { background: #991b1b; color: #fee2e2; }
+    [data-theme="dark"] .exit-reason.tp_hit { background: #065f46; color: #d1fae5; }
+    [data-theme="dark"] .exit-reason.sl_hit { background: #991b1b; color: #fee2e2; }
+    [data-theme="dark"] .exit-reason.tsl_hit { background: #5b21b6; color: #ede9fe; }
+    [data-theme="dark"] .exit-reason.manual { background: #92400e; color: #fef3c7; }
 </style>
 {% endblock %}
 
@@ -177,7 +343,7 @@
                 <i class="fas fa-exchange-alt"></i>
                 Futures Trades
             </h1>
-            <p class="page-subtitle">Complete trade history for futures module</p>
+            <p class="page-subtitle">Complete trade history with filtering and export</p>
         </div>
         <div class="header-actions">
             <button class="btn btn-secondary" onclick="loadTrades()">
@@ -192,10 +358,77 @@
         </div>
     </div>
 
+    <!-- Filters Section -->
+    <div class="filters-section">
+        <div class="filters-row">
+            <div class="filter-group">
+                <label class="filter-label">Timeframe</label>
+                <select id="filter-timeframe" class="filter-select" onchange="applyFilters()">
+                    <option value="all">All Time</option>
+                    <option value="today">Today</option>
+                    <option value="7d">Last 7 Days</option>
+                    <option value="30d">Last 30 Days</option>
+                    <option value="90d">Last 90 Days</option>
+                    <option value="custom">Custom Range</option>
+                </select>
+            </div>
+
+            <div class="filter-group" id="date-from-group" style="display: none;">
+                <label class="filter-label">From</label>
+                <input type="date" id="filter-date-from" class="filter-input" onchange="applyFilters()">
+            </div>
+
+            <div class="filter-group" id="date-to-group" style="display: none;">
+                <label class="filter-label">To</label>
+                <input type="date" id="filter-date-to" class="filter-input" onchange="applyFilters()">
+            </div>
+
+            <div class="filter-group">
+                <label class="filter-label">Pair</label>
+                <select id="filter-pair" class="filter-select" onchange="applyFilters()">
+                    <option value="all">All Pairs</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label class="filter-label">Side</label>
+                <select id="filter-side" class="filter-select" onchange="applyFilters()">
+                    <option value="all">All Sides</option>
+                    <option value="long">Long</option>
+                    <option value="short">Short</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label class="filter-label">Exit Reason</label>
+                <select id="filter-exit" class="filter-select" onchange="applyFilters()">
+                    <option value="all">All Reasons</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label class="filter-label">Result</label>
+                <select id="filter-result" class="filter-select" onchange="applyFilters()">
+                    <option value="all">All Results</option>
+                    <option value="profit">Profitable</option>
+                    <option value="loss">Loss</option>
+                </select>
+            </div>
+
+            <button class="filter-btn filter-btn-secondary" onclick="resetFilters()">
+                <i class="fas fa-undo"></i> Reset
+            </button>
+        </div>
+
+        <div class="active-filters" id="active-filters" style="display: none;">
+            <!-- Active filter tags will be inserted here -->
+        </div>
+    </div>
+
     <!-- Stats Summary -->
     <div class="stats-grid">
         <div class="stat-card">
-            <div class="stat-label">Total Trades</div>
+            <div class="stat-label">Filtered Trades</div>
             <div class="stat-value" id="stat-total-trades">0</div>
         </div>
         <div class="stat-card">
@@ -215,6 +448,10 @@
             <div class="stat-value" id="stat-pnl">$0.00</div>
         </div>
         <div class="stat-card">
+            <div class="stat-label">Avg P&L</div>
+            <div class="stat-value" id="stat-avg-pnl">$0.00</div>
+        </div>
+        <div class="stat-card">
             <div class="stat-label">Total Fees</div>
             <div class="stat-value" id="stat-fees">$0.00</div>
         </div>
@@ -223,56 +460,67 @@
     <div class="section-card">
         <div class="section-title">
             <i class="fas fa-history"></i>
-            Trade History (<span id="trade-count">0</span>)
+            Trade History (<span id="trade-count">0</span> of <span id="total-count">0</span>)
         </div>
         <div id="trades-empty" class="empty-state">
             <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
-            <p>No completed trades yet. Trades will appear here when positions are closed.</p>
+            <p>No trades found. Adjust your filters or wait for trades to complete.</p>
         </div>
         <div class="table-responsive">
             <table class="trades-table" id="trades-table" style="display: none;">
                 <thead>
                     <tr>
-                        <th>Time</th>
-                        <th>Symbol</th>
-                        <th>Side</th>
-                        <th>Entry</th>
-                        <th>Exit</th>
-                        <th>Size</th>
-                        <th>Leverage</th>
-                        <th>P&L</th>
-                        <th>P&L %</th>
-                        <th>Fees</th>
-                        <th>Exit Reason</th>
-                        <th>Duration</th>
+                        <th data-sort="time" onclick="sortTable('time')">Time <span class="sort-icon">↕</span></th>
+                        <th data-sort="symbol" onclick="sortTable('symbol')">Symbol <span class="sort-icon">↕</span></th>
+                        <th data-sort="side" onclick="sortTable('side')">Side <span class="sort-icon">↕</span></th>
+                        <th data-sort="entry_price" onclick="sortTable('entry_price')">Entry <span class="sort-icon">↕</span></th>
+                        <th data-sort="exit_price" onclick="sortTable('exit_price')">Exit <span class="sort-icon">↕</span></th>
+                        <th data-sort="size" onclick="sortTable('size')">Size <span class="sort-icon">↕</span></th>
+                        <th data-sort="leverage" onclick="sortTable('leverage')">Leverage <span class="sort-icon">↕</span></th>
+                        <th data-sort="pnl" onclick="sortTable('pnl')">P&L <span class="sort-icon">↕</span></th>
+                        <th data-sort="pnl_pct" onclick="sortTable('pnl_pct')">P&L % <span class="sort-icon">↕</span></th>
+                        <th data-sort="fees" onclick="sortTable('fees')">Fees <span class="sort-icon">↕</span></th>
+                        <th data-sort="exit_reason" onclick="sortTable('exit_reason')">Exit Reason <span class="sort-icon">↕</span></th>
+                        <th data-sort="duration" onclick="sortTable('duration')">Duration <span class="sort-icon">↕</span></th>
                     </tr>
                 </thead>
                 <tbody id="tradesTableBody">
                 </tbody>
             </table>
         </div>
+
+        <!-- Pagination -->
+        <div class="pagination" id="pagination">
+        </div>
     </div>
 </div>
 
 <script>
-// Store trades globally for export
+// Global state
 let allTrades = [];
+let filteredTrades = [];
+let displayedTrades = [];
+let availablePairs = [];
+let availableExitReasons = [];
+let currentSort = { column: 'time', direction: 'desc' };
+let currentPage = 1;
+const pageSize = 50;
 
 async function loadTrades() {
     try {
         // Fetch trades from the futures module API
-        const response = await fetch('/api/futures/trades?limit=500');
+        const response = await fetch('/api/futures/trades?limit=2000');
         if (!response.ok) throw new Error('Failed to fetch trades');
         const data = await response.json();
 
         if (data.success && data.trades) {
             allTrades = data.trades;
-            updateStats(data.trades);
-            updateTrades(data.trades);
+            extractFilterOptions();
+            applyFilters();
         } else {
             allTrades = [];
-            updateStats([]);
-            updateTrades([]);
+            extractFilterOptions();
+            applyFilters();
         }
     } catch (error) {
         console.error('Error loading trades:', error);
@@ -283,14 +531,302 @@ async function loadTrades() {
                 const fallbackData = await fallbackResponse.json();
                 if (fallbackData.futures && fallbackData.futures.trades) {
                     allTrades = fallbackData.futures.trades;
-                    updateStats(fallbackData.futures.trades);
-                    updateTrades(fallbackData.futures.trades);
+                    extractFilterOptions();
+                    applyFilters();
                 }
             }
         } catch (e) {
             console.error('Fallback also failed:', e);
+            allTrades = [];
+            extractFilterOptions();
+            applyFilters();
         }
     }
+}
+
+function extractFilterOptions() {
+    // Extract unique pairs from data
+    const pairSet = new Set();
+    const exitReasonSet = new Set();
+
+    allTrades.forEach(trade => {
+        if (trade.symbol) pairSet.add(trade.symbol);
+        const reason = trade.close_reason || trade.exit_reason;
+        if (reason) exitReasonSet.add(reason);
+    });
+
+    availablePairs = Array.from(pairSet).sort();
+    availableExitReasons = Array.from(exitReasonSet).sort();
+
+    // Populate pair filter
+    const pairSelect = document.getElementById('filter-pair');
+    const currentPair = pairSelect.value;
+    pairSelect.innerHTML = '<option value="all">All Pairs</option>';
+    availablePairs.forEach(pair => {
+        const option = document.createElement('option');
+        option.value = pair;
+        option.textContent = pair;
+        pairSelect.appendChild(option);
+    });
+    if (currentPair !== 'all' && availablePairs.includes(currentPair)) {
+        pairSelect.value = currentPair;
+    }
+
+    // Populate exit reason filter
+    const exitSelect = document.getElementById('filter-exit');
+    const currentExit = exitSelect.value;
+    exitSelect.innerHTML = '<option value="all">All Reasons</option>';
+    availableExitReasons.forEach(reason => {
+        const option = document.createElement('option');
+        option.value = reason;
+        option.textContent = formatExitReasonLabel(reason);
+        exitSelect.appendChild(option);
+    });
+    if (currentExit !== 'all' && availableExitReasons.includes(currentExit)) {
+        exitSelect.value = currentExit;
+    }
+}
+
+function applyFilters() {
+    const timeframe = document.getElementById('filter-timeframe').value;
+    const dateFrom = document.getElementById('filter-date-from').value;
+    const dateTo = document.getElementById('filter-date-to').value;
+    const pair = document.getElementById('filter-pair').value;
+    const side = document.getElementById('filter-side').value;
+    const exitReason = document.getElementById('filter-exit').value;
+    const result = document.getElementById('filter-result').value;
+
+    // Show/hide custom date inputs
+    const showCustomDates = timeframe === 'custom';
+    document.getElementById('date-from-group').style.display = showCustomDates ? 'flex' : 'none';
+    document.getElementById('date-to-group').style.display = showCustomDates ? 'flex' : 'none';
+
+    // Calculate date range
+    let startDate = null;
+    let endDate = new Date();
+    endDate.setHours(23, 59, 59, 999);
+
+    const now = new Date();
+    switch (timeframe) {
+        case 'today':
+            startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            break;
+        case '7d':
+            startDate = new Date(now);
+            startDate.setDate(startDate.getDate() - 7);
+            break;
+        case '30d':
+            startDate = new Date(now);
+            startDate.setDate(startDate.getDate() - 30);
+            break;
+        case '90d':
+            startDate = new Date(now);
+            startDate.setDate(startDate.getDate() - 90);
+            break;
+        case 'custom':
+            if (dateFrom) startDate = new Date(dateFrom);
+            if (dateTo) {
+                endDate = new Date(dateTo);
+                endDate.setHours(23, 59, 59, 999);
+            }
+            break;
+    }
+
+    // Filter trades
+    filteredTrades = allTrades.filter(trade => {
+        // Time filter
+        if (startDate || endDate) {
+            const tradeDate = new Date(trade.closed_at || trade.time || trade.exit_time);
+            if (startDate && tradeDate < startDate) return false;
+            if (endDate && tradeDate > endDate) return false;
+        }
+
+        // Pair filter
+        if (pair !== 'all' && trade.symbol !== pair) return false;
+
+        // Side filter
+        if (side !== 'all' && trade.side !== side) return false;
+
+        // Exit reason filter
+        const tradeExitReason = trade.close_reason || trade.exit_reason;
+        if (exitReason !== 'all' && tradeExitReason !== exitReason) return false;
+
+        // Result filter
+        const pnl = trade.pnl || trade.net_pnl || 0;
+        if (result === 'profit' && pnl <= 0) return false;
+        if (result === 'loss' && pnl > 0) return false;
+
+        return true;
+    });
+
+    // Update active filters display
+    updateActiveFilters();
+
+    // Reset to page 1 when filters change
+    currentPage = 1;
+
+    // Sort and display
+    sortFilteredTrades();
+    updateStats(filteredTrades);
+    updateDisplay();
+}
+
+function updateActiveFilters() {
+    const container = document.getElementById('active-filters');
+    const tags = [];
+
+    const timeframe = document.getElementById('filter-timeframe').value;
+    const pair = document.getElementById('filter-pair').value;
+    const side = document.getElementById('filter-side').value;
+    const exitReason = document.getElementById('filter-exit').value;
+    const result = document.getElementById('filter-result').value;
+
+    if (timeframe !== 'all') {
+        const labels = { 'today': 'Today', '7d': '7 Days', '30d': '30 Days', '90d': '90 Days', 'custom': 'Custom Range' };
+        tags.push({ key: 'timeframe', label: labels[timeframe] || timeframe });
+    }
+    if (pair !== 'all') {
+        tags.push({ key: 'pair', label: `Pair: ${pair}` });
+    }
+    if (side !== 'all') {
+        tags.push({ key: 'side', label: `Side: ${side.toUpperCase()}` });
+    }
+    if (exitReason !== 'all') {
+        tags.push({ key: 'exit', label: `Exit: ${formatExitReasonLabel(exitReason)}` });
+    }
+    if (result !== 'all') {
+        tags.push({ key: 'result', label: result === 'profit' ? 'Profitable' : 'Loss' });
+    }
+
+    if (tags.length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+
+    container.style.display = 'flex';
+    container.innerHTML = tags.map(tag => `
+        <span class="filter-tag">
+            ${tag.label}
+            <span class="filter-tag-remove" onclick="clearFilter('${tag.key}')">&times;</span>
+        </span>
+    `).join('');
+}
+
+function clearFilter(key) {
+    switch (key) {
+        case 'timeframe':
+            document.getElementById('filter-timeframe').value = 'all';
+            break;
+        case 'pair':
+            document.getElementById('filter-pair').value = 'all';
+            break;
+        case 'side':
+            document.getElementById('filter-side').value = 'all';
+            break;
+        case 'exit':
+            document.getElementById('filter-exit').value = 'all';
+            break;
+        case 'result':
+            document.getElementById('filter-result').value = 'all';
+            break;
+    }
+    applyFilters();
+}
+
+function resetFilters() {
+    document.getElementById('filter-timeframe').value = 'all';
+    document.getElementById('filter-date-from').value = '';
+    document.getElementById('filter-date-to').value = '';
+    document.getElementById('filter-pair').value = 'all';
+    document.getElementById('filter-side').value = 'all';
+    document.getElementById('filter-exit').value = 'all';
+    document.getElementById('filter-result').value = 'all';
+    applyFilters();
+}
+
+function sortTable(column) {
+    if (currentSort.column === column) {
+        currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+    } else {
+        currentSort.column = column;
+        currentSort.direction = column === 'time' ? 'desc' : 'asc';
+    }
+
+    // Update header styles
+    document.querySelectorAll('.trades-table th').forEach(th => {
+        th.classList.remove('sorted-asc', 'sorted-desc');
+    });
+    const activeHeader = document.querySelector(`th[data-sort="${column}"]`);
+    if (activeHeader) {
+        activeHeader.classList.add(currentSort.direction === 'asc' ? 'sorted-asc' : 'sorted-desc');
+    }
+
+    sortFilteredTrades();
+    updateDisplay();
+}
+
+function sortFilteredTrades() {
+    const col = currentSort.column;
+    const dir = currentSort.direction === 'asc' ? 1 : -1;
+
+    filteredTrades.sort((a, b) => {
+        let aVal, bVal;
+
+        switch (col) {
+            case 'time':
+                aVal = new Date(a.closed_at || a.time || a.exit_time).getTime();
+                bVal = new Date(b.closed_at || b.time || b.exit_time).getTime();
+                break;
+            case 'symbol':
+                aVal = a.symbol || '';
+                bVal = b.symbol || '';
+                return dir * aVal.localeCompare(bVal);
+            case 'side':
+                aVal = a.side || '';
+                bVal = b.side || '';
+                return dir * aVal.localeCompare(bVal);
+            case 'entry_price':
+                aVal = parseFloat(a.entry_price) || 0;
+                bVal = parseFloat(b.entry_price) || 0;
+                break;
+            case 'exit_price':
+                aVal = parseFloat(a.exit_price) || 0;
+                bVal = parseFloat(b.exit_price) || 0;
+                break;
+            case 'size':
+                aVal = parseFloat(a.size) || 0;
+                bVal = parseFloat(b.size) || 0;
+                break;
+            case 'leverage':
+                aVal = a.leverage || 1;
+                bVal = b.leverage || 1;
+                break;
+            case 'pnl':
+                aVal = a.pnl || a.net_pnl || 0;
+                bVal = b.pnl || b.net_pnl || 0;
+                break;
+            case 'pnl_pct':
+                aVal = a.pnl_pct || 0;
+                bVal = b.pnl_pct || 0;
+                break;
+            case 'fees':
+                aVal = a.fees || 0;
+                bVal = b.fees || 0;
+                break;
+            case 'exit_reason':
+                aVal = a.close_reason || a.exit_reason || '';
+                bVal = b.close_reason || b.exit_reason || '';
+                return dir * aVal.localeCompare(bVal);
+            case 'duration':
+                aVal = a.duration_seconds || 0;
+                bVal = b.duration_seconds || 0;
+                break;
+            default:
+                return 0;
+        }
+
+        return dir * (aVal - bVal);
+    });
 }
 
 function updateStats(trades) {
@@ -299,6 +835,7 @@ function updateStats(trades) {
     const losses = trades.filter(t => (t.pnl || t.net_pnl || 0) <= 0).length;
     const winRate = total > 0 ? ((wins / total) * 100).toFixed(1) : 0;
     const totalPnl = trades.reduce((sum, t) => sum + (t.pnl || t.net_pnl || 0), 0);
+    const avgPnl = total > 0 ? totalPnl / total : 0;
     const totalFees = trades.reduce((sum, t) => sum + (t.fees || 0), 0);
 
     document.getElementById('stat-total-trades').textContent = total;
@@ -310,27 +847,41 @@ function updateStats(trades) {
     pnlEl.textContent = `$${totalPnl.toFixed(2)}`;
     pnlEl.className = 'stat-value ' + (totalPnl >= 0 ? 'positive' : 'negative');
 
+    const avgPnlEl = document.getElementById('stat-avg-pnl');
+    avgPnlEl.textContent = `$${avgPnl.toFixed(2)}`;
+    avgPnlEl.className = 'stat-value ' + (avgPnl >= 0 ? 'positive' : 'negative');
+
     document.getElementById('stat-fees').textContent = `$${totalFees.toFixed(2)}`;
 }
 
-function updateTrades(trades) {
+function updateDisplay() {
     const tableBody = document.getElementById('tradesTableBody');
     const emptyState = document.getElementById('trades-empty');
     const table = document.getElementById('trades-table');
     const countEl = document.getElementById('trade-count');
+    const totalCountEl = document.getElementById('total-count');
 
-    countEl.textContent = trades.length;
+    totalCountEl.textContent = allTrades.length;
 
-    if (trades.length === 0) {
+    // Calculate pagination
+    const totalPages = Math.ceil(filteredTrades.length / pageSize);
+    const startIndex = (currentPage - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    displayedTrades = filteredTrades.slice(startIndex, endIndex);
+
+    countEl.textContent = filteredTrades.length;
+
+    if (filteredTrades.length === 0) {
         emptyState.style.display = 'block';
         table.style.display = 'none';
+        document.getElementById('pagination').innerHTML = '';
         return;
     }
 
     emptyState.style.display = 'none';
     table.style.display = 'table';
 
-    tableBody.innerHTML = trades.map(trade => {
+    tableBody.innerHTML = displayedTrades.map(trade => {
         const pnl = trade.pnl || trade.net_pnl || 0;
         const pnlPct = trade.pnl_pct || 0;
         const exitReason = formatExitReason(trade.close_reason || trade.exit_reason || 'unknown');
@@ -354,6 +905,73 @@ function updateTrades(trades) {
             </tr>
         `;
     }).join('');
+
+    // Update pagination
+    updatePagination(totalPages);
+}
+
+function updatePagination(totalPages) {
+    const container = document.getElementById('pagination');
+
+    if (totalPages <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+
+    let html = '';
+
+    // Previous button
+    html += `<button class="pagination-btn" onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>
+        <i class="fas fa-chevron-left"></i>
+    </button>`;
+
+    // Page numbers
+    const maxVisiblePages = 5;
+    let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+    let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+
+    if (endPage - startPage < maxVisiblePages - 1) {
+        startPage = Math.max(1, endPage - maxVisiblePages + 1);
+    }
+
+    if (startPage > 1) {
+        html += `<button class="pagination-btn" onclick="goToPage(1)">1</button>`;
+        if (startPage > 2) {
+            html += `<span class="pagination-info">...</span>`;
+        }
+    }
+
+    for (let i = startPage; i <= endPage; i++) {
+        html += `<button class="pagination-btn ${i === currentPage ? 'active' : ''}" onclick="goToPage(${i})">${i}</button>`;
+    }
+
+    if (endPage < totalPages) {
+        if (endPage < totalPages - 1) {
+            html += `<span class="pagination-info">...</span>`;
+        }
+        html += `<button class="pagination-btn" onclick="goToPage(${totalPages})">${totalPages}</button>`;
+    }
+
+    // Next button
+    html += `<button class="pagination-btn" onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>
+        <i class="fas fa-chevron-right"></i>
+    </button>`;
+
+    // Page info
+    const startItem = (currentPage - 1) * pageSize + 1;
+    const endItem = Math.min(currentPage * pageSize, filteredTrades.length);
+    html += `<span class="pagination-info" style="margin-left: 16px;">Showing ${startItem}-${endItem} of ${filteredTrades.length}</span>`;
+
+    container.innerHTML = html;
+}
+
+function goToPage(page) {
+    const totalPages = Math.ceil(filteredTrades.length / pageSize);
+    if (page < 1 || page > totalPages) return;
+    currentPage = page;
+    updateDisplay();
+    // Scroll to top of table
+    document.querySelector('.section-card').scrollIntoView({ behavior: 'smooth' });
 }
 
 function formatExitReason(reason) {
@@ -381,24 +999,46 @@ function formatExitReason(reason) {
     return `<span class="exit-reason ${info.class}">${info.label}</span>`;
 }
 
+function formatExitReasonLabel(reason) {
+    const labels = {
+        'take_profit': 'TP Hit',
+        'take_profit_1': 'TP1 Hit',
+        'take_profit_2': 'TP2 Hit',
+        'take_profit_3': 'TP3 Hit',
+        'take_profit_4': 'TP4 Hit',
+        'stop_loss': 'Stop Loss',
+        'trailing_stop': 'Trailing Stop',
+        'manual_close': 'Manual Close',
+        'signal_reversal': 'Signal Reversal',
+        'signal': 'Signal',
+        'liquidation_protection': 'Liq Protection',
+        'liquidation': 'Liquidation'
+    };
+    return labels[reason] || reason;
+}
+
 function formatDuration(seconds) {
     if (!seconds) return '-';
     if (seconds < 60) return `${seconds}s`;
     if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
     const hours = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
-    return `${hours}h ${mins}m`;
+    if (hours < 24) return `${hours}h ${mins}m`;
+    const days = Math.floor(hours / 24);
+    const remainingHours = hours % 24;
+    return `${days}d ${remainingHours}h`;
 }
 
-// Export to CSV
+// Export functions - export filtered trades
 function exportCSV() {
-    if (allTrades.length === 0) {
+    const trades = filteredTrades;
+    if (trades.length === 0) {
         alert('No trades to export');
         return;
     }
 
     const headers = ['Time', 'Symbol', 'Side', 'Entry Price', 'Exit Price', 'Size', 'Leverage', 'P&L', 'P&L %', 'Fees', 'Exit Reason', 'Duration (s)'];
-    const rows = allTrades.map(t => [
+    const rows = trades.map(t => [
         t.closed_at || t.time || t.exit_time || '',
         t.symbol,
         t.side,
@@ -426,9 +1066,9 @@ function exportCSV() {
     URL.revokeObjectURL(link.href);
 }
 
-// Export to XLSX (using SheetJS library loaded dynamically)
 async function exportXLSX() {
-    if (allTrades.length === 0) {
+    const trades = filteredTrades;
+    if (trades.length === 0) {
         alert('No trades to export');
         return;
     }
@@ -440,7 +1080,7 @@ async function exportXLSX() {
 
     const wsData = [
         ['Time', 'Symbol', 'Side', 'Entry Price', 'Exit Price', 'Size', 'Leverage', 'P&L', 'P&L %', 'Fees', 'Exit Reason', 'Duration (s)'],
-        ...allTrades.map(t => [
+        ...trades.map(t => [
             t.closed_at || t.time || t.exit_time || '',
             t.symbol,
             t.side,
@@ -482,7 +1122,7 @@ function loadScript(src) {
 // Load on page load
 loadTrades();
 
-// Auto-refresh every 30 seconds
-setInterval(loadTrades, 30000);
+// Auto-refresh every 60 seconds
+setInterval(loadTrades, 60000);
 </script>
 {% endblock %}

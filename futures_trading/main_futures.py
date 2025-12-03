@@ -200,9 +200,10 @@ class HealthServer:
         if self.app.engine:
             positions = []
             for symbol, pos in self.app.engine.active_positions.items():
+                # IMPORTANT: Use dictionary key 'symbol' for consistency with close_position_handler lookup
                 positions.append({
                     'position_id': pos.position_id,
-                    'symbol': pos.symbol,
+                    'symbol': symbol,  # Use dict key, not pos.symbol, to ensure close works
                     'side': pos.side.value,
                     'entry_price': pos.entry_price,
                     'current_price': pos.current_price,
@@ -316,6 +317,10 @@ class HealthServer:
         try:
             data = await request.json()
             symbol = data.get('symbol')
+
+            # Debug logging to trace position lookup
+            active_keys = list(self.app.engine.active_positions.keys())
+            logger.info(f"🔍 Close position request: symbol='{symbol}', active_positions={active_keys}")
 
             if not symbol:
                 return web.json_response({
