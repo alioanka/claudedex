@@ -366,10 +366,11 @@ class PnLTracker:
         Profit Factor = Total Wins / Total Losses
 
         Returns:
-            Profit factor (> 1 is profitable)
+            Profit factor (> 1 is profitable, capped at 9999 for JSON compatibility)
         """
         if self.total_losses == 0:
-            return float('inf') if self.total_wins > 0 else 0.0
+            # Return a large but JSON-serializable value instead of infinity
+            return 9999.99 if self.total_wins > 0 else 0.0
 
         return round(self.total_wins / self.total_losses, 2)
 

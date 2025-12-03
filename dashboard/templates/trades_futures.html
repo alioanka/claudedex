@@ -9,7 +9,12 @@
     }
 
     .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
         margin-bottom: 30px;
+        flex-wrap: wrap;
+        gap: 16px;
     }
 
     .page-title {
@@ -22,6 +27,11 @@
     .page-subtitle {
         color: var(--text-secondary);
         font-size: 1rem;
+    }
+
+    .header-actions {
+        display: flex;
+        gap: 10px;
     }
 
     .section-card {
@@ -48,11 +58,113 @@
         color: var(--text-secondary);
     }
 
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+
+    .stat-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 16px;
+    }
+
+    .stat-label {
+        color: var(--text-secondary);
+        font-size: 0.875rem;
+        margin-bottom: 4px;
+    }
+
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: bold;
+    }
+
+    .positive { color: #10b981; }
+    .negative { color: #ef4444; }
+
+    .table-responsive {
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .trades-table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 900px;
+    }
+
+    .trades-table th {
+        background: var(--metric-bg);
+        padding: 12px 10px;
+        text-align: left;
+        font-weight: 600;
+        color: var(--text-secondary);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        white-space: nowrap;
+    }
+
+    .trades-table td {
+        padding: 12px 10px;
+        border-bottom: 1px solid var(--border-color);
+        white-space: nowrap;
+    }
+
+    .trades-table tr:hover {
+        background: var(--metric-bg);
+    }
+
+    .badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .badge-long { background: #d1fae5; color: #065f46; }
+    .badge-short { background: #fee2e2; color: #991b1b; }
+
+    .exit-reason {
+        font-size: 0.75rem;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: var(--metric-bg);
+    }
+    .exit-reason.tp_hit { background: #d1fae5; color: #065f46; }
+    .exit-reason.sl_hit { background: #fee2e2; color: #991b1b; }
+    .exit-reason.tsl_hit { background: #ede9fe; color: #5b21b6; }
+    .exit-reason.manual { background: #fef3c7; color: #92400e; }
+
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s;
+    }
+
+    .btn-primary { background: #8b5cf6; color: white; }
+    .btn-primary:hover { background: #7c3aed; }
+    .btn-secondary { background: #6b7280; color: white; }
+    .btn-secondary:hover { background: #4b5563; }
+
     [data-theme="dark"] {
         --card-bg: #1f2937;
         --border-color: #374151;
         --text-primary: #f9fafb;
         --text-secondary: #d1d5db;
+        --metric-bg: #111827;
     }
 </style>
 {% endblock %}
@@ -60,82 +172,145 @@
 {% block content %}
 <div class="page-container">
     <div class="page-header">
-        <h1 class="page-title">
-            <i class="fas fa-exchange-alt"></i>
-            Futures Trades
-        </h1>
-        <p class="page-subtitle">Trade history for futures module</p>
+        <div>
+            <h1 class="page-title">
+                <i class="fas fa-exchange-alt"></i>
+                Futures Trades
+            </h1>
+            <p class="page-subtitle">Complete trade history for futures module</p>
+        </div>
+        <div class="header-actions">
+            <button class="btn btn-secondary" onclick="loadTrades()">
+                <i class="fas fa-sync"></i> Refresh
+            </button>
+            <button class="btn btn-primary" onclick="exportCSV()">
+                <i class="fas fa-file-csv"></i> Export CSV
+            </button>
+            <button class="btn btn-primary" onclick="exportXLSX()">
+                <i class="fas fa-file-excel"></i> Export Excel
+            </button>
+        </div>
     </div>
 
     <!-- Stats Summary -->
-    <div class="stats-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px;">
-        <div class="stat-card" style="background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 16px;">
-            <div style="color: var(--text-secondary); font-size: 0.875rem;">Total Trades</div>
-            <div id="stat-total-trades" style="font-size: 1.5rem; font-weight: bold;">0</div>
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">Total Trades</div>
+            <div class="stat-value" id="stat-total-trades">0</div>
         </div>
-        <div class="stat-card" style="background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 16px;">
-            <div style="color: var(--text-secondary); font-size: 0.875rem;">Winning</div>
-            <div id="stat-winning" style="font-size: 1.5rem; font-weight: bold; color: #10b981;">0</div>
+        <div class="stat-card">
+            <div class="stat-label">Winning</div>
+            <div class="stat-value positive" id="stat-winning">0</div>
         </div>
-        <div class="stat-card" style="background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 16px;">
-            <div style="color: var(--text-secondary); font-size: 0.875rem;">Losing</div>
-            <div id="stat-losing" style="font-size: 1.5rem; font-weight: bold; color: #ef4444;">0</div>
+        <div class="stat-card">
+            <div class="stat-label">Losing</div>
+            <div class="stat-value negative" id="stat-losing">0</div>
         </div>
-        <div class="stat-card" style="background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 16px;">
-            <div style="color: var(--text-secondary); font-size: 0.875rem;">Win Rate</div>
-            <div id="stat-winrate" style="font-size: 1.5rem; font-weight: bold;">0%</div>
+        <div class="stat-card">
+            <div class="stat-label">Win Rate</div>
+            <div class="stat-value" id="stat-winrate">0%</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Total P&L</div>
+            <div class="stat-value" id="stat-pnl">$0.00</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Total Fees</div>
+            <div class="stat-value" id="stat-fees">$0.00</div>
         </div>
     </div>
 
     <div class="section-card">
         <div class="section-title">
             <i class="fas fa-history"></i>
-            Recent Trades (<span id="trade-count">0</span>)
+            Trade History (<span id="trade-count">0</span>)
         </div>
         <div id="trades-empty" class="empty-state">
             <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
             <p>No completed trades yet. Trades will appear here when positions are closed.</p>
         </div>
-        <table class="position-table" id="trades-table" style="display: none; width: 100%; border-collapse: collapse;">
-            <thead>
-                <tr>
-                    <th style="background: var(--metric-bg); padding: 12px; text-align: left;">Time</th>
-                    <th style="background: var(--metric-bg); padding: 12px; text-align: left;">Symbol</th>
-                    <th style="background: var(--metric-bg); padding: 12px; text-align: left;">Side</th>
-                    <th style="background: var(--metric-bg); padding: 12px; text-align: left;">Entry</th>
-                    <th style="background: var(--metric-bg); padding: 12px; text-align: left;">Exit</th>
-                    <th style="background: var(--metric-bg); padding: 12px; text-align: left;">P&L</th>
-                </tr>
-            </thead>
-            <tbody id="tradesTableBody">
-            </tbody>
-        </table>
+        <div class="table-responsive">
+            <table class="trades-table" id="trades-table" style="display: none;">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Symbol</th>
+                        <th>Side</th>
+                        <th>Entry</th>
+                        <th>Exit</th>
+                        <th>Size</th>
+                        <th>Leverage</th>
+                        <th>P&L</th>
+                        <th>P&L %</th>
+                        <th>Fees</th>
+                        <th>Exit Reason</th>
+                        <th>Duration</th>
+                    </tr>
+                </thead>
+                <tbody id="tradesTableBody">
+                </tbody>
+            </table>
+        </div>
     </div>
 </div>
 
 <script>
+// Store trades globally for export
+let allTrades = [];
+
 async function loadTrades() {
     try {
-        const response = await fetch('/api/simulator/data');
-        if (!response.ok) throw new Error('Failed to fetch data');
+        // Fetch trades from the futures module API
+        const response = await fetch('/api/futures/trades?limit=500');
+        if (!response.ok) throw new Error('Failed to fetch trades');
         const data = await response.json();
 
-        if (data.futures) {
-            updateStats(data.futures);
-            // Trade history would come from data.futures.trade_history when implemented
-            const trades = data.futures.trade_history || [];
-            updateTrades(trades);
+        if (data.success && data.trades) {
+            allTrades = data.trades;
+            updateStats(data.trades);
+            updateTrades(data.trades);
+        } else {
+            allTrades = [];
+            updateStats([]);
+            updateTrades([]);
         }
     } catch (error) {
         console.error('Error loading trades:', error);
+        // Try fallback to simulator data
+        try {
+            const fallbackResponse = await fetch('/api/simulator/data');
+            if (fallbackResponse.ok) {
+                const fallbackData = await fallbackResponse.json();
+                if (fallbackData.futures && fallbackData.futures.trades) {
+                    allTrades = fallbackData.futures.trades;
+                    updateStats(fallbackData.futures.trades);
+                    updateTrades(fallbackData.futures.trades);
+                }
+            }
+        } catch (e) {
+            console.error('Fallback also failed:', e);
+        }
     }
 }
 
-function updateStats(stats) {
-    document.getElementById('stat-total-trades').textContent = stats.total_trades || 0;
-    document.getElementById('stat-winning').textContent = stats.winning_trades || 0;
-    document.getElementById('stat-losing').textContent = stats.losing_trades || 0;
-    document.getElementById('stat-winrate').textContent = stats.win_rate || '0%';
+function updateStats(trades) {
+    const total = trades.length;
+    const wins = trades.filter(t => (t.pnl || t.net_pnl || 0) > 0).length;
+    const losses = trades.filter(t => (t.pnl || t.net_pnl || 0) <= 0).length;
+    const winRate = total > 0 ? ((wins / total) * 100).toFixed(1) : 0;
+    const totalPnl = trades.reduce((sum, t) => sum + (t.pnl || t.net_pnl || 0), 0);
+    const totalFees = trades.reduce((sum, t) => sum + (t.fees || 0), 0);
+
+    document.getElementById('stat-total-trades').textContent = total;
+    document.getElementById('stat-winning').textContent = wins;
+    document.getElementById('stat-losing').textContent = losses;
+    document.getElementById('stat-winrate').textContent = winRate + '%';
+
+    const pnlEl = document.getElementById('stat-pnl');
+    pnlEl.textContent = `$${totalPnl.toFixed(2)}`;
+    pnlEl.className = 'stat-value ' + (totalPnl >= 0 ? 'positive' : 'negative');
+
+    document.getElementById('stat-fees').textContent = `$${totalFees.toFixed(2)}`;
 }
 
 function updateTrades(trades) {
@@ -155,22 +330,159 @@ function updateTrades(trades) {
     emptyState.style.display = 'none';
     table.style.display = 'table';
 
-    tableBody.innerHTML = trades.map(trade => `
-        <tr style="border-bottom: 1px solid var(--border-color);">
-            <td style="padding: 12px;">${new Date(trade.time).toLocaleString()}</td>
-            <td style="padding: 12px;"><strong>${trade.symbol}</strong></td>
-            <td style="padding: 12px;"><span class="badge badge-${trade.side}">${trade.side.toUpperCase()}</span></td>
-            <td style="padding: 12px;">$${trade.entry.toLocaleString()}</td>
-            <td style="padding: 12px;">$${trade.exit.toLocaleString()}</td>
-            <td style="padding: 12px; color: ${trade.pnl >= 0 ? '#10b981' : '#ef4444'};">$${trade.pnl.toFixed(2)}</td>
-        </tr>
-    `).join('');
+    tableBody.innerHTML = trades.map(trade => {
+        const pnl = trade.pnl || trade.net_pnl || 0;
+        const pnlPct = trade.pnl_pct || 0;
+        const exitReason = formatExitReason(trade.close_reason || trade.exit_reason || 'unknown');
+        const closedAt = trade.closed_at || trade.time || trade.exit_time;
+        const duration = formatDuration(trade.duration_seconds);
+
+        return `
+            <tr>
+                <td>${closedAt ? new Date(closedAt).toLocaleString() : 'N/A'}</td>
+                <td><strong>${trade.symbol}</strong></td>
+                <td><span class="badge badge-${trade.side}">${trade.side.toUpperCase()}</span></td>
+                <td>$${parseFloat(trade.entry_price).toFixed(4)}</td>
+                <td>$${parseFloat(trade.exit_price).toFixed(4)}</td>
+                <td>${parseFloat(trade.size).toFixed(6)}</td>
+                <td>${trade.leverage || 1}x</td>
+                <td class="${pnl >= 0 ? 'positive' : 'negative'}">$${pnl.toFixed(2)}</td>
+                <td class="${pnlPct >= 0 ? 'positive' : 'negative'}">${pnlPct.toFixed(2)}%</td>
+                <td>$${(trade.fees || 0).toFixed(4)}</td>
+                <td>${exitReason}</td>
+                <td>${duration}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function formatExitReason(reason) {
+    if (!reason || reason === 'unknown' || reason === '-') {
+        return '<span class="exit-reason">-</span>';
+    }
+    const reasonMap = {
+        'take_profit': { label: 'TP Hit', class: 'tp_hit' },
+        'take_profit_1': { label: 'TP1 Hit', class: 'tp_hit' },
+        'take_profit_2': { label: 'TP2 Hit', class: 'tp_hit' },
+        'take_profit_3': { label: 'TP3 Hit', class: 'tp_hit' },
+        'take_profit_4': { label: 'TP4 Hit', class: 'tp_hit' },
+        'stop_loss': { label: 'SL Hit', class: 'sl_hit' },
+        'trailing_stop': { label: 'TSL Hit', class: 'tsl_hit' },
+        'manual_close': { label: 'Manual', class: 'manual' },
+        'signal_reversal': { label: 'Signal', class: '' },
+        'signal': { label: 'Signal', class: '' },
+        'liquidation_protection': { label: 'Liq Prot', class: 'sl_hit' },
+        'liquidation': { label: 'Liquidation', class: 'sl_hit' }
+    };
+    const info = reasonMap[reason];
+    if (!info) {
+        return `<span class="exit-reason">${reason}</span>`;
+    }
+    return `<span class="exit-reason ${info.class}">${info.label}</span>`;
+}
+
+function formatDuration(seconds) {
+    if (!seconds) return '-';
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    return `${hours}h ${mins}m`;
+}
+
+// Export to CSV
+function exportCSV() {
+    if (allTrades.length === 0) {
+        alert('No trades to export');
+        return;
+    }
+
+    const headers = ['Time', 'Symbol', 'Side', 'Entry Price', 'Exit Price', 'Size', 'Leverage', 'P&L', 'P&L %', 'Fees', 'Exit Reason', 'Duration (s)'];
+    const rows = allTrades.map(t => [
+        t.closed_at || t.time || t.exit_time || '',
+        t.symbol,
+        t.side,
+        t.entry_price,
+        t.exit_price,
+        t.size,
+        t.leverage || 1,
+        (t.pnl || t.net_pnl || 0).toFixed(4),
+        (t.pnl_pct || 0).toFixed(2),
+        (t.fees || 0).toFixed(4),
+        t.close_reason || t.exit_reason || '',
+        t.duration_seconds || 0
+    ]);
+
+    let csvContent = headers.join(',') + '\n';
+    rows.forEach(row => {
+        csvContent += row.map(cell => `"${cell}"`).join(',') + '\n';
+    });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `futures_trades_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+}
+
+// Export to XLSX (using SheetJS library loaded dynamically)
+async function exportXLSX() {
+    if (allTrades.length === 0) {
+        alert('No trades to export');
+        return;
+    }
+
+    // Load SheetJS library if not already loaded
+    if (typeof XLSX === 'undefined') {
+        await loadScript('https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js');
+    }
+
+    const wsData = [
+        ['Time', 'Symbol', 'Side', 'Entry Price', 'Exit Price', 'Size', 'Leverage', 'P&L', 'P&L %', 'Fees', 'Exit Reason', 'Duration (s)'],
+        ...allTrades.map(t => [
+            t.closed_at || t.time || t.exit_time || '',
+            t.symbol,
+            t.side,
+            parseFloat(t.entry_price),
+            parseFloat(t.exit_price),
+            parseFloat(t.size),
+            t.leverage || 1,
+            parseFloat((t.pnl || t.net_pnl || 0).toFixed(4)),
+            parseFloat((t.pnl_pct || 0).toFixed(2)),
+            parseFloat((t.fees || 0).toFixed(4)),
+            t.close_reason || t.exit_reason || '',
+            t.duration_seconds || 0
+        ])
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Futures Trades');
+
+    // Auto-size columns
+    const colWidths = wsData[0].map((_, i) => ({
+        wch: Math.max(...wsData.map(row => String(row[i]).length)) + 2
+    }));
+    ws['!cols'] = colWidths;
+
+    XLSX.writeFile(wb, `futures_trades_${new Date().toISOString().split('T')[0]}.xlsx`);
+}
+
+function loadScript(src) {
+    return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.appendChild(script);
+    });
 }
 
 // Load on page load
 loadTrades();
 
-// Auto-refresh every 10 seconds
-setInterval(loadTrades, 10000);
+// Auto-refresh every 30 seconds
+setInterval(loadTrades, 30000);
 </script>
 {% endblock %}

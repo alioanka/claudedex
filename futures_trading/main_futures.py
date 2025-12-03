@@ -326,7 +326,8 @@ class HealthServer:
             if symbol not in self.app.engine.active_positions:
                 return web.json_response({
                     'success': False,
-                    'error': f'No active position for {symbol}'
+                    'error': f'Position {symbol} not found in active positions. It may have already been closed by TP/SL hit or the trading system.',
+                    'already_closed': True
                 }, status=404)
 
             # Close the position

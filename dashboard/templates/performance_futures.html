@@ -10,7 +10,12 @@
     }
 
     .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
         margin-bottom: 30px;
+        flex-wrap: wrap;
+        gap: 16px;
     }
 
     .page-title {
@@ -27,7 +32,7 @@
 
     .stats-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
         gap: 20px;
         margin-bottom: 30px;
     }
@@ -47,10 +52,13 @@
     }
 
     .stat-value {
-        font-size: 2rem;
+        font-size: 1.75rem;
         font-weight: 700;
         color: var(--text-primary);
     }
+
+    .stat-value.positive { color: #10b981; }
+    .stat-value.negative { color: #ef4444; }
 
     .section-card {
         background: var(--card-bg);
@@ -72,8 +80,36 @@
 
     .chart-container {
         position: relative;
-        height: 300px;
+        height: 350px;
         margin-top: 20px;
+    }
+
+    .grid-2 {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+        gap: 24px;
+    }
+
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s;
+    }
+
+    .btn-secondary { background: #6b7280; color: white; }
+    .btn-secondary:hover { background: #4b5563; }
+
+    .loading-state {
+        text-align: center;
+        padding: 40px;
+        color: var(--text-secondary);
     }
 
     [data-theme="dark"] {
@@ -88,14 +124,23 @@
 {% block content %}
 <div class="page-container">
     <div class="page-header">
-        <h1 class="page-title">
-            <i class="fas fa-chart-bar"></i>
-            Futures Performance
-        </h1>
-        <p class="page-subtitle">Performance metrics for futures module</p>
+        <div>
+            <h1 class="page-title">
+                <i class="fas fa-chart-bar"></i>
+                Futures Performance
+            </h1>
+            <p class="page-subtitle">Performance metrics calculated from trade history</p>
+        </div>
+        <button class="btn btn-secondary" onclick="loadPerformance()">
+            <i class="fas fa-sync"></i> Refresh
+        </button>
     </div>
 
     <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">Total P&L</div>
+            <div class="stat-value" id="stat-pnl">$0.00</div>
+        </div>
         <div class="stat-card">
             <div class="stat-label">Win Rate</div>
             <div class="stat-value" id="stat-winrate">0%</div>
@@ -110,15 +155,11 @@
         </div>
         <div class="stat-card">
             <div class="stat-label">Max Drawdown</div>
-            <div class="stat-value" id="stat-drawdown">0.00%</div>
+            <div class="stat-value negative" id="stat-drawdown">0.00%</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Sortino Ratio</div>
             <div class="stat-value" id="stat-sortino">0.00</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-label">Calmar Ratio</div>
-            <div class="stat-value" id="stat-calmar">0.00</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Avg Win</div>
@@ -137,85 +178,315 @@
             <div class="stat-value negative" id="stat-worst-trade">$0.00</div>
         </div>
         <div class="stat-card">
+            <div class="stat-label">Total Trades</div>
+            <div class="stat-value" id="stat-total-trades">0</div>
+        </div>
+        <div class="stat-card">
             <div class="stat-label">Current Streak</div>
             <div class="stat-value" id="stat-streak">0</div>
         </div>
-        <div class="stat-card">
-            <div class="stat-label">Max Win Streak</div>
-            <div class="stat-value" id="stat-max-win-streak">0</div>
+    </div>
+
+    <div class="grid-2">
+        <div class="section-card">
+            <div class="section-title">
+                <i class="fas fa-chart-area"></i>
+                Equity Curve
+            </div>
+            <div class="chart-container">
+                <canvas id="equityChart"></canvas>
+            </div>
+        </div>
+
+        <div class="section-card">
+            <div class="section-title">
+                <i class="fas fa-chart-bar"></i>
+                Daily P&L
+            </div>
+            <div class="chart-container">
+                <canvas id="dailyPnlChart"></canvas>
+            </div>
         </div>
     </div>
 
     <div class="section-card">
         <div class="section-title">
-            <i class="fas fa-chart-area"></i>
-            Equity Curve
+            <i class="fas fa-chart-pie"></i>
+            Win/Loss Distribution
         </div>
-        <div class="chart-container">
-            <canvas id="equityChart"></canvas>
+        <div class="chart-container" style="height: 250px; max-width: 400px; margin: 0 auto;">
+            <canvas id="winLossChart"></canvas>
         </div>
     </div>
 </div>
 
 <script>
-const ctx = document.getElementById('equityChart').getContext('2d');
-const equityChart = new Chart(ctx, {
-    type: 'line',
-    data: {
-        labels: [],
-        datasets: [{
-            label: 'Equity',
-            data: [],
-            borderColor: '#8b5cf6',
-            backgroundColor: 'rgba(139, 92, 246, 0.1)',
-            fill: true,
-            tension: 0.4
-        }]
-    },
-    options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-            y: {
-                beginAtZero: true
-            }
-        }
-    }
-});
+let equityChart = null;
+let dailyPnlChart = null;
+let winLossChart = null;
+let allTrades = [];
 
 async function loadPerformance() {
     try {
-        const response = await fetch('/api/simulator/data');
-        if (!response.ok) throw new Error('Failed to fetch data');
+        // Fetch trades from the futures module API
+        const response = await fetch('/api/futures/trades?limit=1000');
+        if (!response.ok) throw new Error('Failed to fetch trades');
         const data = await response.json();
 
-        if (data.futures) {
-            updateStats(data.futures);
+        if (data.success && data.trades && data.trades.length > 0) {
+            allTrades = data.trades;
+            calculateAndDisplayMetrics(data.trades);
+        } else {
+            // Try fallback to simulator data
+            const fallbackResponse = await fetch('/api/simulator/data');
+            if (fallbackResponse.ok) {
+                const fallbackData = await fallbackResponse.json();
+                if (fallbackData.futures && fallbackData.futures.trades && fallbackData.futures.trades.length > 0) {
+                    allTrades = fallbackData.futures.trades;
+                    calculateAndDisplayMetrics(fallbackData.futures.trades);
+                } else {
+                    showEmptyState();
+                }
+            }
         }
     } catch (error) {
         console.error('Error loading performance:', error);
+        showEmptyState();
     }
 }
 
-function updateStats(stats) {
-    document.getElementById('stat-winrate').textContent = stats.win_rate || '0%';
-    document.getElementById('stat-profit-factor').textContent = (stats.profit_factor || 0).toFixed(2);
-    document.getElementById('stat-sharpe').textContent = (stats.sharpe_ratio || 0).toFixed(2);
-    document.getElementById('stat-drawdown').textContent = stats.max_drawdown_pct || '0.0%';
-    document.getElementById('stat-sortino').textContent = (stats.sortino_ratio || 0).toFixed(2);
-    document.getElementById('stat-calmar').textContent = (stats.calmar_ratio || 0).toFixed(2);
-    document.getElementById('stat-avg-win').textContent = stats.avg_win || '$0.00';
-    document.getElementById('stat-avg-loss').textContent = stats.avg_loss || '$0.00';
-    document.getElementById('stat-best-trade').textContent = stats.best_trade || '$0.00';
-    document.getElementById('stat-worst-trade').textContent = stats.worst_trade || '$0.00';
-    document.getElementById('stat-streak').textContent = stats.current_streak || 0;
-    document.getElementById('stat-max-win-streak').textContent = stats.max_win_streak || 0;
+function showEmptyState() {
+    document.getElementById('stat-pnl').textContent = '$0.00';
+    document.getElementById('stat-winrate').textContent = '0%';
+    document.getElementById('stat-profit-factor').textContent = '0.00';
+    document.getElementById('stat-sharpe').textContent = '0.00';
+    document.getElementById('stat-drawdown').textContent = '0.00%';
+    document.getElementById('stat-sortino').textContent = '0.00';
+    document.getElementById('stat-avg-win').textContent = '$0.00';
+    document.getElementById('stat-avg-loss').textContent = '$0.00';
+    document.getElementById('stat-best-trade').textContent = '$0.00';
+    document.getElementById('stat-worst-trade').textContent = '$0.00';
+    document.getElementById('stat-total-trades').textContent = '0';
+    document.getElementById('stat-streak').textContent = '0';
+}
+
+function calculateAndDisplayMetrics(trades) {
+    // Sort trades by time (oldest first)
+    trades.sort((a, b) => new Date(a.closed_at || a.time || a.exit_time) - new Date(b.closed_at || b.time || b.exit_time));
+
+    // Calculate basic stats
+    const pnls = trades.map(t => t.pnl || t.net_pnl || 0);
+    const wins = pnls.filter(p => p > 0);
+    const losses = pnls.filter(p => p < 0);
+
+    const totalPnl = pnls.reduce((a, b) => a + b, 0);
+    const winRate = trades.length > 0 ? (wins.length / trades.length) * 100 : 0;
+    const avgWin = wins.length > 0 ? wins.reduce((a, b) => a + b, 0) / wins.length : 0;
+    const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((a, b) => a + b, 0) / losses.length) : 0;
+    const bestTrade = pnls.length > 0 ? Math.max(...pnls) : 0;
+    const worstTrade = pnls.length > 0 ? Math.min(...pnls) : 0;
+
+    // Profit Factor
+    const grossProfit = wins.reduce((a, b) => a + b, 0);
+    const grossLoss = Math.abs(losses.reduce((a, b) => a + b, 0));
+    const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
+
+    // Calculate equity curve and drawdown
+    let equity = 10000; // Starting capital
+    let peak = equity;
+    let maxDrawdown = 0;
+    const equityCurve = [equity];
+
+    pnls.forEach(pnl => {
+        equity += pnl;
+        equityCurve.push(equity);
+        if (equity > peak) peak = equity;
+        const drawdown = (peak - equity) / peak * 100;
+        if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+    });
+
+    // Sharpe Ratio (annualized, assuming 252 trading days)
+    const avgReturn = pnls.length > 0 ? pnls.reduce((a, b) => a + b, 0) / pnls.length : 0;
+    const stdDev = calculateStdDev(pnls);
+    const sharpeRatio = stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(252) : 0;
+
+    // Sortino Ratio (downside deviation only)
+    const negativeReturns = pnls.filter(p => p < 0);
+    const downsideDev = calculateStdDev(negativeReturns);
+    const sortinoRatio = downsideDev > 0 ? (avgReturn / downsideDev) * Math.sqrt(252) : 0;
+
+    // Current streak
+    let streak = 0;
+    for (let i = pnls.length - 1; i >= 0; i--) {
+        if (i === pnls.length - 1) {
+            streak = pnls[i] > 0 ? 1 : -1;
+        } else if ((pnls[i] > 0 && streak > 0) || (pnls[i] < 0 && streak < 0)) {
+            streak = streak > 0 ? streak + 1 : streak - 1;
+        } else {
+            break;
+        }
+    }
+
+    // Update UI
+    const pnlEl = document.getElementById('stat-pnl');
+    pnlEl.textContent = `$${totalPnl.toFixed(2)}`;
+    pnlEl.className = 'stat-value ' + (totalPnl >= 0 ? 'positive' : 'negative');
+
+    document.getElementById('stat-winrate').textContent = winRate.toFixed(1) + '%';
+    document.getElementById('stat-profit-factor').textContent = profitFactor === Infinity ? '∞' : profitFactor.toFixed(2);
+    document.getElementById('stat-sharpe').textContent = sharpeRatio.toFixed(2);
+    document.getElementById('stat-drawdown').textContent = maxDrawdown.toFixed(2) + '%';
+    document.getElementById('stat-sortino').textContent = sortinoRatio.toFixed(2);
+    document.getElementById('stat-avg-win').textContent = `$${avgWin.toFixed(2)}`;
+    document.getElementById('stat-avg-loss').textContent = `$${avgLoss.toFixed(2)}`;
+    document.getElementById('stat-best-trade').textContent = `$${bestTrade.toFixed(2)}`;
+    document.getElementById('stat-worst-trade').textContent = `$${worstTrade.toFixed(2)}`;
+    document.getElementById('stat-total-trades').textContent = trades.length;
+    document.getElementById('stat-streak').textContent = streak > 0 ? `+${streak} wins` : streak < 0 ? `${streak} losses` : '0';
+
+    // Update charts
+    updateEquityChart(trades, equityCurve);
+    updateDailyPnlChart(trades);
+    updateWinLossChart(wins.length, losses.length);
+}
+
+function calculateStdDev(arr) {
+    if (arr.length === 0) return 0;
+    const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+    const squaredDiffs = arr.map(x => Math.pow(x - mean, 2));
+    return Math.sqrt(squaredDiffs.reduce((a, b) => a + b, 0) / arr.length);
+}
+
+function updateEquityChart(trades, equityCurve) {
+    const ctx = document.getElementById('equityChart').getContext('2d');
+
+    const labels = ['Start', ...trades.map((t, i) => {
+        const date = new Date(t.closed_at || t.time || t.exit_time);
+        return date.toLocaleDateString();
+    })];
+
+    if (equityChart) {
+        equityChart.destroy();
+    }
+
+    equityChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Equity',
+                data: equityCurve,
+                borderColor: '#8b5cf6',
+                backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                fill: true,
+                tension: 0.4,
+                pointRadius: 0,
+                pointHoverRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false }
+            },
+            scales: {
+                x: {
+                    display: false
+                },
+                y: {
+                    grid: { color: 'rgba(148, 163, 184, 0.1)' },
+                    ticks: { color: '#94a3b8' }
+                }
+            }
+        }
+    });
+}
+
+function updateDailyPnlChart(trades) {
+    const ctx = document.getElementById('dailyPnlChart').getContext('2d');
+
+    // Group by date
+    const dailyPnl = {};
+    trades.forEach(t => {
+        const date = new Date(t.closed_at || t.time || t.exit_time).toLocaleDateString();
+        if (!dailyPnl[date]) dailyPnl[date] = 0;
+        dailyPnl[date] += t.pnl || t.net_pnl || 0;
+    });
+
+    const dates = Object.keys(dailyPnl);
+    const pnls = Object.values(dailyPnl);
+
+    if (dailyPnlChart) {
+        dailyPnlChart.destroy();
+    }
+
+    dailyPnlChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: dates,
+            datasets: [{
+                label: 'Daily P&L',
+                data: pnls,
+                backgroundColor: pnls.map(p => p >= 0 ? 'rgba(16, 185, 129, 0.7)' : 'rgba(239, 68, 68, 0.7)'),
+                borderColor: pnls.map(p => p >= 0 ? '#10b981' : '#ef4444'),
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false }
+            },
+            scales: {
+                x: {
+                    grid: { display: false },
+                    ticks: { color: '#94a3b8' }
+                },
+                y: {
+                    grid: { color: 'rgba(148, 163, 184, 0.1)' },
+                    ticks: { color: '#94a3b8' }
+                }
+            }
+        }
+    });
+}
+
+function updateWinLossChart(wins, losses) {
+    const ctx = document.getElementById('winLossChart').getContext('2d');
+
+    if (winLossChart) {
+        winLossChart.destroy();
+    }
+
+    winLossChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Wins', 'Losses'],
+            datasets: [{
+                data: [wins, losses],
+                backgroundColor: ['#10b981', '#ef4444'],
+                borderWidth: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: { color: '#94a3b8' }
+                }
+            }
+        }
+    });
 }
 
 // Load on page load
 loadPerformance();
 
-// Auto-refresh every 10 seconds
-setInterval(loadPerformance, 10000);
+// Auto-refresh every 30 seconds
+setInterval(loadPerformance, 30000);
 </script>
 {% endblock %}
