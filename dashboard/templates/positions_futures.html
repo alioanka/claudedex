@@ -42,27 +42,50 @@
         gap: 10px;
     }
 
+    .table-responsive {
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
     .position-table {
         width: 100%;
         border-collapse: collapse;
+        min-width: 1000px;
     }
 
     .position-table th {
         background: var(--metric-bg);
-        padding: 12px;
+        padding: 10px 8px;
         text-align: left;
         font-weight: 600;
         color: var(--text-secondary);
-        font-size: 0.875rem;
+        font-size: 0.75rem;
         text-transform: uppercase;
+        white-space: nowrap;
     }
 
     .position-table td {
-        padding: 12px;
+        padding: 10px 8px;
         border-bottom: 1px solid var(--border-color);
+        white-space: nowrap;
     }
 
     .position-table tr:hover {
+        background: var(--metric-bg);
+    }
+
+    /* Make Actions column sticky on right side */
+    .position-table th:last-child,
+    .position-table td:last-child {
+        position: sticky;
+        right: 0;
+        background: var(--card-bg);
+        z-index: 1;
+        box-shadow: -2px 0 4px rgba(0,0,0,0.1);
+    }
+
+    .position-table th:last-child {
         background: var(--metric-bg);
     }
 
@@ -244,25 +267,27 @@
             <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
             <p>No active futures positions.</p>
         </div>
-        <table class="position-table" id="positions-table" style="display: none;">
-            <thead>
-                <tr>
-                    <th>Symbol</th>
-                    <th>Side</th>
-                    <th>Size</th>
-                    <th>Value</th>
-                    <th>Leverage</th>
-                    <th>Entry</th>
-                    <th>Current</th>
-                    <th>SL / TSL</th>
-                    <th>Take Profits</th>
-                    <th>P&L</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody id="positionsTableBody">
-            </tbody>
-        </table>
+        <div class="table-responsive">
+            <table class="position-table" id="positions-table" style="display: none;">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Side</th>
+                        <th>Size</th>
+                        <th>Value</th>
+                        <th>Lev</th>
+                        <th>Entry</th>
+                        <th>Current</th>
+                        <th>SL/TSL</th>
+                        <th>Take Profits</th>
+                        <th>P&L</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="positionsTableBody">
+                </tbody>
+            </table>
+        </div>
     </div>
 </div>
 
@@ -392,6 +417,13 @@ async function closePosition(symbol) {
         return;
     }
 
+    // Disable the button to prevent double-clicks
+    const btn = document.querySelector(`tr[data-symbol="${symbol}"] .btn-danger`);
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    }
+
     try {
         const response = await fetch('/api/futures/position/close', {
             method: 'POST',
@@ -403,13 +435,18 @@ async function closePosition(symbol) {
 
         if (data.success) {
             showToast('success', data.message || `Position ${symbol} closed successfully`);
-            loadPositions(); // Refresh the list
+        } else if (response.status === 404) {
+            // Position not found - likely already closed
+            showToast('info', `Position ${symbol} may have already been closed. Refreshing...`);
         } else {
             showToast('error', data.error || 'Failed to close position');
         }
     } catch (error) {
         console.error('Error closing position:', error);
         showToast('error', 'Failed to close position: ' + error.message);
+    } finally {
+        // Always refresh the positions list
+        loadPositions();
     }
 }
 

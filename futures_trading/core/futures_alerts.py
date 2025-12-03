@@ -104,13 +104,20 @@ class FuturesTelegramAlerts:
         # Determine exit reason emoji
         reason_map = {
             'take_profit': '🎯 TP HIT',
+            'take_profit_1': '🎯 TP1 HIT',
+            'take_profit_2': '🎯 TP2 HIT',
+            'take_profit_3': '🎯 TP3 HIT',
+            'take_profit_4': '🎯 TP4 HIT',
             'stop_loss': '🛑 SL HIT',
             'trailing_stop': '📉 TRAILING SL',
             'manual_close': '👤 MANUAL CLOSE',
+            'signal_reversal': '📊 SIGNAL REVERSAL',
             'signal': '📊 SIGNAL EXIT',
-            'liquidation': '💥 LIQUIDATION'
+            'liquidation': '💥 LIQUIDATION',
+            'liquidation_protection': '💥 LIQ PROTECTION'
         }
-        exit_reason = reason_map.get(alert.action, alert.reason or 'EXIT')
+        # Get exit reason and escape it for MarkdownV2
+        exit_reason = reason_map.get(alert.action, self._escape_markdown(alert.reason or 'EXIT'))
 
         # PnL formatting
         pnl = alert.pnl or 0

@@ -50,10 +50,14 @@ class TradeLogFilter(logging.Filter):
         'entry price', 'exit price', 'stop loss hit', 'take profit hit',
         'liquidation', 'daily pnl', 'daily stats', 'trading stats',
         'total trades', 'win rate', 'total pnl', 'net pnl',
-        '✅ opened', '✅ closed', '🎯', '💰', '📉 closed',
+        '✅ opened', '✅ closed', '✅ position', '🎯', '💰', '📉 closed',
         'unrealized p&l', 'max drawdown', 'active positions',
         'reason:', 'entry:', 'pnl:', 'fees:',
-        '📊 daily stats', '=====', 'futures trading module'
+        '📊 daily stats', '=====', 'futures trading module',
+        # Add SL/TP related keywords for trade entry logging
+        '🛑 stop loss:', '📈 take profit:', 'tp1:', 'tp2:', 'tp3:', 'tp4:',
+        'notional:', 'leverage:', 'partial close', 'fully closed',
+        '🔵 [dry_run]', '🔴 [dry_run]', '🟢 partial'
     ]
     # Keywords that should be excluded even if they contain trade-related words
     EXCLUDE_KEYWORDS = [
@@ -576,23 +580,30 @@ class FuturesTradingApplication:
 
     async def _status_reporter(self):
         """Periodically report system status"""
+        last_hourly_log = datetime.now()
+
         while not self.shutdown_event.is_set():
             try:
                 if self.engine:
                     stats = await self.engine.get_stats()
-                    # Log in a format that TradeLogFilter will capture for futures_trades.log
-                    self.logger.info("=" * 60)
-                    self.logger.info("📊 DAILY STATS - Futures Trading Module")
-                    self.logger.info(f"   Total Trades: {stats.get('total_trades', 0)}")
-                    self.logger.info(f"   Win Rate: {stats.get('win_rate', '0%')}")
-                    self.logger.info(f"   Total PnL: {stats.get('net_pnl', '$0.00')}")
-                    self.logger.info(f"   Daily PnL: {stats.get('daily_pnl', '$0.00')}")
-                    self.logger.info(f"   Active Positions: {stats.get('active_positions', 0)}")
-                    self.logger.info(f"   Unrealized P&L: {stats.get('unrealized_pnl', '$0.00')}")
-                    self.logger.info(f"   Max Drawdown: {stats.get('max_drawdown_pct', '0%')}")
-                    self.logger.info("=" * 60)
 
-                await asyncio.sleep(120)  # Report every 2 minutes
+                    # Check if an hour has passed for DAILY STATS logging to futures_trades.log
+                    now = datetime.now()
+                    if (now - last_hourly_log).total_seconds() >= 3600:  # 1 hour
+                        # Log in a format that TradeLogFilter will capture for futures_trades.log
+                        self.logger.info("=" * 60)
+                        self.logger.info("📊 DAILY STATS - Futures Trading Module")
+                        self.logger.info(f"   Total Trades: {stats.get('total_trades', 0)}")
+                        self.logger.info(f"   Win Rate: {stats.get('win_rate', '0%')}")
+                        self.logger.info(f"   Total PnL: {stats.get('net_pnl', '$0.00')}")
+                        self.logger.info(f"   Daily PnL: {stats.get('daily_pnl', '$0.00')}")
+                        self.logger.info(f"   Active Positions: {stats.get('active_positions', 0)}")
+                        self.logger.info(f"   Unrealized P&L: {stats.get('unrealized_pnl', '$0.00')}")
+                        self.logger.info(f"   Max Drawdown: {stats.get('max_drawdown_pct', '0%')}")
+                        self.logger.info("=" * 60)
+                        last_hourly_log = now
+
+                await asyncio.sleep(120)  # Check every 2 minutes
 
             except Exception as e:
                 self.logger.error(f"Error in status reporter: {e}")
