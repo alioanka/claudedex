@@ -741,7 +741,7 @@ function updatePositions(positions) {
                 <td>${tpHtml}</td>
                 <td class="${pnlUsd >= 0 ? 'positive' : 'negative'}">$${pnlUsd.toFixed(2)} (${pnlPct.toFixed(2)}%)</td>
                 <td>
-                    <button class="btn btn-danger btn-sm" onclick="closePosition('${symbol}')" title="Close Position">
+                    <button class="btn btn-danger btn-sm" onclick="closeFuturesPosition('${symbol}')" title="Close Position">
                         <i class="fas fa-times"></i> Close
                     </button>
                 </td>
@@ -889,7 +889,7 @@ async function unblockTrading(resetType) {
     }
 }
 
-async function closePosition(symbol) {
+async function closeFuturesPosition(symbol) {
     if (!confirm(`Close position ${symbol}?`)) return;
 
     // Find and disable the button
