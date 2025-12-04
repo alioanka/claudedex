@@ -140,6 +140,38 @@
         --metric-bg: #111827;
     }
 
+    /* Explicit dark mode overrides for stat cards */
+    [data-theme="dark"] .stat-card {
+        background: #111827 !important;
+        border-color: #374151 !important;
+    }
+
+    [data-theme="dark"] .stat-label {
+        color: #9ca3af !important;
+    }
+
+    [data-theme="dark"] .stat-value {
+        color: #f9fafb !important;
+    }
+
+    /* Explicit dark mode overrides for strategy cards */
+    [data-theme="dark"] .strategy-card {
+        background: #111827 !important;
+        border: 1px solid #374151;
+    }
+
+    [data-theme="dark"] .strategy-name {
+        color: #f9fafb !important;
+    }
+
+    [data-theme="dark"] .strategy-stat-label {
+        color: #9ca3af !important;
+    }
+
+    [data-theme="dark"] .strategy-stat-value {
+        color: #f9fafb !important;
+    }
+
     [data-theme="dark"] .badge-jupiter { background: #312e81; color: #a5b4fc; }
     [data-theme="dark"] .badge-drift { background: #831843; color: #f9a8d4; }
     [data-theme="dark"] .badge-pumpfun { background: #134e4a; color: #5eead4; }
@@ -256,10 +288,10 @@ async function loadPerformance() {
 
             if (pnl > 0) {
                 totalWinPnl += pnl;
-                if (t.pnl_percent) winPnlPercents.push(t.pnl_percent);
+                if (t.pnl_pct || t.pnl_percent) winPnlPercents.push(t.pnl_pct || t.pnl_percent);
             } else {
                 totalLossPnl += Math.abs(pnl);
-                if (t.pnl_percent) lossPnlPercents.push(Math.abs(t.pnl_percent));
+                if (t.pnl_pct || t.pnl_percent) lossPnlPercents.push(Math.abs(t.pnl_pct || t.pnl_percent));
             }
         });
 
@@ -370,7 +402,7 @@ function buildEquityCurve(trades) {
 }
 
 function buildPnlDistribution(trades) {
-    const pnlValues = trades.map(t => (t.pnl_percent || 0));
+    const pnlValues = trades.map(t => (t.pnl_pct || t.pnl_percent || 0));
 
     // Create histogram bins
     const bins = {};
@@ -466,8 +498,9 @@ function buildStrategyPerformance(trades) {
             strategies[strategy].wins++;
         }
         strategies[strategy].totalPnl += (t.pnl_sol || 0);
-        if (t.pnl_percent) {
-            strategies[strategy].pnlPercents.push(t.pnl_percent);
+        const pnlPct = t.pnl_pct || t.pnl_percent;
+        if (pnlPct) {
+            strategies[strategy].pnlPercents.push(pnlPct);
         }
     });
 
