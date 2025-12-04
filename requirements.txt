@@ -8,9 +8,11 @@ aiofiles==23.2.1
 numpy==1.26.3
 TA-Lib==0.6.7
 
-#solana
+# Solana - Pin httpx to compatible version and add solana explicitly
+solana==0.34.3
 solders==0.27.1
 base58==2.1.1
+httpx>=0.23.0,<0.28.0
 driftpy==0.8.80
 
 # Futures Trading (CCXT)

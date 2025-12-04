@@ -16,6 +16,48 @@ Features:
 - Transaction confirmation handling
 """
 
+# ============================================================================
+# HTTPX COMPATIBILITY FIX
+# The solana library uses httpx.AsyncClient with 'proxy' parameter, but
+# newer httpx versions (0.24+) renamed this to 'proxy' or require 'proxies'.
+# This patch ensures compatibility with both old and new httpx versions.
+# ============================================================================
+import httpx
+
+# Store original AsyncClient
+_OriginalAsyncClient = httpx.AsyncClient
+
+
+class _CompatAsyncClient(_OriginalAsyncClient):
+    """Wrapper that handles the proxy parameter compatibility"""
+
+    def __init__(self, *args, **kwargs):
+        # Handle 'proxy' parameter for newer httpx versions
+        proxy = kwargs.pop('proxy', None)
+        if proxy is not None:
+            # In newer httpx, use 'proxy' parameter (it was temporarily removed then re-added)
+            # But some versions use 'proxies' dict instead
+            try:
+                # Try the new way first
+                super().__init__(*args, proxy=proxy, **kwargs)
+                return
+            except TypeError:
+                # If that fails, try without proxy (proxy=None means no proxy anyway)
+                if proxy is not None:
+                    # Try 'proxies' parameter for some versions
+                    try:
+                        super().__init__(*args, proxies={'all://': proxy}, **kwargs)
+                        return
+                    except TypeError:
+                        pass
+        # Default: call without proxy
+        super().__init__(*args, **kwargs)
+
+
+# Apply the monkey patch
+httpx.AsyncClient = _CompatAsyncClient
+# ============================================================================
+
 import asyncio
 import logging
 from typing import Dict, List, Optional, Any
@@ -525,13 +567,18 @@ class SolanaTradingEngine:
                     logger.error(f"Failed to decrypt Solana module private key: {e}")
                     raise ValueError("Cannot decrypt SOLANA_MODULE_PRIVATE_KEY")
 
-            # Decode private key
+            # Decode private key (try base58 first, then hex)
             try:
                 key_bytes = base58.b58decode(private_key)
                 self.wallet = Keypair.from_bytes(key_bytes)
-            except:
-                key_bytes = bytes.fromhex(private_key)
-                self.wallet = Keypair.from_bytes(key_bytes)
+            except (ValueError, Exception) as b58_error:
+                try:
+                    key_bytes = bytes.fromhex(private_key)
+                    self.wallet = Keypair.from_bytes(key_bytes)
+                except (ValueError, Exception) as hex_error:
+                    logger.error(f"Failed to decode private key as base58: {b58_error}")
+                    logger.error(f"Failed to decode private key as hex: {hex_error}")
+                    raise ValueError("Invalid private key format - must be base58 or hex encoded")
 
             self.wallet_pubkey = str(self.wallet.pubkey())
             logger.info(f"✅ Solana wallet loaded: {self.wallet_pubkey[:8]}...{self.wallet_pubkey[-8:]}")
@@ -1063,17 +1110,23 @@ class SolanaTradingEngine:
         logger.info("Shutting down Solana trading engine...")
         self.is_running = False
 
-        # Close clients
+        # Close clients with proper error handling
         if self.jupiter_client:
-            await self.jupiter_client.close()
+            try:
+                await self.jupiter_client.close()
+            except Exception as e:
+                logger.debug(f"Error closing Jupiter client: {e}")
 
         if self.pumpfun_monitor:
-            await self.pumpfun_monitor.close()
+            try:
+                await self.pumpfun_monitor.close()
+            except Exception as e:
+                logger.debug(f"Error closing Pump.fun monitor: {e}")
 
         if self.client:
             try:
                 await self.client.close()
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Error closing Solana client: {e}")
 
         logger.info("✅ Engine shutdown complete")
