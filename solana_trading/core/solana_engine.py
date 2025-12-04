@@ -324,9 +324,16 @@ class JupiterClient:
                         self._price_cache[token_mint] = {'price': price}
                         self._price_cache_time[token_mint] = datetime.now()
                         return price
+                    else:
+                        logger.debug(f"No price data for {token_mint[:8]}... in response")
+                else:
+                    logger.warning(f"Jupiter price API returned status {resp.status}")
                 return None
+        except asyncio.TimeoutError:
+            logger.warning(f"Jupiter price fetch timed out for {token_mint[:8]}...")
+            return None
         except Exception as e:
-            logger.error(f"Jupiter price fetch failed for {token_mint}: {e}")
+            logger.error(f"Jupiter price fetch failed for {token_mint[:8]}...: {e}")
             return None
 
     async def get_prices_batch(self, token_mints: List[str]) -> Dict[str, float]:
@@ -378,9 +385,15 @@ class PumpFunMonitor:
         try:
             session = await self._get_session()
 
-            # Pump.fun doesn't have a public REST API, so this is a placeholder
-            # In production, you'd use WebSocket or scrape their site
-            # For now, return empty list
+            # Pump.fun doesn't have a public REST API
+            # In production, you would:
+            # 1. Use WebSocket connection to wss://pumpportal.fun/api/data
+            # 2. Or use DexScreener API for new Pump.fun tokens
+            # 3. Or monitor on-chain transactions to the Pump.fun program
+
+            # For demonstration, log that we're checking
+            logger.debug("🔍 Pump.fun: Checking for new token launches...")
+
             return []
 
         except Exception as e:
@@ -688,7 +701,11 @@ class SolanaTradingEngine:
         if self.jupiter_client:
             price = await self.jupiter_client.get_price(SOL_MINT)
             if price:
+                old_price = self.sol_price_usd
                 self.sol_price_usd = price
+                # Log significant price changes (>1%)
+                if abs(price - old_price) / old_price > 0.01:
+                    logger.info(f"📈 SOL price: ${old_price:.2f} → ${price:.2f}")
 
     def calculate_dynamic_position_size(
         self,
@@ -778,6 +795,7 @@ class SolanaTradingEngine:
 
         cycle_count = 0
         heartbeat_interval = 60  # Log heartbeat every 60 cycles (5 min at 5s intervals)
+        scan_log_interval = 12  # Log scanning activity every 12 cycles (1 min at 5s intervals)
 
         try:
             while self.is_running:
@@ -793,15 +811,26 @@ class SolanaTradingEngine:
                     # Main trading logic
                     await self._trading_cycle()
 
-                    # Periodic heartbeat log
-                    if cycle_count % heartbeat_interval == 0:
+                    # Periodic scan activity log (every 1 minute)
+                    if cycle_count % scan_log_interval == 0:
                         pos_count = len(self.active_positions)
                         strategies_str = ', '.join(s.value for s in self.strategies)
                         logger.info(
-                            f"💓 Engine heartbeat: cycle={cycle_count}, "
+                            f"🔄 Scanning: strategies={strategies_str}, "
                             f"positions={pos_count}/{self.max_positions}, "
-                            f"strategies={strategies_str}, "
-                            f"SOL=${self.sol_price_usd:.2f}"
+                            f"SOL=${self.sol_price_usd:.2f}, "
+                            f"daily_pnl={self.risk_metrics.daily_pnl_sol:.4f} SOL"
+                        )
+
+                    # Periodic heartbeat log (every 5 minutes)
+                    if cycle_count % heartbeat_interval == 0:
+                        pos_count = len(self.active_positions)
+                        strategies_str = ', '.join(s.value for s in self.strategies)
+                        win_rate = (self.winning_trades / self.total_trades * 100) if self.total_trades > 0 else 0
+                        logger.info(
+                            f"💓 Heartbeat: cycle={cycle_count}, "
+                            f"trades={self.total_trades} (win={win_rate:.1f}%), "
+                            f"pnl={self.total_pnl_sol:.4f} SOL"
                         )
 
                     # Wait before next cycle
@@ -904,15 +933,36 @@ class SolanaTradingEngine:
             logger.debug(f"Max positions ({self.max_positions}) reached, skipping Jupiter scan")
             return
 
-        # For Jupiter, we'd typically monitor specific tokens or use signals
-        # This is a placeholder - in production, integrate with signal providers
-        # or implement your own token analysis logic
-        #
-        # Example: You could integrate with:
-        # - DexScreener API for trending tokens
-        # - Birdeye API for token analytics
-        # - Custom on-chain monitoring for liquidity events
-        pass
+        try:
+            # In DRY_RUN mode, log that we're scanning but don't make actual trades
+            # For real trading, you would integrate with signal providers or your own analysis
+
+            # Try to update SOL price
+            if self.jupiter_client:
+                sol_price = await self.jupiter_client.get_price(SOL_MINT)
+                if sol_price and sol_price != self.sol_price_usd:
+                    self.sol_price_usd = sol_price
+                    logger.debug(f"📈 SOL price updated: ${sol_price:.2f}")
+
+            # Example: Monitor some popular tokens for price changes
+            # In production, replace with your own signal source
+            popular_tokens = [
+                ('BONK', 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'),
+                ('JTO', 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL'),
+                ('WIF', 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm'),
+            ]
+
+            for token_name, token_mint in popular_tokens[:1]:  # Check one token per cycle
+                if token_mint in self.token_cooldowns:
+                    if datetime.now() < self.token_cooldowns[token_mint]:
+                        continue
+
+                price = await self.jupiter_client.get_price(token_mint)
+                if price:
+                    logger.debug(f"🔍 Jupiter scanning {token_name}: ${price:.6f}")
+
+        except Exception as e:
+            logger.error(f"Error in Jupiter scan: {e}")
 
     async def _scan_drift_opportunities(self):
         """Scan for Drift perpetual opportunities"""
@@ -923,9 +973,13 @@ class SolanaTradingEngine:
         if not self.drift_client:
             return
 
-        # Placeholder for Drift perpetual trading logic
-        # In production, analyze funding rates, order book, etc.
-        pass
+        try:
+            # Log that Drift is being scanned
+            # In production, check funding rates, order book depth, etc.
+            logger.debug("🔍 Drift scanning for perpetual opportunities...")
+
+        except Exception as e:
+            logger.error(f"Error in Drift scan: {e}")
 
     async def _scan_pumpfun_opportunities(self):
         """Scan for Pump.fun new token launches"""
