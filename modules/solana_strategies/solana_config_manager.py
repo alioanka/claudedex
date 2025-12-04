@@ -53,6 +53,8 @@ CONFIG_KEY_MAPPING = {
     'pumpfun_enabled': ('solana_pumpfun', 'bool'),
     'pumpfun_buy_amount': ('solana_pumpfun', 'float'),
     'pumpfun_min_liquidity': ('solana_pumpfun', 'float'),
+    'pumpfun_min_liquidity_usd': ('solana_pumpfun', 'float'),
+    'pumpfun_min_volume_24h': ('solana_pumpfun', 'float'),
     'pumpfun_max_age': ('solana_pumpfun', 'int'),
     'pumpfun_auto_sell': ('solana_pumpfun', 'int'),
     'pumpfun_jito': ('solana_pumpfun', 'bool'),
@@ -102,7 +104,9 @@ class SolanaConfigManager:
         # Pump.fun
         'pumpfun_enabled': False,
         'pumpfun_buy_amount': 0.1,
-        'pumpfun_min_liquidity': 10.0,
+        'pumpfun_min_liquidity': 10.0,  # Min liquidity in SOL
+        'pumpfun_min_liquidity_usd': 1000.0,  # Min liquidity in USD
+        'pumpfun_min_volume_24h': 5000.0,  # Min 24h volume in USD
         'pumpfun_max_age': 300,
         'pumpfun_auto_sell': 0,
         'pumpfun_jito': True,

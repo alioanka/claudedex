@@ -623,8 +623,20 @@
 
                 <div class="setting-item">
                     <label class="setting-label">Min Liquidity (SOL)</label>
-                    <div class="setting-description">Minimum liquidity required to snipe</div>
+                    <div class="setting-description">Minimum liquidity in SOL required to snipe</div>
                     <input type="number" class="setting-input" id="solana_pumpfun_min_liquidity" name="solana_pumpfun_min_liquidity" value="10" min="1" max="1000">
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">Min Liquidity (USD)</label>
+                    <div class="setting-description">Minimum USD liquidity required (DexScreener filter)</div>
+                    <input type="number" class="setting-input" id="solana_pumpfun_min_liquidity_usd" name="solana_pumpfun_min_liquidity_usd" value="1000" min="100" max="100000" step="100">
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">Min 24h Volume (USD)</label>
+                    <div class="setting-description">Minimum 24h trading volume required (filters low activity)</div>
+                    <input type="number" class="setting-input" id="solana_pumpfun_min_volume_24h" name="solana_pumpfun_min_volume_24h" value="5000" min="100" max="1000000" step="100">
                 </div>
 
                 <div class="setting-item">
@@ -796,6 +808,8 @@ function resetSettings() {
         document.getElementById('solana_pumpfun_enabled').checked = false;
         document.getElementById('solana_pumpfun_buy_amount').value = 0.1;
         document.getElementById('solana_pumpfun_min_liquidity').value = 10;
+        document.getElementById('solana_pumpfun_min_liquidity_usd').value = 1000;
+        document.getElementById('solana_pumpfun_min_volume_24h').value = 5000;
         document.getElementById('solana_pumpfun_max_age').value = 300;
         document.getElementById('solana_pumpfun_auto_sell').value = 0;
         document.getElementById('solana_pumpfun_jito').checked = true;

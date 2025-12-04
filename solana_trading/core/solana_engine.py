@@ -907,13 +907,28 @@ class SolanaTradingEngine:
         try:
             logger.info("Initializing Pump.fun monitor...")
 
-            config = {
-                'program_id': os.getenv('PUMPFUN_PROGRAM_ID', '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'),
-                'min_liquidity_sol': float(os.getenv('PUMPFUN_MIN_LIQUIDITY', '10')),
-                'max_age_seconds': int(os.getenv('PUMPFUN_MAX_AGE_SECONDS', '300')),
-                'buy_amount_sol': float(os.getenv('PUMPFUN_BUY_AMOUNT_SOL', '0.1')),
-                'ws_url': os.getenv('PUMPFUN_WS_URL', 'wss://pumpportal.fun/api/data')
-            }
+            # Build config from config_manager (DB) or environment variables
+            if self.config_manager:
+                config = {
+                    'program_id': os.getenv('PUMPFUN_PROGRAM_ID', '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'),
+                    'min_liquidity_sol': self.config_manager.get('pumpfun_min_liquidity', 10.0),
+                    'min_liquidity_usd': self.config_manager.get('pumpfun_min_liquidity_usd', 1000.0),
+                    'min_volume_24h': self.config_manager.get('pumpfun_min_volume_24h', 5000.0),
+                    'max_age_seconds': self.config_manager.get('pumpfun_max_age', 300),
+                    'buy_amount_sol': self.config_manager.get('pumpfun_buy_amount', 0.1),
+                    'ws_url': os.getenv('PUMPFUN_WS_URL', 'wss://pumpportal.fun/api/data')
+                }
+                logger.info(f"   Config from DB: min_liq=${config['min_liquidity_usd']}, min_vol=${config['min_volume_24h']}")
+            else:
+                config = {
+                    'program_id': os.getenv('PUMPFUN_PROGRAM_ID', '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'),
+                    'min_liquidity_sol': float(os.getenv('PUMPFUN_MIN_LIQUIDITY', '10')),
+                    'min_liquidity_usd': float(os.getenv('PUMPFUN_MIN_LIQUIDITY_USD', '1000')),
+                    'min_volume_24h': float(os.getenv('PUMPFUN_MIN_VOLUME_24H', '5000')),
+                    'max_age_seconds': int(os.getenv('PUMPFUN_MAX_AGE_SECONDS', '300')),
+                    'buy_amount_sol': float(os.getenv('PUMPFUN_BUY_AMOUNT_SOL', '0.1')),
+                    'ws_url': os.getenv('PUMPFUN_WS_URL', 'wss://pumpportal.fun/api/data')
+                }
 
             self.pumpfun_monitor = PumpFunMonitor(config)
             logger.info("✅ Pump.fun monitor configured")
