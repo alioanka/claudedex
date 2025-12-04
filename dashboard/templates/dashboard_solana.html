@@ -195,37 +195,37 @@
     <div class="stats-grid">
         <div class="stat-card">
             <div class="stat-label">Capital Allocated</div>
-            <div class="stat-value">$400.00</div>
-            <div class="stat-change">Used: $0.00 (0%)</div>
+            <div class="stat-value" id="capital-value">$0.00</div>
+            <div class="stat-change" id="capital-used">Used: $0.00 (0%)</div>
         </div>
 
         <div class="stat-card">
             <div class="stat-label">Total P&L</div>
-            <div class="stat-value positive">$0.00</div>
-            <div class="stat-change positive">0.00% ROI</div>
+            <div class="stat-value positive" id="total-pnl">$0.00</div>
+            <div class="stat-change positive" id="roi-value">0.00% ROI</div>
         </div>
 
         <div class="stat-card">
             <div class="stat-label">Active Positions</div>
-            <div class="stat-value">0</div>
+            <div class="stat-value" id="active-positions">0</div>
             <div class="stat-change">Across all strategies</div>
         </div>
 
         <div class="stat-card">
             <div class="stat-label">SOL Balance</div>
-            <div class="stat-value">0.00</div>
+            <div class="stat-value" id="sol-balance">0.00</div>
             <div class="stat-change">Wallet balance</div>
         </div>
 
         <div class="stat-card">
             <div class="stat-label">Win Rate</div>
-            <div class="stat-value">0%</div>
-            <div class="stat-change">0 wins / 0 losses</div>
+            <div class="stat-value" id="win-rate">0%</div>
+            <div class="stat-change" id="win-loss">0 wins / 0 losses</div>
         </div>
 
         <div class="stat-card">
             <div class="stat-label">Active Strategies</div>
-            <div class="stat-value">0/3</div>
+            <div class="stat-value" id="active-strategies">0/3</div>
             <div class="stat-change">Enabled strategies</div>
         </div>
     </div>
@@ -238,73 +238,73 @@
         </div>
         <div class="strategy-grid">
             <!-- Pump.fun Strategy -->
-            <div class="strategy-card">
+            <div class="strategy-card" id="pumpfun-card">
                 <div class="strategy-name">Pump.fun Sniper</div>
-                <span class="strategy-status">DISABLED</span>
+                <span class="strategy-status" id="pumpfun-status">DISABLED</span>
                 <div class="strategy-metrics">
                     <div class="metric-box">
                         <div class="metric-label">P&L</div>
-                        <div class="metric-value">$0.00</div>
+                        <div class="metric-value" id="pumpfun-pnl">$0.00</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Trades</div>
-                        <div class="metric-value">0</div>
+                        <div class="metric-value" id="pumpfun-trades">0</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Win Rate</div>
-                        <div class="metric-value">0%</div>
+                        <div class="metric-value" id="pumpfun-winrate">0%</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Positions</div>
-                        <div class="metric-value">0</div>
+                        <div class="metric-value" id="pumpfun-positions">0</div>
                     </div>
                 </div>
             </div>
 
             <!-- Jupiter Strategy -->
-            <div class="strategy-card">
+            <div class="strategy-card" id="jupiter-card">
                 <div class="strategy-name">Jupiter Arb</div>
-                <span class="strategy-status">DISABLED</span>
+                <span class="strategy-status" id="jupiter-status">DISABLED</span>
                 <div class="strategy-metrics">
                     <div class="metric-box">
                         <div class="metric-label">P&L</div>
-                        <div class="metric-value">$0.00</div>
+                        <div class="metric-value" id="jupiter-pnl">$0.00</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Trades</div>
-                        <div class="metric-value">0</div>
+                        <div class="metric-value" id="jupiter-trades">0</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Win Rate</div>
-                        <div class="metric-value">0%</div>
+                        <div class="metric-value" id="jupiter-winrate">0%</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Swaps</div>
-                        <div class="metric-value">0</div>
+                        <div class="metric-value" id="jupiter-swaps">0</div>
                     </div>
                 </div>
             </div>
 
             <!-- Drift Strategy -->
-            <div class="strategy-card">
+            <div class="strategy-card" id="drift-card">
                 <div class="strategy-name">Drift Perps</div>
-                <span class="strategy-status">DISABLED</span>
+                <span class="strategy-status" id="drift-status">DISABLED</span>
                 <div class="strategy-metrics">
                     <div class="metric-box">
                         <div class="metric-label">P&L</div>
-                        <div class="metric-value">$0.00</div>
+                        <div class="metric-value" id="drift-pnl">$0.00</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Trades</div>
-                        <div class="metric-value">0</div>
+                        <div class="metric-value" id="drift-trades">0</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Win Rate</div>
-                        <div class="metric-value">0%</div>
+                        <div class="metric-value" id="drift-winrate">0%</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Positions</div>
-                        <div class="metric-value">0</div>
+                        <div class="metric-value" id="drift-positions">0</div>
                     </div>
                 </div>
             </div>
@@ -336,6 +336,63 @@
 </div>
 
 <script>
+// Load settings and update dashboard
+async function loadDashboardData() {
+    try {
+        // Load settings from API
+        const settingsResponse = await fetch('/api/settings/solana');
+        if (settingsResponse.ok) {
+            const settingsData = await settingsResponse.json();
+            if (settingsData.success && settingsData.settings) {
+                updateSettingsDisplay(settingsData.settings);
+            }
+        }
+    } catch (e) {
+        console.error('Failed to load dashboard data:', e);
+    }
+}
+
+function updateSettingsDisplay(settings) {
+    // Update capital
+    const capital = settings.solana_capital || 10;
+    const solPrice = 200; // Default SOL price
+    document.getElementById('capital-value').textContent = `$${(capital * solPrice).toFixed(2)}`;
+
+    // Update strategy status badges
+    const strategies = ['jupiter', 'drift', 'pumpfun'];
+    let enabledCount = 0;
+
+    strategies.forEach(strategy => {
+        const enabled = settings[`solana_${strategy}_enabled`] === true;
+        const statusEl = document.getElementById(`${strategy}-status`);
+        const cardEl = document.getElementById(`${strategy}-card`);
+
+        if (statusEl) {
+            if (enabled) {
+                statusEl.textContent = 'ENABLED';
+                statusEl.className = 'strategy-status enabled';
+                enabledCount++;
+            } else {
+                statusEl.textContent = 'DISABLED';
+                statusEl.className = 'strategy-status';
+            }
+        }
+
+        if (cardEl) {
+            cardEl.className = enabled ? 'strategy-card enabled' : 'strategy-card';
+        }
+    });
+
+    // Update active strategies count
+    document.getElementById('active-strategies').textContent = `${enabledCount}/3`;
+}
+
+// Load data on page load
+document.addEventListener('DOMContentLoaded', loadDashboardData);
+
+// Refresh every 30 seconds
+setInterval(loadDashboardData, 30000);
+
 // P&L Chart
 const ctx = document.getElementById('pnlChart').getContext('2d');
 new Chart(ctx, {

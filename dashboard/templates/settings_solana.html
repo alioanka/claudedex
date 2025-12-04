@@ -491,7 +491,7 @@
                 </div>
                 <div class="toggle-switch">
                     <input type="checkbox" id="solana_jupiter_enabled" name="solana_jupiter_enabled" checked>
-                    <span>Enabled</span>
+                    <span id="solana_jupiter_enabled_label">Enabled</span>
                 </div>
             </div>
 
@@ -556,7 +556,7 @@
                 </div>
                 <div class="toggle-switch">
                     <input type="checkbox" id="solana_drift_enabled" name="solana_drift_enabled">
-                    <span>Disabled</span>
+                    <span id="solana_drift_enabled_label">Disabled</span>
                 </div>
             </div>
 
@@ -610,7 +610,7 @@
                 </div>
                 <div class="toggle-switch">
                     <input type="checkbox" id="solana_pumpfun_enabled" name="solana_pumpfun_enabled">
-                    <span>Disabled</span>
+                    <span id="solana_pumpfun_enabled_label">Disabled</span>
                 </div>
             </div>
 
@@ -712,8 +712,13 @@ function updateStrategyCards() {
     ['jupiter', 'drift', 'pumpfun'].forEach(strategy => {
         const checkbox = document.getElementById(`solana_${strategy}_enabled`);
         const card = document.getElementById(`${strategy}-card`);
+        const label = document.getElementById(`solana_${strategy}_enabled_label`);
+
         if (checkbox && card) {
             card.className = checkbox.checked ? 'strategy-card enabled' : 'strategy-card';
+        }
+        if (checkbox && label) {
+            label.textContent = checkbox.checked ? 'Enabled' : 'Disabled';
         }
     });
 }
