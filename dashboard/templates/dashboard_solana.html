@@ -480,7 +480,7 @@ function updatePositionsTable(positions) {
                 <td>${pos.current || '$0.00'}</td>
                 <td class="${pnlClass}">${pos.pnl_pct || '0.00%'}</td>
                 <td>
-                    <button class="btn btn-sm btn-danger" onclick="closePosition('${mint}')">
+                    <button class="btn btn-sm btn-danger" onclick="closeSolanaPosition('${mint}')">
                         <i class="fas fa-times"></i>
                     </button>
                 </td>
@@ -489,7 +489,7 @@ function updatePositionsTable(positions) {
     }).join('');
 }
 
-async function closePosition(mint) {
+async function closeSolanaPosition(mint) {
     if (!confirm('Are you sure you want to close this position?')) return;
 
     try {

@@ -358,7 +358,7 @@ function displayPositions(positions) {
             <td class="tp-sl" style="color: #9ca3af;"><span class="positive">${tp}</span> / <span class="negative">${sl}</span></td>
             <td style="color: #f9fafb;">${ageText}</td>
             <td>
-                <button class="btn btn-danger btn-sm" onclick="closePosition('${fullMint}', '${pos.token_symbol || 'UNKNOWN'}')">
+                <button class="btn btn-danger btn-sm" onclick="closeSolanaPosition('${fullMint}', '${pos.token_symbol || 'UNKNOWN'}')">
                     <i class="fas fa-times"></i> Close
                 </button>
             </td>
@@ -368,7 +368,7 @@ function displayPositions(positions) {
     });
 }
 
-async function closePosition(mint, symbol) {
+async function closeSolanaPosition(mint, symbol) {
     if (!mint) {
         alert('Error: No mint address available for this position');
         return;
