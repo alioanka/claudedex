@@ -72,8 +72,11 @@ trade_handler.setFormatter(trade_formatter)
 trade_logger.addHandler(trade_handler)
 trade_logger.propagate = False  # Don't send to parent logger
 
-# Also apply error handler to engine logger
+# Configure engine logger with all handlers
 engine_logger = logging.getLogger("SolanaTradingEngine")
+engine_logger.setLevel(logging.INFO)
+engine_logger.addHandler(main_handler)
+engine_logger.addHandler(console_handler)
 engine_logger.addHandler(error_handler)
 
 

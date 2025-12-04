@@ -776,9 +776,14 @@ class SolanaTradingEngine:
         mode_str = "DRY_RUN (SIMULATED)" if self.dry_run else "LIVE TRADING"
         logger.info(f"🚀 Solana trading engine started - {mode_str}")
 
+        cycle_count = 0
+        heartbeat_interval = 60  # Log heartbeat every 60 cycles (5 min at 5s intervals)
+
         try:
             while self.is_running:
                 try:
+                    cycle_count += 1
+
                     # Reset daily metrics at midnight
                     await self._check_daily_reset()
 
@@ -787,6 +792,17 @@ class SolanaTradingEngine:
 
                     # Main trading logic
                     await self._trading_cycle()
+
+                    # Periodic heartbeat log
+                    if cycle_count % heartbeat_interval == 0:
+                        pos_count = len(self.active_positions)
+                        strategies_str = ', '.join(s.value for s in self.strategies)
+                        logger.info(
+                            f"💓 Engine heartbeat: cycle={cycle_count}, "
+                            f"positions={pos_count}/{self.max_positions}, "
+                            f"strategies={strategies_str}, "
+                            f"SOL=${self.sol_price_usd:.2f}"
+                        )
 
                     # Wait before next cycle
                     await asyncio.sleep(5)
@@ -885,18 +901,31 @@ class SolanaTradingEngine:
     async def _scan_jupiter_opportunities(self):
         """Scan for Jupiter swap opportunities"""
         if len(self.active_positions) >= self.max_positions:
+            logger.debug(f"Max positions ({self.max_positions}) reached, skipping Jupiter scan")
             return
 
         # For Jupiter, we'd typically monitor specific tokens or use signals
-        # This is a placeholder for strategy logic
-        logger.debug("Scanning Jupiter opportunities...")
+        # This is a placeholder - in production, integrate with signal providers
+        # or implement your own token analysis logic
+        #
+        # Example: You could integrate with:
+        # - DexScreener API for trending tokens
+        # - Birdeye API for token analytics
+        # - Custom on-chain monitoring for liquidity events
+        pass
 
     async def _scan_drift_opportunities(self):
         """Scan for Drift perpetual opportunities"""
         if len(self.active_positions) >= self.max_positions:
+            logger.debug(f"Max positions ({self.max_positions}) reached, skipping Drift scan")
             return
 
-        logger.debug("Scanning Drift opportunities...")
+        if not self.drift_client:
+            return
+
+        # Placeholder for Drift perpetual trading logic
+        # In production, analyze funding rates, order book, etc.
+        pass
 
     async def _scan_pumpfun_opportunities(self):
         """Scan for Pump.fun new token launches"""
