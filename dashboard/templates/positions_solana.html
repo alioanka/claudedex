@@ -307,23 +307,19 @@ function displayPositions(positions) {
         const pnlClass = pnlPercent >= 0 ? 'positive' : 'negative';
         const pnlSign = pnlPercent >= 0 ? '+' : '';
 
-        // Age formatting - FIX TIMEZONE: Parse as UTC
+        // Age formatting - server sends UTC timestamps with 'Z' suffix
         let ageText = '--';
         if (pos.opened_at) {
-            // Parse ISO string as UTC and compare with current UTC time
+            // JavaScript correctly parses ISO strings with 'Z' as UTC
             const openedAt = new Date(pos.opened_at);
-            const nowUtc = new Date();
-            // Get UTC time for both
-            const openedUtc = openedAt.getTime();
-            const nowUtcTime = nowUtc.getTime() - (nowUtc.getTimezoneOffset() * 60000);
-            const ageMs = nowUtcTime - openedUtc;
-
-            // Actually simpler: just use Date objects directly, they handle UTC
-            const ageMs2 = Date.now() - openedAt.getTime();
-            const ageMinutes = Math.floor(ageMs2 / 60000);
+            const ageMs = Date.now() - openedAt.getTime();
+            const ageMinutes = Math.floor(ageMs / 60000);
             const ageHours = Math.floor(ageMinutes / 60);
+            const ageDays = Math.floor(ageHours / 24);
 
-            if (ageHours > 0) {
+            if (ageDays > 0) {
+                ageText = `${ageDays}d ${ageHours % 24}h`;
+            } else if (ageHours > 0) {
                 ageText = `${ageHours}h ${ageMinutes % 60}m`;
             } else {
                 ageText = `${ageMinutes}m`;

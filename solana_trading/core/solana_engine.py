@@ -144,7 +144,7 @@ class Position:
     unrealized_pnl: float = 0.0
     unrealized_pnl_pct: float = 0.0
     fees_paid: float = 0.0
-    opened_at: datetime = field(default_factory=datetime.now)
+    opened_at: datetime = field(default_factory=datetime.utcnow)
     is_simulated: bool = False
     tx_signature: Optional[str] = None
     metadata: Dict = field(default_factory=dict)
@@ -1420,8 +1420,8 @@ class SolanaTradingEngine:
         if pnl_pct >= take_profit_pct:
             return "take_profit"
 
-        # Time-based exits
-        time_held = (datetime.now() - position.opened_at).total_seconds()
+        # Time-based exits (use UTC for consistency with opened_at)
+        time_held = (datetime.utcnow() - position.opened_at).total_seconds()
 
         # Jupiter time-based auto exit
         if position.strategy == Strategy.JUPITER:
@@ -1922,7 +1922,7 @@ class SolanaTradingEngine:
                 'token_amount': pos.amount,
                 'current_value_sol': pos.value_sol,
                 'unrealized_pnl_usd': pos.unrealized_pnl * self.sol_price_usd if hasattr(pos, 'unrealized_pnl') else 0,
-                'opened_at': pos.opened_at.isoformat() if pos.opened_at else None,
+                'opened_at': pos.opened_at.isoformat() + 'Z' if pos.opened_at else None,  # Add 'Z' to indicate UTC
                 'stop_loss': stop_loss_pct / 100,  # Convert to decimal for UI (e.g., -0.05 for -5%)
                 'take_profit': take_profit_pct / 100,  # Convert to decimal for UI (e.g., 0.10 for 10%)
                 'is_simulated': pos.is_simulated
