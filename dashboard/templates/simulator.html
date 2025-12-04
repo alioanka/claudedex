@@ -1099,18 +1099,29 @@ function filterAndRenderTrades() {
 }
 
 function formatExitReason(reason) {
+    if (!reason || reason === 'unknown' || reason === '-') {
+        return '<span class="badge badge-sm">-</span>';
+    }
     const reasonMap = {
         'take_profit': { label: 'TP Hit', class: 'badge-success' },
+        'take_profit_1': { label: 'TP1 Hit', class: 'badge-success' },
+        'take_profit_2': { label: 'TP2 Hit', class: 'badge-success' },
+        'take_profit_3': { label: 'TP3 Hit', class: 'badge-success' },
+        'take_profit_4': { label: 'TP4 Hit', class: 'badge-success' },
         'stop_loss': { label: 'SL Hit', class: 'badge-danger' },
         'trailing_stop': { label: 'TSL Hit', class: 'badge-warning' },
         'manual_close': { label: 'Manual', class: 'badge-info' },
+        'signal_reversal': { label: 'Signal', class: 'badge-secondary' },
         'signal': { label: 'Signal', class: 'badge-secondary' },
+        'liquidation_protection': { label: 'Liq Prot', class: 'badge-danger' },
         'liquidation': { label: 'Liquidated', class: 'badge-danger' },
-        'timeout': { label: 'Timeout', class: 'badge-secondary' },
-        'unknown': { label: '-', class: '' }
+        'timeout': { label: 'Timeout', class: 'badge-secondary' }
     };
-    const info = reasonMap[reason] || reasonMap['unknown'];
-    return info.class ? `<span class="badge badge-sm ${info.class}">${info.label}</span>` : info.label;
+    const info = reasonMap[reason];
+    if (!info) {
+        return `<span class="badge badge-sm">${reason}</span>`;
+    }
+    return info.class ? `<span class="badge badge-sm ${info.class}">${info.label}</span>` : `<span class="badge badge-sm">${info.label}</span>`;
 }
 
 function checkValidationWarnings(data) {

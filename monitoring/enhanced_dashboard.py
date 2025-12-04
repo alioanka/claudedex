@@ -2969,7 +2969,7 @@ class DashboardEndpoints:
 
             sum_of_wins = winning_trades['profit_loss'].sum()
             sum_of_losses = abs(losing_trades['profit_loss'].sum())
-            profit_factor = sum_of_wins / sum_of_losses if sum_of_losses > 0 else float('inf')
+            profit_factor = sum_of_wins / sum_of_losses if sum_of_losses > 0 else (9999.99 if sum_of_wins > 0 else 0.0)
 
             # Sharpe Ratio (annualized, assuming risk-free rate is 0)
             daily_returns = df.set_index('exit_timestamp')['profit_loss'].resample('D').sum()
@@ -4240,6 +4240,9 @@ class DashboardEndpoints:
             data = await request.json()
             symbol = data.get('symbol')
 
+            # Debug logging to trace symbol through proxy
+            logger.info(f"🔍 Proxying close request for symbol: '{symbol}'")
+
             if not symbol:
                 return web.json_response({
                     'success': False,
@@ -4253,8 +4256,9 @@ class DashboardEndpoints:
                     json={'symbol': symbol},
                     timeout=10
                 ) as resp:
-                    data = await resp.json()
-                    return web.json_response(data, status=resp.status)
+                    response_data = await resp.json()
+                    logger.info(f"🔍 Futures module response: status={resp.status}, data={response_data}")
+                    return web.json_response(response_data, status=resp.status)
 
         except Exception as e:
             logger.error(f"Error closing futures position: {e}")
@@ -4997,7 +5001,7 @@ class DashboardEndpoints:
 
         gross_profit = winning_trades_df['profit_loss'].sum()
         gross_loss = abs(losing_trades_df['profit_loss'].sum())
-        profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+        profit_factor = gross_profit / gross_loss if gross_loss > 0 else (9999.99 if gross_profit > 0 else 0.0)
 
         initial_balance = self.config_mgr.get_portfolio_config().initial_balance
         df['cumulative_pnl'] = df['profit_loss'].cumsum()
@@ -5434,7 +5438,7 @@ class DashboardEndpoints:
             # Backtesting statistics
             gross_profit = float(winning_trades_df['profit_loss'].sum())
             gross_loss = abs(float(losing_trades_df['profit_loss'].sum()))
-            profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+            profit_factor = gross_profit / gross_loss if gross_loss > 0 else (9999.99 if gross_profit > 0 else 0.0)
 
             avg_win = float(winning_trades_df['profit_loss'].mean()) if not winning_trades_df.empty else 0.0
             avg_loss = abs(float(losing_trades_df['profit_loss'].mean())) if not losing_trades_df.empty else 0.0

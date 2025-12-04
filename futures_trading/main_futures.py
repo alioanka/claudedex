@@ -50,10 +50,14 @@ class TradeLogFilter(logging.Filter):
         'entry price', 'exit price', 'stop loss hit', 'take profit hit',
         'liquidation', 'daily pnl', 'daily stats', 'trading stats',
         'total trades', 'win rate', 'total pnl', 'net pnl',
-        '✅ opened', '✅ closed', '🎯', '💰', '📉 closed',
+        '✅ opened', '✅ closed', '✅ position', '🎯', '💰', '📉 closed',
         'unrealized p&l', 'max drawdown', 'active positions',
         'reason:', 'entry:', 'pnl:', 'fees:',
-        '📊 daily stats', '=====', 'futures trading module'
+        '📊 daily stats', '=====', 'futures trading module',
+        # Add SL/TP related keywords for trade entry logging
+        '🛑 stop loss:', '📈 take profit:', 'tp1:', 'tp2:', 'tp3:', 'tp4:',
+        'notional:', 'leverage:', 'partial close', 'fully closed',
+        '🔵 [dry_run]', '🔴 [dry_run]', '🟢 partial'
     ]
     # Keywords that should be excluded even if they contain trade-related words
     EXCLUDE_KEYWORDS = [
@@ -196,9 +200,10 @@ class HealthServer:
         if self.app.engine:
             positions = []
             for symbol, pos in self.app.engine.active_positions.items():
+                # IMPORTANT: Use dictionary key 'symbol' for consistency with close_position_handler lookup
                 positions.append({
                     'position_id': pos.position_id,
-                    'symbol': pos.symbol,
+                    'symbol': symbol,  # Use dict key, not pos.symbol, to ensure close works
                     'side': pos.side.value,
                     'entry_price': pos.entry_price,
                     'current_price': pos.current_price,
@@ -313,25 +318,51 @@ class HealthServer:
             data = await request.json()
             symbol = data.get('symbol')
 
+            # Clean the symbol - strip whitespace
+            if symbol:
+                symbol = symbol.strip()
+
+            # Debug logging to trace position lookup
+            active_keys = list(self.app.engine.active_positions.keys())
+            logger.info(f"🔍 Close position request: symbol='{symbol}' (len={len(symbol) if symbol else 0})")
+            logger.info(f"🔍 Active positions: {active_keys}")
+            for key in active_keys:
+                logger.info(f"🔍   Key: '{key}' (len={len(key)}), match={key == symbol}")
+
             if not symbol:
                 return web.json_response({
                     'success': False,
                     'error': 'Symbol is required'
                 }, status=400)
 
-            if symbol not in self.app.engine.active_positions:
+            # Try exact match first
+            matched_symbol = None
+            if symbol in self.app.engine.active_positions:
+                matched_symbol = symbol
+            else:
+                # Try case-insensitive match as fallback
+                for key in self.app.engine.active_positions.keys():
+                    if key.upper() == symbol.upper():
+                        matched_symbol = key
+                        logger.info(f"🔍 Found case-insensitive match: '{key}' for '{symbol}'")
+                        break
+
+            if not matched_symbol:
+                logger.warning(f"❌ Position {symbol} not found. Active: {active_keys}")
                 return web.json_response({
                     'success': False,
-                    'error': f'No active position for {symbol}'
+                    'error': f'Position {symbol} not found in active positions. Active positions: {active_keys}',
+                    'already_closed': True,
+                    'active_positions': active_keys
                 }, status=404)
 
-            # Close the position
-            await self.app.engine._close_position(symbol, "manual_close")
-            logger.info(f"✅ Position {symbol} closed via API")
+            # Close the position using the matched symbol
+            await self.app.engine._close_position(matched_symbol, "manual_close")
+            logger.info(f"✅ Position {matched_symbol} closed via API")
 
             return web.json_response({
                 'success': True,
-                'message': f'Position {symbol} closed successfully'
+                'message': f'Position {matched_symbol} closed successfully'
             })
 
         except Exception as e:
@@ -576,23 +607,30 @@ class FuturesTradingApplication:
 
     async def _status_reporter(self):
         """Periodically report system status"""
+        last_hourly_log = datetime.now()
+
         while not self.shutdown_event.is_set():
             try:
                 if self.engine:
                     stats = await self.engine.get_stats()
-                    # Log in a format that TradeLogFilter will capture for futures_trades.log
-                    self.logger.info("=" * 60)
-                    self.logger.info("📊 DAILY STATS - Futures Trading Module")
-                    self.logger.info(f"   Total Trades: {stats.get('total_trades', 0)}")
-                    self.logger.info(f"   Win Rate: {stats.get('win_rate', '0%')}")
-                    self.logger.info(f"   Total PnL: {stats.get('net_pnl', '$0.00')}")
-                    self.logger.info(f"   Daily PnL: {stats.get('daily_pnl', '$0.00')}")
-                    self.logger.info(f"   Active Positions: {stats.get('active_positions', 0)}")
-                    self.logger.info(f"   Unrealized P&L: {stats.get('unrealized_pnl', '$0.00')}")
-                    self.logger.info(f"   Max Drawdown: {stats.get('max_drawdown_pct', '0%')}")
-                    self.logger.info("=" * 60)
 
-                await asyncio.sleep(120)  # Report every 2 minutes
+                    # Check if an hour has passed for DAILY STATS logging to futures_trades.log
+                    now = datetime.now()
+                    if (now - last_hourly_log).total_seconds() >= 3600:  # 1 hour
+                        # Log in a format that TradeLogFilter will capture for futures_trades.log
+                        self.logger.info("=" * 60)
+                        self.logger.info("📊 DAILY STATS - Futures Trading Module")
+                        self.logger.info(f"   Total Trades: {stats.get('total_trades', 0)}")
+                        self.logger.info(f"   Win Rate: {stats.get('win_rate', '0%')}")
+                        self.logger.info(f"   Total PnL: {stats.get('net_pnl', '$0.00')}")
+                        self.logger.info(f"   Daily PnL: {stats.get('daily_pnl', '$0.00')}")
+                        self.logger.info(f"   Active Positions: {stats.get('active_positions', 0)}")
+                        self.logger.info(f"   Unrealized P&L: {stats.get('unrealized_pnl', '$0.00')}")
+                        self.logger.info(f"   Max Drawdown: {stats.get('max_drawdown_pct', '0%')}")
+                        self.logger.info("=" * 60)
+                        last_hourly_log = now
+
+                await asyncio.sleep(120)  # Check every 2 minutes
 
             except Exception as e:
                 self.logger.error(f"Error in status reporter: {e}")

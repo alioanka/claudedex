@@ -166,27 +166,50 @@
         margin-top: 20px;
     }
 
+    .table-responsive {
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
     .position-table {
         width: 100%;
         border-collapse: collapse;
+        min-width: 1000px;
     }
 
     .position-table th {
         background: var(--metric-bg);
-        padding: 12px;
+        padding: 10px 8px;
         text-align: left;
         font-weight: 600;
         color: var(--text-secondary);
-        font-size: 0.875rem;
+        font-size: 0.75rem;
         text-transform: uppercase;
+        white-space: nowrap;
     }
 
     .position-table td {
-        padding: 12px;
+        padding: 10px 8px;
         border-bottom: 1px solid var(--border-color);
+        white-space: nowrap;
     }
 
     .position-table tr:hover {
+        background: var(--metric-bg);
+    }
+
+    /* Make Actions column sticky on right side */
+    .position-table th:last-child,
+    .position-table td:last-child {
+        position: sticky;
+        right: 0;
+        background: var(--card-bg);
+        z-index: 1;
+        box-shadow: -2px 0 4px rgba(0,0,0,0.1);
+    }
+
+    .position-table th:last-child {
         background: var(--metric-bg);
     }
 
@@ -438,25 +461,27 @@
             <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
             <p>No active positions. Futures positions will appear here once trading begins.</p>
         </div>
-        <table class="position-table" id="positions-table" style="display: none;">
-            <thead>
-                <tr>
-                    <th>Symbol</th>
-                    <th>Side</th>
-                    <th>Size</th>
-                    <th>Value</th>
-                    <th>Leverage</th>
-                    <th>Entry</th>
-                    <th>Current</th>
-                    <th>SL / TSL</th>
-                    <th>Take Profits</th>
-                    <th>P&L</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody id="positionsTableBody">
-            </tbody>
-        </table>
+        <div class="table-responsive">
+            <table class="position-table" id="positions-table" style="display: none;">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Side</th>
+                        <th>Size</th>
+                        <th>Value</th>
+                        <th>Lev</th>
+                        <th>Entry</th>
+                        <th>Current</th>
+                        <th>SL/TSL</th>
+                        <th>Take Profits</th>
+                        <th>P&L</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="positionsTableBody">
+                </tbody>
+            </table>
+        </div>
     </div>
 
     <!-- Recent Trades -->
@@ -716,7 +741,7 @@ function updatePositions(positions) {
                 <td>${tpHtml}</td>
                 <td class="${pnlUsd >= 0 ? 'positive' : 'negative'}">$${pnlUsd.toFixed(2)} (${pnlPct.toFixed(2)}%)</td>
                 <td>
-                    <button class="btn btn-danger btn-sm" onclick="closePosition('${symbol}')" title="Close Position">
+                    <button class="btn btn-danger btn-sm" onclick="closeFuturesPosition('${symbol}')" title="Close Position">
                         <i class="fas fa-times"></i> Close
                     </button>
                 </td>
@@ -779,15 +804,28 @@ function updateTrades(trades) {
 }
 
 function formatExitReason(reason) {
+    if (!reason || reason === 'unknown' || reason === '-') {
+        return '<span class="exit-reason">-</span>';
+    }
     const reasonMap = {
         'take_profit': { label: 'TP Hit', class: 'tp_hit' },
+        'take_profit_1': { label: 'TP1 Hit', class: 'tp_hit' },
+        'take_profit_2': { label: 'TP2 Hit', class: 'tp_hit' },
+        'take_profit_3': { label: 'TP3 Hit', class: 'tp_hit' },
+        'take_profit_4': { label: 'TP4 Hit', class: 'tp_hit' },
         'stop_loss': { label: 'SL Hit', class: 'sl_hit' },
         'trailing_stop': { label: 'TSL Hit', class: 'tsl_hit' },
         'manual_close': { label: 'Manual', class: 'manual' },
+        'signal_reversal': { label: 'Signal', class: '' },
         'signal': { label: 'Signal', class: '' },
-        'unknown': { label: 'Unknown', class: '' }
+        'liquidation_protection': { label: 'Liq Prot', class: 'sl_hit' },
+        'liquidation': { label: 'Liquidation', class: 'sl_hit' }
     };
-    const info = reasonMap[reason] || reasonMap['unknown'];
+    const info = reasonMap[reason];
+    if (!info) {
+        // Show the raw reason if not in map
+        return `<span class="exit-reason">${reason}</span>`;
+    }
     return `<span class="exit-reason ${info.class}">${info.label}</span>`;
 }
 
@@ -851,8 +889,20 @@ async function unblockTrading(resetType) {
     }
 }
 
-async function closePosition(symbol) {
+async function closeFuturesPosition(symbol) {
     if (!confirm(`Close position ${symbol}?`)) return;
+
+    // Find and disable the button
+    const rows = document.querySelectorAll('#positionsTableBody tr');
+    rows.forEach(row => {
+        if (row.cells[0]?.textContent?.includes(symbol)) {
+            const btn = row.querySelector('.btn-danger');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            }
+        }
+    });
 
     try {
         const response = await fetch('/api/futures/position/close', {
@@ -863,12 +913,20 @@ async function closePosition(symbol) {
         const data = await response.json();
         if (data.success) {
             alert(data.message);
-            loadFuturesData();
+        } else if (response.status === 404 || data.already_closed) {
+            // Position not found - show debug info
+            const activeList = data.active_positions ? data.active_positions.join(', ') : 'unknown';
+            console.error(`Close failed - Symbol: '${symbol}', Active: [${activeList}]`);
+            alert(`Position ${symbol} not found.\n\nActive positions: ${activeList}\n\nThe position may have been closed by TP/SL hit.`);
         } else {
             alert('Error: ' + data.error);
         }
     } catch (error) {
-        alert('Failed to close position: ' + error.message);
+        console.error('Failed to close position:', error);
+        alert('Connection error. The position may still be open. Refreshing...');
+    } finally {
+        // Always refresh to show current state
+        loadFuturesData();
     }
 }
 
