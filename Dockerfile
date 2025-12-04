@@ -42,21 +42,21 @@ RUN pip install --no-cache-dir TA-Lib==0.6.7 \
 
 # Stage 4: Blockchain and Web3
 # Pin httpx first to ensure compatibility with solana library
+# The solana library uses httpx with 'proxy' parameter which changed in newer versions
 RUN pip install --no-cache-dir \
     "httpx>=0.23.0,<0.28.0" \
     && echo "✅ httpx pinned for solana compatibility"
 
-# Install Solana dependencies
+# Install base58 (standalone dependency)
 RUN pip install --no-cache-dir \
-    solana==0.34.3 \
-    solders==0.27.1 \
     base58==2.1.1 \
-    && echo "✅ Solana libraries installed"
+    && echo "✅ base58 installed"
 
-# Install driftpy (will bring in anchorpy and other dependencies)
+# Install driftpy which brings in compatible solana and solders versions
+# driftpy 0.8.80 requires solders>=0.27.1 and will pull compatible solana
 RUN pip install --no-cache-dir \
     driftpy==0.8.80 \
-    && echo "✅ DriftPy SDK installed"
+    && echo "✅ DriftPy SDK installed (includes solana, solders)"
 
 # Install CCXT for Futures trading
 RUN pip install --no-cache-dir \
