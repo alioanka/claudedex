@@ -77,6 +77,20 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from core.pnl_tracker import PnLTracker, TradeRecord
 
+# Import JupiterHelper for live swap execution
+try:
+    from modules.solana_strategies.jupiter_helper import JupiterHelper
+    JUPITER_HELPER_AVAILABLE = True
+except ImportError:
+    JUPITER_HELPER_AVAILABLE = False
+
+# Import DriftHelper for live perpetual trading
+try:
+    from modules.solana_strategies.drift_helper import DriftHelper
+    DRIFT_HELPER_AVAILABLE = True
+except ImportError:
+    DRIFT_HELPER_AVAILABLE = False
+
 logger = logging.getLogger("SolanaTradingEngine")
 
 
@@ -250,7 +264,17 @@ class RPCManager:
 
 
 class JupiterClient:
-    """Jupiter V6 API client"""
+    """Jupiter V6 API client with multi-source price fetching"""
+
+    # Token address to CoinGecko ID mapping for common tokens
+    COINGECKO_IDS = {
+        SOL_MINT: 'solana',
+        USDC_MINT: 'usd-coin',
+        USDT_MINT: 'tether',
+        'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': 'bonk',
+        'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL': 'jito-governance-token',
+        'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm': 'dogwifcoin',
+    }
 
     def __init__(self, api_url: str, api_key: Optional[str] = None, slippage_bps: int = 50):
         self.api_url = api_url.rstrip('/')
@@ -260,6 +284,7 @@ class JupiterClient:
         self._price_cache: Dict[str, Dict] = {}
         self._price_cache_time: Dict[str, datetime] = {}
         self._cache_ttl = timedelta(seconds=30)
+        self._price_source_failures: Dict[str, int] = {}  # Track API failures
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -301,17 +326,102 @@ class JupiterClient:
             return None
 
     async def get_price(self, token_mint: str) -> Optional[float]:
-        """Get token price in USD via Jupiter price API"""
-        # Check cache
+        """
+        Get token price in USD using multiple free price sources.
+
+        Price sources (in order of preference):
+        1. DexScreener API (free, no auth, covers all Solana tokens)
+        2. CoinGecko API (free, no auth, reliable for major tokens)
+        3. Jupiter Price API (may require auth)
+
+        Returns:
+            Optional[float]: Token price in USD, or None if unavailable
+        """
+        # Check cache first
         if token_mint in self._price_cache:
             cache_time = self._price_cache_time.get(token_mint, datetime.min)
             if datetime.now() - cache_time < self._cache_ttl:
                 return self._price_cache[token_mint].get('price')
 
-        try:
-            session = await self._get_session()
+        session = await self._get_session()
 
-            # Jupiter price API v2
+        # Try DexScreener first (free, no auth, excellent coverage)
+        price = await self._get_price_dexscreener(session, token_mint)
+        if price:
+            return price
+
+        # Try CoinGecko for major tokens (free, no auth)
+        if token_mint in self.COINGECKO_IDS:
+            price = await self._get_price_coingecko(session, token_mint)
+            if price:
+                return price
+
+        # Fallback to Jupiter (may need auth in newer versions)
+        price = await self._get_price_jupiter(session, token_mint)
+        if price:
+            return price
+
+        logger.warning(f"Could not fetch price for {token_mint[:8]}... from any source")
+        return None
+
+    async def _get_price_dexscreener(self, session: aiohttp.ClientSession, token_mint: str) -> Optional[float]:
+        """Get price from DexScreener API (free, no auth)"""
+        try:
+            url = f"https://api.dexscreener.com/latest/dex/tokens/{token_mint}"
+
+            async with session.get(url, timeout=10) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    pairs = data.get('pairs', [])
+                    if pairs:
+                        # Get the pair with highest liquidity
+                        best_pair = max(pairs, key=lambda p: float(p.get('liquidity', {}).get('usd', 0) or 0))
+                        price = float(best_pair.get('priceUsd', 0))
+                        if price > 0:
+                            self._price_cache[token_mint] = {'price': price, 'source': 'dexscreener'}
+                            self._price_cache_time[token_mint] = datetime.now()
+                            logger.debug(f"DexScreener price for {token_mint[:8]}...: ${price:.8f}")
+                            return price
+                elif resp.status != 404:
+                    logger.debug(f"DexScreener returned status {resp.status} for {token_mint[:8]}...")
+        except asyncio.TimeoutError:
+            logger.debug(f"DexScreener timeout for {token_mint[:8]}...")
+        except Exception as e:
+            logger.debug(f"DexScreener error for {token_mint[:8]}...: {e}")
+        return None
+
+    async def _get_price_coingecko(self, session: aiohttp.ClientSession, token_mint: str) -> Optional[float]:
+        """Get price from CoinGecko API (free, no auth)"""
+        coingecko_id = self.COINGECKO_IDS.get(token_mint)
+        if not coingecko_id:
+            return None
+
+        try:
+            url = f"https://api.coingecko.com/api/v3/simple/price"
+            params = {'ids': coingecko_id, 'vs_currencies': 'usd'}
+
+            async with session.get(url, params=params, timeout=10) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if coingecko_id in data and 'usd' in data[coingecko_id]:
+                        price = float(data[coingecko_id]['usd'])
+                        self._price_cache[token_mint] = {'price': price, 'source': 'coingecko'}
+                        self._price_cache_time[token_mint] = datetime.now()
+                        logger.debug(f"CoinGecko price for {token_mint[:8]}...: ${price:.8f}")
+                        return price
+                elif resp.status == 429:
+                    logger.debug("CoinGecko rate limited")
+                else:
+                    logger.debug(f"CoinGecko returned status {resp.status}")
+        except asyncio.TimeoutError:
+            logger.debug(f"CoinGecko timeout for {token_mint[:8]}...")
+        except Exception as e:
+            logger.debug(f"CoinGecko error: {e}")
+        return None
+
+    async def _get_price_jupiter(self, session: aiohttp.ClientSession, token_mint: str) -> Optional[float]:
+        """Get price from Jupiter Price API (may require auth)"""
+        try:
             price_api_url = "https://api.jup.ag/price/v2"
             params = {'ids': token_mint}
 
@@ -321,55 +431,52 @@ class JupiterClient:
                     if 'data' in data and token_mint in data['data']:
                         price_data = data['data'][token_mint]
                         price = float(price_data.get('price', 0))
-                        self._price_cache[token_mint] = {'price': price}
-                        self._price_cache_time[token_mint] = datetime.now()
-                        return price
-                    else:
-                        logger.debug(f"No price data for {token_mint[:8]}... in response")
+                        if price > 0:
+                            self._price_cache[token_mint] = {'price': price, 'source': 'jupiter'}
+                            self._price_cache_time[token_mint] = datetime.now()
+                            logger.debug(f"Jupiter price for {token_mint[:8]}...: ${price:.8f}")
+                            return price
+                elif resp.status == 401:
+                    logger.debug("Jupiter price API requires authentication")
                 else:
-                    logger.warning(f"Jupiter price API returned status {resp.status}")
-                return None
+                    logger.debug(f"Jupiter price API returned status {resp.status}")
         except asyncio.TimeoutError:
-            logger.warning(f"Jupiter price fetch timed out for {token_mint[:8]}...")
-            return None
+            logger.debug(f"Jupiter price timeout for {token_mint[:8]}...")
         except Exception as e:
-            logger.error(f"Jupiter price fetch failed for {token_mint[:8]}...: {e}")
-            return None
+            logger.debug(f"Jupiter price error: {e}")
+        return None
 
     async def get_prices_batch(self, token_mints: List[str]) -> Dict[str, float]:
-        """Get prices for multiple tokens"""
+        """Get prices for multiple tokens using multi-source approach"""
         prices = {}
-        try:
-            session = await self._get_session()
-            price_api_url = "https://api.jup.ag/price/v2"
-            params = {'ids': ','.join(token_mints)}
 
-            async with session.get(price_api_url, params=params, timeout=10) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if 'data' in data:
-                        for mint in token_mints:
-                            if mint in data['data']:
-                                prices[mint] = float(data['data'][mint].get('price', 0))
-                                self._price_cache[mint] = {'price': prices[mint]}
-                                self._price_cache_time[mint] = datetime.now()
-        except Exception as e:
-            logger.error(f"Jupiter batch price fetch failed: {e}")
+        # Fetch prices individually using multi-source get_price
+        for token_mint in token_mints:
+            price = await self.get_price(token_mint)
+            if price:
+                prices[token_mint] = price
 
         return prices
 
 
 class PumpFunMonitor:
-    """Monitor Pump.fun for new token launches"""
+    """Monitor Pump.fun for new token launches via DexScreener API"""
+
+    # Pump.fun DEX identifier on DexScreener
+    PUMPFUN_DEX_ID = "pumpfun"
 
     def __init__(self, config: Dict):
         self.program_id = config.get('program_id', '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P')
         self.min_liquidity_sol = config.get('min_liquidity_sol', 10)
+        self.min_liquidity_usd = config.get('min_liquidity_usd', 1000)  # Minimum $1000 liquidity
         self.max_age_seconds = config.get('max_age_seconds', 300)
         self.buy_amount_sol = config.get('buy_amount_sol', 0.1)
-        self.ws_url = config.get('ws_url', 'wss://pumpportal.fun/api/data')
+        self.min_volume_24h = config.get('min_volume_24h', 5000)  # Minimum $5000 24h volume
         self._recent_tokens: Dict[str, Dict] = {}
+        self._seen_tokens: set = set()  # Track already seen tokens
         self._session: Optional[aiohttp.ClientSession] = None
+        self._last_fetch_time: Optional[datetime] = None
+        self._fetch_interval = timedelta(seconds=30)  # Don't spam API
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -381,40 +488,128 @@ class PumpFunMonitor:
             await self._session.close()
 
     async def get_new_tokens(self) -> List[Dict]:
-        """Get new tokens from Pump.fun API"""
+        """
+        Get new Pump.fun tokens from DexScreener API
+
+        Returns tokens that:
+        - Are on Pump.fun DEX
+        - Meet liquidity requirements
+        - Are within max_age_seconds
+        - Haven't been seen before
+        """
+        # Rate limit API calls
+        if self._last_fetch_time:
+            time_since_last = datetime.now() - self._last_fetch_time
+            if time_since_last < self._fetch_interval:
+                return []
+
         try:
             session = await self._get_session()
+            self._last_fetch_time = datetime.now()
 
-            # Pump.fun doesn't have a public REST API
-            # In production, you would:
-            # 1. Use WebSocket connection to wss://pumpportal.fun/api/data
-            # 2. Or use DexScreener API for new Pump.fun tokens
-            # 3. Or monitor on-chain transactions to the Pump.fun program
+            # DexScreener API for latest Solana pairs (includes Pump.fun)
+            url = "https://api.dexscreener.com/latest/dex/pairs/solana"
 
-            # For demonstration, log that we're checking
-            logger.debug("🔍 Pump.fun: Checking for new token launches...")
+            async with session.get(url, timeout=15) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    pairs = data.get('pairs', [])
 
+                    new_tokens = []
+                    for pair in pairs:
+                        # Filter for Pump.fun tokens specifically
+                        dex_id = pair.get('dexId', '').lower()
+                        if dex_id != self.PUMPFUN_DEX_ID:
+                            continue
+
+                        token_address = pair.get('baseToken', {}).get('address')
+                        if not token_address:
+                            continue
+
+                        # Skip already seen tokens
+                        if token_address in self._seen_tokens:
+                            continue
+
+                        # Parse pair data
+                        token_info = {
+                            'mint': token_address,
+                            'symbol': pair.get('baseToken', {}).get('symbol', 'UNKNOWN'),
+                            'name': pair.get('baseToken', {}).get('name', 'Unknown'),
+                            'price_usd': float(pair.get('priceUsd', 0) or 0),
+                            'liquidity_usd': float(pair.get('liquidity', {}).get('usd', 0) or 0),
+                            'liquidity_sol': float(pair.get('liquidity', {}).get('base', 0) or 0),
+                            'volume_24h': float(pair.get('volume', {}).get('h24', 0) or 0),
+                            'price_change_24h': float(pair.get('priceChange', {}).get('h24', 0) or 0),
+                            'pair_address': pair.get('pairAddress'),
+                            'created_at': datetime.now(),  # DexScreener doesn't always provide creation time
+                            'dex': 'pumpfun',
+                            'url': pair.get('url', ''),
+                        }
+
+                        # Apply filters
+                        if self.filter_token(token_info):
+                            new_tokens.append(token_info)
+                            self._seen_tokens.add(token_address)
+                            self._recent_tokens[token_address] = token_info
+                            logger.info(
+                                f"🎯 New Pump.fun token: {token_info['symbol']} "
+                                f"(${token_info['price_usd']:.8f}, "
+                                f"liq=${token_info['liquidity_usd']:.0f})"
+                            )
+
+                    if new_tokens:
+                        logger.info(f"🔍 Pump.fun: Found {len(new_tokens)} new tokens")
+
+                    return new_tokens
+
+                else:
+                    logger.debug(f"DexScreener returned status {resp.status}")
+                    return []
+
+        except asyncio.TimeoutError:
+            logger.debug("DexScreener timeout for Pump.fun tokens")
             return []
-
         except Exception as e:
             logger.error(f"Pump.fun fetch failed: {e}")
             return []
 
     def filter_token(self, token: Dict) -> bool:
-        """Filter token based on criteria"""
-        # Check liquidity
-        liquidity = token.get('liquidity_sol', 0)
-        if liquidity < self.min_liquidity_sol:
+        """Filter token based on safety/quality criteria"""
+        # Check USD liquidity
+        liquidity_usd = token.get('liquidity_usd', 0)
+        if liquidity_usd < self.min_liquidity_usd:
             return False
 
-        # Check age
-        created_at = token.get('created_at')
-        if created_at:
-            age_seconds = (datetime.now() - created_at).total_seconds()
-            if age_seconds > self.max_age_seconds:
-                return False
+        # Check 24h volume (indicates real activity)
+        volume_24h = token.get('volume_24h', 0)
+        if volume_24h < self.min_volume_24h:
+            return False
+
+        # Check price exists
+        price = token.get('price_usd', 0)
+        if price <= 0:
+            return False
+
+        # Avoid honeypot indicators (very high price change could be manipulation)
+        price_change = abs(token.get('price_change_24h', 0))
+        if price_change > 500:  # >500% change in 24h is suspicious
+            logger.debug(f"Skipping {token.get('symbol')} - suspicious price change: {price_change}%")
+            return False
 
         return True
+
+    def clear_seen_tokens(self):
+        """Clear the seen tokens cache (call periodically)"""
+        # Keep only tokens from last hour
+        cutoff = datetime.now() - timedelta(hours=1)
+        to_remove = []
+        for mint, info in self._recent_tokens.items():
+            if info.get('created_at', datetime.now()) < cutoff:
+                to_remove.append(mint)
+
+        for mint in to_remove:
+            self._recent_tokens.pop(mint, None)
+            self._seen_tokens.discard(mint)
 
 
 class SolanaTradingEngine:
@@ -493,10 +688,14 @@ class SolanaTradingEngine:
         self.wallet = None
         self.wallet_pubkey = None
 
-        # Strategy clients
+        # Strategy clients (price/quote APIs)
         self.jupiter_client: Optional[JupiterClient] = None
         self.drift_client = None
         self.pumpfun_monitor: Optional[PumpFunMonitor] = None
+
+        # Live trading helpers (for actual swap execution)
+        self.jupiter_helper: Optional['JupiterHelper'] = None
+        self.drift_helper: Optional['DriftHelper'] = None
 
         # Risk metrics
         self.risk_metrics = RiskMetrics(
@@ -631,13 +830,38 @@ class SolanaTradingEngine:
                 slippage_bps=self.slippage_bps
             )
 
-            # Test with SOL price
+            # Initialize JupiterHelper for live swap execution (if not in dry run)
+            if not self.dry_run and JUPITER_HELPER_AVAILABLE:
+                try:
+                    # Get the decrypted private key for signing
+                    private_key = os.getenv('SOLANA_MODULE_PRIVATE_KEY', '')
+                    encryption_key = os.getenv('ENCRYPTION_KEY', '')
+
+                    # Decrypt if needed
+                    if private_key.startswith('gAAAAAB') and encryption_key:
+                        from cryptography.fernet import Fernet
+                        f = Fernet(encryption_key.encode())
+                        private_key = f.decrypt(private_key.encode()).decode()
+
+                    self.jupiter_helper = JupiterHelper(
+                        solana_rpc_url=self.primary_rpc,
+                        private_key=private_key
+                    )
+                    await self.jupiter_helper.initialize()
+                    logger.info("✅ JupiterHelper initialized for LIVE swap execution")
+                except Exception as e:
+                    logger.warning(f"⚠️ JupiterHelper not available for live swaps: {e}")
+                    self.jupiter_helper = None
+
+            # Test with SOL price - uses multi-source price fetching
             sol_price = await self.jupiter_client.get_price(SOL_MINT)
             if sol_price:
                 self.sol_price_usd = sol_price
-                logger.info(f"✅ Jupiter configured (SOL price: ${sol_price:.2f})")
+                # Get the source from cache
+                price_source = self.jupiter_client._price_cache.get(SOL_MINT, {}).get('source', 'unknown')
+                logger.info(f"✅ Jupiter configured (SOL: ${sol_price:.2f} via {price_source})")
             else:
-                logger.warning("⚠️ Could not fetch SOL price, using default")
+                logger.warning("⚠️ Could not fetch SOL price from any source, using default $200")
 
         except Exception as e:
             logger.error(f"Jupiter initialization failed: {e}")
@@ -652,9 +876,24 @@ class SolanaTradingEngine:
             try:
                 from driftpy.drift_client import DriftClient
 
-                # For now, just log that it's configured
-                # Full implementation would require proper SDK setup
-                logger.info("✅ Drift Protocol configured (basic mode)")
+                # Initialize DriftHelper for live perpetual trading
+                if not self.dry_run and DRIFT_HELPER_AVAILABLE:
+                    try:
+                        self.drift_helper = DriftHelper(
+                            rpc_url=self.primary_rpc,
+                            private_key=os.getenv('SOLANA_MODULE_PRIVATE_KEY', '')
+                        )
+                        initialized = await self.drift_helper.initialize()
+                        if initialized:
+                            logger.info("✅ DriftHelper initialized for LIVE perpetual trading")
+                        else:
+                            logger.warning("⚠️ DriftHelper initialization failed")
+                            self.drift_helper = None
+                    except Exception as e:
+                        logger.warning(f"⚠️ DriftHelper not available: {e}")
+                        self.drift_helper = None
+                else:
+                    logger.info("✅ Drift Protocol configured (DRY_RUN mode)")
 
             except ImportError:
                 logger.warning("⚠️ driftpy not installed. Drift trading disabled.")
@@ -668,13 +907,28 @@ class SolanaTradingEngine:
         try:
             logger.info("Initializing Pump.fun monitor...")
 
-            config = {
-                'program_id': os.getenv('PUMPFUN_PROGRAM_ID', '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'),
-                'min_liquidity_sol': float(os.getenv('PUMPFUN_MIN_LIQUIDITY', '10')),
-                'max_age_seconds': int(os.getenv('PUMPFUN_MAX_AGE_SECONDS', '300')),
-                'buy_amount_sol': float(os.getenv('PUMPFUN_BUY_AMOUNT_SOL', '0.1')),
-                'ws_url': os.getenv('PUMPFUN_WS_URL', 'wss://pumpportal.fun/api/data')
-            }
+            # Build config from config_manager (DB) or environment variables
+            if self.config_manager:
+                config = {
+                    'program_id': os.getenv('PUMPFUN_PROGRAM_ID', '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'),
+                    'min_liquidity_sol': self.config_manager.get('pumpfun_min_liquidity', 10.0),
+                    'min_liquidity_usd': self.config_manager.get('pumpfun_min_liquidity_usd', 1000.0),
+                    'min_volume_24h': self.config_manager.get('pumpfun_min_volume_24h', 5000.0),
+                    'max_age_seconds': self.config_manager.get('pumpfun_max_age', 300),
+                    'buy_amount_sol': self.config_manager.get('pumpfun_buy_amount', 0.1),
+                    'ws_url': os.getenv('PUMPFUN_WS_URL', 'wss://pumpportal.fun/api/data')
+                }
+                logger.info(f"   Config from DB: min_liq=${config['min_liquidity_usd']}, min_vol=${config['min_volume_24h']}")
+            else:
+                config = {
+                    'program_id': os.getenv('PUMPFUN_PROGRAM_ID', '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'),
+                    'min_liquidity_sol': float(os.getenv('PUMPFUN_MIN_LIQUIDITY', '10')),
+                    'min_liquidity_usd': float(os.getenv('PUMPFUN_MIN_LIQUIDITY_USD', '1000')),
+                    'min_volume_24h': float(os.getenv('PUMPFUN_MIN_VOLUME_24H', '5000')),
+                    'max_age_seconds': int(os.getenv('PUMPFUN_MAX_AGE_SECONDS', '300')),
+                    'buy_amount_sol': float(os.getenv('PUMPFUN_BUY_AMOUNT_SOL', '0.1')),
+                    'ws_url': os.getenv('PUMPFUN_WS_URL', 'wss://pumpportal.fun/api/data')
+                }
 
             self.pumpfun_monitor = PumpFunMonitor(config)
             logger.info("✅ Pump.fun monitor configured")
@@ -1072,30 +1326,49 @@ class SolanaTradingEngine:
             )
 
             # Execute swap (or simulate)
+            tx_signature = None
             if self.dry_run:
                 logger.info(f"🔵 [DRY_RUN] SIMULATED BUY {token_symbol}")
                 logger.info(f"   Price: ${current_price:.8f}")
                 logger.info(f"   Amount: {amount_sol} SOL (${value_usd:.2f})")
+                tx_signature = f"DRY_RUN_{uuid.uuid4().hex[:16]}"
             else:
                 # Execute real Jupiter swap
                 try:
-                    # Get quote
-                    quote = await self.jupiter_client.get_quote(
-                        input_mint=SOL_MINT,
-                        output_mint=token_mint,
-                        amount=int(amount_sol * self.LAMPORTS_PER_SOL)
-                    )
+                    if self.jupiter_helper:
+                        # Use JupiterHelper for full swap execution
+                        logger.info(f"🔄 Executing LIVE swap: {amount_sol} SOL → {token_symbol}")
+                        tx_signature = await self.jupiter_helper.execute_swap(
+                            input_mint=SOL_MINT,
+                            output_mint=token_mint,
+                            amount=int(amount_sol * self.LAMPORTS_PER_SOL),
+                            slippage_bps=self.slippage_bps
+                        )
 
-                    if not quote:
-                        logger.error("Failed to get Jupiter quote")
-                        return
+                        if tx_signature:
+                            logger.info(f"🟢 LIVE SWAP executed: {tx_signature}")
+                            position.tx_signature = tx_signature
+                        else:
+                            logger.error("❌ Jupiter swap failed - no signature returned")
+                            return
+                    else:
+                        # Fallback: get quote but warn about no execution
+                        quote = await self.jupiter_client.get_quote(
+                            input_mint=SOL_MINT,
+                            output_mint=token_mint,
+                            amount=int(amount_sol * self.LAMPORTS_PER_SOL)
+                        )
 
-                    # TODO: Execute swap transaction
-                    # This requires signing and sending transaction
-                    logger.info(f"🟢 SWAP executed (simulation - full TX not implemented)")
+                        if not quote:
+                            logger.error("Failed to get Jupiter quote")
+                            return
+
+                        logger.warning(f"⚠️ JupiterHelper not available - swap NOT executed (quote only)")
+                        logger.warning(f"   Quote output: {quote.get('outAmount', 'N/A')} lamports")
+                        return  # Don't open position without actual swap
 
                 except Exception as e:
-                    logger.error(f"Swap execution failed: {e}")
+                    logger.error(f"❌ Swap execution failed: {e}", exc_info=True)
                     return
 
             # Add to positions
@@ -1135,11 +1408,38 @@ class SolanaTradingEngine:
             pnl_usd = pnl_sol * self.sol_price_usd
 
             # Execute close (or simulate)
+            close_tx_signature = None
             if self.dry_run:
                 logger.info(f"🔵 [DRY_RUN] SIMULATED SELL {position.token_symbol} ({reason})")
+                close_tx_signature = f"DRY_RUN_CLOSE_{uuid.uuid4().hex[:16]}"
             else:
                 # Execute real Jupiter swap back to SOL
-                logger.info(f"🔴 Position closed (simulation - full TX not implemented)")
+                try:
+                    if self.jupiter_helper:
+                        # Calculate token amount in smallest units (lamports equivalent)
+                        # Most SPL tokens use 6 or 9 decimals
+                        token_decimals = 6  # Default, would need to fetch actual decimals
+                        token_amount_raw = int(position.amount * (10 ** token_decimals))
+
+                        logger.info(f"🔄 Executing LIVE close: {position.token_symbol} → SOL")
+                        close_tx_signature = await self.jupiter_helper.execute_swap(
+                            input_mint=token_mint,
+                            output_mint=SOL_MINT,
+                            amount=token_amount_raw,
+                            slippage_bps=self.slippage_bps
+                        )
+
+                        if close_tx_signature:
+                            logger.info(f"🟢 LIVE CLOSE executed: {close_tx_signature}")
+                        else:
+                            logger.error(f"❌ Close swap failed for {position.token_symbol}")
+                            # Still record the position close attempt
+                    else:
+                        logger.warning(f"⚠️ JupiterHelper not available - close NOT executed")
+                        logger.warning(f"   Position {position.token_symbol} needs manual close!")
+
+                except Exception as e:
+                    logger.error(f"❌ Close execution failed: {e}", exc_info=True)
 
             # Record trade
             trade = Trade(
@@ -1320,6 +1620,18 @@ class SolanaTradingEngine:
                 await self.jupiter_client.close()
             except Exception as e:
                 logger.debug(f"Error closing Jupiter client: {e}")
+
+        if self.jupiter_helper:
+            try:
+                await self.jupiter_helper.close()
+            except Exception as e:
+                logger.debug(f"Error closing Jupiter helper: {e}")
+
+        if self.drift_helper:
+            try:
+                await self.drift_helper.close()
+            except Exception as e:
+                logger.debug(f"Error closing Drift helper: {e}")
 
         if self.pumpfun_monitor:
             try:
