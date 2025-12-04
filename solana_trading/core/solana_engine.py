@@ -144,7 +144,7 @@ class Position:
     unrealized_pnl: float = 0.0
     unrealized_pnl_pct: float = 0.0
     fees_paid: float = 0.0
-    opened_at: datetime = field(default_factory=datetime.now)
+    opened_at: datetime = field(default_factory=datetime.utcnow)
     is_simulated: bool = False
     tx_signature: Optional[str] = None
     metadata: Dict = field(default_factory=dict)
@@ -1397,27 +1397,49 @@ class SolanaTradingEngine:
                 logger.error(f"Error monitoring position {token_mint[:8]}...: {e}")
 
     async def _check_exit_conditions(self, position: Position) -> Optional[str]:
-        """Check if position should be closed"""
+        """Check if position should be closed using strategy-specific TP/SL"""
         pnl_pct = position.unrealized_pnl_pct
 
+        # Get strategy-specific TP/SL from config or use global defaults
+        stop_loss_pct = self.stop_loss_pct
+        take_profit_pct = self.take_profit_pct
+
+        if self.config_manager:
+            if position.strategy == Strategy.JUPITER:
+                stop_loss_pct = -abs(self.config_manager.jupiter_stop_loss_pct)
+                take_profit_pct = self.config_manager.jupiter_take_profit_pct
+            elif position.strategy == Strategy.PUMPFUN:
+                stop_loss_pct = -abs(self.config_manager.pumpfun_stop_loss_pct)
+                take_profit_pct = self.config_manager.pumpfun_take_profit_pct
+
         # Stop loss
-        if pnl_pct <= self.stop_loss_pct:
+        if pnl_pct <= stop_loss_pct:
             return "stop_loss"
 
         # Take profit
-        if pnl_pct >= self.take_profit_pct:
+        if pnl_pct >= take_profit_pct:
             return "take_profit"
 
-        # Auto-sell delay for Pump.fun positions
+        # Time-based exits (use UTC for consistency with opened_at)
+        time_held = (datetime.utcnow() - position.opened_at).total_seconds()
+
+        # Jupiter time-based auto exit
+        if position.strategy == Strategy.JUPITER:
+            jupiter_auto_exit = 0
+            if self.config_manager:
+                jupiter_auto_exit = self.config_manager.jupiter_auto_exit_seconds
+
+            if jupiter_auto_exit > 0 and time_held >= jupiter_auto_exit:
+                return "jupiter_time_exit"
+
+        # Pump.fun auto-sell delay
         if position.strategy == Strategy.PUMPFUN:
             auto_sell_delay = 0
             if self.config_manager:
                 auto_sell_delay = self.config_manager.get('pumpfun_auto_sell', 0)
 
-            if auto_sell_delay > 0:
-                time_held = (datetime.now() - position.opened_at).total_seconds()
-                if time_held >= auto_sell_delay:
-                    return "auto_sell_timeout"
+            if auto_sell_delay > 0 and time_held >= auto_sell_delay:
+                return "auto_sell_timeout"
 
         return None
 
@@ -1623,7 +1645,21 @@ class SolanaTradingEngine:
             value_usd = amount_sol * self.sol_price_usd
             token_amount = (amount_sol * self.sol_price_usd) / current_price if current_price > 0 else 0
 
-            # Create position
+            # Get strategy-specific TP/SL from config or use global defaults
+            stop_loss_pct = self.stop_loss_pct
+            take_profit_pct = self.take_profit_pct
+
+            if self.config_manager:
+                if strategy == Strategy.JUPITER:
+                    stop_loss_pct = -abs(self.config_manager.jupiter_stop_loss_pct)
+                    take_profit_pct = self.config_manager.jupiter_take_profit_pct
+                    logger.info(f"   Jupiter TP/SL: TP={take_profit_pct}%, SL={stop_loss_pct}%")
+                elif strategy == Strategy.PUMPFUN:
+                    stop_loss_pct = -abs(self.config_manager.pumpfun_stop_loss_pct)
+                    take_profit_pct = self.config_manager.pumpfun_take_profit_pct
+                    logger.info(f"   Pump.fun TP/SL: TP={take_profit_pct}%, SL={stop_loss_pct}%")
+
+            # Create position with strategy-specific TP/SL
             position = Position(
                 position_id=str(uuid.uuid4()),
                 token_mint=token_mint,
@@ -1635,8 +1671,8 @@ class SolanaTradingEngine:
                 amount=token_amount,
                 value_sol=amount_sol,
                 value_usd=value_usd,
-                stop_loss=current_price * (1 + self.stop_loss_pct / 100),
-                take_profit=current_price * (1 + self.take_profit_pct / 100),
+                stop_loss=current_price * (1 + stop_loss_pct / 100),
+                take_profit=current_price * (1 + take_profit_pct / 100),
                 is_simulated=self.dry_run,
                 metadata=metadata or {}
             )
@@ -1827,6 +1863,9 @@ class SolanaTradingEngine:
             logger.info(f"   PnL: {pnl_sol:.4f} SOL (${pnl_usd:.2f}, {pnl_pct:.2f}%)")
             logger.info(f"   Daily PnL: {self.risk_metrics.daily_pnl_sol:.4f} SOL")
 
+            # Calculate duration
+            duration_seconds = int((datetime.utcnow() - position.opened_at).total_seconds())
+
             # Log trade to separate trade file
             self._log_trade('CLOSE', {
                 'position_id': position.position_id,
@@ -1841,7 +1880,10 @@ class SolanaTradingEngine:
                 'pnl_usd': pnl_usd,
                 'pnl_pct': pnl_pct,
                 'reason': reason,
-                'win': pnl_sol > 0
+                'win': pnl_sol > 0,
+                'opened_at': position.opened_at.isoformat() + 'Z',
+                'closed_at': datetime.utcnow().isoformat() + 'Z',
+                'duration_seconds': duration_seconds
             })
 
         except Exception as e:
@@ -1864,6 +1906,18 @@ class SolanaTradingEngine:
 
         positions_summary = []
         for mint, pos in self.active_positions.items():
+            # Get strategy-specific TP/SL percentages for display
+            stop_loss_pct = self.stop_loss_pct
+            take_profit_pct = self.take_profit_pct
+
+            if self.config_manager:
+                if pos.strategy == Strategy.JUPITER:
+                    stop_loss_pct = -abs(self.config_manager.jupiter_stop_loss_pct)
+                    take_profit_pct = self.config_manager.jupiter_take_profit_pct
+                elif pos.strategy == Strategy.PUMPFUN:
+                    stop_loss_pct = -abs(self.config_manager.pumpfun_stop_loss_pct)
+                    take_profit_pct = self.config_manager.pumpfun_take_profit_pct
+
             positions_summary.append({
                 'token_symbol': pos.token_symbol,
                 'mint': mint,  # Full mint address for close button
@@ -1874,9 +1928,9 @@ class SolanaTradingEngine:
                 'token_amount': pos.amount,
                 'current_value_sol': pos.value_sol,
                 'unrealized_pnl_usd': pos.unrealized_pnl * self.sol_price_usd if hasattr(pos, 'unrealized_pnl') else 0,
-                'opened_at': pos.opened_at.isoformat() if pos.opened_at else None,
-                'stop_loss': pos.stop_loss,
-                'take_profit': pos.take_profit,
+                'opened_at': pos.opened_at.isoformat() + 'Z' if pos.opened_at else None,  # Add 'Z' to indicate UTC
+                'stop_loss': stop_loss_pct / 100,  # Convert to decimal for UI (e.g., -0.05 for -5%)
+                'take_profit': take_profit_pct / 100,  # Convert to decimal for UI (e.g., 0.10 for 10%)
                 'is_simulated': pos.is_simulated
             })
 

@@ -181,42 +181,42 @@
 {% block content %}
 <div class="page-container">
     <div class="page-header">
-        <h1 class="page-title">
+        <h1 class="page-title" style="color: #f9fafb;">
             <i class="fas fa-chart-bar"></i>
             Solana Performance
         </h1>
-        <p class="page-subtitle">Performance metrics for Solana strategies</p>
+        <p class="page-subtitle" style="color: #9ca3af;">Performance metrics for Solana strategies</p>
     </div>
 
     <div class="stats-grid">
-        <div class="stat-card">
-            <div class="stat-label">Total Trades</div>
-            <div class="stat-value" id="total-trades">0</div>
+        <div class="stat-card" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Total Trades</div>
+            <div class="stat-value" style="color: #f9fafb;" id="total-trades">0</div>
         </div>
-        <div class="stat-card">
-            <div class="stat-label">Win Rate</div>
-            <div class="stat-value" id="win-rate">0%</div>
+        <div class="stat-card" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Win Rate</div>
+            <div class="stat-value" style="color: #f9fafb;" id="win-rate">0%</div>
         </div>
-        <div class="stat-card">
-            <div class="stat-label">Profit Factor</div>
-            <div class="stat-value" id="profit-factor">0.00</div>
+        <div class="stat-card" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Profit Factor</div>
+            <div class="stat-value" style="color: #f9fafb;" id="profit-factor">0.00</div>
         </div>
-        <div class="stat-card">
-            <div class="stat-label">Total P&L</div>
-            <div class="stat-value" id="total-pnl">0.0000 SOL</div>
+        <div class="stat-card" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Total P&L</div>
+            <div class="stat-value" style="color: #f9fafb;" id="total-pnl">0.0000 SOL</div>
         </div>
-        <div class="stat-card">
-            <div class="stat-label">Avg Win</div>
+        <div class="stat-card" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Avg Win</div>
             <div class="stat-value positive" id="avg-win">+0.00%</div>
         </div>
-        <div class="stat-card">
-            <div class="stat-label">Avg Loss</div>
+        <div class="stat-card" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Avg Loss</div>
             <div class="stat-value negative" id="avg-loss">-0.00%</div>
         </div>
     </div>
 
-    <div class="section-card">
-        <div class="section-title">
+    <div class="section-card" style="background: #1f2937; border: 1px solid #374151;">
+        <div class="section-title" style="color: #f9fafb;">
             <i class="fas fa-chart-area"></i>
             Equity Curve
         </div>
@@ -225,8 +225,8 @@
         </div>
     </div>
 
-    <div class="section-card">
-        <div class="section-title">
+    <div class="section-card" style="background: #1f2937; border: 1px solid #374151;">
+        <div class="section-title" style="color: #f9fafb;">
             <i class="fas fa-layer-group"></i>
             Strategy Performance
         </div>
@@ -235,8 +235,8 @@
         </div>
     </div>
 
-    <div class="section-card">
-        <div class="section-title">
+    <div class="section-card" style="background: #1f2937; border: 1px solid #374151;">
+        <div class="section-title" style="color: #f9fafb;">
             <i class="fas fa-chart-pie"></i>
             P&L Distribution
         </div>
@@ -508,7 +508,7 @@ function buildStrategyPerformance(trades) {
     grid.innerHTML = '';
 
     if (Object.keys(strategies).length === 0) {
-        grid.innerHTML = '<p style="color: var(--text-secondary);">No strategy data available yet.</p>';
+        grid.innerHTML = '<p style="color: #9ca3af;">No strategy data available yet.</p>';
         return;
     }
 
@@ -519,25 +519,29 @@ function buildStrategyPerformance(trades) {
 
         const card = document.createElement('div');
         card.className = 'strategy-card';
+        card.style.background = '#111827';
+        card.style.border = '1px solid #374151';
+        card.style.borderRadius = '8px';
+        card.style.padding = '16px';
         card.innerHTML = `
-            <div class="strategy-name">
+            <div class="strategy-name" style="color: #f9fafb; margin-bottom: 12px;">
                 <span class="badge badge-${name}">${name.toUpperCase()}</span>
             </div>
             <div class="strategy-stats">
                 <div class="strategy-stat">
-                    <span class="strategy-stat-label">Trades</span>
-                    <span class="strategy-stat-value">${data.trades}</span>
+                    <span class="strategy-stat-label" style="color: #9ca3af;">Trades</span>
+                    <span class="strategy-stat-value" style="color: #f9fafb;">${data.trades}</span>
                 </div>
                 <div class="strategy-stat">
-                    <span class="strategy-stat-label">Win Rate</span>
-                    <span class="strategy-stat-value">${winRate.toFixed(1)}%</span>
+                    <span class="strategy-stat-label" style="color: #9ca3af;">Win Rate</span>
+                    <span class="strategy-stat-value" style="color: #f9fafb;">${winRate.toFixed(1)}%</span>
                 </div>
                 <div class="strategy-stat">
-                    <span class="strategy-stat-label">Total P&L</span>
+                    <span class="strategy-stat-label" style="color: #9ca3af;">Total P&L</span>
                     <span class="strategy-stat-value ${data.totalPnl >= 0 ? 'positive' : 'negative'}">${data.totalPnl >= 0 ? '+' : ''}${data.totalPnl.toFixed(4)} SOL</span>
                 </div>
                 <div class="strategy-stat">
-                    <span class="strategy-stat-label">Avg P&L</span>
+                    <span class="strategy-stat-label" style="color: #9ca3af;">Avg P&L</span>
                     <span class="strategy-stat-value ${avgPnl >= 0 ? 'positive' : 'negative'}">${avgPnl >= 0 ? '+' : ''}${avgPnl.toFixed(2)}%</span>
                 </div>
             </div>

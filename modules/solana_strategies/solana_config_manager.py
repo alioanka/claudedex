@@ -60,6 +60,13 @@ CONFIG_KEY_MAPPING = {
     'pumpfun_auto_sell': ('solana_pumpfun', 'int'),
     'pumpfun_jito': ('solana_pumpfun', 'bool'),
     'pumpfun_jito_tip': ('solana_pumpfun', 'float'),
+    'pumpfun_stop_loss': ('solana_pumpfun', 'float'),
+    'pumpfun_take_profit': ('solana_pumpfun', 'float'),
+
+    # Jupiter strategy-specific settings
+    'jupiter_stop_loss': ('solana_jupiter', 'float'),
+    'jupiter_take_profit': ('solana_jupiter', 'float'),
+    'jupiter_auto_exit': ('solana_jupiter', 'int'),  # Time-based exit in seconds
 }
 
 
@@ -113,6 +120,13 @@ class SolanaConfigManager:
         'pumpfun_auto_sell': 0,
         'pumpfun_jito': True,
         'pumpfun_jito_tip': 0.001,
+        'pumpfun_stop_loss': 20.0,  # Pump.fun: higher SL for volatile new tokens
+        'pumpfun_take_profit': 100.0,  # Pump.fun: higher TP for meme tokens
+
+        # Jupiter strategy-specific (established tokens need tighter TP/SL)
+        'jupiter_stop_loss': 5.0,  # Jupiter: tighter SL for established tokens
+        'jupiter_take_profit': 10.0,  # Jupiter: realistic TP for established tokens
+        'jupiter_auto_exit': 0,  # Time-based exit in seconds (0 = disabled)
     }
 
     def __init__(self, db_pool=None):
@@ -353,6 +367,31 @@ class SolanaConfigManager:
     def pumpfun_buy_amount_sol(self) -> float:
         """Get Pump.fun buy amount in SOL"""
         return self.get('pumpfun_buy_amount', 0.1)
+
+    @property
+    def pumpfun_stop_loss_pct(self) -> float:
+        """Get Pump.fun strategy-specific stop loss percentage"""
+        return self.get('pumpfun_stop_loss', 20.0)
+
+    @property
+    def pumpfun_take_profit_pct(self) -> float:
+        """Get Pump.fun strategy-specific take profit percentage"""
+        return self.get('pumpfun_take_profit', 100.0)
+
+    @property
+    def jupiter_stop_loss_pct(self) -> float:
+        """Get Jupiter strategy-specific stop loss percentage"""
+        return self.get('jupiter_stop_loss', 5.0)
+
+    @property
+    def jupiter_take_profit_pct(self) -> float:
+        """Get Jupiter strategy-specific take profit percentage"""
+        return self.get('jupiter_take_profit', 10.0)
+
+    @property
+    def jupiter_auto_exit_seconds(self) -> int:
+        """Get Jupiter time-based auto exit in seconds (0 = disabled)"""
+        return self.get('jupiter_auto_exit', 0)
 
     @property
     def priority_fee_lamports(self) -> int:

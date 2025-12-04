@@ -19,12 +19,10 @@
     .page-title {
         font-size: 2rem;
         font-weight: 700;
-        color: var(--text-primary, #111827);
         margin-bottom: 8px;
     }
 
     .page-subtitle {
-        color: var(--text-secondary, #6b7280);
         font-size: 1rem;
     }
 
@@ -45,22 +43,13 @@
         transition: all 0.2s;
     }
 
-    .btn-primary {
-        background: #3b82f6;
+    .btn-secondary {
+        background: #4b5563;
         color: white;
     }
 
-    .btn-primary:hover {
-        background: #2563eb;
-    }
-
-    .btn-secondary {
-        background: var(--btn-secondary-bg, #e5e7eb);
-        color: var(--text-primary, #111827);
-    }
-
     .btn-secondary:hover {
-        background: var(--btn-secondary-hover, #d1d5db);
+        background: #374151;
     }
 
     .btn-success {
@@ -73,8 +62,6 @@
     }
 
     .section-card {
-        background: var(--card-bg, #ffffff);
-        border: 1px solid var(--border-color, #e5e7eb);
         border-radius: 12px;
         padding: 24px;
         margin-bottom: 24px;
@@ -83,7 +70,6 @@
     .section-title {
         font-size: 1.25rem;
         font-weight: 600;
-        color: var(--text-primary, #111827);
         margin-bottom: 20px;
         display: flex;
         align-items: center;
@@ -93,7 +79,6 @@
     .empty-state {
         text-align: center;
         padding: 40px;
-        color: var(--text-secondary, #6b7280);
     }
 
     .stats-row {
@@ -104,24 +89,21 @@
     }
 
     .stat-box {
-        background: var(--metric-bg, #f9fafb);
         padding: 16px 20px;
         border-radius: 8px;
         text-align: center;
         flex: 1;
-        min-width: 150px;
+        min-width: 120px;
     }
 
     .stat-label {
         font-size: 0.75rem;
-        color: var(--text-secondary, #6b7280);
         margin-bottom: 4px;
     }
 
     .stat-value {
         font-size: 1.5rem;
         font-weight: 700;
-        color: var(--text-primary, #111827);
     }
 
     /* Filter controls */
@@ -141,16 +123,12 @@
 
     .filter-label {
         font-size: 0.75rem;
-        color: var(--text-secondary, #6b7280);
         font-weight: 500;
     }
 
     .filter-select, .filter-input {
         padding: 8px 12px;
-        border: 1px solid var(--border-color, #d1d5db);
         border-radius: 6px;
-        background: var(--input-bg, #ffffff);
-        color: var(--text-primary, #111827);
         font-size: 0.875rem;
         min-width: 120px;
     }
@@ -160,41 +138,41 @@
         border-color: #3b82f6;
     }
 
+    .table-scroll {
+        overflow-x: auto;
+        max-height: 500px;
+        overflow-y: auto;
+    }
+
     .trades-table {
         width: 100%;
         border-collapse: collapse;
+        min-width: 1100px;
     }
 
     .trades-table th, .trades-table td {
         padding: 12px;
         text-align: left;
-        border-bottom: 1px solid var(--border-color, #e5e7eb);
     }
 
     .trades-table th {
         font-weight: 600;
-        color: var(--text-secondary, #6b7280);
         font-size: 0.875rem;
         text-transform: uppercase;
         cursor: pointer;
         user-select: none;
+        position: sticky;
+        top: 0;
+        z-index: 10;
     }
 
     .trades-table th:hover {
-        color: var(--text-primary, #111827);
+        opacity: 0.8;
     }
 
     .trades-table th .sort-icon {
         margin-left: 4px;
         opacity: 0.5;
-    }
-
-    .trades-table th.sorted .sort-icon {
-        opacity: 1;
-    }
-
-    .trades-table td {
-        color: var(--text-primary, #111827);
     }
 
     .badge {
@@ -204,57 +182,16 @@
         font-weight: 600;
     }
 
-    .badge-open { background: #dbeafe; color: #1d4ed8; }
-    .badge-closed { background: #fef3c7; color: #b45309; }
-    .badge-jupiter { background: #e0e7ff; color: #4338ca; }
-    .badge-drift { background: #fce7f3; color: #9d174d; }
-    .badge-pumpfun { background: #ccfbf1; color: #0f766e; }
-    .badge-dry { background: #f3f4f6; color: #374151; }
-    .badge-live { background: #fef3c7; color: #b45309; }
+    .badge-open { background: #1e3a5f; color: #93c5fd; }
+    .badge-closed { background: #78350f; color: #fcd34d; }
+    .badge-jupiter { background: #312e81; color: #a5b4fc; }
+    .badge-drift { background: #831843; color: #f9a8d4; }
+    .badge-pumpfun { background: #134e4a; color: #5eead4; }
+    .badge-dry { background: #374151; color: #d1d5db; }
+    .badge-live { background: #78350f; color: #fcd34d; }
 
-    .positive { color: #10b981; }
-    .negative { color: #ef4444; }
-
-    /* Dark mode */
-    [data-theme="dark"] {
-        --card-bg: #1f2937;
-        --border-color: #374151;
-        --text-primary: #f9fafb;
-        --text-secondary: #d1d5db;
-        --metric-bg: #111827;
-        --input-bg: #374151;
-        --btn-secondary-bg: #374151;
-        --btn-secondary-hover: #4b5563;
-    }
-
-    /* Explicit dark mode overrides for stat boxes */
-    [data-theme="dark"] .stat-box {
-        background: #111827 !important;
-        border: 1px solid #374151;
-    }
-
-    [data-theme="dark"] .stat-label {
-        color: #9ca3af !important;
-    }
-
-    [data-theme="dark"] .stat-value {
-        color: #f9fafb !important;
-    }
-
-    /* Dark mode badge colors */
-    [data-theme="dark"] .badge-open { background: #1e3a5f; color: #93c5fd; }
-    [data-theme="dark"] .badge-closed { background: #78350f; color: #fcd34d; }
-    [data-theme="dark"] .badge-jupiter { background: #312e81; color: #a5b4fc; }
-    [data-theme="dark"] .badge-drift { background: #831843; color: #f9a8d4; }
-    [data-theme="dark"] .badge-pumpfun { background: #134e4a; color: #5eead4; }
-    [data-theme="dark"] .badge-dry { background: #374151; color: #d1d5db; }
-    [data-theme="dark"] .badge-live { background: #78350f; color: #fcd34d; }
-
-    [data-theme="dark"] .filter-select, [data-theme="dark"] .filter-input {
-        background: #374151;
-        border-color: #4b5563;
-        color: #f9fafb;
-    }
+    .positive { color: #10b981 !important; }
+    .negative { color: #ef4444 !important; }
 </style>
 {% endblock %}
 
@@ -262,11 +199,11 @@
 <div class="page-container">
     <div class="page-header">
         <div>
-            <h1 class="page-title">
+            <h1 class="page-title" style="color: #f9fafb;">
                 <i class="fas fa-exchange-alt"></i>
                 Solana Trades
             </h1>
-            <p class="page-subtitle">Trade history for Solana strategies</p>
+            <p class="page-subtitle" style="color: #9ca3af;">Trade history for Solana strategies</p>
         </div>
         <div class="header-actions">
             <button class="btn btn-secondary" onclick="loadTrades()">
@@ -280,47 +217,47 @@
 
     <!-- Stats Summary -->
     <div class="stats-row">
-        <div class="stat-box">
-            <div class="stat-label">Total Positions</div>
-            <div class="stat-value" id="total-positions">0</div>
+        <div class="stat-box" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Total Positions</div>
+            <div class="stat-value" style="color: #f9fafb;" id="total-positions">0</div>
         </div>
-        <div class="stat-box">
-            <div class="stat-label">Open</div>
-            <div class="stat-value" id="open-positions">0</div>
+        <div class="stat-box" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Open</div>
+            <div class="stat-value" style="color: #f9fafb;" id="open-positions">0</div>
         </div>
-        <div class="stat-box">
-            <div class="stat-label">Closed</div>
-            <div class="stat-value" id="closed-positions">0</div>
+        <div class="stat-box" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Closed</div>
+            <div class="stat-value" style="color: #f9fafb;" id="closed-positions">0</div>
         </div>
-        <div class="stat-box">
-            <div class="stat-label">Win Rate</div>
-            <div class="stat-value" id="win-rate">0%</div>
+        <div class="stat-box" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Win Rate</div>
+            <div class="stat-value" style="color: #f9fafb;" id="win-rate">0%</div>
         </div>
-        <div class="stat-box">
-            <div class="stat-label">Total P&L</div>
-            <div class="stat-value" id="total-pnl">0.0000 SOL</div>
+        <div class="stat-box" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Total P&L</div>
+            <div class="stat-value" style="color: #f9fafb;" id="total-pnl">0.0000 SOL</div>
         </div>
     </div>
 
-    <div class="section-card">
-        <div class="section-title">
+    <div class="section-card" style="background: #1f2937; border: 1px solid #374151;">
+        <div class="section-title" style="color: #f9fafb;">
             <i class="fas fa-history"></i>
             Position History
         </div>
 
         <!-- Filters -->
-        <div class="filter-row">
+        <div class="filter-row" style="background: #111827; padding: 15px; border-radius: 8px; border: 1px solid #374151;">
             <div class="filter-group">
-                <span class="filter-label">Status</span>
-                <select class="filter-select" id="filter-status" onchange="applyFilters()">
+                <span class="filter-label" style="color: #9ca3af;">Status</span>
+                <select class="filter-select" id="filter-status" onchange="applyFilters()" style="background: #374151; border: 1px solid #4b5563; color: #f9fafb;">
                     <option value="all">All</option>
                     <option value="open">Open</option>
                     <option value="closed">Closed</option>
                 </select>
             </div>
             <div class="filter-group">
-                <span class="filter-label">Strategy</span>
-                <select class="filter-select" id="filter-strategy" onchange="applyFilters()">
+                <span class="filter-label" style="color: #9ca3af;">Strategy</span>
+                <select class="filter-select" id="filter-strategy" onchange="applyFilters()" style="background: #374151; border: 1px solid #4b5563; color: #f9fafb;">
                     <option value="all">All</option>
                     <option value="jupiter">Jupiter</option>
                     <option value="pumpfun">Pump.fun</option>
@@ -328,12 +265,12 @@
                 </select>
             </div>
             <div class="filter-group">
-                <span class="filter-label">Token</span>
-                <input type="text" class="filter-input" id="filter-token" placeholder="Search token..." oninput="applyFilters()">
+                <span class="filter-label" style="color: #9ca3af;">Token</span>
+                <input type="text" class="filter-input" id="filter-token" placeholder="Search token..." oninput="applyFilters()" style="background: #374151; border: 1px solid #4b5563; color: #f9fafb;">
             </div>
             <div class="filter-group">
-                <span class="filter-label">Result</span>
-                <select class="filter-select" id="filter-result" onchange="applyFilters()">
+                <span class="filter-label" style="color: #9ca3af;">Result</span>
+                <select class="filter-select" id="filter-result" onchange="applyFilters()" style="background: #374151; border: 1px solid #4b5563; color: #f9fafb;">
                     <option value="all">All</option>
                     <option value="win">Winning</option>
                     <option value="loss">Losing</option>
@@ -341,29 +278,32 @@
             </div>
         </div>
 
-        <div id="trades-container">
-            <div class="empty-state" id="empty-state">
+        <div id="trades-container" style="margin-top: 20px;">
+            <div class="empty-state" id="empty-state" style="color: #9ca3af;">
                 <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
                 <p>No trades yet. Trade history will appear here.</p>
             </div>
-            <table class="trades-table" id="trades-table" style="display: none;">
-                <thead>
-                    <tr>
-                        <th onclick="sortTable('openTime')">Open Time <span class="sort-icon">↕</span></th>
-                        <th onclick="sortTable('token')">Token <span class="sort-icon">↕</span></th>
-                        <th onclick="sortTable('strategy')">Strategy <span class="sort-icon">↕</span></th>
-                        <th onclick="sortTable('status')">Status <span class="sort-icon">↕</span></th>
-                        <th onclick="sortTable('entryPrice')">Entry Price <span class="sort-icon">↕</span></th>
-                        <th onclick="sortTable('currentExitPrice')">Current/Exit <span class="sort-icon">↕</span></th>
-                        <th onclick="sortTable('amount')">Amount <span class="sort-icon">↕</span></th>
-                        <th onclick="sortTable('pnl')">P&L <span class="sort-icon">↕</span></th>
-                        <th onclick="sortTable('pnlPercent')">P&L % <span class="sort-icon">↕</span></th>
-                        <th>Mode</th>
-                    </tr>
-                </thead>
-                <tbody id="trades-body">
-                </tbody>
-            </table>
+            <div class="table-scroll">
+                <table class="trades-table" id="trades-table" style="display: none;">
+                    <thead>
+                        <tr style="background: #111827;">
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;" onclick="sortTable('openTime')">Open Time <span class="sort-icon">↕</span></th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;" onclick="sortTable('token')">Token <span class="sort-icon">↕</span></th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;" onclick="sortTable('strategy')">Strategy <span class="sort-icon">↕</span></th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;" onclick="sortTable('status')">Status <span class="sort-icon">↕</span></th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;" onclick="sortTable('entryPrice')">Entry <span class="sort-icon">↕</span></th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;" onclick="sortTable('currentExitPrice')">Curr/Exit <span class="sort-icon">↕</span></th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;" onclick="sortTable('amount')">Amount <span class="sort-icon">↕</span></th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;" onclick="sortTable('pnl')">P&L <span class="sort-icon">↕</span></th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;" onclick="sortTable('pnlPercent')">P&L % <span class="sort-icon">↕</span></th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;">Exit Reason</th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;">Mode</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trades-body">
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 </div>
@@ -434,7 +374,8 @@ function mergeTradesIntoPositions(trades) {
                 pnlSol: 0,
                 pnlPercent: 0,
                 mode: trade.mode || 'DRY_RUN',
-                win: null
+                win: null,
+                exitReason: null
             };
         } else if (trade.type === 'CLOSE') {
             // Find matching open position
@@ -445,6 +386,7 @@ function mergeTradesIntoPositions(trades) {
                 positionMap[mint].pnlSol = trade.pnl_sol || 0;
                 positionMap[mint].pnlPercent = trade.pnl_pct || trade.pnl_percent || 0;
                 positionMap[mint].win = (trade.pnl_sol || 0) > 0;
+                positionMap[mint].exitReason = trade.reason || trade.exit_reason || 'manual';
             }
         }
     });
@@ -584,7 +526,7 @@ function updateStats() {
 
     const pnlEl = document.getElementById('total-pnl');
     pnlEl.textContent = `${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(4)} SOL`;
-    pnlEl.className = totalPnl >= 0 ? 'stat-value positive' : 'stat-value negative';
+    pnlEl.style.color = totalPnl >= 0 ? '#10b981' : '#ef4444';
 }
 
 function displayPositions() {
@@ -602,6 +544,7 @@ function displayPositions() {
 
     filteredPositions.forEach(pos => {
         const row = document.createElement('tr');
+        row.style.borderBottom = '1px solid #374151';
 
         // Format time
         const openTime = new Date(pos.openTime).toLocaleString();
@@ -639,24 +582,37 @@ function displayPositions() {
         const pnlPercentSign = pos.pnlPercent >= 0 ? '+' : '';
         const pnlPercent = `<span class="${pnlPercentClass}">${pnlPercentSign}${pos.pnlPercent.toFixed(2)}%</span>`;
 
-        // Price column label
-        const priceLabel = pos.status === 'OPEN' ? 'Current' : 'Exit';
+        // Exit reason
+        const exitReason = pos.exitReason ? formatExitReason(pos.exitReason) : '--';
 
         row.innerHTML = `
-            <td>${openTime}</td>
-            <td><strong>${pos.token}</strong></td>
+            <td style="color: #f9fafb;">${openTime}</td>
+            <td style="color: #f9fafb;"><strong>${pos.token}</strong></td>
             <td>${strategyBadge}</td>
             <td>${statusBadge}</td>
-            <td>$${entryFormatted}</td>
-            <td>$${currentExitFormatted}</td>
-            <td>${amount}</td>
+            <td style="color: #f9fafb;">$${entryFormatted}</td>
+            <td style="color: #f9fafb;">$${currentExitFormatted}</td>
+            <td style="color: #f9fafb;">${amount}</td>
             <td>${pnl}</td>
             <td>${pnlPercent}</td>
+            <td style="color: #9ca3af;">${exitReason}</td>
             <td>${modeBadge}</td>
         `;
 
         tbody.appendChild(row);
     });
+}
+
+function formatExitReason(reason) {
+    const reasonMap = {
+        'take_profit': 'Take Profit',
+        'stop_loss': 'Stop Loss',
+        'manual_close': 'Manual',
+        'auto_sell_timeout': 'Auto-Sell',
+        'trailing_stop': 'Trailing Stop',
+        'market_close': 'Market Close'
+    };
+    return reasonMap[reason] || reason.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 }
 
 function exportToExcel() {
@@ -677,6 +633,7 @@ function exportToExcel() {
         'Amount (SOL)': pos.amount,
         'P&L (SOL)': pos.pnlSol,
         'P&L (%)': pos.pnlPercent,
+        'Exit Reason': pos.exitReason || '-',
         'Mode': pos.mode,
         'Result': pos.status === 'CLOSED' ? (pos.win ? 'WIN' : 'LOSS') : '-'
     }));
@@ -687,18 +644,9 @@ function exportToExcel() {
 
     // Set column widths
     ws['!cols'] = [
-        { wch: 20 }, // Open Time
-        { wch: 20 }, // Close Time
-        { wch: 12 }, // Token
-        { wch: 10 }, // Strategy
-        { wch: 8 },  // Status
-        { wch: 15 }, // Entry Price
-        { wch: 15 }, // Current/Exit Price
-        { wch: 12 }, // Amount
-        { wch: 12 }, // P&L
-        { wch: 10 }, // P&L %
-        { wch: 10 }, // Mode
-        { wch: 8 }   // Result
+        { wch: 20 }, { wch: 20 }, { wch: 12 }, { wch: 10 },
+        { wch: 8 }, { wch: 15 }, { wch: 15 }, { wch: 12 },
+        { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 8 }
     ];
 
     XLSX.utils.book_append_sheet(wb, ws, 'Solana Trades');
