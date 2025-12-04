@@ -336,10 +336,10 @@
 </div>
 
 <script>
-// Load settings and update dashboard
+// Load settings and stats from API
 async function loadDashboardData() {
     try {
-        // Load settings from API
+        // Load settings
         const settingsResponse = await fetch('/api/settings/solana');
         if (settingsResponse.ok) {
             const settingsData = await settingsResponse.json();
@@ -347,9 +347,99 @@ async function loadDashboardData() {
                 updateSettingsDisplay(settingsData.settings);
             }
         }
+
+        // Load live stats from Solana module
+        const statsResponse = await fetch('/api/solana/stats');
+        if (statsResponse.ok) {
+            const statsData = await statsResponse.json();
+            if (statsData.data) {
+                updateStatsDisplay(statsData.data);
+            }
+        }
+
+        // Load trades
+        const tradesResponse = await fetch('/api/solana/trades');
+        if (tradesResponse.ok) {
+            const tradesData = await tradesResponse.json();
+            if (tradesData.trades) {
+                updateTradesDisplay(tradesData.trades);
+            }
+        }
     } catch (e) {
         console.error('Failed to load dashboard data:', e);
     }
+}
+
+function updateStatsDisplay(data) {
+    const stats = data.stats || {};
+    const health = data.health || {};
+
+    // Update SOL balance
+    document.getElementById('sol-balance').textContent = (health.wallet_balance_sol || 0).toFixed(4);
+
+    // Update total PnL
+    const totalPnl = stats.total_pnl || '0.0000 SOL';
+    const pnlValue = parseFloat(totalPnl.split(' ')[0]) || 0;
+    const solPrice = stats.sol_price_usd || 200;
+    const pnlUsd = pnlValue * solPrice;
+    const pnlEl = document.getElementById('total-pnl');
+    pnlEl.textContent = `$${pnlUsd.toFixed(2)}`;
+    pnlEl.className = pnlUsd >= 0 ? 'stat-value positive' : 'stat-value negative';
+
+    // Update ROI
+    const roiEl = document.getElementById('roi-value');
+    const roi = ((pnlUsd / (10 * solPrice)) * 100) || 0;
+    roiEl.textContent = `${roi.toFixed(2)}% ROI`;
+    roiEl.className = roi >= 0 ? 'stat-change positive' : 'stat-change negative';
+
+    // Update active positions
+    document.getElementById('active-positions').textContent = stats.active_positions || 0;
+
+    // Update win rate
+    const totalTrades = stats.total_trades || 0;
+    const winningTrades = stats.winning_trades || 0;
+    const losingTrades = stats.losing_trades || 0;
+    const winRate = totalTrades > 0 ? ((winningTrades / totalTrades) * 100).toFixed(0) : 0;
+    document.getElementById('win-rate').textContent = `${winRate}%`;
+    document.getElementById('win-loss').textContent = `${winningTrades} wins / ${losingTrades} losses`;
+
+    // Update strategy metrics (from positions list)
+    const positions = stats.positions || [];
+    const strategyCounts = {jupiter: 0, drift: 0, pumpfun: 0};
+    positions.forEach(pos => {
+        const strategy = (pos.strategy || '').toLowerCase();
+        if (strategyCounts.hasOwnProperty(strategy)) {
+            strategyCounts[strategy]++;
+        }
+    });
+
+    ['jupiter', 'drift', 'pumpfun'].forEach(s => {
+        const posEl = document.getElementById(`${s}-positions`) || document.getElementById(`${s}-swaps`);
+        if (posEl) posEl.textContent = strategyCounts[s];
+    });
+
+    // Update module status
+    const moduleStatusEl = document.getElementById('module-running-status');
+    if (moduleStatusEl) {
+        moduleStatusEl.textContent = health.engine_running ? 'RUNNING' : 'STOPPED';
+        moduleStatusEl.className = health.engine_running ? 'status-badge running' : 'status-badge stopped';
+    }
+}
+
+function updateTradesDisplay(trades) {
+    // Update trade counts per strategy
+    const tradeCounts = {jupiter: 0, drift: 0, pumpfun: 0};
+    trades.forEach(trade => {
+        const strategy = (trade.strategy || '').toLowerCase();
+        if (tradeCounts.hasOwnProperty(strategy)) {
+            tradeCounts[strategy]++;
+        }
+    });
+
+    ['jupiter', 'drift', 'pumpfun'].forEach(s => {
+        const el = document.getElementById(`${s}-trades`);
+        if (el) el.textContent = tradeCounts[s];
+    });
 }
 
 function updateSettingsDisplay(settings) {
@@ -370,16 +460,18 @@ function updateSettingsDisplay(settings) {
         if (statusEl) {
             if (enabled) {
                 statusEl.textContent = 'ENABLED';
-                statusEl.className = 'strategy-status enabled';
+                statusEl.style.background = '#d1fae5';
+                statusEl.style.color = '#065f46';
                 enabledCount++;
             } else {
                 statusEl.textContent = 'DISABLED';
-                statusEl.className = 'strategy-status';
+                statusEl.style.background = '#f3f4f6';
+                statusEl.style.color = '#6b7280';
             }
         }
 
         if (cardEl) {
-            cardEl.className = enabled ? 'strategy-card enabled' : 'strategy-card';
+            cardEl.style.borderColor = enabled ? '#10b981' : '#e5e7eb';
         }
     });
 
@@ -390,8 +482,8 @@ function updateSettingsDisplay(settings) {
 // Load data on page load
 document.addEventListener('DOMContentLoaded', loadDashboardData);
 
-// Refresh every 30 seconds
-setInterval(loadDashboardData, 30000);
+// Refresh every 10 seconds
+setInterval(loadDashboardData, 10000);
 
 // P&L Chart
 const ctx = document.getElementById('pnlChart').getContext('2d');

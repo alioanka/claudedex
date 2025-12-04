@@ -1341,13 +1341,19 @@ class SolanaTradingEngine:
         if not self.active_positions:
             return
 
+        # Log monitoring activity periodically
+        pos_count = len(self.active_positions)
+        logger.info(f"📊 Monitoring {pos_count} active position(s)...")
+
         for token_mint, position in list(self.active_positions.items()):
             try:
                 # Get current price
                 current_price = await self._get_token_price(token_mint)
                 if current_price is None or current_price == 0:
+                    logger.warning(f"⚠️ Could not fetch price for {position.token_symbol}")
                     continue
 
+                old_price = position.current_price
                 position.current_price = current_price
 
                 # Calculate PnL
@@ -1359,9 +1365,19 @@ class SolanaTradingEngine:
                 position.unrealized_pnl_pct = pnl_pct
                 position.unrealized_pnl = position.value_sol * (pnl_pct / 100)
 
+                # Log position status
+                pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
+                logger.info(
+                    f"{pnl_emoji} {position.token_symbol}: "
+                    f"${current_price:.8f} (entry: ${position.entry_price:.8f}), "
+                    f"PnL: {pnl_pct:+.2f}%, "
+                    f"SL: {self.stop_loss_pct}%, TP: {self.take_profit_pct}%"
+                )
+
                 # Check exit conditions
                 exit_reason = await self._check_exit_conditions(position)
                 if exit_reason:
+                    logger.info(f"🎯 Exit signal for {position.token_symbol}: {exit_reason}")
                     await self._close_position(token_mint, exit_reason)
 
             except Exception as e:
@@ -1854,6 +1870,7 @@ class SolanaTradingEngine:
             'active_positions': len(self.active_positions),
             'positions': positions_summary,
             'sol_price': f"${self.sol_price_usd:.2f}",
+            'sol_price_usd': self.sol_price_usd,  # Numeric for calculations
             'sharpe_ratio': f"{sharpe:.2f}" if sharpe else "N/A",
             'sortino_ratio': f"{sortino:.2f}" if sortino else "N/A",
             'calmar_ratio': f"{calmar:.2f}" if calmar else "N/A",
