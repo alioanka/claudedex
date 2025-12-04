@@ -41,11 +41,17 @@ RUN pip install --no-cache-dir TA-Lib==0.6.7 \
     && echo "✅ TA-Lib installed"
 
 # Stage 4: Blockchain and Web3
-# Install Solana dependencies first
+# Pin httpx first to ensure compatibility with solana library
 RUN pip install --no-cache-dir \
+    "httpx>=0.23.0,<0.28.0" \
+    && echo "✅ httpx pinned for solana compatibility"
+
+# Install Solana dependencies
+RUN pip install --no-cache-dir \
+    solana==0.34.3 \
     solders==0.27.1 \
     base58==2.1.1 \
-    && echo "✅ Solana base libraries installed"
+    && echo "✅ Solana libraries installed"
 
 # Install driftpy (will bring in anchorpy and other dependencies)
 RUN pip install --no-cache-dir \
@@ -157,6 +163,8 @@ RUN python -c "import talib; print('✅ TA-Lib version:', talib.__version__)" &&
     python -c "import web3; print('✅ Web3 imported')" && \
     python -c "import asyncpg; print('✅ Database libraries OK')" && \
     python -c "import bcrypt; print('✅ Auth libraries OK')" && \
+    python -c "import solana; print('✅ Solana imported')" && \
+    python -c "from solana.rpc.async_api import AsyncClient; print('✅ Solana AsyncClient OK')" && \
     python -c "import driftpy; print('✅ DriftPy imported')" && \
     echo "✅ All critical dependencies verified"
 
