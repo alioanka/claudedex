@@ -327,10 +327,31 @@
         <div class="section-title">
             <i class="fas fa-wallet"></i>
             Active Positions
+            <button class="btn btn-sm btn-danger" id="close-all-btn" onclick="closeAllPositions()" style="margin-left: auto; display: none;">
+                <i class="fas fa-times"></i> Close All
+            </button>
         </div>
-        <div class="empty-state">
-            <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
-            <p>No active positions. Positions will appear here once trading begins.</p>
+        <div id="positions-container">
+            <div class="empty-state" id="no-positions">
+                <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
+                <p>No active positions. Positions will appear here once trading begins.</p>
+            </div>
+            <div class="table-container" id="positions-table" style="display: none;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Token</th>
+                            <th>Strategy</th>
+                            <th>Entry Price</th>
+                            <th>Current Price</th>
+                            <th>P&L %</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="positions-body">
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 </div>
@@ -371,7 +392,7 @@ async function loadDashboardData() {
 }
 
 function updateStatsDisplay(data) {
-    const stats = data.stats || {};
+    const stats = data.stats || data || {};
     const health = data.health || {};
 
     // Update SOL balance
@@ -379,7 +400,7 @@ function updateStatsDisplay(data) {
 
     // Update total PnL
     const totalPnl = stats.total_pnl || '0.0000 SOL';
-    const pnlValue = parseFloat(totalPnl.split(' ')[0]) || 0;
+    const pnlValue = parseFloat(totalPnl.toString().replace(' SOL', '').replace('$', '')) || 0;
     const solPrice = stats.sol_price_usd || 200;
     const pnlUsd = pnlValue * solPrice;
     const pnlEl = document.getElementById('total-pnl');
@@ -392,7 +413,7 @@ function updateStatsDisplay(data) {
     roiEl.textContent = `${roi.toFixed(2)}% ROI`;
     roiEl.className = roi >= 0 ? 'stat-change positive' : 'stat-change negative';
 
-    // Update active positions
+    // Update active positions count
     document.getElementById('active-positions').textContent = stats.active_positions || 0;
 
     // Update win rate
@@ -403,8 +424,11 @@ function updateStatsDisplay(data) {
     document.getElementById('win-rate').textContent = `${winRate}%`;
     document.getElementById('win-loss').textContent = `${winningTrades} wins / ${losingTrades} losses`;
 
-    // Update strategy metrics (from positions list)
+    // Update positions table
     const positions = stats.positions || [];
+    updatePositionsTable(positions);
+
+    // Update strategy metrics (from positions list)
     const strategyCounts = {jupiter: 0, drift: 0, pumpfun: 0};
     positions.forEach(pos => {
         const strategy = (pos.strategy || '').toLowerCase();
@@ -423,6 +447,86 @@ function updateStatsDisplay(data) {
     if (moduleStatusEl) {
         moduleStatusEl.textContent = health.engine_running ? 'RUNNING' : 'STOPPED';
         moduleStatusEl.className = health.engine_running ? 'status-badge running' : 'status-badge stopped';
+    }
+}
+
+function updatePositionsTable(positions) {
+    const noPositions = document.getElementById('no-positions');
+    const positionsTable = document.getElementById('positions-table');
+    const positionsBody = document.getElementById('positions-body');
+    const closeAllBtn = document.getElementById('close-all-btn');
+
+    if (!positions || positions.length === 0) {
+        noPositions.style.display = 'block';
+        positionsTable.style.display = 'none';
+        closeAllBtn.style.display = 'none';
+        return;
+    }
+
+    noPositions.style.display = 'none';
+    positionsTable.style.display = 'block';
+    closeAllBtn.style.display = 'inline-block';
+
+    positionsBody.innerHTML = positions.map(pos => {
+        const pnlPct = parseFloat(pos.pnl_pct?.toString().replace('%', '') || 0);
+        const pnlClass = pnlPct >= 0 ? 'positive' : 'negative';
+        const mint = pos.mint || '';
+
+        return `
+            <tr>
+                <td><strong>${pos.token || 'UNKNOWN'}</strong><br><small>${mint}</small></td>
+                <td><span class="badge badge-${pos.strategy}">${pos.strategy}</span></td>
+                <td>${pos.entry || '$0.00'}</td>
+                <td>${pos.current || '$0.00'}</td>
+                <td class="${pnlClass}">${pos.pnl_pct || '0.00%'}</td>
+                <td>
+                    <button class="btn btn-sm btn-danger" onclick="closePosition('${mint}')">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+async function closePosition(mint) {
+    if (!confirm('Are you sure you want to close this position?')) return;
+
+    try {
+        const response = await fetch('/api/solana/close-position', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({mint: mint})
+        });
+        const data = await response.json();
+        if (data.success) {
+            alert('Position closed successfully');
+            loadDashboardData();
+        } else {
+            alert('Failed to close position: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Error closing position: ' + e.message);
+    }
+}
+
+async function closeAllPositions() {
+    if (!confirm('Are you sure you want to close ALL positions?')) return;
+
+    try {
+        const response = await fetch('/api/solana/close-all-positions', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        const data = await response.json();
+        if (data.success) {
+            alert('All positions closed successfully');
+            loadDashboardData();
+        } else {
+            alert('Failed to close positions: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Error closing positions: ' + e.message);
     }
 }
 
