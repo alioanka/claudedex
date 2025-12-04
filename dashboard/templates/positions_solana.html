@@ -9,6 +9,9 @@
     }
 
     .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
         margin-bottom: 30px;
     }
 
@@ -22,6 +25,67 @@
     .page-subtitle {
         color: var(--text-secondary);
         font-size: 1rem;
+    }
+
+    .header-actions {
+        display: flex;
+        gap: 10px;
+    }
+
+    .btn {
+        padding: 10px 20px;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        border: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition: all 0.2s;
+    }
+
+    .btn-danger {
+        background: #ef4444;
+        color: white;
+    }
+
+    .btn-danger:hover {
+        background: #dc2626;
+    }
+
+    .btn-secondary {
+        background: var(--btn-secondary-bg, #e5e7eb);
+        color: var(--text-primary);
+    }
+
+    .btn-secondary:hover {
+        background: var(--btn-secondary-hover, #d1d5db);
+    }
+
+    .stats-row {
+        display: flex;
+        gap: 20px;
+        margin-bottom: 20px;
+    }
+
+    .stat-box {
+        background: var(--metric-bg, #f9fafb);
+        padding: 16px 20px;
+        border-radius: 8px;
+        text-align: center;
+        flex: 1;
+    }
+
+    .stat-label {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        margin-bottom: 4px;
+    }
+
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--text-primary);
     }
 
     .section-card {
@@ -48,23 +112,101 @@
         color: var(--text-secondary);
     }
 
+    .positions-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .positions-table th, .positions-table td {
+        padding: 12px;
+        text-align: left;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .positions-table th {
+        font-weight: 600;
+        color: var(--text-secondary);
+        font-size: 0.875rem;
+        text-transform: uppercase;
+    }
+
+    .positions-table td {
+        color: var(--text-primary);
+    }
+
+    .badge {
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .badge-jupiter { background: #e0e7ff; color: #4338ca; }
+    .badge-drift { background: #fce7f3; color: #9d174d; }
+    .badge-pumpfun { background: #ccfbf1; color: #0f766e; }
+
+    .positive { color: #10b981; }
+    .negative { color: #ef4444; }
+
+    .btn-sm {
+        padding: 6px 12px;
+        font-size: 0.875rem;
+    }
+
     [data-theme="dark"] {
         --card-bg: #1f2937;
         --border-color: #374151;
         --text-primary: #f9fafb;
         --text-secondary: #d1d5db;
+        --metric-bg: #111827;
+        --btn-secondary-bg: #374151;
+        --btn-secondary-hover: #4b5563;
     }
+
+    [data-theme="dark"] .badge-jupiter { background: #312e81; color: #a5b4fc; }
+    [data-theme="dark"] .badge-drift { background: #831843; color: #f9a8d4; }
+    [data-theme="dark"] .badge-pumpfun { background: #134e4a; color: #5eead4; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="page-container">
     <div class="page-header">
-        <h1 class="page-title">
-            <i class="fas fa-wallet"></i>
-            Solana Positions
-        </h1>
-        <p class="page-subtitle">Active Solana DeFi positions</p>
+        <div>
+            <h1 class="page-title">
+                <i class="fas fa-wallet"></i>
+                Solana Positions
+            </h1>
+            <p class="page-subtitle">Active Solana DeFi positions</p>
+        </div>
+        <div class="header-actions">
+            <button class="btn btn-secondary" onclick="loadPositions()">
+                <i class="fas fa-sync"></i> Refresh
+            </button>
+            <button class="btn btn-danger" onclick="closeAllPositions()" id="close-all-btn" style="display: none;">
+                <i class="fas fa-times-circle"></i> Close All
+            </button>
+        </div>
+    </div>
+
+    <!-- Stats Summary -->
+    <div class="stats-row">
+        <div class="stat-box">
+            <div class="stat-label">Open Positions</div>
+            <div class="stat-value" id="position-count">0</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Total Value</div>
+            <div class="stat-value" id="total-value">0.0000 SOL</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Unrealized P&L</div>
+            <div class="stat-value" id="unrealized-pnl">$0.00</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Mode</div>
+            <div class="stat-value" id="trading-mode">--</div>
+        </div>
     </div>
 
     <div class="section-card">
@@ -72,10 +214,205 @@
             <i class="fas fa-coins"></i>
             Open Positions
         </div>
-        <div class="empty-state">
-            <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
-            <p>No active Solana positions.</p>
+        <div id="positions-container">
+            <div class="empty-state" id="empty-state">
+                <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
+                <p>No active Solana positions.</p>
+            </div>
+            <table class="positions-table" id="positions-table" style="display: none;">
+                <thead>
+                    <tr>
+                        <th>Token</th>
+                        <th>Strategy</th>
+                        <th>Entry Price</th>
+                        <th>Current Price</th>
+                        <th>Amount</th>
+                        <th>Value (SOL)</th>
+                        <th>P&L %</th>
+                        <th>Age</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="positions-body">
+                </tbody>
+            </table>
         </div>
     </div>
 </div>
+
+<script>
+let positionsData = [];
+
+async function loadPositions() {
+    try {
+        const response = await fetch('/api/solana/stats');
+        if (response.ok) {
+            const result = await response.json();
+            const data = result.data || result;
+            const stats = data.stats || {};
+            const health = data.health || {};
+
+            // Update mode
+            document.getElementById('trading-mode').textContent = health.dry_run ? 'DRY RUN' : 'LIVE';
+
+            // Get positions
+            const positions = stats.positions || [];
+            positionsData = positions;
+
+            // Update stats
+            document.getElementById('position-count').textContent = positions.length;
+
+            // Calculate totals
+            let totalValue = 0;
+            let totalUnrealizedPnl = 0;
+
+            positions.forEach(p => {
+                totalValue += p.current_value_sol || 0;
+                totalUnrealizedPnl += p.unrealized_pnl_usd || 0;
+            });
+
+            document.getElementById('total-value').textContent = `${totalValue.toFixed(4)} SOL`;
+            const pnlEl = document.getElementById('unrealized-pnl');
+            pnlEl.textContent = `$${totalUnrealizedPnl.toFixed(2)}`;
+            pnlEl.className = totalUnrealizedPnl >= 0 ? 'stat-value positive' : 'stat-value negative';
+
+            // Display positions
+            if (positions.length > 0) {
+                displayPositions(positions);
+                document.getElementById('close-all-btn').style.display = 'flex';
+            } else {
+                document.getElementById('empty-state').style.display = 'block';
+                document.getElementById('positions-table').style.display = 'none';
+                document.getElementById('close-all-btn').style.display = 'none';
+            }
+        }
+    } catch (e) {
+        console.error('Failed to load positions:', e);
+    }
+}
+
+function displayPositions(positions) {
+    document.getElementById('empty-state').style.display = 'none';
+    document.getElementById('positions-table').style.display = 'table';
+
+    const tbody = document.getElementById('positions-body');
+    tbody.innerHTML = '';
+
+    positions.forEach(pos => {
+        const row = document.createElement('tr');
+
+        // Strategy badge
+        const strategy = (pos.strategy || '').toLowerCase();
+        const strategyBadge = `<span class="badge badge-${strategy}">${strategy.toUpperCase()}</span>`;
+
+        // Price formatting
+        const entryPrice = pos.entry_price || 0;
+        const currentPrice = pos.current_price || 0;
+        const entryFormatted = entryPrice < 0.01 ? entryPrice.toFixed(8) : entryPrice.toFixed(4);
+        const currentFormatted = currentPrice < 0.01 ? currentPrice.toFixed(8) : currentPrice.toFixed(4);
+
+        // P&L calculation
+        const pnlPercent = pos.pnl_percent || 0;
+        const pnlClass = pnlPercent >= 0 ? 'positive' : 'negative';
+        const pnlSign = pnlPercent >= 0 ? '+' : '';
+
+        // Age formatting
+        const openedAt = new Date(pos.opened_at);
+        const now = new Date();
+        const ageMs = now - openedAt;
+        const ageMinutes = Math.floor(ageMs / 60000);
+        const ageHours = Math.floor(ageMinutes / 60);
+        let ageText = '';
+        if (ageHours > 0) {
+            ageText = `${ageHours}h ${ageMinutes % 60}m`;
+        } else {
+            ageText = `${ageMinutes}m`;
+        }
+
+        // Token amount
+        const tokenAmount = pos.token_amount || 0;
+        const amountFormatted = tokenAmount > 1000000 ? `${(tokenAmount/1000000).toFixed(2)}M` :
+                               tokenAmount > 1000 ? `${(tokenAmount/1000).toFixed(2)}K` :
+                               tokenAmount.toFixed(2);
+
+        // Value in SOL
+        const valueSol = pos.current_value_sol || 0;
+
+        row.innerHTML = `
+            <td><strong>${pos.token_symbol || 'UNKNOWN'}</strong><br><small style="color: var(--text-secondary); font-size: 0.75rem;">${(pos.mint || '').slice(0, 8)}...</small></td>
+            <td>${strategyBadge}</td>
+            <td>$${entryFormatted}</td>
+            <td>$${currentFormatted}</td>
+            <td>${amountFormatted}</td>
+            <td>${valueSol.toFixed(4)}</td>
+            <td><span class="${pnlClass}">${pnlSign}${pnlPercent.toFixed(2)}%</span></td>
+            <td>${ageText}</td>
+            <td>
+                <button class="btn btn-danger btn-sm" onclick="closePosition('${pos.mint}', '${pos.token_symbol}')">
+                    <i class="fas fa-times"></i> Close
+                </button>
+            </td>
+        `;
+
+        tbody.appendChild(row);
+    });
+}
+
+async function closePosition(mint, symbol) {
+    if (!confirm(`Are you sure you want to close the position for ${symbol}?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/solana/close-position', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({mint: mint})
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert(`Position ${symbol} closed successfully!`);
+            loadPositions();
+        } else {
+            alert(`Failed to close position: ${result.error}`);
+        }
+    } catch (e) {
+        console.error('Error closing position:', e);
+        alert('Error closing position. See console for details.');
+    }
+}
+
+async function closeAllPositions() {
+    if (!confirm(`Are you sure you want to close ALL ${positionsData.length} positions?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/solana/close-all-positions', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert(result.message);
+            loadPositions();
+        } else {
+            alert(`Failed to close positions: ${result.error}`);
+        }
+    } catch (e) {
+        console.error('Error closing all positions:', e);
+        alert('Error closing positions. See console for details.');
+    }
+}
+
+// Load positions on page load
+document.addEventListener('DOMContentLoaded', loadPositions);
+
+// Auto-refresh every 10 seconds
+setInterval(loadPositions, 10000);
+</script>
 {% endblock %}

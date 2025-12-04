@@ -540,13 +540,19 @@ class PumpFunMonitor:
                             continue
 
                         # Get token info - need to fetch price separately
-                        symbol = profile.get('symbol', 'UNKNOWN')
-                        name = profile.get('name', 'Unknown')
+                        symbol = profile.get('symbol', '')
+                        name = profile.get('name', '')
 
                         # For new tokens, we'll try to get price from DexScreener token endpoint
                         price_data = await self._get_token_price_data(session, token_address)
                         if not price_data:
                             continue
+
+                        # Use symbol/name from price_data if token-profiles didn't provide them
+                        if not symbol or symbol == 'UNKNOWN':
+                            symbol = price_data.get('symbol', '') or 'UNKNOWN'
+                        if not name or name == 'Unknown':
+                            name = price_data.get('name', '') or 'Unknown'
 
                         token_info = {
                             'mint': token_address,
@@ -654,14 +660,14 @@ class PumpFunMonitor:
 
     async def _get_token_price_data(self, session: aiohttp.ClientSession, token_address: str) -> Optional[Dict]:
         """
-        Get price, liquidity, and volume data for a specific token from DexScreener.
+        Get price, liquidity, volume, and token info from DexScreener.
 
         Args:
             session: aiohttp session
             token_address: Solana token mint address
 
         Returns:
-            Dict with price, liquidity, volume, priceChange, pairAddress, dex or None
+            Dict with price, liquidity, volume, priceChange, pairAddress, dex, symbol, name or None
         """
         try:
             url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
@@ -684,13 +690,20 @@ class PumpFunMonitor:
                     pair_address = best_pair.get('pairAddress', '')
                     dex_id = best_pair.get('dexId', 'unknown')
 
+                    # Extract token symbol and name from baseToken
+                    base_token = best_pair.get('baseToken', {})
+                    symbol = base_token.get('symbol', '')
+                    name = base_token.get('name', '')
+
                     return {
                         'price': price,
                         'liquidity': liquidity,
                         'volume': volume_24h,
                         'priceChange': price_change,
                         'pairAddress': pair_address,
-                        'dex': dex_id
+                        'dex': dex_id,
+                        'symbol': symbol,
+                        'name': name
                     }
 
                 elif resp.status == 404:
@@ -1394,6 +1407,17 @@ class SolanaTradingEngine:
         # Take profit
         if pnl_pct >= self.take_profit_pct:
             return "take_profit"
+
+        # Auto-sell delay for Pump.fun positions
+        if position.strategy == Strategy.PUMPFUN:
+            auto_sell_delay = 0
+            if self.config_manager:
+                auto_sell_delay = self.config_manager.get('pumpfun_auto_sell', 0)
+
+            if auto_sell_delay > 0:
+                time_held = (datetime.now() - position.opened_at).total_seconds()
+                if time_held >= auto_sell_delay:
+                    return "auto_sell_timeout"
 
         return None
 

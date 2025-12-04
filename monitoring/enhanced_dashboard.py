@@ -362,6 +362,8 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/solana/stats', self.api_get_solana_stats)
         self.app.router.add_get('/api/solana/positions', self.api_get_solana_positions)
         self.app.router.add_get('/api/solana/trades', self.api_get_solana_trades)
+        self.app.router.add_post('/api/solana/close-position', self.api_solana_close_position)
+        self.app.router.add_post('/api/solana/close-all-positions', self.api_solana_close_all_positions)
 
         # API - Sensitive Configuration (Admin only)
         self.app.router.add_get('/api/settings/sensitive/list', require_auth(require_admin(self.api_list_sensitive_configs)))
@@ -1192,6 +1194,58 @@ class DashboardEndpoints:
                     'total_pnl': '$0.00',
                     'win_rate': '0%'
                 }
+
+            # Fetch Solana trades from log file for trade log display
+            try:
+                from pathlib import Path
+                import json
+                trade_log_path = Path('logs/solana/solana_trades.log')
+                solana_trades = []
+
+                if trade_log_path.exists():
+                    with open(trade_log_path, 'r') as f:
+                        for line in f:
+                            try:
+                                if ' - {' in line:
+                                    json_str = line.split(' - ', 1)[1].strip()
+                                    trade = json.loads(json_str)
+                                    # Only include CLOSE trades for the trade log
+                                    if trade.get('type') == 'CLOSE':
+                                        solana_trades.append({
+                                            'trade_id': trade.get('trade_id', ''),
+                                            'symbol': trade.get('token', 'UNKNOWN'),
+                                            'token_symbol': trade.get('token', 'UNKNOWN'),
+                                            'side': trade.get('side', 'SELL'),
+                                            'entry_price': trade.get('entry_price', 0),
+                                            'exit_price': trade.get('exit_price', 0),
+                                            'size': trade.get('amount_sol', 0),
+                                            'amount': trade.get('amount_sol', 0),
+                                            'pnl': trade.get('pnl_sol', 0),
+                                            'net_pnl': trade.get('pnl_sol', 0),
+                                            'pnl_pct': trade.get('pnl_pct', 0),
+                                            'time': trade.get('timestamp', ''),
+                                            'closed_at': trade.get('timestamp', ''),
+                                            'exit_reason': trade.get('reason', ''),
+                                            'close_reason': trade.get('reason', ''),
+                                            'is_simulated': trade.get('mode') == 'DRY_RUN',
+                                            'module': 'solana',
+                                            'strategy': trade.get('strategy', 'unknown')
+                                        })
+                            except (json.JSONDecodeError, IndexError):
+                                continue
+
+                    # Most recent first, limit to 100
+                    solana_trades = list(reversed(solana_trades[-100:]))
+
+                # Ensure solana data exists and add trades
+                if simulator_data['solana'] is None:
+                    simulator_data['solana'] = {}
+                simulator_data['solana']['trades'] = solana_trades
+            except Exception as e:
+                logger.debug(f"Could not fetch solana trades from log: {e}")
+                if simulator_data['solana'] is None:
+                    simulator_data['solana'] = {}
+                simulator_data['solana']['trades'] = []
 
             # Get DEX data from database (historical trades)
             # dry_run already defined above
@@ -4019,6 +4073,48 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Error fetching solana trades: {e}")
             return web.json_response({'success': False, 'trades': [], 'error': str(e)})
+
+    async def api_solana_close_position(self, request):
+        """Proxy close position request to Solana module"""
+        try:
+            data = await request.json()
+            solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f'http://localhost:{solana_port}/close-position',
+                    json=data,
+                    timeout=30
+                ) as resp:
+                    result = await resp.json()
+                    return web.json_response(result, status=resp.status)
+        except aiohttp.ClientConnectorError:
+            return web.json_response({
+                'success': False,
+                'error': 'Solana module not running'
+            }, status=503)
+        except Exception as e:
+            logger.error(f"Error closing solana position: {e}")
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def api_solana_close_all_positions(self, request):
+        """Proxy close all positions request to Solana module"""
+        try:
+            solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f'http://localhost:{solana_port}/close-all-positions',
+                    timeout=60
+                ) as resp:
+                    result = await resp.json()
+                    return web.json_response(result, status=resp.status)
+        except aiohttp.ClientConnectorError:
+            return web.json_response({
+                'success': False,
+                'error': 'Solana module not running'
+            }, status=503)
+        except Exception as e:
+            logger.error(f"Error closing all solana positions: {e}")
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
 
     async def api_list_sensitive_configs(self, request):
         """List all sensitive configuration keys (admin only)"""
