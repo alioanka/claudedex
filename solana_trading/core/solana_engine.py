@@ -416,7 +416,8 @@ class SolanaTradingEngine:
         rpc_url: str,
         strategies: List[str],
         max_positions: int = 3,
-        mode: str = "production"
+        mode: str = "production",
+        config_manager=None
     ):
         """
         Initialize Solana trading engine
@@ -426,12 +427,14 @@ class SolanaTradingEngine:
             strategies: List of enabled strategies (jupiter, drift, pumpfun)
             max_positions: Maximum concurrent positions
             mode: Operating mode
+            config_manager: Optional SolanaConfigManager for DB-backed config
         """
         self.primary_rpc = rpc_url
         self.strategies = [Strategy(s.strip().lower()) for s in strategies if s.strip().lower() in [e.value for e in Strategy]]
         self.max_positions = max_positions
         self.mode = mode
         self.is_running = False
+        self.config_manager = config_manager
 
         # DRY_RUN mode - CRITICAL: Check environment variable
         dry_run_env = os.getenv('DRY_RUN', 'true').strip().lower()
@@ -450,12 +453,19 @@ class SolanaTradingEngine:
 
         self.rpc_manager = RPCManager(rpc_urls)
 
-        # Trading configuration from environment
-        self.position_size_sol = float(os.getenv('SOLANA_POSITION_SIZE_SOL', '1.0'))
-        self.stop_loss_pct = float(os.getenv('SOLANA_STOP_LOSS_PCT', '-10.0'))
-        self.take_profit_pct = float(os.getenv('SOLANA_TAKE_PROFIT_PCT', '50.0'))
-        self.max_daily_loss_sol = float(os.getenv('SOLANA_MAX_DAILY_LOSS_SOL', '5.0'))
-        self.slippage_bps = int(os.getenv('JUPITER_SLIPPAGE_BPS', '50'))
+        # Trading configuration - prefer config_manager, fallback to env vars
+        if config_manager:
+            self.position_size_sol = config_manager.position_size_sol
+            self.stop_loss_pct = -abs(config_manager.stop_loss_pct)  # Ensure negative
+            self.take_profit_pct = config_manager.take_profit_pct
+            self.max_daily_loss_sol = config_manager.daily_loss_limit_sol
+            self.slippage_bps = config_manager.jupiter_slippage_bps
+        else:
+            self.position_size_sol = float(os.getenv('SOLANA_POSITION_SIZE_SOL', '1.0'))
+            self.stop_loss_pct = float(os.getenv('SOLANA_STOP_LOSS_PCT', '-10.0'))
+            self.take_profit_pct = float(os.getenv('SOLANA_TAKE_PROFIT_PCT', '50.0'))
+            self.max_daily_loss_sol = float(os.getenv('SOLANA_MAX_DAILY_LOSS_SOL', '5.0'))
+            self.slippage_bps = int(os.getenv('JUPITER_SLIPPAGE_BPS', '50'))
 
         # Trading state
         self.active_positions: Dict[str, Position] = {}
@@ -679,6 +689,86 @@ class SolanaTradingEngine:
             price = await self.jupiter_client.get_price(SOL_MINT)
             if price:
                 self.sol_price_usd = price
+
+    def calculate_dynamic_position_size(
+        self,
+        signal_strength: float = 0.5,
+        volatility: float = 1.0,
+        trend_strength: float = 0.5
+    ) -> float:
+        """
+        Calculate dynamic position size based on signal strength and market conditions.
+
+        Args:
+            signal_strength: Signal confidence (0.0 to 1.0)
+            volatility: Market volatility multiplier (1.0 = normal)
+            trend_strength: Trend alignment strength (0.0 to 1.0)
+
+        Returns:
+            Adjusted position size in SOL
+        """
+        base_size = self.position_size_sol
+
+        # Adjust based on signal strength (50% to 150% of base)
+        signal_multiplier = 0.5 + (signal_strength * 1.0)
+
+        # Reduce size in high volatility (inverse relationship)
+        volatility_multiplier = min(1.5, max(0.5, 1.0 / volatility))
+
+        # Boost for strong trend alignment
+        trend_multiplier = 0.8 + (trend_strength * 0.4)
+
+        # Calculate win rate adjustment (more wins = more confidence)
+        if self.total_trades > 10:
+            win_rate = self.winning_trades / self.total_trades if self.total_trades > 0 else 0.5
+            # Adjust between 0.8 (30% win rate) and 1.2 (70% win rate)
+            win_rate_multiplier = 0.5 + (win_rate * 1.0)
+        else:
+            win_rate_multiplier = 1.0
+
+        # Current risk adjustment (reduce if already exposed)
+        current_exposure = len(self.active_positions) / self.max_positions if self.max_positions > 0 else 0
+        exposure_multiplier = max(0.5, 1.0 - (current_exposure * 0.5))
+
+        # Calculate final size
+        dynamic_size = (
+            base_size *
+            signal_multiplier *
+            volatility_multiplier *
+            trend_multiplier *
+            win_rate_multiplier *
+            exposure_multiplier
+        )
+
+        # Enforce minimum and maximum bounds
+        min_size = self.config_manager.get('min_position', 0.05) if self.config_manager else 0.05
+        max_size = base_size * 2.0  # Never more than 2x base size
+
+        final_size = max(min_size, min(max_size, dynamic_size))
+
+        logger.debug(
+            f"Dynamic position size: base={base_size:.4f}, "
+            f"signal={signal_multiplier:.2f}, vol={volatility_multiplier:.2f}, "
+            f"trend={trend_multiplier:.2f}, win={win_rate_multiplier:.2f}, "
+            f"exposure={exposure_multiplier:.2f} -> final={final_size:.4f}"
+        )
+
+        return final_size
+
+    def _log_trade(self, trade_type: str, details: dict):
+        """Log trade to separate trade log file"""
+        try:
+            import logging
+            trade_logger = logging.getLogger("SolanaTrading.Trades")
+            trade_info = {
+                'type': trade_type,
+                'timestamp': datetime.now().isoformat(),
+                'mode': 'DRY_RUN' if self.dry_run else 'LIVE',
+                **details
+            }
+            trade_logger.info(json.dumps(trade_info))
+        except Exception as e:
+            logger.debug(f"Error logging trade: {e}")
 
     async def run(self):
         """Main trading loop"""
@@ -931,6 +1021,20 @@ class SolanaTradingEngine:
 
             logger.info(f"✅ Position opened: {token_symbol} ({strategy.value})")
 
+            # Log trade to separate trade file
+            self._log_trade('OPEN', {
+                'position_id': position.position_id,
+                'token': token_symbol,
+                'mint': token_mint,
+                'strategy': strategy.value,
+                'side': 'BUY',
+                'price': current_price,
+                'amount_sol': amount_sol,
+                'amount_usd': value_usd,
+                'stop_loss': position.stop_loss,
+                'take_profit': position.take_profit
+            })
+
         except Exception as e:
             logger.error(f"Error opening position: {e}")
 
@@ -1024,6 +1128,23 @@ class SolanaTradingEngine:
             logger.info(f"   PnL: {pnl_sol:.4f} SOL (${pnl_usd:.2f}, {pnl_pct:.2f}%)")
             logger.info(f"   Daily PnL: {self.risk_metrics.daily_pnl_sol:.4f} SOL")
 
+            # Log trade to separate trade file
+            self._log_trade('CLOSE', {
+                'position_id': position.position_id,
+                'trade_id': trade.trade_id,
+                'token': position.token_symbol,
+                'mint': token_mint,
+                'strategy': position.strategy.value,
+                'side': 'SELL',
+                'entry_price': position.entry_price,
+                'exit_price': position.current_price,
+                'pnl_sol': pnl_sol,
+                'pnl_usd': pnl_usd,
+                'pnl_pct': pnl_pct,
+                'reason': reason,
+                'win': pnl_sol > 0
+            })
+
         except Exception as e:
             logger.error(f"Error closing position: {e}")
 
@@ -1058,7 +1179,7 @@ class SolanaTradingEngine:
         sortino = self.pnl_tracker.get_sortino_ratio()
         calmar = self.pnl_tracker.get_calmar_ratio()
         profit_factor = self.pnl_tracker.get_profit_factor()
-        max_drawdown = self.pnl_tracker.get_max_drawdown()
+        max_drawdown = self.pnl_tracker.max_drawdown_pct  # Use attribute, not method
 
         return {
             'mode': 'DRY_RUN' if self.dry_run else 'LIVE',
@@ -1087,8 +1208,8 @@ class SolanaTradingEngine:
         try:
             if self.client:
                 rpc_connected = await self.client.is_connected()
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"RPC connection check failed: {e}")
 
         wallet_balance = await self._get_wallet_balance() if rpc_connected else 0
 
