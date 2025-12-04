@@ -1398,15 +1398,23 @@ class SolanaTradingEngine:
                     if abs(pct_change) > 0.5:  # Log significant changes
                         logger.info(f"📈 SOL price: ${old_price:.2f} → ${sol_price:.2f} ({pct_change:+.2f}%)")
 
-            # Monitor popular tokens for trading opportunities
-            tokens_to_scan = [
-                ('BONK', 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'),
-                ('JTO', 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL'),
-                ('WIF', 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm'),
-                ('PYTH', 'HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3'),
-                ('RAY', '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R'),
-                ('ORCA', 'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE'),
-            ]
+            # Get tokens to monitor from config (configurable from settings page)
+            if self.config_manager:
+                tokens_to_scan = self.config_manager.jupiter_tokens
+                if not tokens_to_scan:
+                    # Fallback defaults if no tokens configured
+                    tokens_to_scan = [
+                        ('BONK', 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'),
+                        ('JTO', 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL'),
+                        ('WIF', 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm'),
+                    ]
+            else:
+                # No config manager - use defaults
+                tokens_to_scan = [
+                    ('BONK', 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'),
+                    ('JTO', 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL'),
+                    ('WIF', 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm'),
+                ]
 
             for token_name, token_mint in tokens_to_scan:
                 # Skip if in cooldown
