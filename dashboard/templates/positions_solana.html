@@ -163,6 +163,20 @@
         --btn-secondary-hover: #4b5563;
     }
 
+    /* Explicit dark mode overrides for stat boxes */
+    [data-theme="dark"] .stat-box {
+        background: #111827 !important;
+        border: 1px solid #374151;
+    }
+
+    [data-theme="dark"] .stat-label {
+        color: #9ca3af !important;
+    }
+
+    [data-theme="dark"] .stat-value {
+        color: #f9fafb !important;
+    }
+
     [data-theme="dark"] .badge-jupiter { background: #312e81; color: #a5b4fc; }
     [data-theme="dark"] .badge-drift { background: #831843; color: #f9a8d4; }
     [data-theme="dark"] .badge-pumpfun { background: #134e4a; color: #5eead4; }

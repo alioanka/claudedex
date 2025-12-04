@@ -1865,12 +1865,19 @@ class SolanaTradingEngine:
         positions_summary = []
         for mint, pos in self.active_positions.items():
             positions_summary.append({
-                'token': pos.token_symbol,
-                'mint': mint[:8] + '...',
+                'token_symbol': pos.token_symbol,
+                'mint': mint,  # Full mint address for close button
                 'strategy': pos.strategy.value,
-                'entry': f"${pos.entry_price:.8f}",
-                'current': f"${pos.current_price:.8f}",
-                'pnl_pct': f"{pos.unrealized_pnl_pct:.2f}%"
+                'entry_price': pos.entry_price,
+                'current_price': pos.current_price,
+                'pnl_percent': pos.unrealized_pnl_pct,
+                'token_amount': pos.amount,
+                'current_value_sol': pos.value_sol,
+                'unrealized_pnl_usd': pos.unrealized_pnl * self.sol_price_usd if hasattr(pos, 'unrealized_pnl') else 0,
+                'opened_at': pos.opened_at.isoformat() if pos.opened_at else None,
+                'stop_loss': pos.stop_loss,
+                'take_profit': pos.take_profit,
+                'is_simulated': pos.is_simulated
             })
 
         # Get advanced metrics from PnL tracker

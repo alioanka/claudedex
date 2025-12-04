@@ -178,12 +178,12 @@ class HealthServer:
             if not mint:
                 return web.json_response({'success': False, 'error': 'Missing mint address'}, status=400)
 
-            # Check if position exists
-            if mint not in self.app.engine.positions:
+            # Check if position exists in active_positions
+            if mint not in self.app.engine.active_positions:
                 return web.json_response({'success': False, 'error': f'No position found for {mint}'}, status=404)
 
             # Close the position
-            position = self.app.engine.positions[mint]
+            position = self.app.engine.active_positions[mint]
             await self.app.engine._close_position(mint, "manual_close")
 
             logger.info(f"📤 Manually closed position: {position.token_symbol}")
@@ -204,7 +204,7 @@ class HealthServer:
             if not self.app.engine:
                 return web.json_response({'success': False, 'error': 'Engine not initialized'}, status=503)
 
-            positions_count = len(self.app.engine.positions)
+            positions_count = len(self.app.engine.active_positions)
 
             if positions_count == 0:
                 return web.json_response({'success': True, 'message': 'No positions to close', 'closed': 0})
