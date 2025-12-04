@@ -1863,6 +1863,9 @@ class SolanaTradingEngine:
             logger.info(f"   PnL: {pnl_sol:.4f} SOL (${pnl_usd:.2f}, {pnl_pct:.2f}%)")
             logger.info(f"   Daily PnL: {self.risk_metrics.daily_pnl_sol:.4f} SOL")
 
+            # Calculate duration
+            duration_seconds = int((datetime.utcnow() - position.opened_at).total_seconds())
+
             # Log trade to separate trade file
             self._log_trade('CLOSE', {
                 'position_id': position.position_id,
@@ -1877,7 +1880,10 @@ class SolanaTradingEngine:
                 'pnl_usd': pnl_usd,
                 'pnl_pct': pnl_pct,
                 'reason': reason,
-                'win': pnl_sol > 0
+                'win': pnl_sol > 0,
+                'opened_at': position.opened_at.isoformat() + 'Z',
+                'closed_at': datetime.utcnow().isoformat() + 'Z',
+                'duration_seconds': duration_seconds
             })
 
         except Exception as e:
