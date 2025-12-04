@@ -507,28 +507,30 @@ class PumpFunMonitor:
             session = await self._get_session()
             self._last_fetch_time = datetime.now()
 
-            # DexScreener API for latest Solana pairs (includes Pump.fun)
-            url = "https://api.dexscreener.com/latest/dex/pairs/solana"
+            # DexScreener API for new token pairs on Solana
+            # Use the token-profiles endpoint for new launches, or search for pump.fun
+            url = "https://api.dexscreener.com/token-profiles/latest/v1"
 
             async with session.get(url, timeout=15) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    pairs = data.get('pairs', [])
+                    # token-profiles returns a list directly
+                    profiles = data if isinstance(data, list) else []
 
                     # Count stats for logging
-                    total_pairs = len(pairs)
                     pumpfun_pairs = 0
-                    filtered_out = {'seen': 0, 'liquidity': 0, 'volume': 0, 'price': 0, 'suspicious': 0}
+                    filtered_out = {'seen': 0, 'liquidity': 0, 'volume': 0, 'price': 0, 'suspicious': 0, 'not_solana': 0}
 
                     new_tokens = []
-                    for pair in pairs:
-                        # Filter for Pump.fun tokens specifically
-                        dex_id = pair.get('dexId', '').lower()
-                        if dex_id != self.PUMPFUN_DEX_ID:
+                    for profile in profiles:
+                        # Check if it's a Solana token
+                        chain_id = profile.get('chainId', '').lower()
+                        if chain_id != 'solana':
+                            filtered_out['not_solana'] += 1
                             continue
 
                         pumpfun_pairs += 1
-                        token_address = pair.get('baseToken', {}).get('address')
+                        token_address = profile.get('tokenAddress')
                         if not token_address:
                             continue
 
@@ -537,20 +539,28 @@ class PumpFunMonitor:
                             filtered_out['seen'] += 1
                             continue
 
-                        # Parse pair data
+                        # Get token info - need to fetch price separately
+                        symbol = profile.get('symbol', 'UNKNOWN')
+                        name = profile.get('name', 'Unknown')
+
+                        # For new tokens, we'll try to get price from DexScreener token endpoint
+                        price_data = await self._get_token_price_data(session, token_address)
+                        if not price_data:
+                            continue
+
                         token_info = {
                             'mint': token_address,
-                            'symbol': pair.get('baseToken', {}).get('symbol', 'UNKNOWN'),
-                            'name': pair.get('baseToken', {}).get('name', 'Unknown'),
-                            'price_usd': float(pair.get('priceUsd', 0) or 0),
-                            'liquidity_usd': float(pair.get('liquidity', {}).get('usd', 0) or 0),
-                            'liquidity_sol': float(pair.get('liquidity', {}).get('base', 0) or 0),
-                            'volume_24h': float(pair.get('volume', {}).get('h24', 0) or 0),
-                            'price_change_24h': float(pair.get('priceChange', {}).get('h24', 0) or 0),
-                            'pair_address': pair.get('pairAddress'),
+                            'symbol': symbol,
+                            'name': name,
+                            'price_usd': price_data.get('price', 0),
+                            'liquidity_usd': price_data.get('liquidity', 0),
+                            'liquidity_sol': 0,
+                            'volume_24h': price_data.get('volume', 0),
+                            'price_change_24h': price_data.get('priceChange', 0),
+                            'pair_address': price_data.get('pairAddress', ''),
                             'created_at': datetime.now(),
-                            'dex': 'pumpfun',
-                            'url': pair.get('url', ''),
+                            'dex': price_data.get('dex', 'unknown'),
+                            'url': profile.get('url', ''),
                         }
 
                         # Apply filters with tracking
@@ -572,23 +582,27 @@ class PumpFunMonitor:
                         self._seen_tokens.add(token_address)
                         self._recent_tokens[token_address] = token_info
                         logger.info(
-                            f"🎯 New Pump.fun token: {token_info['symbol']} "
+                            f"🎯 New token found: {token_info['symbol']} "
                             f"(${token_info['price_usd']:.8f}, "
                             f"liq=${token_info['liquidity_usd']:.0f}, "
                             f"vol=${token_info['volume_24h']:.0f})"
                         )
 
-                    # Log scanning summary periodically
-                    if pumpfun_pairs > 0:
+                    # Log scanning summary
+                    if pumpfun_pairs > 0 or len(profiles) > 0:
                         logger.info(
-                            f"🔍 Pump.fun scan: {pumpfun_pairs} tokens checked, "
-                            f"{len(new_tokens)} qualify, "
-                            f"filtered: liq={filtered_out['liquidity']}, vol={filtered_out['volume']}, "
-                            f"seen={filtered_out['seen']}"
+                            f"🔍 Pump.fun scan: {len(profiles)} profiles, {pumpfun_pairs} Solana tokens, "
+                            f"{len(new_tokens)} qualify"
                         )
+                    else:
+                        logger.info("🔍 Pump.fun scan: No new token profiles found")
 
                     return new_tokens
 
+                elif resp.status == 404:
+                    # Try alternative endpoint
+                    logger.debug("Token profiles endpoint not available, trying search...")
+                    return await self._search_pumpfun_tokens(session)
                 else:
                     logger.warning(f"DexScreener returned status {resp.status}")
                     return []
@@ -637,6 +651,165 @@ class PumpFunMonitor:
         for mint in to_remove:
             self._recent_tokens.pop(mint, None)
             self._seen_tokens.discard(mint)
+
+    async def _get_token_price_data(self, session: aiohttp.ClientSession, token_address: str) -> Optional[Dict]:
+        """
+        Get price, liquidity, and volume data for a specific token from DexScreener.
+
+        Args:
+            session: aiohttp session
+            token_address: Solana token mint address
+
+        Returns:
+            Dict with price, liquidity, volume, priceChange, pairAddress, dex or None
+        """
+        try:
+            url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
+
+            async with session.get(url, timeout=10) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    pairs = data.get('pairs', [])
+
+                    if not pairs:
+                        return None
+
+                    # Get the pair with highest liquidity
+                    best_pair = max(pairs, key=lambda p: float(p.get('liquidity', {}).get('usd', 0) or 0))
+
+                    price = float(best_pair.get('priceUsd', 0) or 0)
+                    liquidity = float(best_pair.get('liquidity', {}).get('usd', 0) or 0)
+                    volume_24h = float(best_pair.get('volume', {}).get('h24', 0) or 0)
+                    price_change = float(best_pair.get('priceChange', {}).get('h24', 0) or 0)
+                    pair_address = best_pair.get('pairAddress', '')
+                    dex_id = best_pair.get('dexId', 'unknown')
+
+                    return {
+                        'price': price,
+                        'liquidity': liquidity,
+                        'volume': volume_24h,
+                        'priceChange': price_change,
+                        'pairAddress': pair_address,
+                        'dex': dex_id
+                    }
+
+                elif resp.status == 404:
+                    logger.debug(f"Token {token_address[:8]}... not found on DexScreener")
+                else:
+                    logger.debug(f"DexScreener returned {resp.status} for token {token_address[:8]}...")
+
+        except asyncio.TimeoutError:
+            logger.debug(f"Timeout fetching price data for {token_address[:8]}...")
+        except Exception as e:
+            logger.debug(f"Error fetching price data for {token_address[:8]}...: {e}")
+
+        return None
+
+    async def _search_pumpfun_tokens(self, session: aiohttp.ClientSession) -> List[Dict]:
+        """
+        Search for Pump.fun tokens using DexScreener pairs API.
+        Fallback method when token-profiles endpoint is unavailable.
+
+        Returns:
+            List of token info dicts that pass filters
+        """
+        try:
+            # Search for recent Solana pairs - this covers more tokens
+            url = "https://api.dexscreener.com/latest/dex/pairs/solana"
+
+            async with session.get(url, timeout=15) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    pairs = data.get('pairs', [])
+
+                    # Filter for Pump.fun pairs or high-liquidity new tokens
+                    new_tokens = []
+                    filtered_out = {'seen': 0, 'liquidity': 0, 'volume': 0, 'price': 0, 'suspicious': 0}
+
+                    for pair in pairs:
+                        dex_id = pair.get('dexId', '').lower()
+
+                        # Focus on pump.fun, raydium, and other Solana DEXs
+                        if dex_id not in ['pumpfun', 'raydium', 'orca', 'meteora']:
+                            continue
+
+                        base_token = pair.get('baseToken', {})
+                        token_address = base_token.get('address', '')
+
+                        if not token_address:
+                            continue
+
+                        # Skip already seen tokens
+                        if token_address in self._seen_tokens:
+                            filtered_out['seen'] += 1
+                            continue
+
+                        # Extract token info
+                        price = float(pair.get('priceUsd', 0) or 0)
+                        liquidity = float(pair.get('liquidity', {}).get('usd', 0) or 0)
+                        volume_24h = float(pair.get('volume', {}).get('h24', 0) or 0)
+                        price_change = float(pair.get('priceChange', {}).get('h24', 0) or 0)
+
+                        # Apply filters
+                        if liquidity < self.min_liquidity_usd:
+                            filtered_out['liquidity'] += 1
+                            continue
+                        if volume_24h < self.min_volume_24h:
+                            filtered_out['volume'] += 1
+                            continue
+                        if price <= 0:
+                            filtered_out['price'] += 1
+                            continue
+                        if abs(price_change) > 500:
+                            filtered_out['suspicious'] += 1
+                            continue
+
+                        token_info = {
+                            'mint': token_address,
+                            'symbol': base_token.get('symbol', 'UNKNOWN'),
+                            'name': base_token.get('name', 'Unknown'),
+                            'price_usd': price,
+                            'liquidity_usd': liquidity,
+                            'liquidity_sol': 0,
+                            'volume_24h': volume_24h,
+                            'price_change_24h': price_change,
+                            'pair_address': pair.get('pairAddress', ''),
+                            'created_at': datetime.now(),
+                            'dex': dex_id,
+                            'url': pair.get('url', ''),
+                        }
+
+                        new_tokens.append(token_info)
+                        self._seen_tokens.add(token_address)
+                        self._recent_tokens[token_address] = token_info
+
+                        logger.info(
+                            f"🎯 Found token via search: {token_info['symbol']} on {dex_id} "
+                            f"(${price:.8f}, liq=${liquidity:.0f}, vol=${volume_24h:.0f})"
+                        )
+
+                        # Limit results per scan
+                        if len(new_tokens) >= 5:
+                            break
+
+                    if new_tokens or len(pairs) > 0:
+                        logger.info(
+                            f"🔍 Pump.fun search: {len(pairs)} pairs scanned, "
+                            f"{len(new_tokens)} qualify, filtered: {filtered_out}"
+                        )
+
+                    return new_tokens
+
+                else:
+                    logger.warning(f"DexScreener pairs search returned {resp.status}")
+                    return []
+
+        except asyncio.TimeoutError:
+            logger.debug("Timeout in Pump.fun token search")
+            return []
+        except Exception as e:
+            logger.error(f"Error in Pump.fun token search: {e}")
+            return []
 
 
 class SolanaTradingEngine:
@@ -1168,13 +1341,19 @@ class SolanaTradingEngine:
         if not self.active_positions:
             return
 
+        # Log monitoring activity periodically
+        pos_count = len(self.active_positions)
+        logger.info(f"📊 Monitoring {pos_count} active position(s)...")
+
         for token_mint, position in list(self.active_positions.items()):
             try:
                 # Get current price
                 current_price = await self._get_token_price(token_mint)
                 if current_price is None or current_price == 0:
+                    logger.warning(f"⚠️ Could not fetch price for {position.token_symbol}")
                     continue
 
+                old_price = position.current_price
                 position.current_price = current_price
 
                 # Calculate PnL
@@ -1186,9 +1365,19 @@ class SolanaTradingEngine:
                 position.unrealized_pnl_pct = pnl_pct
                 position.unrealized_pnl = position.value_sol * (pnl_pct / 100)
 
+                # Log position status
+                pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
+                logger.info(
+                    f"{pnl_emoji} {position.token_symbol}: "
+                    f"${current_price:.8f} (entry: ${position.entry_price:.8f}), "
+                    f"PnL: {pnl_pct:+.2f}%, "
+                    f"SL: {self.stop_loss_pct}%, TP: {self.take_profit_pct}%"
+                )
+
                 # Check exit conditions
                 exit_reason = await self._check_exit_conditions(position)
                 if exit_reason:
+                    logger.info(f"🎯 Exit signal for {position.token_symbol}: {exit_reason}")
                     await self._close_position(token_mint, exit_reason)
 
             except Exception as e:
@@ -1225,12 +1414,23 @@ class SolanaTradingEngine:
                     if abs(pct_change) > 0.5:  # Log significant changes
                         logger.info(f"📈 SOL price: ${old_price:.2f} → ${sol_price:.2f} ({pct_change:+.2f}%)")
 
-            # Monitor popular tokens for trading opportunities
-            tokens_to_scan = [
-                ('BONK', 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'),
-                ('JTO', 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL'),
-                ('WIF', 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm'),
-            ]
+            # Get tokens to monitor from config (configurable from settings page)
+            if self.config_manager:
+                tokens_to_scan = self.config_manager.jupiter_tokens
+                if not tokens_to_scan:
+                    # Fallback defaults if no tokens configured
+                    tokens_to_scan = [
+                        ('BONK', 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'),
+                        ('JTO', 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL'),
+                        ('WIF', 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm'),
+                    ]
+            else:
+                # No config manager - use defaults
+                tokens_to_scan = [
+                    ('BONK', 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'),
+                    ('JTO', 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL'),
+                    ('WIF', 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm'),
+                ]
 
             for token_name, token_mint in tokens_to_scan:
                 # Skip if in cooldown
@@ -1248,45 +1448,66 @@ class SolanaTradingEngine:
 
                 logger.info(f"🔍 Jupiter: {token_name} = ${price:.8f}")
 
-                # Simple momentum signal for DRY_RUN demo
-                # In production, replace with real technical analysis
-                if self.dry_run:
-                    # Get price history from cache to detect momentum
-                    cache_key = f"price_history_{token_mint}"
-                    price_history = getattr(self, '_price_history', {})
-                    if not hasattr(self, '_price_history'):
-                        self._price_history = {}
+                # Trading signals for DRY_RUN and LIVE modes
+                # Get price history from cache to detect momentum
+                if not hasattr(self, '_price_history'):
+                    self._price_history = {}
+                if not hasattr(self, '_demo_trade_counter'):
+                    self._demo_trade_counter = 0
 
-                    if token_mint not in self._price_history:
-                        self._price_history[token_mint] = []
+                if token_mint not in self._price_history:
+                    self._price_history[token_mint] = []
 
-                    self._price_history[token_mint].append({'price': price, 'time': datetime.now()})
+                self._price_history[token_mint].append({'price': price, 'time': datetime.now()})
 
-                    # Keep only last 10 prices
-                    self._price_history[token_mint] = self._price_history[token_mint][-10:]
+                # Keep only last 10 prices
+                self._price_history[token_mint] = self._price_history[token_mint][-10:]
 
-                    # Need at least 3 prices to calculate momentum
-                    if len(self._price_history[token_mint]) >= 3:
-                        prices = [p['price'] for p in self._price_history[token_mint]]
-                        avg_old = sum(prices[:-1]) / len(prices[:-1])
-                        current = prices[-1]
-                        momentum = ((current - avg_old) / avg_old) * 100 if avg_old > 0 else 0
+                # Check for momentum signal
+                momentum = 0.0
+                should_trade = False
+                trade_reason = ""
 
-                        # Buy signal: positive momentum > 0.5%
-                        if momentum > 0.5:
-                            logger.info(f"📊 {token_name}: Bullish momentum detected ({momentum:+.2f}%)")
-                            await self._open_position(
-                                token_mint=token_mint,
-                                token_symbol=token_name,
-                                strategy=Strategy.JUPITER,
-                                amount_sol=self.calculate_dynamic_position_size(
-                                    signal_strength=min(1.0, momentum / 5.0),
-                                    volatility=1.0,
-                                    trend_strength=0.7
-                                ),
-                                metadata={'momentum': momentum, 'price': price}
-                            )
-                            break  # One trade per cycle
+                if len(self._price_history[token_mint]) >= 3:
+                    prices = [p['price'] for p in self._price_history[token_mint]]
+                    avg_old = sum(prices[:-1]) / len(prices[:-1])
+                    current = prices[-1]
+                    momentum = ((current - avg_old) / avg_old) * 100 if avg_old > 0 else 0
+
+                    # Buy signal: positive momentum > 0.1% (lowered from 0.5%)
+                    if momentum > 0.1:
+                        should_trade = True
+                        trade_reason = f"momentum (+{momentum:.2f}%)"
+
+                    # Also trigger on negative momentum (reversal potential)
+                    elif momentum < -0.2 and len(self._price_history[token_mint]) >= 5:
+                        # Potential reversal - price dropped but may bounce
+                        should_trade = True
+                        trade_reason = f"reversal potential ({momentum:.2f}%)"
+
+                # DRY_RUN Demo Mode: trigger trades periodically for testing
+                if self.dry_run and not should_trade:
+                    self._demo_trade_counter += 1
+                    # Trigger a demo trade every ~60 cycles (5 minutes) per token
+                    if self._demo_trade_counter % 60 == 0:
+                        should_trade = True
+                        trade_reason = "demo periodic trade"
+                        momentum = 0.05  # Small positive for demo
+
+                if should_trade:
+                    logger.info(f"📊 {token_name}: Trading signal - {trade_reason}")
+                    await self._open_position(
+                        token_mint=token_mint,
+                        token_symbol=token_name,
+                        strategy=Strategy.JUPITER,
+                        amount_sol=self.calculate_dynamic_position_size(
+                            signal_strength=min(1.0, abs(momentum) / 2.0 + 0.3),
+                            volatility=1.0,
+                            trend_strength=0.7
+                        ),
+                        metadata={'momentum': momentum, 'price': price, 'reason': trade_reason}
+                    )
+                    break  # One trade per cycle
 
         except Exception as e:
             logger.error(f"Error in Jupiter scan: {e}", exc_info=True)
@@ -1649,6 +1870,7 @@ class SolanaTradingEngine:
             'active_positions': len(self.active_positions),
             'positions': positions_summary,
             'sol_price': f"${self.sol_price_usd:.2f}",
+            'sol_price_usd': self.sol_price_usd,  # Numeric for calculations
             'sharpe_ratio': f"{sharpe:.2f}" if sharpe else "N/A",
             'sortino_ratio': f"{sortino:.2f}" if sortino else "N/A",
             'calmar_ratio': f"{calmar:.2f}" if calmar else "N/A",

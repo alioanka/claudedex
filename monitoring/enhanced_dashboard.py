@@ -358,6 +358,11 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/settings/solana', self.api_get_solana_settings)
         self.app.router.add_post('/api/settings/solana', self.api_save_solana_settings)
 
+        # API - Solana Module Stats (proxy to health server)
+        self.app.router.add_get('/api/solana/stats', self.api_get_solana_stats)
+        self.app.router.add_get('/api/solana/positions', self.api_get_solana_positions)
+        self.app.router.add_get('/api/solana/trades', self.api_get_solana_trades)
+
         # API - Sensitive Configuration (Admin only)
         self.app.router.add_get('/api/settings/sensitive/list', require_auth(require_admin(self.api_list_sensitive_configs)))
         self.app.router.add_get('/api/settings/sensitive/{key}', require_auth(require_admin(self.api_get_sensitive_config)))
@@ -3932,6 +3937,88 @@ class DashboardEndpoints:
         if key.startswith('pumpfun_'):
             return 'solana_pumpfun'
         return type_map.get(key)
+
+    async def api_get_solana_stats(self, request):
+        """Fetch stats from Solana module health server"""
+        try:
+            solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{solana_port}/stats', timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return web.json_response({'success': True, 'data': data})
+                    else:
+                        return web.json_response({
+                            'success': False,
+                            'error': f'Solana module returned status {resp.status}'
+                        }, status=resp.status)
+        except aiohttp.ClientConnectorError:
+            return web.json_response({
+                'success': False,
+                'error': 'Solana module not running',
+                'data': {
+                    'stats': {
+                        'total_trades': 0,
+                        'winning_trades': 0,
+                        'losing_trades': 0,
+                        'active_positions': 0,
+                        'total_pnl': '0.0000 SOL',
+                        'daily_pnl': '0.0000 SOL',
+                        'sol_price_usd': 0,
+                        'mode': 'OFFLINE'
+                    },
+                    'health': {'status': 'offline'}
+                }
+            })
+        except Exception as e:
+            logger.error(f"Error fetching solana stats: {e}")
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    async def api_get_solana_positions(self, request):
+        """Fetch positions from Solana module"""
+        try:
+            solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{solana_port}/stats', timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        positions = data.get('stats', {}).get('positions', [])
+                        return web.json_response({'success': True, 'positions': positions})
+                    else:
+                        return web.json_response({'success': False, 'positions': []})
+        except Exception as e:
+            logger.debug(f"Error fetching solana positions: {e}")
+            return web.json_response({'success': False, 'positions': [], 'error': str(e)})
+
+    async def api_get_solana_trades(self, request):
+        """Fetch trades from Solana trade log file"""
+        try:
+            trades = []
+            trade_log_path = Path('logs/solana/solana_trades.log')
+
+            if trade_log_path.exists():
+                import json
+                with open(trade_log_path, 'r') as f:
+                    for line in f:
+                        try:
+                            # Parse log line: "2025-12-04 12:50:05,230 - {...}"
+                            if ' - {' in line:
+                                json_str = line.split(' - ', 1)[1].strip()
+                                trade = json.loads(json_str)
+                                trades.append(trade)
+                        except (json.JSONDecodeError, IndexError):
+                            continue
+
+                # Return most recent trades first
+                trades = list(reversed(trades[-100:]))  # Last 100 trades
+
+            return web.json_response({'success': True, 'trades': trades})
+        except Exception as e:
+            logger.error(f"Error fetching solana trades: {e}")
+            return web.json_response({'success': False, 'trades': [], 'error': str(e)})
 
     async def api_list_sensitive_configs(self, request):
         """List all sensitive configuration keys (admin only)"""

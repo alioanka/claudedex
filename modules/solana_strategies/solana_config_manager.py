@@ -42,6 +42,7 @@ CONFIG_KEY_MAPPING = {
     'jupiter_slippage': ('solana_jupiter', 'int'),
     'jupiter_auto_route': ('solana_jupiter', 'bool'),
     'jupiter_direct_only': ('solana_jupiter', 'bool'),
+    'jupiter_tokens': ('solana_jupiter', 'string'),  # Comma-separated token list
 
     # Drift settings
     'drift_enabled': ('solana_drift', 'bool'),
@@ -94,6 +95,7 @@ class SolanaConfigManager:
         'jupiter_slippage': 50,
         'jupiter_auto_route': True,
         'jupiter_direct_only': False,
+        'jupiter_tokens': 'BONK:DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263,JTO:jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL,WIF:EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm,PYTH:HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3,RAY:4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R,ORCA:orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE',
 
         # Drift
         'drift_enabled': False,
@@ -302,6 +304,29 @@ class SolanaConfigManager:
     def jupiter_slippage_bps(self) -> int:
         """Get Jupiter slippage in basis points"""
         return self.get('jupiter_slippage', 50)
+
+    @property
+    def jupiter_tokens(self) -> List[tuple]:
+        """
+        Get Jupiter tokens to scan as list of (symbol, mint_address) tuples.
+
+        Format in DB: "BONK:DezXAZ...,JTO:jtojto..."
+        Returns: [('BONK', 'DezXAZ...'), ('JTO', 'jtojto...')]
+        """
+        tokens_str = self.get('jupiter_tokens', '')
+        if not tokens_str:
+            return []
+
+        tokens = []
+        for token_pair in tokens_str.split(','):
+            token_pair = token_pair.strip()
+            if ':' in token_pair:
+                parts = token_pair.split(':', 1)
+                symbol = parts[0].strip()
+                mint = parts[1].strip()
+                if symbol and mint:
+                    tokens.append((symbol, mint))
+        return tokens
 
     @property
     def drift_enabled(self) -> bool:
