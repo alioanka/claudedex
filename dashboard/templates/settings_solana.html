@@ -491,7 +491,7 @@
                 </div>
                 <div class="toggle-switch">
                     <input type="checkbox" id="solana_jupiter_enabled" name="solana_jupiter_enabled" checked>
-                    <span>Enabled</span>
+                    <span id="solana_jupiter_enabled_label">Enabled</span>
                 </div>
             </div>
 
@@ -535,6 +535,15 @@
                         <span>Disabled</span>
                     </div>
                 </div>
+
+                <div class="setting-item" style="grid-column: span 2;">
+                    <label class="setting-label">
+                        <i class="fas fa-coins"></i>
+                        Tokens to Monitor
+                    </label>
+                    <div class="setting-description">Comma-separated list of tokens in format SYMBOL:MINT_ADDRESS. Example: BONK:DezXAZ...,JTO:jtojto...</div>
+                    <textarea class="setting-input" id="solana_jupiter_tokens" name="solana_jupiter_tokens" rows="3" style="resize: vertical; font-family: monospace; font-size: 0.85rem;" placeholder="BONK:DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263,JTO:jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL">BONK:DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263,JTO:jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL,WIF:EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm,PYTH:HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3,RAY:4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R,ORCA:orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE</textarea>
+                </div>
             </div>
         </div>
     </div>
@@ -556,7 +565,7 @@
                 </div>
                 <div class="toggle-switch">
                     <input type="checkbox" id="solana_drift_enabled" name="solana_drift_enabled">
-                    <span>Disabled</span>
+                    <span id="solana_drift_enabled_label">Disabled</span>
                 </div>
             </div>
 
@@ -610,7 +619,7 @@
                 </div>
                 <div class="toggle-switch">
                     <input type="checkbox" id="solana_pumpfun_enabled" name="solana_pumpfun_enabled">
-                    <span>Disabled</span>
+                    <span id="solana_pumpfun_enabled_label">Disabled</span>
                 </div>
             </div>
 
@@ -623,8 +632,20 @@
 
                 <div class="setting-item">
                     <label class="setting-label">Min Liquidity (SOL)</label>
-                    <div class="setting-description">Minimum liquidity required to snipe</div>
+                    <div class="setting-description">Minimum liquidity in SOL required to snipe</div>
                     <input type="number" class="setting-input" id="solana_pumpfun_min_liquidity" name="solana_pumpfun_min_liquidity" value="10" min="1" max="1000">
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">Min Liquidity (USD)</label>
+                    <div class="setting-description">Minimum USD liquidity required (DexScreener filter)</div>
+                    <input type="number" class="setting-input" id="solana_pumpfun_min_liquidity_usd" name="solana_pumpfun_min_liquidity_usd" value="1000" min="100" max="100000" step="100">
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">Min 24h Volume (USD)</label>
+                    <div class="setting-description">Minimum 24h trading volume required (filters low activity)</div>
+                    <input type="number" class="setting-input" id="solana_pumpfun_min_volume_24h" name="solana_pumpfun_min_volume_24h" value="5000" min="100" max="1000000" step="100">
                 </div>
 
                 <div class="setting-item">
@@ -712,15 +733,20 @@ function updateStrategyCards() {
     ['jupiter', 'drift', 'pumpfun'].forEach(strategy => {
         const checkbox = document.getElementById(`solana_${strategy}_enabled`);
         const card = document.getElementById(`${strategy}-card`);
+        const label = document.getElementById(`solana_${strategy}_enabled_label`);
+
         if (checkbox && card) {
             card.className = checkbox.checked ? 'strategy-card enabled' : 'strategy-card';
+        }
+        if (checkbox && label) {
+            label.textContent = checkbox.checked ? 'Enabled' : 'Disabled';
         }
     });
 }
 
 async function saveSettings() {
     const settings = {};
-    const inputs = document.querySelectorAll('.setting-input, .setting-select, input[type="checkbox"]');
+    const inputs = document.querySelectorAll('.setting-input, .setting-select, input[type="checkbox"], textarea.setting-input');
 
     inputs.forEach(input => {
         if (input.type === 'checkbox') {
@@ -780,6 +806,7 @@ function resetSettings() {
         document.getElementById('solana_jupiter_slippage').value = 50;
         document.getElementById('solana_jupiter_auto_route').checked = true;
         document.getElementById('solana_jupiter_direct_only').checked = false;
+        document.getElementById('solana_jupiter_tokens').value = 'BONK:DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263,JTO:jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL,WIF:EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm,PYTH:HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3,RAY:4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R,ORCA:orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE';
 
         // Drift
         document.getElementById('solana_drift_enabled').checked = false;
@@ -791,6 +818,8 @@ function resetSettings() {
         document.getElementById('solana_pumpfun_enabled').checked = false;
         document.getElementById('solana_pumpfun_buy_amount').value = 0.1;
         document.getElementById('solana_pumpfun_min_liquidity').value = 10;
+        document.getElementById('solana_pumpfun_min_liquidity_usd').value = 1000;
+        document.getElementById('solana_pumpfun_min_volume_24h').value = 5000;
         document.getElementById('solana_pumpfun_max_age').value = 300;
         document.getElementById('solana_pumpfun_auto_sell').value = 0;
         document.getElementById('solana_pumpfun_jito').checked = true;

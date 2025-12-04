@@ -1,6 +1,8 @@
 """
 Solana Strategies Module Configuration Manager
 Database-backed configuration with .env integration for sensitive data
+
+Uses the config_settings table (same as dashboard) for consistency.
 """
 from __future__ import annotations
 from typing import Dict, Any, Optional, List
@@ -13,104 +15,105 @@ from enum import Enum
 logger = logging.getLogger(__name__)
 
 
-class SolanaConfigType(Enum):
-    """Solana configuration types"""
-    GENERAL = "solana_general"
-    TRADING = "solana_trading"
-    RISK = "solana_risk"
-    STRATEGIES = "solana_strategies"
-    PUMPFUN = "solana_pumpfun"
-    JUPITER = "solana_jupiter"
-    DRIFT = "solana_drift"
-    RAYDIUM = "solana_raydium"
+# ============================================================================
+# Configuration Key Mapping
+# Maps dashboard keys (solana_*) to internal config structure
+# ============================================================================
+CONFIG_KEY_MAPPING = {
+    # General settings
+    'enabled': ('solana_general', 'bool'),
+    'capital': ('solana_general', 'float'),
+    'position_size': ('solana_general', 'float'),
+    'max_positions': ('solana_general', 'int'),
+    'min_position': ('solana_general', 'float'),
+    'rpc_timeout': ('solana_rpc', 'int'),
+    'max_retries': ('solana_rpc', 'int'),
+    'commitment': ('solana_rpc', 'string'),
 
+    # Risk settings
+    'stop_loss': ('solana_risk', 'float'),
+    'take_profit': ('solana_risk', 'float'),
+    'daily_loss_limit': ('solana_risk', 'float'),
+    'priority_fee': ('solana_priority', 'int'),
 
-class SolanaGeneralConfig(BaseModel):
-    """General Solana strategies configuration"""
-    enabled: bool = False
-    capital_allocation: float = 400.0
-    max_positions: int = 8
-    rpc_url: str = ""  # Will be loaded from .env
-    use_jito: bool = True
-    priority_fee_lamports: int = 10000
-    max_compute_units: int = 200000
+    # Jupiter settings
+    'jupiter_enabled': ('solana_jupiter', 'bool'),
+    'jupiter_tier': ('solana_jupiter', 'string'),
+    'jupiter_slippage': ('solana_jupiter', 'int'),
+    'jupiter_auto_route': ('solana_jupiter', 'bool'),
+    'jupiter_direct_only': ('solana_jupiter', 'bool'),
+    'jupiter_tokens': ('solana_jupiter', 'string'),  # Comma-separated token list
 
+    # Drift settings
+    'drift_enabled': ('solana_drift', 'bool'),
+    'drift_leverage': ('solana_drift', 'int'),
+    'drift_markets': ('solana_drift', 'string'),
+    'drift_margin': ('solana_drift', 'string'),
 
-class SolanaRiskConfig(BaseModel):
-    """Solana risk management configuration"""
-    max_position_size_usd: float = 80.0
-    risk_per_trade_pct: float = 0.02
-    stop_loss_pct: float = 0.10
-    take_profit_pct: float = 0.20
-    max_daily_loss_usd: float = 100.0
-    max_slippage_bps: int = 100
-    min_liquidity_usd: float = 10000
-    max_price_impact_pct: float = 0.05
-
-
-class SolanaTradingConfig(BaseModel):
-    """Solana trading configuration"""
-    min_opportunity_score: float = 0.60
-    use_jupiter_routing: bool = True
-    jupiter_slippage_bps: int = 50
-    max_transaction_retries: int = 3
-    transaction_timeout_seconds: int = 60
-    use_versioned_transactions: bool = True
-    compute_unit_price_micro_lamports: int = 1
-
-
-class SolanaPumpFunConfig(BaseModel):
-    """Pump.fun strategy configuration"""
-    enabled: bool = True
-    monitor_new_tokens: bool = True
-    min_initial_liquidity: float = 5000
-    max_buy_amount_sol: float = 0.5
-    min_holder_count: int = 50
-    blacklist_suspicious: bool = True
-    auto_sell_on_profit_pct: float = 0.30
-    auto_sell_on_loss_pct: float = 0.15
-    max_hold_time_minutes: int = 30
-
-
-class SolanaJupiterConfig(BaseModel):
-    """Jupiter aggregator configuration"""
-    enabled: bool = True
-    use_v6_api: bool = True
-    max_accounts: int = 64
-    slippage_bps: int = 50
-    only_direct_routes: bool = False
-    as_legacy_transaction: bool = False
-
-
-class SolanaDriftConfig(BaseModel):
-    """Drift Protocol configuration"""
-    enabled: bool = False
-    use_perpetuals: bool = True
-    max_leverage: int = 5
-    markets: List[str] = ["SOL-PERP", "BTC-PERP", "ETH-PERP"]
-    funding_rate_threshold: float = 0.01
-    auto_compound_rewards: bool = True
-
-
-class SolanaRaydiumConfig(BaseModel):
-    """Raydium DEX configuration"""
-    enabled: bool = True
-    use_cpmm: bool = True  # Constant product market maker
-    use_clmm: bool = True  # Concentrated liquidity
-    min_pool_tvl: float = 50000
-    max_pool_age_days: int = 30
+    # Pump.fun settings
+    'pumpfun_enabled': ('solana_pumpfun', 'bool'),
+    'pumpfun_buy_amount': ('solana_pumpfun', 'float'),
+    'pumpfun_min_liquidity': ('solana_pumpfun', 'float'),
+    'pumpfun_min_liquidity_usd': ('solana_pumpfun', 'float'),
+    'pumpfun_min_volume_24h': ('solana_pumpfun', 'float'),
+    'pumpfun_max_age': ('solana_pumpfun', 'int'),
+    'pumpfun_auto_sell': ('solana_pumpfun', 'int'),
+    'pumpfun_jito': ('solana_pumpfun', 'bool'),
+    'pumpfun_jito_tip': ('solana_pumpfun', 'float'),
+}
 
 
 class SolanaConfigManager:
     """
-    Configuration manager for Solana Strategies Module
+    Configuration manager for Solana Trading Module
 
-    Follows the same pattern as DEX config_manager.py:
-    - Database-backed storage
-    - .env integration for sensitive data
-    - Pydantic validation
-    - Hot-reload support
+    Reads from config_settings table (same as dashboard uses).
+    Provides centralized access to all Solana configuration.
     """
+
+    # Default values matching the dashboard defaults
+    DEFAULTS = {
+        # General
+        'enabled': False,
+        'capital': 10.0,
+        'position_size': 1.0,
+        'max_positions': 3,
+        'min_position': 0.05,
+        'rpc_timeout': 30,
+        'max_retries': 3,
+        'commitment': 'confirmed',
+
+        # Risk
+        'stop_loss': 10.0,
+        'take_profit': 50.0,
+        'daily_loss_limit': 5.0,
+        'priority_fee': 10000,
+
+        # Jupiter
+        'jupiter_enabled': True,
+        'jupiter_tier': 'lite',
+        'jupiter_slippage': 50,
+        'jupiter_auto_route': True,
+        'jupiter_direct_only': False,
+        'jupiter_tokens': 'BONK:DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263,JTO:jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL,WIF:EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm,PYTH:HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3,RAY:4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R,ORCA:orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE',
+
+        # Drift
+        'drift_enabled': False,
+        'drift_leverage': 5,
+        'drift_markets': 'SOL-PERP,BTC-PERP,ETH-PERP',
+        'drift_margin': 'cross',
+
+        # Pump.fun
+        'pumpfun_enabled': False,
+        'pumpfun_buy_amount': 0.1,
+        'pumpfun_min_liquidity': 10.0,  # Min liquidity in SOL
+        'pumpfun_min_liquidity_usd': 1000.0,  # Min liquidity in USD
+        'pumpfun_min_volume_24h': 5000.0,  # Min 24h volume in USD
+        'pumpfun_max_age': 300,
+        'pumpfun_auto_sell': 0,
+        'pumpfun_jito': True,
+        'pumpfun_jito_tip': 0.001,
+    }
 
     def __init__(self, db_pool=None):
         """
@@ -120,20 +123,8 @@ class SolanaConfigManager:
             db_pool: Database connection pool
         """
         self.db_pool = db_pool
-
-        # Configuration models
-        self.config_models = {
-            SolanaConfigType.GENERAL: SolanaGeneralConfig,
-            SolanaConfigType.RISK: SolanaRiskConfig,
-            SolanaConfigType.TRADING: SolanaTradingConfig,
-            SolanaConfigType.PUMPFUN: SolanaPumpFunConfig,
-            SolanaConfigType.JUPITER: SolanaJupiterConfig,
-            SolanaConfigType.DRIFT: SolanaDriftConfig,
-            SolanaConfigType.RAYDIUM: SolanaRaydiumConfig,
-        }
-
-        # Loaded configs
-        self.configs: Dict[SolanaConfigType, BaseModel] = {}
+        self._config_cache: Dict[str, Any] = {}
+        self._cache_loaded = False
 
         # Environment config (sensitive data from .env)
         self._env_config = self._load_environment_config()
@@ -141,29 +132,25 @@ class SolanaConfigManager:
         logger.info("SolanaConfigManager initialized")
 
     def _load_environment_config(self) -> Dict[str, Any]:
-        """
-        Load sensitive configuration from .env
-
-        Returns:
-            Dict: Environment configuration
-        """
+        """Load sensitive configuration from .env"""
         env_config = {}
 
-        # Solana Module uses dedicated wallet (separate from DEX Module's Solana wallet)
-        # SOLANA_PRIVATE_KEY/SOLANA_WALLET = DEX Module (Solana chain trading)
-        # SOLANA_MODULE_PRIVATE_KEY/SOLANA_MODULE_WALLET = Solana Module (Jupiter/Drift/Pump.fun)
         sensitive_keys = [
             'SOLANA_MODULE_PRIVATE_KEY',
             'SOLANA_MODULE_WALLET',
+            'SOLANA_PRIVATE_KEY',
+            'SOLANA_WALLET',
             'SOLANA_RPC_URL',
             'SOLANA_RPC_URLS',
             'SOLANA_BACKUP_RPCS',
             'SOLANA_WS_URL',
             'HELIUS_API_KEY',
             'JUPITER_API_KEY',
+            'JUPITER_API_URL',
             'DRIFT_API_KEY',
             'JITO_TIP_ACCOUNT',
             'JITO_BLOCK_ENGINE_URL',
+            'DRY_RUN',
         ]
 
         for var in sensitive_keys:
@@ -174,82 +161,264 @@ class SolanaConfigManager:
         return env_config
 
     async def initialize(self) -> None:
-        """Initialize and load all configurations"""
+        """Initialize and load all configurations from database"""
         try:
             await self._load_all_configs()
-            logger.info("✅ Solana configuration loaded successfully")
+            logger.info("✅ Solana configuration loaded from database")
         except Exception as e:
-            logger.error(f"Failed to initialize Solana config: {e}", exc_info=True)
-            # Load defaults if database fails
-            for config_type, model_class in self.config_models.items():
-                self.configs[config_type] = model_class()
+            logger.error(f"Failed to load Solana config from DB, using defaults: {e}")
+            self._config_cache = self.DEFAULTS.copy()
+            self._cache_loaded = True
 
     async def set_db_pool(self, db_pool) -> None:
-        """
-        Set database pool and reload configs
-
-        Args:
-            db_pool: Database connection pool
-        """
+        """Set database pool and reload configs"""
         self.db_pool = db_pool
         if db_pool:
             logger.info("Database pool set, reloading Solana configs...")
             await self._load_all_configs()
 
     async def _load_all_configs(self) -> None:
-        """Load all configuration types from database"""
-        for config_type, model_class in self.config_models.items():
-            try:
-                config = await self._load_config_from_db(config_type)
-                if config:
-                    self.configs[config_type] = model_class(**config)
-                else:
-                    # Use defaults if not in database
-                    self.configs[config_type] = model_class()
-            except Exception as e:
-                logger.error(f"Error loading {config_type.value}: {e}")
-                self.configs[config_type] = model_class()
-
-    async def _load_config_from_db(self, config_type: SolanaConfigType) -> Optional[Dict]:
-        """
-        Load configuration from database
-
-        Args:
-            config_type: Configuration type to load
-
-        Returns:
-            Optional[Dict]: Configuration data or None
-        """
+        """Load all Solana configuration from config_settings table"""
         if not self.db_pool:
-            return None
+            self._config_cache = self.DEFAULTS.copy()
+            self._cache_loaded = True
+            return
 
         try:
-            query = """
-                SELECT config_data
-                FROM module_configs
-                WHERE module_name = 'solana_strategies'
-                AND config_type = $1
-                ORDER BY updated_at DESC
-                LIMIT 1
-            """
-
             async with self.db_pool.acquire() as conn:
-                row = await conn.fetchrow(query, config_type.value)
-                if row:
-                    return row['config_data']
-                return None
+                rows = await conn.fetch("""
+                    SELECT config_type, key, value, value_type
+                    FROM config_settings
+                    WHERE config_type LIKE 'solana_%'
+                    ORDER BY config_type, key
+                """)
+
+                # Start with defaults
+                self._config_cache = self.DEFAULTS.copy()
+
+                # Override with database values
+                for row in rows:
+                    key = row['key']
+                    value = row['value']
+                    value_type = row['value_type']
+
+                    # Convert value based on type
+                    try:
+                        if value_type == 'int':
+                            self._config_cache[key] = int(value)
+                        elif value_type == 'float':
+                            self._config_cache[key] = float(value)
+                        elif value_type == 'bool':
+                            self._config_cache[key] = value.lower() in ('true', '1', 'yes')
+                        else:
+                            self._config_cache[key] = value
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Error parsing config {key}: {e}")
+
+                self._cache_loaded = True
+                logger.debug(f"Loaded {len(rows)} Solana config values from database")
 
         except Exception as e:
-            logger.error(f"Database error loading {config_type.value}: {e}")
-            return None
+            logger.error(f"Database error loading Solana config: {e}")
+            self._config_cache = self.DEFAULTS.copy()
+            self._cache_loaded = True
 
-    async def save_config(self, config_type: SolanaConfigType, config_data: Dict[str, Any]) -> bool:
+    async def reload(self) -> None:
+        """Reload configuration from database"""
+        await self._load_all_configs()
+
+    def get(self, key: str, default: Any = None) -> Any:
         """
-        Save configuration to database
+        Get configuration value by key
 
         Args:
-            config_type: Configuration type
-            config_data: Configuration data to save
+            key: Configuration key (e.g., 'position_size', 'jupiter_slippage')
+            default: Default value if not found
+
+        Returns:
+            Configuration value
+        """
+        # Check environment config first for sensitive data
+        env_key = key.upper()
+        if env_key in self._env_config:
+            return self._env_config[env_key]
+
+        # Check cache
+        if key in self._config_cache:
+            return self._config_cache[key]
+
+        # Return default from DEFAULTS or provided default
+        return self.DEFAULTS.get(key, default)
+
+    def get_env(self, key: str, default: str = '') -> str:
+        """Get environment variable value"""
+        return self._env_config.get(key, os.getenv(key, default))
+
+    @property
+    def is_enabled(self) -> bool:
+        """Check if Solana module is enabled"""
+        return self.get('enabled', False)
+
+    @property
+    def is_dry_run(self) -> bool:
+        """Check if running in dry run mode"""
+        dry_run = self.get_env('DRY_RUN', 'true')
+        return dry_run.lower() in ('true', '1', 'yes')
+
+    @property
+    def capital_sol(self) -> float:
+        """Get capital allocation in SOL"""
+        return self.get('capital', 10.0)
+
+    @property
+    def position_size_sol(self) -> float:
+        """Get default position size in SOL"""
+        return self.get('position_size', 1.0)
+
+    @property
+    def max_positions(self) -> int:
+        """Get maximum concurrent positions"""
+        return self.get('max_positions', 3)
+
+    @property
+    def stop_loss_pct(self) -> float:
+        """Get stop loss percentage"""
+        return self.get('stop_loss', 10.0)
+
+    @property
+    def take_profit_pct(self) -> float:
+        """Get take profit percentage"""
+        return self.get('take_profit', 50.0)
+
+    @property
+    def daily_loss_limit_sol(self) -> float:
+        """Get daily loss limit in SOL"""
+        return self.get('daily_loss_limit', 5.0)
+
+    @property
+    def jupiter_enabled(self) -> bool:
+        """Check if Jupiter strategy is enabled"""
+        return self.get('jupiter_enabled', True)
+
+    @property
+    def jupiter_slippage_bps(self) -> int:
+        """Get Jupiter slippage in basis points"""
+        return self.get('jupiter_slippage', 50)
+
+    @property
+    def jupiter_tokens(self) -> List[tuple]:
+        """
+        Get Jupiter tokens to scan as list of (symbol, mint_address) tuples.
+
+        Format in DB: "BONK:DezXAZ...,JTO:jtojto..."
+        Returns: [('BONK', 'DezXAZ...'), ('JTO', 'jtojto...')]
+        """
+        tokens_str = self.get('jupiter_tokens', '')
+        if not tokens_str:
+            return []
+
+        tokens = []
+        for token_pair in tokens_str.split(','):
+            token_pair = token_pair.strip()
+            if ':' in token_pair:
+                parts = token_pair.split(':', 1)
+                symbol = parts[0].strip()
+                mint = parts[1].strip()
+                if symbol and mint:
+                    tokens.append((symbol, mint))
+        return tokens
+
+    @property
+    def drift_enabled(self) -> bool:
+        """Check if Drift strategy is enabled"""
+        return self.get('drift_enabled', False)
+
+    @property
+    def drift_leverage(self) -> int:
+        """Get Drift default leverage"""
+        return self.get('drift_leverage', 5)
+
+    @property
+    def drift_markets(self) -> List[str]:
+        """Get Drift markets list"""
+        markets_str = self.get('drift_markets', 'SOL-PERP,BTC-PERP,ETH-PERP')
+        return [m.strip() for m in markets_str.split(',') if m.strip()]
+
+    @property
+    def pumpfun_enabled(self) -> bool:
+        """Check if Pump.fun strategy is enabled"""
+        return self.get('pumpfun_enabled', False)
+
+    @property
+    def pumpfun_buy_amount_sol(self) -> float:
+        """Get Pump.fun buy amount in SOL"""
+        return self.get('pumpfun_buy_amount', 0.1)
+
+    @property
+    def priority_fee_lamports(self) -> int:
+        """Get priority fee in lamports"""
+        return self.get('priority_fee', 10000)
+
+    @property
+    def rpc_url(self) -> str:
+        """Get primary RPC URL"""
+        return self.get_env('SOLANA_RPC_URL', '')
+
+    @property
+    def rpc_urls(self) -> List[str]:
+        """Get all RPC URLs"""
+        urls_str = self.get_env('SOLANA_RPC_URLS', '')
+        if urls_str:
+            return [url.strip() for url in urls_str.split(',') if url.strip()]
+        primary = self.rpc_url
+        return [primary] if primary else []
+
+    @property
+    def wallet_address(self) -> str:
+        """Get wallet address (prefer SOLANA_MODULE_WALLET)"""
+        return self.get_env('SOLANA_MODULE_WALLET') or self.get_env('SOLANA_WALLET', '')
+
+    @property
+    def private_key(self) -> str:
+        """Get private key (prefer SOLANA_MODULE_PRIVATE_KEY)"""
+        return self.get_env('SOLANA_MODULE_PRIVATE_KEY') or self.get_env('SOLANA_PRIVATE_KEY', '')
+
+    def get_enabled_strategies(self) -> List[str]:
+        """Get list of enabled strategies"""
+        strategies = []
+        if self.jupiter_enabled:
+            strategies.append('jupiter')
+        if self.drift_enabled:
+            strategies.append('drift')
+        if self.pumpfun_enabled:
+            strategies.append('pumpfun')
+        return strategies
+
+    def get_all(self) -> Dict[str, Any]:
+        """Get all configuration as a dictionary"""
+        config = self._config_cache.copy()
+
+        # Add computed properties
+        config['enabled_strategies'] = self.get_enabled_strategies()
+        config['is_dry_run'] = self.is_dry_run
+
+        # Add environment config indicators (without exposing secrets)
+        config['_has_solana_wallet'] = bool(self.wallet_address)
+        config['_has_solana_private_key'] = bool(self.private_key)
+        config['_has_solana_rpc'] = bool(self.rpc_url)
+        config['_has_jupiter_api'] = bool(self.get_env('JUPITER_API_KEY'))
+        config['_has_helius_api'] = bool(self.get_env('HELIUS_API_KEY'))
+
+        return config
+
+    async def save_config(self, key: str, value: Any, user_id: str = None) -> bool:
+        """
+        Save a single configuration value to database
+
+        Args:
+            key: Configuration key
+            value: Value to save
+            user_id: User making the change
 
         Returns:
             bool: True if saved successfully
@@ -259,86 +428,73 @@ class SolanaConfigManager:
             return False
 
         try:
-            # Validate with Pydantic model
-            model_class = self.config_models[config_type]
-            validated_config = model_class(**config_data)
+            # Determine config type from key
+            config_type = CONFIG_KEY_MAPPING.get(key, ('solana_general', 'string'))[0]
+            value_type = CONFIG_KEY_MAPPING.get(key, ('solana_general', 'string'))[1]
 
-            # Save to database
-            query = """
-                INSERT INTO module_configs (module_name, config_type, config_data, updated_at)
-                VALUES ('solana_strategies', $1, $2, $3)
-                ON CONFLICT (module_name, config_type)
-                DO UPDATE SET
-                    config_data = EXCLUDED.config_data,
-                    updated_at = EXCLUDED.updated_at
-            """
+            # Convert value to string
+            if isinstance(value, bool):
+                value_str = str(value).lower()
+                value_type = 'bool'
+            elif isinstance(value, int):
+                value_str = str(value)
+                value_type = 'int'
+            elif isinstance(value, float):
+                value_str = str(value)
+                value_type = 'float'
+            else:
+                value_str = str(value)
+                value_type = 'string'
 
             async with self.db_pool.acquire() as conn:
-                await conn.execute(
-                    query,
-                    config_type.value,
-                    validated_config.dict(),
-                    datetime.now()
-                )
+                # Get old value for history
+                old_row = await conn.fetchrow("""
+                    SELECT value FROM config_settings
+                    WHERE config_type = $1 AND key = $2
+                """, config_type, key)
+                old_value = old_row['value'] if old_row else None
 
-            # Update in-memory config
-            self.configs[config_type] = validated_config
+                # Upsert the value
+                await conn.execute("""
+                    INSERT INTO config_settings (config_type, key, value, value_type, updated_by)
+                    VALUES ($1, $2, $3, $4, $5)
+                    ON CONFLICT (config_type, key) DO UPDATE
+                    SET value = $3, value_type = $4, updated_by = $5, updated_at = NOW()
+                """, config_type, key, value_str, value_type, user_id)
 
-            logger.info(f"✅ Saved {config_type.value} configuration")
+                # Log to history if changed
+                if old_value != value_str:
+                    await conn.execute("""
+                        INSERT INTO config_history (config_type, key, old_value, new_value, change_source, changed_by)
+                        VALUES ($1, $2, $3, $4, 'config_manager', $5)
+                    """, config_type, key, old_value, value_str, user_id)
+
+            # Update cache
+            self._config_cache[key] = value
+
+            logger.info(f"✅ Saved Solana config: {key} = {value}")
             return True
 
         except Exception as e:
-            logger.error(f"Error saving {config_type.value}: {e}", exc_info=True)
+            logger.error(f"Error saving Solana config {key}: {e}", exc_info=True)
             return False
 
-    def get(self, key: str, default: Any = None) -> Any:
-        """
-        Get configuration value by key
 
-        Args:
-            key: Configuration key (can include category prefix like "risk.max_position_size_usd")
-            default: Default value if not found
+# Global instance for convenience
+_config_manager: Optional[SolanaConfigManager] = None
 
-        Returns:
-            Configuration value or default
-        """
-        # Check environment config first for sensitive data
-        if key.upper() in self._env_config:
-            return self._env_config[key.upper()]
 
-        # Parse key (e.g., "risk.max_position_size_usd" or just "max_position_size_usd")
-        parts = key.split('.', 1)
+def get_solana_config() -> SolanaConfigManager:
+    """Get the global Solana config manager instance"""
+    global _config_manager
+    if _config_manager is None:
+        _config_manager = SolanaConfigManager()
+    return _config_manager
 
-        if len(parts) == 2:
-            category, field = parts
-            # Find config type matching category
-            for config_type, config_obj in self.configs.items():
-                if category in config_type.value:
-                    return getattr(config_obj, field, default)
 
-        # Search all configs for the key
-        for config_obj in self.configs.values():
-            if hasattr(config_obj, key):
-                return getattr(config_obj, key)
-
-        return default
-
-    def get_all(self) -> Dict[str, Any]:
-        """
-        Get all configuration as a dictionary
-
-        Returns:
-            Dict: All configuration data
-        """
-        all_config = {}
-
-        for config_type, config_obj in self.configs.items():
-            all_config[config_type.value] = config_obj.dict()
-
-        # Add environment config indicators (without exposing secrets)
-        # Solana Module uses dedicated wallet (SOLANA_MODULE_*)
-        all_config['_has_solana_wallet'] = bool(os.getenv('SOLANA_MODULE_WALLET'))
-        all_config['_has_solana_private_key'] = bool(os.getenv('SOLANA_MODULE_PRIVATE_KEY'))
-        all_config['_has_solana_rpc'] = bool(os.getenv('SOLANA_RPC_URL'))
-
-        return all_config
+async def init_solana_config(db_pool) -> SolanaConfigManager:
+    """Initialize and return the global Solana config manager"""
+    global _config_manager
+    _config_manager = SolanaConfigManager(db_pool)
+    await _config_manager.initialize()
+    return _config_manager

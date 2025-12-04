@@ -9,6 +9,8 @@ Features:
 - Pump.fun token sniping
 - Real-time price monitoring
 - HTTP health/metrics endpoints for monitoring
+- Database-backed configuration
+- Separate log files for errors and trades
 """
 
 import asyncio
@@ -29,19 +31,53 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Load environment variables
 load_dotenv()
 
-# Configure solana-specific logging
+# ============================================================================
+# LOGGING SETUP - Separate files for main, errors, and trades
+# ============================================================================
 log_dir = Path("logs/solana")
 log_dir.mkdir(parents=True, exist_ok=True)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_dir / 'solana_trading.log'),
-        logging.StreamHandler()
-    ]
-)
+# Create formatters
+log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+trade_formatter = logging.Formatter('%(asctime)s - %(message)s')
+
+# Root logger for Solana module
 logger = logging.getLogger("SolanaTrading")
+logger.setLevel(logging.INFO)
+
+# Main log file - all messages
+main_handler = logging.FileHandler(log_dir / 'solana_trading.log')
+main_handler.setLevel(logging.INFO)
+main_handler.setFormatter(log_formatter)
+logger.addHandler(main_handler)
+
+# Console handler
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(log_formatter)
+logger.addHandler(console_handler)
+
+# Error log file - only errors and above
+error_handler = logging.FileHandler(log_dir / 'solana_errors.log')
+error_handler.setLevel(logging.ERROR)
+error_handler.setFormatter(log_formatter)
+logger.addHandler(error_handler)
+
+# Trade logger - separate logger for trades only
+trade_logger = logging.getLogger("SolanaTrading.Trades")
+trade_logger.setLevel(logging.INFO)
+trade_handler = logging.FileHandler(log_dir / 'solana_trades.log')
+trade_handler.setLevel(logging.INFO)
+trade_handler.setFormatter(trade_formatter)
+trade_logger.addHandler(trade_handler)
+trade_logger.propagate = False  # Don't send to parent logger
+
+# Configure engine logger with all handlers
+engine_logger = logging.getLogger("SolanaTradingEngine")
+engine_logger.setLevel(logging.INFO)
+engine_logger.addHandler(main_handler)
+engine_logger.addHandler(console_handler)
+engine_logger.addHandler(error_handler)
 
 
 class HealthServer:
@@ -157,12 +193,14 @@ class SolanaTradingApplication:
         self.health_server = None
         self.shutdown_event = asyncio.Event()
         self.logger = logger
+        self.config_manager = None
+        self.db_pool = None
 
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
 
-        # Module config
+        # Default config (will be overridden from DB if available)
         self.rpc_url = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
         self.strategies = os.getenv('SOLANA_STRATEGIES', 'jupiter,drift').split(',')
         self.max_positions = int(os.getenv('SOLANA_MAX_POSITIONS', '3'))
@@ -173,26 +211,67 @@ class SolanaTradingApplication:
         self.logger.warning(f"Received signal {signum}, initiating graceful shutdown...")
         self.shutdown_event.set()
 
+    async def _init_database(self):
+        """Initialize database connection pool"""
+        try:
+            import asyncpg
+            db_url = os.getenv('DATABASE_URL')
+            if db_url:
+                self.db_pool = await asyncpg.create_pool(db_url, min_size=2, max_size=10)
+                self.logger.info("✅ Database pool initialized")
+                return True
+        except Exception as e:
+            self.logger.warning(f"Database not available, using defaults: {e}")
+        return False
+
+    async def _init_config_manager(self):
+        """Initialize and load configuration from database"""
+        try:
+            from modules.solana_strategies.solana_config_manager import SolanaConfigManager
+
+            self.config_manager = SolanaConfigManager(self.db_pool)
+            await self.config_manager.initialize()
+
+            # Override settings from database config
+            if self.config_manager._cache_loaded:
+                self.strategies = self.config_manager.get_enabled_strategies()
+                if not self.strategies:
+                    # Default to jupiter if nothing enabled
+                    self.strategies = ['jupiter']
+                self.max_positions = self.config_manager.max_positions
+                self.logger.info(f"✅ Loaded config from database: strategies={self.strategies}, max_positions={self.max_positions}")
+
+        except Exception as e:
+            self.logger.warning(f"Config manager not available: {e}")
+
     async def initialize(self):
         """Initialize all components"""
         try:
             self.logger.info("=" * 80)
             self.logger.info("🚀 Solana Trading Bot Starting...")
             self.logger.info(f"Mode: {self.mode}")
-            self.logger.info(f"RPC: {self.rpc_url}")
-            self.logger.info(f"Strategies: {', '.join(self.strategies)}")
             self.logger.info(f"Time: {datetime.now().isoformat()}")
             self.logger.info("=" * 80)
+
+            # Initialize database connection
+            await self._init_database()
+
+            # Initialize config manager (loads settings from DB)
+            await self._init_config_manager()
+
+            self.logger.info(f"RPC: {self.rpc_url}")
+            self.logger.info(f"Strategies: {', '.join(self.strategies)}")
 
             # Import Solana engine
             from solana_trading.core.solana_engine import SolanaTradingEngine
 
-            # Initialize engine
+            # Initialize engine with config manager
             self.engine = SolanaTradingEngine(
                 rpc_url=self.rpc_url,
                 strategies=self.strategies,
                 max_positions=self.max_positions,
-                mode=self.mode
+                mode=self.mode,
+                config_manager=self.config_manager
             )
 
             await self.engine.initialize()

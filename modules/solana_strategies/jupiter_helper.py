@@ -75,9 +75,9 @@ class JupiterHelper:
             # Try to parse as base58
             try:
                 return Keypair.from_base58_string(pk_str)
-            except:
+            except (ValueError, Exception) as e:
                 # If that fails, it might be encrypted - would need decryption logic
-                logger.warning("Private key appears to be encrypted, implement decryption")
+                logger.warning(f"Private key appears to be encrypted or invalid: {e}")
                 return None
 
         except Exception as e:
@@ -298,12 +298,13 @@ class JupiterHelper:
             bool: True if confirmed, False otherwise
         """
         try:
+            import time
             if not self.solana_rpc or not self.session:
                 return False
 
-            start_time = asyncio.get_event_loop().time()
+            start_time = time.monotonic()
 
-            while (asyncio.get_event_loop().time() - start_time) < timeout:
+            while (time.monotonic() - start_time) < timeout:
                 payload = {
                     "jsonrpc": "2.0",
                     "id": 1,

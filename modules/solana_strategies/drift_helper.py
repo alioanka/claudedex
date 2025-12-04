@@ -5,6 +5,43 @@ On-chain perpetual futures trading on Solana via driftpy SDK
 Documentation: https://drift-labs.github.io/driftpy/
 SDK: https://github.com/drift-labs/driftpy
 """
+
+# ============================================================================
+# HTTPX COMPATIBILITY FIX
+# The solana library uses httpx.AsyncClient with 'proxy' parameter, but
+# newer httpx versions (0.24+) renamed this to 'proxy' or require 'proxies'.
+# This patch ensures compatibility with both old and new httpx versions.
+# ============================================================================
+import httpx
+
+# Store original AsyncClient
+_OriginalAsyncClient = httpx.AsyncClient
+
+
+class _CompatAsyncClient(_OriginalAsyncClient):
+    """Wrapper that handles the proxy parameter compatibility"""
+
+    def __init__(self, *args, **kwargs):
+        # Handle 'proxy' parameter for newer httpx versions
+        proxy = kwargs.pop('proxy', None)
+        if proxy is not None:
+            try:
+                super().__init__(*args, proxy=proxy, **kwargs)
+                return
+            except TypeError:
+                if proxy is not None:
+                    try:
+                        super().__init__(*args, proxies={'all://': proxy}, **kwargs)
+                        return
+                    except TypeError:
+                        pass
+        super().__init__(*args, **kwargs)
+
+
+# Apply the monkey patch
+httpx.AsyncClient = _CompatAsyncClient
+# ============================================================================
+
 import os
 import asyncio
 import logging

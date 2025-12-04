@@ -41,16 +41,22 @@ RUN pip install --no-cache-dir TA-Lib==0.6.7 \
     && echo "✅ TA-Lib installed"
 
 # Stage 4: Blockchain and Web3
-# Install Solana dependencies first
+# Pin httpx first to ensure compatibility with solana library
+# The solana library uses httpx with 'proxy' parameter which changed in newer versions
 RUN pip install --no-cache-dir \
-    solders==0.27.1 \
-    base58==2.1.1 \
-    && echo "✅ Solana base libraries installed"
+    "httpx>=0.23.0,<0.28.0" \
+    && echo "✅ httpx pinned for solana compatibility"
 
-# Install driftpy (will bring in anchorpy and other dependencies)
+# Install base58 (standalone dependency)
+RUN pip install --no-cache-dir \
+    base58==2.1.1 \
+    && echo "✅ base58 installed"
+
+# Install driftpy which brings in compatible solana and solders versions
+# driftpy 0.8.80 requires solders>=0.27.1 and will pull compatible solana
 RUN pip install --no-cache-dir \
     driftpy==0.8.80 \
-    && echo "✅ DriftPy SDK installed"
+    && echo "✅ DriftPy SDK installed (includes solana, solders)"
 
 # Install CCXT for Futures trading
 RUN pip install --no-cache-dir \
@@ -157,6 +163,8 @@ RUN python -c "import talib; print('✅ TA-Lib version:', talib.__version__)" &&
     python -c "import web3; print('✅ Web3 imported')" && \
     python -c "import asyncpg; print('✅ Database libraries OK')" && \
     python -c "import bcrypt; print('✅ Auth libraries OK')" && \
+    python -c "import solana; print('✅ Solana imported')" && \
+    python -c "from solana.rpc.async_api import AsyncClient; print('✅ Solana AsyncClient OK')" && \
     python -c "import driftpy; print('✅ DriftPy imported')" && \
     echo "✅ All critical dependencies verified"
 
