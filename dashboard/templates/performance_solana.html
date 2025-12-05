@@ -27,7 +27,7 @@
 
     .stats-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
         gap: 20px;
         margin-bottom: 30px;
     }
@@ -76,46 +76,147 @@
         margin-top: 20px;
     }
 
+    .positive { color: #10b981; }
+    .negative { color: #ef4444; }
+
+    .strategy-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 20px;
+    }
+
+    .strategy-card {
+        background: var(--metric-bg, #f9fafb);
+        border-radius: 8px;
+        padding: 16px;
+    }
+
+    .strategy-name {
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .strategy-stats {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+    }
+
+    .strategy-stat {
+        display: flex;
+        justify-content: space-between;
+    }
+
+    .strategy-stat-label {
+        color: var(--text-secondary);
+        font-size: 0.875rem;
+    }
+
+    .strategy-stat-value {
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .badge {
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .badge-jupiter { background: #e0e7ff; color: #4338ca; }
+    .badge-drift { background: #fce7f3; color: #9d174d; }
+    .badge-pumpfun { background: #ccfbf1; color: #0f766e; }
+
     [data-theme="dark"] {
         --card-bg: #1f2937;
         --border-color: #374151;
         --text-primary: #f9fafb;
         --text-secondary: #d1d5db;
+        --metric-bg: #111827;
     }
+
+    /* Explicit dark mode overrides for stat cards */
+    [data-theme="dark"] .stat-card {
+        background: #111827 !important;
+        border-color: #374151 !important;
+    }
+
+    [data-theme="dark"] .stat-label {
+        color: #9ca3af !important;
+    }
+
+    [data-theme="dark"] .stat-value {
+        color: #f9fafb !important;
+    }
+
+    /* Explicit dark mode overrides for strategy cards */
+    [data-theme="dark"] .strategy-card {
+        background: #111827 !important;
+        border: 1px solid #374151;
+    }
+
+    [data-theme="dark"] .strategy-name {
+        color: #f9fafb !important;
+    }
+
+    [data-theme="dark"] .strategy-stat-label {
+        color: #9ca3af !important;
+    }
+
+    [data-theme="dark"] .strategy-stat-value {
+        color: #f9fafb !important;
+    }
+
+    [data-theme="dark"] .badge-jupiter { background: #312e81; color: #a5b4fc; }
+    [data-theme="dark"] .badge-drift { background: #831843; color: #f9a8d4; }
+    [data-theme="dark"] .badge-pumpfun { background: #134e4a; color: #5eead4; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="page-container">
     <div class="page-header">
-        <h1 class="page-title">
+        <h1 class="page-title" style="color: #f9fafb;">
             <i class="fas fa-chart-bar"></i>
             Solana Performance
         </h1>
-        <p class="page-subtitle">Performance metrics for Solana strategies</p>
+        <p class="page-subtitle" style="color: #9ca3af;">Performance metrics for Solana strategies</p>
     </div>
 
     <div class="stats-grid">
-        <div class="stat-card">
-            <div class="stat-label">Win Rate</div>
-            <div class="stat-value">0%</div>
+        <div class="stat-card" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Total Trades</div>
+            <div class="stat-value" style="color: #f9fafb;" id="total-trades">0</div>
         </div>
-        <div class="stat-card">
-            <div class="stat-label">Profit Factor</div>
-            <div class="stat-value">0.00</div>
+        <div class="stat-card" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Win Rate</div>
+            <div class="stat-value" style="color: #f9fafb;" id="win-rate">0%</div>
         </div>
-        <div class="stat-card">
-            <div class="stat-label">Sharpe Ratio</div>
-            <div class="stat-value">0.00</div>
+        <div class="stat-card" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Profit Factor</div>
+            <div class="stat-value" style="color: #f9fafb;" id="profit-factor">0.00</div>
         </div>
-        <div class="stat-card">
-            <div class="stat-label">Max Drawdown</div>
-            <div class="stat-value">0.00%</div>
+        <div class="stat-card" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Total P&L</div>
+            <div class="stat-value" style="color: #f9fafb;" id="total-pnl">0.0000 SOL</div>
+        </div>
+        <div class="stat-card" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Avg Win</div>
+            <div class="stat-value positive" id="avg-win">+0.00%</div>
+        </div>
+        <div class="stat-card" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Avg Loss</div>
+            <div class="stat-value negative" id="avg-loss">-0.00%</div>
         </div>
     </div>
 
-    <div class="section-card">
-        <div class="section-title">
+    <div class="section-card" style="background: #1f2937; border: 1px solid #374151;">
+        <div class="section-title" style="color: #f9fafb;">
             <i class="fas fa-chart-area"></i>
             Equity Curve
         </div>
@@ -123,32 +224,336 @@
             <canvas id="equityChart"></canvas>
         </div>
     </div>
+
+    <div class="section-card" style="background: #1f2937; border: 1px solid #374151;">
+        <div class="section-title" style="color: #f9fafb;">
+            <i class="fas fa-layer-group"></i>
+            Strategy Performance
+        </div>
+        <div class="strategy-grid" id="strategy-grid">
+            <!-- Strategy cards will be populated here -->
+        </div>
+    </div>
+
+    <div class="section-card" style="background: #1f2937; border: 1px solid #374151;">
+        <div class="section-title" style="color: #f9fafb;">
+            <i class="fas fa-chart-pie"></i>
+            P&L Distribution
+        </div>
+        <div class="chart-container">
+            <canvas id="pnlDistChart"></canvas>
+        </div>
+    </div>
 </div>
 
 <script>
-const ctx = document.getElementById('equityChart').getContext('2d');
-new Chart(ctx, {
-    type: 'line',
-    data: {
-        labels: [],
-        datasets: [{
-            label: 'Equity',
-            data: [],
-            borderColor: '#10b981',
-            backgroundColor: 'rgba(16, 185, 129, 0.1)',
-            fill: true,
-            tension: 0.4
-        }]
-    },
-    options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-            y: {
-                beginAtZero: true
+let equityChart = null;
+let pnlDistChart = null;
+
+async function loadPerformance() {
+    try {
+        // Fetch trades data
+        const tradesResponse = await fetch('/api/solana/trades');
+        if (!tradesResponse.ok) return;
+
+        const tradesResult = await tradesResponse.json();
+        const trades = tradesResult.trades || [];
+
+        // Fetch stats data
+        const statsResponse = await fetch('/api/solana/stats');
+        let stats = {};
+        if (statsResponse.ok) {
+            const statsResult = await statsResponse.json();
+            stats = statsResult.data?.stats || statsResult.stats || {};
+        }
+
+        // Calculate performance metrics from closed trades
+        const closedTrades = trades.filter(t => t.type === 'CLOSE');
+        const totalTrades = closedTrades.length;
+        const wins = closedTrades.filter(t => t.pnl_sol > 0 || t.win === true);
+        const losses = closedTrades.filter(t => t.pnl_sol <= 0 && t.win !== true);
+
+        const winRate = totalTrades > 0 ? (wins.length / totalTrades * 100) : 0;
+
+        // Calculate totals
+        let totalPnl = 0;
+        let totalWinPnl = 0;
+        let totalLossPnl = 0;
+        let winPnlPercents = [];
+        let lossPnlPercents = [];
+
+        closedTrades.forEach(t => {
+            const pnl = t.pnl_sol || 0;
+            totalPnl += pnl;
+
+            if (pnl > 0) {
+                totalWinPnl += pnl;
+                if (t.pnl_pct || t.pnl_percent) winPnlPercents.push(t.pnl_pct || t.pnl_percent);
+            } else {
+                totalLossPnl += Math.abs(pnl);
+                if (t.pnl_pct || t.pnl_percent) lossPnlPercents.push(Math.abs(t.pnl_pct || t.pnl_percent));
+            }
+        });
+
+        const profitFactor = totalLossPnl > 0 ? (totalWinPnl / totalLossPnl) : totalWinPnl > 0 ? Infinity : 0;
+        const avgWin = winPnlPercents.length > 0 ? winPnlPercents.reduce((a, b) => a + b, 0) / winPnlPercents.length : 0;
+        const avgLoss = lossPnlPercents.length > 0 ? lossPnlPercents.reduce((a, b) => a + b, 0) / lossPnlPercents.length : 0;
+
+        // Update stats display
+        document.getElementById('total-trades').textContent = totalTrades;
+        document.getElementById('win-rate').textContent = `${winRate.toFixed(1)}%`;
+        document.getElementById('profit-factor').textContent = profitFactor === Infinity ? '∞' : profitFactor.toFixed(2);
+
+        const totalPnlEl = document.getElementById('total-pnl');
+        totalPnlEl.textContent = `${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(4)} SOL`;
+        totalPnlEl.className = totalPnl >= 0 ? 'stat-value positive' : 'stat-value negative';
+
+        document.getElementById('avg-win').textContent = `+${avgWin.toFixed(2)}%`;
+        document.getElementById('avg-loss').textContent = `-${avgLoss.toFixed(2)}%`;
+
+        // Build equity curve data
+        buildEquityCurve(closedTrades);
+
+        // Build P&L distribution chart
+        buildPnlDistribution(closedTrades);
+
+        // Build strategy performance
+        buildStrategyPerformance(closedTrades);
+
+    } catch (e) {
+        console.error('Failed to load performance:', e);
+    }
+}
+
+function buildEquityCurve(trades) {
+    // Sort by timestamp
+    const sortedTrades = [...trades].sort((a, b) =>
+        new Date(a.timestamp) - new Date(b.timestamp)
+    );
+
+    let cumPnl = 0;
+    const labels = [];
+    const data = [];
+
+    // Starting point
+    labels.push('Start');
+    data.push(0);
+
+    sortedTrades.forEach((t, i) => {
+        cumPnl += (t.pnl_sol || 0);
+        labels.push(`Trade ${i + 1}`);
+        data.push(cumPnl);
+    });
+
+    // Destroy existing chart
+    if (equityChart) {
+        equityChart.destroy();
+    }
+
+    const ctx = document.getElementById('equityChart').getContext('2d');
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+
+    equityChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Cumulative P&L (SOL)',
+                data: data,
+                borderColor: cumPnl >= 0 ? '#10b981' : '#ef4444',
+                backgroundColor: cumPnl >= 0 ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                fill: true,
+                tension: 0.4,
+                pointRadius: 3,
+                pointHoverRadius: 6
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    labels: {
+                        color: isDark ? '#f9fafb' : '#374151'
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    grid: {
+                        color: isDark ? '#374151' : '#e5e7eb'
+                    },
+                    ticks: {
+                        color: isDark ? '#d1d5db' : '#6b7280'
+                    }
+                },
+                x: {
+                    grid: {
+                        color: isDark ? '#374151' : '#e5e7eb'
+                    },
+                    ticks: {
+                        color: isDark ? '#d1d5db' : '#6b7280',
+                        maxTicksLimit: 10
+                    }
+                }
             }
         }
+    });
+}
+
+function buildPnlDistribution(trades) {
+    const pnlValues = trades.map(t => (t.pnl_pct || t.pnl_percent || 0));
+
+    // Create histogram bins
+    const bins = {};
+    const binSize = 5; // 5% bins
+
+    pnlValues.forEach(pnl => {
+        const bin = Math.floor(pnl / binSize) * binSize;
+        const label = `${bin}% to ${bin + binSize}%`;
+        bins[label] = (bins[label] || 0) + 1;
+    });
+
+    const sortedBins = Object.entries(bins).sort((a, b) => {
+        const aVal = parseInt(a[0]);
+        const bVal = parseInt(b[0]);
+        return aVal - bVal;
+    });
+
+    const labels = sortedBins.map(b => b[0]);
+    const data = sortedBins.map(b => b[1]);
+    const colors = sortedBins.map(b => {
+        const val = parseInt(b[0]);
+        return val >= 0 ? 'rgba(16, 185, 129, 0.7)' : 'rgba(239, 68, 68, 0.7)';
+    });
+
+    // Destroy existing chart
+    if (pnlDistChart) {
+        pnlDistChart.destroy();
     }
-});
+
+    const ctx = document.getElementById('pnlDistChart').getContext('2d');
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+
+    pnlDistChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Number of Trades',
+                data: data,
+                backgroundColor: colors,
+                borderColor: colors.map(c => c.replace('0.7', '1')),
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    grid: {
+                        color: isDark ? '#374151' : '#e5e7eb'
+                    },
+                    ticks: {
+                        color: isDark ? '#d1d5db' : '#6b7280',
+                        stepSize: 1
+                    }
+                },
+                x: {
+                    grid: {
+                        color: isDark ? '#374151' : '#e5e7eb'
+                    },
+                    ticks: {
+                        color: isDark ? '#d1d5db' : '#6b7280'
+                    }
+                }
+            }
+        }
+    });
+}
+
+function buildStrategyPerformance(trades) {
+    const strategies = {};
+
+    trades.forEach(t => {
+        const strategy = (t.strategy || 'unknown').toLowerCase();
+        if (!strategies[strategy]) {
+            strategies[strategy] = {
+                trades: 0,
+                wins: 0,
+                totalPnl: 0,
+                pnlPercents: []
+            };
+        }
+
+        strategies[strategy].trades++;
+        if (t.pnl_sol > 0 || t.win === true) {
+            strategies[strategy].wins++;
+        }
+        strategies[strategy].totalPnl += (t.pnl_sol || 0);
+        const pnlPct = t.pnl_pct || t.pnl_percent;
+        if (pnlPct) {
+            strategies[strategy].pnlPercents.push(pnlPct);
+        }
+    });
+
+    const grid = document.getElementById('strategy-grid');
+    grid.innerHTML = '';
+
+    if (Object.keys(strategies).length === 0) {
+        grid.innerHTML = '<p style="color: #9ca3af;">No strategy data available yet.</p>';
+        return;
+    }
+
+    Object.entries(strategies).forEach(([name, data]) => {
+        const winRate = data.trades > 0 ? (data.wins / data.trades * 100) : 0;
+        const avgPnl = data.pnlPercents.length > 0 ?
+            data.pnlPercents.reduce((a, b) => a + b, 0) / data.pnlPercents.length : 0;
+
+        const card = document.createElement('div');
+        card.className = 'strategy-card';
+        card.style.background = '#111827';
+        card.style.border = '1px solid #374151';
+        card.style.borderRadius = '8px';
+        card.style.padding = '16px';
+        card.innerHTML = `
+            <div class="strategy-name" style="color: #f9fafb; margin-bottom: 12px;">
+                <span class="badge badge-${name}">${name.toUpperCase()}</span>
+            </div>
+            <div class="strategy-stats">
+                <div class="strategy-stat">
+                    <span class="strategy-stat-label" style="color: #9ca3af;">Trades</span>
+                    <span class="strategy-stat-value" style="color: #f9fafb;">${data.trades}</span>
+                </div>
+                <div class="strategy-stat">
+                    <span class="strategy-stat-label" style="color: #9ca3af;">Win Rate</span>
+                    <span class="strategy-stat-value" style="color: #f9fafb;">${winRate.toFixed(1)}%</span>
+                </div>
+                <div class="strategy-stat">
+                    <span class="strategy-stat-label" style="color: #9ca3af;">Total P&L</span>
+                    <span class="strategy-stat-value ${data.totalPnl >= 0 ? 'positive' : 'negative'}">${data.totalPnl >= 0 ? '+' : ''}${data.totalPnl.toFixed(4)} SOL</span>
+                </div>
+                <div class="strategy-stat">
+                    <span class="strategy-stat-label" style="color: #9ca3af;">Avg P&L</span>
+                    <span class="strategy-stat-value ${avgPnl >= 0 ? 'positive' : 'negative'}">${avgPnl >= 0 ? '+' : ''}${avgPnl.toFixed(2)}%</span>
+                </div>
+            </div>
+        `;
+        grid.appendChild(card);
+    });
+}
+
+// Load performance on page load
+document.addEventListener('DOMContentLoaded', loadPerformance);
+
+// Auto-refresh every 30 seconds
+setInterval(loadPerformance, 30000);
 </script>
 {% endblock %}

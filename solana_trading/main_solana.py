@@ -98,6 +98,8 @@ class HealthServer:
         self.web_app.router.add_get('/ready', self.ready_handler)
         self.web_app.router.add_get('/metrics', self.metrics_handler)
         self.web_app.router.add_get('/stats', self.stats_handler)
+        self.web_app.router.add_post('/close-position', self.close_position_handler)
+        self.web_app.router.add_post('/close-all-positions', self.close_all_positions_handler)
 
     async def health_handler(self, request):
         """Liveness probe endpoint"""
@@ -163,6 +165,64 @@ class HealthServer:
                 'timestamp': datetime.now().isoformat()
             })
         return web.json_response({'error': 'Engine not initialized'}, status=503)
+
+    async def close_position_handler(self, request):
+        """Close a specific position by token mint address"""
+        try:
+            if not self.app.engine:
+                return web.json_response({'success': False, 'error': 'Engine not initialized'}, status=503)
+
+            data = await request.json()
+            mint = data.get('mint')
+
+            if not mint:
+                return web.json_response({'success': False, 'error': 'Missing mint address'}, status=400)
+
+            # Check if position exists in active_positions
+            if mint not in self.app.engine.active_positions:
+                return web.json_response({'success': False, 'error': f'No position found for {mint}'}, status=404)
+
+            # Close the position
+            position = self.app.engine.active_positions[mint]
+            await self.app.engine._close_position(mint, "manual_close")
+
+            logger.info(f"📤 Manually closed position: {position.token_symbol}")
+
+            return web.json_response({
+                'success': True,
+                'message': f'Position {position.token_symbol} closed successfully',
+                'mint': mint
+            })
+
+        except Exception as e:
+            logger.error(f"Error closing position: {e}")
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def close_all_positions_handler(self, request):
+        """Close all open positions"""
+        try:
+            if not self.app.engine:
+                return web.json_response({'success': False, 'error': 'Engine not initialized'}, status=503)
+
+            positions_count = len(self.app.engine.active_positions)
+
+            if positions_count == 0:
+                return web.json_response({'success': True, 'message': 'No positions to close', 'closed': 0})
+
+            # Close all positions
+            await self.app.engine.close_all_positions()
+
+            logger.info(f"📤 Manually closed all {positions_count} positions")
+
+            return web.json_response({
+                'success': True,
+                'message': f'Closed {positions_count} positions successfully',
+                'closed': positions_count
+            })
+
+        except Exception as e:
+            logger.error(f"Error closing all positions: {e}")
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
 
     async def start(self):
         """Start the HTTP server"""

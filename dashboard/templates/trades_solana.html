@@ -3,6 +3,7 @@
 {% block title %}Solana Trades{% endblock %}
 
 {% block extra_head %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
     .page-container {
         padding: 20px;
@@ -18,18 +19,49 @@
     .page-title {
         font-size: 2rem;
         font-weight: 700;
-        color: var(--text-primary);
         margin-bottom: 8px;
     }
 
     .page-subtitle {
-        color: var(--text-secondary);
         font-size: 1rem;
     }
 
+    .header-actions {
+        display: flex;
+        gap: 10px;
+    }
+
+    .btn {
+        padding: 10px 20px;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        border: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition: all 0.2s;
+    }
+
+    .btn-secondary {
+        background: #4b5563;
+        color: white;
+    }
+
+    .btn-secondary:hover {
+        background: #374151;
+    }
+
+    .btn-success {
+        background: #10b981;
+        color: white;
+    }
+
+    .btn-success:hover {
+        background: #059669;
+    }
+
     .section-card {
-        background: var(--card-bg);
-        border: 1px solid var(--border-color);
         border-radius: 12px;
         padding: 24px;
         margin-bottom: 24px;
@@ -38,7 +70,6 @@
     .section-title {
         font-size: 1.25rem;
         font-weight: 600;
-        color: var(--text-primary);
         margin-bottom: 20px;
         display: flex;
         align-items: center;
@@ -48,29 +79,100 @@
     .empty-state {
         text-align: center;
         padding: 40px;
-        color: var(--text-secondary);
+    }
+
+    .stats-row {
+        display: flex;
+        gap: 20px;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+    }
+
+    .stat-box {
+        padding: 16px 20px;
+        border-radius: 8px;
+        text-align: center;
+        flex: 1;
+        min-width: 120px;
+    }
+
+    .stat-label {
+        font-size: 0.75rem;
+        margin-bottom: 4px;
+    }
+
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+    }
+
+    /* Filter controls */
+    .filter-row {
+        display: flex;
+        gap: 15px;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+
+    .filter-group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .filter-label {
+        font-size: 0.75rem;
+        font-weight: 500;
+    }
+
+    .filter-select, .filter-input {
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        min-width: 120px;
+    }
+
+    .filter-select:focus, .filter-input:focus {
+        outline: none;
+        border-color: #3b82f6;
+    }
+
+    .table-scroll {
+        overflow-x: auto;
+        max-height: 500px;
+        overflow-y: auto;
     }
 
     .trades-table {
         width: 100%;
         border-collapse: collapse;
+        min-width: 1100px;
     }
 
     .trades-table th, .trades-table td {
         padding: 12px;
         text-align: left;
-        border-bottom: 1px solid var(--border-color);
     }
 
     .trades-table th {
         font-weight: 600;
-        color: var(--text-secondary);
         font-size: 0.875rem;
         text-transform: uppercase;
+        cursor: pointer;
+        user-select: none;
+        position: sticky;
+        top: 0;
+        z-index: 10;
     }
 
-    .trades-table td {
-        color: var(--text-primary);
+    .trades-table th:hover {
+        opacity: 0.8;
+    }
+
+    .trades-table th .sort-icon {
+        margin-left: 4px;
+        opacity: 0.5;
     }
 
     .badge {
@@ -80,52 +182,16 @@
         font-weight: 600;
     }
 
-    .badge-open { background: #dbeafe; color: #1d4ed8; }
-    .badge-close { background: #fef3c7; color: #b45309; }
-    .badge-buy { background: #d1fae5; color: #065f46; }
-    .badge-sell { background: #fee2e2; color: #991b1b; }
-    .badge-jupiter { background: #e0e7ff; color: #4338ca; }
-    .badge-drift { background: #fce7f3; color: #9d174d; }
-    .badge-pumpfun { background: #ccfbf1; color: #0f766e; }
-    .badge-dry { background: #f3f4f6; color: #374151; }
-    .badge-live { background: #fef3c7; color: #b45309; }
+    .badge-open { background: #1e3a5f; color: #93c5fd; }
+    .badge-closed { background: #78350f; color: #fcd34d; }
+    .badge-jupiter { background: #312e81; color: #a5b4fc; }
+    .badge-drift { background: #831843; color: #f9a8d4; }
+    .badge-pumpfun { background: #134e4a; color: #5eead4; }
+    .badge-dry { background: #374151; color: #d1d5db; }
+    .badge-live { background: #78350f; color: #fcd34d; }
 
-    .positive { color: #10b981; }
-    .negative { color: #ef4444; }
-
-    .stats-row {
-        display: flex;
-        gap: 20px;
-        margin-bottom: 20px;
-    }
-
-    .stat-box {
-        background: var(--metric-bg, #f9fafb);
-        padding: 16px 20px;
-        border-radius: 8px;
-        text-align: center;
-        flex: 1;
-    }
-
-    .stat-label {
-        font-size: 0.75rem;
-        color: var(--text-secondary);
-        margin-bottom: 4px;
-    }
-
-    .stat-value {
-        font-size: 1.5rem;
-        font-weight: 700;
-        color: var(--text-primary);
-    }
-
-    [data-theme="dark"] {
-        --card-bg: #1f2937;
-        --border-color: #374151;
-        --text-primary: #f9fafb;
-        --text-secondary: #d1d5db;
-        --metric-bg: #111827;
-    }
+    .positive { color: #10b981 !important; }
+    .negative { color: #ef4444 !important; }
 </style>
 {% endblock %}
 
@@ -133,161 +199,464 @@
 <div class="page-container">
     <div class="page-header">
         <div>
-            <h1 class="page-title">
+            <h1 class="page-title" style="color: #f9fafb;">
                 <i class="fas fa-exchange-alt"></i>
                 Solana Trades
             </h1>
-            <p class="page-subtitle">Trade history for Solana strategies</p>
+            <p class="page-subtitle" style="color: #9ca3af;">Trade history for Solana strategies</p>
         </div>
-        <button class="btn btn-secondary" onclick="loadTrades()">
-            <i class="fas fa-sync"></i> Refresh
-        </button>
+        <div class="header-actions">
+            <button class="btn btn-secondary" onclick="loadTrades()">
+                <i class="fas fa-sync"></i> Refresh
+            </button>
+            <button class="btn btn-success" onclick="exportToExcel()">
+                <i class="fas fa-file-excel"></i> Export XLSX
+            </button>
+        </div>
     </div>
 
     <!-- Stats Summary -->
     <div class="stats-row">
-        <div class="stat-box">
-            <div class="stat-label">Total Trades</div>
-            <div class="stat-value" id="total-trades">0</div>
+        <div class="stat-box" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Total Positions</div>
+            <div class="stat-value" style="color: #f9fafb;" id="total-positions">0</div>
         </div>
-        <div class="stat-box">
-            <div class="stat-label">Open Positions</div>
-            <div class="stat-value" id="open-positions">0</div>
+        <div class="stat-box" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Open</div>
+            <div class="stat-value" style="color: #f9fafb;" id="open-positions">0</div>
         </div>
-        <div class="stat-box">
-            <div class="stat-label">Closed Trades</div>
-            <div class="stat-value" id="closed-trades">0</div>
+        <div class="stat-box" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Closed</div>
+            <div class="stat-value" style="color: #f9fafb;" id="closed-positions">0</div>
         </div>
-        <div class="stat-box">
-            <div class="stat-label">Win Rate</div>
-            <div class="stat-value" id="win-rate">0%</div>
+        <div class="stat-box" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Win Rate</div>
+            <div class="stat-value" style="color: #f9fafb;" id="win-rate">0%</div>
+        </div>
+        <div class="stat-box" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Total P&L</div>
+            <div class="stat-value" style="color: #f9fafb;" id="total-pnl">0.0000 SOL</div>
         </div>
     </div>
 
-    <div class="section-card">
-        <div class="section-title">
+    <div class="section-card" style="background: #1f2937; border: 1px solid #374151;">
+        <div class="section-title" style="color: #f9fafb;">
             <i class="fas fa-history"></i>
-            Recent Trades
+            Position History
         </div>
-        <div id="trades-container">
-            <div class="empty-state" id="empty-state">
+
+        <!-- Filters -->
+        <div class="filter-row" style="background: #111827; padding: 15px; border-radius: 8px; border: 1px solid #374151;">
+            <div class="filter-group">
+                <span class="filter-label" style="color: #9ca3af;">Status</span>
+                <select class="filter-select" id="filter-status" onchange="applyFilters()" style="background: #374151; border: 1px solid #4b5563; color: #f9fafb;">
+                    <option value="all">All</option>
+                    <option value="open">Open</option>
+                    <option value="closed">Closed</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <span class="filter-label" style="color: #9ca3af;">Strategy</span>
+                <select class="filter-select" id="filter-strategy" onchange="applyFilters()" style="background: #374151; border: 1px solid #4b5563; color: #f9fafb;">
+                    <option value="all">All</option>
+                    <option value="jupiter">Jupiter</option>
+                    <option value="pumpfun">Pump.fun</option>
+                    <option value="drift">Drift</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <span class="filter-label" style="color: #9ca3af;">Token</span>
+                <input type="text" class="filter-input" id="filter-token" placeholder="Search token..." oninput="applyFilters()" style="background: #374151; border: 1px solid #4b5563; color: #f9fafb;">
+            </div>
+            <div class="filter-group">
+                <span class="filter-label" style="color: #9ca3af;">Result</span>
+                <select class="filter-select" id="filter-result" onchange="applyFilters()" style="background: #374151; border: 1px solid #4b5563; color: #f9fafb;">
+                    <option value="all">All</option>
+                    <option value="win">Winning</option>
+                    <option value="loss">Losing</option>
+                </select>
+            </div>
+        </div>
+
+        <div id="trades-container" style="margin-top: 20px;">
+            <div class="empty-state" id="empty-state" style="color: #9ca3af;">
                 <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
                 <p>No trades yet. Trade history will appear here.</p>
             </div>
-            <table class="trades-table" id="trades-table" style="display: none;">
-                <thead>
-                    <tr>
-                        <th>Time</th>
-                        <th>Type</th>
-                        <th>Token</th>
-                        <th>Strategy</th>
-                        <th>Side</th>
-                        <th>Price</th>
-                        <th>Amount</th>
-                        <th>P&L</th>
-                        <th>Mode</th>
-                    </tr>
-                </thead>
-                <tbody id="trades-body">
-                </tbody>
-            </table>
+            <div class="table-scroll">
+                <table class="trades-table" id="trades-table" style="display: none;">
+                    <thead>
+                        <tr style="background: #111827;">
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;" onclick="sortTable('openTime')">Open Time <span class="sort-icon">↕</span></th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;" onclick="sortTable('token')">Token <span class="sort-icon">↕</span></th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;" onclick="sortTable('strategy')">Strategy <span class="sort-icon">↕</span></th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;" onclick="sortTable('status')">Status <span class="sort-icon">↕</span></th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;" onclick="sortTable('entryPrice')">Entry <span class="sort-icon">↕</span></th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;" onclick="sortTable('currentExitPrice')">Curr/Exit <span class="sort-icon">↕</span></th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;" onclick="sortTable('amount')">Amount <span class="sort-icon">↕</span></th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;" onclick="sortTable('pnl')">P&L <span class="sort-icon">↕</span></th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;" onclick="sortTable('pnlPercent')">P&L % <span class="sort-icon">↕</span></th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;">Exit Reason</th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;">Mode</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trades-body">
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 </div>
 
 <script>
+let allPositions = [];
+let filteredPositions = [];
+let currentSort = { field: 'openTime', direction: 'desc' };
+let activePositionsData = {};
+
 async function loadTrades() {
     try {
-        const response = await fetch('/api/solana/trades');
-        if (response.ok) {
-            const data = await response.json();
-            if (data.trades && data.trades.length > 0) {
-                displayTrades(data.trades);
-            } else {
-                document.getElementById('empty-state').style.display = 'block';
-                document.getElementById('trades-table').style.display = 'none';
-            }
+        // Fetch trades from log
+        const tradesResponse = await fetch('/api/solana/trades');
+        let trades = [];
+        if (tradesResponse.ok) {
+            const tradesResult = await tradesResponse.json();
+            trades = tradesResult.trades || [];
         }
+
+        // Fetch active positions for current prices
+        const statsResponse = await fetch('/api/solana/stats');
+        if (statsResponse.ok) {
+            const statsResult = await statsResponse.json();
+            const positions = statsResult.data?.stats?.positions || statsResult.stats?.positions || [];
+            positions.forEach(p => {
+                activePositionsData[p.mint] = p;
+            });
+        }
+
+        // Merge trades into positions
+        allPositions = mergeTradesIntoPositions(trades);
+
+        // Apply filters and display
+        applyFilters();
+
     } catch (e) {
         console.error('Failed to load trades:', e);
     }
 }
 
-function displayTrades(trades) {
-    document.getElementById('empty-state').style.display = 'none';
-    document.getElementById('trades-table').style.display = 'table';
+function mergeTradesIntoPositions(trades) {
+    const positionMap = {};
 
-    // Calculate stats
-    let opens = 0, closes = 0, wins = 0;
-    trades.forEach(t => {
-        if (t.type === 'OPEN') opens++;
-        if (t.type === 'CLOSE') {
-            closes++;
-            if (t.win) wins++;
+    // Sort trades by timestamp (oldest first for processing)
+    const sortedTrades = [...trades].sort((a, b) =>
+        new Date(a.timestamp) - new Date(b.timestamp)
+    );
+
+    sortedTrades.forEach(trade => {
+        const key = trade.trade_id || `${trade.token_mint || trade.mint}_${trade.timestamp}`;
+        const token = trade.token || trade.token_symbol || 'UNKNOWN';
+        const mint = trade.token_mint || trade.mint || '';
+
+        if (trade.type === 'OPEN') {
+            // Create new position entry
+            positionMap[mint] = {
+                id: key,
+                token: token,
+                mint: mint,
+                strategy: trade.strategy || '',
+                openTime: trade.timestamp,
+                closeTime: null,
+                entryPrice: trade.price || trade.entry_price || 0,
+                currentExitPrice: trade.price || trade.entry_price || 0,
+                amount: trade.amount_sol || 0,
+                status: 'OPEN',
+                pnlSol: 0,
+                pnlPercent: 0,
+                mode: trade.mode || 'DRY_RUN',
+                win: null,
+                exitReason: null
+            };
+        } else if (trade.type === 'CLOSE') {
+            // Find matching open position
+            if (positionMap[mint]) {
+                positionMap[mint].closeTime = trade.timestamp;
+                positionMap[mint].currentExitPrice = trade.price || trade.exit_price || 0;
+                positionMap[mint].status = 'CLOSED';
+                positionMap[mint].pnlSol = trade.pnl_sol || 0;
+                positionMap[mint].pnlPercent = trade.pnl_pct || trade.pnl_percent || 0;
+                positionMap[mint].win = (trade.pnl_sol || 0) > 0;
+                positionMap[mint].exitReason = trade.reason || trade.exit_reason || 'manual';
+            }
         }
     });
 
-    document.getElementById('total-trades').textContent = trades.length;
-    document.getElementById('open-positions').textContent = opens - closes;
-    document.getElementById('closed-trades').textContent = closes;
-    document.getElementById('win-rate').textContent = closes > 0 ? `${((wins/closes)*100).toFixed(0)}%` : '0%';
+    // Update open positions with current prices from active positions
+    Object.values(positionMap).forEach(pos => {
+        if (pos.status === 'OPEN' && activePositionsData[pos.mint]) {
+            const activePos = activePositionsData[pos.mint];
+            pos.currentExitPrice = activePos.current_price || pos.currentExitPrice;
+            pos.pnlPercent = activePos.pnl_percent || 0;
+            // Calculate unrealized P&L
+            if (activePos.current_value_sol && pos.amount) {
+                pos.pnlSol = activePos.current_value_sol - pos.amount;
+            }
+        }
+    });
+
+    return Object.values(positionMap);
+}
+
+function applyFilters() {
+    const statusFilter = document.getElementById('filter-status').value;
+    const strategyFilter = document.getElementById('filter-strategy').value;
+    const tokenFilter = document.getElementById('filter-token').value.toLowerCase();
+    const resultFilter = document.getElementById('filter-result').value;
+
+    filteredPositions = allPositions.filter(pos => {
+        // Status filter
+        if (statusFilter !== 'all') {
+            if (statusFilter === 'open' && pos.status !== 'OPEN') return false;
+            if (statusFilter === 'closed' && pos.status !== 'CLOSED') return false;
+        }
+
+        // Strategy filter
+        if (strategyFilter !== 'all') {
+            if (pos.strategy.toLowerCase() !== strategyFilter) return false;
+        }
+
+        // Token filter
+        if (tokenFilter && !pos.token.toLowerCase().includes(tokenFilter)) {
+            return false;
+        }
+
+        // Result filter (only for closed positions)
+        if (resultFilter !== 'all' && pos.status === 'CLOSED') {
+            if (resultFilter === 'win' && !pos.win) return false;
+            if (resultFilter === 'loss' && pos.win) return false;
+        }
+
+        return true;
+    });
+
+    // Apply sorting
+    sortPositions();
+
+    // Update stats and display
+    updateStats();
+    displayPositions();
+}
+
+function sortTable(field) {
+    if (currentSort.field === field) {
+        currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+    } else {
+        currentSort.field = field;
+        currentSort.direction = 'desc';
+    }
+    sortPositions();
+    displayPositions();
+}
+
+function sortPositions() {
+    const { field, direction } = currentSort;
+    const multiplier = direction === 'asc' ? 1 : -1;
+
+    filteredPositions.sort((a, b) => {
+        let aVal, bVal;
+
+        switch (field) {
+            case 'openTime':
+                aVal = new Date(a.openTime);
+                bVal = new Date(b.openTime);
+                break;
+            case 'token':
+                aVal = a.token.toLowerCase();
+                bVal = b.token.toLowerCase();
+                break;
+            case 'strategy':
+                aVal = a.strategy.toLowerCase();
+                bVal = b.strategy.toLowerCase();
+                break;
+            case 'status':
+                aVal = a.status;
+                bVal = b.status;
+                break;
+            case 'entryPrice':
+                aVal = a.entryPrice;
+                bVal = b.entryPrice;
+                break;
+            case 'currentExitPrice':
+                aVal = a.currentExitPrice;
+                bVal = b.currentExitPrice;
+                break;
+            case 'amount':
+                aVal = a.amount;
+                bVal = b.amount;
+                break;
+            case 'pnl':
+                aVal = a.pnlSol;
+                bVal = b.pnlSol;
+                break;
+            case 'pnlPercent':
+                aVal = a.pnlPercent;
+                bVal = b.pnlPercent;
+                break;
+            default:
+                return 0;
+        }
+
+        if (aVal < bVal) return -1 * multiplier;
+        if (aVal > bVal) return 1 * multiplier;
+        return 0;
+    });
+}
+
+function updateStats() {
+    const openCount = filteredPositions.filter(p => p.status === 'OPEN').length;
+    const closedCount = filteredPositions.filter(p => p.status === 'CLOSED').length;
+    const wins = filteredPositions.filter(p => p.status === 'CLOSED' && p.win).length;
+    const winRate = closedCount > 0 ? (wins / closedCount * 100) : 0;
+    const totalPnl = filteredPositions.reduce((sum, p) => sum + (p.pnlSol || 0), 0);
+
+    document.getElementById('total-positions').textContent = filteredPositions.length;
+    document.getElementById('open-positions').textContent = openCount;
+    document.getElementById('closed-positions').textContent = closedCount;
+    document.getElementById('win-rate').textContent = `${winRate.toFixed(0)}%`;
+
+    const pnlEl = document.getElementById('total-pnl');
+    pnlEl.textContent = `${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(4)} SOL`;
+    pnlEl.style.color = totalPnl >= 0 ? '#10b981' : '#ef4444';
+}
+
+function displayPositions() {
+    if (filteredPositions.length === 0) {
+        document.getElementById('empty-state').style.display = 'block';
+        document.getElementById('trades-table').style.display = 'none';
+        return;
+    }
+
+    document.getElementById('empty-state').style.display = 'none';
+    document.getElementById('trades-table').style.display = 'table';
 
     const tbody = document.getElementById('trades-body');
     tbody.innerHTML = '';
 
-    trades.forEach(trade => {
+    filteredPositions.forEach(pos => {
         const row = document.createElement('tr');
+        row.style.borderBottom = '1px solid #374151';
 
-        // Format timestamp
-        const time = new Date(trade.timestamp).toLocaleString();
+        // Format time
+        const openTime = new Date(pos.openTime).toLocaleString();
 
-        // Type badge
-        const typeBadge = trade.type === 'OPEN'
+        // Status badge
+        const statusBadge = pos.status === 'OPEN'
             ? '<span class="badge badge-open">OPEN</span>'
-            : '<span class="badge badge-close">CLOSE</span>';
-
-        // Side badge
-        const sideBadge = trade.side === 'BUY'
-            ? '<span class="badge badge-buy">BUY</span>'
-            : '<span class="badge badge-sell">SELL</span>';
+            : '<span class="badge badge-closed">CLOSED</span>';
 
         // Strategy badge
-        const strategy = (trade.strategy || '').toLowerCase();
+        const strategy = (pos.strategy || '').toLowerCase();
         const strategyBadge = `<span class="badge badge-${strategy}">${strategy.toUpperCase()}</span>`;
 
         // Mode badge
-        const modeBadge = trade.mode === 'DRY_RUN'
-            ? '<span class="badge badge-dry">DRY_RUN</span>'
+        const modeBadge = pos.mode === 'DRY_RUN'
+            ? '<span class="badge badge-dry">DRY RUN</span>'
             : '<span class="badge badge-live">LIVE</span>';
 
         // Price formatting
-        const price = trade.price || trade.entry_price || 0;
-        const priceFormatted = price < 0.01 ? price.toFixed(8) : price.toFixed(4);
+        const entryPrice = pos.entryPrice || 0;
+        const currentExitPrice = pos.currentExitPrice || 0;
+        const entryFormatted = entryPrice < 0.01 ? entryPrice.toFixed(8) : entryPrice.toFixed(4);
+        const currentExitFormatted = currentExitPrice < 0.01 ? currentExitPrice.toFixed(8) : currentExitPrice.toFixed(4);
 
         // Amount
-        const amount = trade.amount_sol ? `${trade.amount_sol.toFixed(4)} SOL` : '-';
+        const amount = pos.amount ? `${pos.amount.toFixed(4)} SOL` : '-';
 
         // P&L
-        let pnl = '-';
-        if (trade.type === 'CLOSE' && trade.pnl_sol !== undefined) {
-            const pnlClass = trade.pnl_sol >= 0 ? 'positive' : 'negative';
-            pnl = `<span class="${pnlClass}">${trade.pnl_sol >= 0 ? '+' : ''}${trade.pnl_sol.toFixed(4)} SOL</span>`;
-        }
+        const pnlClass = pos.pnlSol >= 0 ? 'positive' : 'negative';
+        const pnlSign = pos.pnlSol >= 0 ? '+' : '';
+        const pnl = `<span class="${pnlClass}">${pnlSign}${pos.pnlSol.toFixed(4)} SOL</span>`;
+
+        // P&L %
+        const pnlPercentClass = pos.pnlPercent >= 0 ? 'positive' : 'negative';
+        const pnlPercentSign = pos.pnlPercent >= 0 ? '+' : '';
+        const pnlPercent = `<span class="${pnlPercentClass}">${pnlPercentSign}${pos.pnlPercent.toFixed(2)}%</span>`;
+
+        // Exit reason
+        const exitReason = pos.exitReason ? formatExitReason(pos.exitReason) : '--';
 
         row.innerHTML = `
-            <td>${time}</td>
-            <td>${typeBadge}</td>
-            <td><strong>${trade.token}</strong></td>
+            <td style="color: #f9fafb;">${openTime}</td>
+            <td style="color: #f9fafb;"><strong>${pos.token}</strong></td>
             <td>${strategyBadge}</td>
-            <td>${sideBadge}</td>
-            <td>$${priceFormatted}</td>
-            <td>${amount}</td>
+            <td>${statusBadge}</td>
+            <td style="color: #f9fafb;">$${entryFormatted}</td>
+            <td style="color: #f9fafb;">$${currentExitFormatted}</td>
+            <td style="color: #f9fafb;">${amount}</td>
             <td>${pnl}</td>
+            <td>${pnlPercent}</td>
+            <td style="color: #9ca3af;">${exitReason}</td>
             <td>${modeBadge}</td>
         `;
 
         tbody.appendChild(row);
     });
+}
+
+function formatExitReason(reason) {
+    const reasonMap = {
+        'take_profit': 'Take Profit',
+        'stop_loss': 'Stop Loss',
+        'manual_close': 'Manual',
+        'auto_sell_timeout': 'Auto-Sell',
+        'trailing_stop': 'Trailing Stop',
+        'market_close': 'Market Close'
+    };
+    return reasonMap[reason] || reason.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+}
+
+function exportToExcel() {
+    if (filteredPositions.length === 0) {
+        alert('No data to export');
+        return;
+    }
+
+    // Prepare data for export
+    const exportData = filteredPositions.map(pos => ({
+        'Open Time': new Date(pos.openTime).toLocaleString(),
+        'Close Time': pos.closeTime ? new Date(pos.closeTime).toLocaleString() : '-',
+        'Token': pos.token,
+        'Strategy': pos.strategy,
+        'Status': pos.status,
+        'Entry Price ($)': pos.entryPrice,
+        'Current/Exit Price ($)': pos.currentExitPrice,
+        'Amount (SOL)': pos.amount,
+        'P&L (SOL)': pos.pnlSol,
+        'P&L (%)': pos.pnlPercent,
+        'Exit Reason': pos.exitReason || '-',
+        'Mode': pos.mode,
+        'Result': pos.status === 'CLOSED' ? (pos.win ? 'WIN' : 'LOSS') : '-'
+    }));
+
+    // Create workbook
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(exportData);
+
+    // Set column widths
+    ws['!cols'] = [
+        { wch: 20 }, { wch: 20 }, { wch: 12 }, { wch: 10 },
+        { wch: 8 }, { wch: 15 }, { wch: 15 }, { wch: 12 },
+        { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 8 }
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Solana Trades');
+
+    // Generate filename with date
+    const date = new Date().toISOString().split('T')[0];
+    const filename = `solana_trades_${date}.xlsx`;
+
+    // Download
+    XLSX.writeFile(wb, filename);
 }
 
 // Load trades on page load

@@ -9,24 +9,83 @@
     }
 
     .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
         margin-bottom: 30px;
     }
 
     .page-title {
         font-size: 2rem;
         font-weight: 700;
-        color: var(--text-primary);
         margin-bottom: 8px;
     }
 
     .page-subtitle {
-        color: var(--text-secondary);
         font-size: 1rem;
     }
 
+    .header-actions {
+        display: flex;
+        gap: 10px;
+    }
+
+    .btn {
+        padding: 10px 20px;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        border: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition: all 0.2s;
+    }
+
+    .btn-danger {
+        background: #ef4444;
+        color: white;
+    }
+
+    .btn-danger:hover {
+        background: #dc2626;
+    }
+
+    .btn-secondary {
+        background: #4b5563;
+        color: white;
+    }
+
+    .btn-secondary:hover {
+        background: #374151;
+    }
+
+    .stats-row {
+        display: flex;
+        gap: 20px;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+    }
+
+    .stat-box {
+        padding: 16px 20px;
+        border-radius: 8px;
+        text-align: center;
+        flex: 1;
+        min-width: 150px;
+    }
+
+    .stat-label {
+        font-size: 0.75rem;
+        margin-bottom: 4px;
+    }
+
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+    }
+
     .section-card {
-        background: var(--card-bg);
-        border: 1px solid var(--border-color);
         border-radius: 12px;
         padding: 24px;
         margin-bottom: 24px;
@@ -35,7 +94,6 @@
     .section-title {
         font-size: 1.25rem;
         font-weight: 600;
-        color: var(--text-primary);
         margin-bottom: 20px;
         display: flex;
         align-items: center;
@@ -45,14 +103,55 @@
     .empty-state {
         text-align: center;
         padding: 40px;
-        color: var(--text-secondary);
     }
 
-    [data-theme="dark"] {
-        --card-bg: #1f2937;
-        --border-color: #374151;
-        --text-primary: #f9fafb;
-        --text-secondary: #d1d5db;
+    .table-scroll {
+        overflow-x: auto;
+        max-height: 500px;
+        overflow-y: auto;
+    }
+
+    .positions-table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 900px;
+    }
+
+    .positions-table th, .positions-table td {
+        padding: 12px;
+        text-align: left;
+    }
+
+    .positions-table th {
+        font-weight: 600;
+        font-size: 0.875rem;
+        text-transform: uppercase;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+    }
+
+    .badge {
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .badge-jupiter { background: #312e81; color: #a5b4fc; }
+    .badge-drift { background: #831843; color: #f9a8d4; }
+    .badge-pumpfun { background: #134e4a; color: #5eead4; }
+
+    .positive { color: #10b981 !important; }
+    .negative { color: #ef4444 !important; }
+
+    .btn-sm {
+        padding: 6px 12px;
+        font-size: 0.875rem;
+    }
+
+    .tp-sl {
+        font-size: 0.75rem;
     }
 </style>
 {% endblock %}
@@ -60,22 +159,271 @@
 {% block content %}
 <div class="page-container">
     <div class="page-header">
-        <h1 class="page-title">
-            <i class="fas fa-wallet"></i>
-            Solana Positions
-        </h1>
-        <p class="page-subtitle">Active Solana DeFi positions</p>
+        <div>
+            <h1 class="page-title" style="color: #f9fafb;">
+                <i class="fas fa-wallet"></i>
+                Solana Positions
+            </h1>
+            <p class="page-subtitle" style="color: #9ca3af;">Active Solana DeFi positions</p>
+        </div>
+        <div class="header-actions">
+            <button class="btn btn-secondary" onclick="loadPositions()">
+                <i class="fas fa-sync"></i> Refresh
+            </button>
+            <button class="btn btn-danger" onclick="closeAllPositions()" id="close-all-btn" style="display: none;">
+                <i class="fas fa-times-circle"></i> Close All
+            </button>
+        </div>
     </div>
 
-    <div class="section-card">
-        <div class="section-title">
+    <!-- Stats Summary -->
+    <div class="stats-row">
+        <div class="stat-box" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Open Positions</div>
+            <div class="stat-value" style="color: #f9fafb;" id="position-count">0</div>
+        </div>
+        <div class="stat-box" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Total Value</div>
+            <div class="stat-value" style="color: #f9fafb;" id="total-value">0.0000 SOL</div>
+        </div>
+        <div class="stat-box" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Unrealized P&L</div>
+            <div class="stat-value" style="color: #f9fafb;" id="unrealized-pnl">$0.00</div>
+        </div>
+        <div class="stat-box" style="background: #111827; border: 1px solid #374151;">
+            <div class="stat-label" style="color: #9ca3af;">Mode</div>
+            <div class="stat-value" style="color: #f9fafb;" id="trading-mode">--</div>
+        </div>
+    </div>
+
+    <div class="section-card" style="background: #1f2937; border: 1px solid #374151;">
+        <div class="section-title" style="color: #f9fafb;">
             <i class="fas fa-coins"></i>
             Open Positions
         </div>
-        <div class="empty-state">
-            <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
-            <p>No active Solana positions.</p>
+        <div id="positions-container">
+            <div class="empty-state" id="empty-state" style="color: #9ca3af;">
+                <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
+                <p>No active Solana positions.</p>
+            </div>
+            <div class="table-scroll">
+                <table class="positions-table" id="positions-table" style="display: none;">
+                    <thead>
+                        <tr style="background: #111827;">
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;">Token</th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;">Strategy</th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;">Entry Price</th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;">Current Price</th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;">Amount</th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;">Value (SOL)</th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;">P&L %</th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;">TP / SL</th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;">Age</th>
+                            <th style="color: #9ca3af; border-bottom: 1px solid #374151;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="positions-body">
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 </div>
+
+<script>
+let positionsData = [];
+
+async function loadPositions() {
+    try {
+        const response = await fetch('/api/solana/stats');
+        if (response.ok) {
+            const result = await response.json();
+            const data = result.data || result;
+            const stats = data.stats || {};
+            const health = data.health || {};
+
+            // Update mode
+            document.getElementById('trading-mode').textContent = health.dry_run ? 'DRY RUN' : 'LIVE';
+
+            // Get positions
+            const positions = stats.positions || [];
+            positionsData = positions;
+
+            // Update stats
+            document.getElementById('position-count').textContent = positions.length;
+
+            // Calculate totals
+            let totalValue = 0;
+            let totalUnrealizedPnl = 0;
+
+            positions.forEach(p => {
+                totalValue += p.current_value_sol || 0;
+                totalUnrealizedPnl += p.unrealized_pnl_usd || 0;
+            });
+
+            document.getElementById('total-value').textContent = `${totalValue.toFixed(4)} SOL`;
+            const pnlEl = document.getElementById('unrealized-pnl');
+            pnlEl.textContent = `$${totalUnrealizedPnl.toFixed(2)}`;
+            pnlEl.style.color = totalUnrealizedPnl >= 0 ? '#10b981' : '#ef4444';
+
+            // Display positions
+            if (positions.length > 0) {
+                displayPositions(positions);
+                document.getElementById('close-all-btn').style.display = 'flex';
+            } else {
+                document.getElementById('empty-state').style.display = 'block';
+                document.getElementById('positions-table').style.display = 'none';
+                document.getElementById('close-all-btn').style.display = 'none';
+            }
+        }
+    } catch (e) {
+        console.error('Failed to load positions:', e);
+    }
+}
+
+function displayPositions(positions) {
+    document.getElementById('empty-state').style.display = 'none';
+    document.getElementById('positions-table').style.display = 'table';
+
+    const tbody = document.getElementById('positions-body');
+    tbody.innerHTML = '';
+
+    positions.forEach(pos => {
+        const row = document.createElement('tr');
+        row.style.borderBottom = '1px solid #374151';
+
+        // Strategy badge
+        const strategy = (pos.strategy || '').toLowerCase();
+        const strategyBadge = `<span class="badge badge-${strategy}">${strategy.toUpperCase()}</span>`;
+
+        // Price formatting
+        const entryPrice = pos.entry_price || 0;
+        const currentPrice = pos.current_price || 0;
+        const entryFormatted = entryPrice < 0.01 ? entryPrice.toFixed(8) : entryPrice.toFixed(4);
+        const currentFormatted = currentPrice < 0.01 ? currentPrice.toFixed(8) : currentPrice.toFixed(4);
+
+        // P&L calculation
+        const pnlPercent = pos.pnl_percent || 0;
+        const pnlClass = pnlPercent >= 0 ? 'positive' : 'negative';
+        const pnlSign = pnlPercent >= 0 ? '+' : '';
+
+        // Age formatting - server sends UTC timestamps with 'Z' suffix
+        let ageText = '--';
+        if (pos.opened_at) {
+            // JavaScript correctly parses ISO strings with 'Z' as UTC
+            const openedAt = new Date(pos.opened_at);
+            const ageMs = Date.now() - openedAt.getTime();
+            const ageMinutes = Math.floor(ageMs / 60000);
+            const ageHours = Math.floor(ageMinutes / 60);
+            const ageDays = Math.floor(ageHours / 24);
+
+            if (ageDays > 0) {
+                ageText = `${ageDays}d ${ageHours % 24}h`;
+            } else if (ageHours > 0) {
+                ageText = `${ageHours}h ${ageMinutes % 60}m`;
+            } else {
+                ageText = `${ageMinutes}m`;
+            }
+        }
+
+        // Token amount
+        const tokenAmount = pos.token_amount || 0;
+        const amountFormatted = tokenAmount > 1000000 ? `${(tokenAmount/1000000).toFixed(2)}M` :
+                               tokenAmount > 1000 ? `${(tokenAmount/1000).toFixed(2)}K` :
+                               tokenAmount.toFixed(2);
+
+        // Value in SOL
+        const valueSol = pos.current_value_sol || 0;
+
+        // TP/SL formatting
+        const tp = pos.take_profit ? `+${(pos.take_profit * 100).toFixed(0)}%` : '--';
+        const sl = pos.stop_loss ? `-${Math.abs(pos.stop_loss * 100).toFixed(0)}%` : '--';
+
+        // Full mint for API call
+        const fullMint = pos.mint || '';
+        const displayMint = fullMint.length > 8 ? fullMint.slice(0, 8) + '...' : fullMint;
+
+        row.innerHTML = `
+            <td style="color: #f9fafb;"><strong>${pos.token_symbol || 'UNKNOWN'}</strong><br><small style="color: #6b7280; font-size: 0.75rem;">${displayMint}</small></td>
+            <td>${strategyBadge}</td>
+            <td style="color: #f9fafb;">$${entryFormatted}</td>
+            <td style="color: #f9fafb;">$${currentFormatted}</td>
+            <td style="color: #f9fafb;">${amountFormatted}</td>
+            <td style="color: #f9fafb;">${valueSol.toFixed(4)}</td>
+            <td><span class="${pnlClass}">${pnlSign}${pnlPercent.toFixed(2)}%</span></td>
+            <td class="tp-sl" style="color: #9ca3af;"><span class="positive">${tp}</span> / <span class="negative">${sl}</span></td>
+            <td style="color: #f9fafb;">${ageText}</td>
+            <td>
+                <button class="btn btn-danger btn-sm" onclick="closeSolanaPosition('${fullMint}', '${pos.token_symbol || 'UNKNOWN'}')">
+                    <i class="fas fa-times"></i> Close
+                </button>
+            </td>
+        `;
+
+        tbody.appendChild(row);
+    });
+}
+
+async function closeSolanaPosition(mint, symbol) {
+    if (!mint) {
+        alert('Error: No mint address available for this position');
+        return;
+    }
+
+    if (!confirm(`Are you sure you want to close the position for ${symbol}?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/solana/close-position', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({mint: mint})
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert(`Position ${symbol} closed successfully!`);
+            loadPositions();
+        } else {
+            alert(`Failed to close position: ${result.error}`);
+        }
+    } catch (e) {
+        console.error('Error closing position:', e);
+        alert('Error closing position. See console for details.');
+    }
+}
+
+async function closeAllPositions() {
+    if (!confirm(`Are you sure you want to close ALL ${positionsData.length} positions?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/solana/close-all-positions', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert(result.message);
+            loadPositions();
+        } else {
+            alert(`Failed to close positions: ${result.error}`);
+        }
+    } catch (e) {
+        console.error('Error closing all positions:', e);
+        alert('Error closing positions. See console for details.');
+    }
+}
+
+// Load positions on page load
+document.addEventListener('DOMContentLoaded', loadPositions);
+
+// Auto-refresh every 10 seconds
+setInterval(loadPositions, 10000);
+</script>
 {% endblock %}

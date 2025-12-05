@@ -161,13 +161,138 @@
         color: var(--text-secondary);
     }
 
-    [data-theme="dark"] {
-        --card-bg: #1f2937;
-        --border-color: #374151;
-        --text-primary: #f9fafb;
-        --text-secondary: #d1d5db;
-        --text-tertiary: #9ca3af;
-        --metric-bg: #111827;
+    /* Dark mode - use direct values instead of CSS variables */
+    .stat-card, .section-card {
+        background: #1f2937 !important;
+        border-color: #374151 !important;
+    }
+
+    .stat-label, .section-title, .strategy-name {
+        color: #f9fafb !important;
+    }
+
+    .stat-value {
+        color: #f9fafb !important;
+    }
+
+    .stat-change {
+        color: #9ca3af !important;
+    }
+
+    .strategy-card, .metric-box {
+        background: #111827 !important;
+        border-color: #374151 !important;
+    }
+
+    .metric-label {
+        color: #9ca3af !important;
+    }
+
+    .metric-value {
+        color: #f9fafb !important;
+    }
+
+    .empty-state {
+        color: #9ca3af !important;
+    }
+
+    .dashboard-title {
+        color: #f9fafb !important;
+    }
+
+    .dashboard-subtitle {
+        color: #9ca3af !important;
+    }
+
+    /* Strategy status badges */
+    .strategy-status {
+        background: rgba(107, 114, 128, 0.2) !important;
+        color: #9ca3af !important;
+    }
+
+    .strategy-status.enabled {
+        background: rgba(16, 185, 129, 0.2) !important;
+        color: #10b981 !important;
+    }
+
+    /* Table styles */
+    .table-container {
+        overflow-x: auto;
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    th, td {
+        padding: 12px;
+        text-align: left;
+        border-bottom: 1px solid #374151;
+    }
+
+    th {
+        background: #111827;
+        color: #9ca3af;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 0.75rem;
+    }
+
+    td {
+        color: #f9fafb;
+    }
+
+    tr:hover {
+        background: rgba(55, 65, 81, 0.3);
+    }
+
+    /* Badges */
+    .badge {
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .badge-jupiter { background: #312e81; color: #a5b4fc; }
+    .badge-drift { background: #831843; color: #f9a8d4; }
+    .badge-pumpfun { background: #134e4a; color: #5eead4; }
+
+    /* Buttons */
+    .btn {
+        padding: 8px 16px;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        border: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .btn-secondary {
+        background: #4b5563;
+        color: white;
+    }
+
+    .btn-secondary:hover {
+        background: #374151;
+    }
+
+    .btn-danger {
+        background: #ef4444;
+        color: white;
+    }
+
+    .btn-danger:hover {
+        background: #dc2626;
+    }
+
+    .btn-sm {
+        padding: 6px 12px;
+        font-size: 0.875rem;
     }
 </style>
 {% endblock %}
@@ -327,10 +452,31 @@
         <div class="section-title">
             <i class="fas fa-wallet"></i>
             Active Positions
+            <button class="btn btn-sm btn-danger" id="close-all-btn" onclick="closeAllPositions()" style="margin-left: auto; display: none;">
+                <i class="fas fa-times"></i> Close All
+            </button>
         </div>
-        <div class="empty-state">
-            <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
-            <p>No active positions. Positions will appear here once trading begins.</p>
+        <div id="positions-container">
+            <div class="empty-state" id="no-positions">
+                <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
+                <p>No active positions. Positions will appear here once trading begins.</p>
+            </div>
+            <div class="table-container" id="positions-table" style="display: none;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Token</th>
+                            <th>Strategy</th>
+                            <th>Entry Price</th>
+                            <th>Current Price</th>
+                            <th>P&L %</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="positions-body">
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 </div>
@@ -371,7 +517,7 @@ async function loadDashboardData() {
 }
 
 function updateStatsDisplay(data) {
-    const stats = data.stats || {};
+    const stats = data.stats || data || {};
     const health = data.health || {};
 
     // Update SOL balance
@@ -379,7 +525,7 @@ function updateStatsDisplay(data) {
 
     // Update total PnL
     const totalPnl = stats.total_pnl || '0.0000 SOL';
-    const pnlValue = parseFloat(totalPnl.split(' ')[0]) || 0;
+    const pnlValue = parseFloat(totalPnl.toString().replace(' SOL', '').replace('$', '')) || 0;
     const solPrice = stats.sol_price_usd || 200;
     const pnlUsd = pnlValue * solPrice;
     const pnlEl = document.getElementById('total-pnl');
@@ -392,7 +538,7 @@ function updateStatsDisplay(data) {
     roiEl.textContent = `${roi.toFixed(2)}% ROI`;
     roiEl.className = roi >= 0 ? 'stat-change positive' : 'stat-change negative';
 
-    // Update active positions
+    // Update active positions count
     document.getElementById('active-positions').textContent = stats.active_positions || 0;
 
     // Update win rate
@@ -403,8 +549,11 @@ function updateStatsDisplay(data) {
     document.getElementById('win-rate').textContent = `${winRate}%`;
     document.getElementById('win-loss').textContent = `${winningTrades} wins / ${losingTrades} losses`;
 
-    // Update strategy metrics (from positions list)
+    // Update positions table
     const positions = stats.positions || [];
+    updatePositionsTable(positions);
+
+    // Update strategy metrics (from positions list)
     const strategyCounts = {jupiter: 0, drift: 0, pumpfun: 0};
     positions.forEach(pos => {
         const strategy = (pos.strategy || '').toLowerCase();
@@ -426,20 +575,183 @@ function updateStatsDisplay(data) {
     }
 }
 
+function updatePositionsTable(positions) {
+    const noPositions = document.getElementById('no-positions');
+    const positionsTable = document.getElementById('positions-table');
+    const positionsBody = document.getElementById('positions-body');
+    const closeAllBtn = document.getElementById('close-all-btn');
+
+    if (!positions || positions.length === 0) {
+        noPositions.style.display = 'block';
+        positionsTable.style.display = 'none';
+        closeAllBtn.style.display = 'none';
+        return;
+    }
+
+    noPositions.style.display = 'none';
+    positionsTable.style.display = 'block';
+    closeAllBtn.style.display = 'inline-block';
+
+    positionsBody.innerHTML = positions.map(pos => {
+        // Use correct field names from get_stats()
+        const pnlPct = pos.pnl_percent || 0;
+        const pnlClass = pnlPct >= 0 ? 'positive' : 'negative';
+        const pnlSign = pnlPct >= 0 ? '+' : '';
+        const mint = pos.mint || '';
+        const symbol = pos.token_symbol || 'UNKNOWN';
+        const strategy = pos.strategy || 'unknown';
+
+        // Format prices
+        const entryPrice = pos.entry_price || 0;
+        const currentPrice = pos.current_price || 0;
+        const entryFormatted = entryPrice < 0.01 ? entryPrice.toFixed(8) : entryPrice.toFixed(4);
+        const currentFormatted = currentPrice < 0.01 ? currentPrice.toFixed(8) : currentPrice.toFixed(4);
+        const displayMint = mint.length > 12 ? mint.slice(0, 6) + '...' + mint.slice(-4) : mint;
+
+        return `
+            <tr>
+                <td><strong>${symbol}</strong><br><small style="color: #6b7280;">${displayMint}</small></td>
+                <td><span class="badge badge-${strategy.toLowerCase()}">${strategy.toUpperCase()}</span></td>
+                <td>$${entryFormatted}</td>
+                <td>$${currentFormatted}</td>
+                <td class="${pnlClass}">${pnlSign}${pnlPct.toFixed(2)}%</td>
+                <td>
+                    <button class="btn btn-sm btn-danger" onclick="closeSolanaPosition('${mint}', '${symbol}')">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+async function closeSolanaPosition(mint, symbol) {
+    if (!mint) {
+        alert('Error: No mint address available for this position');
+        return;
+    }
+
+    const tokenName = symbol || mint.slice(0, 8) + '...';
+    if (!confirm(`Are you sure you want to close the position for ${tokenName}?`)) return;
+
+    try {
+        const response = await fetch('/api/solana/close-position', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({mint: mint})
+        });
+        const data = await response.json();
+        if (data.success) {
+            alert(`Position ${tokenName} closed successfully!`);
+            loadDashboardData();
+        } else {
+            alert('Failed to close position: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Error closing position: ' + e.message);
+    }
+}
+
+async function closeAllPositions() {
+    if (!confirm('Are you sure you want to close ALL positions?')) return;
+
+    try {
+        const response = await fetch('/api/solana/close-all-positions', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        const data = await response.json();
+        if (data.success) {
+            alert('All positions closed successfully');
+            loadDashboardData();
+        } else {
+            alert('Failed to close positions: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Error closing positions: ' + e.message);
+    }
+}
+
 function updateTradesDisplay(trades) {
     // Update trade counts per strategy
     const tradeCounts = {jupiter: 0, drift: 0, pumpfun: 0};
-    trades.forEach(trade => {
+    const strategyPnl = {jupiter: 0, drift: 0, pumpfun: 0};
+    const strategyWins = {jupiter: 0, drift: 0, pumpfun: 0};
+
+    // Filter to CLOSE trades only for P&L calculation
+    const closeTrades = trades.filter(t => t.type === 'CLOSE');
+
+    closeTrades.forEach(trade => {
         const strategy = (trade.strategy || '').toLowerCase();
         if (tradeCounts.hasOwnProperty(strategy)) {
             tradeCounts[strategy]++;
+            const pnl = trade.pnl_usd || (trade.pnl_sol || 0) * 200;
+            strategyPnl[strategy] += pnl;
+            if (pnl > 0) strategyWins[strategy]++;
         }
     });
 
+    // Update strategy cards
     ['jupiter', 'drift', 'pumpfun'].forEach(s => {
-        const el = document.getElementById(`${s}-trades`);
-        if (el) el.textContent = tradeCounts[s];
+        const tradesEl = document.getElementById(`${s}-trades`);
+        if (tradesEl) tradesEl.textContent = tradeCounts[s];
+
+        const pnlEl = document.getElementById(`${s}-pnl`);
+        if (pnlEl) {
+            const pnl = strategyPnl[s];
+            pnlEl.textContent = `$${pnl.toFixed(2)}`;
+            pnlEl.className = pnl >= 0 ? 'metric-value positive' : 'metric-value negative';
+        }
+
+        const winrateEl = document.getElementById(`${s}-winrate`);
+        if (winrateEl) {
+            const winrate = tradeCounts[s] > 0 ? ((strategyWins[s] / tradeCounts[s]) * 100).toFixed(0) : 0;
+            winrateEl.textContent = `${winrate}%`;
+        }
     });
+
+    // Update P&L chart with cumulative performance
+    updatePnlChart(closeTrades);
+}
+
+let pnlChart = null;
+
+function updatePnlChart(trades) {
+    // Sort trades by timestamp
+    const sortedTrades = [...trades].sort((a, b) => {
+        const timeA = new Date(a.timestamp || 0).getTime();
+        const timeB = new Date(b.timestamp || 0).getTime();
+        return timeA - timeB;
+    });
+
+    // Calculate cumulative P&L
+    let cumulativePnl = 0;
+    const labels = [];
+    const data = [];
+
+    sortedTrades.forEach((trade, index) => {
+        const pnl = trade.pnl_usd || (trade.pnl_sol || 0) * 200;
+        cumulativePnl += pnl;
+
+        // Format timestamp for label
+        const timestamp = trade.timestamp ? new Date(trade.timestamp) : new Date();
+        const label = `${timestamp.getMonth()+1}/${timestamp.getDate()} ${timestamp.getHours()}:${String(timestamp.getMinutes()).padStart(2, '0')}`;
+        labels.push(label);
+        data.push(cumulativePnl);
+    });
+
+    // If no trades, show placeholder
+    if (labels.length === 0) {
+        labels.push('No trades yet');
+        data.push(0);
+    }
+
+    // Update chart
+    if (pnlChart) {
+        pnlChart.data.labels = labels;
+        pnlChart.data.datasets[0].data = data;
+        pnlChart.update();
+    }
 }
 
 function updateSettingsDisplay(settings) {
@@ -479,50 +791,70 @@ function updateSettingsDisplay(settings) {
     document.getElementById('active-strategies').textContent = `${enabledCount}/3`;
 }
 
-// Load data on page load
-document.addEventListener('DOMContentLoaded', loadDashboardData);
-
 // Refresh every 10 seconds
 setInterval(loadDashboardData, 10000);
 
-// P&L Chart
-const ctx = document.getElementById('pnlChart').getContext('2d');
-new Chart(ctx, {
-    type: 'line',
-    data: {
-        labels: [],
-        datasets: [{
-            label: 'P&L ($)',
-            data: [],
-            borderColor: '#10b981',
-            backgroundColor: 'rgba(16, 185, 129, 0.1)',
-            fill: true,
-            tension: 0.4
-        }]
-    },
-    options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            legend: {
-                display: true,
-                position: 'top'
-            }
+// Initialize P&L Chart
+function initPnlChart() {
+    const ctx = document.getElementById('pnlChart').getContext('2d');
+    pnlChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: ['No trades yet'],
+            datasets: [{
+                label: 'Cumulative P&L ($)',
+                data: [0],
+                borderColor: '#10b981',
+                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                fill: true,
+                tension: 0.4,
+                pointRadius: 4,
+                pointBackgroundColor: '#10b981'
+            }]
         },
-        scales: {
-            y: {
-                beginAtZero: true,
-                grid: {
-                    color: 'rgba(0, 0, 0, 0.05)'
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        color: '#9ca3af'
+                    }
                 }
             },
-            x: {
-                grid: {
-                    display: false
+            scales: {
+                y: {
+                    beginAtZero: false,
+                    grid: {
+                        color: 'rgba(156, 163, 175, 0.1)'
+                    },
+                    ticks: {
+                        color: '#9ca3af',
+                        callback: function(value) {
+                            return '$' + value.toFixed(2);
+                        }
+                    }
+                },
+                x: {
+                    grid: {
+                        display: false
+                    },
+                    ticks: {
+                        color: '#9ca3af',
+                        maxRotation: 45
+                    }
                 }
             }
         }
-    }
+    });
+}
+
+// Initialize chart when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    initPnlChart();
+    loadDashboardData();
 });
 </script>
 {% endblock %}
