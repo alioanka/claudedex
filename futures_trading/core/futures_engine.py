@@ -136,6 +136,7 @@ class Position:
     original_size: float = 0.0
     # Trailing stop tracking
     trailing_stop_price: Optional[float] = None
+    trailing_stop_active: bool = False  # Activated after TP2 is hit
     highest_price: Optional[float] = None  # For LONG: track highest since entry
     lowest_price: Optional[float] = None   # For SHORT: track lowest since entry
 
@@ -778,9 +779,23 @@ class FuturesTradingEngine:
                 if position.side == TradeSide.LONG:
                     if position.highest_price is None or current_price > position.highest_price:
                         position.highest_price = current_price
-                else:
+                        # Update trailing stop if active
+                        if position.trailing_stop_active and self.trailing_stop_enabled:
+                            new_trailing_stop = position.highest_price * (1 - self.trailing_stop_distance / 100)
+                            # Only move trailing stop UP (never down)
+                            if position.trailing_stop_price is None or new_trailing_stop > position.trailing_stop_price:
+                                position.trailing_stop_price = new_trailing_stop
+                                logger.info(f"📈 TSL updated {position.symbol}: ${new_trailing_stop:.4f} (high: ${position.highest_price:.4f})")
+                else:  # SHORT
                     if position.lowest_price is None or current_price < position.lowest_price:
                         position.lowest_price = current_price
+                        # Update trailing stop if active
+                        if position.trailing_stop_active and self.trailing_stop_enabled:
+                            new_trailing_stop = position.lowest_price * (1 + self.trailing_stop_distance / 100)
+                            # Only move trailing stop DOWN (never up)
+                            if position.trailing_stop_price is None or new_trailing_stop < position.trailing_stop_price:
+                                position.trailing_stop_price = new_trailing_stop
+                                logger.info(f"📉 TSL updated {position.symbol}: ${new_trailing_stop:.4f} (low: ${position.lowest_price:.4f})")
 
                 # Calculate PnL
                 if position.side == TradeSide.LONG:
@@ -822,11 +837,23 @@ class FuturesTradingEngine:
         # stop_loss_pct and take_profit_pct are price movement percentages (not leveraged)
         actual_price_change_pct = leveraged_pnl_pct / position.leverage if position.leverage > 0 else leveraged_pnl_pct
 
-        # Stop loss check - stop_loss_pct is stored as positive (e.g., 2.0)
+        # TRAILING STOP CHECK (if active and set)
+        if position.trailing_stop_price is not None:
+            if position.side == TradeSide.LONG:
+                # For LONG: exit if price falls below trailing stop
+                if position.current_price <= position.trailing_stop_price:
+                    return "TSL Hit" if position.trailing_stop_active else "SL Hit"
+            else:  # SHORT
+                # For SHORT: exit if price rises above trailing stop
+                if position.current_price >= position.trailing_stop_price:
+                    return "TSL Hit" if position.trailing_stop_active else "SL Hit"
+
+        # Standard stop loss check (if no trailing stop is set)
+        # stop_loss_pct is stored as positive (e.g., 2.0)
         # SL triggers when price moves against position by >= stop_loss_pct
         # Example: if stop_loss_pct=2.0, SL triggers when price drops 2% (for LONG)
-        if actual_price_change_pct <= -self.stop_loss_pct:
-            return "stop_loss"
+        if position.trailing_stop_price is None and actual_price_change_pct <= -self.stop_loss_pct:
+            return "SL Hit"
 
         # Take profit check (legacy single TP - only if NOT using multiple tp_levels)
         # Skip this check if position has tp_levels (handled by partial TPs)
@@ -1265,6 +1292,25 @@ class FuturesTradingEngine:
 
                     # Mark as hit
                     tp['hit'] = True
+
+                    # TRAILING STOP ACTIVATION:
+                    # After TP1: Move stop loss to breakeven (entry price)
+                    # After TP2+: Activate trailing stop
+                    if tp['level'] == 1:
+                        # TP1 hit - move stop to breakeven
+                        position.trailing_stop_price = position.entry_price
+                        logger.info(f"🔒 {position.symbol}: Stop moved to breakeven ${position.entry_price:.4f}")
+                    elif tp['level'] >= 2 and not position.trailing_stop_active:
+                        # TP2+ hit - activate trailing stop
+                        position.trailing_stop_active = True
+                        # Initialize trailing stop based on current peak
+                        if position.side == TradeSide.LONG:
+                            peak = position.highest_price or current_price
+                            position.trailing_stop_price = peak * (1 - self.trailing_stop_distance / 100)
+                        else:  # SHORT
+                            peak = position.lowest_price or current_price
+                            position.trailing_stop_price = peak * (1 + self.trailing_stop_distance / 100)
+                        logger.info(f"🎚️ {position.symbol}: Trailing stop activated at ${position.trailing_stop_price:.4f}")
 
                     return True
 

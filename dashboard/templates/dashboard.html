@@ -782,18 +782,26 @@ function renderBlockStatus(data) {
         </div>
     `;
 
-    // Block remaining time if applicable
-    if (data.block_remaining_hours && data.block_remaining_hours > 0) {
+    // Block duration info - show when blocked
+    if (!canTrade && (data.block_remaining_hours > 0 || data.consecutive_losses_blocked_at || data.daily_loss_blocked_at)) {
+        let blockedSince = data.consecutive_losses_blocked_at || data.daily_loss_blocked_at;
+        let blockDurationHours = 0;
+
+        if (blockedSince) {
+            const blockedSinceDate = new Date(blockedSince);
+            blockDurationHours = (Date.now() - blockedSinceDate.getTime()) / (1000 * 60 * 60);
+        }
+
         html += `
             <div class="block-reasons" style="background: rgba(245, 158, 11, 0.1); border-color: rgba(245, 158, 11, 0.3);">
                 <div class="block-reasons-title" style="color: #f59e0b;">
                     <i class="fas fa-clock"></i>
                     Block Duration
                 </div>
-                <p style="margin: 0; color: var(--text-primary);">
-                    Trading blocked for <strong>${data.block_remaining_hours.toFixed(1)} more hours</strong>
-                    ${data.blocked_until ? `(until ${new Date(data.blocked_until).toLocaleTimeString()})` : ''}
-                </p>
+                <div style="color: var(--text-primary);">
+                    ${blockedSince ? `<p style="margin: 0 0 8px 0;">Blocked since: <strong>${new Date(blockedSince).toLocaleString()}</strong> (${blockDurationHours.toFixed(1)} hours ago)</p>` : ''}
+                    ${data.block_remaining_hours > 0 ? `<p style="margin: 0;">Remaining: <strong>${data.block_remaining_hours.toFixed(1)} more hours</strong>${data.blocked_until ? ` (until ${new Date(data.blocked_until).toLocaleTimeString()})` : ''}</p>` : ''}
+                </div>
             </div>
         `;
     }

@@ -931,6 +931,16 @@ class SolanaTradingEngine:
             currency="SOL"
         )
 
+        # Telegram alerts
+        self.telegram_alerts = None
+        try:
+            from solana_trading.core.solana_alerts import SolanaTelegramAlerts
+            self.telegram_alerts = SolanaTelegramAlerts()
+            if self.telegram_alerts.enabled:
+                logger.info("✅ Telegram alerts enabled for Solana module")
+        except ImportError as e:
+            logger.warning(f"Solana Telegram alerts not available: {e}")
+
         # Log configuration
         mode_str = "DRY_RUN (SIMULATED)" if self.dry_run else "LIVE TRADING"
         logger.info(f"Solana engine initialized:")
@@ -1328,13 +1338,21 @@ class SolanaTradingEngine:
     async def _trading_cycle(self):
         """Execute one trading cycle"""
         try:
-            # Check risk limits
-            if not self.risk_metrics.can_trade:
-                logger.warning(f"⚠️ Trading paused - Risk limit reached (Daily PnL: {self.risk_metrics.daily_pnl_sol:.4f} SOL)")
-                return
-
-            # Monitor existing positions
+            # CRITICAL: Always monitor positions first, even when trading is paused
+            # This ensures SL/TP checks, price updates, and time-based exits still work
             await self._monitor_positions()
+
+            # Check risk limits for NEW trades only
+            if not self.risk_metrics.can_trade:
+                # Provide detailed reason for pause
+                pause_reason = []
+                if self.risk_metrics.daily_pnl_sol <= -self.risk_metrics.daily_loss_limit_sol:
+                    pause_reason.append(f"daily loss limit ({self.risk_metrics.daily_pnl_sol:.4f} <= -{self.risk_metrics.daily_loss_limit_sol:.2f} SOL)")
+                if self.risk_metrics.consecutive_losses >= 5:
+                    pause_reason.append(f"consecutive losses ({self.risk_metrics.consecutive_losses} >= 5)")
+                reason_str = " and ".join(pause_reason) if pause_reason else "unknown"
+                logger.warning(f"⚠️ Trading paused - {reason_str}. Positions still being monitored for SL/TP.")
+                return
 
             # Scan for opportunities per strategy
             if Strategy.JUPITER in self.strategies:
@@ -1378,13 +1396,24 @@ class SolanaTradingEngine:
                 position.unrealized_pnl_pct = pnl_pct
                 position.unrealized_pnl = position.value_sol * (pnl_pct / 100)
 
-                # Log position status
+                # Get strategy-specific SL/TP for display
+                display_sl = self.stop_loss_pct
+                display_tp = self.take_profit_pct
+                if self.config_manager:
+                    if position.strategy == Strategy.JUPITER:
+                        display_sl = -abs(self.config_manager.jupiter_stop_loss_pct)
+                        display_tp = self.config_manager.jupiter_take_profit_pct
+                    elif position.strategy == Strategy.PUMPFUN:
+                        display_sl = -abs(self.config_manager.pumpfun_stop_loss_pct)
+                        display_tp = self.config_manager.pumpfun_take_profit_pct
+
+                # Log position status with strategy-specific SL/TP
                 pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
                 logger.info(
                     f"{pnl_emoji} {position.token_symbol}: "
                     f"${current_price:.8f} (entry: ${position.entry_price:.8f}), "
                     f"PnL: {pnl_pct:+.2f}%, "
-                    f"SL: {self.stop_loss_pct}%, TP: {self.take_profit_pct}%"
+                    f"SL: {display_sl}%, TP: {display_tp}%"
                 )
 
                 # Check exit conditions
@@ -1577,8 +1606,25 @@ class SolanaTradingEngine:
 
     async def _scan_pumpfun_opportunities(self):
         """Scan for Pump.fun new token launches"""
-        if len(self.active_positions) >= self.max_positions:
-            logger.debug("Max positions reached, skipping Pump.fun scan")
+        # Count pump.fun positions separately from other strategies
+        # This allows pump.fun to have dedicated position slots
+        pumpfun_positions = sum(1 for p in self.active_positions.values() if p.strategy == Strategy.PUMPFUN)
+        other_positions = len(self.active_positions) - pumpfun_positions
+
+        # Pump.fun has its own limit from DB config (default 3 positions)
+        pumpfun_max = 3  # Default fallback
+        if self.config_manager:
+            pumpfun_max = self.config_manager.pumpfun_max_positions
+
+        # Skip if pump.fun slots are full
+        if pumpfun_positions >= pumpfun_max:
+            logger.debug(f"Pump.fun position limit reached ({pumpfun_positions}/{pumpfun_max}), skipping scan")
+            return
+
+        # Also respect overall position limit but with some flexibility for pump.fun
+        # Allow pump.fun if total is at limit but no pump.fun positions exist
+        if len(self.active_positions) >= self.max_positions and pumpfun_positions > 0:
+            logger.debug(f"Max positions reached ({len(self.active_positions)}/{self.max_positions}), skipping Pump.fun scan")
             return
 
         if not self.pumpfun_monitor:
@@ -1743,6 +1789,27 @@ class SolanaTradingEngine:
                 'take_profit': position.take_profit
             })
 
+            # Send Telegram entry alert
+            if self.telegram_alerts and self.telegram_alerts.enabled:
+                try:
+                    from solana_trading.core.solana_alerts import SolanaTradeAlert
+                    alert = SolanaTradeAlert(
+                        token_symbol=token_symbol,
+                        token_mint=token_mint,
+                        strategy=strategy.value,
+                        action='entry',
+                        entry_price=current_price,
+                        amount_sol=amount_sol,
+                        token_amount=position.amount,
+                        stop_loss_pct=abs(position.stop_loss) if position.stop_loss else None,
+                        take_profit_pct=position.take_profit,
+                        is_simulated=self.dry_run,
+                        sol_price_usd=self.sol_price_usd
+                    )
+                    await self.telegram_alerts.send_entry_alert(alert)
+                except Exception as e:
+                    logger.debug(f"Telegram entry alert failed: {e}")
+
         except Exception as e:
             logger.error(f"Error opening position: {e}")
 
@@ -1885,6 +1952,39 @@ class SolanaTradingEngine:
                 'closed_at': datetime.utcnow().isoformat() + 'Z',
                 'duration_seconds': duration_seconds
             })
+
+            # Send Telegram exit alert
+            if self.telegram_alerts and self.telegram_alerts.enabled:
+                try:
+                    from solana_trading.core.solana_alerts import SolanaTradeAlert
+                    # Map reason to action type
+                    action_map = {
+                        'stop_loss': 'stop_loss',
+                        'take_profit': 'take_profit',
+                        'max_age': 'time_exit',
+                        'time_exit': 'time_exit',
+                        'manual_close': 'manual_close',
+                    }
+                    action = action_map.get(reason.lower(), 'exit')
+
+                    alert = SolanaTradeAlert(
+                        token_symbol=position.token_symbol,
+                        token_mint=token_mint,
+                        strategy=position.strategy.value,
+                        action=action,
+                        entry_price=position.entry_price,
+                        exit_price=position.current_price,
+                        amount_sol=position.value_sol,
+                        token_amount=position.amount,
+                        pnl_sol=pnl_sol,
+                        pnl_pct=pnl_pct,
+                        reason=reason,
+                        is_simulated=position.is_simulated,
+                        sol_price_usd=self.sol_price_usd
+                    )
+                    await self.telegram_alerts.send_exit_alert(alert)
+                except Exception as e:
+                    logger.debug(f"Telegram exit alert failed: {e}")
 
         except Exception as e:
             logger.error(f"Error closing position: {e}")
