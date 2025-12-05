@@ -3232,9 +3232,12 @@ class DashboardEndpoints:
 
             # --- FIX ENDS HERE ---
 
-            # Strategy Performance
+            # Strategy Performance (for the selected timeframe)
             strategy_performance = df.groupby('strategy')['profit_loss'].sum().reset_index()
             strategy_performance.columns = ['strategy', 'pnl']
+            # Add trade count per strategy for context
+            strategy_counts = df.groupby('strategy').size().reset_index(name='trade_count')
+            strategy_performance = strategy_performance.merge(strategy_counts, on='strategy', how='left')
 
             # Win/Loss Distribution
             win_loss_distribution = {

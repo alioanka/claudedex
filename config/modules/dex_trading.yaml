@@ -48,14 +48,17 @@ strategies:
 
 # DEX-Specific Settings
 dex:
-  # Supported chains
+  # Supported chains (ordered by activity)
+  # Removed arbitrum (very low activity - only 2 tokens/24h)
+  # Added pulsechain, avalanche as alternatives
   chains:
     - solana
+    - bsc
+    - base
     - ethereum
     - polygon
-    - bsc
-    - arbitrum
-    - base
+    - pulsechain
+    - avalanche
 
   # Supported DEXs
   dexs:

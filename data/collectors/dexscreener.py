@@ -111,7 +111,13 @@ class DexScreenerCollector:
         'op': 'optimism',
         'avalanche': 'avalanche',
         'avax': 'avalanche',
-        
+        'pulsechain': 'pulsechain',
+        'pls': 'pulsechain',
+        'fantom': 'fantom',
+        'ftm': 'fantom',
+        'cronos': 'cronos',
+        'cro': 'cronos',
+
         # Solana - IMPORTANT: DexScreener uses 'solana' (lowercase)
         'solana': 'solana',
         'sol': 'solana',
