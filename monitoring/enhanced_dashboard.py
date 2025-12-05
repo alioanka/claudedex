@@ -587,6 +587,11 @@ class DashboardEndpoints:
         futures_health_data = {}
         solana_health_data = {}
 
+        # Initialize metrics dictionaries BEFORE fetching stats
+        dex_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
+        futures_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
+        solana_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
+
         try:
             futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
             async with aiohttp.ClientSession() as session:
@@ -626,13 +631,39 @@ class DashboardEndpoints:
                         solana_running = True
                         solana_health_data = await resp.json()
                         logger.info(f"Solana module is running: {solana_health_data}")
+
+                # Also fetch stats to get metrics (same as Futures)
+                if solana_running:
+                    async with session.get(f'http://localhost:{solana_port}/stats', timeout=5) as resp:
+                        if resp.status == 200:
+                            stats_data = await resp.json()
+                            stats = stats_data.get('stats', stats_data)
+                            solana_metrics['total_trades'] = stats.get('total_trades', 0)
+                            solana_metrics['positions'] = stats.get('active_positions', 0)
+                            # Parse PnL which may be a string like "0.2881 SOL" or a number
+                            # Solana returns 'total_pnl' formatted as "X.XXXX SOL"
+                            net_pnl = stats.get('total_pnl', stats.get('net_pnl', stats.get('total_pnl_sol', 0)))
+                            if isinstance(net_pnl, str):
+                                # Handle formats like "0.2881 SOL" or "$0.00"
+                                net_pnl = float(net_pnl.replace('$', '').replace(',', '').replace('SOL', '').strip())
+                            solana_metrics['pnl'] = net_pnl
+                            # Parse win rate which may be a string like "66.7%"
+                            win_rate = stats.get('win_rate', '0%')
+                            if isinstance(win_rate, str):
+                                win_rate = float(win_rate.replace('%', ''))
+                            solana_metrics['win_rate'] = win_rate
+                            logger.info(f"Solana metrics from stats: {solana_metrics}")
         except Exception as e:
             logger.debug(f"Solana module not reachable: {e}")
 
-        # Get metrics from database
+        # Initialize metrics dictionaries ONLY if not already populated from /stats endpoints
         dex_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
-        futures_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
-        solana_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
+        # futures_metrics was already set above from /stats endpoint if futures is running
+        if not futures_running:
+            futures_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
+        # solana_metrics was already set above from /stats endpoint if solana is running
+        if not solana_running:
+            solana_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
 
         # Count positions by chain FROM ENGINE (same source as Open Positions API)
         if self.engine and hasattr(self.engine, 'active_positions') and self.engine.active_positions:

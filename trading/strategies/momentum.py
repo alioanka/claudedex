@@ -561,3 +561,187 @@ class MomentumStrategy(BaseStrategy):
         
         # Default stop loss
         return entry_price * Decimal("0.95")
+
+    # ========================================================================
+    # MISSING HELPER METHODS (Added to fix Momentum strategy)
+    # ========================================================================
+
+    async def _check_ma_alignment(self, market_data: Dict) -> bool:
+        """
+        Check if moving averages are properly aligned for trend following.
+        Returns True if short MA > medium MA > long MA (uptrend) or vice versa (downtrend).
+        """
+        try:
+            indicators = market_data.get("technical_indicators", {})
+
+            # Get MAs from market data
+            ma_short = indicators.get("ema_9") or indicators.get("sma_9")
+            ma_medium = indicators.get("ema_21") or indicators.get("sma_21")
+            ma_long = indicators.get("ema_50") or indicators.get("sma_50")
+
+            # If no MAs available, try to calculate from price history
+            if not all([ma_short, ma_medium, ma_long]):
+                candles = market_data.get("candles", [])
+                if len(candles) >= 50:
+                    prices = [c.get("close", 0) for c in candles]
+                    ma_short = sum(prices[-9:]) / 9
+                    ma_medium = sum(prices[-21:]) / 21
+                    ma_long = sum(prices[-50:]) / 50
+                else:
+                    # Not enough data, be lenient
+                    return True
+
+            # Check for uptrend alignment: short > medium > long
+            if ma_short > ma_medium > ma_long:
+                return True
+
+            # Check for downtrend alignment: short < medium < long (for shorts)
+            # For simplicity, we're only supporting uptrend momentum signals
+
+            return False
+        except Exception as e:
+            logger.error(f"Error checking MA alignment: {e}")
+            return False
+
+    def _calculate_trend_targets(
+        self,
+        current_price: Decimal,
+        trend_strength: float,
+        market_data: Dict
+    ) -> List[Decimal]:
+        """Calculate target prices for trend-following trades."""
+        targets = []
+
+        # Target based on trend strength (stronger trend = larger targets)
+        base_target_pct = Decimal("0.03") + Decimal(str(trend_strength * 0.05))  # 3-8%
+
+        # First target: Conservative
+        targets.append(current_price * (Decimal("1") + base_target_pct))
+
+        # Second target: Moderate
+        targets.append(current_price * (Decimal("1") + base_target_pct * Decimal("1.5")))
+
+        # Third target: Aggressive
+        targets.append(current_price * (Decimal("1") + base_target_pct * Decimal("2")))
+
+        return targets
+
+    def _calculate_trend_stop_loss(
+        self,
+        current_price: Decimal,
+        market_data: Dict
+    ) -> Decimal:
+        """Calculate stop loss for trend-following trades."""
+        candles = market_data.get("candles", [])
+
+        if candles and len(candles) >= 5:
+            # Use recent swing low as support
+            recent_lows = [c.get("low", float(current_price)) for c in candles[-10:]]
+            swing_low = min(recent_lows)
+            stop_loss = Decimal(str(swing_low)) * Decimal("0.98")  # 2% below swing low
+
+            # Ensure stop loss is reasonable (not more than 8% from entry)
+            max_stop_loss = current_price * Decimal("0.92")
+            return max(stop_loss, max_stop_loss)
+
+        # Default: 5% stop loss
+        return current_price * Decimal("0.95")
+
+    async def _analyze_volume_pattern(self, market_data: Dict) -> Dict:
+        """
+        Analyze volume patterns to identify surges, accumulation, or distribution.
+        """
+        try:
+            candles = market_data.get("candles", [])
+            if not candles or len(candles) < 10:
+                return {"type": "unknown", "score": 0}
+
+            volumes = [c.get("volume", 0) for c in candles]
+            recent_volume = sum(volumes[-3:]) / 3
+            average_volume = sum(volumes[:-3]) / max(len(volumes) - 3, 1)
+
+            # Calculate volume ratio
+            volume_ratio = recent_volume / average_volume if average_volume > 0 else 1.0
+
+            # Determine pattern type
+            if volume_ratio >= 3.0:
+                return {"type": "surge", "score": min(volume_ratio / 5, 1.0), "ratio": volume_ratio}
+            elif volume_ratio >= 2.0:
+                return {"type": "elevated", "score": volume_ratio / 4, "ratio": volume_ratio}
+            elif volume_ratio <= 0.5:
+                return {"type": "declining", "score": 0.2, "ratio": volume_ratio}
+            else:
+                return {"type": "normal", "score": 0.5, "ratio": volume_ratio}
+        except Exception as e:
+            logger.error(f"Error analyzing volume pattern: {e}")
+            return {"type": "unknown", "score": 0}
+
+    def _calculate_volume_targets(
+        self,
+        current_price: Decimal,
+        volume_ratio: float,
+        volume_pattern: Dict
+    ) -> List[Decimal]:
+        """Calculate target prices for volume-surge trades."""
+        targets = []
+
+        # Higher volume = potentially larger move
+        base_target = Decimal("0.02") + Decimal(str(min(volume_ratio, 5) * 0.01))  # 2-7%
+
+        # First target: Quick scalp
+        targets.append(current_price * (Decimal("1") + base_target))
+
+        # Second target: Extended move
+        targets.append(current_price * (Decimal("1") + base_target * Decimal("1.5")))
+
+        # Third target: Full extension
+        targets.append(current_price * (Decimal("1") + base_target * Decimal("2")))
+
+        return targets
+
+    def _calculate_smart_money_targets(
+        self,
+        current_price: Decimal,
+        smart_money: Dict,
+        score: float
+    ) -> List[Decimal]:
+        """Calculate target prices for smart money-driven trades."""
+        targets = []
+
+        # Smart money accumulation suggests larger moves
+        whale_activity = smart_money.get("whale_activity", {})
+        net_flow = whale_activity.get("net_flow", 0)
+
+        # Base target on score and net flow
+        base_pct = Decimal("0.05") + Decimal(str(score / 2000))  # 5-10%
+
+        if net_flow > 100000:  # Large whale inflow
+            base_pct *= Decimal("1.3")  # 30% bonus
+
+        targets.append(current_price * (Decimal("1") + base_pct))
+        targets.append(current_price * (Decimal("1") + base_pct * Decimal("1.5")))
+        targets.append(current_price * (Decimal("1") + base_pct * Decimal("2")))
+
+        return targets
+
+    def _calculate_smart_money_stop_loss(
+        self,
+        current_price: Decimal,
+        whale_activity: Dict
+    ) -> Decimal:
+        """Calculate stop loss for smart money trades."""
+        # Smart money trades typically have wider stops due to higher conviction
+        # But we want to exit if the thesis is invalidated
+
+        avg_whale_entry = whale_activity.get("avg_entry_price")
+        if avg_whale_entry and avg_whale_entry > 0:
+            # Set stop just below whale average entry
+            whale_entry = Decimal(str(avg_whale_entry))
+            stop_loss = whale_entry * Decimal("0.95")
+
+            # Don't set stop too far from current price
+            max_distance = current_price * Decimal("0.92")
+            return max(stop_loss, max_distance)
+
+        # Default: 7% stop loss (wider for conviction trades)
+        return current_price * Decimal("0.93")

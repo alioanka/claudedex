@@ -30,6 +30,7 @@ from core.portfolio_manager import PortfolioManager
 from trading.orders.order_manager import OrderManager
 from core.risk_manager import RiskManager
 from monitoring.alerts import AlertsSystem
+from core.analytics_engine import AnalyticsEngine
 
 # Load environment variables
 load_dotenv()
@@ -95,7 +96,7 @@ async def test_api_connection():
     """Test DexScreener API connection"""
     from data.collectors.dexscreener import test_api_connection as test_api
     await test_api()
-    
+
 async def verify_models_loaded():
     """Verify ML models are loaded"""
     from ml.models.ensemble_model import EnsemblePredictor
@@ -151,6 +152,7 @@ class TradingBotApplication:
         self.order_manager = None
         self.risk_manager = None
         self.alerts_system = None
+        self.analytics_engine = None
         self.dashboard = None
 
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -420,6 +422,12 @@ class TradingBotApplication:
             await self.engine.initialize()
             # --- FIX ENDS HERE ---
 
+            # Initialize analytics engine for dashboard analytics
+            self.logger.info("Initializing analytics engine...")
+            self.analytics_engine = AnalyticsEngine(db_manager=self.db_manager)
+            await self.analytics_engine.initialize()
+            self.logger.info("✅ Analytics engine initialized")
+
             self.dashboard = DashboardEndpoints(
                 host="0.0.0.0",
                 port=8080,
@@ -430,7 +438,8 @@ class TradingBotApplication:
                 risk_manager=self.risk_manager,
                 alerts_system=self.alerts_system,
                 config_manager=self.config_manager,
-                db_manager=self.db_manager
+                db_manager=self.db_manager,
+                analytics_engine=self.analytics_engine
             )
             self.logger.info("Enhanced dashboard initialized")
             

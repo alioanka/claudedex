@@ -1328,13 +1328,21 @@ class SolanaTradingEngine:
     async def _trading_cycle(self):
         """Execute one trading cycle"""
         try:
-            # Check risk limits
-            if not self.risk_metrics.can_trade:
-                logger.warning(f"⚠️ Trading paused - Risk limit reached (Daily PnL: {self.risk_metrics.daily_pnl_sol:.4f} SOL)")
-                return
-
-            # Monitor existing positions
+            # CRITICAL: Always monitor positions first, even when trading is paused
+            # This ensures SL/TP checks, price updates, and time-based exits still work
             await self._monitor_positions()
+
+            # Check risk limits for NEW trades only
+            if not self.risk_metrics.can_trade:
+                # Provide detailed reason for pause
+                pause_reason = []
+                if self.risk_metrics.daily_pnl_sol <= -self.risk_metrics.daily_loss_limit_sol:
+                    pause_reason.append(f"daily loss limit ({self.risk_metrics.daily_pnl_sol:.4f} <= -{self.risk_metrics.daily_loss_limit_sol:.2f} SOL)")
+                if self.risk_metrics.consecutive_losses >= 5:
+                    pause_reason.append(f"consecutive losses ({self.risk_metrics.consecutive_losses} >= 5)")
+                reason_str = " and ".join(pause_reason) if pause_reason else "unknown"
+                logger.warning(f"⚠️ Trading paused - {reason_str}. Positions still being monitored for SL/TP.")
+                return
 
             # Scan for opportunities per strategy
             if Strategy.JUPITER in self.strategies:
@@ -1378,13 +1386,24 @@ class SolanaTradingEngine:
                 position.unrealized_pnl_pct = pnl_pct
                 position.unrealized_pnl = position.value_sol * (pnl_pct / 100)
 
-                # Log position status
+                # Get strategy-specific SL/TP for display
+                display_sl = self.stop_loss_pct
+                display_tp = self.take_profit_pct
+                if self.config_manager:
+                    if position.strategy == Strategy.JUPITER:
+                        display_sl = -abs(self.config_manager.jupiter_stop_loss_pct)
+                        display_tp = self.config_manager.jupiter_take_profit_pct
+                    elif position.strategy == Strategy.PUMPFUN:
+                        display_sl = -abs(self.config_manager.pumpfun_stop_loss_pct)
+                        display_tp = self.config_manager.pumpfun_take_profit_pct
+
+                # Log position status with strategy-specific SL/TP
                 pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
                 logger.info(
                     f"{pnl_emoji} {position.token_symbol}: "
                     f"${current_price:.8f} (entry: ${position.entry_price:.8f}), "
                     f"PnL: {pnl_pct:+.2f}%, "
-                    f"SL: {self.stop_loss_pct}%, TP: {self.take_profit_pct}%"
+                    f"SL: {display_sl}%, TP: {display_tp}%"
                 )
 
                 # Check exit conditions
@@ -1577,8 +1596,23 @@ class SolanaTradingEngine:
 
     async def _scan_pumpfun_opportunities(self):
         """Scan for Pump.fun new token launches"""
-        if len(self.active_positions) >= self.max_positions:
-            logger.debug("Max positions reached, skipping Pump.fun scan")
+        # Count pump.fun positions separately from other strategies
+        # This allows pump.fun to have dedicated position slots
+        pumpfun_positions = sum(1 for p in self.active_positions.values() if p.strategy == Strategy.PUMPFUN)
+        other_positions = len(self.active_positions) - pumpfun_positions
+
+        # Pump.fun has its own limit (default 3 positions)
+        pumpfun_max = int(os.getenv('PUMPFUN_MAX_POSITIONS', '3'))
+
+        # Skip if pump.fun slots are full
+        if pumpfun_positions >= pumpfun_max:
+            logger.debug(f"Pump.fun position limit reached ({pumpfun_positions}/{pumpfun_max}), skipping scan")
+            return
+
+        # Also respect overall position limit but with some flexibility for pump.fun
+        # Allow pump.fun if total is at limit but no pump.fun positions exist
+        if len(self.active_positions) >= self.max_positions and pumpfun_positions > 0:
+            logger.debug(f"Max positions reached ({len(self.active_positions)}/{self.max_positions}), skipping Pump.fun scan")
             return
 
         if not self.pumpfun_monitor:

@@ -139,6 +139,7 @@ class SolanaConfigManager:
         self.db_pool = db_pool
         self._config_cache: Dict[str, Any] = {}
         self._cache_loaded = False
+        self._db_loaded_keys: set = set()  # Track keys explicitly loaded from database
 
         # Environment config (sensitive data from .env)
         self._env_config = self._load_environment_config()
@@ -195,6 +196,7 @@ class SolanaConfigManager:
         """Load all Solana configuration from config_settings table"""
         if not self.db_pool:
             self._config_cache = self.DEFAULTS.copy()
+            self._db_loaded_keys = set()  # No keys loaded from DB
             self._cache_loaded = True
             return
 
@@ -209,6 +211,7 @@ class SolanaConfigManager:
 
                 # Start with defaults
                 self._config_cache = self.DEFAULTS.copy()
+                self._db_loaded_keys = set()  # Reset loaded keys tracking
 
                 # Override with database values
                 for row in rows:
@@ -226,15 +229,18 @@ class SolanaConfigManager:
                             self._config_cache[key] = value.lower() in ('true', '1', 'yes')
                         else:
                             self._config_cache[key] = value
+                        # Track that this key was explicitly loaded from DB
+                        self._db_loaded_keys.add(key)
                     except (ValueError, TypeError) as e:
                         logger.warning(f"Error parsing config {key}: {e}")
 
                 self._cache_loaded = True
-                logger.debug(f"Loaded {len(rows)} Solana config values from database")
+                logger.debug(f"Loaded {len(rows)} Solana config values from database: {self._db_loaded_keys}")
 
         except Exception as e:
             logger.error(f"Database error loading Solana config: {e}")
             self._config_cache = self.DEFAULTS.copy()
+            self._db_loaded_keys = set()
             self._cache_loaded = True
 
     async def reload(self) -> None:
@@ -380,13 +386,23 @@ class SolanaConfigManager:
 
     @property
     def jupiter_stop_loss_pct(self) -> float:
-        """Get Jupiter strategy-specific stop loss percentage"""
-        return self.get('jupiter_stop_loss', 5.0)
+        """Get Jupiter strategy-specific stop loss percentage.
+        Falls back to global stop_loss if Jupiter-specific not set."""
+        # Check if Jupiter-specific value was explicitly set in database
+        if 'jupiter_stop_loss' in self._db_loaded_keys:
+            return self._config_cache['jupiter_stop_loss']
+        # Fall back to global stop_loss setting (which may also be from DB or defaults)
+        return self.get('stop_loss', 5.0)
 
     @property
     def jupiter_take_profit_pct(self) -> float:
-        """Get Jupiter strategy-specific take profit percentage"""
-        return self.get('jupiter_take_profit', 10.0)
+        """Get Jupiter strategy-specific take profit percentage.
+        Falls back to global take_profit if Jupiter-specific not set."""
+        # Check if Jupiter-specific value was explicitly set in database
+        if 'jupiter_take_profit' in self._db_loaded_keys:
+            return self._config_cache['jupiter_take_profit']
+        # Fall back to global take_profit setting (which may also be from DB or defaults)
+        return self.get('take_profit', 10.0)
 
     @property
     def jupiter_auto_exit_seconds(self) -> int:
