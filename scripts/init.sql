@@ -670,19 +670,37 @@ INSERT INTO config_settings (config_type, key, value, value_type, description, i
 ON CONFLICT (config_type, key) DO NOTHING;
 
 -- Chain Configuration
+-- Chains are managed via Settings > Chains Tab and stored in database
+-- Monad supported by DexScreener since November 2025
 INSERT INTO config_settings (config_type, key, value, value_type, description, is_editable, requires_restart) VALUES
-('chain', 'enabled_chains', 'ethereum,bsc,base,arbitrum,solana', 'string', 'Comma-separated list of enabled chains', TRUE, TRUE),
+('chain', 'enabled_chains', 'ethereum,bsc,base,solana,monad,pulsechain', 'string', 'Comma-separated list of enabled chains', TRUE, TRUE),
 ('chain', 'default_chain', 'ethereum', 'string', 'Default blockchain network', TRUE, FALSE),
+('chain', 'max_pairs_per_chain', '50', 'int', 'Maximum trading pairs per chain', TRUE, FALSE),
+('chain', 'discovery_interval_seconds', '300', 'int', 'Interval between chain discovery scans', TRUE, FALSE),
+-- Chain enabled flags
 ('chain', 'ethereum_enabled', 'true', 'bool', 'Enable Ethereum trading', TRUE, TRUE),
 ('chain', 'bsc_enabled', 'true', 'bool', 'Enable BSC trading', TRUE, TRUE),
 ('chain', 'base_enabled', 'true', 'bool', 'Enable Base trading', TRUE, TRUE),
-('chain', 'arbitrum_enabled', 'true', 'bool', 'Enable Arbitrum trading', TRUE, TRUE),
+('chain', 'arbitrum_enabled', 'false', 'bool', 'Enable Arbitrum trading (low activity)', TRUE, TRUE),
+('chain', 'polygon_enabled', 'false', 'bool', 'Enable Polygon trading', TRUE, TRUE),
 ('chain', 'solana_enabled', 'true', 'bool', 'Enable Solana trading', TRUE, TRUE),
+('chain', 'monad_enabled', 'true', 'bool', 'Enable Monad trading (DexScreener Nov 2025)', TRUE, TRUE),
+('chain', 'pulsechain_enabled', 'true', 'bool', 'Enable PulseChain trading', TRUE, TRUE),
+('chain', 'fantom_enabled', 'false', 'bool', 'Enable Fantom trading', TRUE, TRUE),
+('chain', 'cronos_enabled', 'false', 'bool', 'Enable Cronos trading', TRUE, TRUE),
+('chain', 'avalanche_enabled', 'false', 'bool', 'Enable Avalanche trading', TRUE, TRUE),
+-- Chain minimum liquidity thresholds (USD)
 ('chain', 'ethereum_min_liquidity', '3000', 'int', 'Minimum liquidity for Ethereum pairs', TRUE, FALSE),
 ('chain', 'bsc_min_liquidity', '500', 'int', 'Minimum liquidity for BSC pairs', TRUE, FALSE),
 ('chain', 'base_min_liquidity', '2000', 'int', 'Minimum liquidity for Base pairs', TRUE, FALSE),
 ('chain', 'arbitrum_min_liquidity', '2500', 'int', 'Minimum liquidity for Arbitrum pairs', TRUE, FALSE),
-('chain', 'solana_min_liquidity', '2000', 'int', 'Minimum liquidity for Solana pairs', TRUE, FALSE)
+('chain', 'polygon_min_liquidity', '500', 'int', 'Minimum liquidity for Polygon pairs', TRUE, FALSE),
+('chain', 'solana_min_liquidity', '2000', 'int', 'Minimum liquidity for Solana pairs', TRUE, FALSE),
+('chain', 'monad_min_liquidity', '2000', 'int', 'Minimum liquidity for Monad pairs', TRUE, FALSE),
+('chain', 'pulsechain_min_liquidity', '1000', 'int', 'Minimum liquidity for PulseChain pairs', TRUE, FALSE),
+('chain', 'fantom_min_liquidity', '500', 'int', 'Minimum liquidity for Fantom pairs', TRUE, FALSE),
+('chain', 'cronos_min_liquidity', '500', 'int', 'Minimum liquidity for Cronos pairs', TRUE, FALSE),
+('chain', 'avalanche_min_liquidity', '1000', 'int', 'Minimum liquidity for Avalanche pairs', TRUE, FALSE)
 ON CONFLICT (config_type, key) DO NOTHING;
 
 -- Position Management Configuration

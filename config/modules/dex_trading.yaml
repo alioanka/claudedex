@@ -49,16 +49,17 @@ strategies:
 # DEX-Specific Settings
 dex:
   # Supported chains (ordered by activity)
+  # NOTE: Chains are managed via Settings > Chains Tab and stored in database
+  # This list is only used as fallback if database config is not available
   # Removed arbitrum (very low activity - only 2 tokens/24h)
-  # Added pulsechain, avalanche as alternatives
+  # Added monad (supported by DexScreener since Nov 2025), pulsechain
   chains:
     - solana
     - bsc
     - base
     - ethereum
-    - polygon
+    - monad
     - pulsechain
-    - avalanche
 
   # Supported DEXs
   dexs:

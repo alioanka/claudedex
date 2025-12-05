@@ -118,6 +118,9 @@ class DexScreenerCollector:
         'cronos': 'cronos',
         'cro': 'cronos',
 
+        # Monad - Supported by DexScreener since November 2025
+        'monad': 'monad',
+
         # Solana - IMPORTANT: DexScreener uses 'solana' (lowercase)
         'solana': 'solana',
         'sol': 'solana',
@@ -801,6 +804,10 @@ class DexScreenerCollector:
             'arbitrum': 10000,
             'base': 5000,
             'solana': 5000,  # ✅ Solana minimum liquidity
+            'monad': 5000,   # ✅ Monad minimum liquidity
+            'pulsechain': 2000,
+            'fantom': 1000,
+            'cronos': 1000,
         }
         
         min_liquidity = chain_min_liquidity.get(chain, self.min_liquidity)
@@ -817,6 +824,10 @@ class DexScreenerCollector:
             'arbitrum': 5000,
             'base': 2000,
             'solana': 2000,  # ✅ Solana minimum volume
+            'monad': 2000,   # ✅ Monad minimum volume
+            'pulsechain': 1000,
+            'fantom': 1000,
+            'cronos': 1000,
         }
         
         min_volume = chain_min_volume.get(chain, self.min_volume)

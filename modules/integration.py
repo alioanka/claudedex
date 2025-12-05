@@ -7,10 +7,11 @@ Helps integrate the modular architecture with the existing trading engine
 import logging
 import yaml
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 from core.module_manager import ModuleManager
 from modules.base_module import ModuleConfig, ModuleType
+from config.config_manager import ConfigManager, ConfigType
 
 # Conditional imports for modules that may not exist yet
 try:
@@ -49,6 +50,7 @@ class ModuleIntegration:
         cache_manager=None,
         alert_manager=None,
         risk_manager=None,
+        config_manager: ConfigManager = None,
         config_dir: str = "config"
     ):
         """
@@ -60,6 +62,7 @@ class ModuleIntegration:
             cache_manager: Cache manager
             alert_manager: Alert manager
             risk_manager: Risk manager
+            config_manager: ConfigManager instance for DB-backed configuration
             config_dir: Configuration directory
         """
         self.engine = trading_engine
@@ -67,6 +70,7 @@ class ModuleIntegration:
         self.cache = cache_manager
         self.alerts = alert_manager
         self.risk = risk_manager
+        self.config_manager = config_manager
         self.config_dir = Path(config_dir)
 
         self.logger = logging.getLogger("ModuleIntegration")
@@ -163,6 +167,35 @@ class ModuleIntegration:
 
         return configs
 
+    def _get_enabled_chains_from_db(self) -> List[str]:
+        """
+        Get enabled chains from config_manager (database-backed)
+        Falls back to default chains if config_manager not available
+        """
+        default_chains = ['solana', 'bsc', 'base', 'ethereum', 'monad', 'pulsechain']
+
+        if not self.config_manager:
+            self.logger.warning("ConfigManager not available, using default chains")
+            return default_chains
+
+        try:
+            chain_config = self.config_manager.get_chain_config()
+            if chain_config and hasattr(chain_config, 'get_enabled_chains_list'):
+                enabled_chains = chain_config.get_enabled_chains_list()
+                if enabled_chains:
+                    self.logger.info(f"✅ Loaded chains from DB config: {enabled_chains}")
+                    return enabled_chains
+            # Fallback to enabled_chains string
+            if chain_config and chain_config.enabled_chains:
+                chains = [c.strip().lower() for c in chain_config.enabled_chains.split(',') if c.strip()]
+                if chains:
+                    self.logger.info(f"✅ Loaded chains from DB config (string): {chains}")
+                    return chains
+        except Exception as e:
+            self.logger.error(f"Error getting chains from config_manager: {e}")
+
+        return default_chains
+
     def _create_dex_module(self, config_data: Dict) -> DexTradingModule:
         """
         Create DEX trading module from configuration
@@ -184,6 +217,10 @@ class ModuleIntegration:
             # Load wallet addresses
             wallet_addresses = self._load_wallet_addresses('dex_trading')
 
+            # ✅ Get chains from config_manager (database-backed) instead of YAML
+            supported_chains = self._get_enabled_chains_from_db()
+            self.logger.info(f"DEX module using chains: {supported_chains}")
+
             # Create module configuration
             config = ModuleConfig(
                 name=module_cfg['name'],
@@ -202,7 +239,7 @@ class ModuleIntegration:
                     'max_gas_price': dex_cfg.get('max_gas_price', 50),
                     'mev_protection': dex_cfg.get('mev_protection', True),
                     'jupiter_routing': dex_cfg.get('jupiter_routing', True),
-                    'supported_chains': dex_cfg.get('chains', []),
+                    'supported_chains': supported_chains,  # ✅ From DB config
                     'supported_dexs': dex_cfg.get('dexs', [])
                 }
             )
