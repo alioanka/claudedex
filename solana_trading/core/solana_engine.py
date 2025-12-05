@@ -838,7 +838,8 @@ class SolanaTradingEngine:
         strategies: List[str],
         max_positions: int = 3,
         mode: str = "production",
-        config_manager=None
+        config_manager=None,
+        db_pool=None
     ):
         """
         Initialize Solana trading engine
@@ -849,6 +850,7 @@ class SolanaTradingEngine:
             max_positions: Maximum concurrent positions
             mode: Operating mode
             config_manager: Optional SolanaConfigManager for DB-backed config
+            db_pool: Optional asyncpg database pool for trade persistence
         """
         self.primary_rpc = rpc_url
         self.strategies = [Strategy(s.strip().lower()) for s in strategies if s.strip().lower() in [e.value for e in Strategy]]
@@ -856,6 +858,7 @@ class SolanaTradingEngine:
         self.mode = mode
         self.is_running = False
         self.config_manager = config_manager
+        self.db_pool = db_pool  # Database pool for trade persistence
 
         # DRY_RUN mode - CRITICAL: Check environment variable
         dry_run_env = os.getenv('DRY_RUN', 'true').strip().lower()
@@ -1263,6 +1266,51 @@ class SolanaTradingEngine:
             trade_logger.info(json.dumps(trade_info))
         except Exception as e:
             logger.debug(f"Error logging trade: {e}")
+
+    async def _save_trade_to_db(self, trade: Trade):
+        """
+        Save a closed trade to the database for persistence across restarts.
+        This is the CRITICAL method that ensures trades survive container restarts.
+        """
+        if not self.db_pool:
+            logger.debug("No database pool available, trade not persisted to DB")
+            return
+
+        try:
+            async with self.db_pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO solana_trades (
+                        trade_id, token_symbol, token_mint, strategy, side,
+                        entry_price, exit_price, amount_sol, amount_tokens,
+                        pnl_sol, pnl_usd, pnl_pct, fees_sol, exit_reason,
+                        entry_time, exit_time, duration_seconds, is_simulated,
+                        sol_price_usd, metadata
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                """,
+                    trade.id,
+                    trade.token_symbol,
+                    trade.token_mint,
+                    trade.strategy.value if hasattr(trade.strategy, 'value') else str(trade.strategy),
+                    'long',  # Solana trades are always long
+                    trade.entry_price,
+                    trade.exit_price,
+                    trade.amount_sol,
+                    trade.amount_tokens if hasattr(trade, 'amount_tokens') else None,
+                    trade.pnl_sol,
+                    trade.pnl_sol * self.sol_price_usd,  # Convert to USD
+                    trade.pnl_pct,
+                    trade.fees_sol if hasattr(trade, 'fees_sol') else 0,
+                    trade.close_reason,
+                    trade.opened_at,
+                    trade.closed_at,
+                    int((trade.closed_at - trade.opened_at).total_seconds()),
+                    trade.is_simulated,
+                    self.sol_price_usd,
+                    None  # metadata - can be extended later
+                )
+                logger.info(f"💾 Trade saved to DB: {trade.token_symbol} P&L: {trade.pnl_sol:.4f} SOL")
+        except Exception as e:
+            logger.error(f"Failed to save trade to DB: {e}")
 
     async def run(self):
         """Main trading loop"""
@@ -1880,6 +1928,9 @@ class SolanaTradingEngine:
                 is_simulated=position.is_simulated
             )
             self.trade_history.append(trade)
+
+            # Save trade to database for persistence across restarts
+            await self._save_trade_to_db(trade)
 
             # Update stats
             self.total_trades += 1

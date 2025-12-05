@@ -429,13 +429,14 @@ class SolanaTradingApplication:
             # Import Solana engine
             from solana_trading.core.solana_engine import SolanaTradingEngine
 
-            # Initialize engine with config manager
+            # Initialize engine with config manager and database pool
             self.engine = SolanaTradingEngine(
                 rpc_url=self.rpc_url,
                 strategies=self.strategies,
                 max_positions=self.max_positions,
                 mode=self.mode,
-                config_manager=self.config_manager
+                config_manager=self.config_manager,
+                db_pool=self.db_pool  # Pass database pool for trade persistence
             )
 
             await self.engine.initialize()

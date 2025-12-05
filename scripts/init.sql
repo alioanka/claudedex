@@ -125,6 +125,59 @@ CREATE TABLE IF NOT EXISTS trading.positions (
 CREATE INDEX idx_positions_status ON trading.positions(status);
 CREATE INDEX idx_positions_token ON trading.positions(token_address);
 
+-- Solana Trades (for Solana module persistence)
+CREATE TABLE IF NOT EXISTS solana_trades (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    trade_id VARCHAR(50),
+    token_symbol VARCHAR(20) NOT NULL,
+    token_mint VARCHAR(64) NOT NULL,
+    strategy VARCHAR(20) NOT NULL,
+    side VARCHAR(10) NOT NULL DEFAULT 'long',
+    entry_price NUMERIC NOT NULL,
+    exit_price NUMERIC NOT NULL,
+    amount_sol NUMERIC NOT NULL,
+    amount_tokens NUMERIC,
+    pnl_sol NUMERIC NOT NULL,
+    pnl_usd NUMERIC,
+    pnl_pct NUMERIC NOT NULL,
+    fees_sol NUMERIC NOT NULL DEFAULT 0,
+    exit_reason VARCHAR(50),
+    entry_time TIMESTAMP NOT NULL,
+    exit_time TIMESTAMP NOT NULL,
+    duration_seconds INT NOT NULL DEFAULT 0,
+    is_simulated BOOLEAN NOT NULL DEFAULT TRUE,
+    sol_price_usd NUMERIC,
+    metadata JSONB,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_solana_trades_token ON solana_trades(token_symbol);
+CREATE INDEX IF NOT EXISTS idx_solana_trades_strategy ON solana_trades(strategy);
+CREATE INDEX IF NOT EXISTS idx_solana_trades_exit_time ON solana_trades(exit_time DESC);
+CREATE INDEX IF NOT EXISTS idx_solana_trades_simulated ON solana_trades(is_simulated);
+
+-- Solana Positions (for state recovery on restart)
+CREATE TABLE IF NOT EXISTS solana_positions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    position_id VARCHAR(50) UNIQUE NOT NULL,
+    token_symbol VARCHAR(20) NOT NULL,
+    token_mint VARCHAR(64) NOT NULL,
+    strategy VARCHAR(20) NOT NULL,
+    entry_price NUMERIC NOT NULL,
+    current_price NUMERIC,
+    amount_sol NUMERIC NOT NULL,
+    amount_tokens NUMERIC,
+    stop_loss_pct NUMERIC,
+    take_profit_pct NUMERIC,
+    unrealized_pnl_sol NUMERIC DEFAULT 0,
+    unrealized_pnl_pct NUMERIC DEFAULT 0,
+    is_simulated BOOLEAN NOT NULL DEFAULT TRUE,
+    opened_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    last_updated TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_solana_positions_token ON solana_positions(token_mint);
+
 -- =====================================================
 -- ML SCHEMA TABLES
 -- =====================================================
