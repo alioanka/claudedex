@@ -62,6 +62,7 @@ CONFIG_KEY_MAPPING = {
     'pumpfun_jito_tip': ('solana_pumpfun', 'float'),
     'pumpfun_stop_loss': ('solana_pumpfun', 'float'),
     'pumpfun_take_profit': ('solana_pumpfun', 'float'),
+    'pumpfun_max_positions': ('solana_pumpfun', 'int'),  # Separate position limit for pump.fun
 
     # Jupiter strategy-specific settings
     'jupiter_stop_loss': ('solana_jupiter', 'float'),
@@ -122,6 +123,7 @@ class SolanaConfigManager:
         'pumpfun_jito_tip': 0.001,
         'pumpfun_stop_loss': 20.0,  # Pump.fun: higher SL for volatile new tokens
         'pumpfun_take_profit': 100.0,  # Pump.fun: higher TP for meme tokens
+        'pumpfun_max_positions': 3,  # Separate position limit for pump.fun snipes
 
         # Jupiter strategy-specific (established tokens need tighter TP/SL)
         'jupiter_stop_loss': 5.0,  # Jupiter: tighter SL for established tokens
@@ -383,6 +385,11 @@ class SolanaConfigManager:
     def pumpfun_take_profit_pct(self) -> float:
         """Get Pump.fun strategy-specific take profit percentage"""
         return self.get('pumpfun_take_profit', 100.0)
+
+    @property
+    def pumpfun_max_positions(self) -> int:
+        """Get Pump.fun strategy-specific max positions limit"""
+        return self.get('pumpfun_max_positions', 3)
 
     @property
     def jupiter_stop_loss_pct(self) -> float:

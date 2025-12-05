@@ -931,6 +931,16 @@ class SolanaTradingEngine:
             currency="SOL"
         )
 
+        # Telegram alerts
+        self.telegram_alerts = None
+        try:
+            from solana_trading.core.solana_alerts import SolanaTelegramAlerts
+            self.telegram_alerts = SolanaTelegramAlerts()
+            if self.telegram_alerts.enabled:
+                logger.info("✅ Telegram alerts enabled for Solana module")
+        except ImportError as e:
+            logger.warning(f"Solana Telegram alerts not available: {e}")
+
         # Log configuration
         mode_str = "DRY_RUN (SIMULATED)" if self.dry_run else "LIVE TRADING"
         logger.info(f"Solana engine initialized:")
@@ -1601,8 +1611,10 @@ class SolanaTradingEngine:
         pumpfun_positions = sum(1 for p in self.active_positions.values() if p.strategy == Strategy.PUMPFUN)
         other_positions = len(self.active_positions) - pumpfun_positions
 
-        # Pump.fun has its own limit (default 3 positions)
-        pumpfun_max = int(os.getenv('PUMPFUN_MAX_POSITIONS', '3'))
+        # Pump.fun has its own limit from DB config (default 3 positions)
+        pumpfun_max = 3  # Default fallback
+        if self.config_manager:
+            pumpfun_max = self.config_manager.pumpfun_max_positions
 
         # Skip if pump.fun slots are full
         if pumpfun_positions >= pumpfun_max:
@@ -1777,6 +1789,27 @@ class SolanaTradingEngine:
                 'take_profit': position.take_profit
             })
 
+            # Send Telegram entry alert
+            if self.telegram_alerts and self.telegram_alerts.enabled:
+                try:
+                    from solana_trading.core.solana_alerts import SolanaTradeAlert
+                    alert = SolanaTradeAlert(
+                        token_symbol=token_symbol,
+                        token_mint=token_mint,
+                        strategy=strategy.value,
+                        action='entry',
+                        entry_price=current_price,
+                        amount_sol=amount_sol,
+                        token_amount=position.amount,
+                        stop_loss_pct=abs(position.stop_loss) if position.stop_loss else None,
+                        take_profit_pct=position.take_profit,
+                        is_simulated=self.dry_run,
+                        sol_price_usd=self.sol_price_usd
+                    )
+                    await self.telegram_alerts.send_entry_alert(alert)
+                except Exception as e:
+                    logger.debug(f"Telegram entry alert failed: {e}")
+
         except Exception as e:
             logger.error(f"Error opening position: {e}")
 
@@ -1919,6 +1952,39 @@ class SolanaTradingEngine:
                 'closed_at': datetime.utcnow().isoformat() + 'Z',
                 'duration_seconds': duration_seconds
             })
+
+            # Send Telegram exit alert
+            if self.telegram_alerts and self.telegram_alerts.enabled:
+                try:
+                    from solana_trading.core.solana_alerts import SolanaTradeAlert
+                    # Map reason to action type
+                    action_map = {
+                        'stop_loss': 'stop_loss',
+                        'take_profit': 'take_profit',
+                        'max_age': 'time_exit',
+                        'time_exit': 'time_exit',
+                        'manual_close': 'manual_close',
+                    }
+                    action = action_map.get(reason.lower(), 'exit')
+
+                    alert = SolanaTradeAlert(
+                        token_symbol=position.token_symbol,
+                        token_mint=token_mint,
+                        strategy=position.strategy.value,
+                        action=action,
+                        entry_price=position.entry_price,
+                        exit_price=position.current_price,
+                        amount_sol=position.value_sol,
+                        token_amount=position.amount,
+                        pnl_sol=pnl_sol,
+                        pnl_pct=pnl_pct,
+                        reason=reason,
+                        is_simulated=position.is_simulated,
+                        sol_price_usd=self.sol_price_usd
+                    )
+                    await self.telegram_alerts.send_exit_alert(alert)
+                except Exception as e:
+                    logger.debug(f"Telegram exit alert failed: {e}")
 
         except Exception as e:
             logger.error(f"Error closing position: {e}")

@@ -365,6 +365,8 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/solana/trades', self.api_get_solana_trades)
         self.app.router.add_post('/api/solana/close-position', self.api_solana_close_position)
         self.app.router.add_post('/api/solana/close-all-positions', self.api_solana_close_all_positions)
+        self.app.router.add_get('/api/solana/trading/status', self.api_solana_trading_status)
+        self.app.router.add_post('/api/solana/trading/unblock', self.api_solana_trading_unblock)
 
         # API - Sensitive Configuration (Admin only)
         self.app.router.add_get('/api/settings/sensitive/list', require_auth(require_admin(self.api_list_sensitive_configs)))
@@ -4147,6 +4149,49 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Error closing all solana positions: {e}")
             return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def api_solana_trading_status(self, request):
+        """Get Solana trading status including block status"""
+        try:
+            solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{solana_port}/trading/status', timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return web.json_response(data)
+                    else:
+                        return web.json_response({
+                            'success': False,
+                            'error': f'Solana module returned status {resp.status}'
+                        }, status=resp.status)
+        except Exception as e:
+            logger.error(f"Error fetching solana trading status: {e}")
+            return web.json_response({
+                'success': False,
+                'error': f'Solana module not available: {str(e)}'
+            }, status=503)
+
+    async def api_solana_trading_unblock(self, request):
+        """Unblock Solana trading by resetting daily loss/consecutive losses"""
+        try:
+            solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
+            data = await request.json() if request.content_length else {}
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f'http://localhost:{solana_port}/trading/unblock',
+                    json=data,
+                    timeout=5
+                ) as resp:
+                    result = await resp.json()
+                    return web.json_response(result, status=resp.status)
+
+        except Exception as e:
+            logger.error(f"Error unblocking solana trading: {e}")
+            return web.json_response({
+                'success': False,
+                'error': f'Solana module not available: {str(e)}'
+            }, status=503)
 
     async def api_list_sensitive_configs(self, request):
         """List all sensitive configuration keys (admin only)"""
