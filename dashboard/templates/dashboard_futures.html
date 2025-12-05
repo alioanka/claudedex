@@ -741,7 +741,7 @@ const pnlChart = new Chart(ctx, {
 // Fetch futures data from API
 async function loadFuturesData() {
     try {
-        // Fetch stats from simulator data
+        // Fetch stats from simulator data for mode/network and live positions
         const statsResponse = await fetch('/api/simulator/data');
         if (statsResponse.ok) {
             const data = await statsResponse.json();
@@ -761,6 +761,15 @@ async function loadFuturesData() {
             }
         }
 
+        // Fetch historical trades and update stats from actual trade history
+        const tradesResponse = await fetch('/api/futures/trades?limit=1000');
+        if (tradesResponse.ok) {
+            const tradesData = await tradesResponse.json();
+            if (tradesData.success && tradesData.trades) {
+                updateStatsFromTrades(tradesData.trades);
+            }
+        }
+
         // Check trading status (blocked/unblocked)
         await checkTradingStatus();
 
@@ -769,6 +778,33 @@ async function loadFuturesData() {
     } catch (error) {
         console.error('Error loading futures data:', error);
     }
+}
+
+// Calculate stats from historical trades (more accurate than session-based)
+function updateStatsFromTrades(trades) {
+    if (!trades || trades.length === 0) return;
+
+    let totalPnl = 0;
+    let wins = 0;
+    let losses = 0;
+
+    trades.forEach(trade => {
+        const pnl = parseFloat(trade.pnl || 0);
+        totalPnl += pnl;
+        if (pnl > 0) wins++;
+        else if (pnl < 0) losses++;
+    });
+
+    // Update Total P&L from historical trades
+    const pnlEl = document.getElementById('stat-pnl');
+    pnlEl.textContent = `$${totalPnl.toFixed(2)}`;
+    pnlEl.className = 'stat-value ' + (totalPnl >= 0 ? 'positive' : 'negative');
+
+    // Update Win Rate from historical trades
+    const totalTrades = wins + losses;
+    const winRate = totalTrades > 0 ? ((wins / totalTrades) * 100).toFixed(1) : 0;
+    document.getElementById('stat-winrate').textContent = `${winRate}%`;
+    document.getElementById('stat-winloss').textContent = `${wins} wins / ${losses} losses`;
 }
 
 // Load and update Performance History chart
