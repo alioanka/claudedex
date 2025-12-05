@@ -596,12 +596,15 @@ class DashboardEndpoints:
 
         try:
             futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+            logger.info(f"Checking Futures module health at port {futures_port}...")
             async with aiohttp.ClientSession() as session:
-                async with session.get(f'http://localhost:{futures_port}/health', timeout=2) as resp:
+                async with session.get(f'http://localhost:{futures_port}/health', timeout=5) as resp:
                     if resp.status == 200:
                         futures_running = True
                         futures_health_data = await resp.json()
-                        logger.info(f"Futures module is running: {futures_health_data}")
+                        logger.info(f"✅ Futures module IS RUNNING: {futures_health_data}")
+                    else:
+                        logger.warning(f"Futures health check returned status {resp.status}")
 
                 # Also fetch stats to get metrics
                 if futures_running:
@@ -627,12 +630,15 @@ class DashboardEndpoints:
 
         try:
             solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
+            logger.info(f"Checking Solana module health at port {solana_port}...")
             async with aiohttp.ClientSession() as session:
-                async with session.get(f'http://localhost:{solana_port}/health', timeout=2) as resp:
+                async with session.get(f'http://localhost:{solana_port}/health', timeout=5) as resp:
                     if resp.status == 200:
                         solana_running = True
                         solana_health_data = await resp.json()
-                        logger.info(f"Solana module is running: {solana_health_data}")
+                        logger.info(f"✅ Solana module IS RUNNING: {solana_health_data}")
+                    else:
+                        logger.warning(f"Solana health check returned status {resp.status}")
 
                 # Also fetch stats to get metrics (same as Futures)
                 if solana_running:

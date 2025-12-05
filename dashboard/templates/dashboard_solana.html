@@ -891,15 +891,53 @@ function updateTradesDisplay(trades) {
     // Filter to CLOSE trades only for P&L calculation
     const closeTrades = trades.filter(t => t.type === 'CLOSE');
 
+    // Calculate overall stats from historical trades
+    let totalPnlSol = 0;
+    let totalWins = 0;
+    let totalLosses = 0;
+
     closeTrades.forEach(trade => {
         const strategy = (trade.strategy || '').toLowerCase();
+        const pnlSol = trade.pnl_sol || 0;
+        const pnl = trade.pnl_usd || (pnlSol * 200);
+
+        // Track overall stats
+        totalPnlSol += pnlSol;
+        if (pnlSol > 0) {
+            totalWins++;
+        } else if (pnlSol < 0) {
+            totalLosses++;
+        }
+
         if (tradeCounts.hasOwnProperty(strategy)) {
             tradeCounts[strategy]++;
-            const pnl = trade.pnl_usd || (trade.pnl_sol || 0) * 200;
             strategyPnl[strategy] += pnl;
             if (pnl > 0) strategyWins[strategy]++;
         }
     });
+
+    // Count OPEN trades (active positions from trades)
+    const openTrades = trades.filter(t => t.type === 'OPEN' && !closeTrades.some(c => c.token_symbol === t.token_symbol && c.timestamp > t.timestamp));
+
+    // Update main dashboard stats from historical trade data
+    const solPrice = 200; // Default SOL price
+    const totalPnlUsd = totalPnlSol * solPrice;
+    const pnlEl = document.getElementById('total-pnl');
+    pnlEl.textContent = `$${totalPnlUsd.toFixed(2)}`;
+    pnlEl.className = totalPnlUsd >= 0 ? 'stat-value positive' : 'stat-value negative';
+
+    // Update ROI based on historical P&L
+    const roiEl = document.getElementById('roi-value');
+    const capital = 10 * solPrice; // Default 10 SOL capital
+    const roi = (totalPnlUsd / capital) * 100;
+    roiEl.textContent = `${roi.toFixed(2)}% ROI`;
+    roiEl.className = roi >= 0 ? 'stat-change positive' : 'stat-change negative';
+
+    // Update win rate from historical trades
+    const totalClosedTrades = totalWins + totalLosses;
+    const winRate = totalClosedTrades > 0 ? ((totalWins / totalClosedTrades) * 100).toFixed(0) : 0;
+    document.getElementById('win-rate').textContent = `${winRate}%`;
+    document.getElementById('win-loss').textContent = `${totalWins} wins / ${totalLosses} losses`;
 
     // Update strategy cards
     ['jupiter', 'drift', 'pumpfun'].forEach(s => {
