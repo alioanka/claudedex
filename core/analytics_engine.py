@@ -194,6 +194,15 @@ class AnalyticsEngine:
 
         self.logger.info("Analytics Engine initialized")
 
+    async def initialize(self) -> None:
+        """
+        Async initialization for Analytics Engine
+        Called after __init__ to perform any async setup tasks
+        """
+        # Any future async initialization can go here
+        # Currently all initialization is done in __init__
+        self.logger.info("Analytics Engine async initialization complete")
+
     async def get_module_performance(
         self,
         module_name: str,
