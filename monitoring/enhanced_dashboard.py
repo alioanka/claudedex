@@ -408,7 +408,11 @@ class DashboardEndpoints:
 
         # SSE for real-time updates
         self.app.router.add_get('/api/stream', self.sse_handler)
-        
+
+        # ML Training API endpoints
+        self.app.router.add_post('/api/ml/train', self.api_ml_train)
+        self.app.router.add_get('/api/ml/status', self.api_ml_status)
+
         # Setup CORS - EXCLUDE socket.io routes
         cors = aiohttp_cors.setup(self.app, defaults={
             "*": aiohttp_cors.ResourceOptions(
@@ -5900,7 +5904,117 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Error in backtest task {test_id}: {e}", exc_info=True)
             self.backtests[test_id] = {'status': 'failed', 'error': str(e)}
-    
+
+    # ==================== API - ML TRAINING ====================
+
+    async def api_ml_train(self, request):
+        """Trigger ML model training"""
+        try:
+            from ml.training.auto_trainer import AutoMLTrainer
+
+            # Get training parameters from request
+            data = {}
+            try:
+                data = await request.json()
+            except:
+                pass
+
+            config = {
+                'min_trades': data.get('min_trades', 100),
+                'lookback_days': data.get('lookback_days', 30)
+            }
+
+            # Run training in background
+            trainer = AutoMLTrainer(config)
+            await trainer.initialize()
+
+            try:
+                results = await trainer.train_models()
+
+                return web.json_response({
+                    'success': True,
+                    'data': {
+                        'message': 'Training completed successfully',
+                        'metrics': trainer.training_metrics,
+                        'model_results': {
+                            k: {
+                                'accuracy': v.get('accuracy', 0),
+                                'f1_score': v.get('f1_score', 0),
+                                'precision': v.get('precision', 0),
+                                'recall': v.get('recall', 0)
+                            } if 'accuracy' in v else {'error': v.get('error', 'Unknown error')}
+                            for k, v in results.items()
+                        }
+                    }
+                })
+            finally:
+                await trainer.close()
+
+        except ImportError as e:
+            logger.error(f"ML training module not available: {e}")
+            return web.json_response({
+                'success': False,
+                'error': 'ML training module not installed. Run: pip install scikit-learn xgboost lightgbm'
+            }, status=500)
+        except Exception as e:
+            logger.error(f"Error in ML training: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    async def api_ml_status(self, request):
+        """Get ML model training status and metrics"""
+        try:
+            from pathlib import Path
+            import json
+
+            model_dir = Path('./models/ai_strategy')
+            status = {
+                'models_available': [],
+                'last_training': None,
+                'metrics': {}
+            }
+
+            # Check for training report
+            report_path = model_dir / 'training_report.json'
+            if report_path.exists():
+                with open(report_path, 'r') as f:
+                    report = json.load(f)
+                    status['last_training'] = report.get('timestamp')
+                    status['metrics'] = report.get('metrics', {})
+
+            # Check which models are available
+            model_files = {
+                'xgboost': model_dir / 'xgboost_model.json',
+                'lightgbm': model_dir / 'lightgbm_model.txt',
+                'random_forest': model_dir / 'random_forest_model.joblib'
+            }
+
+            for model_name, model_path in model_files.items():
+                if model_path.exists():
+                    status['models_available'].append({
+                        'name': model_name,
+                        'path': str(model_path),
+                        'modified': datetime.fromtimestamp(model_path.stat().st_mtime).isoformat()
+                    })
+
+            # Check for feature scaler
+            scaler_path = model_dir / 'feature_scaler.joblib'
+            status['scaler_available'] = scaler_path.exists()
+
+            return web.json_response({
+                'success': True,
+                'data': status
+            })
+
+        except Exception as e:
+            logger.error(f"Error getting ML status: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
     async def start(self):
         """Start the dashboard server"""
         runner = web.AppRunner(self.app)
