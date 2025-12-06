@@ -4176,12 +4176,14 @@ class DashboardEndpoints:
                         'winning_trades': 0,
                         'losing_trades': 0,
                         'active_positions': 0,
+                        'positions': [],  # Empty positions array for offline state
                         'total_pnl': '0.0000 SOL',
                         'daily_pnl': '0.0000 SOL',
                         'sol_price_usd': 0,
-                        'mode': 'OFFLINE'
+                        'mode': 'OFFLINE',
+                        'win_rate': '0%'
                     },
-                    'health': {'status': 'offline'}
+                    'health': {'status': 'offline', 'engine_running': False, 'wallet_balance_sol': 0}
                 }
             })
         except Exception as e:
