@@ -125,6 +125,59 @@ CREATE TABLE IF NOT EXISTS trading.positions (
 CREATE INDEX idx_positions_status ON trading.positions(status);
 CREATE INDEX idx_positions_token ON trading.positions(token_address);
 
+-- Solana Trades (for Solana module persistence)
+CREATE TABLE IF NOT EXISTS solana_trades (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    trade_id VARCHAR(50),
+    token_symbol VARCHAR(20) NOT NULL,
+    token_mint VARCHAR(64) NOT NULL,
+    strategy VARCHAR(20) NOT NULL,
+    side VARCHAR(10) NOT NULL DEFAULT 'long',
+    entry_price NUMERIC NOT NULL,
+    exit_price NUMERIC NOT NULL,
+    amount_sol NUMERIC NOT NULL,
+    amount_tokens NUMERIC,
+    pnl_sol NUMERIC NOT NULL,
+    pnl_usd NUMERIC,
+    pnl_pct NUMERIC NOT NULL,
+    fees_sol NUMERIC NOT NULL DEFAULT 0,
+    exit_reason VARCHAR(50),
+    entry_time TIMESTAMP NOT NULL,
+    exit_time TIMESTAMP NOT NULL,
+    duration_seconds INT NOT NULL DEFAULT 0,
+    is_simulated BOOLEAN NOT NULL DEFAULT TRUE,
+    sol_price_usd NUMERIC,
+    metadata JSONB,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_solana_trades_token ON solana_trades(token_symbol);
+CREATE INDEX IF NOT EXISTS idx_solana_trades_strategy ON solana_trades(strategy);
+CREATE INDEX IF NOT EXISTS idx_solana_trades_exit_time ON solana_trades(exit_time DESC);
+CREATE INDEX IF NOT EXISTS idx_solana_trades_simulated ON solana_trades(is_simulated);
+
+-- Solana Positions (for state recovery on restart)
+CREATE TABLE IF NOT EXISTS solana_positions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    position_id VARCHAR(50) UNIQUE NOT NULL,
+    token_symbol VARCHAR(20) NOT NULL,
+    token_mint VARCHAR(64) NOT NULL,
+    strategy VARCHAR(20) NOT NULL,
+    entry_price NUMERIC NOT NULL,
+    current_price NUMERIC,
+    amount_sol NUMERIC NOT NULL,
+    amount_tokens NUMERIC,
+    stop_loss_pct NUMERIC,
+    take_profit_pct NUMERIC,
+    unrealized_pnl_sol NUMERIC DEFAULT 0,
+    unrealized_pnl_pct NUMERIC DEFAULT 0,
+    is_simulated BOOLEAN NOT NULL DEFAULT TRUE,
+    opened_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    last_updated TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_solana_positions_token ON solana_positions(token_mint);
+
 -- =====================================================
 -- ML SCHEMA TABLES
 -- =====================================================
@@ -670,19 +723,37 @@ INSERT INTO config_settings (config_type, key, value, value_type, description, i
 ON CONFLICT (config_type, key) DO NOTHING;
 
 -- Chain Configuration
+-- Chains are managed via Settings > Chains Tab and stored in database
+-- Monad supported by DexScreener since November 2025
 INSERT INTO config_settings (config_type, key, value, value_type, description, is_editable, requires_restart) VALUES
-('chain', 'enabled_chains', 'ethereum,bsc,base,arbitrum,solana', 'string', 'Comma-separated list of enabled chains', TRUE, TRUE),
+('chain', 'enabled_chains', 'ethereum,bsc,base,solana,monad,pulsechain', 'string', 'Comma-separated list of enabled chains', TRUE, TRUE),
 ('chain', 'default_chain', 'ethereum', 'string', 'Default blockchain network', TRUE, FALSE),
+('chain', 'max_pairs_per_chain', '50', 'int', 'Maximum trading pairs per chain', TRUE, FALSE),
+('chain', 'discovery_interval_seconds', '300', 'int', 'Interval between chain discovery scans', TRUE, FALSE),
+-- Chain enabled flags
 ('chain', 'ethereum_enabled', 'true', 'bool', 'Enable Ethereum trading', TRUE, TRUE),
 ('chain', 'bsc_enabled', 'true', 'bool', 'Enable BSC trading', TRUE, TRUE),
 ('chain', 'base_enabled', 'true', 'bool', 'Enable Base trading', TRUE, TRUE),
-('chain', 'arbitrum_enabled', 'true', 'bool', 'Enable Arbitrum trading', TRUE, TRUE),
+('chain', 'arbitrum_enabled', 'false', 'bool', 'Enable Arbitrum trading (low activity)', TRUE, TRUE),
+('chain', 'polygon_enabled', 'false', 'bool', 'Enable Polygon trading', TRUE, TRUE),
 ('chain', 'solana_enabled', 'true', 'bool', 'Enable Solana trading', TRUE, TRUE),
+('chain', 'monad_enabled', 'true', 'bool', 'Enable Monad trading (DexScreener Nov 2025)', TRUE, TRUE),
+('chain', 'pulsechain_enabled', 'true', 'bool', 'Enable PulseChain trading', TRUE, TRUE),
+('chain', 'fantom_enabled', 'false', 'bool', 'Enable Fantom trading', TRUE, TRUE),
+('chain', 'cronos_enabled', 'false', 'bool', 'Enable Cronos trading', TRUE, TRUE),
+('chain', 'avalanche_enabled', 'false', 'bool', 'Enable Avalanche trading', TRUE, TRUE),
+-- Chain minimum liquidity thresholds (USD)
 ('chain', 'ethereum_min_liquidity', '3000', 'int', 'Minimum liquidity for Ethereum pairs', TRUE, FALSE),
 ('chain', 'bsc_min_liquidity', '500', 'int', 'Minimum liquidity for BSC pairs', TRUE, FALSE),
 ('chain', 'base_min_liquidity', '2000', 'int', 'Minimum liquidity for Base pairs', TRUE, FALSE),
 ('chain', 'arbitrum_min_liquidity', '2500', 'int', 'Minimum liquidity for Arbitrum pairs', TRUE, FALSE),
-('chain', 'solana_min_liquidity', '2000', 'int', 'Minimum liquidity for Solana pairs', TRUE, FALSE)
+('chain', 'polygon_min_liquidity', '500', 'int', 'Minimum liquidity for Polygon pairs', TRUE, FALSE),
+('chain', 'solana_min_liquidity', '2000', 'int', 'Minimum liquidity for Solana pairs', TRUE, FALSE),
+('chain', 'monad_min_liquidity', '2000', 'int', 'Minimum liquidity for Monad pairs', TRUE, FALSE),
+('chain', 'pulsechain_min_liquidity', '1000', 'int', 'Minimum liquidity for PulseChain pairs', TRUE, FALSE),
+('chain', 'fantom_min_liquidity', '500', 'int', 'Minimum liquidity for Fantom pairs', TRUE, FALSE),
+('chain', 'cronos_min_liquidity', '500', 'int', 'Minimum liquidity for Cronos pairs', TRUE, FALSE),
+('chain', 'avalanche_min_liquidity', '1000', 'int', 'Minimum liquidity for Avalanche pairs', TRUE, FALSE)
 ON CONFLICT (config_type, key) DO NOTHING;
 
 -- Position Management Configuration

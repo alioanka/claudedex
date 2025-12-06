@@ -174,7 +174,12 @@ class DexTradingModule(BaseModule):
 
             # Validate opportunity is for DEX trading
             chain = opportunity.get('chain', '').lower()
-            if chain not in ['solana', 'ethereum', 'polygon', 'bsc', 'arbitrum', 'base']:
+            # Check against supported chains from config, or use defaults
+            supported_chains = self.config.custom_settings.get(
+                'supported_chains',
+                ['solana', 'ethereum', 'polygon', 'bsc', 'arbitrum', 'base', 'monad', 'pulsechain']
+            )
+            if chain not in supported_chains:
                 return None
 
             # Check if we have capital available
@@ -212,9 +217,14 @@ class DexTradingModule(BaseModule):
             all_positions = self.position_tracker.get_open_positions()
 
             dex_positions = []
+            # Get supported chains from config
+            supported_chains = self.config.custom_settings.get(
+                'supported_chains',
+                ['solana', 'ethereum', 'polygon', 'bsc', 'arbitrum', 'base', 'monad', 'pulsechain']
+            )
             for pos in all_positions:
                 chain = pos.chain.lower()
-                if chain in ['solana', 'ethereum', 'polygon', 'bsc', 'arbitrum', 'base']:
+                if chain in supported_chains:
                     dex_positions.append({
                         'id': pos.id,
                         'token_address': pos.token_address,
@@ -289,10 +299,19 @@ class DexTradingModule(BaseModule):
             if not self.db:
                 return []
 
+            # Get supported chains from config
+            supported_chains = self.config.custom_settings.get(
+                'supported_chains',
+                ['solana', 'ethereum', 'polygon', 'bsc', 'arbitrum', 'base', 'monad', 'pulsechain']
+            )
+
+            # Build chain list for SQL
+            chain_placeholders = ', '.join([f"'{c}'" for c in supported_chains])
+
             # Query trades for DEX chains
-            query = """
+            query = f"""
                 SELECT * FROM trades
-                WHERE chain IN ('solana', 'ethereum', 'polygon', 'bsc', 'arbitrum', 'base')
+                WHERE chain IN ({chain_placeholders})
                 ORDER BY entry_timestamp DESC
                 LIMIT 1000
             """
@@ -338,8 +357,11 @@ class DexTradingModule(BaseModule):
             self.logger.error(f"Error setting up DEX settings: {e}")
 
     async def get_supported_chains(self) -> List[str]:
-        """Get list of supported chains for DEX trading"""
-        return ['solana', 'ethereum', 'polygon', 'bsc', 'arbitrum', 'base']
+        """Get list of supported chains for DEX trading from config"""
+        return self.config.custom_settings.get(
+            'supported_chains',
+            ['solana', 'ethereum', 'polygon', 'bsc', 'arbitrum', 'base', 'monad', 'pulsechain']
+        )
 
     async def get_supported_dexs(self) -> List[str]:
         """Get list of supported DEXs"""
@@ -347,12 +369,16 @@ class DexTradingModule(BaseModule):
 
     def get_module_info(self) -> Dict:
         """Get detailed module information"""
+        supported_chains = self.config.custom_settings.get(
+            'supported_chains',
+            ['solana', 'ethereum', 'polygon', 'bsc', 'arbitrum', 'base', 'monad', 'pulsechain']
+        )
         return {
             'name': self.name,
             'type': self.module_type.value,
             'version': '1.0.0',
             'description': 'DEX spot trading module',
-            'supported_chains': ['solana', 'ethereum', 'polygon', 'bsc', 'arbitrum', 'base'],
+            'supported_chains': supported_chains,
             'supported_dexs': self.supported_dexs,
             'strategies': self.config.strategies,
             'features': [

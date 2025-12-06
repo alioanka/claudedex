@@ -734,9 +734,18 @@ async function updateEquityCurve(data) {
             equityData.push(10000);
         }
     } else {
+        // Get SOL price for normalizing Solana trades to USD
+        const solPrice = parseFloat(String(solanaStats?.sol_price || '200').replace(/[^0-9.]/g, '')) || 200;
+
         // Calculate cumulative equity from trades
         allTrades.forEach((trade, i) => {
-            const pnl = parseFloat(trade.pnl || trade.net_pnl || 0);
+            let pnl = parseFloat(trade.pnl || trade.net_pnl || 0);
+
+            // Normalize Solana PnL from SOL to USD for consistent equity curve
+            if (trade.module === 'solana') {
+                pnl = pnl * solPrice;
+            }
+
             equity += pnl;
             const timestamp = trade.time || trade.closed_at;
             const label = timestamp ? new Date(timestamp).toLocaleDateString() : `Trade ${i+1}`;

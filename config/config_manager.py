@@ -188,23 +188,61 @@ class StrategiesConfig(BaseModel):
         }
 
 class ChainConfig(BaseModel):
-    enabled_chains: str = "ethereum,bsc,base,arbitrum,solana"
+    enabled_chains: str = "ethereum,bsc,base,solana,monad,pulsechain"
     default_chain: str = "ethereum"
     max_pairs_per_chain: int = 50
     discovery_interval_seconds: int = 300
     chain_id: int = 1
+    # Chain enabled flags
     ethereum_enabled: bool = True
     bsc_enabled: bool = True
     base_enabled: bool = True
-    arbitrum_enabled: bool = True
+    arbitrum_enabled: bool = False  # Low activity
     polygon_enabled: bool = False
     solana_enabled: bool = True
+    monad_enabled: bool = True       # Monad - supported by DexScreener Nov 2025
+    pulsechain_enabled: bool = True
+    fantom_enabled: bool = False
+    cronos_enabled: bool = False
+    avalanche_enabled: bool = False
+    # Chain minimum liquidity thresholds (USD)
     ethereum_min_liquidity: int = 3000
     bsc_min_liquidity: int = 500
     base_min_liquidity: int = 2000
     arbitrum_min_liquidity: int = 3000
     polygon_min_liquidity: int = 500
     solana_min_liquidity: int = 2000
+    monad_min_liquidity: int = 2000
+    pulsechain_min_liquidity: int = 1000
+    fantom_min_liquidity: int = 500
+    cronos_min_liquidity: int = 500
+    avalanche_min_liquidity: int = 1000
+
+    def get_enabled_chains_list(self) -> list:
+        """Get list of enabled chains from the enabled_chains string"""
+        if not self.enabled_chains:
+            return []
+        return [c.strip().lower() for c in self.enabled_chains.split(',') if c.strip()]
+
+    def is_chain_enabled(self, chain: str) -> bool:
+        """Check if a specific chain is enabled"""
+        chain_lower = chain.lower()
+        # First check enabled_chains string
+        if chain_lower in self.get_enabled_chains_list():
+            # Then check individual flag if exists
+            flag_name = f"{chain_lower}_enabled"
+            if hasattr(self, flag_name):
+                return getattr(self, flag_name)
+            return True
+        return False
+
+    def get_chain_min_liquidity(self, chain: str) -> int:
+        """Get minimum liquidity threshold for a chain"""
+        chain_lower = chain.lower()
+        attr_name = f"{chain_lower}_min_liquidity"
+        if hasattr(self, attr_name):
+            return getattr(self, attr_name)
+        return 1000  # Default minimum liquidity
 
 class PositionManagementConfig(BaseModel):
     default_stop_loss_percent: int = 12

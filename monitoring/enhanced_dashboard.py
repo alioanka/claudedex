@@ -365,6 +365,8 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/solana/trades', self.api_get_solana_trades)
         self.app.router.add_post('/api/solana/close-position', self.api_solana_close_position)
         self.app.router.add_post('/api/solana/close-all-positions', self.api_solana_close_all_positions)
+        self.app.router.add_get('/api/solana/trading/status', self.api_solana_trading_status)
+        self.app.router.add_post('/api/solana/trading/unblock', self.api_solana_trading_unblock)
 
         # API - Sensitive Configuration (Admin only)
         self.app.router.add_get('/api/settings/sensitive/list', require_auth(require_admin(self.api_list_sensitive_configs)))
@@ -587,14 +589,22 @@ class DashboardEndpoints:
         futures_health_data = {}
         solana_health_data = {}
 
+        # Initialize metrics dictionaries BEFORE fetching stats
+        dex_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
+        futures_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
+        solana_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
+
         try:
             futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+            logger.info(f"Checking Futures module health at port {futures_port}...")
             async with aiohttp.ClientSession() as session:
-                async with session.get(f'http://localhost:{futures_port}/health', timeout=2) as resp:
+                async with session.get(f'http://localhost:{futures_port}/health', timeout=5) as resp:
                     if resp.status == 200:
                         futures_running = True
                         futures_health_data = await resp.json()
-                        logger.info(f"Futures module is running: {futures_health_data}")
+                        logger.info(f"✅ Futures module IS RUNNING: {futures_health_data}")
+                    else:
+                        logger.warning(f"Futures health check returned status {resp.status}")
 
                 # Also fetch stats to get metrics
                 if futures_running:
@@ -620,19 +630,48 @@ class DashboardEndpoints:
 
         try:
             solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
+            logger.info(f"Checking Solana module health at port {solana_port}...")
             async with aiohttp.ClientSession() as session:
-                async with session.get(f'http://localhost:{solana_port}/health', timeout=2) as resp:
+                async with session.get(f'http://localhost:{solana_port}/health', timeout=5) as resp:
                     if resp.status == 200:
                         solana_running = True
                         solana_health_data = await resp.json()
-                        logger.info(f"Solana module is running: {solana_health_data}")
+                        logger.info(f"✅ Solana module IS RUNNING: {solana_health_data}")
+                    else:
+                        logger.warning(f"Solana health check returned status {resp.status}")
+
+                # Also fetch stats to get metrics (same as Futures)
+                if solana_running:
+                    async with session.get(f'http://localhost:{solana_port}/stats', timeout=5) as resp:
+                        if resp.status == 200:
+                            stats_data = await resp.json()
+                            stats = stats_data.get('stats', stats_data)
+                            solana_metrics['total_trades'] = stats.get('total_trades', 0)
+                            solana_metrics['positions'] = stats.get('active_positions', 0)
+                            # Parse PnL which may be a string like "0.2881 SOL" or a number
+                            # Solana returns 'total_pnl' formatted as "X.XXXX SOL"
+                            net_pnl = stats.get('total_pnl', stats.get('net_pnl', stats.get('total_pnl_sol', 0)))
+                            if isinstance(net_pnl, str):
+                                # Handle formats like "0.2881 SOL" or "$0.00"
+                                net_pnl = float(net_pnl.replace('$', '').replace(',', '').replace('SOL', '').strip())
+                            solana_metrics['pnl'] = net_pnl
+                            # Parse win rate which may be a string like "66.7%"
+                            win_rate = stats.get('win_rate', '0%')
+                            if isinstance(win_rate, str):
+                                win_rate = float(win_rate.replace('%', ''))
+                            solana_metrics['win_rate'] = win_rate
+                            logger.info(f"Solana metrics from stats: {solana_metrics}")
         except Exception as e:
             logger.debug(f"Solana module not reachable: {e}")
 
-        # Get metrics from database
+        # Initialize metrics dictionaries ONLY if not already populated from /stats endpoints
         dex_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
-        futures_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
-        solana_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
+        # futures_metrics was already set above from /stats endpoint if futures is running
+        if not futures_running:
+            futures_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
+        # solana_metrics was already set above from /stats endpoint if solana is running
+        if not solana_running:
+            solana_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
 
         # Count positions by chain FROM ENGINE (same source as Open Positions API)
         if self.engine and hasattr(self.engine, 'active_positions') and self.engine.active_positions:
@@ -1196,54 +1235,95 @@ class DashboardEndpoints:
                     'win_rate': '0%'
                 }
 
-            # Fetch Solana trades from log file for trade log display
+            # Fetch Solana trades from database (preferred) or log file (fallback)
             try:
                 from pathlib import Path
                 import json
-                trade_log_path = Path('logs/solana/solana_trades.log')
                 solana_trades = []
 
-                if trade_log_path.exists():
-                    with open(trade_log_path, 'r') as f:
-                        for line in f:
-                            try:
-                                if ' - {' in line:
-                                    json_str = line.split(' - ', 1)[1].strip()
-                                    trade = json.loads(json_str)
-                                    # Only include CLOSE trades for the trade log
-                                    if trade.get('type') == 'CLOSE':
-                                        solana_trades.append({
-                                            'trade_id': trade.get('trade_id', ''),
-                                            'symbol': trade.get('token', 'UNKNOWN'),
-                                            'token_symbol': trade.get('token', 'UNKNOWN'),
-                                            'side': trade.get('side', 'SELL'),
-                                            'entry_price': trade.get('entry_price', 0),
-                                            'exit_price': trade.get('exit_price', 0),
-                                            'size': trade.get('amount_sol', 0),
-                                            'amount': trade.get('amount_sol', 0),
-                                            'pnl': trade.get('pnl_sol', 0),
-                                            'net_pnl': trade.get('pnl_sol', 0),
-                                            'pnl_pct': trade.get('pnl_pct', 0),
-                                            'time': trade.get('timestamp', ''),
-                                            'closed_at': trade.get('timestamp', ''),
-                                            'exit_reason': trade.get('reason', ''),
-                                            'close_reason': trade.get('reason', ''),
-                                            'is_simulated': trade.get('mode') == 'DRY_RUN',
-                                            'module': 'solana',
-                                            'strategy': trade.get('strategy', 'unknown')
-                                        })
-                            except (json.JSONDecodeError, IndexError):
-                                continue
+                # Try database first (persisted across restarts)
+                if self.db and self.db.pool:
+                    try:
+                        async with self.db.pool.acquire() as conn:
+                            rows = await conn.fetch("""
+                                SELECT
+                                    trade_id, token_symbol, token_mint, strategy,
+                                    entry_price, exit_price, amount_sol, pnl_sol, pnl_usd,
+                                    pnl_pct, fees_sol, exit_reason, entry_time, exit_time,
+                                    is_simulated
+                                FROM solana_trades
+                                ORDER BY exit_time DESC
+                                LIMIT 100
+                            """)
+                            for row in rows:
+                                solana_trades.append({
+                                    'trade_id': row['trade_id'],
+                                    'symbol': row['token_symbol'],
+                                    'token_symbol': row['token_symbol'],
+                                    'side': 'SELL',
+                                    'entry_price': float(row['entry_price']),
+                                    'exit_price': float(row['exit_price']),
+                                    'size': float(row['amount_sol']),
+                                    'amount': float(row['amount_sol']),
+                                    'pnl': float(row['pnl_sol']),
+                                    'net_pnl': float(row['pnl_sol']),
+                                    'pnl_pct': float(row['pnl_pct']),
+                                    'time': row['exit_time'].isoformat() if row['exit_time'] else '',
+                                    'closed_at': row['exit_time'].isoformat() if row['exit_time'] else '',
+                                    'exit_reason': row['exit_reason'],
+                                    'close_reason': row['exit_reason'],
+                                    'is_simulated': row['is_simulated'],
+                                    'module': 'solana',
+                                    'strategy': row['strategy']
+                                })
+                            if solana_trades:
+                                logger.debug(f"Loaded {len(solana_trades)} Solana trades from DB for simulator")
+                    except Exception as db_error:
+                        logger.debug(f"Could not fetch from solana_trades table: {db_error}")
 
-                    # Most recent first, limit to 100
-                    solana_trades = list(reversed(solana_trades[-100:]))
+                # Fallback to log file if database is empty
+                if not solana_trades:
+                    trade_log_path = Path('logs/solana/solana_trades.log')
+                    if trade_log_path.exists():
+                        with open(trade_log_path, 'r') as f:
+                            for line in f:
+                                try:
+                                    if ' - {' in line:
+                                        json_str = line.split(' - ', 1)[1].strip()
+                                        trade = json.loads(json_str)
+                                        # Only include CLOSE trades for the trade log
+                                        if trade.get('type') == 'CLOSE':
+                                            solana_trades.append({
+                                                'trade_id': trade.get('trade_id', ''),
+                                                'symbol': trade.get('token', 'UNKNOWN'),
+                                                'token_symbol': trade.get('token', 'UNKNOWN'),
+                                                'side': trade.get('side', 'SELL'),
+                                                'entry_price': trade.get('entry_price', 0),
+                                                'exit_price': trade.get('exit_price', 0),
+                                                'size': trade.get('amount_sol', 0),
+                                                'amount': trade.get('amount_sol', 0),
+                                                'pnl': trade.get('pnl_sol', 0),
+                                                'net_pnl': trade.get('pnl_sol', 0),
+                                                'pnl_pct': trade.get('pnl_pct', 0),
+                                                'time': trade.get('timestamp', ''),
+                                                'closed_at': trade.get('timestamp', ''),
+                                                'exit_reason': trade.get('reason', ''),
+                                                'close_reason': trade.get('reason', ''),
+                                                'is_simulated': trade.get('mode') == 'DRY_RUN',
+                                                'module': 'solana',
+                                                'strategy': trade.get('strategy', 'unknown')
+                                            })
+                                except (json.JSONDecodeError, IndexError):
+                                    continue
+                        # Most recent first, limit to 100
+                        solana_trades = list(reversed(solana_trades[-100:]))
 
                 # Ensure solana data exists and add trades
                 if simulator_data['solana'] is None:
                     simulator_data['solana'] = {}
                 simulator_data['solana']['trades'] = solana_trades
             except Exception as e:
-                logger.debug(f"Could not fetch solana trades from log: {e}")
+                logger.debug(f"Could not fetch solana trades: {e}")
                 if simulator_data['solana'] is None:
                     simulator_data['solana'] = {}
                 simulator_data['solana']['trades'] = []
@@ -3193,9 +3273,12 @@ class DashboardEndpoints:
 
             # --- FIX ENDS HERE ---
 
-            # Strategy Performance
+            # Strategy Performance (for the selected timeframe)
             strategy_performance = df.groupby('strategy')['profit_loss'].sum().reset_index()
             strategy_performance.columns = ['strategy', 'pnl']
+            # Add trade count per strategy for context
+            strategy_counts = df.groupby('strategy').size().reset_index(name='trade_count')
+            strategy_performance = strategy_performance.merge(strategy_counts, on='strategy', how='left')
 
             # Win/Loss Distribution
             win_loss_distribution = {
@@ -4049,9 +4132,61 @@ class DashboardEndpoints:
             return web.json_response({'success': False, 'positions': [], 'error': str(e)})
 
     async def api_get_solana_trades(self, request):
-        """Fetch trades from Solana trade log file"""
+        """Fetch trades from database first, with fallback to log file"""
         try:
             trades = []
+            limit = int(request.query.get('limit', 100))
+
+            # Try to fetch from database first (persisted across restarts)
+            if self.db_pool:
+                try:
+                    async with self.db_pool.acquire() as conn:
+                        rows = await conn.fetch("""
+                            SELECT
+                                trade_id, token_symbol, token_mint, strategy,
+                                entry_price, exit_price, amount_sol, pnl_sol, pnl_usd,
+                                pnl_pct, fees_sol, exit_reason, entry_time, exit_time,
+                                duration_seconds, is_simulated, sol_price_usd
+                            FROM solana_trades
+                            ORDER BY exit_time DESC
+                            LIMIT $1
+                        """, limit)
+
+                        for row in rows:
+                            trades.append({
+                                'trade_id': row['trade_id'],
+                                'token': row['token_symbol'],
+                                'token_symbol': row['token_symbol'],
+                                'token_mint': row['token_mint'],
+                                'strategy': row['strategy'],
+                                'type': 'CLOSE',
+                                'side': 'SELL',
+                                'entry_price': float(row['entry_price']),
+                                'exit_price': float(row['exit_price']),
+                                'amount_sol': float(row['amount_sol']),
+                                'pnl_sol': float(row['pnl_sol']),
+                                'pnl_usd': float(row['pnl_usd']) if row['pnl_usd'] else 0,
+                                'pnl_pct': float(row['pnl_pct']),
+                                'fees_sol': float(row['fees_sol']) if row['fees_sol'] else 0,
+                                'reason': row['exit_reason'],
+                                'exit_reason': row['exit_reason'],
+                                'close_reason': row['exit_reason'],
+                                'timestamp': row['exit_time'].isoformat() if row['exit_time'] else '',
+                                'closed_at': row['exit_time'].isoformat() if row['exit_time'] else '',
+                                'entry_time': row['entry_time'].isoformat() if row['entry_time'] else '',
+                                'duration_seconds': row['duration_seconds'],
+                                'is_simulated': row['is_simulated'],
+                                'mode': 'DRY_RUN' if row['is_simulated'] else 'LIVE',
+                                'module': 'solana'
+                            })
+
+                        if trades:
+                            logger.debug(f"Loaded {len(trades)} Solana trades from database")
+                            return web.json_response({'success': True, 'trades': trades, 'source': 'database'})
+                except Exception as db_error:
+                    logger.warning(f"Could not fetch from solana_trades table: {db_error}")
+
+            # Fallback to log file if database is empty or unavailable
             trade_log_path = Path('logs/solana/solana_trades.log')
 
             if trade_log_path.exists():
@@ -4068,9 +4203,9 @@ class DashboardEndpoints:
                             continue
 
                 # Return most recent trades first
-                trades = list(reversed(trades[-100:]))  # Last 100 trades
+                trades = list(reversed(trades[-limit:]))
 
-            return web.json_response({'success': True, 'trades': trades})
+            return web.json_response({'success': True, 'trades': trades, 'source': 'log_file'})
         except Exception as e:
             logger.error(f"Error fetching solana trades: {e}")
             return web.json_response({'success': False, 'trades': [], 'error': str(e)})
@@ -4116,6 +4251,49 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Error closing all solana positions: {e}")
             return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def api_solana_trading_status(self, request):
+        """Get Solana trading status including block status"""
+        try:
+            solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{solana_port}/trading/status', timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return web.json_response(data)
+                    else:
+                        return web.json_response({
+                            'success': False,
+                            'error': f'Solana module returned status {resp.status}'
+                        }, status=resp.status)
+        except Exception as e:
+            logger.error(f"Error fetching solana trading status: {e}")
+            return web.json_response({
+                'success': False,
+                'error': f'Solana module not available: {str(e)}'
+            }, status=503)
+
+    async def api_solana_trading_unblock(self, request):
+        """Unblock Solana trading by resetting daily loss/consecutive losses"""
+        try:
+            solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
+            data = await request.json() if request.content_length else {}
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f'http://localhost:{solana_port}/trading/unblock',
+                    json=data,
+                    timeout=5
+                ) as resp:
+                    result = await resp.json()
+                    return web.json_response(result, status=resp.status)
+
+        except Exception as e:
+            logger.error(f"Error unblocking solana trading: {e}")
+            return web.json_response({
+                'success': False,
+                'error': f'Solana module not available: {str(e)}'
+            }, status=503)
 
     async def api_list_sensitive_configs(self, request):
         """List all sensitive configuration keys (admin only)"""

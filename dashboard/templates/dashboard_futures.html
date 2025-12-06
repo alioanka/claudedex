@@ -351,6 +351,172 @@
         --text-tertiary: #9ca3af;
         --metric-bg: #111827;
     }
+
+    /* Trading Status Card Styles */
+    .block-status-container {
+        padding: 0;
+    }
+
+    .block-status-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px;
+        border-radius: 8px;
+        margin-bottom: 16px;
+    }
+
+    .block-status-header.can-trade {
+        background: rgba(16, 185, 129, 0.1);
+        border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .block-status-header.blocked {
+        background: rgba(239, 68, 68, 0.1);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    .status-indicator {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .status-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+    }
+
+    .status-icon.success {
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
+    }
+
+    .status-icon.danger {
+        background: rgba(239, 68, 68, 0.2);
+        color: #ef4444;
+    }
+
+    .status-label {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+    }
+
+    .status-value {
+        font-size: 1rem;
+        font-weight: 600;
+    }
+
+    .status-value.success {
+        color: #10b981;
+    }
+
+    .status-value.danger {
+        color: #ef4444;
+    }
+
+    .reset-block-btn {
+        padding: 8px 16px;
+        border-radius: 6px;
+        border: none;
+        background: rgba(239, 68, 68, 0.2);
+        color: #ef4444;
+        cursor: pointer;
+        font-weight: 500;
+        transition: all 0.2s;
+    }
+
+    .reset-block-btn:hover {
+        background: rgba(239, 68, 68, 0.3);
+    }
+
+    .block-reasons {
+        background: rgba(239, 68, 68, 0.05);
+        border: 1px solid rgba(239, 68, 68, 0.2);
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 16px;
+    }
+
+    .block-reasons-title {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #ef4444;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .block-reasons-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    .block-reasons-list li {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.85rem;
+        color: var(--text-primary);
+        padding: 4px 0;
+    }
+
+    .block-details {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+    }
+
+    @media (max-width: 768px) {
+        .block-details {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+
+    .block-detail-item {
+        background: var(--metric-bg);
+        padding: 12px;
+        border-radius: 8px;
+        text-align: center;
+    }
+
+    .block-detail-label {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        display: block;
+        margin-bottom: 4px;
+    }
+
+    .block-detail-value {
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .block-duration-box {
+        background: rgba(245, 158, 11, 0.1);
+        border: 1px solid rgba(245, 158, 11, 0.3);
+        border-radius: 8px;
+        padding: 12px;
+        margin-top: 16px;
+    }
+
+    .block-duration-title {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #f59e0b;
+        margin-bottom: 4px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
 </style>
 {% endblock %}
 
@@ -431,6 +597,24 @@
             <div class="stat-label">Win Rate</div>
             <div class="stat-value" id="stat-winrate">0%</div>
             <div class="stat-change" id="stat-winloss">0 wins / 0 losses</div>
+        </div>
+    </div>
+
+    <!-- Trading Status Card -->
+    <div class="section-card">
+        <div class="section-header">
+            <div class="section-title" style="margin-bottom: 0;">
+                <i class="fas fa-shield-alt"></i>
+                Trading Status
+            </div>
+            <button class="btn btn-sm btn-secondary" onclick="refreshTradingStatus()">
+                <i class="fas fa-sync"></i> Refresh
+            </button>
+        </div>
+        <div id="tradingStatusContent">
+            <div class="text-center text-muted">
+                <i class="fas fa-spinner fa-spin"></i> Loading status...
+            </div>
         </div>
     </div>
 
@@ -557,7 +741,7 @@ const pnlChart = new Chart(ctx, {
 // Fetch futures data from API
 async function loadFuturesData() {
     try {
-        // Fetch stats from simulator data
+        // Fetch stats from simulator data for mode/network and live positions
         const statsResponse = await fetch('/api/simulator/data');
         if (statsResponse.ok) {
             const data = await statsResponse.json();
@@ -577,6 +761,15 @@ async function loadFuturesData() {
             }
         }
 
+        // Fetch historical trades and update stats from actual trade history
+        const tradesResponse = await fetch('/api/futures/trades?limit=1000');
+        if (tradesResponse.ok) {
+            const tradesData = await tradesResponse.json();
+            if (tradesData.success && tradesData.trades) {
+                updateStatsFromTrades(tradesData.trades);
+            }
+        }
+
         // Check trading status (blocked/unblocked)
         await checkTradingStatus();
 
@@ -585,6 +778,33 @@ async function loadFuturesData() {
     } catch (error) {
         console.error('Error loading futures data:', error);
     }
+}
+
+// Calculate stats from historical trades (more accurate than session-based)
+function updateStatsFromTrades(trades) {
+    if (!trades || trades.length === 0) return;
+
+    let totalPnl = 0;
+    let wins = 0;
+    let losses = 0;
+
+    trades.forEach(trade => {
+        const pnl = parseFloat(trade.pnl || 0);
+        totalPnl += pnl;
+        if (pnl > 0) wins++;
+        else if (pnl < 0) losses++;
+    });
+
+    // Update Total P&L from historical trades
+    const pnlEl = document.getElementById('stat-pnl');
+    pnlEl.textContent = `$${totalPnl.toFixed(2)}`;
+    pnlEl.className = 'stat-value ' + (totalPnl >= 0 ? 'positive' : 'negative');
+
+    // Update Win Rate from historical trades
+    const totalTrades = wins + losses;
+    const winRate = totalTrades > 0 ? ((wins / totalTrades) * 100).toFixed(1) : 0;
+    document.getElementById('stat-winrate').textContent = `${winRate}%`;
+    document.getElementById('stat-winloss').textContent = `${wins} wins / ${losses} losses`;
 }
 
 // Load and update Performance History chart
@@ -953,14 +1173,188 @@ async function closeAllPositions() {
     }
 }
 
+// Trading Status Card Functions
+async function loadTradingStatus() {
+    try {
+        const response = await fetch('/api/futures/trading/status');
+        if (!response.ok) {
+            document.getElementById('tradingStatusContent').innerHTML = `
+                <div class="text-center text-muted">
+                    <i class="fas fa-info-circle"></i> Trading status unavailable
+                </div>
+            `;
+            return;
+        }
+
+        const data = await response.json();
+        if (data.success) {
+            renderTradingStatus(data);
+        } else {
+            document.getElementById('tradingStatusContent').innerHTML = `
+                <div class="text-center text-danger">
+                    <i class="fas fa-exclamation-triangle"></i> ${data.error || 'Failed to load status'}
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('Error loading trading status:', error);
+        document.getElementById('tradingStatusContent').innerHTML = `
+            <div class="text-center text-muted">
+                <i class="fas fa-info-circle"></i> Futures module not reachable
+            </div>
+        `;
+    }
+}
+
+function renderTradingStatus(data) {
+    const container = document.getElementById('tradingStatusContent');
+    const canTrade = !data.trading_blocked;
+    const reasons = data.block_reasons || [];
+
+    let html = '<div class="block-status-container">';
+
+    // Status Header
+    html += `
+        <div class="block-status-header ${canTrade ? 'can-trade' : 'blocked'}">
+            <div class="status-indicator">
+                <div class="status-icon ${canTrade ? 'success' : 'danger'}">
+                    <i class="fas fa-${canTrade ? 'check' : 'ban'}"></i>
+                </div>
+                <div class="status-text">
+                    <span class="status-label">Trading Status</span>
+                    <span class="status-value ${canTrade ? 'success' : 'danger'}">
+                        ${canTrade ? 'Active - Can Trade' : 'Blocked - Cannot Trade'}
+                    </span>
+                </div>
+            </div>
+            ${!canTrade ? `
+                <button class="reset-block-btn" onclick="resetFuturesTradingBlock()">
+                    <i class="fas fa-unlock"></i>
+                    Reset Block
+                </button>
+            ` : ''}
+        </div>
+    `;
+
+    // Block Reasons (if blocked)
+    if (!canTrade && reasons.length > 0) {
+        html += `
+            <div class="block-reasons">
+                <div class="block-reasons-title">
+                    <i class="fas fa-exclamation-circle"></i>
+                    Blocking Reasons
+                </div>
+                <ul class="block-reasons-list">
+                    ${reasons.map(reason => `
+                        <li>
+                            <i class="fas fa-times-circle"></i>
+                            ${reason}
+                        </li>
+                    `).join('')}
+                </ul>
+            </div>
+        `;
+    }
+
+    // Details Grid
+    html += `
+        <div class="block-details">
+            <div class="block-detail-item">
+                <span class="block-detail-label">Capital</span>
+                <span class="block-detail-value">$${(data.capital || 0).toFixed(2)}</span>
+            </div>
+            <div class="block-detail-item">
+                <span class="block-detail-label">Daily P&L</span>
+                <span class="block-detail-value ${(data.daily_pnl || 0) >= 0 ? 'positive' : 'negative'}">$${(data.daily_pnl || 0).toFixed(2)}</span>
+            </div>
+            <div class="block-detail-item">
+                <span class="block-detail-label">Daily Loss Limit</span>
+                <span class="block-detail-value">$${(data.daily_loss_limit || 0).toFixed(2)}</span>
+            </div>
+            <div class="block-detail-item">
+                <span class="block-detail-label">Positions</span>
+                <span class="block-detail-value">${data.active_positions || 0} / ${data.max_positions || 10}</span>
+            </div>
+            <div class="block-detail-item">
+                <span class="block-detail-label">Consecutive Losses</span>
+                <span class="block-detail-value ${(data.consecutive_losses || 0) >= 4 ? 'text-danger' : ''}">${data.consecutive_losses || 0}</span>
+            </div>
+            <div class="block-detail-item">
+                <span class="block-detail-label">Max Consecutive</span>
+                <span class="block-detail-value">${data.max_consecutive_losses || 5}</span>
+            </div>
+            <div class="block-detail-item">
+                <span class="block-detail-label">Leverage</span>
+                <span class="block-detail-value">${data.leverage || 1}x</span>
+            </div>
+            <div class="block-detail-item">
+                <span class="block-detail-label">Mode</span>
+                <span class="block-detail-value">${data.mode || 'Unknown'}</span>
+            </div>
+        </div>
+    `;
+
+    // Block duration if applicable
+    if (data.block_duration_hours && data.block_duration_hours > 0) {
+        html += `
+            <div class="block-duration-box">
+                <div class="block-duration-title">
+                    <i class="fas fa-clock"></i>
+                    Block Duration
+                </div>
+                <p style="margin: 0; color: var(--text-primary);">
+                    Trading blocked for <strong>${data.block_duration_hours.toFixed(1)} hours</strong>
+                    ${data.blocked_since ? `(since ${new Date(data.blocked_since).toLocaleTimeString()})` : ''}
+                </p>
+            </div>
+        `;
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function refreshTradingStatus() {
+    const content = document.getElementById('tradingStatusContent');
+    content.innerHTML = '<div class="text-center text-muted"><i class="fas fa-spinner fa-spin"></i> Refreshing...</div>';
+    loadTradingStatus();
+}
+
+async function resetFuturesTradingBlock() {
+    if (!confirm('Reset trading block and allow new trades?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/futures/trading/unblock', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reset_type: 'all' })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            alert('Trading block reset successfully!');
+            loadTradingStatus();
+            loadFuturesData();
+        } else {
+            alert('Error: ' + (data.error || 'Failed to reset block'));
+        }
+    } catch (error) {
+        alert('Failed to reset block: ' + error.message);
+    }
+}
+
 // Load data on page load
 loadFuturesData();
 loadRecentTrades();
+loadTradingStatus();
 
 // Auto-refresh every 10 seconds
 setInterval(() => {
     loadFuturesData();
     loadRecentTrades();
+    loadTradingStatus();
 }, 10000);
 </script>
 {% endblock %}

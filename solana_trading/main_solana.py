@@ -98,6 +98,8 @@ class HealthServer:
         self.web_app.router.add_get('/ready', self.ready_handler)
         self.web_app.router.add_get('/metrics', self.metrics_handler)
         self.web_app.router.add_get('/stats', self.stats_handler)
+        self.web_app.router.add_get('/trading/status', self.trading_status_handler)
+        self.web_app.router.add_post('/trading/unblock', self.trading_unblock_handler)
         self.web_app.router.add_post('/close-position', self.close_position_handler)
         self.web_app.router.add_post('/close-all-positions', self.close_all_positions_handler)
 
@@ -165,6 +167,108 @@ class HealthServer:
                 'timestamp': datetime.now().isoformat()
             })
         return web.json_response({'error': 'Engine not initialized'}, status=503)
+
+    async def trading_status_handler(self, request):
+        """Get trading status including block status for dashboard"""
+        try:
+            if not self.app.engine:
+                return web.json_response({
+                    'success': False,
+                    'error': 'Engine not initialized'
+                }, status=503)
+
+            health = await self.app.engine.get_health()
+            risk_metrics = self.app.engine.risk_metrics
+
+            # Determine block reasons
+            block_reasons = []
+            if risk_metrics.daily_pnl_sol <= -risk_metrics.daily_loss_limit_sol:
+                block_reasons.append(f"Daily loss limit reached ({risk_metrics.daily_pnl_sol:.4f} SOL)")
+            if risk_metrics.consecutive_losses >= 5:
+                block_reasons.append(f"Max consecutive losses reached ({risk_metrics.consecutive_losses})")
+
+            # Calculate block duration if blocked
+            block_duration_hours = 0
+            blocked_since = None
+            if not risk_metrics.can_trade and hasattr(self.app.engine, '_blocked_since'):
+                blocked_since = self.app.engine._blocked_since
+                if blocked_since:
+                    delta = datetime.now() - blocked_since
+                    block_duration_hours = delta.total_seconds() / 3600
+
+            # Get config values
+            config = self.app.config_manager
+            max_positions = config.max_positions if config else self.app.max_positions
+            daily_loss_limit = config.daily_loss_limit_sol if config else 5.0
+
+            return web.json_response({
+                'success': True,
+                'trading_blocked': not risk_metrics.can_trade,
+                'block_reasons': block_reasons,
+                'block_duration_hours': block_duration_hours,
+                'blocked_since': blocked_since.isoformat() if blocked_since else None,
+                'daily_pnl_sol': risk_metrics.daily_pnl_sol,
+                'daily_loss_limit_sol': daily_loss_limit,
+                'consecutive_losses': risk_metrics.consecutive_losses,
+                'max_consecutive_losses': 5,
+                'active_positions': len(self.app.engine.active_positions),
+                'max_positions': max_positions,
+                'risk_level': risk_metrics.risk_level,
+                'mode': 'DRY_RUN' if self.app.engine.dry_run else 'LIVE',
+                'sol_balance': health.get('wallet_balance_sol', 0),
+                'sol_price_usd': self.app.engine.sol_price_usd
+            })
+
+        except Exception as e:
+            logger.error(f"Error getting trading status: {e}")
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    async def trading_unblock_handler(self, request):
+        """Reset trading blocks (daily loss, consecutive losses)"""
+        try:
+            if not self.app.engine:
+                return web.json_response({
+                    'success': False,
+                    'error': 'Engine not initialized'
+                }, status=503)
+
+            data = await request.json() if request.content_length else {}
+            reset_type = data.get('reset_type', 'all')  # 'all', 'daily_loss', 'consecutive'
+
+            risk_metrics = self.app.engine.risk_metrics
+            reset_actions = []
+
+            if reset_type in ('all', 'daily_loss'):
+                risk_metrics.daily_pnl_sol = 0.0
+                risk_metrics.daily_pnl_usd = 0.0
+                reset_actions.append('daily_loss')
+                logger.info("🔓 Reset daily P&L to 0")
+
+            if reset_type in ('all', 'consecutive'):
+                risk_metrics.consecutive_losses = 0
+                reset_actions.append('consecutive_losses')
+                logger.info("🔓 Reset consecutive losses to 0")
+
+            # Clear blocked_since timestamp
+            if hasattr(self.app.engine, '_blocked_since'):
+                self.app.engine._blocked_since = None
+
+            return web.json_response({
+                'success': True,
+                'message': f'Trading block reset successfully',
+                'reset_actions': reset_actions,
+                'can_trade': risk_metrics.can_trade
+            })
+
+        except Exception as e:
+            logger.error(f"Error unblocking trading: {e}")
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
 
     async def close_position_handler(self, request):
         """Close a specific position by token mint address"""
@@ -325,13 +429,14 @@ class SolanaTradingApplication:
             # Import Solana engine
             from solana_trading.core.solana_engine import SolanaTradingEngine
 
-            # Initialize engine with config manager
+            # Initialize engine with config manager and database pool
             self.engine = SolanaTradingEngine(
                 rpc_url=self.rpc_url,
                 strategies=self.strategies,
                 max_positions=self.max_positions,
                 mode=self.mode,
-                config_manager=self.config_manager
+                config_manager=self.config_manager,
+                db_pool=self.db_pool  # Pass database pool for trade persistence
             )
 
             await self.engine.initialize()
