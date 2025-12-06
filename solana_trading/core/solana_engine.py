@@ -1276,7 +1276,7 @@ class SolanaTradingEngine:
         This ensures accurate PnL tracking across restarts.
         """
         if not self.db_pool:
-            logger.debug("No database pool available, skipping historical stats load")
+            logger.warning("⚠️ No database pool - historical stats NOT loaded (trades will reset)")
             return
 
         try:
@@ -1314,7 +1314,7 @@ class SolanaTradingEngine:
         This is the CRITICAL method that ensures trades survive container restarts.
         """
         if not self.db_pool:
-            logger.debug("No database pool available, trade not persisted to DB")
+            logger.warning(f"⚠️ Trade NOT saved to DB (no db_pool): {trade.token_symbol}")
             return
 
         try:

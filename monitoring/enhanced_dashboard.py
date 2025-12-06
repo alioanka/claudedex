@@ -603,13 +603,18 @@ class DashboardEndpoints:
             futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
             logger.info(f"Checking Futures module health at port {futures_port}...")
             async with aiohttp.ClientSession() as session:
-                async with session.get(f'http://localhost:{futures_port}/health', timeout=5) as resp:
-                    if resp.status == 200:
-                        futures_running = True
-                        futures_health_data = await resp.json()
-                        logger.info(f"✅ Futures module IS RUNNING: {futures_health_data}")
-                    else:
-                        logger.warning(f"Futures health check returned status {resp.status}")
+                try:
+                    async with session.get(f'http://localhost:{futures_port}/health', timeout=5) as resp:
+                        if resp.status == 200:
+                            futures_running = True
+                            futures_health_data = await resp.json()
+                            logger.info(f"✅ Futures module IS RUNNING: {futures_health_data}")
+                        else:
+                            logger.warning(f"Futures health check returned status {resp.status}")
+                except aiohttp.ClientConnectorError as e:
+                    logger.info(f"Futures health check failed (connection refused): {e}")
+                except asyncio.TimeoutError:
+                    logger.warning(f"Futures health check timed out")
 
                 # Also fetch stats to get metrics
                 if futures_running:
@@ -637,13 +642,18 @@ class DashboardEndpoints:
             solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
             logger.info(f"Checking Solana module health at port {solana_port}...")
             async with aiohttp.ClientSession() as session:
-                async with session.get(f'http://localhost:{solana_port}/health', timeout=5) as resp:
-                    if resp.status == 200:
-                        solana_running = True
-                        solana_health_data = await resp.json()
-                        logger.info(f"✅ Solana module IS RUNNING: {solana_health_data}")
-                    else:
-                        logger.warning(f"Solana health check returned status {resp.status}")
+                try:
+                    async with session.get(f'http://localhost:{solana_port}/health', timeout=5) as resp:
+                        if resp.status == 200:
+                            solana_running = True
+                            solana_health_data = await resp.json()
+                            logger.info(f"✅ Solana module IS RUNNING: {solana_health_data}")
+                        else:
+                            logger.warning(f"Solana health check returned status {resp.status}")
+                except aiohttp.ClientConnectorError as e:
+                    logger.info(f"Solana health check failed (connection refused): {e}")
+                except asyncio.TimeoutError:
+                    logger.warning(f"Solana health check timed out")
 
                 # Also fetch stats to get metrics (same as Futures)
                 if solana_running:
@@ -669,9 +679,8 @@ class DashboardEndpoints:
         except Exception as e:
             logger.debug(f"Solana module not reachable: {e}")
 
-        # Initialize metrics dictionaries ONLY if not already populated from /stats endpoints
-        dex_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
-        # futures_metrics was already set above from /stats endpoint if futures is running
+        # Note: dex_metrics, futures_metrics, solana_metrics were already initialized at lines 598-600
+        # and potentially populated from /stats endpoints above. Do NOT reinitialize here.
         if not futures_running:
             futures_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
         # solana_metrics was already set above from /stats endpoint if solana is running
