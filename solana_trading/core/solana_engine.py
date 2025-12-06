@@ -974,6 +974,9 @@ class SolanaTradingEngine:
             # Get initial SOL price
             await self._update_sol_price()
 
+            # Load historical stats from database for accurate PnL tracking
+            await self._load_historical_stats()
+
             logger.info("✅ Solana connection and strategies initialized")
 
         except Exception as e:
@@ -1267,6 +1270,44 @@ class SolanaTradingEngine:
         except Exception as e:
             logger.debug(f"Error logging trade: {e}")
 
+    async def _load_historical_stats(self):
+        """
+        Load historical trading stats from database on startup.
+        This ensures accurate PnL tracking across restarts.
+        """
+        if not self.db_pool:
+            logger.debug("No database pool available, skipping historical stats load")
+            return
+
+        try:
+            async with self.db_pool.acquire() as conn:
+                # Load aggregate stats from solana_trades table
+                row = await conn.fetchrow("""
+                    SELECT
+                        COUNT(*) as total_trades,
+                        COALESCE(SUM(CASE WHEN pnl_sol > 0 THEN 1 ELSE 0 END), 0) as winning_trades,
+                        COALESCE(SUM(CASE WHEN pnl_sol <= 0 THEN 1 ELSE 0 END), 0) as losing_trades,
+                        COALESCE(SUM(pnl_sol), 0) as total_pnl_sol,
+                        COALESCE(SUM(fees_sol), 0) as total_fees
+                    FROM solana_trades
+                """)
+
+                if row:
+                    self.total_trades = row['total_trades'] or 0
+                    self.winning_trades = row['winning_trades'] or 0
+                    self.losing_trades = row['losing_trades'] or 0
+                    self.total_pnl_sol = float(row['total_pnl_sol'] or 0)
+                    self.total_fees = float(row['total_fees'] or 0)
+
+                    logger.info(f"📊 Loaded historical stats from DB:")
+                    logger.info(f"   Total trades: {self.total_trades}")
+                    logger.info(f"   Win/Loss: {self.winning_trades}/{self.losing_trades}")
+                    logger.info(f"   Total PnL: {self.total_pnl_sol:.4f} SOL")
+
+        except Exception as e:
+            logger.warning(f"Could not load historical stats from DB: {e}")
+            # Continue with zeroed stats - will accumulate from new trades
+
     async def _save_trade_to_db(self, trade: Trade):
         """
         Save a closed trade to the database for persistence across restarts.
@@ -1287,19 +1328,19 @@ class SolanaTradingEngine:
                         sol_price_usd, metadata
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
                 """,
-                    trade.id,
+                    trade.trade_id,  # Fixed: was 'trade.id', correct attribute is 'trade_id'
                     trade.token_symbol,
                     trade.token_mint,
                     trade.strategy.value if hasattr(trade.strategy, 'value') else str(trade.strategy),
                     'long',  # Solana trades are always long
                     trade.entry_price,
                     trade.exit_price,
-                    trade.amount_sol,
-                    trade.amount_tokens if hasattr(trade, 'amount_tokens') else None,
+                    trade.amount,  # This is now value_sol (SOL amount used for trade)
+                    getattr(trade, 'amount_tokens', None),  # Token amount if available
                     trade.pnl_sol,
-                    trade.pnl_sol * self.sol_price_usd,  # Convert to USD
+                    trade.pnl_usd if hasattr(trade, 'pnl_usd') else (trade.pnl_sol * self.sol_price_usd),
                     trade.pnl_pct,
-                    trade.fees_sol if hasattr(trade, 'fees_sol') else 0,
+                    trade.fees if hasattr(trade, 'fees') else 0,
                     trade.close_reason,
                     trade.opened_at,
                     trade.closed_at,
@@ -1908,7 +1949,7 @@ class SolanaTradingEngine:
                 except Exception as e:
                     logger.error(f"❌ Close execution failed: {e}", exc_info=True)
 
-            # Record trade
+            # Record trade - store value_sol for position size tracking
             trade = Trade(
                 trade_id=str(uuid.uuid4()),
                 token_mint=token_mint,
@@ -1917,13 +1958,13 @@ class SolanaTradingEngine:
                 side=TradeSide.SELL,
                 entry_price=position.entry_price,
                 exit_price=position.current_price,
-                amount=position.amount,
+                amount=position.value_sol,  # Fixed: Use value_sol (SOL amount) not amount (token count)
                 pnl_sol=pnl_sol,
                 pnl_usd=pnl_usd,
                 pnl_pct=pnl_pct,
                 fees=position.fees_paid,
                 opened_at=position.opened_at,
-                closed_at=datetime.now(),
+                closed_at=datetime.utcnow(),  # Fixed: Use UTC for consistency with opened_at
                 close_reason=reason,
                 is_simulated=position.is_simulated
             )

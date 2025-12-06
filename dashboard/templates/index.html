@@ -209,9 +209,18 @@
         color: #10b981;
     }
 
+    .status-enabled {
+        background: rgba(245, 158, 11, 0.2);
+        color: #f59e0b;
+    }
+
     .status-stopped {
         background: rgba(107, 114, 128, 0.2);
         color: #9aa0a6;
+    }
+
+    .module-card.enabled {
+        border-color: rgba(245, 158, 11, 0.5);
     }
 
     .module-metrics {
@@ -1061,16 +1070,25 @@ function updateModuleCard(prefix, moduleData) {
     const card = document.getElementById(prefix + '-module');
     if (!card) return;
 
-    // Update status badge
+    // Update status badge - handle RUNNING, ENABLED, and DISABLED states
     const status = moduleData.status || (moduleData.enabled ? 'RUNNING' : 'DISABLED');
     const statusEl = document.getElementById(prefix + '-status');
     if (statusEl) {
         statusEl.textContent = status;
-        statusEl.className = 'module-status status-' + (status === 'RUNNING' ? 'running' : 'stopped');
+        // Map status to CSS class: RUNNING → running, ENABLED → enabled (yellow), DISABLED → stopped
+        let statusClass = 'stopped';
+        if (status === 'RUNNING') {
+            statusClass = 'running';
+        } else if (status === 'ENABLED') {
+            statusClass = 'enabled';  // Module enabled but not running
+        }
+        statusEl.className = 'module-status status-' + statusClass;
     }
 
-    // Update card style based on enabled status
-    card.className = 'module-card ' + (moduleData.enabled ? 'active' : 'inactive');
+    // Update card style based on enabled status and running state
+    const isRunning = status === 'RUNNING';
+    const isEnabled = moduleData.enabled || status === 'ENABLED';
+    card.className = 'module-card ' + (isRunning ? 'active' : (isEnabled ? 'enabled' : 'inactive'));
 
     // Update Capital
     const capitalEl = document.getElementById(prefix + '-capital');
