@@ -83,7 +83,20 @@ async function loadModuleTabs() {
             const tabsContainer = document.getElementById('module-tabs');
             tabsContainer.innerHTML = '';
 
-            result.data.forEach(module => {
+            // Handle both array format and object format (modules as object)
+            let modules = [];
+            if (Array.isArray(result.data)) {
+                modules = result.data;
+            } else if (result.data.modules && typeof result.data.modules === 'object') {
+                // Convert modules object to array
+                modules = Object.entries(result.data.modules).map(([name, data]) => ({
+                    name: name,
+                    display_name: data.display_name || name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+                    ...data
+                }));
+            }
+
+            modules.forEach(module => {
                 const tab = document.createElement('button');
                 tab.className = `tab-btn ${module.name === currentModule ? 'active' : ''}`;
                 tab.textContent = module.display_name || module.name;

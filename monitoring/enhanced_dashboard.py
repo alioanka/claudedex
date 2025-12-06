@@ -352,6 +352,7 @@ class DashboardEndpoints:
         self.app.router.add_post('/api/settings/update', self.api_update_settings)
         self.app.router.add_post('/api/settings/revert', self.api_revert_settings)
         self.app.router.add_get('/api/settings/history', self.api_settings_history)
+        self.app.router.add_get('/api/settings/networks', self.api_get_networks)
 
         # API - Module-specific Settings (database-backed)
         self.app.router.add_get('/api/settings/futures', self.api_get_futures_settings)
@@ -575,10 +576,10 @@ class DashboardEndpoints:
         else:
             logger.warning(f".env file not found at: {env_path}")
 
-        # Read module enabled status from .env (default to DEX enabled, others disabled)
+        # Read module enabled status from .env (default to all enabled since user typically enables all)
         dex_enabled = os.getenv('DEX_MODULE_ENABLED', 'true').lower() == 'true'
-        futures_enabled = os.getenv('FUTURES_MODULE_ENABLED', 'false').lower() == 'true'
-        solana_enabled = os.getenv('SOLANA_MODULE_ENABLED', 'false').lower() == 'true'
+        futures_enabled = os.getenv('FUTURES_MODULE_ENABLED', 'true').lower() == 'true'
+        solana_enabled = os.getenv('SOLANA_MODULE_ENABLED', 'true').lower() == 'true'
 
         logger.info(f"Module status from env: DEX={dex_enabled}, Futures={futures_enabled}, Solana={solana_enabled}")
 
@@ -1913,11 +1914,37 @@ class DashboardEndpoints:
             except Exception as e:
                 logger.debug(f"Could not fetch futures stats for summary: {e}")
 
-            # Combine totals
-            total_pnl += futures_pnl
-            total_trades += futures_trades
-            open_positions_count += futures_positions
-            winning_trades_count += futures_winning
+            # Get Solana module data
+            solana_pnl = 0.0
+            solana_trades = 0
+            solana_positions = 0
+            solana_winning = 0
+            try:
+                solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'http://localhost:{solana_port}/stats', timeout=5) as resp:
+                        if resp.status == 200:
+                            stats_data = await resp.json()
+                            stats = stats_data.get('stats', stats_data)
+                            solana_trades = stats.get('total_trades', 0)
+                            solana_positions = stats.get('active_positions', 0)
+                            solana_winning = stats.get('winning_trades', 0)
+                            # Parse PnL which may be a string like "0.2881 SOL"
+                            net_pnl = stats.get('total_pnl', stats.get('net_pnl', stats.get('total_pnl_sol', 0)))
+                            if isinstance(net_pnl, str):
+                                net_pnl = float(net_pnl.replace('$', '').replace(',', '').replace('SOL', '').strip())
+                            # Convert SOL to USD (approximate - should use real price)
+                            sol_price = 200.0  # TODO: Get real SOL price from API
+                            solana_pnl = net_pnl * sol_price
+                            logger.debug(f"Solana summary: trades={solana_trades}, pnl={solana_pnl}, positions={solana_positions}")
+            except Exception as e:
+                logger.debug(f"Could not fetch solana stats for summary: {e}")
+
+            # Combine totals from ALL modules
+            total_pnl += futures_pnl + solana_pnl
+            total_trades += futures_trades + solana_trades
+            open_positions_count += futures_positions + solana_positions
+            winning_trades_count += futures_winning + solana_winning
 
             # Calculate combined win rate
             win_rate = (winning_trades_count / total_trades * 100) if total_trades > 0 else 0
@@ -3794,6 +3821,48 @@ class DashboardEndpoints:
             })
         except Exception as e:
             logger.error(f"Error getting settings history: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    async def api_get_networks(self, request):
+        """Get list of available networks/chains from database config_settings"""
+        try:
+            if not self.db_pool:
+                return web.json_response({'error': 'Database not available'}, status=503)
+
+            networks = []
+            async with self.db_pool.acquire() as conn:
+                # Get all chain enabled settings from database
+                rows = await conn.fetch("""
+                    SELECT key, value
+                    FROM config_settings
+                    WHERE config_type = 'chain'
+                    AND key LIKE '%_enabled'
+                    ORDER BY key
+                """)
+
+                for row in rows:
+                    # Extract network name from key (e.g., 'ethereum_enabled' -> 'ethereum')
+                    network_name = row['key'].replace('_enabled', '')
+                    is_enabled = row['value'].lower() in ('true', '1', 'yes')
+
+                    # Format display name (capitalize, special cases)
+                    display_name = network_name.upper() if network_name.lower() == 'bsc' else network_name.title()
+
+                    networks.append({
+                        'value': network_name.lower(),
+                        'name': display_name,
+                        'enabled': is_enabled
+                    })
+
+            return web.json_response({
+                'success': True,
+                'data': networks
+            })
+        except Exception as e:
+            logger.error(f"Error getting networks: {e}", exc_info=True)
             return web.json_response({
                 'success': False,
                 'error': str(e)
