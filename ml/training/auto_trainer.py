@@ -162,47 +162,50 @@ class AutoMLTrainer:
             return self._generate_synthetic_data()
 
     def _generate_synthetic_data(self, n_samples: int = 500) -> pd.DataFrame:
-        """Generate synthetic training data when real data is insufficient"""
-        logger.info(f"Generating {n_samples} synthetic training samples")
+        """Generate BALANCED synthetic training data when real data is insufficient"""
+        logger.info(f"Generating {n_samples} synthetic training samples (50% balanced)")
 
         np.random.seed(42)
 
-        data = {
-            'trade_id': [f'synthetic_{i}' for i in range(n_samples)],
-            'symbol': [f'TOKEN{i % 100}' for i in range(n_samples)],
-            'chain': np.random.choice(['ETHEREUM', 'BSC', 'BASE', 'SOLANA'], n_samples),
-            'entry_price': np.random.uniform(0.0001, 100, n_samples),
-            'pump_probability': np.random.beta(2, 2, n_samples),  # Beta distribution
-            'volume_24h': np.random.exponential(100000, n_samples),
-            'liquidity': np.random.exponential(50000, n_samples),
-            'price_change_24h': np.random.normal(0, 20, n_samples),
-            'holder_count': np.random.exponential(1000, n_samples).astype(int),
-            'volatility': np.abs(np.random.normal(0.1, 0.05, n_samples))
+        # Generate balanced classes - 50% wins, 50% losses
+        half = n_samples // 2
+
+        # Generate WINNING trades with favorable characteristics
+        wins_data = {
+            'pump_probability': np.random.beta(5, 2, half),  # Higher pump prob for wins
+            'volume_24h': np.random.exponential(200000, half),  # Higher volume
+            'liquidity': np.random.exponential(100000, half),  # Higher liquidity
+            'price_change_24h': np.random.normal(10, 15, half),  # Positive price change
+            'holder_count': np.random.exponential(2000, half).astype(int),
+            'volatility': np.abs(np.random.normal(0.08, 0.03, half)),  # Lower volatility
+            'is_win': np.ones(half, dtype=int),
+            'pnl': np.abs(np.random.normal(15, 8, half))
         }
 
-        df = pd.DataFrame(data)
+        # Generate LOSING trades with unfavorable characteristics
+        losses_data = {
+            'pump_probability': np.random.beta(2, 5, half),  # Lower pump prob for losses
+            'volume_24h': np.random.exponential(50000, half),  # Lower volume
+            'liquidity': np.random.exponential(20000, half),  # Lower liquidity
+            'price_change_24h': np.random.normal(-5, 20, half),  # Negative/neutral price change
+            'holder_count': np.random.exponential(500, half).astype(int),
+            'volatility': np.abs(np.random.normal(0.15, 0.08, half)),  # Higher volatility
+            'is_win': np.zeros(half, dtype=int),
+            'pnl': -np.abs(np.random.normal(10, 5, half))
+        }
 
-        # Generate target variable (is_win) based on features
-        # Higher pump_probability, volume, liquidity → more likely to win
-        win_probability = (
-            0.3 * df['pump_probability'] +
-            0.2 * np.clip(df['volume_24h'] / 500000, 0, 1) +
-            0.2 * np.clip(df['liquidity'] / 200000, 0, 1) +
-            0.15 * np.clip((df['price_change_24h'] + 50) / 100, 0, 1) +
-            0.15 * np.clip(df['holder_count'] / 5000, 0, 1)
-        )
+        # Combine and shuffle
+        wins_df = pd.DataFrame(wins_data)
+        losses_df = pd.DataFrame(losses_data)
+        df = pd.concat([wins_df, losses_df], ignore_index=True).sample(frac=1, random_state=42).reset_index(drop=True)
 
-        # Add some noise
-        win_probability += np.random.normal(0, 0.1, n_samples)
-        win_probability = np.clip(win_probability, 0, 1)
+        # Add trade IDs and metadata
+        df['trade_id'] = [f'synthetic_{i}' for i in range(len(df))]
+        df['symbol'] = [f'TOKEN{i % 100}' for i in range(len(df))]
+        df['chain'] = np.random.choice(['ETHEREUM', 'BSC', 'BASE', 'SOLANA'], len(df))
+        df['entry_price'] = np.random.uniform(0.0001, 100, len(df))
 
-        df['is_win'] = np.random.binomial(1, win_probability)
-        df['pnl'] = np.where(
-            df['is_win'] == 1,
-            np.abs(np.random.normal(10, 5, n_samples)),
-            -np.abs(np.random.normal(8, 4, n_samples))
-        )
-
+        logger.info(f"Synthetic data: {df['is_win'].sum()} wins, {(df['is_win'] == 0).sum()} losses")
         return df
 
     def prepare_features(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
@@ -286,20 +289,28 @@ class AutoMLTrainer:
         self.training_metrics['last_trained'] = datetime.utcnow().isoformat()
         self.training_metrics['trades_used'] = len(df)
 
-        # Calculate overall metrics
+        # Calculate overall metrics from all successful models
         successful_models = [r for r in results.values() if 'accuracy' in r]
         if successful_models:
             self.training_metrics['accuracy'] = np.mean([m['accuracy'] for m in successful_models])
+            self.training_metrics['precision'] = np.mean([m['precision'] for m in successful_models])
+            self.training_metrics['recall'] = np.mean([m['recall'] for m in successful_models])
             self.training_metrics['f1_score'] = np.mean([m['f1_score'] for m in successful_models])
 
         # Save training report
         await self._save_training_report(results)
 
-        logger.info(f"Training complete! Metrics: {self.training_metrics}")
+        logger.info("=" * 60)
+        logger.info("🎯 Training Complete! Final Metrics:")
+        logger.info(f"   Accuracy:  {self.training_metrics.get('accuracy', 0):.4f}")
+        logger.info(f"   Precision: {self.training_metrics.get('precision', 0):.4f}")
+        logger.info(f"   Recall:    {self.training_metrics.get('recall', 0):.4f}")
+        logger.info(f"   F1 Score:  {self.training_metrics.get('f1_score', 0):.4f}")
+        logger.info("=" * 60)
         return results
 
     async def _train_xgboost(self, X_train, y_train, X_test, y_test) -> Dict:
-        """Train XGBoost model"""
+        """Train XGBoost model with class imbalance handling"""
         try:
             import xgboost as xgb
         except ImportError:
@@ -308,37 +319,59 @@ class AutoMLTrainer:
 
         from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
+        # Calculate scale_pos_weight to handle class imbalance
+        # This gives more weight to the minority class (winning trades)
+        n_neg = np.sum(y_train == 0)
+        n_pos = np.sum(y_train == 1)
+        scale_pos_weight = n_neg / n_pos if n_pos > 0 else 1.0
+        logger.info(f"XGBoost: Training with scale_pos_weight={scale_pos_weight:.2f} (neg={n_neg}, pos={n_pos})")
+
         model = xgb.XGBClassifier(
-            n_estimators=100,
-            max_depth=6,
-            learning_rate=0.1,
+            n_estimators=200,
+            max_depth=5,
+            learning_rate=0.05,
             objective='binary:logistic',
+            scale_pos_weight=scale_pos_weight,  # Handle class imbalance
+            min_child_weight=3,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_alpha=0.1,
+            reg_lambda=1.0,
             random_state=42,
             use_label_encoder=False,
-            eval_metric='logloss'
+            eval_metric='auc'  # AUC is better for imbalanced data
         )
 
         model.fit(X_train, y_train)
 
-        # Evaluate
-        y_pred = model.predict(X_test)
+        # Get probability predictions for threshold tuning
+        y_pred_proba = model.predict_proba(X_test)[:, 1]
+
+        # Use a lower threshold for predicting positive class (default is 0.5)
+        # This helps catch more winning trades at the cost of some false positives
+        threshold = 0.4
+        y_pred = (y_pred_proba >= threshold).astype(int)
 
         metrics = {
             'accuracy': accuracy_score(y_test, y_pred),
             'precision': precision_score(y_test, y_pred, zero_division=0),
             'recall': recall_score(y_test, y_pred, zero_division=0),
-            'f1_score': f1_score(y_test, y_pred, zero_division=0)
+            'f1_score': f1_score(y_test, y_pred, zero_division=0),
+            'threshold': threshold,
+            'scale_pos_weight': scale_pos_weight
         }
 
         # Save model
         model_path = self.model_save_dir / 'xgboost_model.json'
         model.save_model(str(model_path))
-        logger.info(f"Saved XGBoost model to {model_path}, accuracy: {metrics['accuracy']:.4f}")
+        logger.info(f"Saved XGBoost model to {model_path}")
+        logger.info(f"  Accuracy: {metrics['accuracy']:.4f}, Precision: {metrics['precision']:.4f}")
+        logger.info(f"  Recall: {metrics['recall']:.4f}, F1: {metrics['f1_score']:.4f}")
 
         return metrics
 
     async def _train_lightgbm(self, X_train, y_train, X_test, y_test) -> Dict:
-        """Train LightGBM model"""
+        """Train LightGBM model with class imbalance handling"""
         try:
             import lightgbm as lgb
         except ImportError:
@@ -347,63 +380,86 @@ class AutoMLTrainer:
 
         from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
+        # Calculate class weights for imbalance
+        n_neg = np.sum(y_train == 0)
+        n_pos = np.sum(y_train == 1)
+        scale_pos_weight = n_neg / n_pos if n_pos > 0 else 1.0
+        logger.info(f"LightGBM: Training with scale_pos_weight={scale_pos_weight:.2f}")
+
         model = lgb.LGBMClassifier(
-            n_estimators=100,
-            max_depth=6,
-            learning_rate=0.1,
+            n_estimators=200,
+            max_depth=5,
+            learning_rate=0.05,
             objective='binary',
+            scale_pos_weight=scale_pos_weight,  # Handle class imbalance
+            min_child_samples=20,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_alpha=0.1,
+            reg_lambda=1.0,
             random_state=42,
             verbose=-1
         )
 
         model.fit(X_train, y_train)
 
-        # Evaluate
-        y_pred = model.predict(X_test)
+        # Get probability predictions and use threshold
+        y_pred_proba = model.predict_proba(X_test)[:, 1]
+        threshold = 0.4
+        y_pred = (y_pred_proba >= threshold).astype(int)
 
         metrics = {
             'accuracy': accuracy_score(y_test, y_pred),
             'precision': precision_score(y_test, y_pred, zero_division=0),
             'recall': recall_score(y_test, y_pred, zero_division=0),
-            'f1_score': f1_score(y_test, y_pred, zero_division=0)
+            'f1_score': f1_score(y_test, y_pred, zero_division=0),
+            'threshold': threshold
         }
 
         # Save model
         model_path = self.model_save_dir / 'lightgbm_model.txt'
         model.booster_.save_model(str(model_path))
-        logger.info(f"Saved LightGBM model to {model_path}, accuracy: {metrics['accuracy']:.4f}")
+        logger.info(f"Saved LightGBM model: Acc={metrics['accuracy']:.4f}, Prec={metrics['precision']:.4f}, Rec={metrics['recall']:.4f}")
 
         return metrics
 
     async def _train_random_forest(self, X_train, y_train, X_test, y_test) -> Dict:
-        """Train Random Forest model as backup"""
+        """Train Random Forest model with class imbalance handling"""
         from sklearn.ensemble import RandomForestClassifier
         from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
         import joblib
 
+        logger.info("Random Forest: Training with class_weight='balanced'")
+
         model = RandomForestClassifier(
-            n_estimators=100,
-            max_depth=10,
+            n_estimators=200,
+            max_depth=8,
+            min_samples_split=5,
+            min_samples_leaf=2,
+            class_weight='balanced',  # Handle class imbalance automatically
             random_state=42,
             n_jobs=-1
         )
 
         model.fit(X_train, y_train)
 
-        # Evaluate
-        y_pred = model.predict(X_test)
+        # Use probability predictions with threshold
+        y_pred_proba = model.predict_proba(X_test)[:, 1]
+        threshold = 0.4
+        y_pred = (y_pred_proba >= threshold).astype(int)
 
         metrics = {
             'accuracy': accuracy_score(y_test, y_pred),
             'precision': precision_score(y_test, y_pred, zero_division=0),
             'recall': recall_score(y_test, y_pred, zero_division=0),
-            'f1_score': f1_score(y_test, y_pred, zero_division=0)
+            'f1_score': f1_score(y_test, y_pred, zero_division=0),
+            'threshold': threshold
         }
 
         # Save model
         model_path = self.model_save_dir / 'random_forest_model.joblib'
         joblib.dump(model, model_path)
-        logger.info(f"Saved Random Forest model to {model_path}, accuracy: {metrics['accuracy']:.4f}")
+        logger.info(f"Saved Random Forest: Acc={metrics['accuracy']:.4f}, Prec={metrics['precision']:.4f}, Rec={metrics['recall']:.4f}")
 
         return metrics
 

@@ -727,8 +727,11 @@ async function loadDashboardData() {
 }
 
 function updateStatsDisplay(data) {
+    console.log('Solana stats data received:', data);
     const stats = data.stats || data || {};
     const health = data.health || {};
+    console.log('Parsed stats:', stats);
+    console.log('Positions array:', stats.positions);
 
     // Update SOL balance
     document.getElementById('sol-balance').textContent = (health.wallet_balance_sol || 0).toFixed(4);

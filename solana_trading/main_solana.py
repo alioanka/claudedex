@@ -380,12 +380,60 @@ class SolanaTradingApplication:
         try:
             import asyncpg
             db_url = os.getenv('DATABASE_URL')
-            if db_url:
-                self.db_pool = await asyncpg.create_pool(db_url, min_size=2, max_size=10)
-                self.logger.info("✅ Database pool initialized")
-                return True
+            if not db_url:
+                self.logger.warning("⚠️ DATABASE_URL not set - trades will NOT persist across restarts!")
+                return False
+
+            self.db_pool = await asyncpg.create_pool(db_url, min_size=2, max_size=10)
+            self.logger.info("✅ Database pool initialized")
+
+            # Verify solana_trades table exists
+            async with self.db_pool.acquire() as conn:
+                exists = await conn.fetchval("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'solana_trades'
+                    )
+                """)
+                if not exists:
+                    self.logger.warning("⚠️ solana_trades table not found - running migration...")
+                    await conn.execute("""
+                        CREATE TABLE IF NOT EXISTS solana_trades (
+                            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                            trade_id VARCHAR(50),
+                            token_symbol VARCHAR(20) NOT NULL,
+                            token_mint VARCHAR(64) NOT NULL,
+                            strategy VARCHAR(20) NOT NULL,
+                            side VARCHAR(10) NOT NULL DEFAULT 'long',
+                            entry_price NUMERIC NOT NULL,
+                            exit_price NUMERIC NOT NULL,
+                            amount_sol NUMERIC NOT NULL,
+                            amount_tokens NUMERIC,
+                            pnl_sol NUMERIC NOT NULL,
+                            pnl_usd NUMERIC,
+                            pnl_pct NUMERIC NOT NULL,
+                            fees_sol NUMERIC NOT NULL DEFAULT 0,
+                            exit_reason VARCHAR(50),
+                            entry_time TIMESTAMP NOT NULL,
+                            exit_time TIMESTAMP NOT NULL,
+                            duration_seconds INT NOT NULL DEFAULT 0,
+                            is_simulated BOOLEAN NOT NULL DEFAULT TRUE,
+                            sol_price_usd NUMERIC,
+                            metadata JSONB,
+                            status VARCHAR(20) DEFAULT 'closed',
+                            created_at TIMESTAMP DEFAULT NOW()
+                        )
+                    """)
+                    self.logger.info("✅ Created solana_trades table")
+                else:
+                    # Check trade count
+                    count = await conn.fetchval("SELECT COUNT(*) FROM solana_trades")
+                    self.logger.info(f"✅ Found {count} existing trades in solana_trades table")
+
+            return True
         except Exception as e:
-            self.logger.warning(f"Database not available, using defaults: {e}")
+            self.logger.error(f"❌ Database initialization failed: {e}")
+            self.logger.warning("⚠️ Continuing without database - trades will NOT persist!")
         return False
 
     async def _init_config_manager(self):
