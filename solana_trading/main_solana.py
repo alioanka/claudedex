@@ -34,6 +34,8 @@ load_dotenv()
 # ============================================================================
 # LOGGING SETUP - Separate files for main, errors, and trades
 # ============================================================================
+from logging.handlers import RotatingFileHandler
+
 log_dir = Path("logs/solana")
 log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -45,8 +47,12 @@ trade_formatter = logging.Formatter('%(asctime)s - %(message)s')
 logger = logging.getLogger("SolanaTrading")
 logger.setLevel(logging.INFO)
 
-# Main log file - all messages
-main_handler = logging.FileHandler(log_dir / 'solana_trading.log')
+# Main log file - all messages - Rotated 10MB
+main_handler = RotatingFileHandler(
+    log_dir / 'solana_trading.log',
+    maxBytes=10*1024*1024,  # 10MB
+    backupCount=5
+)
 main_handler.setLevel(logging.INFO)
 main_handler.setFormatter(log_formatter)
 logger.addHandler(main_handler)
@@ -57,16 +63,24 @@ console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(log_formatter)
 logger.addHandler(console_handler)
 
-# Error log file - only errors and above
-error_handler = logging.FileHandler(log_dir / 'solana_errors.log')
+# Error log file - only errors and above - Rotated 10MB
+error_handler = RotatingFileHandler(
+    log_dir / 'solana_errors.log',
+    maxBytes=10*1024*1024,  # 10MB
+    backupCount=5
+)
 error_handler.setLevel(logging.ERROR)
 error_handler.setFormatter(log_formatter)
 logger.addHandler(error_handler)
 
-# Trade logger - separate logger for trades only
+# Trade logger - separate logger for trades only - Rotated 10MB
 trade_logger = logging.getLogger("SolanaTrading.Trades")
 trade_logger.setLevel(logging.INFO)
-trade_handler = logging.FileHandler(log_dir / 'solana_trades.log')
+trade_handler = RotatingFileHandler(
+    log_dir / 'solana_trades.log',
+    maxBytes=10*1024*1024,  # 10MB
+    backupCount=5
+)
 trade_handler.setLevel(logging.INFO)
 trade_handler.setFormatter(trade_formatter)
 trade_logger.addHandler(trade_handler)

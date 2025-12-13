@@ -298,7 +298,24 @@ class RiskManager:
         log.debug("✅ All circuit breakers OK")
         return True, None
 
+    def reset_circuit_breakers(self):
+        """
+        Manually reset circuit breaker counters
+        This is called by the dashboard when user explicitly requests unblock
+        """
+        log.info("🔓 Manually resetting circuit breakers...")
 
+        # Reset internal counters
+        self.error_count = 0
+        self.consecutive_losses = 0
+        self.avg_slippage_bps = 0
+
+        # Reset return history to prevent error rate calculation from old data
+        if hasattr(self, 'returns_history'):
+            # Keep only last 10 trades to seed history but not block
+            self.returns_history = self.returns_history[-10:] if len(self.returns_history) > 10 else []
+
+        log.info("✅ Circuit breakers reset successfully")
 
     def update_trade_metrics(self, trade_result: Dict):
         """
@@ -327,6 +344,16 @@ class RiskManager:
             else:
                 self.consecutive_losses = 0  # Reset on win
             
+            # Append result to history for metrics calculation
+            profit = trade_result.get('profit', 0)
+            if hasattr(self, 'returns_history'):
+                self.returns_history.append(profit)
+                # Keep history manageable (last 1000 trades)
+                if len(self.returns_history) > 1000:
+                    self.returns_history = self.returns_history[-1000:]
+            else:
+                self.returns_history = [profit]
+
             # Update balance and peak tracking
 #            if hasattr(self, 'balance'):
 #                new_balance = self.balance + Decimal(str(trade_result.get('profit', 0)))

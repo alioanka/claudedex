@@ -161,7 +161,7 @@ class ModuleProcess:
             stderr_file = open(log_dir / "stderr.log", "a")
 
             self.process = subprocess.Popen(
-                [sys.executable, self.script_path],
+                [sys.executable, "-u", self.script_path],  # -u for unbuffered stdout
                 stdout=stdout_file,
                 stderr=stderr_file,
                 env=os.environ.copy()

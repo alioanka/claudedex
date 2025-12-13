@@ -74,6 +74,8 @@ class TradeLogFilter(logging.Filter):
         # Then check inclusions
         return any(incl in msg for incl in self.INCLUDE_KEYWORDS)
 
+from logging.handlers import RotatingFileHandler
+
 # Log format
 log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 formatter = logging.Formatter(log_format)
@@ -82,18 +84,33 @@ formatter = logging.Formatter(log_format)
 root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
 
-# 1. Main log file - all logs (UTF-8 encoding for emoji support)
-main_handler = logging.FileHandler(log_dir / 'futures_trading.log', encoding='utf-8')
+# 1. Main log file - all logs (UTF-8 encoding for emoji support) - Rotated 10MB
+main_handler = RotatingFileHandler(
+    log_dir / 'futures_trading.log',
+    encoding='utf-8',
+    maxBytes=10*1024*1024,
+    backupCount=5
+)
 main_handler.setLevel(logging.INFO)
 main_handler.setFormatter(formatter)
 
-# 2. Errors log file - only ERROR and WARNING
-error_handler = logging.FileHandler(log_dir / 'futures_errors.log', encoding='utf-8')
+# 2. Errors log file - only ERROR and WARNING - Rotated 10MB
+error_handler = RotatingFileHandler(
+    log_dir / 'futures_errors.log',
+    encoding='utf-8',
+    maxBytes=10*1024*1024,
+    backupCount=5
+)
 error_handler.setLevel(logging.WARNING)
 error_handler.setFormatter(formatter)
 
-# 3. Trades log file - only trade-related messages
-trades_handler = logging.FileHandler(log_dir / 'futures_trades.log', encoding='utf-8')
+# 3. Trades log file - only trade-related messages - Rotated 10MB
+trades_handler = RotatingFileHandler(
+    log_dir / 'futures_trades.log',
+    encoding='utf-8',
+    maxBytes=10*1024*1024,
+    backupCount=5
+)
 trades_handler.setLevel(logging.INFO)
 trades_handler.setFormatter(formatter)
 trades_handler.addFilter(TradeLogFilter())
