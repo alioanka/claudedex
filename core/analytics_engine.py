@@ -575,15 +575,15 @@ class AnalyticsEngine:
 
             query = """
                 SELECT * FROM trades
-                WHERE module = %s
-                AND timestamp >= %s
-                AND timestamp <= %s
+                WHERE module = $1
+                AND timestamp >= $2
+                AND timestamp <= $3
                 ORDER BY timestamp ASC
             """
 
             result = await self.db.fetch_all(
                 query,
-                (module_name, start_time, end_time)
+                module_name, start_time, end_time
             )
 
             return [dict(row) for row in result]

@@ -8,6 +8,7 @@ import asyncio
 from typing import Dict, List, Optional, Tuple, Any
 from decimal import Decimal
 from datetime import datetime, timedelta
+from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
@@ -926,15 +927,42 @@ class AIStrategy(BaseStrategy):
     
     async def _load_models(self) -> None:
         """Load pre-trained models"""
+        self.models_trained = False
+
         try:
-            # Load saved models if they exist
-            # This would load from disk/database
+            # Try to load saved models from disk
             logger.info("Loading pre-trained AI models...")
-            
-            # For now, models will use their defaults
-            
+
+            # Check if model files exist
+            model_dir = Path(self.config.get('model_dir', './models/ai_strategy'))
+            if model_dir.exists():
+                # Try loading pump predictor models
+                if self.pump_predictor:
+                    try:
+                        # Find latest model version
+                        model_versions = sorted(model_dir.glob("pump_predictor_*"))
+                        if model_versions:
+                            latest_version = model_versions[-1].name.replace("pump_predictor_", "")
+                            self.pump_predictor.load_model(latest_version)
+                            self.models_trained = True
+                            logger.info(f"Loaded pre-trained pump predictor model: {latest_version}")
+                    except Exception as e:
+                        logger.warning(f"Could not load pump predictor: {e}")
+
+            if not self.models_trained:
+                logger.warning(
+                    "⚠️ AI Strategy: No trained models found! "
+                    "Using higher thresholds for safety. "
+                    "Train models on historical data for better performance."
+                )
+                # Increase thresholds when models aren't trained (more conservative)
+                self.ml_confidence_threshold = max(self.ml_confidence_threshold, 0.80)
+                self.min_pump_probability = max(self.min_pump_probability, 0.70)
+                self.max_rug_probability = min(self.max_rug_probability, 0.15)
+
         except Exception as e:
             logger.warning(f"Could not load saved models: {e}")
+            self.models_trained = False
     
     def get_feature_importance(self) -> Dict[str, float]:
         """Get feature importance from models"""

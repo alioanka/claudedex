@@ -59,7 +59,7 @@ class StrategyManager:
         
     def select_strategy(self, opportunity: Any) -> str:
         """
-        Select best strategy for opportunity (IMPROVED: Balanced multi-strategy support)
+        Select best strategy for opportunity (IMPROVED: Respects config settings)
 
         Args:
             opportunity: Trading opportunity
@@ -67,24 +67,29 @@ class StrategyManager:
         Returns:
             Strategy name
         """
-        # 🆕 IMPROVED STRATEGY SELECTION LOGIC
-        # Now uses a priority system with better balance across all strategies
+        # 🆕 CRITICAL FIX: Respect strategy_selection_mode and default_strategy config
+        selection_mode = self.config.get('strategy_selection_mode', 'auto')
+        default_strategy = self.config.get('default_strategy', 'momentum')
 
+        # If mode is "single", always use the default strategy
+        if selection_mode == 'single':
+            if default_strategy in self.active_strategies:
+                logger.info(f"Single mode: Using default strategy '{default_strategy}'")
+                if default_strategy in self.strategy_stats:
+                    self.strategy_stats[default_strategy] += 1
+                return default_strategy
+            else:
+                logger.warning(f"Default strategy '{default_strategy}' not active, falling back to auto mode")
+
+        # Auto mode: Use priority-based selection
         selected_strategy = None
 
         # Priority 1: Scalping for HIGH volatility + TIGHT spreads + GOOD liquidity
-        # Scalping works best with: rapid price moves, low slippage, deep liquidity
         if (hasattr(opportunity, 'volatility') and hasattr(opportunity, 'spread') and
             hasattr(opportunity, 'liquidity')):
-
-            # Scalping conditions (more balanced):
-            # - High volatility (>3% for quick gains)
-            # - Tight spread (<1% for low cost)
-            # - Sufficient liquidity (>$50k for execution)
             if (opportunity.volatility > 0.03 and
                 opportunity.spread < 0.01 and
                 opportunity.liquidity > 50000):
-
                 if 'scalping' in self.active_strategies:
                     selected_strategy = 'scalping'
                     logger.debug(
@@ -92,23 +97,10 @@ class StrategyManager:
                         f"spread={opportunity.spread:.2%}, liq=${opportunity.liquidity:,.0f}"
                     )
 
-        # Priority 2: AI for MEDIUM confidence (sweet spot for ML models)
-        # AI works best when probability is uncertain but positive
+        # Priority 2: Momentum for HIGH confidence (>65%)
+        # 🆕 FIXED: Momentum now has priority over AI for high confidence signals
         if selected_strategy is None:
-            # Wider range for AI: 40%-80% (catches more opportunities)
-            if 0.40 <= opportunity.pump_probability <= 0.80:
-                if 'ai' in self.active_strategies:
-                    selected_strategy = 'ai'
-                    logger.debug(
-                        f"AI selected: pump_prob={opportunity.pump_probability:.2%} "
-                        f"(medium confidence range)"
-                    )
-
-        # Priority 3: Momentum for VERY HIGH confidence
-        # Momentum works best for clear trends with strong signals
-        if selected_strategy is None:
-            # Only use momentum for VERY high confidence (>75%)
-            if opportunity.pump_probability > 0.75:
+            if opportunity.pump_probability > 0.65:
                 if 'momentum' in self.active_strategies:
                     selected_strategy = 'momentum'
                     logger.debug(
@@ -116,15 +108,29 @@ class StrategyManager:
                         f"(high confidence)"
                     )
 
-        # Priority 4: Default strategy based on availability
+        # Priority 3: AI for MEDIUM confidence (40%-65%)
+        # AI works best when probability is uncertain but positive
         if selected_strategy is None:
-            # Prefer AI for lower confidence, then momentum, then scalping
-            if 'ai' in self.active_strategies:
-                selected_strategy = 'ai'
-                logger.debug("AI selected (default for low-medium confidence)")
+            if 0.40 <= opportunity.pump_probability <= 0.65:
+                if 'ai' in self.active_strategies:
+                    selected_strategy = 'ai'
+                    logger.debug(
+                        f"AI selected: pump_prob={opportunity.pump_probability:.2%} "
+                        f"(medium confidence range)"
+                    )
+
+        # Priority 4: Default strategy based on config, then availability
+        if selected_strategy is None:
+            # 🆕 FIXED: Use configured default_strategy first
+            if default_strategy in self.active_strategies:
+                selected_strategy = default_strategy
+                logger.debug(f"{default_strategy.capitalize()} selected (configured default)")
             elif 'momentum' in self.active_strategies:
                 selected_strategy = 'momentum'
-                logger.debug("Momentum selected (default fallback)")
+                logger.debug("Momentum selected (fallback)")
+            elif 'ai' in self.active_strategies:
+                selected_strategy = 'ai'
+                logger.debug("AI selected (fallback)")
             elif 'scalping' in self.active_strategies:
                 selected_strategy = 'scalping'
                 logger.debug("Scalping selected (only available)")
@@ -132,7 +138,7 @@ class StrategyManager:
                 selected_strategy = 'momentum'  # Ultimate fallback
                 logger.warning("No strategies active, using momentum as ultimate fallback")
 
-        # 🆕 Track statistics
+        # Track statistics
         if selected_strategy in self.strategy_stats:
             self.strategy_stats[selected_strategy] += 1
 

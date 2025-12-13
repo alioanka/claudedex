@@ -404,6 +404,118 @@
         </ul>
     </div>
 </div>
+
+<!-- ML Model Training Section -->
+<div class="card" id="mlTrainingCard">
+    <div class="card-header">
+        <h3 class="card-title">
+            <i class="fas fa-brain"></i>
+            AI/ML Model Training
+        </h3>
+        <div class="card-actions">
+            <button class="btn btn-sm btn-secondary" onclick="loadMLStatus()">
+                <i class="fas fa-sync"></i> Refresh
+            </button>
+        </div>
+    </div>
+    <div class="card-body">
+        <!-- ML Status Info -->
+        <div class="ml-status-grid">
+            <div class="ml-status-item">
+                <div class="ml-status-label">Training Status</div>
+                <div class="ml-status-value" id="mlTrainingStatus">
+                    <span class="badge badge-secondary">Not Started</span>
+                </div>
+            </div>
+            <div class="ml-status-item">
+                <div class="ml-status-label">Last Training</div>
+                <div class="ml-status-value" id="mlLastTraining">Never</div>
+            </div>
+            <div class="ml-status-item">
+                <div class="ml-status-label">Models Available</div>
+                <div class="ml-status-value" id="mlModelsCount">0/3</div>
+            </div>
+            <div class="ml-status-item">
+                <div class="ml-status-label">Feature Scaler</div>
+                <div class="ml-status-value" id="mlScalerStatus">
+                    <span class="badge badge-danger">Not Ready</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Model Details -->
+        <div class="ml-models-section">
+            <h4 class="section-subtitle">Available Models</h4>
+            <div class="ml-models-grid" id="mlModelsList">
+                <div class="ml-model-item">
+                    <div class="model-icon"><i class="fas fa-tree"></i></div>
+                    <div class="model-info">
+                        <div class="model-name">XGBoost</div>
+                        <div class="model-status" id="model-xgboost">Not Trained</div>
+                    </div>
+                </div>
+                <div class="ml-model-item">
+                    <div class="model-icon"><i class="fas fa-bolt"></i></div>
+                    <div class="model-info">
+                        <div class="model-name">LightGBM</div>
+                        <div class="model-status" id="model-lightgbm">Not Trained</div>
+                    </div>
+                </div>
+                <div class="ml-model-item">
+                    <div class="model-icon"><i class="fas fa-sitemap"></i></div>
+                    <div class="model-info">
+                        <div class="model-name">Random Forest</div>
+                        <div class="model-status" id="model-random_forest">Not Trained</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Training Metrics -->
+        <div class="ml-metrics-section" id="mlMetricsSection" style="display: none;">
+            <h4 class="section-subtitle">Training Metrics</h4>
+            <div class="ml-metrics-grid" id="mlMetricsGrid">
+                <!-- Metrics will be loaded here -->
+            </div>
+        </div>
+
+        <!-- Training Controls -->
+        <div class="ml-training-controls">
+            <div class="training-options">
+                <div class="form-group">
+                    <label>Min Trades Required</label>
+                    <input type="number" id="mlMinTrades" value="100" min="50" max="1000" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label>Lookback Days</label>
+                    <input type="number" id="mlLookbackDays" value="30" min="7" max="365" class="form-control">
+                </div>
+            </div>
+            <div class="training-actions">
+                <button class="btn btn-primary btn-lg" onclick="startMLTraining()" id="mlTrainBtn">
+                    <i class="fas fa-play"></i> Start Training
+                </button>
+                <p class="training-note">
+                    <i class="fas fa-info-circle"></i>
+                    Training uses historical trade data to improve AI strategy predictions.
+                    If insufficient data, synthetic data will be generated.
+                </p>
+            </div>
+        </div>
+
+        <!-- Training Progress -->
+        <div class="ml-training-progress" id="mlTrainingProgress" style="display: none;">
+            <div class="progress-header">
+                <span>Training in Progress...</span>
+                <span id="mlProgressPercent">0%</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="mlProgressBar" style="width: 0%"></div>
+            </div>
+            <div class="progress-status" id="mlProgressStatus">Initializing...</div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_css %}
@@ -660,6 +772,230 @@
     opacity: 0.5;
     cursor: not-allowed;
     transform: none;
+}
+
+/* ML Training Section Styles */
+.ml-status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.ml-status-item {
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+}
+
+.ml-status-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+.ml-status-value {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.section-subtitle {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.ml-models-section {
+    margin-bottom: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-color);
+}
+
+.ml-models-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+}
+
+.ml-model-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    padding: 12px 16px;
+    transition: all 0.3s;
+}
+
+.ml-model-item:hover {
+    background: var(--bg-secondary);
+}
+
+.ml-model-item.trained {
+    border-left: 3px solid #10b981;
+}
+
+.model-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    background: rgba(59, 130, 246, 0.2);
+    color: #3b82f6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+}
+
+.model-info {
+    flex: 1;
+}
+
+.model-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 2px;
+}
+
+.model-status {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.model-status.trained {
+    color: #10b981;
+}
+
+.ml-metrics-section {
+    margin-bottom: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-color);
+}
+
+.ml-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+}
+
+.ml-metric-item {
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+}
+
+.ml-metric-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+
+.ml-metric-value {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--accent-primary);
+}
+
+.ml-training-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+    align-items: flex-start;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-color);
+}
+
+.training-options {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.training-options .form-group {
+    min-width: 150px;
+}
+
+.training-options label {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+    display: block;
+}
+
+.training-options input {
+    width: 100%;
+    padding: 8px 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+
+.training-actions {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-items: flex-end;
+}
+
+.training-note {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    max-width: 400px;
+    text-align: right;
+}
+
+.training-note i {
+    color: #3b82f6;
+}
+
+.btn-lg {
+    padding: 12px 24px;
+    font-size: 1rem;
+}
+
+.ml-training-progress {
+    margin-top: 24px;
+    padding: 16px;
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+}
+
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 0.9rem;
+}
+
+.progress-bar {
+    height: 8px;
+    background: var(--bg-secondary);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #10b981);
+    border-radius: 4px;
+    transition: width 0.5s ease;
+}
+
+.progress-status {
+    margin-top: 8px;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
 }
 </style>
 {% endblock %}
@@ -1367,6 +1703,201 @@ function updateOrdersTable(orders) {
     }).join('');
 }
 
+// ==================== ML Training Functions ====================
+
+let mlTrainingInProgress = false;
+
+async function loadMLStatus() {
+    try {
+        const response = await fetch('/api/ml/status');
+        const result = await response.json();
+
+        if (result.success && result.data) {
+            const data = result.data;
+
+            // Update last training time
+            const lastTrainingEl = document.getElementById('mlLastTraining');
+            if (lastTrainingEl) {
+                if (data.last_training) {
+                    const date = new Date(data.last_training);
+                    lastTrainingEl.textContent = date.toLocaleString();
+                } else {
+                    lastTrainingEl.textContent = 'Never';
+                }
+            }
+
+            // Update models count
+            const modelsCountEl = document.getElementById('mlModelsCount');
+            if (modelsCountEl) {
+                const count = data.models_available ? data.models_available.length : 0;
+                modelsCountEl.textContent = `${count}/3`;
+            }
+
+            // Update scaler status
+            const scalerStatusEl = document.getElementById('mlScalerStatus');
+            if (scalerStatusEl) {
+                if (data.scaler_available) {
+                    scalerStatusEl.innerHTML = '<span class="badge badge-success">Ready</span>';
+                } else {
+                    scalerStatusEl.innerHTML = '<span class="badge badge-danger">Not Ready</span>';
+                }
+            }
+
+            // Update training status
+            const trainingStatusEl = document.getElementById('mlTrainingStatus');
+            if (trainingStatusEl) {
+                if (mlTrainingInProgress) {
+                    trainingStatusEl.innerHTML = '<span class="badge badge-warning">Training...</span>';
+                } else if (data.models_available && data.models_available.length > 0) {
+                    trainingStatusEl.innerHTML = '<span class="badge badge-success">Trained</span>';
+                } else {
+                    trainingStatusEl.innerHTML = '<span class="badge badge-secondary">Not Started</span>';
+                }
+            }
+
+            // Update individual model statuses
+            if (data.models_available) {
+                const modelNames = ['xgboost', 'lightgbm', 'random_forest'];
+                modelNames.forEach(name => {
+                    const modelStatusEl = document.getElementById(`model-${name}`);
+                    const modelItem = modelStatusEl?.closest('.ml-model-item');
+                    const model = data.models_available.find(m => m.name === name);
+
+                    if (modelStatusEl) {
+                        if (model) {
+                            const modDate = new Date(model.modified);
+                            modelStatusEl.textContent = `Trained ${modDate.toLocaleDateString()}`;
+                            modelStatusEl.classList.add('trained');
+                            if (modelItem) modelItem.classList.add('trained');
+                        } else {
+                            modelStatusEl.textContent = 'Not Trained';
+                            modelStatusEl.classList.remove('trained');
+                            if (modelItem) modelItem.classList.remove('trained');
+                        }
+                    }
+                });
+            }
+
+            // Update metrics section
+            if (data.metrics && Object.keys(data.metrics).length > 0) {
+                const metricsSection = document.getElementById('mlMetricsSection');
+                const metricsGrid = document.getElementById('mlMetricsGrid');
+
+                if (metricsSection && metricsGrid) {
+                    metricsSection.style.display = 'block';
+                    metricsGrid.innerHTML = Object.entries(data.metrics).map(([key, value]) => `
+                        <div class="ml-metric-item">
+                            <div class="ml-metric-label">${key.replace(/_/g, ' ')}</div>
+                            <div class="ml-metric-value">${typeof value === 'number' ? value.toFixed(4) : value}</div>
+                        </div>
+                    `).join('');
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error loading ML status:', error);
+    }
+}
+
+async function startMLTraining() {
+    if (mlTrainingInProgress) {
+        alert('Training is already in progress');
+        return;
+    }
+
+    const minTrades = parseInt(document.getElementById('mlMinTrades').value) || 100;
+    const lookbackDays = parseInt(document.getElementById('mlLookbackDays').value) || 30;
+
+    const trainBtn = document.getElementById('mlTrainBtn');
+    const progressDiv = document.getElementById('mlTrainingProgress');
+    const progressBar = document.getElementById('mlProgressBar');
+    const progressPercent = document.getElementById('mlProgressPercent');
+    const progressStatus = document.getElementById('mlProgressStatus');
+
+    // Update UI
+    mlTrainingInProgress = true;
+    trainBtn.disabled = true;
+    trainBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Training...';
+    progressDiv.style.display = 'block';
+    progressBar.style.width = '0%';
+    progressPercent.textContent = '0%';
+    progressStatus.textContent = 'Initializing training...';
+
+    // Simulate progress updates
+    let progress = 0;
+    const progressInterval = setInterval(() => {
+        if (progress < 90) {
+            progress += Math.random() * 15;
+            progress = Math.min(progress, 90);
+            progressBar.style.width = progress + '%';
+            progressPercent.textContent = Math.round(progress) + '%';
+
+            if (progress < 20) {
+                progressStatus.textContent = 'Loading historical data...';
+            } else if (progress < 40) {
+                progressStatus.textContent = 'Preparing features...';
+            } else if (progress < 60) {
+                progressStatus.textContent = 'Training XGBoost model...';
+            } else if (progress < 75) {
+                progressStatus.textContent = 'Training LightGBM model...';
+            } else {
+                progressStatus.textContent = 'Training Random Forest model...';
+            }
+        }
+    }, 500);
+
+    try {
+        const response = await fetch('/api/ml/train', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                min_trades: minTrades,
+                lookback_days: lookbackDays
+            })
+        });
+
+        clearInterval(progressInterval);
+        const result = await response.json();
+
+        if (result.success) {
+            progressBar.style.width = '100%';
+            progressPercent.textContent = '100%';
+            progressStatus.textContent = 'Training completed successfully!';
+
+            // Show success alert with results
+            const modelResults = result.data.model_results || {};
+            let resultMsg = 'ML Training completed successfully!\n\n';
+            Object.entries(modelResults).forEach(([model, metrics]) => {
+                if (metrics.accuracy) {
+                    resultMsg += `${model}: Accuracy ${(metrics.accuracy * 100).toFixed(1)}%, F1 ${(metrics.f1_score * 100).toFixed(1)}%\n`;
+                } else if (metrics.error) {
+                    resultMsg += `${model}: Error - ${metrics.error}\n`;
+                }
+            });
+            alert(resultMsg);
+
+            // Reload status
+            await loadMLStatus();
+        } else {
+            progressStatus.textContent = 'Training failed: ' + (result.error || 'Unknown error');
+            alert('Training failed: ' + (result.error || 'Unknown error'));
+        }
+    } catch (error) {
+        clearInterval(progressInterval);
+        progressStatus.textContent = 'Training failed: ' + error.message;
+        alert('Training failed: ' + error.message);
+    } finally {
+        mlTrainingInProgress = false;
+        trainBtn.disabled = false;
+        trainBtn.innerHTML = '<i class="fas fa-play"></i> Start Training';
+
+        // Hide progress after 3 seconds
+        setTimeout(() => {
+            progressDiv.style.display = 'none';
+        }, 3000);
+    }
+}
+
 // ✅ MODIFY your existing DOMContentLoaded to call these functions
 document.addEventListener('DOMContentLoaded', function() {
     // ✅ Load everything ONCE on page load
@@ -1376,6 +1907,7 @@ document.addEventListener('DOMContentLoaded', function() {
     loadOrders();
     loadInsights();  // ✅ Load performance insights
     loadBlockStatus();  // ✅ Load trading block status
+    loadMLStatus();  // ✅ Load ML model status
 
     // Add timeframe change listeners (these will reload specific charts)
     document.getElementById('portfolioTimeframe').addEventListener('change', loadPortfolioChart);
@@ -1409,6 +1941,11 @@ document.addEventListener('DOMContentLoaded', function() {
     setInterval(async () => {
         await loadBlockStatus();
     }, 30000);  // 30 seconds
+
+    // ML status refresh every 60 seconds
+    setInterval(async () => {
+        await loadMLStatus();
+    }, 60000);  // 60 seconds
 
     // ✅ DON'T refresh summary stats - they should only be loaded once
 });

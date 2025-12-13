@@ -842,11 +842,25 @@ class FuturesTradingEngine:
             if position.side == TradeSide.LONG:
                 # For LONG: exit if price falls below trailing stop
                 if position.current_price <= position.trailing_stop_price:
-                    return "TSL Hit" if position.trailing_stop_active else "SL Hit"
+                    # Distinguish exit reasons:
+                    # - TSL Hit: Active trailing stop triggered
+                    # - Breakeven SL: Stop at entry price (after TP1)
+                    # - SL Hit: Other stop levels
+                    if position.trailing_stop_active:
+                        return "TSL Hit"
+                    elif abs(position.trailing_stop_price - position.entry_price) < 0.0001:
+                        return "Breakeven SL"
+                    else:
+                        return "SL Hit"
             else:  # SHORT
                 # For SHORT: exit if price rises above trailing stop
                 if position.current_price >= position.trailing_stop_price:
-                    return "TSL Hit" if position.trailing_stop_active else "SL Hit"
+                    if position.trailing_stop_active:
+                        return "TSL Hit"
+                    elif abs(position.trailing_stop_price - position.entry_price) < 0.0001:
+                        return "Breakeven SL"
+                    else:
+                        return "SL Hit"
 
         # Standard stop loss check (if no trailing stop is set)
         # stop_loss_pct is stored as positive (e.g., 2.0)
@@ -1294,14 +1308,14 @@ class FuturesTradingEngine:
                     tp['hit'] = True
 
                     # TRAILING STOP ACTIVATION:
-                    # After TP1: Move stop loss to breakeven (entry price)
-                    # After TP2+: Activate trailing stop
+                    # After TP1: Move stop loss to breakeven (entry price) - always enabled for safety
+                    # After TP2+: Activate trailing stop (only if trailing_stop_enabled)
                     if tp['level'] == 1:
-                        # TP1 hit - move stop to breakeven
+                        # TP1 hit - move stop to breakeven (always enabled for capital protection)
                         position.trailing_stop_price = position.entry_price
                         logger.info(f"🔒 {position.symbol}: Stop moved to breakeven ${position.entry_price:.4f}")
-                    elif tp['level'] >= 2 and not position.trailing_stop_active:
-                        # TP2+ hit - activate trailing stop
+                    elif tp['level'] >= 2 and not position.trailing_stop_active and self.trailing_stop_enabled:
+                        # TP2+ hit - activate trailing stop (ONLY if trailing stop is enabled in settings)
                         position.trailing_stop_active = True
                         # Initialize trailing stop based on current peak
                         if position.side == TradeSide.LONG:
@@ -1311,6 +1325,10 @@ class FuturesTradingEngine:
                             peak = position.lowest_price or current_price
                             position.trailing_stop_price = peak * (1 + self.trailing_stop_distance / 100)
                         logger.info(f"🎚️ {position.symbol}: Trailing stop activated at ${position.trailing_stop_price:.4f}")
+                    elif tp['level'] >= 2 and not position.trailing_stop_active and not self.trailing_stop_enabled:
+                        # TP2+ hit but trailing stop disabled - update stop to current TP level for protection
+                        position.trailing_stop_price = tp['price'] * (0.99 if position.side == TradeSide.LONG else 1.01)
+                        logger.info(f"🔒 {position.symbol}: Stop updated to TP{tp['level']} level ${position.trailing_stop_price:.4f} (TSL disabled)")
 
                     return True
 

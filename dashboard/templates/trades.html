@@ -69,13 +69,8 @@
             <div class="form-group">
                 <label class="form-label">Network</label>
                 <select id="filterNetwork" class="form-control">
-                    <option value="all">All</option>
-                    <option value="ethereum">Ethereum</option>
-                    <option value="bsc">BSC</option>
-                    <option value="base">Base</option>
-                    <option value="arbitrum">Arbitrum</option>
-                    <option value="polygon">Polygon</option>
-                    <option value="solana">Solana</option>
+                    <option value="all">All Networks</option>
+                    <!-- Networks loaded dynamically from database -->
                 </select>
             </div>
 
@@ -362,10 +357,41 @@ function closeTradeModal() {
     if (overlay) overlay.classList.remove('active');
 }
 
-// Load on page ready
-document.addEventListener('DOMContentLoaded', loadTrades);
+// Load networks from database for filter dropdown
+async function loadNetworks() {
+    try {
+        const response = await apiGet('/api/settings/networks');
+        if (response.success && response.data) {
+            const select = document.getElementById('filterNetwork');
+            // Keep the "All Networks" option
+            const allOption = select.querySelector('option[value="all"]');
+            select.innerHTML = '';
+            select.appendChild(allOption);
 
-// Refresh every 10 seconds
+            // Add networks from database
+            response.data.forEach(network => {
+                const option = document.createElement('option');
+                option.value = network.value;
+                option.textContent = network.name;
+                if (!network.enabled) {
+                    option.textContent += ' (disabled)';
+                    option.style.color = '#888';
+                }
+                select.appendChild(option);
+            });
+        }
+    } catch (error) {
+        console.error('Error loading networks:', error);
+    }
+}
+
+// Load on page ready
+document.addEventListener('DOMContentLoaded', () => {
+    loadNetworks();
+    loadTrades();
+});
+
+// Refresh every 5 minutes
 setInterval(loadTrades, 300000);
 </script>
 {% endblock %}

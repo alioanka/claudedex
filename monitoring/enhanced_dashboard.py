@@ -352,6 +352,7 @@ class DashboardEndpoints:
         self.app.router.add_post('/api/settings/update', self.api_update_settings)
         self.app.router.add_post('/api/settings/revert', self.api_revert_settings)
         self.app.router.add_get('/api/settings/history', self.api_settings_history)
+        self.app.router.add_get('/api/settings/networks', self.api_get_networks)
 
         # API - Module-specific Settings (database-backed)
         self.app.router.add_get('/api/settings/futures', self.api_get_futures_settings)
@@ -407,7 +408,11 @@ class DashboardEndpoints:
 
         # SSE for real-time updates
         self.app.router.add_get('/api/stream', self.sse_handler)
-        
+
+        # ML Training API endpoints
+        self.app.router.add_post('/api/ml/train', self.api_ml_train)
+        self.app.router.add_get('/api/ml/status', self.api_ml_status)
+
         # Setup CORS - EXCLUDE socket.io routes
         cors = aiohttp_cors.setup(self.app, defaults={
             "*": aiohttp_cors.ResourceOptions(
@@ -575,10 +580,10 @@ class DashboardEndpoints:
         else:
             logger.warning(f".env file not found at: {env_path}")
 
-        # Read module enabled status from .env (default to DEX enabled, others disabled)
+        # Read module enabled status from .env (default to all enabled since user typically enables all)
         dex_enabled = os.getenv('DEX_MODULE_ENABLED', 'true').lower() == 'true'
-        futures_enabled = os.getenv('FUTURES_MODULE_ENABLED', 'false').lower() == 'true'
-        solana_enabled = os.getenv('SOLANA_MODULE_ENABLED', 'false').lower() == 'true'
+        futures_enabled = os.getenv('FUTURES_MODULE_ENABLED', 'true').lower() == 'true'
+        solana_enabled = os.getenv('SOLANA_MODULE_ENABLED', 'true').lower() == 'true'
 
         logger.info(f"Module status from env: DEX={dex_enabled}, Futures={futures_enabled}, Solana={solana_enabled}")
 
@@ -598,13 +603,18 @@ class DashboardEndpoints:
             futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
             logger.info(f"Checking Futures module health at port {futures_port}...")
             async with aiohttp.ClientSession() as session:
-                async with session.get(f'http://localhost:{futures_port}/health', timeout=5) as resp:
-                    if resp.status == 200:
-                        futures_running = True
-                        futures_health_data = await resp.json()
-                        logger.info(f"✅ Futures module IS RUNNING: {futures_health_data}")
-                    else:
-                        logger.warning(f"Futures health check returned status {resp.status}")
+                try:
+                    async with session.get(f'http://localhost:{futures_port}/health', timeout=5) as resp:
+                        if resp.status == 200:
+                            futures_running = True
+                            futures_health_data = await resp.json()
+                            logger.info(f"✅ Futures module IS RUNNING: {futures_health_data}")
+                        else:
+                            logger.warning(f"Futures health check returned status {resp.status}")
+                except aiohttp.ClientConnectorError as e:
+                    logger.info(f"Futures health check failed (connection refused): {e}")
+                except asyncio.TimeoutError:
+                    logger.warning(f"Futures health check timed out")
 
                 # Also fetch stats to get metrics
                 if futures_running:
@@ -632,13 +642,18 @@ class DashboardEndpoints:
             solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
             logger.info(f"Checking Solana module health at port {solana_port}...")
             async with aiohttp.ClientSession() as session:
-                async with session.get(f'http://localhost:{solana_port}/health', timeout=5) as resp:
-                    if resp.status == 200:
-                        solana_running = True
-                        solana_health_data = await resp.json()
-                        logger.info(f"✅ Solana module IS RUNNING: {solana_health_data}")
-                    else:
-                        logger.warning(f"Solana health check returned status {resp.status}")
+                try:
+                    async with session.get(f'http://localhost:{solana_port}/health', timeout=5) as resp:
+                        if resp.status == 200:
+                            solana_running = True
+                            solana_health_data = await resp.json()
+                            logger.info(f"✅ Solana module IS RUNNING: {solana_health_data}")
+                        else:
+                            logger.warning(f"Solana health check returned status {resp.status}")
+                except aiohttp.ClientConnectorError as e:
+                    logger.info(f"Solana health check failed (connection refused): {e}")
+                except asyncio.TimeoutError:
+                    logger.warning(f"Solana health check timed out")
 
                 # Also fetch stats to get metrics (same as Futures)
                 if solana_running:
@@ -664,9 +679,8 @@ class DashboardEndpoints:
         except Exception as e:
             logger.debug(f"Solana module not reachable: {e}")
 
-        # Initialize metrics dictionaries ONLY if not already populated from /stats endpoints
-        dex_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
-        # futures_metrics was already set above from /stats endpoint if futures is running
+        # Note: dex_metrics, futures_metrics, solana_metrics were already initialized at lines 598-600
+        # and potentially populated from /stats endpoints above. Do NOT reinitialize here.
         if not futures_running:
             futures_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
         # solana_metrics was already set above from /stats endpoint if solana is running
@@ -695,65 +709,68 @@ class DashboardEndpoints:
             except Exception as e:
                 logger.warning(f"Error getting positions from engine: {e}")
 
-        if self.db:
+        if self.db and self.db_pool:
             try:
-                # Get trades by chain/module
-                trades = await self.db.get_recent_trades(limit=1000)
-                logger.info(f"Got {len(trades) if trades else 0} trades from database")
+                # ==================== DEX TRADES (from 'trades' table) ====================
+                async with self.db_pool.acquire() as conn:
+                    # Get DEX trades from main trades table
+                    dex_trades = await conn.fetch("""
+                        SELECT status, profit_loss
+                        FROM trades
+                        WHERE chain NOT IN ('SOLANA', 'SOL')
+                        ORDER BY entry_timestamp DESC
+                        LIMIT 1000
+                    """)
 
-                # Define chain mappings - handle various formats
-                SOLANA_CHAINS = {'SOLANA', 'SOL'}
-                DEX_CHAINS = {'ETHEREUM', 'ETH', 'BSC', 'BNB', 'BASE', 'POLYGON', 'MATIC', 'ARBITRUM', 'ARB', 'AVALANCHE', 'AVAX', 'FANTOM', 'FTM'}
+                    if dex_trades:
+                        dex_metrics['total_trades'] = len(dex_trades)
+                        dex_closed = [t for t in dex_trades if t['status'] == 'closed']
+                        dex_wins = [t for t in dex_closed if float(t['profit_loss'] or 0) > 0]
+                        dex_metrics['pnl'] = sum(float(t['profit_loss'] or 0) for t in dex_closed)
+                        dex_metrics['win_rate'] = (len(dex_wins) / len(dex_closed) * 100) if dex_closed else 0
+                        logger.info(f"DEX metrics from trades table: trades={dex_metrics['total_trades']}, pnl={dex_metrics['pnl']:.2f}, win_rate={dex_metrics['win_rate']:.1f}%")
 
-                if trades:
-                    # Log unique chains for debugging
-                    unique_chains = set((t.get('chain') or t.get('network') or 'UNKNOWN') for t in trades)
-                    logger.info(f"Unique chains in trades: {unique_chains}")
+                    # ==================== FUTURES TRADES (from 'futures_trades' table) ====================
+                    # Only query DB if futures module is not running (metrics not from health endpoint)
+                    if not futures_running:
+                        try:
+                            futures_trades = await conn.fetch("""
+                                SELECT status, pnl_usdt, exit_reason
+                                FROM futures_trades
+                                ORDER BY entry_time DESC
+                                LIMIT 1000
+                            """)
 
-                    closed_trades = [t for t in trades if t.get('status') == 'closed']
-                    logger.info(f"Closed trades: {len(closed_trades)} out of {len(trades)}")
+                            if futures_trades:
+                                futures_metrics['total_trades'] = len(futures_trades)
+                                futures_closed = [t for t in futures_trades if t['status'] == 'closed']
+                                futures_wins = [t for t in futures_closed if float(t['pnl_usdt'] or 0) > 0]
+                                futures_metrics['pnl'] = sum(float(t['pnl_usdt'] or 0) for t in futures_closed)
+                                futures_metrics['win_rate'] = (len(futures_wins) / len(futures_closed) * 100) if futures_closed else 0
+                                logger.info(f"Futures metrics from DB: trades={futures_metrics['total_trades']}, pnl={futures_metrics['pnl']:.2f}, win_rate={futures_metrics['win_rate']:.1f}%")
+                        except Exception as e:
+                            logger.debug(f"futures_trades table not available or error: {e}")
 
-                    for trade in trades:
-                        chain = (trade.get('chain') or trade.get('network') or '').upper()
-                        is_closed = trade.get('status') == 'closed'
-                        pnl = float(trade.get('profit_loss') or 0) if is_closed else 0
+                    # ==================== SOLANA TRADES (from 'solana_trades' table) ====================
+                    # Only query DB if solana module is not running (metrics not from health endpoint)
+                    if not solana_running:
+                        try:
+                            solana_trades = await conn.fetch("""
+                                SELECT status, pnl_sol, exit_reason
+                                FROM solana_trades
+                                ORDER BY entry_time DESC
+                                LIMIT 1000
+                            """)
 
-                        if chain in SOLANA_CHAINS:
-                            solana_metrics['total_trades'] += 1
-                            if is_closed:
-                                solana_metrics['pnl'] += pnl
-                        elif chain in DEX_CHAINS or chain:  # Count any non-empty chain as DEX if not Solana
-                            dex_metrics['total_trades'] += 1
-                            if is_closed:
-                                dex_metrics['pnl'] += pnl
-
-                    # Calculate win rates
-                    dex_wins = 0
-                    dex_closed = 0
-                    solana_wins = 0
-                    solana_closed = 0
-
-                    for t in trades:
-                        chain = (t.get('chain') or t.get('network') or '').upper()
-                        is_closed = t.get('status') == 'closed'
-                        is_win = is_closed and float(t.get('profit_loss') or 0) > 0
-
-                        if chain in SOLANA_CHAINS:
-                            if is_closed:
-                                solana_closed += 1
-                                if is_win:
-                                    solana_wins += 1
-                        elif chain in DEX_CHAINS or chain:
-                            if is_closed:
-                                dex_closed += 1
-                                if is_win:
-                                    dex_wins += 1
-
-                    dex_metrics['win_rate'] = (dex_wins / dex_closed * 100) if dex_closed > 0 else 0
-                    solana_metrics['win_rate'] = (solana_wins / solana_closed * 100) if solana_closed > 0 else 0
-
-                    logger.info(f"Module metrics: DEX trades={dex_metrics['total_trades']}, closed={dex_closed}, wins={dex_wins}, pnl={dex_metrics['pnl']:.2f}")
-                    logger.info(f"Module metrics: Solana trades={solana_metrics['total_trades']}, closed={solana_closed}, wins={solana_wins}, pnl={solana_metrics['pnl']:.2f}")
+                            if solana_trades:
+                                solana_metrics['total_trades'] = len(solana_trades)
+                                solana_closed = [t for t in solana_trades if t['status'] == 'closed']
+                                solana_wins = [t for t in solana_closed if float(t['pnl_sol'] or 0) > 0]
+                                solana_metrics['pnl'] = sum(float(t['pnl_sol'] or 0) for t in solana_closed)
+                                solana_metrics['win_rate'] = (len(solana_wins) / len(solana_closed) * 100) if solana_closed else 0
+                                logger.info(f"Solana metrics from DB: trades={solana_metrics['total_trades']}, pnl={solana_metrics['pnl']:.4f} SOL, win_rate={solana_metrics['win_rate']:.1f}%")
+                        except Exception as e:
+                            logger.debug(f"solana_trades table not available or error: {e}")
 
             except Exception as e:
                 logger.error(f"Error getting module metrics from DB: {e}", exc_info=True)
@@ -1913,11 +1930,37 @@ class DashboardEndpoints:
             except Exception as e:
                 logger.debug(f"Could not fetch futures stats for summary: {e}")
 
-            # Combine totals
-            total_pnl += futures_pnl
-            total_trades += futures_trades
-            open_positions_count += futures_positions
-            winning_trades_count += futures_winning
+            # Get Solana module data
+            solana_pnl = 0.0
+            solana_trades = 0
+            solana_positions = 0
+            solana_winning = 0
+            try:
+                solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'http://localhost:{solana_port}/stats', timeout=5) as resp:
+                        if resp.status == 200:
+                            stats_data = await resp.json()
+                            stats = stats_data.get('stats', stats_data)
+                            solana_trades = stats.get('total_trades', 0)
+                            solana_positions = stats.get('active_positions', 0)
+                            solana_winning = stats.get('winning_trades', 0)
+                            # Parse PnL which may be a string like "0.2881 SOL"
+                            net_pnl = stats.get('total_pnl', stats.get('net_pnl', stats.get('total_pnl_sol', 0)))
+                            if isinstance(net_pnl, str):
+                                net_pnl = float(net_pnl.replace('$', '').replace(',', '').replace('SOL', '').strip())
+                            # Convert SOL to USD (approximate - should use real price)
+                            sol_price = 200.0  # TODO: Get real SOL price from API
+                            solana_pnl = net_pnl * sol_price
+                            logger.debug(f"Solana summary: trades={solana_trades}, pnl={solana_pnl}, positions={solana_positions}")
+            except Exception as e:
+                logger.debug(f"Could not fetch solana stats for summary: {e}")
+
+            # Combine totals from ALL modules
+            total_pnl += futures_pnl + solana_pnl
+            total_trades += futures_trades + solana_trades
+            open_positions_count += futures_positions + solana_positions
+            winning_trades_count += futures_winning + solana_winning
 
             # Calculate combined win rate
             win_rate = (winning_trades_count / total_trades * 100) if total_trades > 0 else 0
@@ -3799,6 +3842,48 @@ class DashboardEndpoints:
                 'error': str(e)
             }, status=500)
 
+    async def api_get_networks(self, request):
+        """Get list of available networks/chains from database config_settings"""
+        try:
+            if not self.db_pool:
+                return web.json_response({'error': 'Database not available'}, status=503)
+
+            networks = []
+            async with self.db_pool.acquire() as conn:
+                # Get all chain enabled settings from database
+                rows = await conn.fetch("""
+                    SELECT key, value
+                    FROM config_settings
+                    WHERE config_type = 'chain'
+                    AND key LIKE '%_enabled'
+                    ORDER BY key
+                """)
+
+                for row in rows:
+                    # Extract network name from key (e.g., 'ethereum_enabled' -> 'ethereum')
+                    network_name = row['key'].replace('_enabled', '')
+                    is_enabled = row['value'].lower() in ('true', '1', 'yes')
+
+                    # Format display name (capitalize, special cases)
+                    display_name = network_name.upper() if network_name.lower() == 'bsc' else network_name.title()
+
+                    networks.append({
+                        'value': network_name.lower(),
+                        'name': display_name,
+                        'enabled': is_enabled
+                    })
+
+            return web.json_response({
+                'success': True,
+                'data': networks
+            })
+        except Exception as e:
+            logger.error(f"Error getting networks: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
     async def api_get_futures_settings(self, request):
         """Get all futures module settings from database"""
         try:
@@ -4100,12 +4185,14 @@ class DashboardEndpoints:
                         'winning_trades': 0,
                         'losing_trades': 0,
                         'active_positions': 0,
+                        'positions': [],  # Empty positions array for offline state
                         'total_pnl': '0.0000 SOL',
                         'daily_pnl': '0.0000 SOL',
                         'sol_price_usd': 0,
-                        'mode': 'OFFLINE'
+                        'mode': 'OFFLINE',
+                        'win_rate': '0%'
                     },
-                    'health': {'status': 'offline'}
+                    'health': {'status': 'offline', 'engine_running': False, 'wallet_balance_sol': 0}
                 }
             })
         except Exception as e:
@@ -5831,7 +5918,117 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Error in backtest task {test_id}: {e}", exc_info=True)
             self.backtests[test_id] = {'status': 'failed', 'error': str(e)}
-    
+
+    # ==================== API - ML TRAINING ====================
+
+    async def api_ml_train(self, request):
+        """Trigger ML model training"""
+        try:
+            from ml.training.auto_trainer import AutoMLTrainer
+
+            # Get training parameters from request
+            data = {}
+            try:
+                data = await request.json()
+            except:
+                pass
+
+            config = {
+                'min_trades': data.get('min_trades', 100),
+                'lookback_days': data.get('lookback_days', 30)
+            }
+
+            # Run training in background
+            trainer = AutoMLTrainer(config)
+            await trainer.initialize()
+
+            try:
+                results = await trainer.train_models()
+
+                return web.json_response({
+                    'success': True,
+                    'data': {
+                        'message': 'Training completed successfully',
+                        'metrics': trainer.training_metrics,
+                        'model_results': {
+                            k: {
+                                'accuracy': v.get('accuracy', 0),
+                                'f1_score': v.get('f1_score', 0),
+                                'precision': v.get('precision', 0),
+                                'recall': v.get('recall', 0)
+                            } if 'accuracy' in v else {'error': v.get('error', 'Unknown error')}
+                            for k, v in results.items()
+                        }
+                    }
+                })
+            finally:
+                await trainer.close()
+
+        except ImportError as e:
+            logger.error(f"ML training module not available: {e}")
+            return web.json_response({
+                'success': False,
+                'error': 'ML training module not installed. Run: pip install scikit-learn xgboost lightgbm'
+            }, status=500)
+        except Exception as e:
+            logger.error(f"Error in ML training: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    async def api_ml_status(self, request):
+        """Get ML model training status and metrics"""
+        try:
+            from pathlib import Path
+            import json
+
+            model_dir = Path('./models/ai_strategy')
+            status = {
+                'models_available': [],
+                'last_training': None,
+                'metrics': {}
+            }
+
+            # Check for training report
+            report_path = model_dir / 'training_report.json'
+            if report_path.exists():
+                with open(report_path, 'r') as f:
+                    report = json.load(f)
+                    status['last_training'] = report.get('timestamp')
+                    status['metrics'] = report.get('metrics', {})
+
+            # Check which models are available
+            model_files = {
+                'xgboost': model_dir / 'xgboost_model.json',
+                'lightgbm': model_dir / 'lightgbm_model.txt',
+                'random_forest': model_dir / 'random_forest_model.joblib'
+            }
+
+            for model_name, model_path in model_files.items():
+                if model_path.exists():
+                    status['models_available'].append({
+                        'name': model_name,
+                        'path': str(model_path),
+                        'modified': datetime.fromtimestamp(model_path.stat().st_mtime).isoformat()
+                    })
+
+            # Check for feature scaler
+            scaler_path = model_dir / 'feature_scaler.joblib'
+            status['scaler_available'] = scaler_path.exists()
+
+            return web.json_response({
+                'success': True,
+                'data': status
+            })
+
+        except Exception as e:
+            logger.error(f"Error getting ML status: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
     async def start(self):
         """Start the dashboard server"""
         runner = web.AppRunner(self.app)
