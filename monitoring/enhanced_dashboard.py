@@ -3660,6 +3660,15 @@ class DashboardEndpoints:
             # Call the manual reset method
             result = await portfolio_mgr.manual_reset_block(reason=reason)
 
+            # Also reset RiskManager state if engine available
+            if self.engine and hasattr(self.engine, 'risk_manager'):
+                try:
+                    if hasattr(self.engine.risk_manager, 'reset_circuit_breakers'):
+                        self.engine.risk_manager.reset_circuit_breakers()
+                        logger.info("✅ Reset RiskManager circuit breakers via dashboard API")
+                except Exception as e:
+                    logger.error(f"Error resetting RiskManager: {e}")
+
             if result.get('success'):
                 return web.json_response({
                     'success': True,
