@@ -136,6 +136,8 @@ class DexScreenerCollector:
         Returns:
             Normalized chain name for API
         """
+        if not chain:
+            return 'ethereum'
         chain_lower = chain.lower()
         return self.CHAIN_MAPPING.get(chain_lower, chain_lower)
 
@@ -237,6 +239,9 @@ class DexScreenerCollector:
         Returns:
             List of new pair data
         """
+        if chain == 'monad' or chain == 'pulsechain':
+             # Skip Monad and Pulsechain for now as they are not fully supported
+             return []
         # ✅ CRITICAL: Normalize chain name for DexScreener
         chain = self._normalize_chain(chain)
         
@@ -365,7 +370,9 @@ class DexScreenerCollector:
                     'solana': ['SOL', 'USDC', 'USDT', 'RAY', 'BONK']
                 }
                 
-                for quote in quote_tokens.get(chain, ['USDC'])[:2]:
+                # Default to empty list if chain not in quote_tokens
+                quotes = quote_tokens.get(chain, [])
+                for quote in quotes[:2]:
                     if len(new_pairs) >= limit:
                         break
                     
@@ -808,6 +815,7 @@ class DexScreenerCollector:
             'pulsechain': 2000,
             'fantom': 1000,
             'cronos': 1000,
+            'avalanche': 1000,
         }
         
         min_liquidity = chain_min_liquidity.get(chain, self.min_liquidity)
@@ -828,6 +836,7 @@ class DexScreenerCollector:
             'pulsechain': 1000,
             'fantom': 1000,
             'cronos': 1000,
+            'avalanche': 1000,
         }
         
         min_volume = chain_min_volume.get(chain, self.min_volume)
