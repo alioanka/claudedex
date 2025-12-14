@@ -33,6 +33,7 @@ load_dotenv()
 
 # ============================================================================
 # LOGGING SETUP - Separate files for main, errors, and trades
+# With log rotation to prevent large file sizes
 # ============================================================================
 from logging.handlers import RotatingFileHandler
 
@@ -47,11 +48,12 @@ trade_formatter = logging.Formatter('%(asctime)s - %(message)s')
 logger = logging.getLogger("SolanaTrading")
 logger.setLevel(logging.INFO)
 
-# Main log file - all messages - Rotated 10MB
+# Main log file - all messages - ROTATING at 10MB with 5 backups
 main_handler = RotatingFileHandler(
     log_dir / 'solana_trading.log',
-    maxBytes=10*1024*1024,  # 10MB
-    backupCount=5
+    maxBytes=10 * 1024 * 1024,  # 10 MB
+    backupCount=5,
+    encoding='utf-8'
 )
 main_handler.setLevel(logging.INFO)
 main_handler.setFormatter(log_formatter)
@@ -63,23 +65,25 @@ console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(log_formatter)
 logger.addHandler(console_handler)
 
-# Error log file - only errors and above - Rotated 10MB
+# Error log file - only errors and above - ROTATING at 5MB with 3 backups
 error_handler = RotatingFileHandler(
     log_dir / 'solana_errors.log',
-    maxBytes=10*1024*1024,  # 10MB
-    backupCount=5
+    maxBytes=5 * 1024 * 1024,  # 5 MB
+    backupCount=3,
+    encoding='utf-8'
 )
 error_handler.setLevel(logging.ERROR)
 error_handler.setFormatter(log_formatter)
 logger.addHandler(error_handler)
 
-# Trade logger - separate logger for trades only - Rotated 10MB
+# Trade logger - separate logger for trades only - ROTATING at 10MB with 5 backups
 trade_logger = logging.getLogger("SolanaTrading.Trades")
 trade_logger.setLevel(logging.INFO)
 trade_handler = RotatingFileHandler(
     log_dir / 'solana_trades.log',
-    maxBytes=10*1024*1024,  # 10MB
-    backupCount=5
+    maxBytes=10 * 1024 * 1024,  # 10 MB
+    backupCount=5,
+    encoding='utf-8'
 )
 trade_handler.setLevel(logging.INFO)
 trade_handler.setFormatter(trade_formatter)

@@ -23,6 +23,10 @@ class Chain(IntEnum):
     BASE = 8453
     OPTIMISM = 10
     AVALANCHE = 43114
+    FANTOM = 250
+    CRONOS = 25
+    PULSECHAIN = 369
+    MONAD = 41454  # Monad testnet chain ID (mainnet TBD)
 
 CHAIN_NAMES = {
     Chain.ETHEREUM: "Ethereum",
@@ -31,7 +35,11 @@ CHAIN_NAMES = {
     Chain.ARBITRUM: "Arbitrum",
     Chain.BASE: "Base",
     Chain.OPTIMISM: "Optimism",
-    Chain.AVALANCHE: "Avalanche"
+    Chain.AVALANCHE: "Avalanche",
+    Chain.FANTOM: "Fantom",
+    Chain.CRONOS: "Cronos",
+    Chain.PULSECHAIN: "PulseChain",
+    Chain.MONAD: "Monad"
 }
 
 CHAIN_SYMBOLS = {
@@ -41,7 +49,11 @@ CHAIN_SYMBOLS = {
     Chain.ARBITRUM: "ETH",
     Chain.BASE: "ETH",
     Chain.OPTIMISM: "ETH",
-    Chain.AVALANCHE: "AVAX"
+    Chain.AVALANCHE: "AVAX",
+    Chain.FANTOM: "FTM",
+    Chain.CRONOS: "CRO",
+    Chain.PULSECHAIN: "PLS",
+    Chain.MONAD: "MON"
 }
 
 CHAIN_RPC_URLS = {
