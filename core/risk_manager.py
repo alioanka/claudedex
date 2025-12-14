@@ -151,6 +151,12 @@ class CircuitBreakerMetrics:
     daily_loss_pct: float = 0.0
     timestamp: datetime = field(default_factory=datetime.now)
 
+    # Circuit breaker state tracking
+    is_blocked: bool = False
+    block_reason: Optional[str] = None
+    blocked_since: Optional[datetime] = None
+    block_count: int = 0
+
 @dataclass
 class TradingOpportunity:
     """Trading opportunity for evaluation"""
@@ -223,6 +229,13 @@ class RiskManager:
         self._real_peak_balance = None
         self._daily_start_balance = None
         self._daily_start_date = None
+
+        # Circuit breaker state tracking
+        self._circuit_breaker_blocked = False
+        self._circuit_breaker_reason = None
+        self._circuit_breaker_blocked_since = None
+        self._circuit_breaker_block_count = 0
+        self._circuit_breaker_cooldown_hours = config.get('breaker.cooldown_hours', 4)  # Auto-reset after 4 hours
         
     async def initialize(self):
         """Initialize risk manager components"""
@@ -248,55 +261,113 @@ class RiskManager:
     def check_circuit_breakers(self, metrics: CircuitBreakerMetrics) -> Tuple[bool, Optional[str]]:
         """
         Check if any circuit breakers should trip
-        
+
         Args:
             metrics: Current trading metrics
-            
+
         Returns:
             Tuple of (breaker_ok, reason)
             - breaker_ok: True if all breakers are OK, False if tripped
             - reason: Description of which breaker tripped (None if OK)
         """
+        # Check auto-reset first (cooldown period elapsed)
+        if self._circuit_breaker_blocked and self._circuit_breaker_blocked_since:
+            hours_blocked = (datetime.now() - self._circuit_breaker_blocked_since).total_seconds() / 3600
+            if hours_blocked >= self._circuit_breaker_cooldown_hours:
+                log.info(f"⏰ Circuit breaker cooldown expired ({hours_blocked:.1f}h >= {self._circuit_breaker_cooldown_hours}h). Auto-resetting...")
+                self.reset_circuit_breaker()
+
+        # If still blocked after auto-reset check, return blocked status
+        if self._circuit_breaker_blocked:
+            return False, self._circuit_breaker_reason
+
         # Get thresholds from config (with safe defaults)
         max_error_rate = self.config.get("breaker.error_rate_max", 20)  # %
         max_slippage = self.config.get("breaker.slippage_realized_bps_max", 120)  # bps
         max_consecutive_losses = self.config.get("breaker.max_consecutive_losses", 5)
         max_drawdown = self.config.get("breaker.max_drawdown_pct", 15)  # %
         max_daily_loss = self.config.get("breaker.max_daily_loss_pct", 10)  # %
-        
+
         # Check error rate
         if metrics.error_rate_pct > max_error_rate:
             reason = f"Error rate too high: {metrics.error_rate_pct:.1f}% > {max_error_rate}%"
             log.error(f"🔴 CIRCUIT BREAKER: {reason}")
+            self._trip_circuit_breaker(reason)
             return False, reason
-        
+
         # Check realized slippage
         if metrics.realized_slippage_bps > max_slippage:
             reason = f"Slippage too high: {metrics.realized_slippage_bps:.0f}bps > {max_slippage}bps"
             log.error(f"🔴 CIRCUIT BREAKER: {reason}")
+            self._trip_circuit_breaker(reason)
             return False, reason
-        
+
         # Check consecutive losses
         if metrics.consecutive_losses >= max_consecutive_losses:
             reason = f"Too many consecutive losses: {metrics.consecutive_losses} >= {max_consecutive_losses}"
             log.error(f"🔴 CIRCUIT BREAKER: {reason}")
+            self._trip_circuit_breaker(reason)
             return False, reason
-        
+
         # Check drawdown
         if metrics.drawdown_pct > max_drawdown:
             reason = f"Drawdown too high: {metrics.drawdown_pct:.1f}% > {max_drawdown}%"
             log.error(f"🔴 CIRCUIT BREAKER: {reason}")
+            self._trip_circuit_breaker(reason)
             return False, reason
-        
+
         # Check daily loss
         if metrics.daily_loss_pct > max_daily_loss:
             reason = f"Daily loss limit exceeded: {metrics.daily_loss_pct:.1f}% > {max_daily_loss}%"
             log.error(f"🔴 CIRCUIT BREAKER: {reason}")
+            self._trip_circuit_breaker(reason)
             return False, reason
-        
+
         # All breakers OK
         log.debug("✅ All circuit breakers OK")
         return True, None
+
+    def _trip_circuit_breaker(self, reason: str):
+        """Trip the circuit breaker and record state"""
+        if not self._circuit_breaker_blocked:
+            self._circuit_breaker_blocked = True
+            self._circuit_breaker_reason = reason
+            self._circuit_breaker_blocked_since = datetime.now()
+            self._circuit_breaker_block_count += 1
+            log.warning(f"🔴 Circuit breaker TRIPPED (block #{self._circuit_breaker_block_count}): {reason}")
+            log.warning(f"   Trading HALTED. Auto-reset in {self._circuit_breaker_cooldown_hours} hours.")
+
+    def reset_circuit_breaker(self, manual: bool = False):
+        """Reset the circuit breaker to allow trading"""
+        was_blocked = self._circuit_breaker_blocked
+        self._circuit_breaker_blocked = False
+        self._circuit_breaker_reason = None
+        self._circuit_breaker_blocked_since = None
+        # Reset consecutive losses on manual reset
+        if manual:
+            self.consecutive_losses = 0
+        if was_blocked:
+            log.info(f"✅ Circuit breaker RESET ({'manual' if manual else 'auto'}). Trading can resume.")
+
+    def get_circuit_breaker_status(self) -> Dict:
+        """Get current circuit breaker status for dashboard display"""
+        status = {
+            'is_blocked': self._circuit_breaker_blocked,
+            'reason': self._circuit_breaker_reason,
+            'blocked_since': self._circuit_breaker_blocked_since.isoformat() if self._circuit_breaker_blocked_since else None,
+            'block_count': self._circuit_breaker_block_count,
+            'cooldown_hours': self._circuit_breaker_cooldown_hours,
+            'hours_until_reset': None,
+            'can_trade': not self._circuit_breaker_blocked
+        }
+
+        if self._circuit_breaker_blocked and self._circuit_breaker_blocked_since:
+            hours_blocked = (datetime.now() - self._circuit_breaker_blocked_since).total_seconds() / 3600
+            hours_remaining = max(0, self._circuit_breaker_cooldown_hours - hours_blocked)
+            status['hours_blocked'] = hours_blocked
+            status['hours_until_reset'] = hours_remaining
+
+        return status
 
 
 

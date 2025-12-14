@@ -33,7 +33,10 @@ load_dotenv()
 
 # ============================================================================
 # LOGGING SETUP - Separate files for main, errors, and trades
+# With log rotation to prevent large file sizes
 # ============================================================================
+from logging.handlers import RotatingFileHandler
+
 log_dir = Path("logs/solana")
 log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -45,8 +48,13 @@ trade_formatter = logging.Formatter('%(asctime)s - %(message)s')
 logger = logging.getLogger("SolanaTrading")
 logger.setLevel(logging.INFO)
 
-# Main log file - all messages
-main_handler = logging.FileHandler(log_dir / 'solana_trading.log')
+# Main log file - all messages - ROTATING at 10MB with 5 backups
+main_handler = RotatingFileHandler(
+    log_dir / 'solana_trading.log',
+    maxBytes=10 * 1024 * 1024,  # 10 MB
+    backupCount=5,
+    encoding='utf-8'
+)
 main_handler.setLevel(logging.INFO)
 main_handler.setFormatter(log_formatter)
 logger.addHandler(main_handler)
@@ -57,16 +65,26 @@ console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(log_formatter)
 logger.addHandler(console_handler)
 
-# Error log file - only errors and above
-error_handler = logging.FileHandler(log_dir / 'solana_errors.log')
+# Error log file - only errors and above - ROTATING at 5MB with 3 backups
+error_handler = RotatingFileHandler(
+    log_dir / 'solana_errors.log',
+    maxBytes=5 * 1024 * 1024,  # 5 MB
+    backupCount=3,
+    encoding='utf-8'
+)
 error_handler.setLevel(logging.ERROR)
 error_handler.setFormatter(log_formatter)
 logger.addHandler(error_handler)
 
-# Trade logger - separate logger for trades only
+# Trade logger - separate logger for trades only - ROTATING at 10MB with 5 backups
 trade_logger = logging.getLogger("SolanaTrading.Trades")
 trade_logger.setLevel(logging.INFO)
-trade_handler = logging.FileHandler(log_dir / 'solana_trades.log')
+trade_handler = RotatingFileHandler(
+    log_dir / 'solana_trades.log',
+    maxBytes=10 * 1024 * 1024,  # 10 MB
+    backupCount=5,
+    encoding='utf-8'
+)
 trade_handler.setLevel(logging.INFO)
 trade_handler.setFormatter(trade_formatter)
 trade_logger.addHandler(trade_handler)
