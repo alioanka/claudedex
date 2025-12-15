@@ -115,6 +115,13 @@ class TradingConfig(BaseModel):
     min_opportunity_score: float = 0.25
     solana_min_opportunity_score: float = 0.20
 
+    # Dynamic weights for opportunity scoring
+    score_weight_volume: float = 0.30
+    score_weight_liquidity: float = 0.35
+    score_weight_price_change: float = 0.10
+    score_weight_risk: float = 0.20
+    score_weight_age: float = 0.05
+
 class StrategiesConfig(BaseModel):
     """Trading strategies configuration"""
     # Momentum Strategy
@@ -398,17 +405,8 @@ class ConfigManager:
     - Multi-source configuration merging
     """
 
-    def __init__(self, config_dir: str = "./config", config_path: Optional[str] = None, db_pool=None):
-        if config_path:
-            self.config_dir = Path(config_path).parent
-            self.config_file = Path(config_path)
-        else:
-            self.config_dir = Path(config_dir)
-            self.config_file = None
-
-        self.config_dir.mkdir(parents=True, exist_ok=True)
-
-        self.db_pool = db_pool  # Database connection pool
+    def __init__(self, db_pool=None):
+        self.db_pool = db_pool
         self.configs: Dict[ConfigType, BaseModel] = {}
         self.config_schemas: Dict[ConfigType, type] = {
             ConfigType.GENERAL: GeneralConfig,
@@ -437,17 +435,7 @@ class ConfigManager:
             ConfigType.API: APIConfig,
             ConfigType.MONITORING: MonitoringConfig,
         }
-        
-        self.change_history: List[ConfigChange] = []
-        self.config_watchers: Dict[ConfigType, List[Callable]] = {}
-        self.file_watchers: Dict[str, float] = {}
-        
         self.encryption_manager = None
-        
-        self.auto_reload_enabled = True
-        self.reload_check_interval = 5
-        self._reload_task = None
-
         self._raw_config = {}
         self._env_config = self._load_environment_config()
         self._raw_config.update(self._env_config)
@@ -465,17 +453,9 @@ class ConfigManager:
 
             for config_type, config_obj in self.configs.items():
                 config_key = config_type.value
-                if hasattr(config_obj, 'model_dump'):
-                    self._raw_config[config_key] = config_obj.model_dump()
-                elif hasattr(config_obj, 'dict'):
-                    self._raw_config[config_key] = config_obj.dict()
-                else:
-                    self._raw_config[config_key] = config_obj
+                self._raw_config[config_key] = config_obj.dict()
 
             self._raw_config.update(self._env_config)
-
-            if self.auto_reload_enabled:
-                await self._start_auto_reload()
 
             logger.info("Configuration manager initialized successfully")
 
@@ -492,17 +472,9 @@ class ConfigManager:
         if db_pool:
             logger.info("Database pool set, reloading configs from database...")
             await self._load_all_configs()
-
-            # Update _raw_config with database values
             for config_type, config_obj in self.configs.items():
                 config_key = config_type.value
-                if hasattr(config_obj, 'model_dump'):
-                    self._raw_config[config_key] = config_obj.model_dump()
-                elif hasattr(config_obj, 'dict'):
-                    self._raw_config[config_key] = config_obj.dict()
-                else:
-                    self._raw_config[config_key] = config_obj
-
+                self._raw_config[config_key] = config_obj.dict()
             logger.info("✅ Configs reloaded from database")
 
     def _load_environment_config(self) -> Dict[str, Any]:
@@ -513,17 +485,8 @@ class ConfigManager:
         env_config = {}
         
         sensitive_keys = [
-            'ENCRYPTION_KEY', 'PRIVATE_KEY', 'SOLANA_PRIVATE_KEY', 'WALLET_ADDRESS', 'SOLANA_WALLET',
-            'DEXSCREENER_API_KEY', 'GOPLUS_API_KEY', 'TOKENSNIFFER_API_KEY', '1INCH_API_KEY',
-            'PARASWAP_API_KEY', 'TWITTER_API_KEY', 'TWITTER_API_SECRET', 'TWITTER_BEARER_TOKEN',
-            'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'DISCORD_WEBHOOK_URL', 'SMTP_SERVER',
-            'SMTP_PORT', 'EMAIL_FROM', 'EMAIL_TO', 'EMAIL_PASSWORD', 'FLASHBOTS_SIGNING_KEY',
-            'DASHBOARD_API_KEY', 'GRAFANA_PASSWORD', 'PGADMIN_EMAIL', 'PGADMIN_PASSWORD',
-            'JUPYTER_TOKEN', 'SESSION_SECRET', 'JWT_SECRET', 'API_KEY', 'SENTRY_DSN',
-            'SOLANA_RPC_URL', 'SOLANA_BACKUP_RPCS', 'ETHEREUM_RPC_URLS', 'BSC_RPC_URLS',
-            'POLYGON_RPC_URLS', 'ARBITRUM_RPC_URLS', 'BASE_RPC_URLS', 'SOLANA_RPC_URLS',
-            'WEB3_PROVIDER_URL', 'WEB3_BACKUP_PROVIDER_1', 'WEB3_BACKUP_PROVIDER_2',
-            'FLASHBOTS_RPC', 'DB_URL', 'DATABASE_URL', 'DB_PASSWORD', 'REDIS_URL'
+            'ENCRYPTION_KEY', 'DEX_MODULE_EVM_PRIVATE_KEY', 'DEX_MODULE_SOLANA_PRIVATE_KEY', 'SOLANA_MODULE_PRIVATE_KEY',
+            'DATABASE_URL', 'REDIS_URL', 'TELEGRAM_BOT_TOKEN', 'DISCORD_WEBHOOK_URL'
         ]
         
         for var in sensitive_keys:
@@ -625,10 +588,6 @@ class ConfigManager:
             default_config = schema_class()
             config_data.update(default_config.dict())
         
-        file_data = await self._load_config_from_file(config_type)
-        if file_data:
-            config_data.update(file_data)
-        
         env_data = self._load_config_from_env(config_type)
         if env_data:
             config_data.update(env_data)
@@ -651,31 +610,6 @@ class ConfigManager:
         else:
             logger.warning(f"No schema defined for {config_type.value}")
 
-    async def _load_config_from_file(self, config_type: ConfigType) -> Optional[Dict]:
-        """Load configuration from file"""
-        config_file = self.config_dir / f"{config_type.value}.yaml"
-        
-        if not config_file.exists():
-            config_file = self.config_dir / f"{config_type.value}.json"
-            if not config_file.exists():
-                return None
-        
-        try:
-            async with aiofiles.open(config_file, 'r') as f:
-                content = await f.read()
-            
-            stat = config_file.stat()
-            self.file_watchers[str(config_file)] = stat.st_mtime
-            
-            if config_file.suffix == '.yaml' or config_file.suffix == '.yml':
-                return yaml.safe_load(content)
-            else:
-                return json.loads(content)
-                
-        except Exception as e:
-            logger.error(f"Failed to load config file {config_file}: {e}")
-            return None
-
     def _load_config_from_env(self, config_type: ConfigType) -> Dict:
         """Load configuration from environment variables"""
         env_data = {}
@@ -692,14 +626,6 @@ class ConfigManager:
 
         return env_data
 
-    def _is_float(self, value: str) -> bool:
-        """Check if string can be converted to float"""
-        try:
-            float(value)
-            return True
-        except ValueError:
-            return False
-
     async def _load_config_from_database(self, config_type: ConfigType) -> Optional[Dict]:
         """Load configuration from database"""
         if not self.db_pool:
@@ -707,7 +633,6 @@ class ConfigManager:
 
         try:
             async with self.db_pool.acquire() as conn:
-                # Load non-sensitive configs
                 rows = await conn.fetch("""
                     SELECT key, value, value_type
                     FROM config_settings
@@ -724,7 +649,6 @@ class ConfigManager:
                     value = row['value']
                     value_type = row['value_type']
 
-                    # Convert value based on type
                     if value_type == 'int':
                         config_data[key] = int(value)
                     elif value_type == 'float':
@@ -742,248 +666,6 @@ class ConfigManager:
         except Exception as e:
             logger.error(f"Failed to load {config_type.value} config from database: {e}")
             return None
-
-    async def get_sensitive_config(self, key: str) -> Optional[str]:
-        """Get and decrypt a sensitive configuration value"""
-        if not self.db_pool or not self.encryption_manager:
-            return None
-
-        try:
-            async with self.db_pool.acquire() as conn:
-                row = await conn.fetchrow("""
-                    SELECT encrypted_value
-                    FROM config_sensitive
-                    WHERE key = $1 AND is_active = TRUE
-                """, key)
-
-                if not row:
-                    return None
-
-                encrypted_value = row['encrypted_value']
-                return self.encryption_manager.decrypt_sensitive_data(encrypted_value)
-
-        except Exception as e:
-            logger.error(f"Failed to get sensitive config '{key}': {e}")
-            return None
-
-    async def get_sensitive_config_with_metadata(self, key: str) -> Optional[Dict[str, Any]]:
-        """Get decrypted sensitive config with all metadata"""
-        if not self.db_pool or not self.encryption_manager:
-            return None
-
-        try:
-            async with self.db_pool.acquire() as conn:
-                row = await conn.fetchrow("""
-                    SELECT key, encrypted_value, description, last_rotated,
-                           rotation_interval_days, updated_at
-                    FROM config_sensitive
-                    WHERE key = $1 AND is_active = TRUE
-                """, key)
-
-                if not row:
-                    return None
-
-                encrypted_value = row['encrypted_value']
-                decrypted_value = self.encryption_manager.decrypt_sensitive_data(encrypted_value)
-
-                result = {
-                    'key': row['key'],
-                    'value': decrypted_value,
-                    'description': row['description'],
-                    'rotation_interval_days': row['rotation_interval_days']
-                }
-
-                # Convert datetime to ISO string
-                if row.get('last_rotated'):
-                    result['last_rotated'] = row['last_rotated'].isoformat()
-                if row.get('updated_at'):
-                    result['updated_at'] = row['updated_at'].isoformat()
-
-                return result
-
-        except Exception as e:
-            logger.error(f"Failed to get sensitive config with metadata '{key}': {e}")
-            return None
-
-    async def set_sensitive_config(self, key: str, value: str, description: str = None,
-                                   user_id: int = None, rotation_days: int = 30) -> bool:
-        """Encrypt and store a sensitive configuration value"""
-        if not self.db_pool or not self.encryption_manager:
-            logger.error("Database pool or encryption manager not available")
-            return False
-
-        try:
-            encrypted_value = self.encryption_manager.encrypt_sensitive_data(value)
-
-            async with self.db_pool.acquire() as conn:
-                await conn.execute("""
-                    INSERT INTO config_sensitive (
-                        key, encrypted_value, description, last_rotated,
-                        rotation_interval_days, updated_by
-                    )
-                    VALUES ($1, $2, $3, NOW(), $4, $5)
-                    ON CONFLICT (key) DO UPDATE
-                    SET encrypted_value = $2,
-                        description = $3,
-                        last_rotated = NOW(),
-                        rotation_interval_days = $4,
-                        updated_by = $5,
-                        updated_at = NOW()
-                """, key, encrypted_value, description, rotation_days, user_id)
-
-            logger.info(f"Stored sensitive config '{key}'")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to set sensitive config '{key}': {e}")
-            return False
-
-    async def delete_sensitive_config(self, key: str, user_id: int = None) -> bool:
-        """Delete a sensitive configuration value"""
-        if not self.db_pool:
-            return False
-
-        try:
-            async with self.db_pool.acquire() as conn:
-                await conn.execute("""
-                    UPDATE config_sensitive
-                    SET is_active = FALSE, updated_by = $2, updated_at = NOW()
-                    WHERE key = $1
-                """, key, user_id)
-
-            logger.info(f"Deleted sensitive config '{key}'")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to delete sensitive config '{key}': {e}")
-            return False
-
-    async def list_sensitive_configs(self) -> List[Dict[str, Any]]:
-        """List all sensitive configuration keys (without values)"""
-        if not self.db_pool:
-            return []
-
-        try:
-            async with self.db_pool.acquire() as conn:
-                rows = await conn.fetch("""
-                    SELECT key, description, last_rotated, rotation_interval_days,
-                           updated_at, is_active
-                    FROM config_sensitive
-                    WHERE is_active = TRUE
-                    ORDER BY key
-                """)
-
-                # Convert datetime objects to ISO format strings for JSON serialization
-                result = []
-                for row in rows:
-                    row_dict = dict(row)
-                    if row_dict.get('last_rotated'):
-                        row_dict['last_rotated'] = row_dict['last_rotated'].isoformat()
-                    if row_dict.get('updated_at'):
-                        row_dict['updated_at'] = row_dict['updated_at'].isoformat()
-                    result.append(row_dict)
-
-                return result
-
-        except Exception as e:
-            logger.error(f"Failed to list sensitive configs: {e}")
-            return []
-
-    async def save_config_to_database(self, config_type: ConfigType,
-                                     updates: Dict[str, Any],
-                                     user_id: int = None,
-                                     reason: str = None) -> bool:
-        """Save configuration changes to database"""
-        if not self.db_pool:
-            return False
-
-        try:
-            async with self.db_pool.acquire() as conn:
-                for key, value in updates.items():
-                    # Determine value type
-                    if isinstance(value, bool):
-                        value_type = 'bool'
-                        value_str = str(value).lower()
-                    elif isinstance(value, int):
-                        value_type = 'int'
-                        value_str = str(value)
-                    elif isinstance(value, float):
-                        value_type = 'float'
-                        value_str = str(value)
-                    elif isinstance(value, (dict, list)):
-                        value_type = 'json'
-                        import json
-                        value_str = json.dumps(value)
-                    else:
-                        value_type = 'string'
-                        value_str = str(value)
-
-                    # Get old value for history
-                    old_row = await conn.fetchrow("""
-                        SELECT value FROM config_settings
-                        WHERE config_type = $1 AND key = $2
-                    """, config_type.value, key)
-
-                    old_value = old_row['value'] if old_row else None
-
-                    # Update or insert config
-                    await conn.execute("""
-                        INSERT INTO config_settings (config_type, key, value, value_type, updated_by)
-                        VALUES ($1, $2, $3, $4, $5)
-                        ON CONFLICT (config_type, key) DO UPDATE
-                        SET value = $3,
-                            value_type = $4,
-                            updated_by = $5,
-                            updated_at = NOW()
-                    """, config_type.value, key, value_str, value_type, user_id)
-
-                    # Log to history
-                    await conn.execute("""
-                        INSERT INTO config_history (
-                            config_type, key, old_value, new_value,
-                            change_source, changed_by, reason
-                        )
-                        VALUES ($1, $2, $3, $4, 'database', $5, $6)
-                    """, config_type.value, key, old_value, value_str, user_id, reason)
-
-            logger.info(f"Saved {len(updates)} config changes to database for {config_type.value}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to save config to database: {e}")
-            return False
-
-    async def get_config_history(self, config_type: Optional[ConfigType] = None,
-                                 limit: int = 100) -> List[Dict[str, Any]]:
-        """Get configuration change history"""
-        if not self.db_pool:
-            return []
-
-        try:
-            async with self.db_pool.acquire() as conn:
-                if config_type:
-                    rows = await conn.fetch("""
-                        SELECT config_type, key, old_value, new_value,
-                               change_source, changed_by_username, reason, timestamp
-                        FROM config_history
-                        WHERE config_type = $1
-                        ORDER BY timestamp DESC
-                        LIMIT $2
-                    """, config_type.value, limit)
-                else:
-                    rows = await conn.fetch("""
-                        SELECT config_type, key, old_value, new_value,
-                               change_source, changed_by_username, reason, timestamp
-                        FROM config_history
-                        ORDER BY timestamp DESC
-                        LIMIT $1
-                    """, limit)
-
-                return [dict(row) for row in rows]
-
-        except Exception as e:
-            logger.error(f"Failed to get config history: {e}")
-            return []
 
     def _decrypt_sensitive_values(self, config_data: Dict) -> Dict:
         """Decrypt sensitive configuration values"""
@@ -1012,17 +694,29 @@ class ConfigManager:
     def validate_environment(self) -> List[str]:
         """Validate required environment variables are set"""
         required_vars = [
-            'PRIVATE_KEY',
+            'ENCRYPTION_KEY',
             'DATABASE_URL',
-            'REDIS_URL',
-            'WEB3_PROVIDER_URL',
-            'TELEGRAM_BOT_TOKEN',
-            'TELEGRAM_CHAT_ID'
+            'REDIS_URL'
         ]
         
+        # Module-specific secrets
+        if os.getenv('DEX_MODULE_ENABLED', 'false').lower() == 'true':
+            required_vars.extend(['DEX_MODULE_EVM_PRIVATE_KEY', 'DEX_MODULE_SOLANA_PRIVATE_KEY'])
+        if os.getenv('FUTURES_MODULE_ENABLED', 'false').lower() == 'true':
+            # Futures needs at least one set of keys
+            if not (os.getenv('BINANCE_API_KEY') and os.getenv('BINANCE_API_SECRET')) and \
+               not (os.getenv('BYBIT_API_KEY') and os.getenv('BYBIT_API_SECRET')):
+                required_vars.append("BINANCE_OR_BYBIT_API_KEYS")
+        if os.getenv('SOLANA_MODULE_ENABLED', 'false').lower() == 'true':
+            required_vars.append('SOLANA_MODULE_PRIVATE_KEY')
+
         missing = []
         for var in required_vars:
-            if not os.getenv(var):
+            if var == "BINANCE_OR_BYBIT_API_KEYS":
+                if not (os.getenv('BINANCE_API_KEY') and os.getenv('BINANCE_API_SECRET')) and \
+                   not (os.getenv('BYBIT_API_KEY') and os.getenv('BYBIT_API_SECRET')):
+                    missing.append(var)
+            elif not os.getenv(var):
                 missing.append(var)
         
         if missing:
@@ -1036,103 +730,6 @@ class ConfigManager:
         if schema_class:
             self.configs[config_type] = schema_class()
             logger.info(f"Loaded default {config_type.value} configuration")
-
-    async def _start_auto_reload(self) -> None:
-        """Start automatic configuration reloading"""
-        self._reload_task = asyncio.create_task(self._auto_reload_loop())
-
-    async def _auto_reload_loop(self) -> None:
-        """Auto-reload loop to check for configuration changes"""
-        while True:
-            try:
-                await asyncio.sleep(self.reload_check_interval)
-                await self._check_for_changes()
-                
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Error in auto-reload loop: {e}")
-
-    async def _check_for_changes(self) -> None:
-        """Check for configuration file changes"""
-        for file_path, last_modified in self.file_watchers.items():
-            try:
-                current_modified = Path(file_path).stat().st_mtime
-                
-                if current_modified > last_modified:
-                    logger.info(f"Configuration file changed: {file_path}")
-                    
-                    filename = Path(file_path).stem
-                    config_type = None
-                    
-                    for ct in ConfigType:
-                        if ct.value == filename:
-                            config_type = ct
-                            break
-                    
-                    if config_type:
-                        await self._reload_config(config_type)
-                        self.file_watchers[file_path] = current_modified
-                    
-            except FileNotFoundError:
-                logger.warning(f"Configuration file deleted: {file_path}")
-                del self.file_watchers[file_path]
-            except Exception as e:
-                logger.error(f"Error checking file {file_path}: {e}")
-
-    async def _reload_config(self, config_type: ConfigType) -> None:
-        """Reload specific configuration type"""
-        try:
-            old_config = self.configs.get(config_type)
-            await self._load_config(config_type)
-            new_config = self.configs.get(config_type)
-            
-            if old_config and new_config:
-                await self._track_config_changes(config_type, old_config, new_config)
-            
-            await self._notify_config_watchers(config_type, new_config)
-            
-            logger.info(f"Reloaded {config_type.value} configuration")
-            
-        except Exception as e:
-            logger.error(f"Failed to reload {config_type.value} configuration: {e}")
-
-    async def _track_config_changes(self, config_type: ConfigType, old_config: BaseModel, new_config: BaseModel) -> None:
-        """Track configuration changes"""
-        old_dict = old_config.dict()
-        new_dict = new_config.dict()
-        
-        for key in set(old_dict.keys()) | set(new_dict.keys()):
-            old_value = old_dict.get(key)
-            new_value = new_dict.get(key)
-            
-            if old_value != new_value:
-                change = ConfigChange(
-                    timestamp=datetime.utcnow(),
-                    config_type=config_type,
-                    key=key,
-                    old_value=old_value,
-                    new_value=new_value,
-                    source=ConfigSource.FILE,
-                    user=None,
-                    reason="auto_reload"
-                )
-                
-                self.change_history.append(change)
-                logger.info(f"Config change detected: {config_type.value}.{key} = {new_value}")
-
-    async def _notify_config_watchers(self, config_type: ConfigType, new_config: BaseModel) -> None:
-        """Notify registered watchers about configuration changes"""
-        watchers = self.config_watchers.get(config_type, [])
-        
-        for watcher in watchers:
-            try:
-                if asyncio.iscoroutinefunction(watcher):
-                    await watcher(config_type, new_config)
-                else:
-                    watcher(config_type, new_config)
-            except Exception as e:
-                logger.error(f"Error notifying config watcher: {e}")
 
     def get_config(self, config_type: ConfigType) -> Optional[BaseModel]:
         """Get configuration for specified type"""
@@ -1223,106 +820,3 @@ class ConfigManager:
 
     def get_dashboard_config(self) -> DashboardConfig:
         return self.configs.get(ConfigType.DASHBOARD, DashboardConfig())
-
-    async def update_config(self,
-                          config_type: ConfigType, 
-                          updates: Dict[str, Any],
-                          user: Optional[str] = None,
-                          reason: Optional[str] = None,
-                          persist: bool = True) -> bool:
-        """Update configuration with validation"""
-        try:
-            current_config = self.configs.get(config_type)
-            if not current_config:
-                logger.error(f"No config found for type {config_type.value}")
-                return False
-            
-            config_dict = current_config.dict()
-            
-            changes = []
-            for key, new_value in updates.items():
-                old_value = config_dict.get(key)
-                if old_value != new_value:
-                    changes.append(ConfigChange(
-                        timestamp=datetime.utcnow(),
-                        config_type=config_type,
-                        key=key,
-                        old_value=old_value,
-                        new_value=new_value,
-                        source=ConfigSource.DATABASE,
-                        user=user,
-                        reason=reason
-                    ))
-            
-            config_dict.update(updates)
-            
-            schema_class = self.config_schemas.get(config_type)
-            if schema_class:
-                try:
-                    new_config = schema_class(**config_dict)
-                except ValidationError as e:
-                    logger.error(f"Validation error for {config_type.value}: {e}")
-                    return False
-            else:
-                logger.error(f"No schema for config type {config_type.value}")
-                return False
-            
-            self.configs[config_type] = new_config
-            
-            self.change_history.extend(changes)
-            
-            if persist:
-                await self._persist_config(config_type, new_config)
-            
-            await self._notify_config_watchers(config_type, new_config)
-            
-            logger.info(f"Updated {config_type.value} configuration with {len(updates)} changes")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to update {config_type.value} configuration: {e}")
-            return False
-
-    async def _persist_config(self, config_type: ConfigType, config: BaseModel) -> None:
-        """Persist configuration to file"""
-        try:
-            config_file = self.config_dir / f"{config_type.value}.yaml"
-            config_dict = config.dict()
-            
-            if self.encryption_manager:
-                config_dict = self._encrypt_sensitive_values(config_dict)
-            
-            async with aiofiles.open(config_file, 'w') as f:
-                await f.write(yaml.dump(config_dict, default_flow_style=False))
-            
-            stat = config_file.stat()
-            self.file_watchers[str(config_file)] = stat.st_mtime
-            
-            logger.info(f"Persisted {config_type.value} configuration to {config_file}")
-            
-        except Exception as e:
-            logger.error(f"Failed to persist {config_type.value} configuration: {e}")
-
-    def _encrypt_sensitive_values(self, config_data: Dict) -> Dict:
-        """Encrypt sensitive configuration values before saving"""
-        if not self.encryption_manager:
-            return config_data
-        
-        sensitive_keys = ['password', 'secret', 'token', 'key']
-        
-        def encrypt_recursive(data):
-            if isinstance(data, dict):
-                for key, value in data.items():
-                    if any(sensitive in key.lower() for sensitive in sensitive_keys):
-                        if isinstance(value, str) and not value.startswith('encrypted:'):
-                            try:
-                                data[key] = 'encrypted:' + self.encryption_manager.encrypt_sensitive_data(value)
-                            except Exception as e:
-                                logger.warning(f"Failed to encrypt {key}: {e}")
-                    else:
-                        data[key] = encrypt_recursive(value)
-            elif isinstance(data, list):
-                return [encrypt_recursive(item) for item in data]
-            return data
-        
-        return encrypt_recursive(config_data.copy())

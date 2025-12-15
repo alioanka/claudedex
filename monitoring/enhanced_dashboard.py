@@ -313,6 +313,8 @@ class DashboardEndpoints:
         self.app.router.add_get('/positions', self.positions_page)
         self.app.router.add_get('/performance', self.performance_page)
         self.app.router.add_get('/settings', self.settings_page)
+        self.app.router.add_get('/settings/all', self.settings_all_page)
+        self.app.router.add_get('/score_inspector', self.score_inspector_page)
         self.app.router.add_get('/reports', self.reports_page)
         self.app.router.add_get('/backtest', self.backtest_page)
         self.app.router.add_get('/logs', self.logs_page)
@@ -408,6 +410,8 @@ class DashboardEndpoints:
 
         # SSE for real-time updates
         self.app.router.add_get('/api/stream', self.sse_handler)
+        self.app.router.add_get('/api/master_overview', self.api_master_overview)
+        self.app.router.add_get('/api/score_inspector', self.api_score_inspector)
 
         # ML Training API endpoints
         self.app.router.add_post('/api/ml/train', self.api_ml_train)
@@ -1097,6 +1101,22 @@ class DashboardEndpoints:
         template = self.jinja_env.get_template('settings.html')
         return web.Response(
             text=template.render(page='settings'),
+            content_type='text/html'
+        )
+
+    async def settings_all_page(self, request):
+        """Global settings page"""
+        template = self.jinja_env.get_template('settings_all.html')
+        return web.Response(
+            text=template.render(page='settings_all'),
+            content_type='text/html'
+        )
+
+    async def score_inspector_page(self, request):
+        """Score inspector page"""
+        template = self.jinja_env.get_template('score_inspector.html')
+        return web.Response(
+            text=template.render(page='score_inspector'),
             content_type='text/html'
         )
     
@@ -5354,6 +5374,57 @@ class DashboardEndpoints:
             except Exception as e:
                 logger.error(f"Error in broadcast loop: {e}")
                 await asyncio.sleep(10)
+
+    async def api_master_overview(self, request):
+        """
+        Provides a single endpoint for aggregated data from all modules.
+        """
+        try:
+            dex_stats = await self.api_dashboard_summary(request)
+            futures_stats = await self.api_futures_stats(request)
+            solana_stats = await self.api_get_solana_stats(request)
+
+            return web.json_response({
+                'success': True,
+                'data': {
+                    'dex': json.loads(dex_stats.body),
+                    'futures': json.loads(futures_stats.body),
+                    'solana': json.loads(solana_stats.body)
+                }
+            })
+        except Exception as e:
+            logger.error(f"Error creating master overview: {e}")
+            return web.json_response({'error': str(e)}, status=500)
+
+    async def api_score_inspector(self, request):
+        """
+        Provides a detailed breakdown of the opportunity score for a given token.
+        """
+        token_address = request.query.get('token_address')
+        chain = request.query.get('chain')
+
+        if not token_address or not chain:
+            return web.json_response({'success': False, 'error': 'token_address and chain are required'}, status=400)
+
+        try:
+            # Fetch pair data using the engine's dex_collector
+            pair_data = await self.engine.dex_collector.get_pair_data_by_token(token_address, chain)
+            if not pair_data:
+                return web.json_response({'success': False, 'error': 'Token pair not found'}, status=404)
+
+            # Run the analysis
+            final_score, score_breakdown = await self.engine._calculate_opportunity_score(pair_data)
+
+            return web.json_response({
+                'success': True,
+                'data': {
+                    'final_score': final_score,
+                    'score_breakdown': score_breakdown
+                }
+            })
+        except Exception as e:
+            logger.error(f"Error in score inspector: {e}")
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
     
     async def _generate_report(self, period, start_date, end_date, metrics):
         """Generate detailed performance report."""

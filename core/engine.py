@@ -157,7 +157,7 @@ class ClosedPositionRecord:
 class TradingBotEngine:
     """Main orchestration engine for the trading bot"""
     
-    def __init__(self, config: Dict, config_manager, chain_rpc_urls: Dict, mode: str = "production"):
+    def __init__(self, config: Dict, config_manager, chain_rpc_urls: Dict, mode: str = "production", global_event_bus=None):
         """
         Initialize the trading engine
         
@@ -166,9 +166,11 @@ class TradingBotEngine:
             config_manager: The main ConfigManager instance
             chain_rpc_urls: Dictionary of chain-specific RPC URLs
             mode: Operating mode
+            global_event_bus: The global event bus for inter-module communication
         """
         self.config = config
         self.config_manager = config_manager
+        self.global_event_bus = global_event_bus
         self.chain_rpc_urls = chain_rpc_urls
         self.mode = mode
         self.state = BotState.INITIALIZING
@@ -1515,7 +1517,19 @@ class TradingBotEngine:
                         logger.error(f"Error fetching price for {token_address}: {e}", exc_info=True)
                         continue
                 
-                # ✅ STEP 2: Bulk update portfolio manager
+                # ✅ STEP 2: Publish price updates to the global event bus
+                if price_data and hasattr(self, 'global_event_bus') and self.global_event_bus:
+                    for token_address, price in price_data.items():
+                        position = self.active_positions.get(token_address)
+                        if position:
+                            await self.global_event_bus.publish("DEX_PRICE_UPDATE", {
+                                "symbol": position.get('token_symbol', 'UNKNOWN'),
+                                "price": price,
+                                "chain": position.get('chain', 'ethereum'),
+                                "timestamp": datetime.now().isoformat()
+                            })
+
+                # ✅ STEP 3: Bulk update portfolio manager
                 if price_data and hasattr(self, 'portfolio_manager') and self.portfolio_manager:
                     try:
                         updated_count = await self.portfolio_manager.update_all_positions(price_data)
@@ -3271,7 +3285,7 @@ class TradingBotEngine:
         contract_safety: Optional[Dict]
     ) -> float:
         """
-        Calculate overall opportunity score with detailed logging
+        Calculate overall opportunity score with detailed logging and dynamic weights.
         Returns: Score between 0 and 1
         """
         try:
@@ -3280,72 +3294,64 @@ class TradingBotEngine:
                 logger.info(f"   ❌ REJECTED: Token is too new ({age_minutes} minutes old)")
                 return 0.0
 
+            # Get dynamic weights from config
+            trading_config = self.config_manager.get_trading_config()
+            w_vol = trading_config.score_weight_volume
+            w_liq = trading_config.score_weight_liquidity
+            w_price = trading_config.score_weight_price_change
+            w_risk = trading_config.score_weight_risk
+            w_age = trading_config.score_weight_age
+
             score = 0.0
             weights = 0.0
             score_breakdown = {}
-            
-            # Volume score (30% weight) - Max score at $250k volume
+
+            # Volume score
             volume_24h = pair.get('volume_24h', 0)
             if volume_24h > 0:
                 volume_score = min(volume_24h / 250000, 1.0)
-                score += volume_score * 0.30
-                weights += 0.30
-                score_breakdown['volume'] = {
-                    'score': volume_score, 'weight': 0.30, 'contribution': volume_score * 0.30, 'raw_value': volume_24h
-                }
-            
-            # Liquidity score (35% weight) - Increased weight, max score at $50k
+                score += volume_score * w_vol
+                weights += w_vol
+                score_breakdown['volume'] = {'score': volume_score, 'weight': w_vol, 'contribution': volume_score * w_vol, 'raw_value': volume_24h}
+
+            # Liquidity score
             liquidity_usd = pair.get('liquidity_usd') or pair.get('liquidity') or 0
             if liquidity_usd > 0:
                 volume_to_liq_ratio = volume_24h / liquidity_usd if liquidity_usd > 0 else 0
                 if volume_to_liq_ratio < 2.0:
                     logger.info(f"   ❌ REJECTED: Low volume/liquidity ratio ({volume_to_liq_ratio:.1f}x)")
                     return 0.0
-
                 liq_score = min(liquidity_usd / 50000, 1.0)
-                score += liq_score * 0.35
-                weights += 0.35
-                score_breakdown['liquidity'] = {
-                    'score': liq_score, 'weight': 0.35, 'contribution': liq_score * 0.35, 'raw_value': liquidity_usd
-                }
-            
-            # Price change score (10% weight) - Reduced weight, less emphasis on initial pump
+                score += liq_score * w_liq
+                weights += w_liq
+                score_breakdown['liquidity'] = {'score': liq_score, 'weight': w_liq, 'contribution': liq_score * w_liq, 'raw_value': liquidity_usd}
+
+            # Price change score
             price_change_5m = pair.get('price_change_5m', 0)
             if price_change_5m is not None:
-                # Normalize score: a 10% change gives a full score, cap at 20%
                 price_score = min(max(price_change_5m / 10, 0), 2.0) / 2.0
-                score += price_score * 0.10
-                weights += 0.10
-                score_breakdown['price_change'] = {
-                    'score': price_score, 'weight': 0.10, 'contribution': price_score * 0.10, 'raw_value': price_change_5m
-                }
-            
-            # Risk score (20% weight) - Adjusted to balance weights
+                score += price_score * w_price
+                weights += w_price
+                score_breakdown['price_change'] = {'score': price_score, 'weight': w_price, 'contribution': price_score * w_price, 'raw_value': price_change_5m}
+
+            # Risk score
             if risk_score and hasattr(risk_score, 'overall_risk'):
                 risk_component = 1.0 - risk_score.overall_risk
-                score += risk_component * 0.20
-                weights += 0.20
-                score_breakdown['risk'] = {
-                    'score': risk_component, 'weight': 0.20, 'contribution': risk_component * 0.20, 'raw_value': risk_score.overall_risk
-                }
-            
-            # Age bonus (5% weight) - Remains the same
+                score += risk_component * w_risk
+                weights += w_risk
+                score_breakdown['risk'] = {'score': risk_component, 'weight': w_risk, 'contribution': risk_component * w_risk, 'raw_value': risk_score.overall_risk}
+
+            # Age bonus
             age_hours = pair.get('age_hours', 999)
             age_score = 0.0
             if age_hours < 24:
                 age_score = 1.0 - (age_hours / 24)
+            score += age_score * w_age
+            weights += w_age
+            score_breakdown['age'] = {'score': age_score, 'weight': w_age, 'contribution': age_score * w_age, 'raw_value': age_hours}
 
-            score += age_score * 0.05
-            weights += 0.05
-            score_breakdown['age'] = {
-                'score': age_score, 'weight': 0.05, 'contribution': age_score * 0.05, 'raw_value': age_hours
-            }
-            
             # Normalize by total weights used
-            if weights > 0:
-                final_score = score / weights
-            else:
-                final_score = 0.3
+            final_score = score / weights if weights > 0 else 0.0
             
             # Detailed logging
             token_symbol = pair.get('token_symbol', 'UNKNOWN')

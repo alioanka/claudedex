@@ -219,7 +219,8 @@ class FuturesTradingEngine:
         self,
         config_manager=None,
         mode: str = "production",
-        db_pool=None
+        db_pool=None,
+        global_event_bus=None
     ):
         """
         Initialize futures trading engine with database-backed configuration
@@ -228,8 +229,10 @@ class FuturesTradingEngine:
             config_manager: FuturesConfigManager instance (loads from database)
             mode: Operating mode
             db_pool: asyncpg connection pool for trade persistence
+            global_event_bus: The global event bus for inter-module communication
         """
         self.config_manager = config_manager
+        self.global_event_bus = global_event_bus
         self.mode = mode
         self.is_running = False
         self.db_pool = db_pool  # Database connection pool for trade persistence
@@ -774,6 +777,15 @@ class FuturesTradingEngine:
 
                 current_price = float(ticker['last'])
                 position.current_price = current_price
+
+                # Publish to global event bus
+                if self.global_event_bus:
+                    await self.global_event_bus.publish("CEX_PRICE_UPDATE", {
+                        "symbol": symbol,
+                        "price": current_price,
+                        "exchange": self.exchange,
+                        "timestamp": datetime.now().isoformat()
+                    })
 
                 # Update high/low tracking for trailing stop
                 if position.side == TradeSide.LONG:
