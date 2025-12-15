@@ -104,18 +104,28 @@ class HoneypotChecker:
             if chain_name.lower() == 'solana':
                 continue
 
-            # --- FIX: Use the correct chain enum and URLs from config ---
+            # --- FIX: Try multiple RPC URLs for better reliability ---
             try:
                 chain_enum = Chain[chain_name.upper()]
-                rpc_url = rpc_urls[0] # Use the first available RPC URL
+                connected = False
 
-                self.web3_connections[chain_enum] = Web3(Web3.HTTPProvider(rpc_url))
-                if self.web3_connections[chain_enum].is_connected():
-                    logger.info(f"✅ Web3 connected for {chain_name.upper()} via {rpc_url[:50]}...")
-                else:
-                    logger.error(f"❌ Failed to connect Web3 for {chain_name.upper()}")
-            except (KeyError, IndexError):
-                logger.warning(f"⚠️ No valid RPC URL or chain enum for '{chain_name}'")
+                # Try each RPC URL until one works
+                for rpc_url in rpc_urls:
+                    try:
+                        web3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 10}))
+                        if web3.is_connected():
+                            self.web3_connections[chain_enum] = web3
+                            logger.info(f"✅ Web3 connected for {chain_name.upper()} via {rpc_url[:50]}...")
+                            connected = True
+                            break
+                    except Exception as e:
+                        logger.debug(f"RPC {rpc_url[:30]}... failed: {e}")
+                        continue
+
+                if not connected:
+                    logger.error(f"❌ Failed to connect Web3 for {chain_name.upper()} (tried {len(rpc_urls)} URLs)")
+            except (KeyError, IndexError) as e:
+                logger.warning(f"⚠️ No valid RPC URL or chain enum for '{chain_name}': {e}")
 
     async def close(self):
         """Clean up resources"""

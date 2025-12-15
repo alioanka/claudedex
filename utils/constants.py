@@ -73,6 +73,8 @@ CHAIN_RPC_URLS = {
         "https://rpc.ankr.com/polygon/85e891889f34c452ace96e25a7422fd8996bd74a0f34bb96a0cd4bb79af6080a"
     ],
     Chain.ARBITRUM: [
+        "https://arb1.arbitrum.io/rpc",
+        "https://arbitrum-one.publicnode.com",
         "https://arb-mainnet.g.alchemy.com/v2/bAwxYCUc1oIDIIYAL3w98NKh00DQK45B",
         "https://rpc.ankr.com/arbitrum/85e891889f34c452ace96e25a7422fd8996bd74a0f34bb96a0cd4bb79af6080a"
     ],
@@ -86,6 +88,9 @@ CHAIN_RPC_URLS = {
         "https://api.avax.network/ext/bc/C/rpc"
     ],
     Chain.FANTOM: [
+        "https://fantom-mainnet.public.blastapi.io",
+        "https://rpc.fantom.network",
+        "https://fantom.publicnode.com",
         "https://rpc.ftm.tools",
         "https://rpc.ankr.com/fantom"
     ],
