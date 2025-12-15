@@ -660,7 +660,7 @@ class AnalyticsEngine:
         cumulative = 0.0
 
         for trade in sorted_trades:
-            pnl = trade.get('pnl', 0)
+            pnl = float(trade.get('pnl', 0) or 0)  # Convert Decimal to float
             cumulative += pnl
             equity.append(cumulative)
 
