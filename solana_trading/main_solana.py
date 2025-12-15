@@ -2,667 +2,164 @@
 """
 Solana Trading Bot - Main Entry Point
 Handles trading on Solana blockchain (Jupiter, Drift, Pump.fun)
-
-Features:
-- Jupiter V6 aggregator integration
-- Drift Protocol perpetuals
-- Pump.fun token sniping
-- Real-time price monitoring
-- HTTP health/metrics endpoints for monitoring
-- Database-backed configuration
-- Separate log files for errors and trades
 """
-
 import asyncio
-import signal
 import sys
 import os
 from pathlib import Path
-from dotenv import load_dotenv
-import logging
-from datetime import datetime
 import argparse
-import json
+import logging
 from aiohttp import web
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add project root for consistent imports
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# Load environment variables
-load_dotenv()
+from core.module_loader import ModuleWrapper
+from solana_trading.core.solana_engine import SolanaTradingEngine
+from modules.solana_strategies.solana_config_manager import SolanaConfigManager
+from security.encryption import EncryptionManager
 
-# ============================================================================
-# LOGGING SETUP - Separate files for main, errors, and trades
-# With log rotation to prevent large file sizes
-# ============================================================================
-from logging.handlers import RotatingFileHandler
-
-log_dir = Path("logs/solana")
-log_dir.mkdir(parents=True, exist_ok=True)
-
-# Create formatters
-log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-trade_formatter = logging.Formatter('%(asctime)s - %(message)s')
-
-# Root logger for Solana module
+# Initialize logger for this module
 logger = logging.getLogger("SolanaTrading")
-logger.setLevel(logging.INFO)
 
-# Main log file - all messages - ROTATING at 10MB with 5 backups
-main_handler = RotatingFileHandler(
-    log_dir / 'solana_trading.log',
-    maxBytes=10 * 1024 * 1024,  # 10 MB
-    backupCount=5,
-    encoding='utf-8'
-)
-main_handler.setLevel(logging.INFO)
-main_handler.setFormatter(log_formatter)
-logger.addHandler(main_handler)
+class SolanaModule(ModuleWrapper):
+    """
+    The Solana trading module, inheriting the common lifecycle from ModuleWrapper.
+    """
+    def __init__(self, mode: str = "production"):
+        super().__init__(module_name="SolanaTrading", mode=mode)
+        self.engine: SolanaTradingEngine | None = None
+        self.health_server: web.AppRunner | None = None
+        self.solana_config_manager: SolanaConfigManager | None = None
 
-# Console handler
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
-console_handler.setFormatter(log_formatter)
-logger.addHandler(console_handler)
+    async def initialize_module(self):
+        """
+        Initialize all Solana-specific components using the services
+        (db_manager, config_manager) provided by the base class.
+        """
+        self.logger.info("Initializing Solana-specific components...")
 
-# Error log file - only errors and above - ROTATING at 5MB with 3 backups
-error_handler = RotatingFileHandler(
-    log_dir / 'solana_errors.log',
-    maxBytes=5 * 1024 * 1024,  # 5 MB
-    backupCount=3,
-    encoding='utf-8'
-)
-error_handler.setLevel(logging.ERROR)
-error_handler.setFormatter(log_formatter)
-logger.addHandler(error_handler)
+        # 1. Initialize Solana-specific config manager
+        self.solana_config_manager = SolanaConfigManager(self.db_pool)
+        await self.solana_config_manager.initialize()
+        self.logger.info("✅ Solana config manager loaded from database.")
 
-# Trade logger - separate logger for trades only - ROTATING at 10MB with 5 backups
-trade_logger = logging.getLogger("SolanaTrading.Trades")
-trade_logger.setLevel(logging.INFO)
-trade_handler = RotatingFileHandler(
-    log_dir / 'solana_trades.log',
-    maxBytes=10 * 1024 * 1024,  # 10 MB
-    backupCount=5,
-    encoding='utf-8'
-)
-trade_handler.setLevel(logging.INFO)
-trade_handler.setFormatter(trade_formatter)
-trade_logger.addHandler(trade_handler)
-trade_logger.propagate = False  # Don't send to parent logger
+        # 2. Decrypt and prepare secrets
+        encryption_key = os.getenv('ENCRYPTION_KEY')
+        fernet = EncryptionManager({'encryption_key': encryption_key}).fernet
 
-# Configure engine logger with all handlers
-engine_logger = logging.getLogger("SolanaTradingEngine")
-engine_logger.setLevel(logging.INFO)
-engine_logger.addHandler(main_handler)
-engine_logger.addHandler(console_handler)
-engine_logger.addHandler(error_handler)
+        encrypted_sol_key = os.getenv('SOLANA_MODULE_PRIVATE_KEY')
+        if not encrypted_sol_key:
+            raise ValueError("SOLANA_MODULE_PRIVATE_KEY is not set.")
 
+        try:
+            decrypted_sol_key = fernet.decrypt(encrypted_sol_key.encode()).decode()
+            self.logger.info("✅ Successfully decrypted Solana Module private key.")
+        except Exception as e:
+            raise ValueError(f"Cannot decrypt SOLANA_MODULE_PRIVATE_KEY: {e}")
 
-class HealthServer:
-    """HTTP server for health and metrics endpoints"""
+        # 3. Get configuration from managers
+        rpc_urls = os.getenv('SOLANA_RPC_URLS', 'https://api.mainnet-beta.solana.com')
+        strategies = self.solana_config_manager.get_enabled_strategies()
+        max_positions = self.solana_config_manager.max_positions
 
-    def __init__(self, app: 'SolanaTradingApplication', host: str = "0.0.0.0", port: int = 8082):
-        self.app = app
-        self.host = host
-        self.port = port
-        self.web_app = web.Application()
-        self._setup_routes()
-        self.runner = None
+        # 4. Initialize Solana Trading Engine
+        self.logger.info("Initializing Solana trading engine...")
+        self.engine = SolanaTradingEngine(
+            rpc_url=rpc_urls.split(',')[0],  # Use the first RPC URL as primary
+            private_key=decrypted_sol_key,
+            strategies=strategies,
+            max_positions=max_positions,
+            mode=self.mode,
+            config_manager=self.solana_config_manager,
+            db_pool=self.db_pool
+        )
+        await self.engine.initialize()
 
-    def _setup_routes(self):
-        """Setup HTTP routes"""
-        self.web_app.router.add_get('/health', self.health_handler)
-        self.web_app.router.add_get('/healthz', self.health_handler)  # Kubernetes standard
-        self.web_app.router.add_get('/ready', self.ready_handler)
-        self.web_app.router.add_get('/metrics', self.metrics_handler)
-        self.web_app.router.add_get('/stats', self.stats_handler)
-        self.web_app.router.add_get('/trading/status', self.trading_status_handler)
-        self.web_app.router.add_post('/trading/unblock', self.trading_unblock_handler)
-        self.web_app.router.add_post('/close-position', self.close_position_handler)
-        self.web_app.router.add_post('/close-all-positions', self.close_all_positions_handler)
+        # 5. Initialize Health Server
+        await self._start_health_server()
+        self.logger.info("✅ Solana Module initialization complete.")
 
-    async def health_handler(self, request):
-        """Liveness probe endpoint"""
-        if self.app.engine:
-            health = await self.app.engine.get_health()
+    async def run_module_tasks(self):
+        """Run the main long-running tasks for the Solana module."""
+        self.logger.info("🎯 Starting main Solana module tasks (engine)...")
+        engine_task = asyncio.create_task(self.engine.run(), name="solana_engine_run")
+
+        done, pending = await asyncio.wait(
+            [engine_task, asyncio.create_task(self.shutdown_event.wait())],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+
+        for task in done:
+            if task.exception():
+                self.logger.error(f"Task '{task.get_name()}' exited with an exception.", exc_info=task.exception())
+
+        self.shutdown_event.set()
+        for task in pending:
+            task.cancel()
+
+    async def shutdown_module(self):
+        """Gracefully shut down all Solana-specific components."""
+        self.logger.info("Shutting down Solana-specific components...")
+        if self.health_server:
+            await self.health_server.cleanup()
+        if self.engine:
+            await self.engine.shutdown()
+        self.logger.info("✅ Solana components shut down.")
+
+    async def _start_health_server(self):
+        """Initializes and starts the AIOHTTP health server."""
+        health_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
+        app = web.Application()
+        app.router.add_get('/health', self._health_handler)
+        app.router.add_get('/ready', self._ready_handler)
+
+        self.health_server = web.AppRunner(app)
+        await self.health_server.setup()
+        site = web.TCPSite(self.health_server, '0.0.0.0', health_port)
+        await site.start()
+        self.logger.info(f"📡 Health server started on http://0.0.0.0:{health_port}")
+
+    async def _health_handler(self, request):
+        """Basic health check endpoint."""
+        if self.engine:
+            health = await self.engine.get_health()
             status = 200 if health.get('status') == 'healthy' else 503
             return web.json_response(health, status=status)
         return web.json_response({'status': 'initializing'}, status=503)
 
-    async def ready_handler(self, request):
-        """Readiness probe endpoint"""
-        if self.app.engine and self.app.engine.is_running:
-            health = await self.app.engine.get_health()
-            if health.get('rpc_connected') and health.get('risk_can_trade'):
-                return web.json_response({'ready': True, **health}, status=200)
-        return web.json_response({'ready': False}, status=503)
-
-    async def metrics_handler(self, request):
-        """Prometheus-style metrics endpoint"""
-        metrics = []
-        if self.app.engine:
-            stats = await self.app.engine.get_stats()
-            health = await self.app.engine.get_health()
-
-            # Trading metrics
-            metrics.append(f'solana_trades_total {stats.get("total_trades", 0)}')
-            metrics.append(f'solana_winning_trades {stats.get("winning_trades", 0)}')
-            metrics.append(f'solana_losing_trades {stats.get("losing_trades", 0)}')
-            metrics.append(f'solana_active_positions {stats.get("active_positions", 0)}')
-            metrics.append(f'solana_daily_trades {stats.get("daily_trades", 0)}')
-
-            # PnL metrics (extract numeric value)
-            total_pnl = stats.get("total_pnl", "0.0000 SOL").split()[0]
-            daily_pnl = stats.get("daily_pnl", "0.0000 SOL").split()[0]
-            metrics.append(f'solana_total_pnl_sol {float(total_pnl)}')
-            metrics.append(f'solana_daily_pnl_sol {float(daily_pnl)}')
-
-            # Health metrics
-            metrics.append(f'solana_engine_running {1 if health.get("engine_running") else 0}')
-            metrics.append(f'solana_rpc_connected {1 if health.get("rpc_connected") else 0}')
-            metrics.append(f'solana_dry_run {1 if health.get("dry_run") else 0}')
-            metrics.append(f'solana_risk_can_trade {1 if health.get("risk_can_trade") else 0}')
-            metrics.append(f'solana_wallet_balance_sol {health.get("wallet_balance_sol", 0)}')
-
-            # RPC latency metrics
-            latencies = health.get('rpc_latencies', {})
-            for rpc_url, latency in latencies.items():
-                # Sanitize RPC URL for Prometheus label
-                safe_url = rpc_url[:30].replace('/', '_').replace(':', '_').replace('.', '_')
-                metrics.append(f'solana_rpc_latency_ms{{rpc="{safe_url}"}} {latency}')
-
-        return web.Response(text='\n'.join(metrics), content_type='text/plain')
-
-    async def stats_handler(self, request):
-        """Full statistics endpoint"""
-        if self.app.engine:
-            stats = await self.app.engine.get_stats()
-            health = await self.app.engine.get_health()
-            return web.json_response({
-                'module': 'solana',
-                'stats': stats,
-                'health': health,
-                'timestamp': datetime.now().isoformat()
-            })
-        return web.json_response({'error': 'Engine not initialized'}, status=503)
-
-    async def trading_status_handler(self, request):
-        """Get trading status including block status for dashboard"""
-        try:
-            if not self.app.engine:
-                return web.json_response({
-                    'success': False,
-                    'error': 'Engine not initialized'
-                }, status=503)
-
-            health = await self.app.engine.get_health()
-            risk_metrics = self.app.engine.risk_metrics
-
-            # Determine block reasons
-            block_reasons = []
-            if risk_metrics.daily_pnl_sol <= -risk_metrics.daily_loss_limit_sol:
-                block_reasons.append(f"Daily loss limit reached ({risk_metrics.daily_pnl_sol:.4f} SOL)")
-            if risk_metrics.consecutive_losses >= 5:
-                block_reasons.append(f"Max consecutive losses reached ({risk_metrics.consecutive_losses})")
-
-            # Calculate block duration if blocked
-            block_duration_hours = 0
-            blocked_since = None
-            if not risk_metrics.can_trade and hasattr(self.app.engine, '_blocked_since'):
-                blocked_since = self.app.engine._blocked_since
-                if blocked_since:
-                    delta = datetime.now() - blocked_since
-                    block_duration_hours = delta.total_seconds() / 3600
-
-            # Get config values
-            config = self.app.config_manager
-            max_positions = config.max_positions if config else self.app.max_positions
-            daily_loss_limit = config.daily_loss_limit_sol if config else 5.0
-
-            return web.json_response({
-                'success': True,
-                'trading_blocked': not risk_metrics.can_trade,
-                'block_reasons': block_reasons,
-                'block_duration_hours': block_duration_hours,
-                'blocked_since': blocked_since.isoformat() if blocked_since else None,
-                'daily_pnl_sol': risk_metrics.daily_pnl_sol,
-                'daily_loss_limit_sol': daily_loss_limit,
-                'consecutive_losses': risk_metrics.consecutive_losses,
-                'max_consecutive_losses': 5,
-                'active_positions': len(self.app.engine.active_positions),
-                'max_positions': max_positions,
-                'risk_level': risk_metrics.risk_level,
-                'mode': 'DRY_RUN' if self.app.engine.dry_run else 'LIVE',
-                'sol_balance': health.get('wallet_balance_sol', 0),
-                'sol_price_usd': self.app.engine.sol_price_usd
-            })
-
-        except Exception as e:
-            logger.error(f"Error getting trading status: {e}")
-            return web.json_response({
-                'success': False,
-                'error': str(e)
-            }, status=500)
-
-    async def trading_unblock_handler(self, request):
-        """Reset trading blocks (daily loss, consecutive losses)"""
-        try:
-            if not self.app.engine:
-                return web.json_response({
-                    'success': False,
-                    'error': 'Engine not initialized'
-                }, status=503)
-
-            data = await request.json() if request.content_length else {}
-            reset_type = data.get('reset_type', 'all')  # 'all', 'daily_loss', 'consecutive'
-
-            risk_metrics = self.app.engine.risk_metrics
-            reset_actions = []
-
-            if reset_type in ('all', 'daily_loss'):
-                risk_metrics.daily_pnl_sol = 0.0
-                risk_metrics.daily_pnl_usd = 0.0
-                reset_actions.append('daily_loss')
-                logger.info("🔓 Reset daily P&L to 0")
-
-            if reset_type in ('all', 'consecutive'):
-                risk_metrics.consecutive_losses = 0
-                reset_actions.append('consecutive_losses')
-                logger.info("🔓 Reset consecutive losses to 0")
-
-            # Clear blocked_since timestamp
-            if hasattr(self.app.engine, '_blocked_since'):
-                self.app.engine._blocked_since = None
-
-            return web.json_response({
-                'success': True,
-                'message': f'Trading block reset successfully',
-                'reset_actions': reset_actions,
-                'can_trade': risk_metrics.can_trade
-            })
-
-        except Exception as e:
-            logger.error(f"Error unblocking trading: {e}")
-            return web.json_response({
-                'success': False,
-                'error': str(e)
-            }, status=500)
-
-    async def close_position_handler(self, request):
-        """Close a specific position by token mint address"""
-        try:
-            if not self.app.engine:
-                return web.json_response({'success': False, 'error': 'Engine not initialized'}, status=503)
-
-            data = await request.json()
-            mint = data.get('mint')
-
-            if not mint:
-                return web.json_response({'success': False, 'error': 'Missing mint address'}, status=400)
-
-            # Check if position exists in active_positions
-            if mint not in self.app.engine.active_positions:
-                return web.json_response({'success': False, 'error': f'No position found for {mint}'}, status=404)
-
-            # Close the position
-            position = self.app.engine.active_positions[mint]
-            await self.app.engine._close_position(mint, "manual_close")
-
-            logger.info(f"📤 Manually closed position: {position.token_symbol}")
-
-            return web.json_response({
-                'success': True,
-                'message': f'Position {position.token_symbol} closed successfully',
-                'mint': mint
-            })
-
-        except Exception as e:
-            logger.error(f"Error closing position: {e}")
-            return web.json_response({'success': False, 'error': str(e)}, status=500)
-
-    async def close_all_positions_handler(self, request):
-        """Close all open positions"""
-        try:
-            if not self.app.engine:
-                return web.json_response({'success': False, 'error': 'Engine not initialized'}, status=503)
-
-            positions_count = len(self.app.engine.active_positions)
-
-            if positions_count == 0:
-                return web.json_response({'success': True, 'message': 'No positions to close', 'closed': 0})
-
-            # Close all positions
-            await self.app.engine.close_all_positions()
-
-            logger.info(f"📤 Manually closed all {positions_count} positions")
-
-            return web.json_response({
-                'success': True,
-                'message': f'Closed {positions_count} positions successfully',
-                'closed': positions_count
-            })
-
-        except Exception as e:
-            logger.error(f"Error closing all positions: {e}")
-            return web.json_response({'success': False, 'error': str(e)}, status=500)
-
-    async def start(self):
-        """Start the HTTP server"""
-        self.runner = web.AppRunner(self.web_app)
-        await self.runner.setup()
-        site = web.TCPSite(self.runner, self.host, self.port)
-        await site.start()
-        logger.info(f"📡 Health server started on http://{self.host}:{self.port}")
-
-    async def stop(self):
-        """Stop the HTTP server"""
-        if self.runner:
-            await self.runner.cleanup()
-
-
-class SolanaTradingApplication:
-    """Main application class for Solana trading"""
-
-    def __init__(self, mode: str = "production"):
-        """
-        Initialize the Solana trading application
-
-        Args:
-            mode: Operating mode (development, testing, production)
-        """
-        self.mode = mode
-        self.engine = None
-        self.health_server = None
-        self.shutdown_event = asyncio.Event()
-        self.logger = logger
-        self.config_manager = None
-        self.db_pool = None
-
-        # Setup signal handlers
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
-
-        # Default config (will be overridden from DB if available)
-        self.rpc_url = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
-        self.strategies = os.getenv('SOLANA_STRATEGIES', 'jupiter,drift').split(',')
-        self.max_positions = int(os.getenv('SOLANA_MAX_POSITIONS', '3'))
-        self.health_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
-
-    def _signal_handler(self, signum, frame):
-        """Handle shutdown signals gracefully"""
-        self.logger.warning(f"Received signal {signum}, initiating graceful shutdown...")
-        self.shutdown_event.set()
-
-    async def _init_database(self):
-        """Initialize database connection pool"""
-        try:
-            import asyncpg
-            db_url = os.getenv('DATABASE_URL')
-            if not db_url:
-                self.logger.warning("⚠️ DATABASE_URL not set - trades will NOT persist across restarts!")
-                return False
-
-            self.db_pool = await asyncpg.create_pool(db_url, min_size=2, max_size=10)
-            self.logger.info("✅ Database pool initialized")
-
-            # Verify solana_trades table exists
-            async with self.db_pool.acquire() as conn:
-                exists = await conn.fetchval("""
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables
-                        WHERE table_name = 'solana_trades'
-                    )
-                """)
-                if not exists:
-                    self.logger.warning("⚠️ solana_trades table not found - running migration...")
-                    await conn.execute("""
-                        CREATE TABLE IF NOT EXISTS solana_trades (
-                            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                            trade_id VARCHAR(50),
-                            token_symbol VARCHAR(20) NOT NULL,
-                            token_mint VARCHAR(64) NOT NULL,
-                            strategy VARCHAR(20) NOT NULL,
-                            side VARCHAR(10) NOT NULL DEFAULT 'long',
-                            entry_price NUMERIC NOT NULL,
-                            exit_price NUMERIC NOT NULL,
-                            amount_sol NUMERIC NOT NULL,
-                            amount_tokens NUMERIC,
-                            pnl_sol NUMERIC NOT NULL,
-                            pnl_usd NUMERIC,
-                            pnl_pct NUMERIC NOT NULL,
-                            fees_sol NUMERIC NOT NULL DEFAULT 0,
-                            exit_reason VARCHAR(50),
-                            entry_time TIMESTAMP NOT NULL,
-                            exit_time TIMESTAMP NOT NULL,
-                            duration_seconds INT NOT NULL DEFAULT 0,
-                            is_simulated BOOLEAN NOT NULL DEFAULT TRUE,
-                            sol_price_usd NUMERIC,
-                            metadata JSONB,
-                            status VARCHAR(20) DEFAULT 'closed',
-                            created_at TIMESTAMP DEFAULT NOW()
-                        )
-                    """)
-                    self.logger.info("✅ Created solana_trades table")
-                else:
-                    # Check trade count
-                    count = await conn.fetchval("SELECT COUNT(*) FROM solana_trades")
-                    self.logger.info(f"✅ Found {count} existing trades in solana_trades table")
-
-            return True
-        except Exception as e:
-            self.logger.error(f"❌ Database initialization failed: {e}")
-            self.logger.warning("⚠️ Continuing without database - trades will NOT persist!")
-        return False
-
-    async def _init_config_manager(self):
-        """Initialize and load configuration from database"""
-        try:
-            from modules.solana_strategies.solana_config_manager import SolanaConfigManager
-
-            self.config_manager = SolanaConfigManager(self.db_pool)
-            await self.config_manager.initialize()
-
-            # Override settings from database config
-            if self.config_manager._cache_loaded:
-                self.strategies = self.config_manager.get_enabled_strategies()
-                if not self.strategies:
-                    # Default to jupiter if nothing enabled
-                    self.strategies = ['jupiter']
-                self.max_positions = self.config_manager.max_positions
-                self.logger.info(f"✅ Loaded config from database: strategies={self.strategies}, max_positions={self.max_positions}")
-
-        except Exception as e:
-            self.logger.warning(f"Config manager not available: {e}")
-
-    async def initialize(self):
-        """Initialize all components"""
-        try:
-            self.logger.info("=" * 80)
-            self.logger.info("🚀 Solana Trading Bot Starting...")
-            self.logger.info(f"Mode: {self.mode}")
-            self.logger.info(f"Time: {datetime.now().isoformat()}")
-            self.logger.info("=" * 80)
-
-            # Initialize database connection
-            await self._init_database()
-
-            # Initialize config manager (loads settings from DB)
-            await self._init_config_manager()
-
-            self.logger.info(f"RPC: {self.rpc_url}")
-            self.logger.info(f"Strategies: {', '.join(self.strategies)}")
-
-            # Import Solana engine
-            from solana_trading.core.solana_engine import SolanaTradingEngine
-
-            # Initialize engine with config manager and database pool
-            self.engine = SolanaTradingEngine(
-                rpc_url=self.rpc_url,
-                strategies=self.strategies,
-                max_positions=self.max_positions,
-                mode=self.mode,
-                config_manager=self.config_manager,
-                db_pool=self.db_pool  # Pass database pool for trade persistence
-            )
-
-            await self.engine.initialize()
-
-            self.logger.info("✅ Solana trading engine initialized")
-            self.logger.info("=" * 80)
-
-        except Exception as e:
-            self.logger.error(f"Failed to initialize: {e}", exc_info=True)
-            raise
-
-    async def run(self):
-        """Main application loop"""
-        try:
-            self.logger.info("Starting Solana Trading Bot...")
-            await self.initialize()
-
-            # Start health server
-            self.health_server = HealthServer(self, port=self.health_port)
-            await self.health_server.start()
-
-            self.logger.info("🎯 Starting Solana trading engine...")
-
-            tasks = [
-                asyncio.create_task(self.engine.run()),
-                asyncio.create_task(self._status_reporter()),
-                asyncio.create_task(self._shutdown_monitor())
-            ]
-
-            done, pending = await asyncio.wait(
-                tasks,
-                return_when=asyncio.FIRST_EXCEPTION
-            )
-
-            for task in done:
-                if task.exception():
-                    self.logger.error(f"Task failed: {task.exception()}")
-
-            for task in pending:
-                task.cancel()
-
-        except Exception as e:
-            self.logger.error(f"Critical error in main loop: {e}", exc_info=True)
-
-        finally:
-            await self.shutdown()
-
-    async def _status_reporter(self):
-        """Periodically report system status"""
-        while not self.shutdown_event.is_set():
-            try:
-                if self.engine:
-                    stats = await self.engine.get_stats()
-                    self.logger.info(f"📊 Solana Stats: {stats}")
-
-                await asyncio.sleep(120)  # Report every 2 minutes
-
-            except Exception as e:
-                self.logger.error(f"Error in status reporter: {e}")
-                await asyncio.sleep(120)
-
-    async def _shutdown_monitor(self):
-        """Monitor for shutdown signal"""
-        await self.shutdown_event.wait()
-        self.logger.info("Shutdown signal received")
-
-    async def shutdown(self):
-        """Graceful shutdown procedure"""
-        try:
-            self.logger.info("Initiating graceful shutdown...")
-
-            # Stop health server first
-            if self.health_server:
-                self.logger.info("Stopping health server...")
-                await self.health_server.stop()
-
-            if self.engine:
-                if self.mode == "production":
-                    self.logger.info("Closing all open positions...")
-                    await self.engine.close_all_positions()
-
-                self.logger.info("Stopping engine...")
-                await self.engine.shutdown()
-
-            self.logger.info("✅ Shutdown complete")
-
-        except Exception as e:
-            self.logger.error(f"Error during shutdown: {e}")
+    async def _ready_handler(self, request):
+        """Readiness probe for orchestration."""
+        is_ready = self.engine and self.engine.is_running
+        return web.json_response({'ready': is_ready}, status=200 if is_ready else 503)
 
 
 def parse_arguments():
-    """Parse command line arguments"""
-    parser = argparse.ArgumentParser(
-        description="Solana Trading Bot - Jupiter/Drift/Pump.fun Trading"
-    )
-
-    parser.add_argument(
-        '--mode',
-        choices=['development', 'testing', 'production'],
-        default='production',
-        help='Operating mode'
-    )
-
-    parser.add_argument(
-        '--strategies',
-        nargs='+',
-        choices=['jupiter', 'drift', 'pumpfun'],
-        default=None,
-        help='Trading strategies to enable'
-    )
-
-    parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='Run in simulation mode without real trades'
-    )
-
-    parser.add_argument(
-        '--debug',
-        action='store_true',
-        help='Enable debug logging'
-    )
-
+    """Parse command line arguments for the Solana module."""
+    parser = argparse.ArgumentParser(description="Solana Trading Bot Module")
+    parser.add_argument('--mode', choices=['development', 'production'], default='production', help='Operating mode')
+    parser.add_argument('--dry-run', action='store_true', help='Force simulation mode')
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     return parser.parse_args()
 
-
 async def main():
-    """Main entry point"""
+    """Main entry point for the Solana module."""
     args = parse_arguments()
 
-    # Set strategies from args
-    if args.strategies:
-        os.environ['SOLANA_STRATEGIES'] = ','.join(args.strategies)
-
-    # Handle dry-run
-    dry_run_env = os.getenv('DRY_RUN', 'true').strip().lower()
-    is_dry_run = dry_run_env in ('true', '1', 'yes')
-
     if args.dry_run:
-        is_dry_run = True
-
-    os.environ['DRY_RUN'] = 'true' if is_dry_run else 'false'
+        os.environ['DRY_RUN'] = 'true'
 
     if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
+        logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    else:
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-    app = SolanaTradingApplication(mode=args.mode)
-
-    try:
-        await app.run()
-    except KeyboardInterrupt:
-        logger.info("\n👋 Goodbye!")
-    except Exception as e:
-        logger.error(f"❌ Fatal error: {e}", exc_info=True)
-        sys.exit(1)
-
+    module = SolanaModule(mode=args.mode)
+    await module.run()
 
 if __name__ == "__main__":
     if sys.version_info < (3, 9):
-        print("Python 3.9+ required")
+        print("Python 3.9+ is required.")
         sys.exit(1)
 
     asyncio.run(main())

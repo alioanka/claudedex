@@ -31,7 +31,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
-      - "127.0.0.1:5432:5432"  # CHANGE THIS LINE - Add 127.0.0.1:
+      - "0.0.0.0:5432:5432"
     networks:
       - trading-network
     healthcheck:
