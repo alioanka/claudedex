@@ -32,6 +32,15 @@ class DecimalEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
+def json_response(data, status=200):
+    """Helper function to return JSON response with proper Decimal handling"""
+    return web.Response(
+        text=json.dumps(data, cls=DecimalEncoder),
+        content_type='application/json',
+        status=status
+    )
+
+
 class AnalyticsRoutes:
     """
     Analytics dashboard routes
@@ -145,11 +154,11 @@ class AnalyticsRoutes:
                 'end_time': metrics.end_time.isoformat() if metrics.end_time else None
             }
 
-            return web.json_response({'success': True, 'data': data})
+            return json_response({'success': True, 'data': data})
 
         except Exception as e:
             self.logger.error(f"Error getting performance: {e}", exc_info=True)
-            return web.json_response({'success': False, 'error': str(e)}, status=500)
+            return json_response({'success': False, 'error': str(e)}, status=500)
 
     async def get_risk(self, request: web.Request) -> web.Response:
         """Get risk metrics for a module"""
@@ -179,11 +188,11 @@ class AnalyticsRoutes:
                 'low_liquidity_positions': metrics.low_liquidity_positions
             }
 
-            return web.json_response({'success': True, 'data': data})
+            return json_response({'success': True, 'data': data})
 
         except Exception as e:
             self.logger.error(f"Error getting risk metrics: {e}", exc_info=True)
-            return web.json_response({'success': False, 'error': str(e)}, status=500)
+            return json_response({'success': False, 'error': str(e)}, status=500)
 
     async def get_comparison(self, request: web.Request) -> web.Response:
         """Get module comparison"""
@@ -200,21 +209,21 @@ class AnalyticsRoutes:
                 'rankings': comparison.module_rankings
             }
 
-            return web.json_response({'success': True, 'data': data})
+            return json_response({'success': True, 'data': data})
 
         except Exception as e:
             self.logger.error(f"Error getting comparison: {e}", exc_info=True)
-            return web.json_response({'success': False, 'error': str(e)}, status=500)
+            return json_response({'success': False, 'error': str(e)}, status=500)
 
     async def get_portfolio(self, request: web.Request) -> web.Response:
         """Get portfolio summary"""
         try:
             summary = await self.analytics.get_portfolio_summary()
-            return web.json_response({'success': True, 'data': summary})
+            return json_response({'success': True, 'data': summary})
 
         except Exception as e:
             self.logger.error(f"Error getting portfolio summary: {e}", exc_info=True)
-            return web.json_response({'success': False, 'error': str(e)}, status=500)
+            return json_response({'success': False, 'error': str(e)}, status=500)
 
     async def get_equity_curve(self, request: web.Request) -> web.Response:
         """Get equity curve for a module"""
@@ -242,17 +251,18 @@ class AnalyticsRoutes:
                 'end_time': metrics.end_time.isoformat() if metrics.end_time else None
             }
 
-            return web.json_response({'success': True, 'data': data})
+            return json_response({'success': True, 'data': data})
 
         except Exception as e:
             self.logger.error(f"Error getting equity curve: {e}", exc_info=True)
-            return web.json_response({'success': False, 'error': str(e)}, status=500)
+            return json_response({'success': False, 'error': str(e)}, status=500)
 
     async def get_trade_history(self, request: web.Request) -> web.Response:
         """Get trade history for a module"""
         try:
             module_name = request.match_info['module']
-            limit = int(request.query.get('limit', 100))
+            # Default to 10000 to show all trades (was 100)
+            limit = int(request.query.get('limit', 10000))
             offset = int(request.query.get('offset', 0))
 
             # Get performance metrics (includes trade history)
@@ -283,11 +293,11 @@ class AnalyticsRoutes:
                 'offset': offset
             }
 
-            return web.json_response({'success': True, 'data': data})
+            return json_response({'success': True, 'data': data})
 
         except Exception as e:
             self.logger.error(f"Error getting trade history: {e}", exc_info=True)
-            return web.json_response({'success': False, 'error': str(e)}, status=500)
+            return json_response({'success': False, 'error': str(e)}, status=500)
 
     async def get_daily_pnl(self, request: web.Request) -> web.Response:
         """Get daily PnL for a module"""
@@ -324,8 +334,8 @@ class AnalyticsRoutes:
                 'cumulative': [sum(daily_pnl[:i+1]) for i in range(len(daily_pnl))]
             }
 
-            return web.json_response({'success': True, 'data': data})
+            return json_response({'success': True, 'data': data})
 
         except Exception as e:
             self.logger.error(f"Error getting daily PnL: {e}", exc_info=True)
-            return web.json_response({'success': False, 'error': str(e)}, status=500)
+            return json_response({'success': False, 'error': str(e)}, status=500)

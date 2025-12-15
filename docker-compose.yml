@@ -83,6 +83,7 @@ services:
       - ./logs:/app/logs
       - ./data:/app/data
       - ./config:/app/config
+      - ./models:/app/models  # Persist trained ML models across Docker restarts
     depends_on:
       postgres:
         condition: service_healthy

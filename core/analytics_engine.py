@@ -321,10 +321,22 @@ class AnalyticsEngine:
             avg_position_size = total_volume / total_trades if total_trades > 0 else Decimal("0")
 
             # Calculate average trade duration
-            durations = [
-                (t.get('exit_time', datetime.now()) - t.get('entry_time', datetime.now())).total_seconds()
-                for t in trades if t.get('entry_time') and t.get('exit_time')
-            ]
+            durations = []
+            for t in trades:
+                entry_time = t.get('entry_time') or t.get('timestamp')
+                exit_time = t.get('exit_time') or t.get('exit_timestamp') or t.get('timestamp')
+                if entry_time and exit_time:
+                    try:
+                        # Handle both datetime objects and strings
+                        if isinstance(entry_time, str):
+                            entry_time = datetime.fromisoformat(entry_time.replace('Z', '+00:00'))
+                        if isinstance(exit_time, str):
+                            exit_time = datetime.fromisoformat(exit_time.replace('Z', '+00:00'))
+                        duration = (exit_time - entry_time).total_seconds()
+                        if duration >= 0:
+                            durations.append(duration)
+                    except Exception:
+                        continue
             avg_duration = int(sum(durations) / len(durations)) if durations else 0
 
             # Calculate average daily PnL
@@ -481,10 +493,13 @@ class AnalyticsEngine:
     async def compare_modules(self) -> ModuleComparison:
         """Compare performance across all modules"""
         try:
-            if not self.module_manager:
-                return ModuleComparison()
+            # Get module names from module_manager or use default list
+            if self.module_manager and hasattr(self.module_manager, 'modules'):
+                module_names = list(self.module_manager.modules.keys())
+            else:
+                # Default module names when module_manager is not available
+                module_names = ['dex_trading', 'futures_trading', 'solana_trading']
 
-            module_names = list(self.module_manager.modules.keys())
             if not module_names:
                 return ModuleComparison()
 
@@ -568,28 +583,76 @@ class AnalyticsEngine:
         start_time: datetime,
         end_time: datetime
     ) -> List[Dict]:
-        """Get trades from database"""
+        """Get trades from database based on module name"""
         try:
             if not self.db:
                 return []
 
-            query = """
-                SELECT * FROM trades
-                WHERE module = $1
-                AND timestamp >= $2
-                AND timestamp <= $3
-                ORDER BY timestamp ASC
-            """
+            # Query different tables based on module
+            module_lower = module_name.lower()
 
-            result = await self.db.fetch_all(
-                query,
-                module_name, start_time, end_time
-            )
+            if module_lower in ['dex', 'dex_trading']:
+                # DEX trades table - uses entry_timestamp for time and profit_loss for pnl
+                query = """
+                    SELECT
+                        id, trade_id, token_address, chain, side,
+                        entry_price, exit_price, amount, usd_value,
+                        gas_fee as fees, profit_loss as pnl,
+                        profit_loss_percentage as pnl_pct, strategy,
+                        entry_timestamp as timestamp, exit_timestamp,
+                        status, metadata
+                    FROM trades
+                    WHERE entry_timestamp >= $1
+                    AND entry_timestamp <= $2
+                    AND status = 'closed'
+                    ORDER BY entry_timestamp ASC
+                """
+                result = await self.db.fetch_all(query, start_time, end_time)
 
-            return [dict(row) for row in result]
+            elif module_lower in ['futures', 'futures_trading']:
+                # Futures trades table - uses exit_time for time and net_pnl for pnl
+                query = """
+                    SELECT
+                        id, symbol as token_address, side,
+                        entry_price, exit_price, size as amount,
+                        notional_value as usd_value, fees,
+                        net_pnl as pnl, pnl_pct,
+                        exit_reason as strategy, exit_time as timestamp,
+                        entry_time, duration_seconds,
+                        is_simulated, metadata
+                    FROM futures_trades
+                    WHERE exit_time >= $1
+                    AND exit_time <= $2
+                    ORDER BY exit_time ASC
+                """
+                result = await self.db.fetch_all(query, start_time, end_time)
+
+            elif module_lower in ['solana', 'solana_trading']:
+                # Solana trades table - uses exit_time for time and pnl_sol for pnl
+                query = """
+                    SELECT
+                        id, token_symbol as token_address, token_mint,
+                        strategy, side, entry_price, exit_price,
+                        amount_sol as amount, pnl_usd as usd_value,
+                        fees_sol as fees, pnl_sol as pnl, pnl_pct,
+                        exit_reason, exit_time as timestamp,
+                        entry_time, duration_seconds,
+                        is_simulated, sol_price_usd, metadata
+                    FROM solana_trades
+                    WHERE exit_time >= $1
+                    AND exit_time <= $2
+                    ORDER BY exit_time ASC
+                """
+                result = await self.db.fetch_all(query, start_time, end_time)
+
+            else:
+                self.logger.warning(f"Unknown module name: {module_name}")
+                return []
+
+            return [dict(row) for row in result] if result else []
 
         except Exception as e:
-            self.logger.error(f"Error fetching trades: {e}")
+            self.logger.error(f"Error fetching trades for {module_name}: {e}")
             return []
 
     def _calculate_equity_curve(
@@ -609,7 +672,7 @@ class AnalyticsEngine:
         cumulative = 0.0
 
         for trade in sorted_trades:
-            pnl = trade.get('pnl', 0)
+            pnl = float(trade.get('pnl', 0) or 0)  # Convert Decimal to float
             cumulative += pnl
             equity.append(cumulative)
 
@@ -780,15 +843,19 @@ class AnalyticsEngine:
     async def get_portfolio_summary(self) -> Dict[str, Any]:
         """Get overall portfolio summary"""
         try:
-            if not self.module_manager:
-                return {}
+            # Get module names from module_manager or use default list
+            if self.module_manager and hasattr(self.module_manager, 'modules'):
+                module_names = list(self.module_manager.modules.keys())
+            else:
+                # Default module names when module_manager is not available
+                module_names = ['dex_trading', 'futures_trading', 'solana_trading']
 
             # Get all module performances
             module_perfs = {}
             total_pnl = Decimal("0")
             total_trades = 0
 
-            for module_name in self.module_manager.modules.keys():
+            for module_name in module_names:
                 perf = await self.get_module_performance(module_name, TimeFrame.DAY_7)
                 module_perfs[module_name] = perf
                 total_pnl += perf.net_pnl

@@ -112,11 +112,14 @@ async function loadModuleTabs() {
 async function switchModule(moduleName) {
     currentModule = moduleName;
 
-    // Update active tab
-    document.querySelectorAll('.tab-btn').forEach(btn => {
+    // Update active tabs (both .tab-btn and .tab-button classes)
+    document.querySelectorAll('.tab-btn, .tab-button').forEach(btn => {
         btn.classList.remove('active');
+        // Re-add active to the clicked button based on data-module attribute
+        if (btn.getAttribute('data-module') === moduleName || btn.textContent.toLowerCase().includes(moduleName.split('_')[0])) {
+            btn.classList.add('active');
+        }
     });
-    event.target.classList.add('active');
 
     // Load module analytics
     await loadModuleAnalytics(moduleName, currentTimeframe);

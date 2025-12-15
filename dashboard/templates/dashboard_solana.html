@@ -708,8 +708,10 @@ async function loadDashboardData() {
         const statsResponse = await fetch('/api/solana/stats');
         if (statsResponse.ok) {
             const statsData = await statsResponse.json();
-            if (statsData.data) {
-                updateStatsDisplay(statsData.data);
+            // API returns {success: true, data: {stats, health}} - extract data object
+            const solanaData = statsData.data || statsData;
+            if (solanaData.stats || solanaData.health) {
+                updateStatsDisplay(solanaData);
             }
         }
 

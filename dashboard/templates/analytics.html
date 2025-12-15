@@ -193,10 +193,9 @@
 <!-- Module Tabs -->
 <section class="module-tabs">
     <div class="tabs-header" id="module-tabs">
-        <button class="tab-button active" data-module="all">All Modules</button>
-        <button class="tab-button" data-module="dex">DEX Trading</button>
-        <button class="tab-button" data-module="futures">Futures</button>
-        <button class="tab-button" data-module="solana">Solana</button>
+        <button class="tab-button active" data-module="dex_trading">DEX Trading</button>
+        <button class="tab-button" data-module="futures_trading">Futures Trading</button>
+        <button class="tab-button" data-module="solana_trading">Solana Strategies</button>
     </div>
 </section>
 
@@ -334,21 +333,23 @@
 <script src="/static/js/analytics.js"></script>
 <script>
 function refreshAnalytics() {
-    if (typeof loadAnalytics === 'function') {
-        loadAnalytics();
+    if (typeof initializeDashboard === 'function') {
+        initializeDashboard();
     } else {
         location.reload();
     }
 }
 
-// Tab switching
+// Tab switching - use switchModule from analytics.js
 document.querySelectorAll('.tab-button').forEach(btn => {
     btn.addEventListener('click', function() {
         document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
         this.classList.add('active');
         const module = this.getAttribute('data-module');
-        if (typeof filterByModule === 'function') {
-            filterByModule(module);
+        if (typeof switchModule === 'function') {
+            switchModule(module);
+        } else if (typeof loadModuleAnalytics === 'function') {
+            loadModuleAnalytics(module, currentTimeframe || '24h');
         }
     });
 });
