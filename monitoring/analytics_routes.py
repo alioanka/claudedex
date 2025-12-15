@@ -252,7 +252,8 @@ class AnalyticsRoutes:
         """Get trade history for a module"""
         try:
             module_name = request.match_info['module']
-            limit = int(request.query.get('limit', 100))
+            # Default to 10000 to show all trades (was 100)
+            limit = int(request.query.get('limit', 10000))
             offset = int(request.query.get('offset', 0))
 
             # Get performance metrics (includes trade history)
