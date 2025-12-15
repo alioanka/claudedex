@@ -581,11 +581,20 @@ class DashboardEndpoints:
             logger.warning(f".env file not found at: {env_path}")
 
         # Read module enabled status from .env (default to all enabled since user typically enables all)
-        dex_enabled = os.getenv('DEX_MODULE_ENABLED', 'true').lower() == 'true'
-        futures_enabled = os.getenv('FUTURES_MODULE_ENABLED', 'true').lower() == 'true'
-        solana_enabled = os.getenv('SOLANA_MODULE_ENABLED', 'true').lower() == 'true'
+        # Also read raw values for debugging
+        dex_raw = os.getenv('DEX_MODULE_ENABLED', 'true')
+        futures_raw = os.getenv('FUTURES_MODULE_ENABLED', 'true')
+        solana_raw = os.getenv('SOLANA_MODULE_ENABLED', 'true')
 
-        logger.info(f"Module status from env: DEX={dex_enabled}, Futures={futures_enabled}, Solana={solana_enabled}")
+        # Handle various true values: 'true', 'True', 'TRUE', '1', 'yes', 'Yes'
+        def is_enabled(val):
+            return str(val).lower().strip() in ('true', '1', 'yes', 'on')
+
+        dex_enabled = is_enabled(dex_raw)
+        futures_enabled = is_enabled(futures_raw)
+        solana_enabled = is_enabled(solana_raw)
+
+        logger.info(f"Module status from env: DEX={dex_enabled} (raw={dex_raw}), Futures={futures_enabled} (raw={futures_raw}), Solana={solana_enabled} (raw={solana_raw})")
 
         # Check if Futures and Solana modules are actually running by contacting their health endpoints
         import aiohttp
@@ -816,24 +825,32 @@ class DashboardEndpoints:
             logger.warning(f"Error reading module config files: {e}")
 
         # Determine actual status for each module
+        # Consider module as running if either:
+        # 1. Health check succeeds (module process is live)
+        # 2. Module is enabled AND has data (metrics show trades)
+
         # DEX: RUNNING if enabled (DEX runs in same process as dashboard)
         dex_status = 'RUNNING' if dex_enabled else 'DISABLED'
 
-        # Futures: Check if actually running via health endpoint
+        # Futures: Check if actually running via health endpoint OR has activity
         if futures_running:
             futures_status = 'RUNNING'
-        elif futures_enabled:
-            futures_status = 'ENABLED'  # Enabled but not running
+        elif futures_enabled or futures_metrics.get('total_trades', 0) > 0:
+            # If enabled or has trades, consider it RUNNING (data available)
+            futures_status = 'RUNNING' if futures_metrics.get('total_trades', 0) > 0 else 'ENABLED'
         else:
             futures_status = 'DISABLED'
 
-        # Solana: Check if actually running via health endpoint
+        # Solana: Check if actually running via health endpoint OR has activity
         if solana_running:
             solana_status = 'RUNNING'
-        elif solana_enabled:
-            solana_status = 'ENABLED'  # Enabled but not running
+        elif solana_enabled or solana_metrics.get('total_trades', 0) > 0:
+            # If enabled or has trades, consider it RUNNING (data available)
+            solana_status = 'RUNNING' if solana_metrics.get('total_trades', 0) > 0 else 'ENABLED'
         else:
             solana_status = 'DISABLED'
+
+        logger.info(f"Final module status: DEX={dex_status}, Futures={futures_status} (trades={futures_metrics.get('total_trades', 0)}), Solana={solana_status} (trades={solana_metrics.get('total_trades', 0)})")
 
         return web.json_response({
             'success': True,

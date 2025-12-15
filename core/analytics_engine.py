@@ -481,10 +481,13 @@ class AnalyticsEngine:
     async def compare_modules(self) -> ModuleComparison:
         """Compare performance across all modules"""
         try:
-            if not self.module_manager:
-                return ModuleComparison()
+            # Get module names from module_manager or use default list
+            if self.module_manager and hasattr(self.module_manager, 'modules'):
+                module_names = list(self.module_manager.modules.keys())
+            else:
+                # Default module names when module_manager is not available
+                module_names = ['dex_trading', 'futures_trading', 'solana_trading']
 
-            module_names = list(self.module_manager.modules.keys())
             if not module_names:
                 return ModuleComparison()
 
@@ -828,15 +831,19 @@ class AnalyticsEngine:
     async def get_portfolio_summary(self) -> Dict[str, Any]:
         """Get overall portfolio summary"""
         try:
-            if not self.module_manager:
-                return {}
+            # Get module names from module_manager or use default list
+            if self.module_manager and hasattr(self.module_manager, 'modules'):
+                module_names = list(self.module_manager.modules.keys())
+            else:
+                # Default module names when module_manager is not available
+                module_names = ['dex_trading', 'futures_trading', 'solana_trading']
 
             # Get all module performances
             module_perfs = {}
             total_pnl = Decimal("0")
             total_trades = 0
 
-            for module_name in self.module_manager.modules.keys():
+            for module_name in module_names:
                 perf = await self.get_module_performance(module_name, TimeFrame.DAY_7)
                 module_perfs[module_name] = perf
                 total_pnl += perf.net_pnl

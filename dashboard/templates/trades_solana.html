@@ -346,11 +346,11 @@ async function loadTrades() {
 }
 
 function mergeTradesIntoPositions(trades) {
-    const positionMap = {};
+    const positions = [];
 
-    // Sort trades by timestamp (oldest first for processing)
+    // Sort trades by timestamp (newest first for display)
     const sortedTrades = [...trades].sort((a, b) =>
-        new Date(a.timestamp) - new Date(b.timestamp)
+        new Date(b.timestamp || b.closed_at) - new Date(a.timestamp || a.closed_at)
     );
 
     sortedTrades.forEach(trade => {
@@ -358,9 +358,28 @@ function mergeTradesIntoPositions(trades) {
         const token = trade.token || trade.token_symbol || 'UNKNOWN';
         const mint = trade.token_mint || trade.mint || '';
 
-        if (trade.type === 'OPEN') {
-            // Create new position entry
-            positionMap[mint] = {
+        // Handle closed trades from database (they come with all data already)
+        if (trade.type === 'CLOSE' || trade.exit_price || trade.closed_at) {
+            positions.push({
+                id: key,
+                token: token,
+                mint: mint,
+                strategy: trade.strategy || '',
+                openTime: trade.entry_time || trade.timestamp,
+                closeTime: trade.timestamp || trade.closed_at,
+                entryPrice: trade.entry_price || 0,
+                currentExitPrice: trade.exit_price || trade.price || 0,
+                amount: trade.amount_sol || 0,
+                status: 'CLOSED',
+                pnlSol: trade.pnl_sol || 0,
+                pnlPercent: trade.pnl_pct || trade.pnl_percent || 0,
+                mode: trade.mode || 'DRY_RUN',
+                win: (trade.pnl_sol || 0) > 0,
+                exitReason: trade.reason || trade.exit_reason || trade.close_reason || 'manual'
+            });
+        } else if (trade.type === 'OPEN') {
+            // Handle open trades (from live data)
+            positions.push({
                 id: key,
                 token: token,
                 mint: mint,
@@ -376,23 +395,12 @@ function mergeTradesIntoPositions(trades) {
                 mode: trade.mode || 'DRY_RUN',
                 win: null,
                 exitReason: null
-            };
-        } else if (trade.type === 'CLOSE') {
-            // Find matching open position
-            if (positionMap[mint]) {
-                positionMap[mint].closeTime = trade.timestamp;
-                positionMap[mint].currentExitPrice = trade.price || trade.exit_price || 0;
-                positionMap[mint].status = 'CLOSED';
-                positionMap[mint].pnlSol = trade.pnl_sol || 0;
-                positionMap[mint].pnlPercent = trade.pnl_pct || trade.pnl_percent || 0;
-                positionMap[mint].win = (trade.pnl_sol || 0) > 0;
-                positionMap[mint].exitReason = trade.reason || trade.exit_reason || 'manual';
-            }
+            });
         }
     });
 
     // Update open positions with current prices from active positions
-    Object.values(positionMap).forEach(pos => {
+    positions.forEach(pos => {
         if (pos.status === 'OPEN' && activePositionsData[pos.mint]) {
             const activePos = activePositionsData[pos.mint];
             pos.currentExitPrice = activePos.current_price || pos.currentExitPrice;
@@ -404,7 +412,7 @@ function mergeTradesIntoPositions(trades) {
         }
     });
 
-    return Object.values(positionMap);
+    return positions;
 }
 
 function applyFilters() {
