@@ -321,10 +321,22 @@ class AnalyticsEngine:
             avg_position_size = total_volume / total_trades if total_trades > 0 else Decimal("0")
 
             # Calculate average trade duration
-            durations = [
-                (t.get('exit_time', datetime.now()) - t.get('entry_time', datetime.now())).total_seconds()
-                for t in trades if t.get('entry_time') and t.get('exit_time')
-            ]
+            durations = []
+            for t in trades:
+                entry_time = t.get('entry_time') or t.get('timestamp')
+                exit_time = t.get('exit_time') or t.get('exit_timestamp') or t.get('timestamp')
+                if entry_time and exit_time:
+                    try:
+                        # Handle both datetime objects and strings
+                        if isinstance(entry_time, str):
+                            entry_time = datetime.fromisoformat(entry_time.replace('Z', '+00:00'))
+                        if isinstance(exit_time, str):
+                            exit_time = datetime.fromisoformat(exit_time.replace('Z', '+00:00'))
+                        duration = (exit_time - entry_time).total_seconds()
+                        if duration >= 0:
+                            durations.append(duration)
+                    except Exception:
+                        continue
             avg_duration = int(sum(durations) / len(durations)) if durations else 0
 
             # Calculate average daily PnL
