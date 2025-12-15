@@ -548,6 +548,83 @@
         </div>
     </div>
 
+    <!-- Equity Curve Chart (from Simulator) -->
+    <div class="section-card">
+        <div class="section-title">
+            <i class="fas fa-chart-area"></i>
+            Portfolio Equity Curve
+            <select class="form-control" id="equityModuleSelect" onchange="updateEquityCurve()" style="margin-left: auto; width: auto; padding: 6px 12px; font-size: 0.875rem;">
+                <option value="all">All Modules</option>
+                <option value="futures">Futures Only</option>
+                <option value="solana">Solana Only</option>
+                <option value="dex">DEX Only</option>
+            </select>
+        </div>
+        <div class="chart-container">
+            <canvas id="equityCurveChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Performance Analysis Charts Grid -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 24px; margin-bottom: 24px;">
+        <!-- Risk Metrics Radar Chart -->
+        <div class="section-card" style="margin-bottom: 0;">
+            <div class="section-title">
+                <i class="fas fa-shield-alt"></i>
+                Risk-Adjusted Performance
+            </div>
+            <div class="chart-container" style="height: 280px;">
+                <canvas id="riskMetricsRadar"></canvas>
+            </div>
+        </div>
+
+        <!-- P&L Distribution Chart -->
+        <div class="section-card" style="margin-bottom: 0;">
+            <div class="section-title">
+                <i class="fas fa-chart-bar"></i>
+                P&L Distribution
+            </div>
+            <div class="chart-container" style="height: 280px;">
+                <canvas id="pnlDistributionChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Trades Table -->
+    <div class="section-card">
+        <div class="section-title">
+            <i class="fas fa-list"></i>
+            Recent Trades (All Modules)
+            <select class="form-control" id="tradeModuleFilter" onchange="filterRecentTrades()" style="margin-left: auto; width: auto; padding: 6px 12px; font-size: 0.875rem;">
+                <option value="all">All Modules</option>
+                <option value="futures">Futures</option>
+                <option value="solana">Solana</option>
+                <option value="dex">DEX</option>
+            </select>
+        </div>
+        <div class="table-container" style="max-height: 400px; overflow-y: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Module</th>
+                        <th>Symbol</th>
+                        <th>Side</th>
+                        <th>Entry</th>
+                        <th>Exit</th>
+                        <th>P&L</th>
+                        <th>Exit Reason</th>
+                    </tr>
+                </thead>
+                <tbody id="recentTradesBody">
+                    <tr>
+                        <td colspan="8" class="text-center text-muted">Loading trades...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
     <!-- Wallet Balances -->
     <div class="section-card">
         <div class="section-title">
@@ -673,6 +750,12 @@
 // Store chart instances for updates
 let pnlChart = null;
 let winRateChart = null;
+let equityCurveChart = null;
+let riskRadarChart = null;
+let pnlDistributionChart = null;
+
+// Store all trades for filtering
+let allRecentTrades = [];
 
 // ========================================
 // DEDICATED WALLET BALANCE LOADING
@@ -1167,5 +1250,405 @@ function emergencyExit() {
             .catch(e => alert('Error: ' + e.message));
     }
 }
+
+// ========================================
+// NEW CHARTS FROM SIMULATOR PAGE
+// ========================================
+
+// Helper to parse P&L values
+function parsePnL(value) {
+    if (value === null || value === undefined) return 0;
+    if (typeof value === 'number') return value;
+    const cleaned = String(value).replace(/[^0-9.-]/g, '');
+    return parseFloat(cleaned) || 0;
+}
+
+// Load simulator/trade data for new charts
+async function loadSimulatorData() {
+    try {
+        const response = await fetch('/api/simulator/data');
+        if (!response.ok) {
+            console.warn('Simulator data not available, using fallback');
+            return null;
+        }
+        return await response.json();
+    } catch (e) {
+        console.warn('Error loading simulator data:', e);
+        return null;
+    }
+}
+
+// Helper to extract stats
+function getStats(moduleData) {
+    if (!moduleData) return null;
+    return moduleData.stats || moduleData;
+}
+
+// Initialize new charts
+async function initializeNewCharts() {
+    const data = await loadSimulatorData();
+
+    // Initialize Equity Curve Chart
+    initEquityCurveChart(data);
+
+    // Initialize Risk Radar Chart
+    initRiskRadarChart(data);
+
+    // Initialize P&L Distribution Chart
+    initPnLDistributionChart(data);
+
+    // Load recent trades
+    loadRecentTrades(data);
+}
+
+// Equity Curve Chart
+function initEquityCurveChart(data) {
+    const canvas = document.getElementById('equityCurveChart');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    const moduleFilter = document.getElementById('equityModuleSelect')?.value || 'all';
+
+    // Collect trades
+    let allTrades = [];
+    const futuresStats = getStats(data?.futures);
+    const solanaStats = getStats(data?.solana);
+    const dexStats = getStats(data?.dex);
+
+    if (moduleFilter === 'all' || moduleFilter === 'futures') {
+        allTrades = allTrades.concat((futuresStats?.trades || []).map(t => ({...t, module: 'futures'})));
+    }
+    if (moduleFilter === 'all' || moduleFilter === 'solana') {
+        allTrades = allTrades.concat((solanaStats?.trades || []).map(t => ({...t, module: 'solana'})));
+    }
+    if (moduleFilter === 'all' || moduleFilter === 'dex') {
+        allTrades = allTrades.concat((dexStats?.trades || []).map(t => ({...t, module: 'dex'})));
+    }
+
+    // Sort by time
+    allTrades.sort((a, b) => new Date(a.time || a.closed_at || 0) - new Date(b.time || b.closed_at || 0));
+
+    // Calculate equity curve
+    const labels = [];
+    const equityData = [];
+    let equity = 10000; // Starting capital
+
+    const solPrice = parseFloat(String(solanaStats?.sol_price || '200').replace(/[^0-9.]/g, '')) || 200;
+
+    if (allTrades.length === 0) {
+        for (let i = 0; i < 10; i++) {
+            labels.push(`T${i}`);
+            equityData.push(10000);
+        }
+    } else {
+        allTrades.forEach((trade, i) => {
+            let pnl = parsePnL(trade.pnl || trade.net_pnl);
+            if (trade.module === 'solana') pnl = pnl * solPrice;
+            equity += pnl;
+            const timestamp = trade.time || trade.closed_at;
+            const label = timestamp ? new Date(timestamp).toLocaleDateString() : `T${i+1}`;
+            labels.push(label);
+            equityData.push(equity);
+        });
+    }
+
+    // Module colors
+    const colorMap = {
+        'all': { border: '#3b82f6', bg: 'rgba(59, 130, 246, 0.1)' },
+        'futures': { border: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.1)' },
+        'solana': { border: '#10b981', bg: 'rgba(16, 185, 129, 0.1)' },
+        'dex': { border: '#f59e0b', bg: 'rgba(245, 158, 11, 0.1)' }
+    };
+    const colors = colorMap[moduleFilter] || colorMap['all'];
+
+    if (equityCurveChart) equityCurveChart.destroy();
+
+    const moduleLabel = moduleFilter === 'all' ? 'All Modules' :
+                       moduleFilter === 'futures' ? 'Futures' :
+                       moduleFilter === 'solana' ? 'Solana' : 'DEX';
+
+    equityCurveChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels.slice(-50),
+            datasets: [{
+                label: `${moduleLabel} Equity`,
+                data: equityData.slice(-50),
+                borderColor: colors.border,
+                backgroundColor: colors.bg,
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { labels: { color: '#94a3b8' } }
+            },
+            scales: {
+                x: { display: false },
+                y: {
+                    grid: { color: 'rgba(148, 163, 184, 0.1)' },
+                    ticks: { color: '#94a3b8' }
+                }
+            }
+        }
+    });
+}
+
+// Update equity curve when filter changes
+async function updateEquityCurve() {
+    const data = await loadSimulatorData();
+    initEquityCurveChart(data);
+}
+
+// Risk Radar Chart
+function initRiskRadarChart(data) {
+    const canvas = document.getElementById('riskMetricsRadar');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    const futuresStats = getStats(data?.futures);
+    const solanaStats = getStats(data?.solana);
+    const dexStats = getStats(data?.dex);
+
+    const datasets = [];
+
+    if (dexStats?.mode || dexStats?.total_trades > 0) {
+        const dexWinRate = parseFloat(dexStats?.win_rate) || 0;
+        datasets.push({
+            label: 'DEX',
+            data: [50, 50, dexWinRate, 50, 50],
+            borderColor: '#f59e0b',
+            backgroundColor: 'rgba(245, 158, 11, 0.2)'
+        });
+    }
+
+    if (futuresStats?.mode || futuresStats?.total_trades > 0) {
+        const futureSharpe = parseFloat(futuresStats?.sharpe_ratio) || 0;
+        const futureSortino = parseFloat(futuresStats?.sortino_ratio) || 0;
+        datasets.push({
+            label: 'Futures',
+            data: [
+                Math.min(futureSharpe * 50, 100),
+                Math.min(futureSortino * 50, 100),
+                parseFloat(futuresStats?.win_rate) || 0,
+                Math.min((parseFloat(futuresStats?.profit_factor) || 0) * 30, 100),
+                50
+            ],
+            borderColor: '#8b5cf6',
+            backgroundColor: 'rgba(139, 92, 246, 0.2)'
+        });
+    }
+
+    if (solanaStats?.mode || solanaStats?.total_trades > 0) {
+        const solanaSharpe = parseFloat(solanaStats?.sharpe_ratio) || 0;
+        const solanaSortino = parseFloat(solanaStats?.sortino_ratio) || 0;
+        datasets.push({
+            label: 'Solana',
+            data: [
+                Math.min(solanaSharpe * 50, 100),
+                Math.min(solanaSortino * 50, 100),
+                parseFloat(solanaStats?.win_rate) || 0,
+                Math.min((parseFloat(solanaStats?.profit_factor) || 0) * 30, 100),
+                50
+            ],
+            borderColor: '#10b981',
+            backgroundColor: 'rgba(16, 185, 129, 0.2)'
+        });
+    }
+
+    if (datasets.length === 0) {
+        datasets.push({
+            label: 'No Data',
+            data: [0, 0, 0, 0, 0],
+            borderColor: '#64748b',
+            backgroundColor: 'rgba(100, 116, 139, 0.2)'
+        });
+    }
+
+    if (riskRadarChart) riskRadarChart.destroy();
+
+    riskRadarChart = new Chart(ctx, {
+        type: 'radar',
+        data: {
+            labels: ['Sharpe', 'Sortino', 'Win Rate', 'Profit Factor', 'Consistency'],
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { labels: { color: '#94a3b8' } }
+            },
+            scales: {
+                r: {
+                    grid: { color: 'rgba(148, 163, 184, 0.1)' },
+                    pointLabels: { color: '#94a3b8' },
+                    ticks: { display: false },
+                    suggestedMin: 0,
+                    suggestedMax: 100
+                }
+            }
+        }
+    });
+}
+
+// P&L Distribution Chart
+function initPnLDistributionChart(data) {
+    const canvas = document.getElementById('pnlDistributionChart');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    const futuresStats = getStats(data?.futures);
+    const solanaStats = getStats(data?.solana);
+    const dexStats = getStats(data?.dex);
+
+    // Collect all P&L values
+    const allPnls = [
+        ...(futuresStats?.trades || []).map(t => parsePnL(t.pnl || t.net_pnl)),
+        ...(solanaStats?.trades || []).map(t => parsePnL(t.pnl || t.net_pnl)),
+        ...(dexStats?.trades || []).map(t => parsePnL(t.pnl || t.net_pnl))
+    ];
+
+    // Create histogram bins
+    const bins = [-100, -50, -25, -10, 0, 10, 25, 50, 100];
+    const counts = new Array(bins.length - 1).fill(0);
+
+    allPnls.forEach(pnl => {
+        for (let i = 0; i < bins.length - 1; i++) {
+            if (pnl >= bins[i] && pnl < bins[i + 1]) {
+                counts[i]++;
+                break;
+            }
+        }
+    });
+
+    if (pnlDistributionChart) pnlDistributionChart.destroy();
+
+    pnlDistributionChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: bins.slice(0, -1).map((b, i) => `${b} to ${bins[i+1]}`),
+            datasets: [{
+                label: 'Trade Count',
+                data: counts,
+                backgroundColor: counts.map((_, i) =>
+                    bins[i] < 0 ? 'rgba(239, 68, 68, 0.6)' : 'rgba(16, 185, 129, 0.6)'
+                ),
+                borderColor: counts.map((_, i) =>
+                    bins[i] < 0 ? '#ef4444' : '#10b981'
+                ),
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false }
+            },
+            scales: {
+                x: {
+                    grid: { display: false },
+                    ticks: { color: '#94a3b8', maxRotation: 45, minRotation: 45 }
+                },
+                y: {
+                    grid: { color: 'rgba(148, 163, 184, 0.1)' },
+                    ticks: { color: '#94a3b8' }
+                }
+            }
+        }
+    });
+}
+
+// Load recent trades from all modules
+async function loadRecentTrades(data) {
+    const tbody = document.getElementById('recentTradesBody');
+    if (!tbody) return;
+
+    const futuresStats = getStats(data?.futures);
+    const solanaStats = getStats(data?.solana);
+    const dexStats = getStats(data?.dex);
+
+    // Collect all trades
+    allRecentTrades = [
+        ...(futuresStats?.trades || []).map(t => ({...t, module: 'futures', moduleLabel: 'Futures'})),
+        ...(solanaStats?.trades || []).map(t => ({...t, module: 'solana', moduleLabel: 'Solana'})),
+        ...(dexStats?.trades || []).map(t => ({...t, module: 'dex', moduleLabel: 'DEX'}))
+    ];
+
+    // Also fetch from dedicated endpoints
+    try {
+        const futuresResponse = await fetch('/api/futures/trades?limit=50');
+        if (futuresResponse.ok) {
+            const futuresData = await futuresResponse.json();
+            if (futuresData.success && futuresData.trades) {
+                const existingIds = new Set(allRecentTrades.filter(t => t.module === 'futures').map(t => t.trade_id));
+                const newTrades = futuresData.trades
+                    .filter(t => !existingIds.has(t.trade_id))
+                    .map(t => ({...t, module: 'futures', moduleLabel: 'Futures'}));
+                allRecentTrades = [...allRecentTrades, ...newTrades];
+            }
+        }
+    } catch (e) { console.debug('Futures trades fetch error:', e); }
+
+    // Sort by time (newest first)
+    allRecentTrades.sort((a, b) => new Date(b.time || b.closed_at || 0) - new Date(a.time || a.closed_at || 0));
+
+    renderTradesTable();
+}
+
+// Filter and render trades table
+function filterRecentTrades() {
+    renderTradesTable();
+}
+
+function renderTradesTable() {
+    const tbody = document.getElementById('recentTradesBody');
+    if (!tbody) return;
+
+    const moduleFilter = document.getElementById('tradeModuleFilter')?.value || 'all';
+
+    const filtered = allRecentTrades.filter(t =>
+        moduleFilter === 'all' || t.module === moduleFilter
+    );
+
+    if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No trades found</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = filtered.slice(0, 50).map(trade => {
+        const pnl = parsePnL(trade.pnl || trade.net_pnl);
+        const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+        const timestamp = trade.time || trade.closed_at;
+        const timeStr = timestamp ? new Date(timestamp).toLocaleString() : 'N/A';
+        const exitReason = trade.close_reason || trade.exit_reason || '-';
+
+        return `
+            <tr>
+                <td>${timeStr}</td>
+                <td><span class="badge badge-${trade.module === 'futures' ? 'info' : trade.module === 'solana' ? 'success' : 'warning'}">${trade.moduleLabel}</span></td>
+                <td>${trade.symbol || trade.token_symbol || 'N/A'}</td>
+                <td>${trade.side || 'N/A'}</td>
+                <td>$${parseFloat(trade.entry_price || 0).toFixed(4)}</td>
+                <td>$${parseFloat(trade.exit_price || 0).toFixed(4)}</td>
+                <td class="${pnlClass}">$${pnl.toFixed(2)}</td>
+                <td>${exitReason}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Initialize new charts on page load
+document.addEventListener('DOMContentLoaded', function() {
+    // Delay to ensure base charts are initialized first
+    setTimeout(initializeNewCharts, 500);
+
+    // Refresh new charts every 60 seconds
+    setInterval(initializeNewCharts, 60000);
+});
 </script>
 {% endblock %}
