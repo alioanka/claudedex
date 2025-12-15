@@ -23,6 +23,11 @@ class Chain(IntEnum):
     BASE = 8453
     OPTIMISM = 10
     AVALANCHE = 43114
+    # New chains (added 2025)
+    FANTOM = 250
+    CRONOS = 25
+    PULSECHAIN = 369
+    MONAD = 41454  # Monad mainnet
 
 CHAIN_NAMES = {
     Chain.ETHEREUM: "Ethereum",
@@ -31,7 +36,11 @@ CHAIN_NAMES = {
     Chain.ARBITRUM: "Arbitrum",
     Chain.BASE: "Base",
     Chain.OPTIMISM: "Optimism",
-    Chain.AVALANCHE: "Avalanche"
+    Chain.AVALANCHE: "Avalanche",
+    Chain.FANTOM: "Fantom",
+    Chain.CRONOS: "Cronos",
+    Chain.PULSECHAIN: "PulseChain",
+    Chain.MONAD: "Monad"
 }
 
 CHAIN_SYMBOLS = {
@@ -41,7 +50,11 @@ CHAIN_SYMBOLS = {
     Chain.ARBITRUM: "ETH",
     Chain.BASE: "ETH",
     Chain.OPTIMISM: "ETH",
-    Chain.AVALANCHE: "AVAX"
+    Chain.AVALANCHE: "AVAX",
+    Chain.FANTOM: "FTM",
+    Chain.CRONOS: "CRO",
+    Chain.PULSECHAIN: "PLS",
+    Chain.MONAD: "MONAD"
 }
 
 CHAIN_RPC_URLS = {
@@ -66,6 +79,26 @@ CHAIN_RPC_URLS = {
     Chain.BASE: [
         "https://base-mainnet.g.alchemy.com/v2/bAwxYCUc1oIDIIYAL3w98NKh00DQK45B",
         "https://rpc.ankr.com/base/85e891889f34c452ace96e25a7422fd8996bd74a0f34bb96a0cd4bb79af6080a"
+    ],
+    # New chains (added 2025)
+    Chain.AVALANCHE: [
+        "https://rpc.ankr.com/avalanche/4daecdbd46f7cc39b14e343e5ee0cc0be57e5f52faa2aff6baefe3826227064d",
+        "https://api.avax.network/ext/bc/C/rpc"
+    ],
+    Chain.FANTOM: [
+        "https://rpc.ftm.tools",
+        "https://rpc.ankr.com/fantom"
+    ],
+    Chain.CRONOS: [
+        "https://evm.cronos.org",
+        "https://cronos-evm.publicnode.com"
+    ],
+    Chain.PULSECHAIN: [
+        "https://rpc.pulsechain.com",
+        "https://pulsechain.publicnode.com"
+    ],
+    Chain.MONAD: [
+        "https://rpc.ankr.com/monad_mainnet/4daecdbd46f7cc39b14e343e5ee0cc0be57e5f52faa2aff6baefe3826227064d"
     ]
 }
 
@@ -74,7 +107,12 @@ BLOCK_EXPLORERS = {
     Chain.BSC: "https://bscscan.com",
     Chain.POLYGON: "https://polygonscan.com",
     Chain.ARBITRUM: "https://arbiscan.io",
-    Chain.BASE: "https://basescan.org"
+    Chain.BASE: "https://basescan.org",
+    Chain.AVALANCHE: "https://snowtrace.io",
+    Chain.FANTOM: "https://ftmscan.com",
+    Chain.CRONOS: "https://cronoscan.com",
+    Chain.PULSECHAIN: "https://scan.pulsechain.com",
+    Chain.MONAD: "https://explorer.monad.xyz"
 }
 
 # ============= DEX Configuration =============
