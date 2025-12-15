@@ -1352,6 +1352,8 @@ class SolanaTradingEngine:
                 logger.info(f"💾 Trade saved to DB: {trade.token_symbol} P&L: {trade.pnl_sol:.4f} SOL")
         except Exception as e:
             logger.error(f"Failed to save trade to DB: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
 
     async def run(self):
         """Main trading loop"""

@@ -3641,6 +3641,22 @@ class DashboardEndpoints:
             if not block_info['can_trade']:
                 logger.info(f"Trading BLOCKED - Reasons: {preserved_reasons}")
 
+            # ========== ADD CIRCUIT BREAKER STATUS ==========
+            # Get circuit breaker status from risk manager
+            circuit_breaker_status = None
+            if self.risk and hasattr(self.risk, 'get_circuit_breaker_status'):
+                circuit_breaker_status = self.risk.get_circuit_breaker_status()
+                block_info['circuit_breaker'] = circuit_breaker_status
+
+                # If circuit breaker is blocked, add it to reasons and update can_trade
+                if circuit_breaker_status and circuit_breaker_status.get('is_blocked'):
+                    cb_reason = circuit_breaker_status.get('reason', 'Circuit breaker tripped')
+                    hours_remaining = circuit_breaker_status.get('hours_until_reset', 0)
+                    if hours_remaining:
+                        cb_reason += f" (auto-reset in {hours_remaining:.1f}h)"
+                    block_info['reasons'].append(f"🔴 Circuit Breaker: {cb_reason}")
+                    block_info['can_trade'] = False
+
             return web.json_response({
                 'success': True,
                 'data': block_info
@@ -3679,11 +3695,21 @@ class DashboardEndpoints:
             # Call the manual reset method
             result = await portfolio_mgr.manual_reset_block(reason=reason)
 
+            # Also reset circuit breaker if present
+            circuit_breaker_reset = False
+            if self.risk and hasattr(self.risk, 'reset_circuit_breaker'):
+                self.risk.reset_circuit_breaker(manual=True)
+                circuit_breaker_reset = True
+                logger.info(f"Circuit breaker manually reset via dashboard: {reason}")
+
             if result.get('success'):
                 return web.json_response({
                     'success': True,
                     'message': result.get('message'),
-                    'data': result
+                    'data': {
+                        **result,
+                        'circuit_breaker_reset': circuit_breaker_reset
+                    }
                 })
             else:
                 return web.json_response({
