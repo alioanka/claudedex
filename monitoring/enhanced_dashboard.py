@@ -718,74 +718,71 @@ class DashboardEndpoints:
             except Exception as e:
                 logger.warning(f"Error getting positions from engine: {e}")
 
+        # ALWAYS query database for trade metrics (regardless of health check status)
+        # This ensures we show historical trade data even if modules are offline
         if self.db and self.db_pool:
             try:
-                # ==================== DEX TRADES (from 'trades' table) ====================
                 async with self.db_pool.acquire() as conn:
-                    # Get DEX trades from main trades table
-                    dex_trades = await conn.fetch("""
-                        SELECT status, profit_loss
-                        FROM trades
-                        WHERE chain NOT IN ('SOLANA', 'SOL')
-                        ORDER BY entry_timestamp DESC
-                        LIMIT 1000
-                    """)
+                    # ==================== DEX TRADES (from 'trades' table) ====================
+                    try:
+                        dex_trades = await conn.fetch("""
+                            SELECT status, profit_loss
+                            FROM trades
+                            WHERE chain NOT IN ('SOLANA', 'SOL')
+                            ORDER BY entry_timestamp DESC
+                            LIMIT 10000
+                        """)
 
-                    if dex_trades:
-                        dex_metrics['total_trades'] = len(dex_trades)
-                        dex_closed = [t for t in dex_trades if t['status'] == 'closed']
-                        dex_wins = [t for t in dex_closed if float(t['profit_loss'] or 0) > 0]
-                        dex_metrics['pnl'] = sum(float(t['profit_loss'] or 0) for t in dex_closed)
-                        dex_metrics['win_rate'] = (len(dex_wins) / len(dex_closed) * 100) if dex_closed else 0
-                        logger.info(f"DEX metrics from trades table: trades={dex_metrics['total_trades']}, pnl={dex_metrics['pnl']:.2f}, win_rate={dex_metrics['win_rate']:.1f}%")
+                        if dex_trades:
+                            dex_metrics['total_trades'] = len(dex_trades)
+                            dex_closed = [t for t in dex_trades if t['status'] == 'closed']
+                            dex_wins = [t for t in dex_closed if float(t['profit_loss'] or 0) > 0]
+                            dex_metrics['pnl'] = sum(float(t['profit_loss'] or 0) for t in dex_closed)
+                            dex_metrics['win_rate'] = (len(dex_wins) / len(dex_closed) * 100) if dex_closed else 0
+                            logger.info(f"DEX metrics from DB: trades={dex_metrics['total_trades']}, pnl={dex_metrics['pnl']:.2f}")
+                    except Exception as e:
+                        logger.debug(f"DEX trades query error: {e}")
 
                     # ==================== FUTURES TRADES (from 'futures_trades' table) ====================
-                    # Only query DB if futures module is not running (metrics not from health endpoint)
-                    if not futures_running:
-                        try:
-                            # Note: futures_trades table has no 'status' column - all records are closed trades
-                            # Use net_pnl instead of pnl_usdt (correct column name)
-                            futures_trades = await conn.fetch("""
-                                SELECT net_pnl, exit_reason
-                                FROM futures_trades
-                                ORDER BY exit_time DESC
-                                LIMIT 10000
-                            """)
+                    try:
+                        futures_trades = await conn.fetch("""
+                            SELECT net_pnl, exit_reason
+                            FROM futures_trades
+                            ORDER BY exit_time DESC
+                            LIMIT 10000
+                        """)
 
-                            if futures_trades:
-                                futures_metrics['total_trades'] = len(futures_trades)
-                                # All trades in futures_trades table are already closed
-                                futures_wins = [t for t in futures_trades if float(t['net_pnl'] or 0) > 0]
-                                futures_metrics['pnl'] = sum(float(t['net_pnl'] or 0) for t in futures_trades)
-                                futures_metrics['win_rate'] = (len(futures_wins) / len(futures_trades) * 100) if futures_trades else 0
-                                logger.info(f"Futures metrics from DB: trades={futures_metrics['total_trades']}, pnl={futures_metrics['pnl']:.2f}, win_rate={futures_metrics['win_rate']:.1f}%")
-                        except Exception as e:
-                            logger.debug(f"futures_trades table not available or error: {e}")
+                        if futures_trades:
+                            futures_metrics['total_trades'] = len(futures_trades)
+                            futures_wins = [t for t in futures_trades if float(t['net_pnl'] or 0) > 0]
+                            futures_metrics['pnl'] = sum(float(t['net_pnl'] or 0) for t in futures_trades)
+                            futures_metrics['win_rate'] = (len(futures_wins) / len(futures_trades) * 100) if futures_trades else 0
+                            logger.info(f"Futures metrics from DB: trades={futures_metrics['total_trades']}, pnl={futures_metrics['pnl']:.2f}")
+                    except Exception as e:
+                        logger.debug(f"futures_trades table error: {e}")
 
                     # ==================== SOLANA TRADES (from 'solana_trades' table) ====================
-                    # Only query DB if solana module is not running (metrics not from health endpoint)
-                    if not solana_running:
-                        try:
-                            # Note: solana_trades table has no 'status' column - all records are closed trades
-                            solana_trades = await conn.fetch("""
-                                SELECT pnl_sol, exit_reason
-                                FROM solana_trades
-                                ORDER BY exit_time DESC
-                                LIMIT 10000
-                            """)
+                    try:
+                        solana_trades = await conn.fetch("""
+                            SELECT pnl_sol, exit_reason
+                            FROM solana_trades
+                            ORDER BY exit_time DESC
+                            LIMIT 10000
+                        """)
 
-                            if solana_trades:
-                                solana_metrics['total_trades'] = len(solana_trades)
-                                # All trades in solana_trades table are already closed
-                                solana_wins = [t for t in solana_trades if float(t['pnl_sol'] or 0) > 0]
-                                solana_metrics['pnl'] = sum(float(t['pnl_sol'] or 0) for t in solana_trades)
-                                solana_metrics['win_rate'] = (len(solana_wins) / len(solana_trades) * 100) if solana_trades else 0
-                                logger.info(f"Solana metrics from DB: trades={solana_metrics['total_trades']}, pnl={solana_metrics['pnl']:.4f} SOL, win_rate={solana_metrics['win_rate']:.1f}%")
-                        except Exception as e:
-                            logger.debug(f"solana_trades table not available or error: {e}")
+                        if solana_trades:
+                            solana_metrics['total_trades'] = len(solana_trades)
+                            solana_wins = [t for t in solana_trades if float(t['pnl_sol'] or 0) > 0]
+                            solana_metrics['pnl'] = sum(float(t['pnl_sol'] or 0) for t in solana_trades)
+                            solana_metrics['win_rate'] = (len(solana_wins) / len(solana_trades) * 100) if solana_trades else 0
+                            logger.info(f"Solana metrics from DB: trades={solana_metrics['total_trades']}, pnl={solana_metrics['pnl']:.4f} SOL")
+                    except Exception as e:
+                        logger.debug(f"solana_trades table error: {e}")
 
             except Exception as e:
                 logger.error(f"Error getting module metrics from DB: {e}", exc_info=True)
+        else:
+            logger.warning(f"Database not available for module metrics (db={self.db is not None}, pool={self.db_pool is not None})")
 
         # Get capital allocations from module config files
         dex_capital = 500.0  # Default
