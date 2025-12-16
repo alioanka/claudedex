@@ -32,7 +32,7 @@ from aiohttp import web
 import asyncpg
 
 # Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Load environment variables
 load_dotenv()
@@ -553,7 +553,7 @@ class FuturesTradingApplication:
             await self._init_database()
 
             # Initialize config manager (loads settings from database)
-            from modules.futures_trading.futures_config_manager import FuturesConfigManager
+            from modules.futures_trading.config.futures_config_manager import FuturesConfigManager
             self.config_manager = FuturesConfigManager(db_pool=self.db_pool)
             await self.config_manager.initialize()
 

@@ -1,0 +1,5 @@
+# Add these to your .env file
+OPENAI_API_KEY=your_openai_api_key_here
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+SNIPER_GAS_LIMIT=1000000
+SNIPER_MAX_GWEI=500

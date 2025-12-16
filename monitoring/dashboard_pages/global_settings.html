@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card bg-dark text-white">
+            <div class="card-header">
+                <h3>Global Settings Editor</h3>
+            </div>
+            <div class="card-body">
+                <div id="settings-editor">Loading...</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+async function loadSettings() {
+    const response = await fetch('/api/settings/all');
+    const data = await response.json();
+    const container = document.getElementById('settings-editor');
+
+    if (data.success) {
+        let html = '<div class="accordion" id="settingsAccordion">';
+        for (const [category, settings] of Object.entries(data.data)) {
+            html += `
+            <div class="accordion-item bg-secondary">
+                <h2 class="accordion-header" id="heading${category}">
+                    <button class="accordion-button collapsed bg-dark text-white" type="button" data-bs-toggle="collapse" data-bs-target="#collapse${category}">
+                        ${category.toUpperCase()}
+                    </button>
+                </h2>
+                <div id="collapse${category}" class="accordion-collapse collapse" data-bs-parent="#settingsAccordion">
+                    <div class="accordion-body">
+                        <form onsubmit="saveSettings(event, '${category}')">
+                            ${Object.entries(settings).map(([key, config]) => `
+                                <div class="mb-3">
+                                    <label class="form-label">${key}</label>
+                                    <input type="${typeof config.value === 'boolean' ? 'checkbox' : 'text'}"
+                                           class="form-control"
+                                           name="${key}"
+                                           value="${config.value}"
+                                           ${typeof config.value === 'boolean' && config.value ? 'checked' : ''}>
+                                    <small class="text-muted">${config.description || ''}</small>
+                                </div>
+                            `).join('')}
+                            <button type="submit" class="btn btn-primary">Save ${category}</button>
+                        </form>
+                    </div>
+                </div>
+            </div>`;
+        }
+        html += '</div>';
+        container.innerHTML = html;
+    }
+}
+
+async function saveSettings(event, category) {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    const updates = {};
+
+    for (const [key, value] of formData.entries()) {
+        updates[key] = value;
+    }
+
+    // Handle checkboxes (unchecked ones are missing from FormData)
+    event.target.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        updates[cb.name] = cb.checked;
+    });
+
+    await fetch('/api/settings/update', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            config_type: category,
+            updates: updates
+        })
+    });
+    alert('Settings saved!');
+}
+
+loadSettings();
+</script>
+{% endblock %}

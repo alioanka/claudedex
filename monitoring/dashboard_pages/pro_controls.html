@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+    <!-- Module Control -->
+    <div class="col-md-6">
+        <div class="card bg-dark text-white mb-4">
+            <div class="card-header">Module Control</div>
+            <div class="card-body">
+                <div id="module-status"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manual Trade -->
+    <div class="col-md-6">
+        <div class="card bg-dark text-white mb-4">
+            <div class="card-header">Manual Trade</div>
+            <div class="card-body">
+                <form id="manual-trade-form">
+                    <div class="mb-3">
+                        <label>Module</label>
+                        <select class="form-select" id="trade-module">
+                            <option value="dex">DEX</option>
+                            <option value="futures">Futures</option>
+                            <option value="solana">Solana</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label>Token Address / Symbol</label>
+                        <input type="text" class="form-control" id="trade-token">
+                    </div>
+                    <div class="mb-3">
+                        <label>Side</label>
+                        <select class="form-select" id="trade-side">
+                            <option value="buy">Buy / Long</option>
+                            <option value="sell">Sell / Short</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label>Amount (USD)</label>
+                        <input type="number" class="form-control" id="trade-amount">
+                    </div>
+                    <button type="button" class="btn btn-success w-100" onclick="executeTrade()">Execute</button>
+                </form>
+            </div>
+        </div>
+
+        <button class="btn btn-danger w-100 mb-4" onclick="panicSell()">🚨 PANIC SELL ALL 🚨</button>
+    </div>
+</div>
+
+<script>
+async function loadModules() {
+    // Poll status API
+    const response = await fetch('/api/bot/status');
+    // Render toggles...
+}
+
+async function executeTrade() {
+    const module = document.getElementById('trade-module').value;
+    const token = document.getElementById('trade-token').value;
+    const side = document.getElementById('trade-side').value;
+    const amount = document.getElementById('trade-amount').value;
+
+    await fetch('/api/trade/execute', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ module, token, side, amount })
+    });
+    alert('Trade executed!');
+}
+
+async function panicSell() {
+    if(!confirm("Are you sure you want to close ALL positions across ALL modules?")) return;
+
+    await fetch('/api/bot/emergency_exit', { method: 'POST' });
+    alert('Emergency exit triggered!');
+}
+</script>
+{% endblock %}

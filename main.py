@@ -246,21 +246,21 @@ class TradingBotOrchestrator:
         # Define modules
         self.modules['dex'] = ModuleProcess(
             name="DEX Trading",
-            script_path="main_dex.py",
+            script_path="modules/dex_trading/main_dex.py",
             enabled_env_var="DEX_MODULE_ENABLED",
             module_key="dex"
         )
 
         self.modules['futures'] = ModuleProcess(
             name="Futures Trading",
-            script_path="futures_trading/main_futures.py",
+            script_path="modules/futures_trading/main_futures.py",
             enabled_env_var="FUTURES_MODULE_ENABLED",
             module_key="futures"
         )
 
         self.modules['solana'] = ModuleProcess(
             name="Solana Trading",
-            script_path="solana_trading/main_solana.py",
+            script_path="modules/solana_trading/main_solana.py",
             enabled_env_var="SOLANA_MODULE_ENABLED",
             module_key="solana"
         )
