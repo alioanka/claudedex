@@ -392,6 +392,94 @@
                 </button>
             </div>
         </div>
+
+        <!-- Sniper Module -->
+        <div class="module-control-card disabled" id="sniper-card">
+            <div class="module-header">
+                <div class="module-name">
+                    <i class="fas fa-crosshairs"></i>
+                    Sniper Module
+                </div>
+                <span class="module-status-badge status-disabled" id="sniper-status">DISABLED</span>
+            </div>
+            <div class="module-info">
+                <div class="info-item"><span class="info-label">Capital Allocated</span><span class="info-value">$0.00</span></div>
+                <div class="info-item"><span class="info-label">Status</span><span class="info-value">Disabled</span></div>
+                <div class="info-item"><span class="info-label">Type</span><span class="info-value">Sniper</span></div>
+            </div>
+            <div class="control-buttons">
+                <button class="control-btn btn-enable" onclick="enableModule('sniper')" id="sniper-enable"><i class="fas fa-check-circle"></i> Enable</button>
+                <button class="control-btn btn-disable" onclick="disableModule('sniper')" id="sniper-disable" disabled><i class="fas fa-ban"></i> Disable</button>
+                <button class="control-btn btn-pause" onclick="pauseModule('sniper')" id="sniper-pause" disabled><i class="fas fa-pause"></i> Pause</button>
+                <button class="control-btn btn-start" onclick="startModule('sniper')" id="sniper-start" disabled><i class="fas fa-play"></i> Start</button>
+            </div>
+        </div>
+
+        <!-- AI Analysis Module -->
+        <div class="module-control-card disabled" id="ai-card">
+            <div class="module-header">
+                <div class="module-name">
+                    <i class="fas fa-brain"></i>
+                    AI Analysis
+                </div>
+                <span class="module-status-badge status-disabled" id="ai-status">DISABLED</span>
+            </div>
+            <div class="module-info">
+                <div class="info-item"><span class="info-label">Capital Allocated</span><span class="info-value">$0.00</span></div>
+                <div class="info-item"><span class="info-label">Status</span><span class="info-value">Disabled</span></div>
+                <div class="info-item"><span class="info-label">Type</span><span class="info-value">AI Analysis</span></div>
+            </div>
+            <div class="control-buttons">
+                <button class="control-btn btn-enable" onclick="enableModule('ai_analysis')" id="ai-enable"><i class="fas fa-check-circle"></i> Enable</button>
+                <button class="control-btn btn-disable" onclick="disableModule('ai_analysis')" id="ai-disable" disabled><i class="fas fa-ban"></i> Disable</button>
+                <button class="control-btn btn-pause" onclick="pauseModule('ai_analysis')" id="ai-pause" disabled><i class="fas fa-pause"></i> Pause</button>
+                <button class="control-btn btn-start" onclick="startModule('ai_analysis')" id="ai-start" disabled><i class="fas fa-play"></i> Start</button>
+            </div>
+        </div>
+
+        <!-- Arbitrage Module -->
+        <div class="module-control-card disabled" id="arbitrage-card">
+            <div class="module-header">
+                <div class="module-name">
+                    <i class="fas fa-balance-scale"></i>
+                    Arbitrage Module
+                </div>
+                <span class="module-status-badge status-disabled" id="arbitrage-status">DISABLED</span>
+            </div>
+            <div class="module-info">
+                <div class="info-item"><span class="info-label">Capital Allocated</span><span class="info-value">$0.00</span></div>
+                <div class="info-item"><span class="info-label">Status</span><span class="info-value">Disabled</span></div>
+                <div class="info-item"><span class="info-label">Type</span><span class="info-value">Arbitrage</span></div>
+            </div>
+            <div class="control-buttons">
+                <button class="control-btn btn-enable" onclick="enableModule('arbitrage')" id="arbitrage-enable"><i class="fas fa-check-circle"></i> Enable</button>
+                <button class="control-btn btn-disable" onclick="disableModule('arbitrage')" id="arbitrage-disable" disabled><i class="fas fa-ban"></i> Disable</button>
+                <button class="control-btn btn-pause" onclick="pauseModule('arbitrage')" id="arbitrage-pause" disabled><i class="fas fa-pause"></i> Pause</button>
+                <button class="control-btn btn-start" onclick="startModule('arbitrage')" id="arbitrage-start" disabled><i class="fas fa-play"></i> Start</button>
+            </div>
+        </div>
+
+        <!-- Copy Trading Module -->
+        <div class="module-control-card disabled" id="copy-card">
+            <div class="module-header">
+                <div class="module-name">
+                    <i class="fas fa-user-friends"></i>
+                    Copy Trading
+                </div>
+                <span class="module-status-badge status-disabled" id="copy-status">DISABLED</span>
+            </div>
+            <div class="module-info">
+                <div class="info-item"><span class="info-label">Capital Allocated</span><span class="info-value">$0.00</span></div>
+                <div class="info-item"><span class="info-label">Status</span><span class="info-value">Disabled</span></div>
+                <div class="info-item"><span class="info-label">Type</span><span class="info-value">Copy Trading</span></div>
+            </div>
+            <div class="control-buttons">
+                <button class="control-btn btn-enable" onclick="enableModule('copy_trading')" id="copy-enable"><i class="fas fa-check-circle"></i> Enable</button>
+                <button class="control-btn btn-disable" onclick="disableModule('copy_trading')" id="copy-disable" disabled><i class="fas fa-ban"></i> Disable</button>
+                <button class="control-btn btn-pause" onclick="pauseModule('copy_trading')" id="copy-pause" disabled><i class="fas fa-pause"></i> Pause</button>
+                <button class="control-btn btn-start" onclick="startModule('copy_trading')" id="copy-start" disabled><i class="fas fa-play"></i> Start</button>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -417,6 +505,18 @@ async function loadModuleStatus() {
 
             // Update Solana module
             updateModuleControlCard('solana', modules.solana_strategies);
+
+            // Update Sniper module
+            updateModuleControlCard('sniper', modules.sniper);
+
+            // Update AI module
+            updateModuleControlCard('ai', modules.ai_analysis);
+
+            // Update Arbitrage module
+            updateModuleControlCard('arbitrage', modules.arbitrage);
+
+            // Update Copy Trading module
+            updateModuleControlCard('copy', modules.copy_trading);
         }
     } catch (e) {
         console.error('Error loading module status:', e);

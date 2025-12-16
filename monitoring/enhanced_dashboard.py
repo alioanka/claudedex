@@ -308,6 +308,7 @@ class DashboardEndpoints:
 
         # Pages - all will be protected by auth middleware if enabled
         self.app.router.add_get('/', self.index)
+        self.app.router.add_get('/full-dashboard', self.full_dashboard_page)
         self.app.router.add_get('/dashboard', self.dashboard_page)
         self.app.router.add_get('/trades', self.trades_page)
         self.app.router.add_get('/positions', self.positions_page)
@@ -335,6 +336,35 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/alerts/recent', self.api_recent_alerts)
         self.app.router.add_get('/api/risk/metrics', self.api_risk_metrics)
         self.app.router.add_get('/api/wallets/balances', self.api_wallet_balances)
+        self.app.router.add_get('/api/wallets/aggregated-balances', self.api_wallet_aggregated_balances)
+
+        # API - Sniper Module
+        self.app.router.add_get('/api/sniper/stats', self.api_get_sniper_stats)
+        self.app.router.add_get('/api/sniper/positions', self.api_get_sniper_positions)
+        self.app.router.add_get('/api/sniper/trades', self.api_get_sniper_trades)
+        self.app.router.add_get('/api/sniper/settings', self.api_get_sniper_settings)
+        self.app.router.add_post('/api/sniper/settings', self.api_save_sniper_settings)
+
+        # API - Arbitrage Module
+        self.app.router.add_get('/api/arbitrage/stats', self.api_get_arbitrage_stats)
+        self.app.router.add_get('/api/arbitrage/positions', self.api_get_arbitrage_positions)
+        self.app.router.add_get('/api/arbitrage/trades', self.api_get_arbitrage_trades)
+        self.app.router.add_get('/api/arbitrage/settings', self.api_get_arbitrage_settings)
+        self.app.router.add_post('/api/arbitrage/settings', self.api_save_arbitrage_settings)
+
+        # API - Copy Trading Module
+        self.app.router.add_get('/api/copytrading/stats', self.api_get_copytrading_stats)
+        self.app.router.add_get('/api/copytrading/positions', self.api_get_copytrading_positions)
+        self.app.router.add_get('/api/copytrading/trades', self.api_get_copytrading_trades)
+        self.app.router.add_get('/api/copytrading/settings', self.api_get_copytrading_settings)
+        self.app.router.add_post('/api/copytrading/settings', self.api_save_copytrading_settings)
+
+        # API - AI Analysis Module
+        self.app.router.add_get('/api/ai/stats', self.api_get_ai_stats)
+        self.app.router.add_get('/api/ai/sentiment', self.api_get_ai_sentiment)
+        self.app.router.add_get('/api/ai/performance', self.api_get_ai_performance)
+        self.app.router.add_get('/api/ai/settings', self.api_get_ai_settings)
+        self.app.router.add_post('/api/ai/settings', self.api_save_ai_settings)
 
         # API - Simulator
         self.app.router.add_get('/api/simulator/data', self.api_simulator_data)
@@ -505,6 +535,33 @@ class DashboardEndpoints:
         # Module Control and Modules Pages
         self.app.router.add_get('/module-control', self._fallback_module_control)
         self.app.router.add_get('/modules', self._fallback_modules_page)
+
+        # Sniper Module Pages
+        self.app.router.add_get('/sniper/dashboard', self._sniper_dashboard)
+        self.app.router.add_get('/sniper/positions', self._sniper_positions)
+        self.app.router.add_get('/sniper/trades', self._sniper_trades)
+        self.app.router.add_get('/sniper/performance', self._sniper_performance)
+        self.app.router.add_get('/sniper/settings', self._sniper_settings)
+
+        # Arbitrage Module Pages
+        self.app.router.add_get('/arbitrage/dashboard', self._arbitrage_dashboard)
+        self.app.router.add_get('/arbitrage/positions', self._arbitrage_positions)
+        self.app.router.add_get('/arbitrage/trades', self._arbitrage_trades)
+        self.app.router.add_get('/arbitrage/performance', self._arbitrage_performance)
+        self.app.router.add_get('/arbitrage/settings', self._arbitrage_settings)
+
+        # Copy Trading Module Pages
+        self.app.router.add_get('/copytrading/dashboard', self._copytrading_dashboard)
+        self.app.router.add_get('/copytrading/positions', self._copytrading_positions)
+        self.app.router.add_get('/copytrading/trades', self._copytrading_trades)
+        self.app.router.add_get('/copytrading/performance', self._copytrading_performance)
+        self.app.router.add_get('/copytrading/settings', self._copytrading_settings)
+
+        # AI Analysis Module Pages
+        self.app.router.add_get('/ai/dashboard', self._ai_dashboard)
+        self.app.router.add_get('/ai/sentiment', self._ai_sentiment)
+        self.app.router.add_get('/ai/performance', self._ai_performance)
+        self.app.router.add_get('/ai/settings', self._ai_settings)
 
         # API endpoints that return empty data when module_manager is unavailable
         self.app.router.add_get('/api/modules', self._fallback_api_modules)
@@ -6244,6 +6301,94 @@ class DashboardEndpoints:
 
     async def api_save_copytrading_settings(self, request):
         return web.json_response({'success': True, 'message': 'Settings saved'})
+
+    # ==================== AI MODULE HANDLERS ====================
+
+    async def _ai_dashboard(self, request):
+        template = self.jinja_env.get_template('dashboard_ai.html')
+        return web.Response(text=template.render(page='ai_dashboard'), content_type='text/html')
+
+    async def _ai_sentiment(self, request):
+        template = self.jinja_env.get_template('sentiment_ai.html')
+        return web.Response(text=template.render(page='ai_sentiment'), content_type='text/html')
+
+    async def _ai_performance(self, request):
+        template = self.jinja_env.get_template('performance_ai.html')
+        return web.Response(text=template.render(page='ai_performance'), content_type='text/html')
+
+    async def _ai_settings(self, request):
+        template = self.jinja_env.get_template('settings_ai.html')
+        return web.Response(text=template.render(page='ai_settings'), content_type='text/html')
+
+    async def api_get_ai_stats(self, request):
+        """Get AI module stats"""
+        # Placeholder for AI stats
+        stats = {
+            'module': 'ai_analysis',
+            'status': 'Offline',
+            'sentiment_score': 0,
+            'active_signals': 0,
+            'accuracy': 0.0
+        }
+        # TODO: Implement real DB/Log reading
+        return web.json_response({'success': True, 'stats': stats})
+
+    async def api_get_ai_sentiment(self, request):
+        """Get sentiment data"""
+        return web.json_response({'success': True, 'data': [], 'count': 0})
+
+    async def api_get_ai_performance(self, request):
+        """Get AI performance metrics"""
+        return web.json_response({'success': True, 'metrics': {}})
+
+    async def api_get_ai_settings(self, request):
+        """Get AI settings"""
+        return web.json_response({'success': True, 'settings': {}})
+
+    async def api_save_ai_settings(self, request):
+        """Save AI settings"""
+        return web.json_response({'success': True, 'message': 'Settings saved'})
+
+    # ==================== FULL DASHBOARD HANDLERS ====================
+
+    async def full_dashboard_page(self, request):
+        """Render the new Full Dashboard page"""
+        template = self.jinja_env.get_template('full_dashboard.html')
+        return web.Response(text=template.render(page='full_dashboard'), content_type='text/html')
+
+    async def api_wallet_aggregated_balances(self, request):
+        """Get aggregated balances from all wallets and exchanges"""
+        try:
+            # This is a placeholder for the actual async implementation
+            # In a real scenario, this would parallel fetch from:
+            # 1. EVM Chains (Eth, BSC, Base, Polygon, Arbitrum)
+            # 2. Solana
+            # 3. CEXs (Binance, Bybit) via CCXT or similar
+
+            # For now, we return simulated structure that the frontend expects
+            balances = {
+                'total_usd': 0.0,
+                'chains': {
+                    'ethereum': {'balance': 0.0, 'symbol': 'ETH', 'usd_value': 0.0},
+                    'bsc': {'balance': 0.0, 'symbol': 'BNB', 'usd_value': 0.0},
+                    'solana': {'balance': 0.0, 'symbol': 'SOL', 'usd_value': 0.0},
+                    'arbitrum': {'balance': 0.0, 'symbol': 'ETH', 'usd_value': 0.0},
+                    'polygon': {'balance': 0.0, 'symbol': 'MATIC', 'usd_value': 0.0},
+                    'base': {'balance': 0.0, 'symbol': 'ETH', 'usd_value': 0.0},
+                },
+                'exchanges': {
+                    'binance_futures': {'balance': 0.0, 'usd_value': 0.0},
+                    'bybit_futures': {'balance': 0.0, 'usd_value': 0.0}
+                }
+            }
+
+            # Try to populate with some real data if available from cached sources
+            # or env vars (public keys)
+
+            return web.json_response({'success': True, 'data': balances})
+        except Exception as e:
+            logger.error(f"Error getting aggregated balances: {e}")
+            return web.json_response({'error': str(e)}, status=500)
 
     async def start(self):
         """Start the dashboard server"""

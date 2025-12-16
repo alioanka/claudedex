@@ -201,11 +201,19 @@
     <!-- Sidebar -->
     <aside class="sidebar" id="sidebar">
         <ul class="nav-menu">
-            <!-- Main Dashboard -->
+            <!-- Full Dashboard (All Modules) -->
+            <li class="nav-item {% if page == 'full_dashboard' %}active{% endif %}">
+                <a href="/full-dashboard">
+                    <i class="fas fa-tachometer-alt"></i>
+                    <span>Full Dashboard</span>
+                </a>
+            </li>
+
+            <!-- Main Dashboard (Overview) -->
             <li class="nav-item {% if page == 'main_dashboard' %}active{% endif %}">
                 <a href="/">
                     <i class="fas fa-th-large"></i>
-                    <span>Main Dashboard</span>
+                    <span>Main Overview</span>
                 </a>
             </li>
 
@@ -474,6 +482,41 @@
                     </li>
                     <li class="nav-item {% if page == 'copytrading_settings' %}active{% endif %}">
                         <a href="/copytrading/settings">
+                            <i class="fas fa-cog"></i>
+                            <span>Settings</span>
+                        </a>
+                    </li>
+                </ul>
+            </li>
+
+            <!-- AI Analysis Module -->
+            <li class="nav-item nav-group">
+                <a href="#" class="nav-group-toggle" data-target="ai-menu">
+                    <i class="fas fa-brain"></i>
+                    <span>AI Analysis</span>
+                    <i class="fas fa-chevron-down group-arrow"></i>
+                </a>
+                <ul class="nav-submenu" id="ai-menu">
+                    <li class="nav-item {% if page == 'ai_dashboard' %}active{% endif %}">
+                        <a href="/ai/dashboard">
+                            <i class="fas fa-tachometer-alt"></i>
+                            <span>Dashboard</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'ai_sentiment' %}active{% endif %}">
+                        <a href="/ai/sentiment">
+                            <i class="fas fa-smile"></i>
+                            <span>Sentiment</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'ai_performance' %}active{% endif %}">
+                        <a href="/ai/performance">
+                            <i class="fas fa-chart-line"></i>
+                            <span>Performance</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'ai_settings' %}active{% endif %}">
+                        <a href="/ai/settings">
                             <i class="fas fa-cog"></i>
                             <span>Settings</span>
                         </a>

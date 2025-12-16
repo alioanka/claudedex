@@ -1,0 +1,244 @@
+{% extends "base.html" %}
+
+{% block title %}AI Analysis Dashboard - DexScreener Bot{% endblock %}
+
+{% block content %}
+<div class="dashboard-header">
+    <div class="header-title">
+        <h1><i class="fas fa-brain"></i> AI Analysis Dashboard</h1>
+        <p class="subtitle">Real-time market sentiment and predictive modeling</p>
+    </div>
+    <div class="header-controls">
+        <div class="status-badge status-active">
+            <span class="dot"></span> AI Engine Active
+        </div>
+        <button class="btn btn-primary" onclick="refreshData()">
+            <i class="fas fa-sync-alt"></i> Refresh
+        </button>
+    </div>
+</div>
+
+<!-- AI Metrics Overview -->
+<div class="metrics-grid">
+    <div class="metric-card">
+        <div class="metric-icon success">
+            <i class="fas fa-smile"></i>
+        </div>
+        <div class="metric-info">
+            <h3>Market Sentiment</h3>
+            <div class="metric-value positive">Bullish</div>
+            <div class="metric-sub">Score: 78/100</div>
+        </div>
+    </div>
+
+    <div class="metric-card">
+        <div class="metric-icon primary">
+            <i class="fas fa-signal"></i>
+        </div>
+        <div class="metric-info">
+            <h3>Active Signals</h3>
+            <div class="metric-value">12</div>
+            <div class="metric-sub">4 High Confidence</div>
+        </div>
+    </div>
+
+    <div class="metric-card">
+        <div class="metric-icon warning">
+            <i class="fas fa-bullseye"></i>
+        </div>
+        <div class="metric-info">
+            <h3>Model Accuracy</h3>
+            <div class="metric-value">84.2%</div>
+            <div class="metric-sub">Last 24 Hours</div>
+        </div>
+    </div>
+
+    <div class="metric-card">
+        <div class="metric-icon info">
+            <i class="fas fa-robot"></i>
+        </div>
+        <div class="metric-info">
+            <h3>Trading Mode</h3>
+            <div class="metric-value">Support Only</div>
+            <div class="metric-sub">Direct Trading: Off</div>
+        </div>
+    </div>
+</div>
+
+<!-- Main Content Grid -->
+<div class="dashboard-grid">
+    <!-- Sentiment Trend Chart -->
+    <div class="card col-span-2">
+        <div class="card-header">
+            <h3><i class="fas fa-chart-area"></i> Sentiment Trend (24h)</h3>
+            <div class="card-controls">
+                <select class="form-select-sm">
+                    <option>Bitcoin</option>
+                    <option>Ethereum</option>
+                    <option>Solana</option>
+                </select>
+            </div>
+        </div>
+        <div class="card-body">
+            <canvas id="sentimentChart" height="300"></canvas>
+        </div>
+    </div>
+
+    <!-- Top AI Picks -->
+    <div class="card">
+        <div class="card-header">
+            <h3><i class="fas fa-star"></i> Top AI Picks</h3>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Token</th>
+                            <th>Score</th>
+                            <th>Signal</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>
+                                <div class="token-info">
+                                    <span class="symbol">SOL</span>
+                                    <span class="name">Solana</span>
+                                </div>
+                            </td>
+                            <td><span class="badge badge-success">92</span></td>
+                            <td><span class="text-success">STRONG BUY</span></td>
+                            <td><button class="btn-xs btn-primary">Trade</button></td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <div class="token-info">
+                                    <span class="symbol">ETH</span>
+                                    <span class="name">Ethereum</span>
+                                </div>
+                            </td>
+                            <td><span class="badge badge-success">88</span></td>
+                            <td><span class="text-success">BUY</span></td>
+                            <td><button class="btn-xs btn-primary">Trade</button></td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <div class="token-info">
+                                    <span class="symbol">PEPE</span>
+                                    <span class="name">Pepe</span>
+                                </div>
+                            </td>
+                            <td><span class="badge badge-warning">45</span></td>
+                            <td><span class="text-warning">NEUTRAL</span></td>
+                            <td><button class="btn-xs btn-secondary">Watch</button></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="dashboard-grid mt-4">
+    <!-- Recent Signals -->
+    <div class="card col-span-3">
+        <div class="card-header">
+            <h3><i class="fas fa-list-ul"></i> Recent AI Signals</h3>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Token</th>
+                        <th>Type</th>
+                        <th>Confidence</th>
+                        <th>Reasoning</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="signalsTable">
+                    <tr>
+                        <td>10:45:22</td>
+                        <td><span class="symbol">BONK</span></td>
+                        <td><span class="badge badge-success">BUY</span></td>
+                        <td>94%</td>
+                        <td>Social volume spike + Price breakout</td>
+                        <td>Executed</td>
+                    </tr>
+                    <tr>
+                        <td>10:30:15</td>
+                        <td><span class="symbol">WIF</span></td>
+                        <td><span class="badge badge-danger">SELL</span></td>
+                        <td>88%</td>
+                        <td>Sentiment reversal + Resistance hit</td>
+                        <td>Executed</td>
+                    </tr>
+                    <tr>
+                        <td>10:15:00</td>
+                        <td><span class="symbol">JUP</span></td>
+                        <td><span class="badge badge-success">BUY</span></td>
+                        <td>76%</td>
+                        <td>Partnership announcement</td>
+                        <td>Pending</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Initialize charts
+    document.addEventListener('DOMContentLoaded', function() {
+        const ctx = document.getElementById('sentimentChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00'],
+                datasets: [{
+                    label: 'Sentiment Score',
+                    data: [65, 70, 68, 75, 82, 78],
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100,
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            display: false
+                        }
+                    }
+                }
+            }
+        });
+    });
+
+    function refreshData() {
+        // Implement data refresh logic
+        location.reload();
+    }
+</script>
+{% endblock %}
