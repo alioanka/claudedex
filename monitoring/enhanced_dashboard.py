@@ -6096,6 +6096,155 @@ class DashboardEndpoints:
                 'error': str(e)
             }, status=500)
 
+    # ==================== SNIPER MODULE HANDLERS ====================
+
+    async def _sniper_dashboard(self, request):
+        template = self.jinja_env.get_template('dashboard_sniper.html')
+        return web.Response(text=template.render(page='sniper_dashboard'), content_type='text/html')
+
+    async def _sniper_positions(self, request):
+        template = self.jinja_env.get_template('positions_sniper.html')
+        return web.Response(text=template.render(page='sniper_positions'), content_type='text/html')
+
+    async def _sniper_trades(self, request):
+        template = self.jinja_env.get_template('trades_sniper.html')
+        return web.Response(text=template.render(page='sniper_trades'), content_type='text/html')
+
+    async def _sniper_performance(self, request):
+        template = self.jinja_env.get_template('performance_sniper.html')
+        return web.Response(text=template.render(page='sniper_performance'), content_type='text/html')
+
+    async def _sniper_settings(self, request):
+        template = self.jinja_env.get_template('settings_sniper.html')
+        return web.Response(text=template.render(page='sniper_settings'), content_type='text/html')
+
+    async def api_get_sniper_stats(self, request):
+        """Get Sniper module stats from DB or logs"""
+        stats = {
+            'module': 'sniper',
+            'status': 'Offline',
+            'total_trades': 0,
+            'winning_trades': 0,
+            'losing_trades': 0,
+            'active_positions': 0,
+            'total_pnl': 0.0,
+            'win_rate': 0.0
+        }
+        # TODO: Implement real DB/Log reading
+        return web.json_response({'success': True, 'stats': stats})
+
+    async def api_get_sniper_positions(self, request):
+        """Get Sniper positions"""
+        return web.json_response({'success': True, 'positions': [], 'count': 0})
+
+    async def api_get_sniper_trades(self, request):
+        """Get Sniper trades"""
+        return web.json_response({'success': True, 'trades': [], 'count': 0})
+
+    async def api_get_sniper_settings(self, request):
+        return web.json_response({'success': True, 'settings': {}})
+
+    async def api_save_sniper_settings(self, request):
+        return web.json_response({'success': True, 'message': 'Settings saved'})
+
+
+    # ==================== ARBITRAGE MODULE HANDLERS ====================
+
+    async def _arbitrage_dashboard(self, request):
+        template = self.jinja_env.get_template('dashboard_arbitrage.html')
+        return web.Response(text=template.render(page='arbitrage_dashboard'), content_type='text/html')
+
+    async def _arbitrage_positions(self, request):
+        template = self.jinja_env.get_template('positions_arbitrage.html')
+        return web.Response(text=template.render(page='arbitrage_positions'), content_type='text/html')
+
+    async def _arbitrage_trades(self, request):
+        template = self.jinja_env.get_template('trades_arbitrage.html')
+        return web.Response(text=template.render(page='arbitrage_trades'), content_type='text/html')
+
+    async def _arbitrage_performance(self, request):
+        template = self.jinja_env.get_template('performance_arbitrage.html')
+        return web.Response(text=template.render(page='arbitrage_performance'), content_type='text/html')
+
+    async def _arbitrage_settings(self, request):
+        template = self.jinja_env.get_template('settings_arbitrage.html')
+        return web.Response(text=template.render(page='arbitrage_settings'), content_type='text/html')
+
+    async def api_get_arbitrage_stats(self, request):
+        """Get Arbitrage module stats"""
+        stats = {
+            'module': 'arbitrage',
+            'status': 'Offline',
+            'total_trades': 0,
+            'winning_trades': 0,
+            'losing_trades': 0,
+            'active_positions': 0,
+            'total_pnl': 0.0,
+            'win_rate': 0.0
+        }
+        return web.json_response({'success': True, 'stats': stats})
+
+    async def api_get_arbitrage_positions(self, request):
+        return web.json_response({'success': True, 'positions': [], 'count': 0})
+
+    async def api_get_arbitrage_trades(self, request):
+        return web.json_response({'success': True, 'trades': [], 'count': 0})
+
+    async def api_get_arbitrage_settings(self, request):
+        return web.json_response({'success': True, 'settings': {}})
+
+    async def api_save_arbitrage_settings(self, request):
+        return web.json_response({'success': True, 'message': 'Settings saved'})
+
+
+    # ==================== COPY TRADING MODULE HANDLERS ====================
+
+    async def _copytrading_dashboard(self, request):
+        template = self.jinja_env.get_template('dashboard_copytrading.html')
+        return web.Response(text=template.render(page='copytrading_dashboard'), content_type='text/html')
+
+    async def _copytrading_positions(self, request):
+        template = self.jinja_env.get_template('positions_copytrading.html')
+        return web.Response(text=template.render(page='copytrading_positions'), content_type='text/html')
+
+    async def _copytrading_trades(self, request):
+        template = self.jinja_env.get_template('trades_copytrading.html')
+        return web.Response(text=template.render(page='copytrading_trades'), content_type='text/html')
+
+    async def _copytrading_performance(self, request):
+        template = self.jinja_env.get_template('performance_copytrading.html')
+        return web.Response(text=template.render(page='copytrading_performance'), content_type='text/html')
+
+    async def _copytrading_settings(self, request):
+        template = self.jinja_env.get_template('settings_copytrading.html')
+        return web.Response(text=template.render(page='copytrading_settings'), content_type='text/html')
+
+    async def api_get_copytrading_stats(self, request):
+        """Get Copy Trading module stats"""
+        stats = {
+            'module': 'copytrading',
+            'status': 'Offline',
+            'total_trades': 0,
+            'winning_trades': 0,
+            'losing_trades': 0,
+            'active_positions': 0,
+            'total_pnl': 0.0,
+            'win_rate': 0.0
+        }
+        return web.json_response({'success': True, 'stats': stats})
+
+    async def api_get_copytrading_positions(self, request):
+        return web.json_response({'success': True, 'positions': [], 'count': 0})
+
+    async def api_get_copytrading_trades(self, request):
+        return web.json_response({'success': True, 'trades': [], 'count': 0})
+
+    async def api_get_copytrading_settings(self, request):
+        return web.json_response({'success': True, 'settings': {}})
+
+    async def api_save_copytrading_settings(self, request):
+        return web.json_response({'success': True, 'message': 'Settings saved'})
+
     async def start(self):
         """Start the dashboard server"""
         runner = web.AppRunner(self.app)

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Futures Trading - Dashboard{% endblock %}
+{% block title %}Sniper Module - Dashboard{% endblock %}
 
 {% block extra_head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -578,7 +578,7 @@
         <div>
             <h1 class="dashboard-title">
                 <i class="fas fa-chart-line"></i>
-                Futures Trading Dashboard
+                Sniper Module Dashboard
             </h1>
             <p class="dashboard-subtitle">Perpetual futures trading module performance</p>
         </div>
@@ -685,7 +685,7 @@
         <div class="section-header">
             <div class="section-title" style="margin-bottom: 0;">
                 <i class="fas fa-wallet"></i>
-                Active Futures Positions (<span id="position-count">0</span>)
+                Active Arbitrage Positions (<span id="position-count">0</span>)
             </div>
             <button class="btn btn-danger" id="closeAllBtn" onclick="closeAllPositions()" disabled>
                 <i class="fas fa-times-circle"></i>
@@ -694,7 +694,7 @@
         </div>
         <div id="positions-empty" class="empty-state">
             <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
-            <p>No active positions. Futures positions will appear here once trading begins.</p>
+            <p>No active positions. Arbitrage positions will appear here once trading begins.</p>
         </div>
         <div class="table-responsive">
             <table class="position-table" id="positions-table" style="display: none;">
@@ -790,7 +790,7 @@ const pnlChart = new Chart(ctx, {
 });
 
 // Fetch futures data from API
-async function loadFuturesData() {
+async function loadArbitrageData() {
     try {
         // Fetch stats from simulator data for mode/network and live positions
         const statsResponse = await fetch('/api/simulator/data');
@@ -802,7 +802,7 @@ async function loadFuturesData() {
         }
 
         // Fetch positions directly from futures module for full details (SL/TP/TSL)
-        const posResponse = await fetch('/api/futures/positions');
+        const posResponse = await fetch('/api/arbitrage/positions');
         if (posResponse.ok) {
             const posData = await posResponse.json();
             if (posData.success && posData.positions) {
@@ -813,7 +813,7 @@ async function loadFuturesData() {
         }
 
         // Fetch historical trades and update stats from actual trade history
-        const tradesResponse = await fetch('/api/futures/trades?limit=1000');
+        const tradesResponse = await fetch('/api/arbitrage/trades?limit=1000');
         if (tradesResponse.ok) {
             const tradesData = await tradesResponse.json();
             if (tradesData.success && tradesData.trades) {
@@ -861,7 +861,7 @@ function updateStatsFromTrades(trades) {
 // Load and update Performance History chart
 async function loadPerformanceChart() {
     try {
-        const response = await fetch('/api/futures/trades?limit=50');
+        const response = await fetch('/api/arbitrage/trades?limit=50');
         if (!response.ok) return;
         const data = await response.json();
 
@@ -1012,7 +1012,7 @@ function updatePositions(positions) {
                 <td>${tpHtml}</td>
                 <td class="${pnlUsd >= 0 ? 'positive' : 'negative'}">$${pnlUsd.toFixed(2)} (${pnlPct.toFixed(2)}%)</td>
                 <td>
-                    <button class="btn btn-danger btn-sm" onclick="closeFuturesPosition('${symbol}')" title="Close Position">
+                    <button class="btn btn-danger btn-sm" onclick="closeArbitragePosition('${symbol}')" title="Close Position">
                         <i class="fas fa-times"></i> Close
                     </button>
                 </td>
@@ -1024,7 +1024,7 @@ function updatePositions(positions) {
 // Load and display recent trades
 async function loadRecentTrades() {
     try {
-        const response = await fetch('/api/futures/trades?limit=10');
+        const response = await fetch('/api/arbitrage/trades?limit=10');
         if (!response.ok) throw new Error('Failed to fetch trades');
         const data = await response.json();
 
@@ -1103,7 +1103,7 @@ function formatExitReason(reason) {
 // Check trading status (blocked/unblocked)
 async function checkTradingStatus() {
     try {
-        const response = await fetch('/api/futures/trading/status');
+        const response = await fetch('/api/arbitrage/trading/status');
         if (!response.ok) return;
 
         const data = await response.json();
@@ -1142,7 +1142,7 @@ async function unblockTrading(resetType) {
     }
 
     try {
-        const response = await fetch('/api/futures/trading/unblock', {
+        const response = await fetch('/api/arbitrage/trading/unblock', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ reset_type: resetType })
@@ -1151,7 +1151,7 @@ async function unblockTrading(resetType) {
         const data = await response.json();
         if (data.success) {
             alert(`Trading unblocked! Previous daily P&L: $${data.previous_daily_pnl?.toFixed(2) || '0.00'}`);
-            loadFuturesData();
+            loadArbitrageData();
         } else {
             alert('Error: ' + (data.error || 'Failed to unblock trading'));
         }
@@ -1160,7 +1160,7 @@ async function unblockTrading(resetType) {
     }
 }
 
-async function closeFuturesPosition(symbol) {
+async function closeArbitragePosition(symbol) {
     if (!confirm(`Close position ${symbol}?`)) return;
 
     // Find and disable the button
@@ -1176,7 +1176,7 @@ async function closeFuturesPosition(symbol) {
     });
 
     try {
-        const response = await fetch('/api/futures/position/close', {
+        const response = await fetch('/api/arbitrage/position/close', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ symbol })
@@ -1197,7 +1197,7 @@ async function closeFuturesPosition(symbol) {
         alert('Connection error. The position may still be open. Refreshing...');
     } finally {
         // Always refresh to show current state
-        loadFuturesData();
+        loadArbitrageData();
     }
 }
 
@@ -1209,7 +1209,7 @@ async function closeAllPositions() {
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
     try {
-        const response = await fetch('/api/futures/positions/close-all', { method: 'POST' });
+        const response = await fetch('/api/arbitrage/positions/close-all', { method: 'POST' });
         const data = await response.json();
         if (data.success) {
             alert(data.message);
@@ -1220,14 +1220,14 @@ async function closeAllPositions() {
         alert('Failed: ' + error.message);
     } finally {
         btn.innerHTML = '<i class="fas fa-times-circle"></i> Close All';
-        loadFuturesData();
+        loadArbitrageData();
     }
 }
 
 // Trading Status Card Functions
 async function loadTradingStatus() {
     try {
-        const response = await fetch('/api/futures/trading/status');
+        const response = await fetch('/api/arbitrage/trading/status');
         if (!response.ok) {
             document.getElementById('tradingStatusContent').innerHTML = `
                 <div class="text-center text-muted">
@@ -1251,7 +1251,7 @@ async function loadTradingStatus() {
         console.error('Error loading trading status:', error);
         document.getElementById('tradingStatusContent').innerHTML = `
             <div class="text-center text-muted">
-                <i class="fas fa-info-circle"></i> Futures module not reachable
+                <i class="fas fa-info-circle"></i> Arbitrage module not reachable
             </div>
         `;
     }
@@ -1279,7 +1279,7 @@ function renderTradingStatus(data) {
                 </div>
             </div>
             ${!canTrade ? `
-                <button class="reset-block-btn" onclick="resetFuturesTradingBlock()">
+                <button class="reset-block-btn" onclick="resetArbitrageTradingBlock()">
                     <i class="fas fa-unlock"></i>
                     Reset Block
                 </button>
@@ -1371,13 +1371,13 @@ function refreshTradingStatus() {
     loadTradingStatus();
 }
 
-async function resetFuturesTradingBlock() {
+async function resetArbitrageTradingBlock() {
     if (!confirm('Reset trading block and allow new trades?')) {
         return;
     }
 
     try {
-        const response = await fetch('/api/futures/trading/unblock', {
+        const response = await fetch('/api/arbitrage/trading/unblock', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ reset_type: 'all' })
@@ -1387,7 +1387,7 @@ async function resetFuturesTradingBlock() {
         if (data.success) {
             alert('Trading block reset successfully!');
             loadTradingStatus();
-            loadFuturesData();
+            loadArbitrageData();
         } else {
             alert('Error: ' + (data.error || 'Failed to reset block'));
         }
@@ -1397,13 +1397,13 @@ async function resetFuturesTradingBlock() {
 }
 
 // Load data on page load
-loadFuturesData();
+loadArbitrageData();
 loadRecentTrades();
 loadTradingStatus();
 
 // Auto-refresh every 10 seconds
 setInterval(() => {
-    loadFuturesData();
+    loadArbitrageData();
     loadRecentTrades();
     loadTradingStatus();
 }, 10000);

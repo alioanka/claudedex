@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Futures Trades{% endblock %}
+{% block title %}Arbitrage Trades{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -381,7 +381,7 @@
         <div>
             <h1 class="page-title">
                 <i class="fas fa-exchange-alt"></i>
-                Futures Trades
+                Arbitrage Trades
             </h1>
             <p class="page-subtitle">Complete trade history with filtering and export</p>
         </div>
@@ -549,7 +549,7 @@ const pageSize = 50;
 async function loadTrades() {
     try {
         // Fetch trades from the futures module API
-        const response = await fetch('/api/futures/trades?limit=2000');
+        const response = await fetch('/api/arbitrage/trades?limit=2000');
         if (!response.ok) throw new Error('Failed to fetch trades');
         const data = await response.json();
 
@@ -1101,7 +1101,7 @@ function exportCSV() {
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `futures_trades_${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `arbitrage_trades_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
     URL.revokeObjectURL(link.href);
 }
@@ -1138,7 +1138,7 @@ async function exportXLSX() {
 
     const ws = XLSX.utils.aoa_to_sheet(wsData);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Futures Trades');
+    XLSX.utils.book_append_sheet(wb, ws, 'Arbitrage Trades');
 
     // Auto-size columns
     const colWidths = wsData[0].map((_, i) => ({
@@ -1146,7 +1146,7 @@ async function exportXLSX() {
     }));
     ws['!cols'] = colWidths;
 
-    XLSX.writeFile(wb, `futures_trades_${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.writeFile(wb, `arbitrage_trades_${new Date().toISOString().split('T')[0]}.xlsx`);
 }
 
 function loadScript(src) {

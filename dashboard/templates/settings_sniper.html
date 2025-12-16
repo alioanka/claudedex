@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Futures Trading Settings{% endblock %}
+{% block title %}Sniper Module Settings{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -270,7 +270,7 @@
     <div class="settings-header">
         <div class="settings-title">
             <i class="fas fa-chart-line"></i>
-            Futures Trading Settings
+            Sniper Module Settings
         </div>
         <div style="display: flex; gap: 12px;">
             <button class="btn-reset" onclick="resetSettings()">
@@ -295,14 +295,14 @@
         <div class="info-box" id="runningInfo" style="display: none; background: #d1fae5; border-color: #10b981;">
             <i class="fas fa-check-circle" style="color: #10b981;"></i>
             <div id="runningInfoText">
-                <strong>Module Running:</strong> The Futures module is currently active.
+                <strong>Module Running:</strong> The Sniper module is currently active.
             </div>
         </div>
 
         <div class="warning-box">
             <i class="fas fa-exclamation-triangle"></i>
             <div>
-                <strong>Risk Warning:</strong> Futures trading involves significant risk of loss.
+                <strong>Risk Warning:</strong> Sniper trading involves significant risk of loss.
                 Leverage can magnify both gains and losses. Only trade with capital you can afford to lose.
             </div>
         </div>
@@ -311,11 +311,11 @@
             <div class="setting-item">
                 <label class="setting-label">
                     <i class="fas fa-toggle-on"></i>
-                    Enable Futures Module (requires .env update)
+                    Enable Sniper Module (requires .env update)
                 </label>
                 <div class="setting-description">Module enable/disable is controlled by FUTURES_MODULE_ENABLED in .env file</div>
                 <div class="toggle-switch">
-                    <input type="checkbox" id="futures_enabled" name="futures_enabled" disabled>
+                    <input type="checkbox" id="sniper_enabled" name="sniper_enabled" disabled>
                     <span id="enabledLabel">Loading...</span>
                 </div>
             </div>
@@ -342,8 +342,8 @@
             <div class="setting-item">
                 <label class="setting-label">Exchange</label>
                 <div class="setting-description">Select your preferred futures exchange</div>
-                <select class="setting-select" id="futures_exchange" name="futures_exchange">
-                    <option value="binance">Binance Futures</option>
+                <select class="setting-select" id="sniper_exchange" name="sniper_exchange">
+                    <option value="binance">Binance Sniper</option>
                     <option value="bybit">Bybit</option>
                     <option value="okx">OKX</option>
                     <option value="bitget">Bitget</option>
@@ -353,7 +353,7 @@
             <div class="setting-item">
                 <label class="setting-label">Trading Mode</label>
                 <div class="setting-description">Select paper trading for testing without real funds</div>
-                <select class="setting-select" id="futures_trading_mode" name="futures_trading_mode">
+                <select class="setting-select" id="sniper_trading_mode" name="sniper_trading_mode">
                     <option value="paper">Paper Trading (Testnet)</option>
                     <option value="live">Live Trading</option>
                 </select>
@@ -362,7 +362,7 @@
             <div class="setting-item">
                 <label class="setting-label">Contract Type</label>
                 <div class="setting-description">Type of futures contracts to trade</div>
-                <select class="setting-select" id="futures_contract_type" name="futures_contract_type">
+                <select class="setting-select" id="sniper_contract_type" name="sniper_contract_type">
                     <option value="perpetual">Perpetual (USDT-M)</option>
                     <option value="coin_margined">Coin Margined (COIN-M)</option>
                 </select>
@@ -391,25 +391,25 @@
             <div class="setting-item">
                 <label class="setting-label">Capital Allocation (USDT)</label>
                 <div class="setting-description">Total capital allocated to futures trading</div>
-                <input type="number" class="setting-input" id="futures_capital" name="futures_capital" value="300" min="10" step="10">
+                <input type="number" class="setting-input" id="sniper_capital" name="sniper_capital" value="300" min="10" step="10">
             </div>
 
             <div class="setting-item">
                 <label class="setting-label">Max Concurrent Positions</label>
                 <div class="setting-description">Maximum number of open positions at once</div>
-                <input type="number" class="setting-input" id="futures_max_positions" name="futures_max_positions" value="3" min="1" max="20">
+                <input type="number" class="setting-input" id="sniper_max_positions" name="sniper_max_positions" value="3" min="1" max="20">
             </div>
 
             <div class="setting-item">
                 <label class="setting-label">Minimum Trade Size (USDT)</label>
                 <div class="setting-description">Minimum notional size for any futures trade</div>
-                <input type="number" class="setting-input" id="futures_min_trade_size" name="futures_min_trade_size" value="10" min="1" step="1">
+                <input type="number" class="setting-input" id="sniper_min_trade_size" name="sniper_min_trade_size" value="10" min="1" step="1">
             </div>
 
             <div class="setting-item">
                 <label class="setting-label">Max Position Size (USDT)</label>
                 <div class="setting-description">Maximum notional size cap regardless of percentage</div>
-                <input type="number" class="setting-input" id="futures_max_position_usd" name="futures_max_position_usd" value="500" min="10" step="10">
+                <input type="number" class="setting-input" id="sniper_max_position_usd" name="sniper_max_position_usd" value="500" min="10" step="10">
             </div>
         </div>
 
@@ -427,7 +427,7 @@
                     </label>
                     <div class="setting-description">Adjust position size based on signal strength (stronger signals = larger positions)</div>
                     <div class="toggle-switch">
-                        <input type="checkbox" id="futures_dynamic_position_sizing" name="futures_dynamic_position_sizing" checked>
+                        <input type="checkbox" id="sniper_dynamic_position_sizing" name="sniper_dynamic_position_sizing" checked>
                         <span>Enabled</span>
                     </div>
                 </div>
@@ -435,19 +435,19 @@
                 <div class="setting-item">
                     <label class="setting-label">Static Position Size (%)</label>
                     <div class="setting-description">Fixed % of capital when dynamic sizing is disabled</div>
-                    <input type="number" class="setting-input" id="futures_static_position_pct" name="futures_static_position_pct" value="15" min="1" max="50" step="1">
+                    <input type="number" class="setting-input" id="sniper_static_position_pct" name="sniper_static_position_pct" value="15" min="1" max="50" step="1">
                 </div>
 
                 <div class="setting-item">
                     <label class="setting-label">Min Position Size (%)</label>
                     <div class="setting-description">Minimum % of capital for weak signals</div>
-                    <input type="number" class="setting-input" id="futures_min_position_pct" name="futures_min_position_pct" value="5" min="1" max="50" step="1">
+                    <input type="number" class="setting-input" id="sniper_min_position_pct" name="sniper_min_position_pct" value="5" min="1" max="50" step="1">
                 </div>
 
                 <div class="setting-item">
                     <label class="setting-label">Max Position Size (%)</label>
                     <div class="setting-description">Maximum % of capital for strong signals</div>
-                    <input type="number" class="setting-input" id="futures_max_position_pct" name="futures_max_position_pct" value="20" min="1" max="100" step="1">
+                    <input type="number" class="setting-input" id="sniper_max_position_pct" name="sniper_max_position_pct" value="20" min="1" max="100" step="1">
                 </div>
             </div>
         </div>
@@ -473,19 +473,19 @@
             <div class="setting-item">
                 <label class="setting-label">Default Leverage</label>
                 <div class="setting-description">Default leverage for new positions</div>
-                <input type="number" class="setting-input" id="futures_leverage" name="futures_leverage" value="5" min="1" max="125" step="1">
+                <input type="number" class="setting-input" id="sniper_leverage" name="sniper_leverage" value="5" min="1" max="125" step="1">
             </div>
 
             <div class="setting-item">
                 <label class="setting-label">Maximum Leverage</label>
                 <div class="setting-description">Maximum allowed leverage</div>
-                <input type="number" class="setting-input" id="futures_max_leverage" name="futures_max_leverage" value="10" min="1" max="125" step="1">
+                <input type="number" class="setting-input" id="sniper_max_leverage" name="sniper_max_leverage" value="10" min="1" max="125" step="1">
             </div>
 
             <div class="setting-item">
                 <label class="setting-label">Margin Mode</label>
                 <div class="setting-description">Isolated protects other positions, Cross uses full balance</div>
-                <select class="setting-select" id="futures_margin_mode" name="futures_margin_mode">
+                <select class="setting-select" id="sniper_margin_mode" name="sniper_margin_mode">
                     <option value="isolated">Isolated Margin</option>
                     <option value="cross">Cross Margin</option>
                 </select>
@@ -506,25 +506,25 @@
             <div class="setting-item">
                 <label class="setting-label">Stop Loss (%)</label>
                 <div class="setting-description">Default stop loss percentage</div>
-                <input type="number" class="setting-input" id="futures_stop_loss" name="futures_stop_loss" value="2" min="0.1" max="50" step="0.1">
+                <input type="number" class="setting-input" id="sniper_stop_loss" name="sniper_stop_loss" value="2" min="0.1" max="50" step="0.1">
             </div>
 
             <div class="setting-item">
                 <label class="setting-label">Take Profit (%)</label>
                 <div class="setting-description">Default take profit percentage</div>
-                <input type="number" class="setting-input" id="futures_take_profit" name="futures_take_profit" value="4" min="0.1" max="100" step="0.1">
+                <input type="number" class="setting-input" id="sniper_take_profit" name="sniper_take_profit" value="4" min="0.1" max="100" step="0.1">
             </div>
 
             <div class="setting-item">
                 <label class="setting-label">Daily Loss Limit (%)</label>
                 <div class="setting-description">Stop trading if daily loss exceeds this percentage</div>
-                <input type="number" class="setting-input" id="futures_daily_loss_limit" name="futures_daily_loss_limit" value="5" min="1" max="50" step="0.5">
+                <input type="number" class="setting-input" id="sniper_daily_loss_limit" name="sniper_daily_loss_limit" value="5" min="1" max="50" step="0.5">
             </div>
 
             <div class="setting-item">
                 <label class="setting-label">Liquidation Buffer (%)</label>
                 <div class="setting-description">Close position before liquidation when margin drops to this level</div>
-                <input type="number" class="setting-input" id="futures_liquidation_buffer" name="futures_liquidation_buffer" value="20" min="5" max="50" step="1">
+                <input type="number" class="setting-input" id="sniper_liquidation_buffer" name="sniper_liquidation_buffer" value="20" min="5" max="50" step="1">
             </div>
 
             <div class="setting-item">
@@ -534,7 +534,7 @@
                 </label>
                 <div class="setting-description">Use trailing stops to lock in profits</div>
                 <div class="toggle-switch">
-                    <input type="checkbox" id="futures_trailing_stop" name="futures_trailing_stop" checked>
+                    <input type="checkbox" id="sniper_trailing_stop" name="sniper_trailing_stop" checked>
                     <span>Enabled</span>
                 </div>
             </div>
@@ -542,7 +542,7 @@
             <div class="setting-item">
                 <label class="setting-label">Trailing Stop Distance (%)</label>
                 <div class="setting-description">Distance for trailing stop from current price</div>
-                <input type="number" class="setting-input" id="futures_trailing_distance" name="futures_trailing_distance" value="1.5" min="0.1" max="20" step="0.1">
+                <input type="number" class="setting-input" id="sniper_trailing_distance" name="sniper_trailing_distance" value="1.5" min="0.1" max="20" step="0.1">
             </div>
         </div>
     </div>
@@ -572,7 +572,7 @@
                     TP1 Price (%)
                 </label>
                 <div class="setting-description">First take profit at this % price move</div>
-                <input type="number" class="setting-input" id="futures_tp1_pct" name="futures_tp1_pct" value="2" min="0.1" max="50" step="0.1">
+                <input type="number" class="setting-input" id="sniper_tp1_pct" name="sniper_tp1_pct" value="2" min="0.1" max="50" step="0.1">
             </div>
 
             <div class="setting-item">
@@ -581,7 +581,7 @@
                     TP1 Size (%)
                 </label>
                 <div class="setting-description">Close this % of position at TP1</div>
-                <input type="number" class="setting-input" id="futures_tp1_size_pct" name="futures_tp1_size_pct" value="25" min="0" max="100" step="5">
+                <input type="number" class="setting-input" id="sniper_tp1_size_pct" name="sniper_tp1_size_pct" value="25" min="0" max="100" step="5">
             </div>
 
             <!-- TP2 -->
@@ -591,7 +591,7 @@
                     TP2 Price (%)
                 </label>
                 <div class="setting-description">Second take profit at this % price move</div>
-                <input type="number" class="setting-input" id="futures_tp2_pct" name="futures_tp2_pct" value="4" min="0.1" max="50" step="0.1">
+                <input type="number" class="setting-input" id="sniper_tp2_pct" name="sniper_tp2_pct" value="4" min="0.1" max="50" step="0.1">
             </div>
 
             <div class="setting-item">
@@ -600,7 +600,7 @@
                     TP2 Size (%)
                 </label>
                 <div class="setting-description">Close this % of position at TP2</div>
-                <input type="number" class="setting-input" id="futures_tp2_size_pct" name="futures_tp2_size_pct" value="25" min="0" max="100" step="5">
+                <input type="number" class="setting-input" id="sniper_tp2_size_pct" name="sniper_tp2_size_pct" value="25" min="0" max="100" step="5">
             </div>
 
             <!-- TP3 -->
@@ -610,7 +610,7 @@
                     TP3 Price (%)
                 </label>
                 <div class="setting-description">Third take profit at this % price move</div>
-                <input type="number" class="setting-input" id="futures_tp3_pct" name="futures_tp3_pct" value="6" min="0.1" max="50" step="0.1">
+                <input type="number" class="setting-input" id="sniper_tp3_pct" name="sniper_tp3_pct" value="6" min="0.1" max="50" step="0.1">
             </div>
 
             <div class="setting-item">
@@ -619,7 +619,7 @@
                     TP3 Size (%)
                 </label>
                 <div class="setting-description">Close this % of position at TP3</div>
-                <input type="number" class="setting-input" id="futures_tp3_size_pct" name="futures_tp3_size_pct" value="25" min="0" max="100" step="5">
+                <input type="number" class="setting-input" id="sniper_tp3_size_pct" name="sniper_tp3_size_pct" value="25" min="0" max="100" step="5">
             </div>
 
             <!-- TP4 -->
@@ -629,7 +629,7 @@
                     TP4 Price (%)
                 </label>
                 <div class="setting-description">Final take profit at this % price move</div>
-                <input type="number" class="setting-input" id="futures_tp4_pct" name="futures_tp4_pct" value="10" min="0.1" max="100" step="0.1">
+                <input type="number" class="setting-input" id="sniper_tp4_pct" name="sniper_tp4_pct" value="10" min="0.1" max="100" step="0.1">
             </div>
 
             <div class="setting-item">
@@ -638,7 +638,7 @@
                     TP4 Size (%)
                 </label>
                 <div class="setting-description">Close remaining % at TP4 (set to 0 to disable)</div>
-                <input type="number" class="setting-input" id="futures_tp4_size_pct" name="futures_tp4_size_pct" value="25" min="0" max="100" step="5">
+                <input type="number" class="setting-input" id="sniper_tp4_size_pct" name="sniper_tp4_size_pct" value="25" min="0" max="100" step="5">
             </div>
         </div>
 
@@ -664,7 +664,7 @@
             <div class="setting-item" style="grid-column: span 2;">
                 <label class="setting-label">Allowed Trading Pairs</label>
                 <div class="setting-description">Comma-separated list of allowed perpetual pairs (e.g., BTCUSDT, ETHUSDT)</div>
-                <input type="text" class="setting-input" id="futures_allowed_pairs" name="futures_allowed_pairs" value="BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT" placeholder="BTCUSDT,ETHUSDT,BNBUSDT">
+                <input type="text" class="setting-input" id="sniper_allowed_pairs" name="sniper_allowed_pairs" value="BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT" placeholder="BTCUSDT,ETHUSDT,BNBUSDT">
             </div>
 
             <div class="setting-item">
@@ -674,7 +674,7 @@
                 </label>
                 <div class="setting-description">Allow both long and short positions</div>
                 <div class="toggle-switch">
-                    <input type="checkbox" id="futures_both_directions" name="futures_both_directions" checked>
+                    <input type="checkbox" id="sniper_both_directions" name="sniper_both_directions" checked>
                     <span>Enabled</span>
                 </div>
             </div>
@@ -682,7 +682,7 @@
             <div class="setting-item">
                 <label class="setting-label">Preferred Direction</label>
                 <div class="setting-description">Default trading direction when both are disabled</div>
-                <select class="setting-select" id="futures_preferred_direction" name="futures_preferred_direction">
+                <select class="setting-select" id="sniper_preferred_direction" name="sniper_preferred_direction">
                     <option value="long">Long Only</option>
                     <option value="short">Short Only</option>
                     <option value="both">Both Directions</option>
@@ -712,7 +712,7 @@
                     Signal Timeframe
                 </label>
                 <div class="setting-description">Candle timeframe for technical analysis (shorter = more signals)</div>
-                <select class="setting-select" id="futures_signal_timeframe" name="futures_signal_timeframe">
+                <select class="setting-select" id="sniper_signal_timeframe" name="sniper_signal_timeframe">
                     <option value="1m">1 Minute</option>
                     <option value="5m">5 Minutes</option>
                     <option value="15m" selected>15 Minutes (Recommended for Paper)</option>
@@ -728,7 +728,7 @@
                     Scan Interval (seconds)
                 </label>
                 <div class="setting-description">How often to scan for trading opportunities</div>
-                <input type="number" class="setting-input" id="futures_scan_interval_seconds" name="futures_scan_interval_seconds" value="30" min="10" max="300" step="5">
+                <input type="number" class="setting-input" id="sniper_scan_interval_seconds" name="sniper_scan_interval_seconds" value="30" min="10" max="300" step="5">
             </div>
 
             <div class="setting-item">
@@ -737,7 +737,7 @@
                     Min Signal Score
                 </label>
                 <div class="setting-description">Minimum combined score to trigger trade (1-6, lower = more trades)</div>
-                <input type="number" class="setting-input" id="futures_min_signal_score" name="futures_min_signal_score" value="3" min="1" max="6" step="1">
+                <input type="number" class="setting-input" id="sniper_min_signal_score" name="sniper_min_signal_score" value="3" min="1" max="6" step="1">
             </div>
 
             <div class="setting-item">
@@ -746,31 +746,31 @@
                     Cooldown (minutes)
                 </label>
                 <div class="setting-description">Wait time after closing a position before opening a new one</div>
-                <input type="number" class="setting-input" id="futures_cooldown_minutes" name="futures_cooldown_minutes" value="5" min="0" max="60" step="1">
+                <input type="number" class="setting-input" id="sniper_cooldown_minutes" name="sniper_cooldown_minutes" value="5" min="0" max="60" step="1">
             </div>
 
             <div class="setting-item">
                 <label class="setting-label">RSI Oversold (Strong Buy)</label>
                 <div class="setting-description">RSI below this triggers STRONG_BUY signal</div>
-                <input type="number" class="setting-input" id="futures_rsi_oversold" name="futures_rsi_oversold" value="30" min="10" max="50" step="1">
+                <input type="number" class="setting-input" id="sniper_rsi_oversold" name="sniper_rsi_oversold" value="30" min="10" max="50" step="1">
             </div>
 
             <div class="setting-item">
                 <label class="setting-label">RSI Overbought (Strong Sell)</label>
                 <div class="setting-description">RSI above this triggers STRONG_SELL signal</div>
-                <input type="number" class="setting-input" id="futures_rsi_overbought" name="futures_rsi_overbought" value="70" min="50" max="90" step="1">
+                <input type="number" class="setting-input" id="sniper_rsi_overbought" name="sniper_rsi_overbought" value="70" min="50" max="90" step="1">
             </div>
 
             <div class="setting-item">
                 <label class="setting-label">RSI Weak Oversold (Buy)</label>
                 <div class="setting-description">RSI below this triggers BUY signal</div>
-                <input type="number" class="setting-input" id="futures_rsi_weak_oversold" name="futures_rsi_weak_oversold" value="40" min="20" max="50" step="1">
+                <input type="number" class="setting-input" id="sniper_rsi_weak_oversold" name="sniper_rsi_weak_oversold" value="40" min="20" max="50" step="1">
             </div>
 
             <div class="setting-item">
                 <label class="setting-label">RSI Weak Overbought (Sell)</label>
                 <div class="setting-description">RSI above this triggers SELL signal</div>
-                <input type="number" class="setting-input" id="futures_rsi_weak_overbought" name="futures_rsi_weak_overbought" value="60" min="50" max="80" step="1">
+                <input type="number" class="setting-input" id="sniper_rsi_weak_overbought" name="sniper_rsi_weak_overbought" value="60" min="50" max="80" step="1">
             </div>
 
             <div class="setting-item">
@@ -780,7 +780,7 @@
                 </label>
                 <div class="setting-description">Log detailed signal analysis for each scan</div>
                 <div class="toggle-switch">
-                    <input type="checkbox" id="futures_verbose_signals" name="futures_verbose_signals" checked>
+                    <input type="checkbox" id="sniper_verbose_signals" name="sniper_verbose_signals" checked>
                     <span>Enabled</span>
                 </div>
             </div>
@@ -804,7 +804,7 @@
                 </label>
                 <div class="setting-description">Enable trading based on funding rate opportunities</div>
                 <div class="toggle-switch">
-                    <input type="checkbox" id="futures_funding_arb" name="futures_funding_arb">
+                    <input type="checkbox" id="sniper_funding_arb" name="sniper_funding_arb">
                     <span>Disabled</span>
                 </div>
             </div>
@@ -812,7 +812,7 @@
             <div class="setting-item">
                 <label class="setting-label">Max Funding Rate (%)</label>
                 <div class="setting-description">Maximum funding rate before closing positions</div>
-                <input type="number" class="setting-input" id="futures_max_funding_rate" name="futures_max_funding_rate" value="0.1" min="0.01" max="1" step="0.01">
+                <input type="number" class="setting-input" id="sniper_max_funding_rate" name="sniper_max_funding_rate" value="0.1" min="0.01" max="1" step="0.01">
             </div>
         </div>
     </div>
@@ -846,7 +846,7 @@ async function checkModuleRunningStatus() {
             if (data.futures && data.futures.status === 'Active') {
                 // Module is running
                 const statusBadge = document.getElementById('moduleStatus');
-                const enabledCheckbox = document.getElementById('futures_enabled');
+                const enabledCheckbox = document.getElementById('sniper_enabled');
                 const enabledLabel = document.getElementById('enabledLabel');
                 const runningInfo = document.getElementById('runningInfo');
                 const runningInfoText = document.getElementById('runningInfoText');
@@ -942,46 +942,46 @@ async function saveSettings() {
 function resetSettings() {
     if (confirm('Reset all futures settings to defaults?')) {
         // Set default values
-        document.getElementById('futures_enabled').checked = false;
-        document.getElementById('futures_exchange').value = 'binance';
-        document.getElementById('futures_trading_mode').value = 'paper';
-        document.getElementById('futures_contract_type').value = 'perpetual';
-        document.getElementById('futures_capital').value = 300;
-        document.getElementById('futures_max_positions').value = 3;
-        document.getElementById('futures_min_trade_size').value = 10;
-        document.getElementById('futures_max_position_usd').value = 500;
+        document.getElementById('sniper_enabled').checked = false;
+        document.getElementById('sniper_exchange').value = 'binance';
+        document.getElementById('sniper_trading_mode').value = 'paper';
+        document.getElementById('sniper_contract_type').value = 'perpetual';
+        document.getElementById('sniper_capital').value = 300;
+        document.getElementById('sniper_max_positions').value = 3;
+        document.getElementById('sniper_min_trade_size').value = 10;
+        document.getElementById('sniper_max_position_usd').value = 500;
         // Dynamic position sizing
-        document.getElementById('futures_dynamic_position_sizing').checked = true;
-        document.getElementById('futures_static_position_pct').value = 15;
-        document.getElementById('futures_min_position_pct').value = 5;
-        document.getElementById('futures_max_position_pct').value = 20;
+        document.getElementById('sniper_dynamic_position_sizing').checked = true;
+        document.getElementById('sniper_static_position_pct').value = 15;
+        document.getElementById('sniper_min_position_pct').value = 5;
+        document.getElementById('sniper_max_position_pct').value = 20;
         // Leverage
-        document.getElementById('futures_leverage').value = 5;
-        document.getElementById('futures_max_leverage').value = 10;
-        document.getElementById('futures_margin_mode').value = 'isolated';
+        document.getElementById('sniper_leverage').value = 5;
+        document.getElementById('sniper_max_leverage').value = 10;
+        document.getElementById('sniper_margin_mode').value = 'isolated';
         // Risk
-        document.getElementById('futures_stop_loss').value = 2;
-        document.getElementById('futures_take_profit').value = 4;
-        document.getElementById('futures_daily_loss_limit').value = 5;
-        document.getElementById('futures_liquidation_buffer').value = 20;
-        document.getElementById('futures_trailing_stop').checked = true;
-        document.getElementById('futures_trailing_distance').value = 1.5;
+        document.getElementById('sniper_stop_loss').value = 2;
+        document.getElementById('sniper_take_profit').value = 4;
+        document.getElementById('sniper_daily_loss_limit').value = 5;
+        document.getElementById('sniper_liquidation_buffer').value = 20;
+        document.getElementById('sniper_trailing_stop').checked = true;
+        document.getElementById('sniper_trailing_distance').value = 1.5;
         // Multiple TPs
-        document.getElementById('futures_tp1_pct').value = 2;
-        document.getElementById('futures_tp1_size_pct').value = 25;
-        document.getElementById('futures_tp2_pct').value = 4;
-        document.getElementById('futures_tp2_size_pct').value = 25;
-        document.getElementById('futures_tp3_pct').value = 6;
-        document.getElementById('futures_tp3_size_pct').value = 25;
-        document.getElementById('futures_tp4_pct').value = 10;
-        document.getElementById('futures_tp4_size_pct').value = 25;
+        document.getElementById('sniper_tp1_pct').value = 2;
+        document.getElementById('sniper_tp1_size_pct').value = 25;
+        document.getElementById('sniper_tp2_pct').value = 4;
+        document.getElementById('sniper_tp2_size_pct').value = 25;
+        document.getElementById('sniper_tp3_pct').value = 6;
+        document.getElementById('sniper_tp3_size_pct').value = 25;
+        document.getElementById('sniper_tp4_pct').value = 10;
+        document.getElementById('sniper_tp4_size_pct').value = 25;
         // Trading pairs
-        document.getElementById('futures_allowed_pairs').value = 'BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT';
-        document.getElementById('futures_both_directions').checked = true;
-        document.getElementById('futures_preferred_direction').value = 'both';
+        document.getElementById('sniper_allowed_pairs').value = 'BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT';
+        document.getElementById('sniper_both_directions').checked = true;
+        document.getElementById('sniper_preferred_direction').value = 'both';
         // Funding
-        document.getElementById('futures_funding_arb').checked = false;
-        document.getElementById('futures_max_funding_rate').value = 0.1;
+        document.getElementById('sniper_funding_arb').checked = false;
+        document.getElementById('sniper_max_funding_rate').value = 0.1;
 
         updateModuleStatus();
         updateTpSizeTotal();
@@ -991,10 +991,10 @@ function resetSettings() {
 
 // Calculate and display TP size total
 function updateTpSizeTotal() {
-    const tp1 = parseFloat(document.getElementById('futures_tp1_size_pct').value) || 0;
-    const tp2 = parseFloat(document.getElementById('futures_tp2_size_pct').value) || 0;
-    const tp3 = parseFloat(document.getElementById('futures_tp3_size_pct').value) || 0;
-    const tp4 = parseFloat(document.getElementById('futures_tp4_size_pct').value) || 0;
+    const tp1 = parseFloat(document.getElementById('sniper_tp1_size_pct').value) || 0;
+    const tp2 = parseFloat(document.getElementById('sniper_tp2_size_pct').value) || 0;
+    const tp3 = parseFloat(document.getElementById('sniper_tp3_size_pct').value) || 0;
+    const tp4 = parseFloat(document.getElementById('sniper_tp4_size_pct').value) || 0;
     const total = tp1 + tp2 + tp3 + tp4;
 
     const totalEl = document.getElementById('tp_size_total');
@@ -1011,7 +1011,7 @@ function updateTpSizeTotal() {
 
 // Add event listeners for TP size inputs
 document.addEventListener('DOMContentLoaded', function() {
-    ['futures_tp1_size_pct', 'futures_tp2_size_pct', 'futures_tp3_size_pct', 'futures_tp4_size_pct'].forEach(id => {
+    ['sniper_tp1_size_pct', 'sniper_tp2_size_pct', 'sniper_tp3_size_pct', 'sniper_tp4_size_pct'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
             el.addEventListener('input', updateTpSizeTotal);
