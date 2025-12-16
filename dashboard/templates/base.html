@@ -358,6 +358,129 @@
                 </ul>
             </li>
 
+            <!-- Sniper Module -->
+            <li class="nav-item nav-group">
+                <a href="#" class="nav-group-toggle" data-target="sniper-menu">
+                    <i class="fas fa-crosshairs"></i>
+                    <span>Sniper Module</span>
+                    <i class="fas fa-chevron-down group-arrow"></i>
+                </a>
+                <ul class="nav-submenu" id="sniper-menu">
+                    <li class="nav-item {% if page == 'sniper_dashboard' %}active{% endif %}">
+                        <a href="/sniper/dashboard">
+                            <i class="fas fa-chart-line"></i>
+                            <span>Dashboard</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'sniper_positions' %}active{% endif %}">
+                        <a href="/sniper/positions">
+                            <i class="fas fa-wallet"></i>
+                            <span>Positions</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'sniper_trades' %}active{% endif %}">
+                        <a href="/sniper/trades">
+                            <i class="fas fa-exchange-alt"></i>
+                            <span>Trades</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'sniper_performance' %}active{% endif %}">
+                        <a href="/sniper/performance">
+                            <i class="fas fa-chart-bar"></i>
+                            <span>Performance</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'sniper_settings' %}active{% endif %}">
+                        <a href="/sniper/settings">
+                            <i class="fas fa-cog"></i>
+                            <span>Settings</span>
+                        </a>
+                    </li>
+                </ul>
+            </li>
+
+            <!-- Arbitrage Module -->
+            <li class="nav-item nav-group">
+                <a href="#" class="nav-group-toggle" data-target="arbitrage-menu">
+                    <i class="fas fa-balance-scale"></i>
+                    <span>Arbitrage Module</span>
+                    <i class="fas fa-chevron-down group-arrow"></i>
+                </a>
+                <ul class="nav-submenu" id="arbitrage-menu">
+                    <li class="nav-item {% if page == 'arbitrage_dashboard' %}active{% endif %}">
+                        <a href="/arbitrage/dashboard">
+                            <i class="fas fa-chart-line"></i>
+                            <span>Dashboard</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'arbitrage_positions' %}active{% endif %}">
+                        <a href="/arbitrage/positions">
+                            <i class="fas fa-wallet"></i>
+                            <span>Positions</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'arbitrage_trades' %}active{% endif %}">
+                        <a href="/arbitrage/trades">
+                            <i class="fas fa-exchange-alt"></i>
+                            <span>Trades</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'arbitrage_performance' %}active{% endif %}">
+                        <a href="/arbitrage/performance">
+                            <i class="fas fa-chart-bar"></i>
+                            <span>Performance</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'arbitrage_settings' %}active{% endif %}">
+                        <a href="/arbitrage/settings">
+                            <i class="fas fa-cog"></i>
+                            <span>Settings</span>
+                        </a>
+                    </li>
+                </ul>
+            </li>
+
+            <!-- Copy Trading Module -->
+            <li class="nav-item nav-group">
+                <a href="#" class="nav-group-toggle" data-target="copytrading-menu">
+                    <i class="fas fa-user-friends"></i>
+                    <span>Copy Trading</span>
+                    <i class="fas fa-chevron-down group-arrow"></i>
+                </a>
+                <ul class="nav-submenu" id="copytrading-menu">
+                    <li class="nav-item {% if page == 'copytrading_dashboard' %}active{% endif %}">
+                        <a href="/copytrading/dashboard">
+                            <i class="fas fa-chart-line"></i>
+                            <span>Dashboard</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'copytrading_positions' %}active{% endif %}">
+                        <a href="/copytrading/positions">
+                            <i class="fas fa-wallet"></i>
+                            <span>Positions</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'copytrading_trades' %}active{% endif %}">
+                        <a href="/copytrading/trades">
+                            <i class="fas fa-exchange-alt"></i>
+                            <span>Trades</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'copytrading_performance' %}active{% endif %}">
+                        <a href="/copytrading/performance">
+                            <i class="fas fa-chart-bar"></i>
+                            <span>Performance</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'copytrading_settings' %}active{% endif %}">
+                        <a href="/copytrading/settings">
+                            <i class="fas fa-cog"></i>
+                            <span>Settings</span>
+                        </a>
+                    </li>
+                </ul>
+            </li>
+
             <li class="nav-divider"></li>
 
             <!-- Module Control -->
@@ -365,6 +488,22 @@
                 <a href="/module-control">
                     <i class="fas fa-sliders-h"></i>
                     <span>Module Control</span>
+                </a>
+            </li>
+
+            <!-- Pro Controls -->
+            <li class="nav-item {% if page == 'pro_controls' %}active{% endif %}">
+                <a href="/pro-controls">
+                    <i class="fas fa-gamepad"></i>
+                    <span>Pro Controls</span>
+                </a>
+            </li>
+
+            <!-- Global Settings -->
+            <li class="nav-item {% if page == 'global_settings' %}active{% endif %}">
+                <a href="/global-settings">
+                    <i class="fas fa-globe"></i>
+                    <span>Global Settings</span>
                 </a>
             </li>
 

@@ -568,7 +568,7 @@ class FuturesTradingApplication:
             self.logger.info(f"Max Positions: {position_config.max_positions}")
 
             # Import futures engine
-            from futures_trading.core.futures_engine import FuturesTradingEngine
+            from modules.futures_trading.core.futures_engine import FuturesTradingEngine
 
             # Initialize engine with config manager and database pool
             self.engine = FuturesTradingEngine(

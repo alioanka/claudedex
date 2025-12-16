@@ -493,7 +493,7 @@ class SolanaTradingApplication:
             self.logger.info(f"Strategies: {', '.join(self.strategies)}")
 
             # Import Solana engine
-            from solana_trading.core.solana_engine import SolanaTradingEngine
+            from modules.solana_trading.core.solana_engine import SolanaTradingEngine
 
             # Initialize engine with config manager and database pool
             self.engine = SolanaTradingEngine(
