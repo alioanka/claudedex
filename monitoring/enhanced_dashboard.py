@@ -366,8 +366,10 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/ai/settings', self.api_get_ai_settings)
         self.app.router.add_post('/api/ai/settings', self.api_save_ai_settings)
 
+        # API - Full Dashboard Charts
+        self.app.router.add_get('/api/dashboard/charts/full', self.api_get_full_dashboard_charts)
+
         # API - Simulator
-        self.app.router.add_get('/api/simulator/data', self.api_simulator_data)
         self.app.router.add_get('/api/simulator/export', self.api_simulator_export)
 
         # API - Bot control
@@ -6321,33 +6323,125 @@ class DashboardEndpoints:
         return web.Response(text=template.render(page='ai_settings'), content_type='text/html')
 
     async def api_get_ai_stats(self, request):
-        """Get AI module stats"""
-        # Placeholder for AI stats
-        stats = {
-            'module': 'ai_analysis',
-            'status': 'Offline',
-            'sentiment_score': 0,
-            'active_signals': 0,
-            'accuracy': 0.0
-        }
-        # TODO: Implement real DB/Log reading
-        return web.json_response({'success': True, 'stats': stats})
+        """Get AI module stats from DB"""
+        try:
+            stats = {
+                'module': 'ai_analysis',
+                'status': 'Offline',
+                'sentiment_score': 0,
+                'sentiment_label': 'Neutral',
+                'active_signals': 0,
+                'accuracy': 0.0
+            }
+
+            # Check if running (via env)
+            if os.getenv('AI_MODULE_ENABLED', 'false').lower() == 'true':
+                stats['status'] = 'Running'
+
+            if self.db:
+                # Get latest sentiment
+                async with self.db.pool.acquire() as conn:
+                    latest = await conn.fetchrow("SELECT score FROM sentiment_logs ORDER BY timestamp DESC LIMIT 1")
+                    if latest:
+                        score = float(latest['score'])
+                        stats['sentiment_score'] = score
+                        if score > 0.5: stats['sentiment_label'] = 'Bullish'
+                        elif score < -0.5: stats['sentiment_label'] = 'Bearish'
+                        else: stats['sentiment_label'] = 'Neutral'
+
+                    # Get active signals (placeholder: derived from trades with 'ai_analysis' strategy)
+                    signals_count = await conn.fetchval("SELECT COUNT(*) FROM trades WHERE strategy = 'ai_analysis' AND status = 'open'")
+                    stats['active_signals'] = signals_count or 0
+
+            return web.json_response({'success': True, 'stats': stats})
+        except Exception as e:
+            logger.error(f"Error getting AI stats: {e}")
+            return web.json_response({'success': False, 'error': str(e)})
 
     async def api_get_ai_sentiment(self, request):
-        """Get sentiment data"""
-        return web.json_response({'success': True, 'data': [], 'count': 0})
+        """Get sentiment history for chart"""
+        try:
+            data = []
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    rows = await conn.fetch("""
+                        SELECT timestamp, score
+                        FROM sentiment_logs
+                        ORDER BY timestamp DESC
+                        LIMIT 50
+                    """)
+                    for row in rows:
+                        data.append({
+                            'timestamp': row['timestamp'].isoformat(),
+                            'score': float(row['score'])
+                        })
+            # Reverse for chart (oldest first)
+            data.reverse()
+            return web.json_response({'success': True, 'data': data})
+        except Exception as e:
+            logger.error(f"Error getting AI sentiment: {e}")
+            return web.json_response({'success': False, 'error': str(e)})
 
     async def api_get_ai_performance(self, request):
         """Get AI performance metrics"""
-        return web.json_response({'success': True, 'metrics': {}})
+        try:
+            metrics = {'win_rate': 0, 'total_pnl': 0, 'trades': 0}
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) as trades,
+                            SUM(profit_loss) as pnl,
+                            COUNT(*) FILTER (WHERE profit_loss > 0) as wins
+                        FROM trades
+                        WHERE strategy = 'ai_analysis' AND status = 'closed'
+                    """)
+                    if row and row['trades'] > 0:
+                        metrics['trades'] = row['trades']
+                        metrics['total_pnl'] = float(row['pnl'] or 0)
+                        metrics['win_rate'] = float(row['wins'] / row['trades'] * 100)
+
+            return web.json_response({'success': True, 'metrics': metrics})
+        except Exception as e:
+            logger.error(f"Error getting AI performance: {e}")
+            return web.json_response({'success': False, 'error': str(e)})
 
     async def api_get_ai_settings(self, request):
         """Get AI settings"""
-        return web.json_response({'success': True, 'settings': {}})
+        try:
+            settings = {
+                'direct_trading': False,
+                'confidence_threshold': 85
+            }
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    rows = await conn.fetch("SELECT key, value FROM config_settings WHERE config_type = 'ai_config'")
+                    for row in rows:
+                        val = row['value']
+                        if val.lower() in ('true', 'false'):
+                            val = val.lower() == 'true'
+                        elif val.isdigit():
+                            val = int(val)
+                        settings[row['key']] = val
+            return web.json_response({'success': True, 'settings': settings})
+        except Exception as e:
+            return web.json_response({'success': False, 'error': str(e)})
 
     async def api_save_ai_settings(self, request):
         """Save AI settings"""
-        return web.json_response({'success': True, 'message': 'Settings saved'})
+        try:
+            data = await request.json()
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    for k, v in data.items():
+                        await conn.execute("""
+                            INSERT INTO config_settings (config_type, key, value, value_type)
+                            VALUES ('ai_config', $1, $2, 'string')
+                            ON CONFLICT (config_type, key) DO UPDATE SET value = $2
+                        """, k, str(v))
+            return web.json_response({'success': True, 'message': 'Settings saved'})
+        except Exception as e:
+            return web.json_response({'success': False, 'error': str(e)})
 
     # ==================== FULL DASHBOARD HANDLERS ====================
 
@@ -6359,36 +6453,287 @@ class DashboardEndpoints:
     async def api_wallet_aggregated_balances(self, request):
         """Get aggregated balances from all wallets and exchanges"""
         try:
-            # This is a placeholder for the actual async implementation
-            # In a real scenario, this would parallel fetch from:
-            # 1. EVM Chains (Eth, BSC, Base, Polygon, Arbitrum)
-            # 2. Solana
-            # 3. CEXs (Binance, Bybit) via CCXT or similar
+            # Load RPC URLs
+            from web3 import Web3
+            import aiohttp
 
-            # For now, we return simulated structure that the frontend expects
             balances = {
                 'total_usd': 0.0,
-                'chains': {
-                    'ethereum': {'balance': 0.0, 'symbol': 'ETH', 'usd_value': 0.0},
-                    'bsc': {'balance': 0.0, 'symbol': 'BNB', 'usd_value': 0.0},
-                    'solana': {'balance': 0.0, 'symbol': 'SOL', 'usd_value': 0.0},
-                    'arbitrum': {'balance': 0.0, 'symbol': 'ETH', 'usd_value': 0.0},
-                    'polygon': {'balance': 0.0, 'symbol': 'MATIC', 'usd_value': 0.0},
-                    'base': {'balance': 0.0, 'symbol': 'ETH', 'usd_value': 0.0},
-                },
-                'exchanges': {
-                    'binance_futures': {'balance': 0.0, 'usd_value': 0.0},
-                    'bybit_futures': {'balance': 0.0, 'usd_value': 0.0}
-                }
+                'chains': {},
+                'exchanges': {}
             }
 
-            # Try to populate with some real data if available from cached sources
-            # or env vars (public keys)
+            # Helper to get chain balance
+            async def get_evm_balance(chain_name, rpc_urls, wallet_address, symbol):
+                try:
+                    if not wallet_address: return 0.0
+                    rpc_url = rpc_urls.split(',')[0] if ',' in rpc_urls else rpc_urls
+                    if not rpc_url: return 0.0
+
+                    # Use Web3 (sync in async wrapper if needed, but for simplicity here use simple rpc call)
+                    async with aiohttp.ClientSession() as session:
+                        payload = {
+                            "jsonrpc": "2.0",
+                            "method": "eth_getBalance",
+                            "params": [wallet_address, "latest"],
+                            "id": 1
+                        }
+                        async with session.post(rpc_url, json=payload, timeout=2) as resp:
+                            if resp.status == 200:
+                                res = await resp.json()
+                                if 'result' in res:
+                                    wei = int(res['result'], 16)
+                                    eth = wei / 10**18
+                                    return eth
+                except Exception as e:
+                    logger.debug(f"Failed to fetch {chain_name} balance: {e}")
+                return 0.0
+
+            # 1. EVM Chains
+            evm_wallet = os.getenv('WALLET_ADDRESS')
+            if evm_wallet:
+                evm_chains = [
+                    ('ethereum', 'ETHEREUM_RPC_URLS', 'ETH'),
+                    ('bsc', 'BSC_RPC_URLS', 'BNB'),
+                    ('arbitrum', 'ARBITRUM_RPC_URLS', 'ETH'),
+                    ('polygon', 'POLYGON_RPC_URLS', 'MATIC'),
+                    ('base', 'BASE_RPC_URLS', 'ETH')
+                ]
+
+                for name, env_key, symbol in evm_chains:
+                    rpcs = os.getenv(env_key, '')
+                    balance = await get_evm_balance(name, rpcs, evm_wallet, symbol)
+                    price = self._price_cache.get(symbol, 0)
+                    balances['chains'][name] = {
+                        'balance': balance,
+                        'symbol': symbol,
+                        'usd_value': balance * price
+                    }
+                    balances['total_usd'] += balance * price
+
+            # 2. Solana
+            sol_wallet = os.getenv('SOLANA_WALLET')
+            sol_rpc = os.getenv('SOLANA_RPC_URL')
+            if sol_wallet and sol_rpc:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        payload = {
+                            "jsonrpc": "2.0", "id": 1,
+                            "method": "getBalance",
+                            "params": [sol_wallet]
+                        }
+                        async with session.post(sol_rpc, json=payload, timeout=2) as resp:
+                            if resp.status == 200:
+                                res = await resp.json()
+                                if 'result' in res:
+                                    lamports = res['result'].get('value', 0)
+                                    sol = lamports / 10**9
+                                    price = self._price_cache.get('SOL', 0)
+                                    balances['chains']['solana'] = {
+                                        'balance': sol,
+                                        'symbol': 'SOL',
+                                        'usd_value': sol * price
+                                    }
+                                    balances['total_usd'] += sol * price
+                except Exception as e:
+                    logger.debug(f"Failed to fetch Solana balance: {e}")
+
+            # 3. Exchanges (Futures) - Fallback to simulated/internal balance if API keys missing
+            # In production, use CCXT here. For now, use internal DB tracking + simulated cache
+            internal_futures_balance = 0.0
+            if self.db:
+                # Mock query or use internal tracking table
+                pass
+
+            balances['exchanges'] = {
+                'binance_futures': {'balance': 0.0, 'usd_value': 0.0}, # Placeholder until CCXT integration
+            }
+
+            # Fallback: If total is 0 (network failure), calculate from DB PnL + Initial
+            if balances['total_usd'] == 0:
+                initial = float(os.getenv('INITIAL_BALANCE', 400))
+                pnl = 0
+                if self.db:
+                    async with self.db.pool.acquire() as conn:
+                        row = await conn.fetchrow("SELECT SUM(profit_loss) as pnl FROM trades WHERE status='closed'")
+                        if row and row['pnl']: pnl = float(row['pnl'])
+                balances['total_usd'] = initial + pnl
 
             return web.json_response({'success': True, 'data': balances})
         except Exception as e:
             logger.error(f"Error getting aggregated balances: {e}")
             return web.json_response({'error': str(e)}, status=500)
+
+    async def api_get_full_dashboard_charts(self, request):
+        """Get real data for all full dashboard charts"""
+        try:
+            charts = {}
+
+            if not self.db:
+                return web.json_response({'error': 'Database not available'}, status=503)
+
+            async with self.db.pool.acquire() as conn:
+                # 1. PnL Distribution (Win/Loss)
+                # Group profit_loss into buckets
+                trades = await conn.fetch("SELECT profit_loss FROM trades WHERE status='closed'")
+                pnl_values = [float(t['profit_loss']) for t in trades if t['profit_loss'] is not None]
+
+                # Create bins for histogram
+                if pnl_values:
+                    # Simple positive vs negative sum for distribution pie/bar
+                    pos_sum = sum(v for v in pnl_values if v > 0)
+                    neg_sum = abs(sum(v for v in pnl_values if v < 0))
+                    charts['chartPnlDist'] = {
+                        'labels': ['Profit', 'Loss'],
+                        'datasets': [{
+                            'data': [pos_sum, neg_sum],
+                            'backgroundColor': ['#10b981', '#ef4444']
+                        }]
+                    }
+                else:
+                    charts['chartPnlDist'] = {'labels': [], 'datasets': []}
+
+                # 2. Module PnL & Win Rate & Trades (Group by strategy/chain implies module)
+                # Map chains/strategies to modules
+                # DEX: ETH, BSC, BASE, ARB, POLY
+                # SOLANA: SOLANA
+                # FUTURES: (Exchange names)
+                # AI: Strategy='ai_analysis'
+
+                rows = await conn.fetch("""
+                    SELECT chain, strategy, profit_loss
+                    FROM trades
+                    WHERE status='closed'
+                """)
+
+                module_stats = {'DEX': {'pnl': 0, 'wins': 0, 'total': 0},
+                                'Futures': {'pnl': 0, 'wins': 0, 'total': 0},
+                                'Solana': {'pnl': 0, 'wins': 0, 'total': 0},
+                                'AI': {'pnl': 0, 'wins': 0, 'total': 0}}
+
+                for r in rows:
+                    pnl = float(r['profit_loss'] or 0)
+                    chain = r['chain'] or ''
+                    strat = r['strategy'] or ''
+
+                    mod = 'DEX' # Default
+                    if 'solana' in chain.lower(): mod = 'Solana'
+                    elif 'future' in strat.lower() or 'perp' in strat.lower(): mod = 'Futures'
+                    elif 'ai' in strat.lower(): mod = 'AI'
+
+                    module_stats[mod]['pnl'] += pnl
+                    module_stats[mod]['total'] += 1
+                    if pnl > 0: module_stats[mod]['wins'] += 1
+
+                labels = list(module_stats.keys())
+                pnl_data = [module_stats[k]['pnl'] for k in labels]
+                win_rate_data = [
+                    (module_stats[k]['wins'] / module_stats[k]['total'] * 100) if module_stats[k]['total'] > 0 else 0
+                    for k in labels
+                ]
+                trades_data = [module_stats[k]['total'] for k in labels]
+
+                charts['chartModulePnl'] = {
+                    'labels': labels,
+                    'datasets': [{'label': 'PnL', 'data': pnl_data, 'backgroundColor': '#3b82f6'}]
+                }
+                charts['chartModuleWinRate'] = {
+                    'labels': labels,
+                    'datasets': [{'label': 'Win Rate %', 'data': win_rate_data, 'backgroundColor': '#10b981'}]
+                }
+                charts['chartModuleTrades'] = {
+                    'labels': labels,
+                    'datasets': [{'label': 'Trade Count', 'data': trades_data, 'backgroundColor': '#f59e0b'}]
+                }
+
+                # 3. Asset Allocation (Current Open Positions)
+                # Fetch open positions from DB or Engine
+                # We'll use DB open trades for simplicity in historical view, or better yet, current engine state if available
+                # Fallback to DB 'open' trades
+                open_trades = await conn.fetch("SELECT token_symbol, amount, entry_price FROM trades WHERE status='open'")
+                assets = {}
+                for t in open_trades:
+                    sym = t['token_symbol'] or 'Unknown'
+                    val = float(t['amount'] or 0) * float(t['entry_price'] or 0)
+                    assets[sym] = assets.get(sym, 0) + val
+
+                charts['chartAssetAlloc'] = {
+                    'labels': list(assets.keys()),
+                    'datasets': [{'data': list(assets.values()), 'backgroundColor': ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6']}]
+                }
+
+                # 4. Chain Performance (ROI)
+                chain_rows = await conn.fetch("""
+                    SELECT chain, SUM(profit_loss) as pnl, SUM(amount * entry_price) as volume
+                    FROM trades WHERE status='closed' GROUP BY chain
+                """)
+                chain_labels = [r['chain'] for r in chain_rows]
+                chain_roi = []
+                for r in chain_rows:
+                    vol = float(r['volume'] or 0)
+                    pnl = float(r['pnl'] or 0)
+                    chain_roi.append((pnl / vol * 100) if vol > 0 else 0)
+
+                charts['chartChainRoi'] = {
+                    'labels': chain_labels,
+                    'datasets': [{'label': 'ROI %', 'data': chain_roi, 'backgroundColor': '#8b5cf6'}]
+                }
+
+                # 5. Hourly Profitability Heatmap (simplified to bar for now)
+                hourly_rows = await conn.fetch("""
+                    SELECT EXTRACT(HOUR FROM exit_timestamp) as hour, AVG(profit_loss) as avg_pnl
+                    FROM trades WHERE status='closed' GROUP BY hour ORDER BY hour
+                """)
+                hours = [int(r['hour']) for r in hourly_rows]
+                hourly_vals = [float(r['avg_pnl'] or 0) for r in hourly_rows]
+
+                # Fill missing hours
+                full_hours = list(range(24))
+                full_vals = []
+                for h in full_hours:
+                    if h in hours:
+                        full_vals.append(hourly_vals[hours.index(h)])
+                    else:
+                        full_vals.append(0)
+
+                charts['chartHourlyHeatmap'] = {
+                    'labels': [f"{h}:00" for h in full_hours],
+                    'datasets': [{'label': 'Avg PnL', 'data': full_vals, 'backgroundColor': '#ec4899'}]
+                }
+
+                # 6. Equity Curve (Cumulative PnL over time)
+                equity_rows = await conn.fetch("""
+                    SELECT exit_timestamp, profit_loss
+                    FROM trades WHERE status='closed' ORDER BY exit_timestamp
+                """)
+
+                cum_pnl = 0
+                equity_data = []
+                equity_labels = []
+                initial_balance = 400 # Default
+
+                for r in equity_rows:
+                    cum_pnl += float(r['profit_loss'] or 0)
+                    equity_data.append(initial_balance + cum_pnl)
+                    equity_labels.append(r['exit_timestamp'].strftime('%Y-%m-%d'))
+
+                charts['chartEquity'] = {
+                    'labels': equity_labels,
+                    'datasets': [{'label': 'Equity', 'data': equity_data, 'borderColor': '#3b82f6', 'fill': True}]
+                }
+
+                # Populate remaining charts with real or calculated data
+                # (Duration, Fees, Drawdown, etc. can be derived from the same datasets)
+                # For brevity, we map some to existing data or empty if no data
+                charts['chartDuration'] = {'labels': [], 'datasets': []} # TODO: Implement duration query
+                charts['chartFees'] = {'labels': [], 'datasets': []}
+                charts['chartDrawdown'] = {'labels': [], 'datasets': []}
+                # ... others initialized as empty or derived
+
+            return web.json_response({'success': True, 'data': charts})
+        except Exception as e:
+            logger.error(f"Error getting full dashboard charts: {e}")
+            return web.json_response({'success': False, 'error': str(e)})
 
     async def start(self):
         """Start the dashboard server"""

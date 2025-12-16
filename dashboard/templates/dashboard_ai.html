@@ -9,8 +9,8 @@
         <p class="subtitle">Real-time market sentiment and predictive modeling</p>
     </div>
     <div class="header-controls">
-        <div class="status-badge status-active">
-            <span class="dot"></span> AI Engine Active
+        <div class="status-badge" id="aiStatus">
+            <span class="dot"></span> <span id="statusText">Offline</span>
         </div>
         <button class="btn btn-primary" onclick="refreshData()">
             <i class="fas fa-sync-alt"></i> Refresh
@@ -26,8 +26,8 @@
         </div>
         <div class="metric-info">
             <h3>Market Sentiment</h3>
-            <div class="metric-value positive">Bullish</div>
-            <div class="metric-sub">Score: 78/100</div>
+            <div class="metric-value" id="sentimentLabel">Loading...</div>
+            <div class="metric-sub">Score: <span id="sentimentScore">0</span>/100</div>
         </div>
     </div>
 
@@ -37,8 +37,8 @@
         </div>
         <div class="metric-info">
             <h3>Active Signals</h3>
-            <div class="metric-value">12</div>
-            <div class="metric-sub">4 High Confidence</div>
+            <div class="metric-value" id="activeSignals">0</div>
+            <div class="metric-sub">Pending Executions</div>
         </div>
     </div>
 
@@ -48,7 +48,7 @@
         </div>
         <div class="metric-info">
             <h3>Model Accuracy</h3>
-            <div class="metric-value">84.2%</div>
+            <div class="metric-value" id="modelAccuracy">0.0%</div>
             <div class="metric-sub">Last 24 Hours</div>
         </div>
     </div>
@@ -59,8 +59,8 @@
         </div>
         <div class="metric-info">
             <h3>Trading Mode</h3>
-            <div class="metric-value">Support Only</div>
-            <div class="metric-sub">Direct Trading: Off</div>
+            <div class="metric-value" id="tradingMode">Support</div>
+            <div class="metric-sub" id="tradingModeSub">Direct Trading: Off</div>
         </div>
     </div>
 </div>
@@ -71,119 +71,29 @@
     <div class="card col-span-2">
         <div class="card-header">
             <h3><i class="fas fa-chart-area"></i> Sentiment Trend (24h)</h3>
-            <div class="card-controls">
-                <select class="form-select-sm">
-                    <option>Bitcoin</option>
-                    <option>Ethereum</option>
-                    <option>Solana</option>
-                </select>
-            </div>
         </div>
         <div class="card-body">
             <canvas id="sentimentChart" height="300"></canvas>
         </div>
     </div>
 
-    <!-- Top AI Picks -->
+    <!-- Recent Signals -->
     <div class="card">
         <div class="card-header">
-            <h3><i class="fas fa-star"></i> Top AI Picks</h3>
-        </div>
-        <div class="card-body p-0">
-            <div class="table-responsive">
-                <table class="table">
-                    <thead>
-                        <tr>
-                            <th>Token</th>
-                            <th>Score</th>
-                            <th>Signal</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td>
-                                <div class="token-info">
-                                    <span class="symbol">SOL</span>
-                                    <span class="name">Solana</span>
-                                </div>
-                            </td>
-                            <td><span class="badge badge-success">92</span></td>
-                            <td><span class="text-success">STRONG BUY</span></td>
-                            <td><button class="btn-xs btn-primary">Trade</button></td>
-                        </tr>
-                        <tr>
-                            <td>
-                                <div class="token-info">
-                                    <span class="symbol">ETH</span>
-                                    <span class="name">Ethereum</span>
-                                </div>
-                            </td>
-                            <td><span class="badge badge-success">88</span></td>
-                            <td><span class="text-success">BUY</span></td>
-                            <td><button class="btn-xs btn-primary">Trade</button></td>
-                        </tr>
-                        <tr>
-                            <td>
-                                <div class="token-info">
-                                    <span class="symbol">PEPE</span>
-                                    <span class="name">Pepe</span>
-                                </div>
-                            </td>
-                            <td><span class="badge badge-warning">45</span></td>
-                            <td><span class="text-warning">NEUTRAL</span></td>
-                            <td><button class="btn-xs btn-secondary">Watch</button></td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-</div>
-
-<div class="dashboard-grid mt-4">
-    <!-- Recent Signals -->
-    <div class="card col-span-3">
-        <div class="card-header">
-            <h3><i class="fas fa-list-ul"></i> Recent AI Signals</h3>
+            <h3><i class="fas fa-list-ul"></i> Live AI Signals</h3>
         </div>
         <div class="card-body p-0">
             <table class="table table-hover">
                 <thead>
                     <tr>
-                        <th>Time</th>
                         <th>Token</th>
-                        <th>Type</th>
-                        <th>Confidence</th>
-                        <th>Reasoning</th>
-                        <th>Status</th>
+                        <th>Score</th>
+                        <th>Signal</th>
+                        <th>Action</th>
                     </tr>
                 </thead>
                 <tbody id="signalsTable">
-                    <tr>
-                        <td>10:45:22</td>
-                        <td><span class="symbol">BONK</span></td>
-                        <td><span class="badge badge-success">BUY</span></td>
-                        <td>94%</td>
-                        <td>Social volume spike + Price breakout</td>
-                        <td>Executed</td>
-                    </tr>
-                    <tr>
-                        <td>10:30:15</td>
-                        <td><span class="symbol">WIF</span></td>
-                        <td><span class="badge badge-danger">SELL</span></td>
-                        <td>88%</td>
-                        <td>Sentiment reversal + Resistance hit</td>
-                        <td>Executed</td>
-                    </tr>
-                    <tr>
-                        <td>10:15:00</td>
-                        <td><span class="symbol">JUP</span></td>
-                        <td><span class="badge badge-success">BUY</span></td>
-                        <td>76%</td>
-                        <td>Partnership announcement</td>
-                        <td>Pending</td>
-                    </tr>
+                    <tr><td colspan="4" class="text-center">Loading signals...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -194,16 +104,86 @@
 
 {% block extra_js %}
 <script>
-    // Initialize charts
+    let sentimentChart = null;
+
     document.addEventListener('DOMContentLoaded', function() {
+        refreshData();
+    });
+
+    async function refreshData() {
+        try {
+            // 1. Fetch Stats
+            const statsRes = await fetch('/api/ai/stats');
+            const stats = await statsRes.json();
+
+            if (stats.success) {
+                updateMetrics(stats.stats);
+            }
+
+            // 2. Fetch Sentiment History
+            const histRes = await fetch('/api/ai/sentiment');
+            const history = await histRes.json();
+
+            if (history.success) {
+                updateChart(history.data);
+            }
+
+            // 3. Fetch Settings (for Mode)
+            const setRes = await fetch('/api/ai/settings');
+            const settings = await setRes.json();
+            if (settings.success) {
+                const mode = settings.settings.direct_trading ? 'Direct Trade' : 'Support Tool';
+                document.getElementById('tradingMode').textContent = mode;
+                document.getElementById('tradingModeSub').textContent = `Direct Trading: ${settings.settings.direct_trading ? 'On' : 'Off'}`;
+            }
+
+        } catch (e) {
+            console.error('Error fetching AI data:', e);
+        }
+    }
+
+    function updateMetrics(data) {
+        document.getElementById('sentimentScore').textContent = (data.sentiment_score * 100).toFixed(0);
+        document.getElementById('sentimentLabel').textContent = data.sentiment_label;
+        document.getElementById('sentimentLabel').className = `metric-value ${getSentimentColor(data.sentiment_score)}`;
+
+        document.getElementById('activeSignals').textContent = data.active_signals;
+        document.getElementById('modelAccuracy').textContent = (data.accuracy || 0).toFixed(1) + '%';
+
+        const statusEl = document.getElementById('aiStatus');
+        const statusText = document.getElementById('statusText');
+        if (data.status === 'Running') {
+            statusEl.className = 'status-badge status-active';
+            statusText.textContent = 'Active';
+        } else {
+            statusEl.className = 'status-badge status-inactive';
+            statusText.textContent = 'Offline';
+        }
+    }
+
+    function getSentimentColor(score) {
+        if (score > 0.3) return 'text-success';
+        if (score < -0.3) return 'text-danger';
+        return 'text-warning';
+    }
+
+    function updateChart(data) {
         const ctx = document.getElementById('sentimentChart').getContext('2d');
-        new Chart(ctx, {
+
+        const labels = data.map(d => new Date(d.timestamp).toLocaleTimeString());
+        const scores = data.map(d => d.score * 100); // Scale to 0-100
+
+        if (sentimentChart) {
+            sentimentChart.destroy();
+        }
+
+        sentimentChart = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00'],
+                labels: labels,
                 datasets: [{
                     label: 'Sentiment Score',
-                    data: [65, 70, 68, 75, 82, 78],
+                    data: scores,
                     borderColor: '#10b981',
                     backgroundColor: 'rgba(16, 185, 129, 0.1)',
                     fill: true,
@@ -213,32 +193,15 @@
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        display: false
-                    }
-                },
                 scales: {
                     y: {
-                        beginAtZero: true,
-                        max: 100,
-                        grid: {
-                            color: 'rgba(255, 255, 255, 0.1)'
-                        }
-                    },
-                    x: {
-                        grid: {
-                            display: false
-                        }
+                        beginAtZero: false,
+                        min: -100,
+                        max: 100
                     }
                 }
             }
         });
-    });
-
-    function refreshData() {
-        // Implement data refresh logic
-        location.reload();
     }
 </script>
 {% endblock %}

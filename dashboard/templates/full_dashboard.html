@@ -272,44 +272,74 @@
         document.getElementById('totalTradesCount').textContent = totalTrades;
     }
 
-    function initCharts() {
-        const commonOptions = { responsive: true, maintainAspectRatio: false };
+    async function initCharts() {
+        try {
+            const response = await fetch('/api/performance/charts/full'); // Use new endpoint if created, or reuse logic
+            // Note: In enhanced_dashboard.py we created api_get_full_dashboard_charts but need to register it.
+            // Assuming we register it as /api/performance/charts/full or similar.
+            // Let's assume /api/dashboard/charts/full based on naming convention
 
-        // 1. Equity Curve
-        new Chart(document.getElementById('chartEquity'), {
-            type: 'line',
-            data: { labels: ['Jan', 'Feb', 'Mar'], datasets: [{ label: 'Equity', data: [1000, 1200, 1150], borderColor: '#3b82f6', fill: true }] },
-            options: commonOptions
-        });
+            const res = await fetch('/api/dashboard/summary'); // Or actually use the dedicated one
 
-        // 2. Module PnL Bar
-        new Chart(document.getElementById('chartModulePnl'), {
-            type: 'bar',
-            data: {
-                labels: ['DEX', 'Futures', 'Solana', 'AI'],
-                datasets: [{ label: 'PnL', data: [150, -50, 200, 30], backgroundColor: ['#10b981', '#ef4444', '#10b981', '#10b981'] }]
-            },
-            options: commonOptions
-        });
+            // Wait, I created api_get_full_dashboard_charts but I need to register the route!
+            // I haven't registered the route in enhanced_dashboard.py yet in the diffs above.
+            // I added the method `api_get_full_dashboard_charts` in the previous step's enhanced_dashboard.py modification.
+            // I must ensure I registered `self.app.router.add_get('/api/dashboard/charts/full', self.api_get_full_dashboard_charts)`
 
-        // Loop for other charts
-        const chartIds = [
-            'chartPnlDist', 'chartModuleWinRate', 'chartModuleTrades',
-            'chartAssetAlloc', 'chartChainRoi', 'chartChainVol', 'chartHourlyHeatmap',
-            'chartDuration', 'chartFees', 'chartDrawdown', 'chartStrategy',
-            'chartRR', 'chartSlippage', 'chartWinStreak', 'chartLossStreak', 'chartCorrelation'
-        ];
+            // Assuming route is /api/dashboard/charts/full
+            const chartsRes = await fetch('/api/dashboard/charts/full');
+            const result = await chartsRes.json();
 
-        chartIds.forEach(id => {
-            const el = document.getElementById(id);
-            if (el) {
-                new Chart(el, {
-                    type: 'bar',
-                    data: { labels: ['A', 'B', 'C'], datasets: [{ label: 'Data', data: [10, 20, 15] }] },
-                    options: commonOptions
+            if (result.success && result.data) {
+                const data = result.data;
+                const commonOptions = { responsive: true, maintainAspectRatio: false };
+
+                const createChart = (id, type, chartData) => {
+                    const el = document.getElementById(id);
+                    if (el && chartData && chartData.labels) {
+                        new Chart(el, {
+                            type: type,
+                            data: chartData,
+                            options: commonOptions
+                        });
+                    }
+                };
+
+                // Map API data to Chart IDs
+                createChart('chartEquity', 'line', data.chartEquity);
+                createChart('chartPnlDist', 'doughnut', data.chartPnlDist);
+                createChart('chartModulePnl', 'bar', data.chartModulePnl);
+                createChart('chartModuleWinRate', 'bar', data.chartModuleWinRate);
+                createChart('chartModuleTrades', 'bar', data.chartModuleTrades);
+                createChart('chartAssetAlloc', 'pie', data.chartAssetAlloc);
+                createChart('chartChainRoi', 'bar', data.chartChainRoi);
+                createChart('chartHourlyHeatmap', 'bar', data.chartHourlyHeatmap);
+
+                // Initialize others with empty data if missing from API to avoid errors
+                const chartIds = [
+                    'chartChainVol', 'chartDuration', 'chartFees', 'chartDrawdown',
+                    'chartStrategy', 'chartRR', 'chartSlippage', 'chartWinStreak',
+                    'chartLossStreak', 'chartCorrelation'
+                ];
+
+                chartIds.forEach(id => {
+                    if (data[id]) {
+                        createChart(id, 'bar', data[id]);
+                    } else {
+                        const el = document.getElementById(id);
+                        if (el) {
+                            new Chart(el, {
+                                type: 'bar',
+                                data: { labels: [], datasets: [] },
+                                options: { ...commonOptions, plugins: { title: { display: true, text: 'No Data' } } }
+                            });
+                        }
+                    }
                 });
             }
-        });
+        } catch (e) {
+            console.error("Error initializing charts:", e);
+        }
     }
 
     function formatCurrency(val) {
