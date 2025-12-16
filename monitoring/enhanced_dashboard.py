@@ -354,6 +354,10 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/settings/history', self.api_settings_history)
         self.app.router.add_get('/api/settings/networks', self.api_get_networks)
 
+        # Pages - New Pro Features
+        self.app.router.add_get('/global-settings', self.global_settings_page)
+        self.app.router.add_get('/pro-controls', self.pro_controls_page)
+
         # API - Module-specific Settings (database-backed)
         self.app.router.add_get('/api/settings/futures', self.api_get_futures_settings)
         self.app.router.add_post('/api/settings/futures', self.api_save_futures_settings)
@@ -1121,6 +1125,22 @@ class DashboardEndpoints:
         template = self.jinja_env.get_template('logs.html')
         return web.Response(
             text=template.render(page='logs'),
+            content_type='text/html'
+        )
+
+    async def global_settings_page(self, request):
+        """Global settings editor page"""
+        template = self.jinja_env.get_template('global_settings.html')
+        return web.Response(
+            text=template.render(page='settings'),
+            content_type='text/html'
+        )
+
+    async def pro_controls_page(self, request):
+        """Pro controls page"""
+        template = self.jinja_env.get_template('pro_controls.html')
+        return web.Response(
+            text=template.render(page='dashboard'),
             content_type='text/html'
         )
     
