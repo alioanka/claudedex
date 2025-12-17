@@ -6201,10 +6201,42 @@ class DashboardEndpoints:
         return web.json_response({'success': True, 'trades': [], 'count': 0})
 
     async def api_get_sniper_settings(self, request):
-        return web.json_response({'success': True, 'settings': {}})
+        """Get Sniper module settings"""
+        try:
+            settings = {}
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    rows = await conn.fetch("SELECT key, value FROM config_settings WHERE config_type = 'sniper_config'")
+                    for row in rows:
+                        val = row['value']
+                        # Simple type inference
+                        if val.lower() in ('true', 'false'):
+                            val = val.lower() == 'true'
+                        elif val.replace('.', '', 1).isdigit():
+                            if '.' in val:
+                                val = float(val)
+                            else:
+                                val = int(val)
+                        settings[row['key']] = val
+            return web.json_response({'success': True, 'settings': settings})
+        except Exception as e:
+            return web.json_response({'success': False, 'error': str(e)})
 
     async def api_save_sniper_settings(self, request):
-        return web.json_response({'success': True, 'message': 'Settings saved'})
+        """Save Sniper module settings"""
+        try:
+            data = await request.json()
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    for k, v in data.items():
+                        await conn.execute("""
+                            INSERT INTO config_settings (config_type, key, value, value_type)
+                            VALUES ('sniper_config', $1, $2, 'string')
+                            ON CONFLICT (config_type, key) DO UPDATE SET value = $2
+                        """, k, str(v))
+            return web.json_response({'success': True, 'message': 'Settings saved'})
+        except Exception as e:
+            return web.json_response({'success': False, 'error': str(e)})
 
 
     # ==================== ARBITRAGE MODULE HANDLERS ====================
@@ -6250,10 +6282,41 @@ class DashboardEndpoints:
         return web.json_response({'success': True, 'trades': [], 'count': 0})
 
     async def api_get_arbitrage_settings(self, request):
-        return web.json_response({'success': True, 'settings': {}})
+        """Get Arbitrage module settings"""
+        try:
+            settings = {}
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    rows = await conn.fetch("SELECT key, value FROM config_settings WHERE config_type = 'arbitrage_config'")
+                    for row in rows:
+                        val = row['value']
+                        if val.lower() in ('true', 'false'):
+                            val = val.lower() == 'true'
+                        elif val.replace('.', '', 1).isdigit():
+                            if '.' in val:
+                                val = float(val)
+                            else:
+                                val = int(val)
+                        settings[row['key']] = val
+            return web.json_response({'success': True, 'settings': settings})
+        except Exception as e:
+            return web.json_response({'success': False, 'error': str(e)})
 
     async def api_save_arbitrage_settings(self, request):
-        return web.json_response({'success': True, 'message': 'Settings saved'})
+        """Save Arbitrage module settings"""
+        try:
+            data = await request.json()
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    for k, v in data.items():
+                        await conn.execute("""
+                            INSERT INTO config_settings (config_type, key, value, value_type)
+                            VALUES ('arbitrage_config', $1, $2, 'string')
+                            ON CONFLICT (config_type, key) DO UPDATE SET value = $2
+                        """, k, str(v))
+            return web.json_response({'success': True, 'message': 'Settings saved'})
+        except Exception as e:
+            return web.json_response({'success': False, 'error': str(e)})
 
 
     # ==================== COPY TRADING MODULE HANDLERS ====================
@@ -6299,10 +6362,41 @@ class DashboardEndpoints:
         return web.json_response({'success': True, 'trades': [], 'count': 0})
 
     async def api_get_copytrading_settings(self, request):
-        return web.json_response({'success': True, 'settings': {}})
+        """Get Copy Trading module settings"""
+        try:
+            settings = {}
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    rows = await conn.fetch("SELECT key, value FROM config_settings WHERE config_type = 'copytrading_config'")
+                    for row in rows:
+                        val = row['value']
+                        if val.lower() in ('true', 'false'):
+                            val = val.lower() == 'true'
+                        elif val.replace('.', '', 1).isdigit():
+                            if '.' in val:
+                                val = float(val)
+                            else:
+                                val = int(val)
+                        settings[row['key']] = val
+            return web.json_response({'success': True, 'settings': settings})
+        except Exception as e:
+            return web.json_response({'success': False, 'error': str(e)})
 
     async def api_save_copytrading_settings(self, request):
-        return web.json_response({'success': True, 'message': 'Settings saved'})
+        """Save Copy Trading module settings"""
+        try:
+            data = await request.json()
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    for k, v in data.items():
+                        await conn.execute("""
+                            INSERT INTO config_settings (config_type, key, value, value_type)
+                            VALUES ('copytrading_config', $1, $2, 'string')
+                            ON CONFLICT (config_type, key) DO UPDATE SET value = $2
+                        """, k, str(v))
+            return web.json_response({'success': True, 'message': 'Settings saved'})
+        except Exception as e:
+            return web.json_response({'success': False, 'error': str(e)})
 
     # ==================== AI MODULE HANDLERS ====================
 
@@ -6411,17 +6505,24 @@ class DashboardEndpoints:
         try:
             settings = {
                 'direct_trading': False,
-                'confidence_threshold': 85
+                'confidence_threshold': 85,
+                'trade_amount_usd': 50,
+                'sentiment_source': 'news',
+                'analysis_interval': 15
             }
             if self.db:
                 async with self.db.pool.acquire() as conn:
                     rows = await conn.fetch("SELECT key, value FROM config_settings WHERE config_type = 'ai_config'")
                     for row in rows:
                         val = row['value']
+                        # Robust type conversion
                         if val.lower() in ('true', 'false'):
                             val = val.lower() == 'true'
-                        elif val.isdigit():
-                            val = int(val)
+                        elif val.replace('.', '', 1).isdigit():
+                            if '.' in val:
+                                val = float(val)
+                            else:
+                                val = int(val)
                         settings[row['key']] = val
             return web.json_response({'success': True, 'settings': settings})
         except Exception as e:
@@ -6650,11 +6751,26 @@ class DashboardEndpoints:
                 # Fetch open positions from DB or Engine
                 # We'll use DB open trades for simplicity in historical view, or better yet, current engine state if available
                 # Fallback to DB 'open' trades
-                open_trades = await conn.fetch("SELECT token_symbol, amount, entry_price FROM trades WHERE status='open'")
+                open_trades = await conn.fetch("SELECT * FROM trades WHERE status='open'")
                 assets = {}
                 for t in open_trades:
-                    sym = t['token_symbol'] or 'Unknown'
-                    val = float(t['amount'] or 0) * float(t['entry_price'] or 0)
+                    # Robustly extract symbol from metadata if column is missing/empty
+                    sym = t.get('token_symbol')
+                    if not sym or sym == 'UNKNOWN':
+                        meta = t.get('metadata')
+                        if meta:
+                            if isinstance(meta, str):
+                                try:
+                                    meta = json.loads(meta)
+                                except:
+                                    meta = {}
+                            if isinstance(meta, dict):
+                                sym = meta.get('token_symbol') or meta.get('symbol') or meta.get('token')
+
+                    if not sym:
+                        sym = 'Unknown'
+
+                    val = float(t.get('amount') or 0) * float(t.get('entry_price') or 0)
                     assets[sym] = assets.get(sym, 0) + val
 
                 charts['chartAssetAlloc'] = {
