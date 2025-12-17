@@ -63,22 +63,166 @@
         </div>
     </div>
 
-    <!-- Guide -->
+    <!-- Comprehensive Guide -->
     <div class="row">
         <div class="col-12">
             <div class="card">
                 <div class="card-header">
-                    <h5 class="mb-0"><i class="fas fa-book me-2"></i>Sniper Guide</h5>
+                    <h5 class="mb-0"><i class="fas fa-book me-2"></i>Sniper Module - Complete User Guide</h5>
                 </div>
                 <div class="card-body">
-                    <h6>Overview</h6>
-                    <p>The Sniper Module allows you to be the first to buy new token launches. It monitors the mempool (EVM) or new account creations (Solana) to detect liquidity adds.</p>
+                    <!-- Overview Section -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-crosshairs me-2"></i>Overview</h5>
+                        <p>The Sniper Module monitors blockchain networks for new token launches and executes rapid buy orders to capture early price appreciation. It detects liquidity additions on DEXs and can execute trades within milliseconds of launch.</p>
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <strong>Current Status:</strong> Operational in DRY RUN mode. Both EVM and Solana listeners are initialized.
+                        </div>
+                    </div>
 
-                    <h6>Configuration</h6>
-                    <ul>
-                        <li><strong>Trade Amount:</strong> Fixed amount of native currency to spend.</li>
-                        <li><strong>Priority Fee:</strong> Critical for being first in block. On Solana, use >10000 Lamports for hype launches.</li>
-                    </ul>
+                    <!-- File Structure -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-folder-tree me-2"></i>Module Architecture</h5>
+                        <div class="bg-dark text-light p-3 rounded" style="font-family: monospace; font-size: 0.85rem;">
+                            modules/sniper/<br>
+                            ├── main_sniper.py &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Entry point<br>
+                            ├── core/<br>
+                            │&nbsp;&nbsp;&nbsp;├── sniper_engine.py &nbsp;&nbsp;&nbsp;# Main orchestrator<br>
+                            │&nbsp;&nbsp;&nbsp;├── evm_listener.py &nbsp;&nbsp;&nbsp;&nbsp;# EVM (Uniswap) pair detection<br>
+                            │&nbsp;&nbsp;&nbsp;└── solana_listener.py &nbsp;# Solana (Raydium) pool detection
+                        </div>
+                    </div>
+
+                    <!-- Dashboard Pages -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-desktop me-2"></i>Dashboard Pages</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm">
+                                <thead class="table-light">
+                                    <tr><th>Page</th><th>URL</th><th>Description</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>Dashboard</td><td><code>/sniper/dashboard</code></td><td>Main overview with stats and positions</td></tr>
+                                    <tr><td>Positions</td><td><code>/sniper/positions</code></td><td>Active snipe positions</td></tr>
+                                    <tr><td>Trades</td><td><code>/sniper/trades</code></td><td>Complete trade history</td></tr>
+                                    <tr><td>Performance</td><td><code>/sniper/performance</code></td><td>P&L metrics and charts</td></tr>
+                                    <tr><td>Settings</td><td><code>/sniper/settings</code></td><td>This configuration page</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Settings Reference -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-sliders-h me-2"></i>Settings Reference</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm">
+                                <thead class="table-light">
+                                    <tr><th>Setting</th><th>Description</th><th>Recommended DRY RUN Value</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td><strong>Enable Sniper</strong></td><td>Master switch for the module</td><td>Enabled</td></tr>
+                                    <tr><td><strong>Trade Amount</strong></td><td>SOL/ETH to spend per snipe</td><td>0.1</td></tr>
+                                    <tr><td><strong>Max Slippage</strong></td><td>Maximum acceptable slippage %</td><td>10%</td></tr>
+                                    <tr><td><strong>Target Chain</strong></td><td>Blockchain to monitor</td><td>Solana</td></tr>
+                                    <tr><td><strong>Priority Fee</strong></td><td>Gas priority (Gwei/Lamports)</td><td>5000</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- How It Works -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-cogs me-2"></i>How It Works</h5>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="card bg-light">
+                                    <div class="card-header"><strong>EVM Chains (Ethereum, BSC, etc.)</strong></div>
+                                    <div class="card-body">
+                                        <ol class="mb-0">
+                                            <li>Monitors Uniswap V2 Factory for <code>PairCreated</code> events</li>
+                                            <li>Optionally watches mempool for <code>addLiquidity</code> transactions</li>
+                                            <li>Detects new token pairs with WETH</li>
+                                            <li>Executes buy order via DEX router</li>
+                                        </ol>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="card bg-light">
+                                    <div class="card-header"><strong>Solana Chain</strong></div>
+                                    <div class="card-body">
+                                        <ol class="mb-0">
+                                            <li>Monitors Raydium/Pump.fun for new pool creations</li>
+                                            <li>Uses WebSocket for real-time detection</li>
+                                            <li>Evaluates token safety (liquidity, holder count)</li>
+                                            <li>Executes buy via Jupiter aggregator</li>
+                                        </ol>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Implementation Status -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-tasks me-2"></i>Implementation Status</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm">
+                                <thead class="table-light">
+                                    <tr><th>Feature</th><th>Status</th><th>Notes</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>EVM Listener (PairCreated)</td><td><span class="badge bg-success">Functional</span></td><td>Monitors Uniswap V2 events</td></tr>
+                                    <tr><td>Solana Listener</td><td><span class="badge bg-warning">Stub</span></td><td>Returns empty - needs Raydium WebSocket</td></tr>
+                                    <tr><td>Token Safety Checks</td><td><span class="badge bg-secondary">Planned</span></td><td>Honeypot detection, liquidity verification</td></tr>
+                                    <tr><td>Trade Execution (DRY RUN)</td><td><span class="badge bg-success">Functional</span></td><td>Simulates trades</td></tr>
+                                    <tr><td>Trade Execution (LIVE)</td><td><span class="badge bg-secondary">Planned</span></td><td>Jupiter/Raydium integration needed</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Required .env Keys -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-key me-2"></i>Required Environment Variables</h5>
+                        <div class="bg-dark text-light p-3 rounded" style="font-family: monospace; font-size: 0.85rem;">
+                            # For Solana Sniping<br>
+                            SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=...<br>
+                            SOLANA_MODULE_PRIVATE_KEY=... (encrypted)<br>
+                            SOLANA_MODULE_WALLET=...<br>
+                            HELIUS_API_KEY=...<br><br>
+                            # For EVM Sniping<br>
+                            ETHEREUM_RPC_URLS=...<br>
+                            PRIVATE_KEY=... (encrypted)<br>
+                            WALLET_ADDRESS=...
+                        </div>
+                    </div>
+
+                    <!-- Risk Warning -->
+                    <div class="mb-4">
+                        <div class="alert alert-danger">
+                            <h6><i class="fas fa-exclamation-triangle me-2"></i>Risk Warning</h6>
+                            <ul class="mb-0">
+                                <li><strong>High Risk:</strong> Sniping new tokens is extremely risky. Many launches are scams (rugs, honeypots).</li>
+                                <li><strong>Front-running:</strong> Other bots may front-run your transactions with higher gas fees.</li>
+                                <li><strong>Capital at Risk:</strong> Only use funds you can afford to lose completely.</li>
+                                <li><strong>Start with DRY RUN:</strong> Always test with simulated trades first.</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Best Practices -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-lightbulb me-2"></i>Best Practices</h5>
+                        <ul>
+                            <li><strong>Priority Fee:</strong> For Solana hype launches, use 10,000-50,000 Lamports. For EVM, 50-200 Gwei.</li>
+                            <li><strong>Trade Amount:</strong> Start small (0.05-0.1 SOL/ETH) until you understand the risks.</li>
+                            <li><strong>Slippage:</strong> 10-20% is common for new tokens with low liquidity.</li>
+                            <li><strong>Exit Strategy:</strong> Plan your exit before entering. Many tokens dump within minutes of launch.</li>
+                        </ul>
+                    </div>
                 </div>
             </div>
         </div>

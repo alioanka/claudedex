@@ -63,28 +63,213 @@
         </div>
     </div>
 
-    <!-- User Guide -->
+    <!-- Comprehensive Guide -->
     <div class="row">
         <div class="col-12">
             <div class="card">
                 <div class="card-header">
-                    <h5 class="mb-0"><i class="fas fa-book me-2"></i>AI Module Guide</h5>
+                    <h5 class="mb-0"><i class="fas fa-book me-2"></i>AI Analysis Module - Complete User Guide</h5>
                 </div>
                 <div class="card-body">
-                    <h6>Overview</h6>
-                    <p>The AI Analysis Module uses Large Language Models (LLMs) to analyze market sentiment from news and social media. It generates a sentiment score (-1 to +1) which can be used to trigger automated trades.</p>
+                    <!-- Overview Section -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-brain me-2"></i>Overview</h5>
+                        <p>The AI Analysis Module uses OpenAI GPT to analyze crypto news sentiment and generate trading signals. It fetches headlines from crypto news APIs, sends them to GPT-3.5-turbo for analysis, and produces a sentiment score that can trigger automated trades.</p>
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <strong>Current Status:</strong> Operational. Runs sentiment analysis every 15 minutes to conserve API credits.
+                        </div>
+                    </div>
 
-                    <h6>Modes</h6>
-                    <ul>
-                        <li><strong>Support Tool:</strong> (Direct Trading Disabled) The module only logs sentiment scores and provides insights on the dashboard. No trades are executed.</li>
-                        <li><strong>Direct Trading:</strong> (Direct Trading Enabled) The module executes BUY orders when sentiment is strongly positive and meets your confidence threshold. In DRY RUN mode, these are simulated.</li>
-                    </ul>
+                    <!-- File Structure -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-folder-tree me-2"></i>Module Architecture</h5>
+                        <div class="bg-dark text-light p-3 rounded" style="font-family: monospace; font-size: 0.85rem;">
+                            modules/ai_analysis/<br>
+                            ├── main_ai.py &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Entry point<br>
+                            └── core/<br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;└── sentiment_engine.py &nbsp;&nbsp;# Sentiment analysis engine
+                        </div>
+                    </div>
 
-                    <h6>Configuration</h6>
-                    <ul>
-                        <li><strong>Confidence Threshold:</strong> The minimum sentiment strength required to trade. Recommended: 80%+.</li>
-                        <li><strong>Trade Amount:</strong> Fixed USD amount per AI-triggered trade.</li>
-                    </ul>
+                    <!-- Dashboard Pages -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-desktop me-2"></i>Dashboard Pages</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm">
+                                <thead class="table-light">
+                                    <tr><th>Page</th><th>URL</th><th>Description</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>Dashboard</td><td><code>/ai/dashboard</code></td><td>Live signals and sentiment overview</td></tr>
+                                    <tr><td>Sentiment</td><td><code>/ai/sentiment</code></td><td>Sentiment history and trends</td></tr>
+                                    <tr><td>Performance</td><td><code>/ai/performance</code></td><td>AI trade performance metrics</td></tr>
+                                    <tr><td>Settings</td><td><code>/ai/settings</code></td><td>This configuration page</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Settings Reference -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-sliders-h me-2"></i>Settings Reference</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm">
+                                <thead class="table-light">
+                                    <tr><th>Setting</th><th>Description</th><th>Recommended Value</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td><strong>Enable Direct Trading</strong></td><td>Allow AI to execute trades automatically</td><td>Disabled initially</td></tr>
+                                    <tr><td><strong>Confidence Threshold</strong></td><td>Min sentiment score to trigger trade (0-100)</td><td>85%</td></tr>
+                                    <tr><td><strong>Trade Amount (USD)</strong></td><td>Amount per AI-triggered trade</td><td>$50</td></tr>
+                                    <tr><td><strong>Sentiment Source</strong></td><td>Data source for analysis</td><td>Combined</td></tr>
+                                    <tr><td><strong>Analysis Interval</strong></td><td>Minutes between analyses</td><td>15</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- How It Works -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-cogs me-2"></i>How It Works</h5>
+                        <div class="card bg-light">
+                            <div class="card-body">
+                                <ol>
+                                    <li><strong>Fetch News:</strong> Module calls CryptoCompare News API to get top 10 crypto headlines</li>
+                                    <li><strong>LLM Analysis:</strong> Headlines sent to OpenAI GPT-3.5-turbo with prompt asking for sentiment score</li>
+                                    <li><strong>Score Calculation:</strong> GPT returns a float between -1.0 (extremely bearish) and 1.0 (extremely bullish)</li>
+                                    <li><strong>Store Result:</strong> Score is logged to <code>sentiment_logs</code> table in database</li>
+                                    <li><strong>Trade Decision:</strong> If Direct Trading enabled and score exceeds threshold, trade is executed/simulated</li>
+                                </ol>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Sentiment Scale -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-tachometer-alt me-2"></i>Sentiment Score Scale</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm">
+                                <thead class="table-light">
+                                    <tr><th>Score Range</th><th>Interpretation</th><th>Action</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr class="table-danger"><td>-1.0 to -0.7</td><td>Extremely Bearish</td><td>SHORT signal (if enabled)</td></tr>
+                                    <tr><td>-0.7 to -0.3</td><td>Bearish</td><td>Caution</td></tr>
+                                    <tr><td>-0.3 to 0.3</td><td>Neutral</td><td>HOLD</td></tr>
+                                    <tr><td>0.3 to 0.7</td><td>Bullish</td><td>Caution</td></tr>
+                                    <tr class="table-success"><td>0.7 to 1.0</td><td>Extremely Bullish</td><td>LONG signal (if enabled)</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Implementation Status -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-tasks me-2"></i>Implementation Status</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm">
+                                <thead class="table-light">
+                                    <tr><th>Feature</th><th>Status</th><th>Notes</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>News Fetching</td><td><span class="badge bg-success">Functional</span></td><td>CryptoCompare API (free tier)</td></tr>
+                                    <tr><td>LLM Analysis</td><td><span class="badge bg-success">Functional</span></td><td>OpenAI GPT-3.5-turbo</td></tr>
+                                    <tr><td>Sentiment Storage</td><td><span class="badge bg-success">Functional</span></td><td>Logs to sentiment_logs table</td></tr>
+                                    <tr><td>Trade Logging</td><td><span class="badge bg-success">Functional</span></td><td>Stores to trades table</td></tr>
+                                    <tr><td>Trade Execution (DRY RUN)</td><td><span class="badge bg-success">Functional</span></td><td>Simulates trades</td></tr>
+                                    <tr><td>Trade Execution (LIVE)</td><td><span class="badge bg-warning">Partial</span></td><td>Logs entry, no actual execution</td></tr>
+                                    <tr><td>Exit Strategy</td><td><span class="badge bg-secondary">Planned</span></td><td>Take profit / stop loss needed</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Required .env Keys -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-key me-2"></i>Required Environment Variables</h5>
+                        <div class="bg-dark text-light p-3 rounded" style="font-family: monospace; font-size: 0.85rem;">
+                            # Required for AI Analysis<br>
+                            OPENAI_API_KEY=sk-proj-...<br><br>
+                            # Optional: Alternative LLM (not yet implemented)<br>
+                            ANTHROPIC_API_KEY=sk-ant-...
+                        </div>
+                        <div class="alert alert-success mt-2">
+                            <i class="fas fa-check-circle me-2"></i>
+                            <strong>Status:</strong> Your OPENAI_API_KEY is configured and working.
+                        </div>
+                    </div>
+
+                    <!-- Operating Modes -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-toggle-on me-2"></i>Operating Modes</h5>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="card bg-light">
+                                    <div class="card-header"><strong>Support Tool Mode</strong></div>
+                                    <div class="card-body">
+                                        <p><strong>Direct Trading:</strong> Disabled</p>
+                                        <ul class="mb-0">
+                                            <li>Logs sentiment scores to dashboard</li>
+                                            <li>Provides market insights</li>
+                                            <li>No trades executed</li>
+                                            <li>Use for manual trading decisions</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="card bg-light">
+                                    <div class="card-header"><strong>Direct Trading Mode</strong></div>
+                                    <div class="card-body">
+                                        <p><strong>Direct Trading:</strong> Enabled</p>
+                                        <ul class="mb-0">
+                                            <li>Automatically executes trades</li>
+                                            <li>BUY on high positive sentiment</li>
+                                            <li>SELL on high negative sentiment</li>
+                                            <li>Simulated in DRY RUN mode</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- API Cost Considerations -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-dollar-sign me-2"></i>API Cost Considerations</h5>
+                        <div class="alert alert-warning">
+                            <ul class="mb-0">
+                                <li><strong>OpenAI API:</strong> GPT-3.5-turbo costs ~$0.002 per 1K tokens</li>
+                                <li><strong>Default Interval:</strong> 15 minutes = ~96 calls/day = ~$0.20/day</li>
+                                <li><strong>Reduce Costs:</strong> Increase analysis interval or switch to cheaper models</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Risk Warning -->
+                    <div class="mb-4">
+                        <div class="alert alert-danger">
+                            <h6><i class="fas fa-exclamation-triangle me-2"></i>Risk Warning</h6>
+                            <ul class="mb-0">
+                                <li><strong>News Lag:</strong> By the time news is published, the market may have already reacted.</li>
+                                <li><strong>False Signals:</strong> LLMs can misinterpret sarcasm, context, or specialized jargon.</li>
+                                <li><strong>Not Financial Advice:</strong> AI sentiment should be one of many factors in trading decisions.</li>
+                                <li><strong>Start with DRY RUN:</strong> Always test Direct Trading with simulated trades first.</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Best Practices -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-lightbulb me-2"></i>Best Practices</h5>
+                        <ul>
+                            <li><strong>Confidence Threshold:</strong> Start with 85%+ to avoid false signals.</li>
+                            <li><strong>Trade Amount:</strong> Keep small ($25-50) until you validate AI accuracy.</li>
+                            <li><strong>Combine with Other Signals:</strong> Use AI sentiment alongside technical analysis.</li>
+                            <li><strong>Review Performance:</strong> Check /ai/performance regularly to track AI accuracy.</li>
+                        </ul>
+                    </div>
                 </div>
             </div>
         </div>

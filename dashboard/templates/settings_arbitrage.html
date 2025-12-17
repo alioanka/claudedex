@@ -72,22 +72,221 @@
         </div>
     </div>
 
-    <!-- Guide -->
+    <!-- Comprehensive Guide -->
     <div class="row">
         <div class="col-12">
             <div class="card">
                 <div class="card-header">
-                    <h5 class="mb-0"><i class="fas fa-book me-2"></i>Arbitrage Guide</h5>
+                    <h5 class="mb-0"><i class="fas fa-book me-2"></i>Arbitrage Module - Complete User Guide</h5>
                 </div>
                 <div class="card-body">
-                    <h6>Overview</h6>
-                    <p>The Arbitrage Module scans for price discrepancies between different Decentralized Exchanges (DEXs) for the same token pair. It executes atomic transactions to profit from these differences without exposure to market risk.</p>
+                    <!-- Overview Section -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-balance-scale me-2"></i>Overview</h5>
+                        <p>The Arbitrage Module detects price differences between DEXs and executes flash swaps for risk-free profit. It continuously monitors token prices across multiple exchanges and identifies opportunities where you can buy low on one DEX and sell high on another in a single atomic transaction.</p>
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <strong>Current Status:</strong> Operational in DRY RUN mode. Scans WETH/USDC prices every 5 seconds.
+                        </div>
+                    </div>
 
-                    <h6>Configuration Tips</h6>
-                    <ul>
-                        <li><strong>Min Profit Spread:</strong> Start with at least 0.5% to cover gas fees and slippage.</li>
-                        <li><strong>DEX Selection:</strong> Enable DEXs with high liquidity to minimize slippage. Uniswap V3 is recommended as a primary source.</li>
-                    </ul>
+                    <!-- File Structure -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-folder-tree me-2"></i>Module Architecture</h5>
+                        <div class="bg-dark text-light p-3 rounded" style="font-family: monospace; font-size: 0.85rem;">
+                            modules/arbitrage/<br>
+                            ├── main_arbitrage.py &nbsp;&nbsp;&nbsp;&nbsp;# Entry point<br>
+                            └── arbitrage_engine.py &nbsp;&nbsp;# Core arbitrage logic
+                        </div>
+                    </div>
+
+                    <!-- Dashboard Pages -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-desktop me-2"></i>Dashboard Pages</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm">
+                                <thead class="table-light">
+                                    <tr><th>Page</th><th>URL</th><th>Description</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>Dashboard</td><td><code>/arbitrage/dashboard</code></td><td>Opportunity overview and stats</td></tr>
+                                    <tr><td>Positions</td><td><code>/arbitrage/positions</code></td><td>Active arbitrage positions</td></tr>
+                                    <tr><td>Trades</td><td><code>/arbitrage/trades</code></td><td>Completed arbitrage history</td></tr>
+                                    <tr><td>Performance</td><td><code>/arbitrage/performance</code></td><td>P&L metrics and charts</td></tr>
+                                    <tr><td>Settings</td><td><code>/arbitrage/settings</code></td><td>This configuration page</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Settings Reference -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-sliders-h me-2"></i>Settings Reference</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm">
+                                <thead class="table-light">
+                                    <tr><th>Setting</th><th>Description</th><th>Recommended Value</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td><strong>Enable Arbitrage</strong></td><td>Master switch for the module</td><td>Enabled</td></tr>
+                                    <tr><td><strong>Min Profit Spread</strong></td><td>Minimum % to trigger trade</td><td>0.5%</td></tr>
+                                    <tr><td><strong>Max Trade Amount</strong></td><td>Maximum USD per trade</td><td>$1000</td></tr>
+                                    <tr><td><strong>Primary DEX</strong></td><td>Main exchange for pricing</td><td>Uniswap V3</td></tr>
+                                    <tr><td><strong>Secondary DEXs</strong></td><td>Additional DEXs to compare</td><td>SushiSwap, Curve</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- How It Works -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-cogs me-2"></i>How It Works</h5>
+                        <div class="card bg-light">
+                            <div class="card-body">
+                                <ol>
+                                    <li><strong>Price Monitoring:</strong> Every 5 seconds, queries WETH/USDC price from multiple DEX routers</li>
+                                    <li><strong>Spread Detection:</strong> Calculates price difference (spread) between best buy and best sell DEX</li>
+                                    <li><strong>Opportunity Check:</strong> If spread > 0.5%, opportunity is logged</li>
+                                    <li><strong>Flash Swap:</strong> In production, executes atomic swap:
+                                        <ul>
+                                            <li>Borrow tokens via flash loan (Aave/dYdX)</li>
+                                            <li>Buy on low-price DEX</li>
+                                            <li>Sell on high-price DEX</li>
+                                            <li>Repay flash loan + keep profit</li>
+                                        </ul>
+                                    </li>
+                                </ol>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Arbitrage Types -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-exchange-alt me-2"></i>Arbitrage Types</h5>
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="card bg-light">
+                                    <div class="card-header"><strong>Spatial Arbitrage</strong></div>
+                                    <div class="card-body">
+                                        <p class="mb-2"><span class="badge bg-success">Implemented</span></p>
+                                        <p class="mb-0">Same token, different DEXs on same chain (e.g., Uniswap vs SushiSwap)</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="card bg-light">
+                                    <div class="card-header"><strong>Triangular Arbitrage</strong></div>
+                                    <div class="card-body">
+                                        <p class="mb-2"><span class="badge bg-secondary">Planned</span></p>
+                                        <p class="mb-0">A→B→C→A cycle (e.g., ETH→USDC→WBTC→ETH)</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="card bg-light">
+                                    <div class="card-header"><strong>Cross-Chain Arbitrage</strong></div>
+                                    <div class="card-body">
+                                        <p class="mb-2"><span class="badge bg-secondary">Planned</span></p>
+                                        <p class="mb-0">Same token across chains (e.g., ETH price on Ethereum vs Arbitrum)</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Implementation Status -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-tasks me-2"></i>Implementation Status</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm">
+                                <thead class="table-light">
+                                    <tr><th>Feature</th><th>Status</th><th>Notes</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>Price Comparison (Uniswap V2)</td><td><span class="badge bg-success">Functional</span></td><td>getAmountsOut via Router ABI</td></tr>
+                                    <tr><td>Opportunity Detection</td><td><span class="badge bg-success">Functional</span></td><td>0.5% threshold</td></tr>
+                                    <tr><td>Status Logging</td><td><span class="badge bg-success">Functional</span></td><td>Logs every 5 minutes</td></tr>
+                                    <tr><td>Trade Execution (DRY RUN)</td><td><span class="badge bg-success">Functional</span></td><td>Simulates trades</td></tr>
+                                    <tr><td>Flash Loan Integration</td><td><span class="badge bg-secondary">Planned</span></td><td>Aave/dYdX needed</td></tr>
+                                    <tr><td>Flashbots Bundle</td><td><span class="badge bg-secondary">Planned</span></td><td>MEV protection</td></tr>
+                                    <tr><td>Multi-Chain Support</td><td><span class="badge bg-warning">Partial</span></td><td>Currently Arbitrum only</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Supported DEXs -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-exchange-alt me-2"></i>Supported DEXs</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm">
+                                <thead class="table-light">
+                                    <tr><th>DEX</th><th>Chain</th><th>Router Address</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>Uniswap V2</td><td>Ethereum</td><td><code>0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D</code></td></tr>
+                                    <tr><td>SushiSwap</td><td>Multi-chain</td><td><code>0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506</code></td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Required .env Keys -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-key me-2"></i>Required Environment Variables</h5>
+                        <div class="bg-dark text-light p-3 rounded" style="font-family: monospace; font-size: 0.85rem;">
+                            # RPC URLs for arbitrage scanning<br>
+                            ARBITRUM_RPC_URLS=https://rpc.ankr.com/arbitrum/...<br>
+                            ETHEREUM_RPC_URLS=https://rpc.ankr.com/eth/...<br><br>
+                            # For flash loan execution (when implemented)<br>
+                            PRIVATE_KEY=... (encrypted)<br>
+                            WALLET_ADDRESS=...<br><br>
+                            # Optional: Flashbots MEV protection<br>
+                            FLASHBOTS_SIGNING_KEY=...<br>
+                            FLASHBOTS_RPC=https://relay.flashbots.net
+                        </div>
+                    </div>
+
+                    <!-- Profitability Factors -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-chart-line me-2"></i>Profitability Factors</h5>
+                        <div class="alert alert-warning">
+                            <p><strong>Arbitrage profit depends on:</strong></p>
+                            <ul class="mb-0">
+                                <li><strong>Gas Costs:</strong> Must be lower than profit margin</li>
+                                <li><strong>Slippage:</strong> Large trades move prices</li>
+                                <li><strong>Competition:</strong> Other bots compete for same opportunities</li>
+                                <li><strong>Flash Loan Fees:</strong> ~0.09% on Aave</li>
+                                <li><strong>DEX Fees:</strong> Usually 0.3% per swap</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Risk Warning -->
+                    <div class="mb-4">
+                        <div class="alert alert-danger">
+                            <h6><i class="fas fa-exclamation-triangle me-2"></i>Risk Warning</h6>
+                            <ul class="mb-0">
+                                <li><strong>MEV Competition:</strong> Sophisticated bots may front-run your transactions.</li>
+                                <li><strong>Smart Contract Risk:</strong> Flash loan contracts can have vulnerabilities.</li>
+                                <li><strong>Gas Wars:</strong> In competitive environments, gas costs can exceed profits.</li>
+                                <li><strong>Rare Opportunities:</strong> True arbitrage opportunities on major pairs are rare due to competition.</li>
+                                <li><strong>Start with DRY RUN:</strong> Always monitor in simulation mode before going live.</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Best Practices -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-lightbulb me-2"></i>Best Practices</h5>
+                        <ul>
+                            <li><strong>Min Profit Spread:</strong> Account for gas + slippage. 0.5% is minimum, 1%+ is safer.</li>
+                            <li><strong>DEX Selection:</strong> Focus on high-liquidity DEXs to reduce slippage.</li>
+                            <li><strong>Token Pairs:</strong> Major pairs (ETH/USDC) have more liquidity but more competition.</li>
+                            <li><strong>Timing:</strong> Opportunities often appear during high volatility or low gas periods.</li>
+                            <li><strong>Flashbots:</strong> Use Flashbots bundles to avoid front-running when going live.</li>
+                        </ul>
+                    </div>
                 </div>
             </div>
         </div>
