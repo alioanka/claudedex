@@ -25,6 +25,12 @@
                                     <div class="form-text">Allow AI to execute trades automatically based on sentiment.</div>
                                 </div>
 
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="dry_run" checked>
+                                    <label class="form-check-label" for="dry_run">DRY RUN Mode</label>
+                                    <div class="form-text">Simulate trades without real execution. <strong class="text-danger">Disable for LIVE trading.</strong></div>
+                                </div>
+
                                 <div class="mb-3">
                                     <label class="form-label">Confidence Threshold (%)</label>
                                     <input type="number" class="form-control" id="confidence_threshold" min="0" max="100">
@@ -34,7 +40,18 @@
                                 <div class="mb-3">
                                     <label class="form-label">Trade Amount (USD)</label>
                                     <input type="number" class="form-control" id="trade_amount_usd" step="10">
-                                    <div class="form-text">Amount to invest per trade.</div>
+                                    <div class="form-text">Amount to invest per trade (Binance Futures margin).</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Trading Pair</label>
+                                    <select class="form-select" id="trading_pair">
+                                        <option value="BTCUSDT">BTC/USDT</option>
+                                        <option value="ETHUSDT">ETH/USDT</option>
+                                        <option value="SOLUSDT">SOL/USDT</option>
+                                        <option value="BNBUSDT">BNB/USDT</option>
+                                    </select>
+                                    <div class="form-text">Trading pair for AI-triggered trades on Binance Futures.</div>
                                 </div>
                             </div>
 
@@ -54,6 +71,59 @@
                                     <label class="form-label">Analysis Interval (Minutes)</label>
                                     <input type="number" class="form-control" id="analysis_interval" min="5" step="5">
                                     <div class="form-text">How often to fetch and analyze data.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <hr class="my-4">
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6 class="text-uppercase text-muted mb-3"><i class="fas fa-door-open me-2"></i>Exit Strategy (Take Profit / Stop Loss)</h6>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Take Profit (%)</label>
+                                    <input type="number" class="form-control" id="take_profit_pct" min="1" max="100" step="1" value="5">
+                                    <div class="form-text">Auto-close position when profit reaches this percentage. Default: 5%.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Stop Loss (%)</label>
+                                    <input type="number" class="form-control" id="stop_loss_pct" min="1" max="50" step="1" value="3">
+                                    <div class="form-text">Auto-close position when loss reaches this percentage. Default: 3%.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Max Hold Time (Hours)</label>
+                                    <input type="number" class="form-control" id="max_hold_hours" min="1" max="168" step="1" value="24">
+                                    <div class="form-text">Maximum time to hold a position before auto-closing. Default: 24 hours.</div>
+                                </div>
+
+                                <div class="alert alert-info mt-3">
+                                    <i class="fas fa-info-circle me-2"></i>
+                                    <strong>Position Monitoring:</strong> Active positions are checked every 60 seconds. When TP, SL, or max hold time is reached, the position is automatically closed via Binance Futures API.
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <h6 class="text-uppercase text-muted mb-3"><i class="fas fa-cog me-2"></i>Execution Settings</h6>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Leverage</label>
+                                    <select class="form-select" id="leverage">
+                                        <option value="1">1x (No leverage)</option>
+                                        <option value="2">2x</option>
+                                        <option value="3">3x</option>
+                                        <option value="5" selected>5x</option>
+                                        <option value="10">10x</option>
+                                        <option value="20">20x (High Risk)</option>
+                                    </select>
+                                    <div class="form-text">Leverage for Binance Futures positions. <strong class="text-danger">Higher leverage = higher risk.</strong></div>
+                                </div>
+
+                                <div class="alert alert-warning mt-3">
+                                    <i class="fas fa-exclamation-triangle me-2"></i>
+                                    <strong>Binance Futures:</strong> Trades are executed on Binance Futures. Ensure you have sufficient USDT margin and understand the risks of futures trading.
                                 </div>
                             </div>
                         </div>
@@ -88,7 +158,10 @@
                             modules/ai_analysis/<br>
                             ├── main_ai.py &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Entry point<br>
                             └── core/<br>
-                            &nbsp;&nbsp;&nbsp;&nbsp;└── sentiment_engine.py &nbsp;&nbsp;# Sentiment analysis engine
+                            &nbsp;&nbsp;&nbsp;&nbsp;└── sentiment_engine.py &nbsp;&nbsp;# Sentiment analysis + AITradeExecutor (Binance Futures)
+                        </div>
+                        <div class="mt-2 small text-muted">
+                            <strong>Key Components:</strong> SentimentEngine (news fetching, GPT analysis), AITradeExecutor (Binance Futures execution), Position Monitor (TP/SL/Max Hold)
                         </div>
                     </div>
 
@@ -120,10 +193,17 @@
                                 </thead>
                                 <tbody>
                                     <tr><td><strong>Enable Direct Trading</strong></td><td>Allow AI to execute trades automatically</td><td>Disabled initially</td></tr>
+                                    <tr><td><strong>DRY RUN Mode</strong></td><td>Simulate trades without execution</td><td>Enabled (until tested)</td></tr>
                                     <tr><td><strong>Confidence Threshold</strong></td><td>Min sentiment score to trigger trade (0-100)</td><td>85%</td></tr>
-                                    <tr><td><strong>Trade Amount (USD)</strong></td><td>Amount per AI-triggered trade</td><td>$50</td></tr>
+                                    <tr><td><strong>Trade Amount (USD)</strong></td><td>Margin amount per trade</td><td>$50</td></tr>
+                                    <tr><td><strong>Trading Pair</strong></td><td>Binance Futures trading pair</td><td>BTCUSDT</td></tr>
                                     <tr><td><strong>Sentiment Source</strong></td><td>Data source for analysis</td><td>Combined</td></tr>
                                     <tr><td><strong>Analysis Interval</strong></td><td>Minutes between analyses</td><td>15</td></tr>
+                                    <tr class="table-info"><td colspan="3"><strong>Exit Strategy</strong></td></tr>
+                                    <tr><td><strong>Take Profit %</strong></td><td>Auto-close at this profit level</td><td>5%</td></tr>
+                                    <tr><td><strong>Stop Loss %</strong></td><td>Auto-close at this loss level</td><td>3%</td></tr>
+                                    <tr><td><strong>Max Hold Time</strong></td><td>Maximum position duration (hours)</td><td>24 hours</td></tr>
+                                    <tr><td><strong>Leverage</strong></td><td>Futures leverage multiplier</td><td>5x</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -177,9 +257,11 @@
                                     <tr><td>LLM Analysis</td><td><span class="badge bg-success">Functional</span></td><td>OpenAI GPT-3.5-turbo</td></tr>
                                     <tr><td>Sentiment Storage</td><td><span class="badge bg-success">Functional</span></td><td>Logs to sentiment_logs table</td></tr>
                                     <tr><td>Trade Logging</td><td><span class="badge bg-success">Functional</span></td><td>Stores to trades table</td></tr>
-                                    <tr><td>Trade Execution (DRY RUN)</td><td><span class="badge bg-success">Functional</span></td><td>Simulates trades</td></tr>
-                                    <tr><td>Trade Execution (LIVE)</td><td><span class="badge bg-warning">Partial</span></td><td>Logs entry, no actual execution</td></tr>
-                                    <tr><td>Exit Strategy</td><td><span class="badge bg-secondary">Planned</span></td><td>Take profit / stop loss needed</td></tr>
+                                    <tr><td>Trade Execution (DRY RUN)</td><td><span class="badge bg-success">Functional</span></td><td>Full simulation with logging</td></tr>
+                                    <tr><td>Trade Execution (LIVE)</td><td><span class="badge bg-success">Functional</span></td><td>Binance Futures API (LONG/SHORT)</td></tr>
+                                    <tr><td>Exit Strategy (TP/SL)</td><td><span class="badge bg-success">Functional</span></td><td>Position monitoring every 60s</td></tr>
+                                    <tr><td>Max Hold Time</td><td><span class="badge bg-success">Functional</span></td><td>Auto-close after configured hours</td></tr>
+                                    <tr><td>Position Tracking</td><td><span class="badge bg-success">Functional</span></td><td>Tracks active positions in memory + DB</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -191,12 +273,19 @@
                         <div class="bg-dark text-light p-3 rounded" style="font-family: monospace; font-size: 0.85rem;">
                             # Required for AI Analysis<br>
                             OPENAI_API_KEY=sk-proj-...<br><br>
+                            # Required for LIVE trading on Binance Futures<br>
+                            BINANCE_API_KEY=your_binance_api_key<br>
+                            BINANCE_SECRET_KEY=your_binance_secret_key<br><br>
                             # Optional: Alternative LLM (not yet implemented)<br>
                             ANTHROPIC_API_KEY=sk-ant-...
                         </div>
                         <div class="alert alert-success mt-2">
                             <i class="fas fa-check-circle me-2"></i>
                             <strong>Status:</strong> Your OPENAI_API_KEY is configured and working.
+                        </div>
+                        <div class="alert alert-warning mt-2">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            <strong>Binance Futures:</strong> Ensure your API keys have Futures trading enabled and sufficient USDT margin. Use Testnet first if available.
                         </div>
                     </div>
 
@@ -286,25 +375,49 @@
 
             if (data.success) {
                 const settings = data.settings;
+                // Basic settings
                 document.getElementById('direct_trading').checked = settings.direct_trading === true;
+                document.getElementById('dry_run').checked = settings.dry_run !== false; // Default true
                 document.getElementById('confidence_threshold').value = settings.confidence_threshold || 85;
                 document.getElementById('trade_amount_usd').value = settings.trade_amount_usd || 50;
+                document.getElementById('trading_pair').value = settings.trading_pair || 'BTCUSDT';
                 document.getElementById('sentiment_source').value = settings.sentiment_source || 'news';
                 document.getElementById('analysis_interval').value = settings.analysis_interval || 15;
+
+                // Exit strategy settings
+                document.getElementById('take_profit_pct').value = settings.take_profit_pct || 5;
+                document.getElementById('stop_loss_pct').value = settings.stop_loss_pct || 3;
+                document.getElementById('max_hold_hours').value = settings.max_hold_hours || 24;
+
+                // Execution settings
+                document.getElementById('leverage').value = settings.leverage || 5;
             }
         } catch (error) {
             console.error('Error loading settings:', error);
-            showNotification('Error loading settings', 'error');
+            if (typeof showNotification === 'function') {
+                showNotification('Error loading settings', 'error');
+            }
         }
     }
 
     async function saveSettings() {
         const settings = {
+            // Basic settings
             direct_trading: document.getElementById('direct_trading').checked,
+            dry_run: document.getElementById('dry_run').checked,
             confidence_threshold: parseFloat(document.getElementById('confidence_threshold').value),
             trade_amount_usd: parseFloat(document.getElementById('trade_amount_usd').value),
+            trading_pair: document.getElementById('trading_pair').value,
             sentiment_source: document.getElementById('sentiment_source').value,
-            analysis_interval: parseInt(document.getElementById('analysis_interval').value)
+            analysis_interval: parseInt(document.getElementById('analysis_interval').value),
+
+            // Exit strategy settings
+            take_profit_pct: parseFloat(document.getElementById('take_profit_pct').value),
+            stop_loss_pct: parseFloat(document.getElementById('stop_loss_pct').value),
+            max_hold_hours: parseInt(document.getElementById('max_hold_hours').value),
+
+            // Execution settings
+            leverage: parseInt(document.getElementById('leverage').value)
         };
 
         try {
@@ -316,13 +429,13 @@
             const data = await response.json();
 
             if (data.success) {
-                showNotification('Settings saved successfully', 'success');
+                alert('Settings saved successfully!');
             } else {
-                showNotification('Error saving settings: ' + data.error, 'error');
+                alert('Error saving settings: ' + data.error);
             }
         } catch (error) {
             console.error('Error saving settings:', error);
-            showNotification('Error saving settings', 'error');
+            alert('Error saving settings');
         }
     }
 </script>
