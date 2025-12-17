@@ -71,19 +71,31 @@ class SniperEngine:
 
     async def _monitor_new_pairs(self):
         """Listen for new pair events"""
+        scan_count = 0
+        evm_pairs_found = 0
+        sol_pools_found = 0
+
         while self.is_running:
             try:
+                scan_count += 1
+
                 # 1. Check EVM Mempool/Events
                 if self.evm_listener:
                     events = await self.evm_listener.get_new_pairs()
                     for event in events:
+                        evm_pairs_found += 1
                         await self._evaluate_target(event, 'evm')
 
                 # 2. Check Solana Raydium Logs
                 if self.solana_listener:
                     events = await self.solana_listener.get_new_pools()
                     for event in events:
+                        sol_pools_found += 1
                         await self._evaluate_target(event, 'solana')
+
+                # Log status every 6000 scans (~10 minutes at 0.1s interval)
+                if scan_count % 6000 == 0:
+                    logger.info(f"🔫 Monitor status: {scan_count} scans, {evm_pairs_found} EVM pairs, {sol_pools_found} Solana pools detected")
 
                 await asyncio.sleep(0.1) # Fast loop
             except Exception as e:

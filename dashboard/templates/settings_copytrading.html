@@ -42,8 +42,8 @@
 
                                 <div class="mb-3">
                                     <label class="form-label">Tracked Addresses</label>
-                                    <textarea class="form-control" id="target_wallets" rows="5" placeholder="0x..."></textarea>
-                                    <div class="form-text">One address per line.</div>
+                                    <textarea class="form-control" id="target_wallets" rows="5" placeholder="0x... (EVM)&#10;4yrH... (Solana)"></textarea>
+                                    <div class="form-text">One address per line. Supports both EVM (0x...) and Solana addresses.</div>
                                 </div>
                             </div>
                         </div>
@@ -62,16 +62,27 @@
                 </div>
                 <div class="card-body">
                     <h6>Overview</h6>
-                    <p>The Copy Trading Module monitors specific "smart money" wallets and automatically replicates their buy/sell transactions on your account.</p>
+                    <p>The Copy Trading Module monitors specific "smart money" wallets and automatically replicates their swap transactions on your account. Supports both EVM chains (Ethereum, BSC, etc.) and Solana.</p>
+
+                    <h6>Supported Chains</h6>
+                    <ul>
+                        <li><strong>EVM Chains:</strong> Monitors via Etherscan API. Detects swaps on Uniswap, SushiSwap, and other DEXs. Requires <code>ETHERSCAN_API_KEY</code> in .env.</li>
+                        <li><strong>Solana:</strong> Monitors via RPC. Detects swaps on Jupiter and Raydium. Uses <code>SOLANA_RPC_URL</code> from .env.</li>
+                    </ul>
 
                     <h6>Setup</h6>
                     <ul>
-                        <li><strong>Target Wallets:</strong> Add the Ethereum/Solana addresses of successful traders you want to copy.</li>
+                        <li><strong>Target Wallets:</strong> Add addresses of successful traders you want to copy:
+                            <ul>
+                                <li>EVM addresses start with <code>0x</code></li>
+                                <li>Solana addresses are 32-44 character base58 strings</li>
+                            </ul>
+                        </li>
                         <li><strong>Copy Ratio:</strong> Determines your trade size relative to theirs. If a whale buys 10 ETH and your ratio is 10%, you buy 1 ETH (limited by Max Copy Amount).</li>
                     </ul>
 
                     <h6>Risk Warning</h6>
-                    <p>Copy trading involves significant risk. The wallets you copy may engage in strategies that are high-risk or specific to their portfolio size. Always set a strict Max Copy Amount.</p>
+                    <p>Copy trading involves significant risk. The wallets you copy may engage in strategies that are high-risk or specific to their portfolio size. Always set a strict Max Copy Amount and start with DRY_RUN mode enabled.</p>
                 </div>
             </div>
         </div>

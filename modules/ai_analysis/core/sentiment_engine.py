@@ -72,15 +72,23 @@ class SentimentEngine:
         self.is_running = True
         logger.info("🧠 Sentiment Engine Started")
 
+        cycle_count = 0
+        trades_executed = 0
+
         while self.is_running:
             try:
+                cycle_count += 1
                 # Reload settings occasionally
                 await self._load_settings()
+
+                logger.info(f"🧠 Cycle {cycle_count}: Fetching market news...")
 
                 # 1. Fetch Market News
                 news_data = await self._fetch_news()
 
                 if news_data and self.openai_api_key:
+                    logger.info(f"🧠 Retrieved {len(news_data)} headlines, analyzing...")
+
                     # 2. Analyze Sentiment with LLM
                     sentiment_score = await self._analyze_with_llm(news_data)
                     logger.info(f"🧠 Market Sentiment Score: {sentiment_score:.2f}")
@@ -91,7 +99,13 @@ class SentimentEngine:
                     # 4. Execute Trade if conditions met
                     if self.direct_trading and abs(sentiment_score) >= self.confidence_threshold:
                         await self._execute_trade(sentiment_score)
+                        trades_executed += 1
+                elif not news_data:
+                    logger.info("🧠 No news data retrieved, skipping analysis")
+                elif not self.openai_api_key:
+                    logger.debug("🧠 No OpenAI API key, skipping LLM analysis")
 
+                logger.info(f"🧠 Cycle {cycle_count} complete. Next analysis in 15 minutes. Total trades: {trades_executed}")
                 await asyncio.sleep(900) # Run every 15 minutes to save API credits
             except Exception as e:
                 logger.error(f"Error in sentiment loop: {e}")

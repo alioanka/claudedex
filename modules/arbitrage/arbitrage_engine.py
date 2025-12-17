@@ -66,17 +66,28 @@ class ArbitrageEngine:
             logger.error("RPC not connected, arbitrage disabled.")
             return
 
+        scan_count = 0
+        opportunities_found = 0
+
         while self.is_running:
             try:
+                scan_count += 1
                 # Scan WETH/USDC
-                await self._check_arb_opportunity(TOKENS['WETH'], TOKENS['USDC'])
+                found = await self._check_arb_opportunity(TOKENS['WETH'], TOKENS['USDC'])
+                if found:
+                    opportunities_found += 1
+
+                # Log status every 60 scans (5 minutes at 5s interval)
+                if scan_count % 60 == 0:
+                    logger.info(f"⚖️ Status: {scan_count} scans completed, {opportunities_found} opportunities found")
+
                 await asyncio.sleep(5)
             except Exception as e:
                 logger.error(f"Arb loop error: {e}")
                 await asyncio.sleep(5)
 
-    async def _check_arb_opportunity(self, token_in, token_out):
-        """Check price difference between two DEXs"""
+    async def _check_arb_opportunity(self, token_in, token_out) -> bool:
+        """Check price difference between two DEXs. Returns True if opportunity found."""
         try:
             amount_in = self.w3.to_wei(1, 'ether') # 1 WETH
 
@@ -89,7 +100,7 @@ class ArbitrageEngine:
                     logger.debug(f"Failed to get price from {name}: {e}")
 
             if len(prices) < 2:
-                return
+                return False
 
             # Find best buy and sell
             best_buy_dex = min(prices, key=prices.get)
@@ -104,9 +115,12 @@ class ArbitrageEngine:
                 logger.info(f"🚨 ARBITRAGE OPPORTUNITY: Buy on {best_buy_dex}, Sell on {best_sell_dex}. Spread: {spread:.2%}")
                 # Execute flash swap (Simulation)
                 await self._execute_flash_swap(best_buy_dex, best_sell_dex, token_in, amount_in)
+                return True
+            return False
 
         except Exception as e:
             logger.error(f"Arb check failed: {e}")
+            return False
 
     async def _execute_flash_swap(self, buy_dex, sell_dex, token, amount):
         """Execute the trade"""

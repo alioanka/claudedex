@@ -363,6 +363,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/ai/stats', self.api_get_ai_stats)
         self.app.router.add_get('/api/ai/sentiment', self.api_get_ai_sentiment)
         self.app.router.add_get('/api/ai/performance', self.api_get_ai_performance)
+        self.app.router.add_get('/api/ai/trades', self.api_get_ai_trades)
         self.app.router.add_get('/api/ai/settings', self.api_get_ai_settings)
         self.app.router.add_post('/api/ai/settings', self.api_save_ai_settings)
 
@@ -6364,38 +6365,84 @@ class DashboardEndpoints:
     async def api_get_copytrading_settings(self, request):
         """Get Copy Trading module settings"""
         try:
-            settings = {}
+            settings = {
+                'enabled': False,
+                'max_copy_amount': 100,
+                'copy_ratio': 10,
+                'target_wallets': []
+            }
             if self.db:
                 async with self.db.pool.acquire() as conn:
                     rows = await conn.fetch("SELECT key, value FROM config_settings WHERE config_type = 'copytrading_config'")
                     for row in rows:
+                        key = row['key']
                         val = row['value']
-                        if val.lower() in ('true', 'false'):
-                            val = val.lower() == 'true'
-                        elif val.replace('.', '', 1).isdigit():
-                            if '.' in val:
-                                val = float(val)
+
+                        # Handle target_wallets specially - parse as array
+                        if key == 'target_wallets':
+                            if val:
+                                try:
+                                    # Try parsing as JSON array first
+                                    import json
+                                    parsed = json.loads(val)
+                                    if isinstance(parsed, list):
+                                        settings[key] = [str(w).strip() for w in parsed if w]
+                                    else:
+                                        settings[key] = [val.strip()] if val.strip() else []
+                                except json.JSONDecodeError:
+                                    # Try parsing as Python list literal
+                                    try:
+                                        import ast
+                                        parsed = ast.literal_eval(val)
+                                        if isinstance(parsed, list):
+                                            settings[key] = [str(w).strip() for w in parsed if w]
+                                        else:
+                                            settings[key] = [val.strip()] if val.strip() else []
+                                    except (ValueError, SyntaxError):
+                                        # Fallback: treat as newline/comma separated string
+                                        settings[key] = [w.strip() for w in val.replace(',', '\n').split('\n') if w.strip()]
                             else:
-                                val = int(val)
-                        settings[row['key']] = val
+                                settings[key] = []
+                        elif val.lower() in ('true', 'false'):
+                            settings[key] = val.lower() == 'true'
+                        elif val.replace('.', '', 1).replace('-', '', 1).isdigit():
+                            if '.' in val:
+                                settings[key] = float(val)
+                            else:
+                                settings[key] = int(val)
+                        else:
+                            settings[key] = val
             return web.json_response({'success': True, 'settings': settings})
         except Exception as e:
+            logger.error(f"Error getting copytrading settings: {e}")
             return web.json_response({'success': False, 'error': str(e)})
 
     async def api_save_copytrading_settings(self, request):
         """Save Copy Trading module settings"""
         try:
+            import json
             data = await request.json()
             if self.db:
                 async with self.db.pool.acquire() as conn:
                     for k, v in data.items():
+                        # Handle target_wallets specially - save as JSON array
+                        if k == 'target_wallets':
+                            if isinstance(v, list):
+                                val_str = json.dumps(v)
+                            else:
+                                val_str = str(v)
+                        else:
+                            val_str = str(v)
+
                         await conn.execute("""
                             INSERT INTO config_settings (config_type, key, value, value_type)
                             VALUES ('copytrading_config', $1, $2, 'string')
                             ON CONFLICT (config_type, key) DO UPDATE SET value = $2
-                        """, k, str(v))
+                        """, k, val_str)
+            logger.info(f"Copy trading settings saved: {list(data.keys())}")
             return web.json_response({'success': True, 'message': 'Settings saved'})
         except Exception as e:
+            logger.error(f"Error saving copytrading settings: {e}")
             return web.json_response({'success': False, 'error': str(e)})
 
     # ==================== AI MODULE HANDLERS ====================
@@ -6499,6 +6546,34 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Error getting AI performance: {e}")
             return web.json_response({'success': False, 'error': str(e)})
+
+    async def api_get_ai_trades(self, request):
+        """Get AI module trades"""
+        try:
+            trades = []
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    rows = await conn.fetch("""
+                        SELECT trade_id, token_address, chain, strategy, side,
+                               entry_price, exit_price, amount, usd_value,
+                               profit_loss as pnl, status, entry_timestamp, exit_timestamp, metadata
+                        FROM trades
+                        WHERE strategy = 'ai_analysis'
+                        ORDER BY entry_timestamp DESC
+                        LIMIT 100
+                    """)
+                    for row in rows:
+                        trade = dict(row)
+                        # Convert timestamps to ISO format
+                        if trade.get('entry_timestamp'):
+                            trade['entry_timestamp'] = trade['entry_timestamp'].isoformat()
+                        if trade.get('exit_timestamp'):
+                            trade['exit_timestamp'] = trade['exit_timestamp'].isoformat()
+                        trades.append(trade)
+            return web.json_response({'success': True, 'trades': trades, 'count': len(trades)})
+        except Exception as e:
+            logger.error(f"Error getting AI trades: {e}")
+            return web.json_response({'success': False, 'error': str(e), 'trades': []})
 
     async def api_get_ai_settings(self, request):
         """Get AI settings"""
