@@ -358,6 +358,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/copytrading/trades', self.api_get_copytrading_trades)
         self.app.router.add_get('/api/copytrading/settings', self.api_get_copytrading_settings)
         self.app.router.add_post('/api/copytrading/settings', self.api_save_copytrading_settings)
+        self.app.router.add_get('/api/copytrading/discover', self.api_copytrading_discover)
 
         # API - AI Analysis Module
         self.app.router.add_get('/api/ai/stats', self.api_get_ai_stats)
@@ -559,6 +560,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/copytrading/trades', self._copytrading_trades)
         self.app.router.add_get('/copytrading/performance', self._copytrading_performance)
         self.app.router.add_get('/copytrading/settings', self._copytrading_settings)
+        self.app.router.add_get('/copytrading/discovery', self._copytrading_discovery)
 
         # AI Analysis Module Pages
         self.app.router.add_get('/ai/dashboard', self._ai_dashboard)
@@ -6342,6 +6344,10 @@ class DashboardEndpoints:
         template = self.jinja_env.get_template('settings_copytrading.html')
         return web.Response(text=template.render(page='copytrading_settings'), content_type='text/html')
 
+    async def _copytrading_discovery(self, request):
+        template = self.jinja_env.get_template('discovery_copytrading.html')
+        return web.Response(text=template.render(page='copytrading_discovery'), content_type='text/html')
+
     async def api_get_copytrading_stats(self, request):
         """Get Copy Trading module stats"""
         stats = {
@@ -6444,6 +6450,143 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Error saving copytrading settings: {e}")
             return web.json_response({'success': False, 'error': str(e)})
+
+    async def api_copytrading_discover(self, request):
+        """Discover best-performing Solana wallets to copy"""
+        import os
+        import aiohttp
+        from datetime import datetime, timedelta
+
+        try:
+            # Get query parameters
+            search_type = request.query.get('type', 'top_traders')
+            min_win_rate = float(request.query.get('min_win_rate', 50))
+            min_trades = int(request.query.get('min_trades', 10))
+            token_address = request.query.get('token_address', '')
+            wallet_address = request.query.get('wallet_address', '')
+
+            helius_api_key = os.getenv('HELIUS_API_KEY')
+            solana_rpc_url = os.getenv('SOLANA_RPC_URL')
+
+            if not helius_api_key and not solana_rpc_url:
+                return web.json_response({
+                    'success': False,
+                    'error': 'No Helius API key or Solana RPC configured. Add HELIUS_API_KEY to .env'
+                })
+
+            wallets = []
+
+            # For demonstration purposes, generate simulated wallet data
+            # In production, this would query Helius/Birdeye APIs
+            if search_type == 'analyze_wallet' and wallet_address:
+                # Analyze specific wallet
+                wallet_data = await self._analyze_solana_wallet(wallet_address, helius_api_key, solana_rpc_url)
+                if wallet_data:
+                    wallets = [wallet_data]
+            else:
+                # Get top traders (simulated for now, would use Helius/Birdeye in production)
+                # This demonstrates the expected data format
+                import random
+                sample_wallets = [
+                    '7Lw3VqYPCNhZBPUzDdXXgxEE3wA7K7xNqXPPnCpcmPXv',
+                    '3tRKxE5QfzF3HA2dWJZvyHXBJN2SdXVh3KY8WeLAHGZ4',
+                    'BQcdHdAQW1hczDbBi9hiegXAR7A98Q9jx3X3iBBBDiq4',
+                    '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+                    'DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL',
+                ]
+
+                for addr in sample_wallets:
+                    # Generate realistic-looking metrics
+                    win_rate = random.uniform(45, 85)
+                    if win_rate >= min_win_rate:
+                        total_trades = random.randint(min_trades, 200)
+                        avg_profit = random.uniform(-5, 25)
+                        total_pnl = avg_profit * total_trades * random.uniform(0.3, 0.7)
+
+                        # Calculate score
+                        score = (win_rate * 0.4) + (min(total_pnl / 100, 30) * 0.3) + (min(total_trades / 10, 15) * 0.15) + (random.uniform(5, 15))
+                        score = min(score, 100)
+
+                        days_ago = random.randint(0, 7)
+                        last_active = (datetime.now() - timedelta(days=days_ago)).strftime('%Y-%m-%d')
+
+                        wallets.append({
+                            'address': addr,
+                            'score': score,
+                            'win_rate': win_rate,
+                            'total_trades': total_trades,
+                            'total_pnl': total_pnl,
+                            'avg_trade_size': random.uniform(50, 500),
+                            'last_active': last_active
+                        })
+
+                # Sort by score
+                wallets.sort(key=lambda x: x['score'], reverse=True)
+
+            return web.json_response({
+                'success': True,
+                'wallets': wallets,
+                'count': len(wallets),
+                'note': 'Demo data - integrate with Helius/Birdeye API for real wallet analytics'
+            })
+
+        except Exception as e:
+            logger.error(f"Error in wallet discovery: {e}")
+            return web.json_response({'success': False, 'error': str(e)})
+
+    async def _analyze_solana_wallet(self, wallet_address: str, helius_api_key: str, solana_rpc_url: str):
+        """Analyze a specific Solana wallet's trading performance"""
+        import aiohttp
+        from datetime import datetime
+
+        try:
+            # Get recent transactions using RPC
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getSignaturesForAddress",
+                "params": [wallet_address, {"limit": 100}]
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(solana_rpc_url, json=payload) as resp:
+                    if resp.status != 200:
+                        return None
+
+                    data = await resp.json()
+                    signatures = data.get('result', [])
+
+                    if not signatures:
+                        return None
+
+                    # Count transactions and calculate basic metrics
+                    total_trades = len(signatures)
+                    successful = len([s for s in signatures if s.get('err') is None])
+
+                    # Calculate mock metrics (in production, would analyze actual trade data)
+                    win_rate = (successful / total_trades * 100) if total_trades > 0 else 0
+                    import random
+                    total_pnl = random.uniform(-500, 2000)
+                    score = (win_rate * 0.4) + (min(total_pnl / 100, 30) * 0.3) + (min(total_trades / 10, 15) * 0.15) + 10
+                    score = min(max(score, 0), 100)
+
+                    # Get last active time
+                    last_block_time = signatures[0].get('blockTime', 0) if signatures else 0
+                    last_active = datetime.fromtimestamp(last_block_time).strftime('%Y-%m-%d') if last_block_time else 'Unknown'
+
+                    return {
+                        'address': wallet_address,
+                        'score': score,
+                        'win_rate': win_rate,
+                        'total_trades': total_trades,
+                        'total_pnl': total_pnl,
+                        'avg_trade_size': abs(total_pnl / total_trades) if total_trades > 0 else 0,
+                        'last_active': last_active
+                    }
+
+        except Exception as e:
+            logger.error(f"Error analyzing wallet {wallet_address}: {e}")
+            return None
 
     # ==================== AI MODULE HANDLERS ====================
 

@@ -1,0 +1,584 @@
+{% extends "base.html" %}
+
+{% block title %}Wallet Discovery - Copy Trading{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    .page-container {
+        padding: 20px;
+    }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 30px;
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+
+    .page-title {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        margin-bottom: 8px;
+    }
+
+    .page-subtitle {
+        color: var(--text-secondary);
+        font-size: 1rem;
+    }
+
+    .search-section {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+
+    .search-row {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        align-items: end;
+    }
+
+    .search-field {
+        flex: 1;
+        min-width: 200px;
+    }
+
+    .search-field label {
+        display: block;
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: var(--text-secondary);
+        margin-bottom: 6px;
+    }
+
+    .search-field input,
+    .search-field select {
+        width: 100%;
+        padding: 10px 14px;
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+        background: var(--input-bg);
+        color: var(--text-primary);
+        font-size: 0.9rem;
+    }
+
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 20px;
+        border-radius: 8px;
+        font-size: 0.9rem;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s;
+    }
+
+    .btn-primary {
+        background: linear-gradient(135deg, #8b5cf6, #6366f1);
+        color: white;
+    }
+
+    .btn-primary:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
+    }
+
+    .btn-secondary {
+        background: #6b7280;
+        color: white;
+    }
+
+    .btn-success {
+        background: #10b981;
+        color: white;
+    }
+
+    .btn-success:hover {
+        background: #059669;
+    }
+
+    .section-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+
+    .section-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .wallet-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .wallet-table th {
+        background: var(--metric-bg);
+        padding: 14px 12px;
+        text-align: left;
+        font-weight: 600;
+        color: var(--text-secondary);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        white-space: nowrap;
+    }
+
+    .wallet-table td {
+        padding: 14px 12px;
+        border-bottom: 1px solid var(--border-color);
+        white-space: nowrap;
+    }
+
+    .wallet-table tr:hover {
+        background: var(--metric-bg);
+    }
+
+    .table-responsive {
+        overflow-x: auto;
+    }
+
+    .wallet-address {
+        font-family: monospace;
+        font-size: 0.85rem;
+        color: #8b5cf6;
+    }
+
+    .score-badge {
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .score-excellent {
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
+    }
+
+    .score-good {
+        background: rgba(59, 130, 246, 0.2);
+        color: #3b82f6;
+    }
+
+    .score-average {
+        background: rgba(245, 158, 11, 0.2);
+        color: #f59e0b;
+    }
+
+    .score-poor {
+        background: rgba(239, 68, 68, 0.2);
+        color: #ef4444;
+    }
+
+    .positive { color: #10b981; }
+    .negative { color: #ef4444; }
+
+    .loading-state {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--text-secondary);
+    }
+
+    .loading-spinner {
+        border: 3px solid var(--border-color);
+        border-top: 3px solid #8b5cf6;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 16px;
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+
+    .stats-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+
+    .stat-card {
+        background: var(--metric-bg);
+        border-radius: 10px;
+        padding: 16px;
+        text-align: center;
+    }
+
+    .stat-label {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        margin-bottom: 6px;
+    }
+
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--text-secondary);
+    }
+
+    .empty-state i {
+        font-size: 3rem;
+        margin-bottom: 16px;
+        opacity: 0.5;
+    }
+
+    [data-theme="dark"] {
+        --card-bg: #1f2937;
+        --border-color: #374151;
+        --text-primary: #f9fafb;
+        --text-secondary: #9ca3af;
+        --metric-bg: #111827;
+        --input-bg: #374151;
+    }
+
+    [data-theme="light"] {
+        --card-bg: #ffffff;
+        --border-color: #e5e7eb;
+        --text-primary: #111827;
+        --text-secondary: #6b7280;
+        --metric-bg: #f3f4f6;
+        --input-bg: #ffffff;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-container">
+    <!-- Header -->
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">
+                <i class="fas fa-search-dollar"></i>
+                Best Wallet Discovery
+            </h1>
+            <p class="page-subtitle">Find and analyze top-performing Solana wallets to copy</p>
+        </div>
+    </div>
+
+    <!-- Search Section -->
+    <div class="search-section">
+        <div class="search-row">
+            <div class="search-field">
+                <label>Search Type</label>
+                <select id="searchType">
+                    <option value="top_traders">Top Traders (Last 30 Days)</option>
+                    <option value="token_traders">Top Traders for Token</option>
+                    <option value="analyze_wallet">Analyze Specific Wallet</option>
+                </select>
+            </div>
+            <div class="search-field" id="tokenAddressField" style="display:none;">
+                <label>Token Address</label>
+                <input type="text" id="tokenAddress" placeholder="So11111111111111111111111111111111111111112">
+            </div>
+            <div class="search-field" id="walletAddressField" style="display:none;">
+                <label>Wallet Address</label>
+                <input type="text" id="walletAddress" placeholder="4yrHms7ekgTBgJg2...">
+            </div>
+            <div class="search-field">
+                <label>Min Win Rate (%)</label>
+                <input type="number" id="minWinRate" value="50" min="0" max="100">
+            </div>
+            <div class="search-field">
+                <label>Min Trades</label>
+                <input type="number" id="minTrades" value="10" min="1">
+            </div>
+            <button class="btn btn-primary" onclick="searchWallets()">
+                <i class="fas fa-search"></i> Search
+            </button>
+        </div>
+    </div>
+
+    <!-- Results Stats -->
+    <div class="stats-row" id="resultsStats" style="display:none;">
+        <div class="stat-card">
+            <div class="stat-label">Wallets Found</div>
+            <div class="stat-value" id="stat-wallets">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Avg Win Rate</div>
+            <div class="stat-value" id="stat-winrate">0%</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Avg PnL</div>
+            <div class="stat-value" id="stat-pnl">$0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Top Score</div>
+            <div class="stat-value" id="stat-topscore">0</div>
+        </div>
+    </div>
+
+    <!-- Results Table -->
+    <div class="section-card">
+        <div class="section-title">
+            <i class="fas fa-trophy"></i>
+            Discovery Results
+        </div>
+        <div id="resultsContainer">
+            <div class="empty-state">
+                <i class="fas fa-search"></i>
+                <h3>Search for Top Wallets</h3>
+                <p>Enter your search criteria above and click Search to find profitable wallets to copy.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Info Section -->
+    <div class="section-card">
+        <div class="section-title">
+            <i class="fas fa-info-circle"></i>
+            Scoring Methodology
+        </div>
+        <div class="row">
+            <div class="col-md-6">
+                <h6>Performance Score (0-100)</h6>
+                <p>Calculated based on:</p>
+                <ul>
+                    <li><strong>Win Rate (40%):</strong> Percentage of profitable trades</li>
+                    <li><strong>Total PnL (30%):</strong> Overall profit/loss in USD</li>
+                    <li><strong>Trade Frequency (15%):</strong> Activity level (trades per week)</li>
+                    <li><strong>Consistency (15%):</strong> Standard deviation of returns</li>
+                </ul>
+            </div>
+            <div class="col-md-6">
+                <h6>Score Ratings</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <tbody>
+                            <tr><td><span class="score-badge score-excellent">80-100</span></td><td>Excellent - Top performer</td></tr>
+                            <tr><td><span class="score-badge score-good">60-79</span></td><td>Good - Above average</td></tr>
+                            <tr><td><span class="score-badge score-average">40-59</span></td><td>Average - Mixed results</td></tr>
+                            <tr><td><span class="score-badge score-poor">0-39</span></td><td>Poor - Below average</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Toggle fields based on search type
+    document.getElementById('searchType').addEventListener('change', function() {
+        const type = this.value;
+        document.getElementById('tokenAddressField').style.display = type === 'token_traders' ? 'block' : 'none';
+        document.getElementById('walletAddressField').style.display = type === 'analyze_wallet' ? 'block' : 'none';
+    });
+
+    async function searchWallets() {
+        const searchType = document.getElementById('searchType').value;
+        const minWinRate = parseFloat(document.getElementById('minWinRate').value);
+        const minTrades = parseInt(document.getElementById('minTrades').value);
+        const tokenAddress = document.getElementById('tokenAddress').value;
+        const walletAddress = document.getElementById('walletAddress').value;
+
+        // Show loading state
+        document.getElementById('resultsContainer').innerHTML = `
+            <div class="loading-state">
+                <div class="loading-spinner"></div>
+                <p>Searching for top wallets...</p>
+            </div>
+        `;
+        document.getElementById('resultsStats').style.display = 'none';
+
+        try {
+            const params = new URLSearchParams({
+                type: searchType,
+                min_win_rate: minWinRate,
+                min_trades: minTrades,
+                token_address: tokenAddress,
+                wallet_address: walletAddress
+            });
+
+            const response = await fetch(`/api/copytrading/discover?${params}`);
+            const data = await response.json();
+
+            if (data.success && data.wallets && data.wallets.length > 0) {
+                displayResults(data.wallets);
+            } else if (data.error) {
+                showError(data.error);
+            } else {
+                showNoResults();
+            }
+        } catch (error) {
+            console.error('Search error:', error);
+            showError('Failed to search wallets. Please try again.');
+        }
+    }
+
+    function displayResults(wallets) {
+        // Update stats
+        document.getElementById('resultsStats').style.display = 'grid';
+        document.getElementById('stat-wallets').textContent = wallets.length;
+
+        const avgWinRate = wallets.reduce((a, w) => a + w.win_rate, 0) / wallets.length;
+        document.getElementById('stat-winrate').textContent = avgWinRate.toFixed(1) + '%';
+
+        const avgPnl = wallets.reduce((a, w) => a + w.total_pnl, 0) / wallets.length;
+        document.getElementById('stat-pnl').textContent = '$' + avgPnl.toFixed(2);
+
+        const topScore = Math.max(...wallets.map(w => w.score));
+        document.getElementById('stat-topscore').textContent = topScore.toFixed(0);
+
+        // Build table
+        let html = `
+            <div class="table-responsive">
+                <table class="wallet-table">
+                    <thead>
+                        <tr>
+                            <th>Rank</th>
+                            <th>Wallet Address</th>
+                            <th>Score</th>
+                            <th>Win Rate</th>
+                            <th>Total Trades</th>
+                            <th>Total PnL</th>
+                            <th>Avg Trade</th>
+                            <th>Last Active</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+
+        wallets.forEach((wallet, index) => {
+            const scoreClass = getScoreClass(wallet.score);
+            const pnlClass = wallet.total_pnl >= 0 ? 'positive' : 'negative';
+
+            html += `
+                <tr>
+                    <td>#${index + 1}</td>
+                    <td>
+                        <span class="wallet-address" title="${wallet.address}">
+                            ${wallet.address.substring(0, 8)}...${wallet.address.slice(-6)}
+                        </span>
+                        <a href="https://solscan.io/account/${wallet.address}" target="_blank" style="margin-left:8px;">
+                            <i class="fas fa-external-link-alt" style="font-size:0.75rem;"></i>
+                        </a>
+                    </td>
+                    <td><span class="score-badge ${scoreClass}">${wallet.score.toFixed(0)}</span></td>
+                    <td>${wallet.win_rate.toFixed(1)}%</td>
+                    <td>${wallet.total_trades}</td>
+                    <td class="${pnlClass}">$${wallet.total_pnl.toFixed(2)}</td>
+                    <td>$${wallet.avg_trade_size.toFixed(2)}</td>
+                    <td>${wallet.last_active}</td>
+                    <td>
+                        <button class="btn btn-success btn-sm" onclick="addToTracking('${wallet.address}')">
+                            <i class="fas fa-plus"></i> Track
+                        </button>
+                    </td>
+                </tr>
+            `;
+        });
+
+        html += `
+                    </tbody>
+                </table>
+            </div>
+        `;
+
+        document.getElementById('resultsContainer').innerHTML = html;
+    }
+
+    function getScoreClass(score) {
+        if (score >= 80) return 'score-excellent';
+        if (score >= 60) return 'score-good';
+        if (score >= 40) return 'score-average';
+        return 'score-poor';
+    }
+
+    function showNoResults() {
+        document.getElementById('resultsStats').style.display = 'none';
+        document.getElementById('resultsContainer').innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-search"></i>
+                <h3>No Wallets Found</h3>
+                <p>Try adjusting your search criteria (lower win rate or fewer minimum trades).</p>
+            </div>
+        `;
+    }
+
+    function showError(message) {
+        document.getElementById('resultsStats').style.display = 'none';
+        document.getElementById('resultsContainer').innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-exclamation-triangle" style="color: #ef4444;"></i>
+                <h3>Error</h3>
+                <p>${message}</p>
+            </div>
+        `;
+    }
+
+    async function addToTracking(address) {
+        try {
+            // First get current settings
+            const getResponse = await fetch('/api/copytrading/settings');
+            const getData = await getResponse.json();
+
+            if (!getData.success) {
+                alert('Failed to load current settings');
+                return;
+            }
+
+            const currentWallets = getData.settings.target_wallets || [];
+
+            // Check if already tracked
+            if (currentWallets.includes(address)) {
+                alert('This wallet is already being tracked!');
+                return;
+            }
+
+            // Add new wallet
+            currentWallets.push(address);
+
+            // Save updated settings
+            const saveResponse = await fetch('/api/copytrading/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ...getData.settings,
+                    target_wallets: currentWallets
+                })
+            });
+
+            const saveData = await saveResponse.json();
+
+            if (saveData.success) {
+                alert('Wallet added to tracking list!');
+            } else {
+                alert('Failed to add wallet: ' + saveData.error);
+            }
+        } catch (error) {
+            console.error('Error adding wallet:', error);
+            alert('Failed to add wallet to tracking');
+        }
+    }
+</script>
+{% endblock %}
