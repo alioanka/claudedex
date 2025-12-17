@@ -7,6 +7,7 @@ import logging
 from typing import Dict, Optional, List
 from datetime import datetime
 import json
+import os
 
 from config.config_manager import ConfigManager
 from data.storage.database import DatabaseManager
@@ -34,14 +35,36 @@ class SniperEngine:
         # Components (to be initialized)
         self.evm_listener = None
         self.solana_listener = None
+        self.token_safety = None
         self.executor = None
+
+        # Settings (loaded from DB)
+        self.dry_run = True
+        self.trade_amount = 0.1
+        self.slippage = 10.0
+        self.priority_fee = 5000
+        self.max_buy_tax = 15.0
+        self.max_sell_tax = 15.0
+        self.min_liquidity = 1000.0
+        self.safety_check_enabled = True
 
     async def initialize(self):
         """Initialize sniper components"""
         logger.info("🔫 Initializing Sniper Engine...")
 
         # Load settings from DB
+        await self._load_settings()
         sniper_config = self.config.get('sniper', {})
+
+        # Initialize Token Safety Checker
+        from modules.sniper.core.token_safety import TokenSafetyChecker
+        self.token_safety = TokenSafetyChecker(self.config)
+        await self.token_safety.initialize()
+
+        # Initialize Trade Executor
+        from modules.sniper.core.trade_executor import TradeExecutor
+        self.executor = TradeExecutor(self.config)
+        await self.executor.initialize()
 
         # Initialize Listeners based on enabled chains
         if sniper_config.get('evm_enabled', True):
@@ -55,6 +78,41 @@ class SniperEngine:
             await self.solana_listener.initialize()
 
         logger.info("✅ Sniper Engine initialized")
+
+    async def _load_settings(self):
+        """Load settings from database"""
+        try:
+            if self.db_pool:
+                async with self.db_pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        "SELECT key, value FROM config_settings WHERE config_type = 'sniper_config'"
+                    )
+                    for row in rows:
+                        key = row['key']
+                        val = row['value']
+                        if key == 'enabled':
+                            pass  # Handled by orchestrator
+                        elif key == 'trade_amount':
+                            self.trade_amount = float(val) if val else 0.1
+                        elif key == 'slippage':
+                            self.slippage = float(val) if val else 10.0
+                        elif key == 'priority_fee':
+                            self.priority_fee = int(val) if val else 5000
+                        elif key == 'max_buy_tax':
+                            self.max_buy_tax = float(val) if val else 15.0
+                        elif key == 'max_sell_tax':
+                            self.max_sell_tax = float(val) if val else 15.0
+                        elif key == 'min_liquidity':
+                            self.min_liquidity = float(val) if val else 1000.0
+                        elif key == 'safety_check_enabled':
+                            self.safety_check_enabled = val.lower() in ('true', '1', 'yes') if val else True
+
+            # Check for DRY_RUN mode
+            self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
+            logger.info(f"📋 Sniper settings loaded: trade_amount={self.trade_amount}, slippage={self.slippage}%, dry_run={self.dry_run}")
+
+        except Exception as e:
+            logger.error(f"Error loading sniper settings: {e}")
 
     async def run(self):
         """Main loop"""
@@ -107,8 +165,8 @@ class SniperEngine:
         try:
             token_address = target.get('token_address')
 
-            # 1. Check Filters (Liquidity, Tax, Honeypot)
-            if not await self._check_filters(target):
+            # 1. Check Filters (Liquidity, Tax, Honeypot, Safety)
+            if not await self._check_filters(target, chain_type):
                 return
 
             # 2. Add to pending targets
@@ -123,11 +181,68 @@ class SniperEngine:
         except Exception as e:
             logger.error(f"Error evaluating target: {e}")
 
-    async def _check_filters(self, target: Dict) -> bool:
-        """Apply strict filters for sniping"""
-        # Basic filter: check liquidity presence (simplified)
+    async def _check_filters(self, target: Dict, chain_type: str) -> bool:
+        """Apply strict filters for sniping including token safety checks"""
+        # Basic filter: check liquidity presence
         if not target.get('pair_address'):
             return False
+
+        token_address = target.get('token_address')
+        if not token_address:
+            return False
+
+        # Skip safety check if disabled
+        if not self.safety_check_enabled:
+            logger.debug(f"Safety check disabled, allowing {token_address}")
+            return True
+
+        # Perform comprehensive safety check
+        try:
+            if self.token_safety:
+                from modules.sniper.core.token_safety import SafetyRating
+
+                report = await self.token_safety.check_token(token_address, chain_type)
+
+                # Log the safety report
+                target['safety_report'] = {
+                    'rating': report.rating.value,
+                    'score': report.score,
+                    'is_honeypot': report.is_honeypot,
+                    'buy_tax': report.buy_tax,
+                    'sell_tax': report.sell_tax,
+                    'liquidity_usd': report.liquidity_usd,
+                    'warnings': report.warnings[:5]
+                }
+
+                # Check if safe to snipe
+                if report.is_honeypot:
+                    logger.warning(f"🍯 HONEYPOT DETECTED: {token_address} - SKIPPING")
+                    return False
+
+                if report.rating == SafetyRating.DANGER:
+                    logger.warning(f"🚨 DANGER RATING: {token_address} - SKIPPING")
+                    return False
+
+                if report.buy_tax > self.max_buy_tax:
+                    logger.warning(f"⚠️ High buy tax ({report.buy_tax:.1f}%): {token_address} - SKIPPING")
+                    return False
+
+                if report.sell_tax > self.max_sell_tax:
+                    logger.warning(f"⚠️ High sell tax ({report.sell_tax:.1f}%): {token_address} - SKIPPING")
+                    return False
+
+                if report.liquidity_usd < self.min_liquidity:
+                    logger.warning(f"⚠️ Low liquidity (${report.liquidity_usd:,.0f}): {token_address} - SKIPPING")
+                    return False
+
+                logger.info(f"✅ Safety check passed: {token_address} (Score: {report.score}/100)")
+                return True
+
+        except Exception as e:
+            logger.error(f"Error during safety check: {e}")
+            # Fail safe - don't snipe if safety check errors
+            return False
+
         return True
 
     async def _process_targets(self):
@@ -157,43 +272,226 @@ class SniperEngine:
         logger.info(f"🔫 EXECUTING SNIPE: {token_address} on {chain}")
         data['status'] = 'buying'
 
-        # Real logic simulation
         try:
-            if chain == 'evm':
-                # Use Web3 to sendSwapExactETHForTokens
-                # tx = router.functions.swapExactETHForTokens(...).buildTransaction(...)
-                # signed_tx = w3.eth.account.sign_transaction(tx, private_key)
-                # w3.eth.send_raw_transaction(signed_tx.rawTransaction)
-                pass
-            elif chain == 'solana':
-                # Use Solana Client to swap on Raydium
-                pass
+            if not self.executor:
+                logger.error("Trade executor not initialized")
+                data['status'] = 'failed'
+                return
 
-            # Simulate network delay
-            await asyncio.sleep(0.5)
+            # Execute buy using the trade executor
+            result = await self.executor.execute_buy(
+                token_address=token_address,
+                chain=chain,
+                amount_in=self.trade_amount,
+                slippage=self.slippage,
+                priority_fee=self.priority_fee
+            )
 
-            logger.info(f"✅ SNIPE SUCCESS: {token_address}")
-            data['status'] = 'active'
-            data['entry_price'] = 0.0001 # Placeholder
-            self.active_snipes[token_address] = data
-            del self.pending_targets[token_address]
+            if result.success:
+                logger.info(f"✅ SNIPE SUCCESS: {token_address}")
+                logger.info(f"   TX: {result.tx_hash} | Amount: {result.amount_out}")
+
+                data['status'] = 'active'
+                data['entry_price'] = self.trade_amount / result.amount_out if result.amount_out > 0 else 0
+                data['amount_bought'] = result.amount_out
+                data['tx_hash'] = result.tx_hash
+                data['entry_time'] = result.timestamp
+
+                self.active_snipes[token_address] = data
+                del self.pending_targets[token_address]
+
+                # Log to database
+                await self._log_snipe_to_db(data, result)
+            else:
+                logger.error(f"❌ SNIPE FAILED: {result.error}")
+                data['status'] = 'failed'
+                data['error'] = result.error
 
         except Exception as e:
             logger.error(f"❌ SNIPE FAILED: {e}")
             data['status'] = 'failed'
+            data['error'] = str(e)
+
+    async def _log_snipe_to_db(self, data: Dict, result):
+        """Log snipe trade to database"""
+        try:
+            if self.db_pool:
+                async with self.db_pool.acquire() as conn:
+                    await conn.execute("""
+                        INSERT INTO trades (
+                            timestamp, symbol, side, price, quantity,
+                            quote_quantity, status, source, tx_hash, notes
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    """,
+                        result.timestamp,
+                        data['target'].get('token_address', 'UNKNOWN'),
+                        'BUY',
+                        data.get('entry_price', 0),
+                        result.amount_out,
+                        result.amount_in,
+                        'FILLED' if result.success else 'FAILED',
+                        'sniper',
+                        result.tx_hash,
+                        json.dumps(data.get('target', {}).get('safety_report', {}))
+                    )
+        except Exception as e:
+            logger.error(f"Error logging snipe to DB: {e}")
 
     async def _monitor_active_snipes(self):
-        """Monitor active snipes for auto-sell targets"""
+        """Monitor active snipes for auto-sell targets (take profit / stop loss)"""
+        # Exit settings
+        take_profit_pct = 50.0  # +50% profit target
+        stop_loss_pct = -20.0   # -20% stop loss
+
+        check_count = 0
         while self.is_running:
+            check_count += 1
+
             for address, data in list(self.active_snipes.items()):
-                # Check for +50% profit or -10% stop loss
-                # In real engine, fetch current price here
-                pass
+                try:
+                    if data['status'] != 'active':
+                        continue
+
+                    chain = data.get('chain_type', 'solana')
+                    entry_price = data.get('entry_price', 0)
+                    amount_held = data.get('amount_bought', 0)
+
+                    if entry_price <= 0 or amount_held <= 0:
+                        continue
+
+                    # Get current price (simplified - in production use DEX price feeds)
+                    current_price = await self._get_token_price(address, chain)
+
+                    if current_price <= 0:
+                        continue
+
+                    # Calculate P&L
+                    pnl_pct = ((current_price - entry_price) / entry_price) * 100
+
+                    # Log status periodically
+                    if check_count % 60 == 0:  # Every minute
+                        logger.info(f"📊 Position: {address[:8]}... | Entry: {entry_price:.8f} | Current: {current_price:.8f} | P&L: {pnl_pct:+.2f}%")
+
+                    # Check take profit
+                    if pnl_pct >= take_profit_pct:
+                        logger.info(f"🎯 TAKE PROFIT triggered for {address[:8]}... (+{pnl_pct:.2f}%)")
+                        await self._exit_position(data, 'TAKE_PROFIT')
+
+                    # Check stop loss
+                    elif pnl_pct <= stop_loss_pct:
+                        logger.warning(f"🛑 STOP LOSS triggered for {address[:8]}... ({pnl_pct:.2f}%)")
+                        await self._exit_position(data, 'STOP_LOSS')
+
+                except Exception as e:
+                    logger.error(f"Error monitoring snipe {address}: {e}")
+
             await asyncio.sleep(1)
+
+    async def _get_token_price(self, token_address: str, chain: str) -> float:
+        """Get current token price (simplified)"""
+        try:
+            import aiohttp
+
+            if chain == 'solana':
+                # Use Jupiter for price (SOL per token)
+                url = f"https://price.jup.ag/v4/price?ids={token_address}"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, timeout=5) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            price_info = data.get('data', {}).get(token_address, {})
+                            return float(price_info.get('price', 0))
+            else:
+                # For EVM, use DexScreener or similar
+                url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, timeout=5) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            pairs = data.get('pairs', [])
+                            if pairs:
+                                return float(pairs[0].get('priceNative', 0))
+
+        except Exception as e:
+            logger.debug(f"Error fetching price for {token_address}: {e}")
+
+        return 0
+
+    async def _exit_position(self, data: Dict, reason: str):
+        """Exit a position (sell tokens)"""
+        token_address = data['target'].get('token_address')
+        chain = data.get('chain_type', 'solana')
+        amount = data.get('amount_bought', 0)
+
+        logger.info(f"💰 Exiting position: {token_address} | Reason: {reason}")
+
+        try:
+            if not self.executor or amount <= 0:
+                logger.error("Cannot exit: executor not ready or no tokens")
+                return
+
+            result = await self.executor.execute_sell(
+                token_address=token_address,
+                chain=chain,
+                amount_in=amount,
+                slippage=self.slippage,
+                priority_fee=self.priority_fee
+            )
+
+            if result.success:
+                logger.info(f"✅ EXIT SUCCESS: {token_address}")
+                logger.info(f"   TX: {result.tx_hash} | Received: {result.amount_out}")
+
+                data['status'] = 'closed'
+                data['exit_price'] = result.amount_out / amount if amount > 0 else 0
+                data['exit_reason'] = reason
+                data['exit_tx'] = result.tx_hash
+                data['exit_time'] = result.timestamp
+
+                # Remove from active snipes
+                if token_address in self.active_snipes:
+                    del self.active_snipes[token_address]
+
+                # Log exit to database
+                await self._log_exit_to_db(data, result, reason)
+            else:
+                logger.error(f"❌ EXIT FAILED: {result.error}")
+
+        except Exception as e:
+            logger.error(f"Error exiting position: {e}")
+
+    async def _log_exit_to_db(self, data: Dict, result, reason: str):
+        """Log exit trade to database"""
+        try:
+            if self.db_pool:
+                async with self.db_pool.acquire() as conn:
+                    await conn.execute("""
+                        INSERT INTO trades (
+                            timestamp, symbol, side, price, quantity,
+                            quote_quantity, status, source, tx_hash, notes
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    """,
+                        result.timestamp,
+                        data['target'].get('token_address', 'UNKNOWN'),
+                        'SELL',
+                        data.get('exit_price', 0),
+                        result.amount_in,
+                        result.amount_out,
+                        'FILLED' if result.success else 'FAILED',
+                        'sniper',
+                        result.tx_hash,
+                        f"Exit reason: {reason}"
+                    )
+        except Exception as e:
+            logger.error(f"Error logging exit to DB: {e}")
 
     async def stop(self):
         """Stop the engine"""
         self.is_running = False
         for task in self.tasks:
             task.cancel()
+        if self.token_safety:
+            await self.token_safety.close()
+        if self.executor:
+            await self.executor.close()
         logger.info("🛑 Sniper Engine Stopped")

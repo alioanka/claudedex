@@ -1,17 +1,273 @@
 """
 Copy Trading Engine - Wallet Tracking (EVM + Solana)
+
+Features:
+- Real-time wallet monitoring on EVM and Solana
+- Real trade execution (when DRY_RUN=false)
+- Jupiter aggregator for Solana swaps
+- Uniswap/DEX router for EVM swaps
 """
 import asyncio
 import logging
 import json
-from typing import Dict, List
+from typing import Dict, List, Optional
 import aiohttp
 import os
 import ast
+from datetime import datetime
 
 logger = logging.getLogger("CopyTradingEngine")
 
+# Jupiter API
+JUPITER_QUOTE_API = "https://quote-api.jup.ag/v6/quote"
+JUPITER_SWAP_API = "https://quote-api.jup.ag/v6/swap"
+
+# Common tokens
+WSOL_MINT = "So11111111111111111111111111111111111111112"
+
+
+class CopyTradeExecutor:
+    """Trade executor for Copy Trading module"""
+
+    def __init__(self, dry_run: bool = True):
+        self.dry_run = dry_run
+        self.session: Optional[aiohttp.ClientSession] = None
+
+        # Solana credentials
+        self.solana_rpc_url = os.getenv('SOLANA_RPC_URL')
+        self.solana_private_key = os.getenv('SOLANA_MODULE_PRIVATE_KEY')
+        self.solana_wallet = os.getenv('SOLANA_MODULE_WALLET')
+
+        # EVM credentials
+        self.evm_private_key = os.getenv('PRIVATE_KEY')
+        self.evm_wallet = os.getenv('WALLET_ADDRESS')
+        self.web3_provider = os.getenv('WEB3_PROVIDER_URL')
+
+    async def initialize(self):
+        """Initialize executor"""
+        timeout = aiohttp.ClientTimeout(total=30)
+        self.session = aiohttp.ClientSession(timeout=timeout)
+        mode = "DRY RUN" if self.dry_run else "LIVE"
+        logger.info(f"💱 Copy Trade Executor initialized ({mode})")
+
+    async def close(self):
+        """Close executor"""
+        if self.session:
+            await self.session.close()
+            self.session = None
+
+    async def copy_solana_swap(
+        self,
+        input_mint: str,
+        output_mint: str,
+        amount_lamports: int,
+        slippage_bps: int = 100
+    ) -> Dict:
+        """Copy a Solana swap via Jupiter"""
+        if self.dry_run:
+            return await self._simulate_solana_swap(input_mint, output_mint, amount_lamports)
+
+        if not self.solana_wallet or not self.solana_private_key:
+            return {'success': False, 'error': 'Solana wallet not configured'}
+
+        try:
+            # Get quote from Jupiter
+            quote = await self._get_jupiter_quote(input_mint, output_mint, amount_lamports, slippage_bps)
+            if not quote:
+                return {'success': False, 'error': 'Failed to get Jupiter quote'}
+
+            # Get swap transaction
+            swap_tx = await self._get_jupiter_swap(quote)
+            if not swap_tx:
+                return {'success': False, 'error': 'Failed to get swap transaction'}
+
+            # Sign and send
+            tx_hash = await self._sign_and_send_solana(swap_tx)
+            if tx_hash:
+                return {
+                    'success': True,
+                    'tx_hash': tx_hash,
+                    'input_mint': input_mint,
+                    'output_mint': output_mint,
+                    'amount': amount_lamports
+                }
+            else:
+                return {'success': False, 'error': 'Failed to send transaction'}
+
+        except Exception as e:
+            logger.error(f"Solana copy swap error: {e}")
+            return {'success': False, 'error': str(e)}
+
+    async def copy_evm_swap(
+        self,
+        token_address: str,
+        amount_wei: int,
+        is_buy: bool = True,
+        slippage: float = 10.0
+    ) -> Dict:
+        """Copy an EVM swap via Uniswap"""
+        if self.dry_run:
+            return await self._simulate_evm_swap(token_address, amount_wei, is_buy)
+
+        if not self.evm_wallet or not self.evm_private_key:
+            return {'success': False, 'error': 'EVM wallet not configured'}
+
+        try:
+            from web3 import Web3
+
+            w3 = Web3(Web3.HTTPProvider(self.web3_provider))
+            if not w3.is_connected():
+                return {'success': False, 'error': 'Failed to connect to Web3'}
+
+            # Uniswap V2 Router
+            ROUTER = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"
+            WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+
+            ROUTER_ABI = [{
+                "inputs": [
+                    {"internalType": "uint256", "name": "amountOutMin", "type": "uint256"},
+                    {"internalType": "address[]", "name": "path", "type": "address[]"},
+                    {"internalType": "address", "name": "to", "type": "address"},
+                    {"internalType": "uint256", "name": "deadline", "type": "uint256"}
+                ],
+                "name": "swapExactETHForTokens",
+                "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
+                "stateMutability": "payable",
+                "type": "function"
+            }]
+
+            router = w3.eth.contract(address=Web3.to_checksum_address(ROUTER), abi=ROUTER_ABI)
+
+            if is_buy:
+                path = [Web3.to_checksum_address(WETH), Web3.to_checksum_address(token_address)]
+            else:
+                path = [Web3.to_checksum_address(token_address), Web3.to_checksum_address(WETH)]
+
+            deadline = int(datetime.now().timestamp()) + 120
+
+            tx = router.functions.swapExactETHForTokens(
+                0,  # Min output
+                path,
+                Web3.to_checksum_address(self.evm_wallet),
+                deadline
+            ).build_transaction({
+                'from': Web3.to_checksum_address(self.evm_wallet),
+                'value': amount_wei,
+                'gas': 300000,
+                'nonce': w3.eth.get_transaction_count(self.evm_wallet)
+            })
+
+            signed = w3.eth.account.sign_transaction(tx, self.evm_private_key)
+            tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
+
+            return {
+                'success': True,
+                'tx_hash': tx_hash.hex(),
+                'token': token_address,
+                'amount': amount_wei
+            }
+
+        except Exception as e:
+            logger.error(f"EVM copy swap error: {e}")
+            return {'success': False, 'error': str(e)}
+
+    async def _get_jupiter_quote(self, input_mint: str, output_mint: str, amount: int, slippage_bps: int) -> Optional[Dict]:
+        """Get Jupiter quote"""
+        try:
+            params = {
+                'inputMint': input_mint,
+                'outputMint': output_mint,
+                'amount': str(amount),
+                'slippageBps': str(slippage_bps)
+            }
+            async with self.session.get(JUPITER_QUOTE_API, params=params) as response:
+                if response.status == 200:
+                    return await response.json()
+        except Exception as e:
+            logger.debug(f"Jupiter quote error: {e}")
+        return None
+
+    async def _get_jupiter_swap(self, quote: Dict) -> Optional[str]:
+        """Get Jupiter swap transaction"""
+        try:
+            payload = {
+                'quoteResponse': quote,
+                'userPublicKey': self.solana_wallet,
+                'wrapAndUnwrapSol': True,
+                'prioritizationFeeLamports': 5000
+            }
+            async with self.session.post(JUPITER_SWAP_API, json=payload) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data.get('swapTransaction')
+        except Exception as e:
+            logger.debug(f"Jupiter swap error: {e}")
+        return None
+
+    async def _sign_and_send_solana(self, swap_tx_base64: str) -> Optional[str]:
+        """Sign and send Solana transaction"""
+        try:
+            from solders.keypair import Keypair
+            from solders.transaction import VersionedTransaction
+            from solana.rpc.async_api import AsyncClient
+            import base64
+            import base58
+
+            private_key_bytes = base58.b58decode(self.solana_private_key)
+            keypair = Keypair.from_bytes(private_key_bytes)
+
+            tx_bytes = base64.b64decode(swap_tx_base64)
+            tx = VersionedTransaction.from_bytes(tx_bytes)
+            tx.sign([keypair])
+
+            async with AsyncClient(self.solana_rpc_url) as client:
+                result = await client.send_transaction(tx)
+                return str(result.value)
+
+        except ImportError:
+            logger.error("Solana libraries not installed")
+        except Exception as e:
+            logger.error(f"Solana transaction error: {e}")
+        return None
+
+    async def _simulate_solana_swap(self, input_mint: str, output_mint: str, amount: int) -> Dict:
+        """Simulate Solana swap"""
+        import hashlib
+        fake_hash = hashlib.sha256(f"{input_mint}{output_mint}{datetime.now().timestamp()}".encode()).hexdigest()
+        logger.info(f"🧪 [DRY RUN] Simulated Solana swap: {amount} lamports")
+        return {
+            'success': True,
+            'tx_hash': f"DRY_RUN_{fake_hash[:16]}",
+            'input_mint': input_mint,
+            'output_mint': output_mint,
+            'amount': amount
+        }
+
+    async def _simulate_evm_swap(self, token: str, amount: int, is_buy: bool) -> Dict:
+        """Simulate EVM swap"""
+        import hashlib
+        fake_hash = hashlib.sha256(f"{token}{amount}{datetime.now().timestamp()}".encode()).hexdigest()
+        side = "BUY" if is_buy else "SELL"
+        logger.info(f"🧪 [DRY RUN] Simulated EVM {side}: {amount} wei")
+        return {
+            'success': True,
+            'tx_hash': f"DRY_RUN_{fake_hash[:16]}",
+            'token': token,
+            'amount': amount
+        }
+
+
 class CopyTradingEngine:
+    """
+    Copy Trading Engine for tracking and copying wallet trades.
+
+    Features:
+    - EVM wallet monitoring via Etherscan
+    - Solana wallet monitoring via RPC
+    - Real trade execution with Jupiter/Uniswap
+    - Configurable copy amount and ratio
+    """
+
     def __init__(self, config: Dict, db_pool):
         self.config = config
         self.db_pool = db_pool
@@ -21,6 +277,13 @@ class CopyTradingEngine:
         self.solana_rpc_url = os.getenv('SOLANA_RPC_URL')
         self.helius_api_key = os.getenv('HELIUS_API_KEY')
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
+
+        # Copy trading settings
+        self.max_copy_amount = 100.0  # Max USD per copy
+        self.copy_ratio = 10  # Copy 10% of original
+
+        # Trade executor
+        self.executor: Optional[CopyTradeExecutor] = None
 
         # Track known transactions to avoid duplicates
         self._known_tx_hashes = set()
@@ -32,6 +295,10 @@ class CopyTradingEngine:
         logger.info(f"   Mode: {'DRY_RUN (Simulated)' if self.dry_run else 'LIVE TRADING'}")
         logger.info(f"   EVM monitoring: {'Enabled' if self.etherscan_api_key else 'Disabled (no ETHERSCAN_API_KEY)'}")
         logger.info(f"   Solana monitoring: {'Enabled' if self.solana_rpc_url else 'Disabled (no SOLANA_RPC_URL)'}")
+
+        # Initialize executor
+        self.executor = CopyTradeExecutor(self.dry_run)
+        await self.executor.initialize()
 
         # Initial load of settings
         await self._load_settings()
@@ -240,13 +507,54 @@ class CopyTradingEngine:
         tx_hash = source_tx.get('hash', 'unknown')
         logger.info(f"🚀 Copying EVM trade {tx_hash} ({method_name})")
 
-        if self.dry_run:
-            # Simulated Execution
-            await asyncio.sleep(0.5)
-            logger.info(f"✅ EVM Copy Trade Simulated: {tx_hash}")
-        else:
-            # TODO: Implement actual trade execution
-            logger.warning("Live EVM copy trading not yet implemented")
+        try:
+            # Parse token from transaction
+            # For swapExactETHForTokens, the token is in the path (input data)
+            input_data = source_tx.get('input', '')
+            original_value = int(source_tx.get('value', 0))
+
+            # Calculate copy amount (ratio of original)
+            copy_amount = min(
+                original_value * self.copy_ratio // 100,
+                int(self.max_copy_amount * 1e18)  # Max in wei
+            )
+
+            if copy_amount <= 0:
+                logger.warning("Copy amount too small, skipping")
+                return
+
+            # Extract token address from input data (simplified)
+            # In production, fully decode the ABI
+            token_address = None
+            if len(input_data) > 200:
+                # Token is usually the last address in path
+                # Path starts at offset 196 for swapExactETHForTokens
+                try:
+                    token_address = '0x' + input_data[-40:]
+                except:
+                    pass
+
+            if not token_address:
+                logger.warning("Could not extract token address from tx")
+                return
+
+            # Execute copy trade
+            result = await self.executor.copy_evm_swap(
+                token_address=token_address,
+                amount_wei=copy_amount,
+                is_buy='ForTokens' in method_name
+            )
+
+            if result.get('success'):
+                logger.info(f"✅ EVM Copy Trade {'Executed' if not self.dry_run else 'Simulated'}: {result.get('tx_hash')}")
+
+                # Log to database
+                await self._log_copy_trade('ethereum', tx_hash, result)
+            else:
+                logger.error(f"❌ EVM Copy Trade Failed: {result.get('error')}")
+
+        except Exception as e:
+            logger.error(f"Error executing EVM copy trade: {e}")
 
     async def _analyze_and_copy_solana(self, wallet: str, signature: str) -> bool:
         """Analyze Solana transaction and execute copy if it's a swap"""
@@ -304,14 +612,95 @@ class CopyTradingEngine:
         """Execute the same trade on Solana"""
         logger.info(f"🚀 Copying Solana trade {signature[:20]}...")
 
-        if self.dry_run:
-            # Simulated Execution
-            await asyncio.sleep(0.5)
-            logger.info(f"✅ Solana Copy Trade Simulated: {signature[:20]}...")
-        else:
-            # TODO: Implement actual Solana trade execution via Jupiter
-            logger.warning("Live Solana copy trading not yet implemented")
+        try:
+            # Extract token mints from transaction
+            meta = tx_data.get('meta', {})
+            post_balances = meta.get('postTokenBalances', [])
+            pre_balances = meta.get('preTokenBalances', [])
+
+            # Find the tokens involved
+            input_mint = WSOL_MINT  # Default to SOL
+            output_mint = None
+
+            pre_mints = {b.get('mint') for b in pre_balances}
+
+            for balance in post_balances:
+                mint = balance.get('mint')
+                if mint and mint != WSOL_MINT and mint not in pre_mints:
+                    output_mint = mint
+                    break
+
+            if not output_mint:
+                # Try to find any non-SOL token
+                for balance in post_balances:
+                    mint = balance.get('mint')
+                    if mint and mint != WSOL_MINT:
+                        output_mint = mint
+                        break
+
+            if not output_mint:
+                logger.warning("Could not extract output token from tx")
+                return
+
+            # Calculate copy amount
+            # Get SOL price and calculate based on max_copy_amount
+            sol_price = 200  # Placeholder, in production fetch real price
+            copy_lamports = int(min(self.max_copy_amount / sol_price, 0.1) * 1e9)
+
+            # Execute copy trade
+            result = await self.executor.copy_solana_swap(
+                input_mint=input_mint,
+                output_mint=output_mint,
+                amount_lamports=copy_lamports
+            )
+
+            if result.get('success'):
+                logger.info(f"✅ Solana Copy Trade {'Executed' if not self.dry_run else 'Simulated'}: {result.get('tx_hash')}")
+
+                # Log to database
+                await self._log_copy_trade('solana', signature, result)
+            else:
+                logger.error(f"❌ Solana Copy Trade Failed: {result.get('error')}")
+
+        except Exception as e:
+            logger.error(f"Error executing Solana copy trade: {e}")
+
+    async def _log_copy_trade(self, chain: str, source_tx: str, result: Dict):
+        """Log copy trade to database"""
+        if not self.db_pool:
+            return
+
+        try:
+            async with self.db_pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO trades (
+                        timestamp, symbol, side, price, quantity,
+                        status, source, tx_hash, notes
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                """,
+                    datetime.now(),
+                    result.get('output_mint') or result.get('token', 'UNKNOWN'),
+                    'BUY',
+                    0,  # Price not easily available
+                    result.get('amount', 0),
+                    'FILLED' if result.get('success') else 'FAILED',
+                    'copytrading',
+                    result.get('tx_hash'),
+                    json.dumps({
+                        'chain': chain,
+                        'source_tx': source_tx,
+                        'dry_run': self.dry_run
+                    })
+                )
+        except Exception as e:
+            logger.error(f"Error logging copy trade: {e}")
 
     async def stop(self):
+        """Stop the engine"""
         self.is_running = False
+
+        # Close executor
+        if self.executor:
+            await self.executor.close()
+
         logger.info("🛑 Copy Trading Engine Stopped")
