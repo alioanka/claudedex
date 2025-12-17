@@ -75,6 +75,7 @@ async def main():
     # Init Engine
     config = {'arbitrage_enabled': True}
     engine = ArbitrageEngine(config, db_pool)
+    await engine.initialize()
 
     try:
         await engine.run()
