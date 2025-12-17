@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+
+{% block title %}AI Sentiment Analysis - ClaudeDex{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Market Sentiment Analysis</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-4 text-center">
+                            <h6 class="text-muted">Current Sentiment</h6>
+                            <h2 id="sentimentScore" class="display-4 fw-bold">--</h2>
+                            <p id="sentimentLabel" class="text-muted">Loading...</p>
+                        </div>
+                        <div class="col-md-8">
+                            <canvas id="sentimentChart" height="200"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Recent Signals</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover" id="signalsTable">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Source</th>
+                                    <th>Score</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Populated by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">AI Performance</h5>
+                </div>
+                <div class="card-body">
+                    <div class="d-flex justify-content-between mb-3">
+                        <span>Total AI Trades:</span>
+                        <span id="totalAiTrades" class="fw-bold">0</span>
+                    </div>
+                    <div class="d-flex justify-content-between mb-3">
+                        <span>AI Win Rate:</span>
+                        <span id="aiWinRate" class="fw-bold">0%</span>
+                    </div>
+                    <div class="d-flex justify-content-between">
+                        <span>Net PnL:</span>
+                        <span id="aiNetPnl" class="fw-bold">$0.00</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', initDashboard);
+
+    async function initDashboard() {
+        await loadSentimentData();
+        await loadPerformance();
+        setInterval(loadSentimentData, 60000); // Refresh every minute
+    }
+
+    async function loadSentimentData() {
+        try {
+            const response = await fetch('/api/ai/sentiment');
+            const data = await response.json();
+
+            if (data.success && data.data.length > 0) {
+                const history = data.data;
+                const latest = history[history.length - 1];
+
+                // Update Score
+                const score = latest.score;
+                const scoreEl = document.getElementById('sentimentScore');
+                const labelEl = document.getElementById('sentimentLabel');
+
+                scoreEl.textContent = (score * 100).toFixed(0);
+
+                if (score > 0.5) {
+                    scoreEl.className = 'display-4 fw-bold text-success';
+                    labelEl.textContent = 'Bullish';
+                } else if (score < -0.5) {
+                    scoreEl.className = 'display-4 fw-bold text-danger';
+                    labelEl.textContent = 'Bearish';
+                } else {
+                    scoreEl.className = 'display-4 fw-bold text-warning';
+                    labelEl.textContent = 'Neutral';
+                }
+
+                // Update Chart
+                updateChart(history);
+
+                // Update Table (mock for now using history)
+                updateTable(history.slice().reverse().slice(0, 5));
+            }
+        } catch (error) {
+            console.error('Error loading sentiment:', error);
+        }
+    }
+
+    async function loadPerformance() {
+        try {
+            const response = await fetch('/api/ai/performance');
+            const data = await response.json();
+
+            if (data.success) {
+                const metrics = data.metrics;
+                document.getElementById('totalAiTrades').textContent = metrics.trades;
+                document.getElementById('aiWinRate').textContent = metrics.win_rate.toFixed(1) + '%';
+
+                const pnlEl = document.getElementById('aiNetPnl');
+                pnlEl.textContent = '$' + metrics.total_pnl.toFixed(2);
+                pnlEl.className = 'fw-bold ' + (metrics.total_pnl >= 0 ? 'text-success' : 'text-danger');
+            }
+        } catch (error) {
+            console.error('Error loading performance:', error);
+        }
+    }
+
+    let chartInstance = null;
+
+    function updateChart(history) {
+        const ctx = document.getElementById('sentimentChart').getContext('2d');
+        const labels = history.map(h => new Date(h.timestamp).toLocaleTimeString());
+        const data = history.map(h => h.score * 100);
+
+        if (chartInstance) {
+            chartInstance.destroy();
+        }
+
+        chartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Sentiment Score',
+                    data: data,
+                    borderColor: '#4e73df',
+                    tension: 0.1,
+                    fill: false
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        min: -100,
+                        max: 100
+                    }
+                }
+            }
+        });
+    }
+
+    function updateTable(recentLogs) {
+        const tbody = document.querySelector('#signalsTable tbody');
+        tbody.innerHTML = '';
+
+        recentLogs.forEach(log => {
+            const row = document.createElement('tr');
+            const score = log.score;
+            let action = 'HOLD';
+            let cls = 'text-muted';
+
+            if (score > 0.8) { action = 'BUY'; cls = 'text-success fw-bold'; }
+            else if (score < -0.8) { action = 'SELL'; cls = 'text-danger fw-bold'; }
+
+            row.innerHTML = `
+                <td>${new Date(log.timestamp).toLocaleTimeString()}</td>
+                <td>AI Analysis</td>
+                <td>${(score * 100).toFixed(0)}</td>
+                <td class="${cls}">${action}</td>
+            `;
+            tbody.appendChild(row);
+        });
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}AI Settings - ClaudeDex{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">AI Module Configuration</h5>
+                    <button class="btn btn-primary" onclick="saveSettings()">
+                        <i class="fas fa-save me-2"></i>Save Changes
+                    </button>
+                </div>
+                <div class="card-body">
+                    <form id="aiSettingsForm">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6 class="text-uppercase text-muted mb-3">Trading Parameters</h6>
+
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="direct_trading">
+                                    <label class="form-check-label" for="direct_trading">Enable Direct Trading</label>
+                                    <div class="form-text">Allow AI to execute trades automatically based on sentiment.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Confidence Threshold (%)</label>
+                                    <input type="number" class="form-control" id="confidence_threshold" min="0" max="100">
+                                    <div class="form-text">Minimum sentiment score (0-100) to trigger a trade.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Trade Amount (USD)</label>
+                                    <input type="number" class="form-control" id="trade_amount_usd" step="10">
+                                    <div class="form-text">Amount to invest per trade.</div>
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <h6 class="text-uppercase text-muted mb-3">Analysis Settings</h6>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Sentiment Source</label>
+                                    <select class="form-select" id="sentiment_source">
+                                        <option value="news">News Headlines</option>
+                                        <option value="social">Social Media (Twitter/Reddit)</option>
+                                        <option value="combined">Combined</option>
+                                    </select>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Analysis Interval (Minutes)</label>
+                                    <input type="number" class="form-control" id="analysis_interval" min="5" step="5">
+                                    <div class="form-text">How often to fetch and analyze data.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- User Guide -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-book me-2"></i>AI Module Guide</h5>
+                </div>
+                <div class="card-body">
+                    <h6>Overview</h6>
+                    <p>The AI Analysis Module uses Large Language Models (LLMs) to analyze market sentiment from news and social media. It generates a sentiment score (-1 to +1) which can be used to trigger automated trades.</p>
+
+                    <h6>Modes</h6>
+                    <ul>
+                        <li><strong>Support Tool:</strong> (Direct Trading Disabled) The module only logs sentiment scores and provides insights on the dashboard. No trades are executed.</li>
+                        <li><strong>Direct Trading:</strong> (Direct Trading Enabled) The module executes BUY orders when sentiment is strongly positive and meets your confidence threshold. In DRY RUN mode, these are simulated.</li>
+                    </ul>
+
+                    <h6>Configuration</h6>
+                    <ul>
+                        <li><strong>Confidence Threshold:</strong> The minimum sentiment strength required to trade. Recommended: 80%+.</li>
+                        <li><strong>Trade Amount:</strong> Fixed USD amount per AI-triggered trade.</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', loadSettings);
+
+    async function loadSettings() {
+        try {
+            const response = await fetch('/api/ai/settings');
+            const data = await response.json();
+
+            if (data.success) {
+                const settings = data.settings;
+                document.getElementById('direct_trading').checked = settings.direct_trading === true;
+                document.getElementById('confidence_threshold').value = settings.confidence_threshold || 85;
+                document.getElementById('trade_amount_usd').value = settings.trade_amount_usd || 50;
+                document.getElementById('sentiment_source').value = settings.sentiment_source || 'news';
+                document.getElementById('analysis_interval').value = settings.analysis_interval || 15;
+            }
+        } catch (error) {
+            console.error('Error loading settings:', error);
+            showNotification('Error loading settings', 'error');
+        }
+    }
+
+    async function saveSettings() {
+        const settings = {
+            direct_trading: document.getElementById('direct_trading').checked,
+            confidence_threshold: parseFloat(document.getElementById('confidence_threshold').value),
+            trade_amount_usd: parseFloat(document.getElementById('trade_amount_usd').value),
+            sentiment_source: document.getElementById('sentiment_source').value,
+            analysis_interval: parseInt(document.getElementById('analysis_interval').value)
+        };
+
+        try {
+            const response = await fetch('/api/ai/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(settings)
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                showNotification('Settings saved successfully', 'success');
+            } else {
+                showNotification('Error saving settings: ' + data.error, 'error');
+            }
+        } catch (error) {
+            console.error('Error saving settings:', error);
+            showNotification('Error saving settings', 'error');
+        }
+    }
+</script>
+{% endblock %}

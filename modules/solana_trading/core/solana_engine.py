@@ -928,6 +928,9 @@ class SolanaTradingEngine:
         self.total_pnl_sol = 0.0
         self.total_fees = 0.0
 
+        # State tracking
+        self._last_pause_log_time = None
+
         # PnL Tracker for Sharpe/Sortino calculations
         self.pnl_tracker = PnLTracker(
             initial_capital=self.position_size_sol * self.max_positions,
@@ -1442,7 +1445,18 @@ class SolanaTradingEngine:
                 if self.risk_metrics.consecutive_losses >= 5:
                     pause_reason.append(f"consecutive losses ({self.risk_metrics.consecutive_losses} >= 5)")
                 reason_str = " and ".join(pause_reason) if pause_reason else "unknown"
-                logger.warning(f"⚠️ Trading paused - {reason_str}. Positions still being monitored for SL/TP.")
+
+                # Log error only once every minute to avoid spam
+                should_log = False
+                if self._last_pause_log_time is None:
+                    should_log = True
+                elif (datetime.utcnow() - self._last_pause_log_time).total_seconds() > 60:
+                    should_log = True
+
+                if should_log:
+                    logger.error(f"⚠️ Trading paused - {reason_str}. Positions still being monitored for SL/TP.")
+                    self._last_pause_log_time = datetime.utcnow()
+
                 return
 
             # Scan for opportunities per strategy
