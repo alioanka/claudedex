@@ -615,6 +615,17 @@ class MEVTransaction(Base):
     )
 
 
+class SentimentLog(Base):
+    """AI Sentiment analysis logs."""
+    __tablename__ = 'sentiment_logs'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    score = Column(Float, nullable=False)
+    source = Column(String(50))
+    timestamp = Column(TIMESTAMP(timezone=True), server_default=func.now(), index=True)
+    metadata = Column(JSONB)
+
+
 class SystemLog(Base):
     """System event logging model."""
     __tablename__ = 'system_logs'

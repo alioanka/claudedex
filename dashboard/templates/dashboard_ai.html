@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+
+{% block title %}AI Analysis Dashboard - DexScreener Bot{% endblock %}
+
+{% block content %}
+<div class="dashboard-header">
+    <div class="header-title">
+        <h1><i class="fas fa-brain"></i> AI Analysis Dashboard</h1>
+        <p class="subtitle">Real-time market sentiment and predictive modeling</p>
+    </div>
+    <div class="header-controls">
+        <div class="status-badge" id="aiStatus">
+            <span class="dot"></span> <span id="statusText">Offline</span>
+        </div>
+        <button class="btn btn-primary" onclick="refreshData()">
+            <i class="fas fa-sync-alt"></i> Refresh
+        </button>
+    </div>
+</div>
+
+<!-- AI Metrics Overview -->
+<div class="metrics-grid">
+    <div class="metric-card">
+        <div class="metric-icon success">
+            <i class="fas fa-smile"></i>
+        </div>
+        <div class="metric-info">
+            <h3>Market Sentiment</h3>
+            <div class="metric-value" id="sentimentLabel">Loading...</div>
+            <div class="metric-sub">Score: <span id="sentimentScore">0</span>/100</div>
+        </div>
+    </div>
+
+    <div class="metric-card">
+        <div class="metric-icon primary">
+            <i class="fas fa-signal"></i>
+        </div>
+        <div class="metric-info">
+            <h3>Active Signals</h3>
+            <div class="metric-value" id="activeSignals">0</div>
+            <div class="metric-sub">Pending Executions</div>
+        </div>
+    </div>
+
+    <div class="metric-card">
+        <div class="metric-icon warning">
+            <i class="fas fa-bullseye"></i>
+        </div>
+        <div class="metric-info">
+            <h3>Model Accuracy</h3>
+            <div class="metric-value" id="modelAccuracy">0.0%</div>
+            <div class="metric-sub">Last 24 Hours</div>
+        </div>
+    </div>
+
+    <div class="metric-card">
+        <div class="metric-icon info">
+            <i class="fas fa-robot"></i>
+        </div>
+        <div class="metric-info">
+            <h3>Trading Mode</h3>
+            <div class="metric-value" id="tradingMode">Support</div>
+            <div class="metric-sub" id="tradingModeSub">Direct Trading: Off</div>
+        </div>
+    </div>
+</div>
+
+<!-- Main Content Grid -->
+<div class="dashboard-grid">
+    <!-- Sentiment Trend Chart -->
+    <div class="card col-span-2">
+        <div class="card-header">
+            <h3><i class="fas fa-chart-area"></i> Sentiment Trend (24h)</h3>
+        </div>
+        <div class="card-body">
+            <canvas id="sentimentChart" height="300"></canvas>
+        </div>
+    </div>
+
+    <!-- Recent Signals -->
+    <div class="card">
+        <div class="card-header">
+            <h3><i class="fas fa-list-ul"></i> Live AI Signals</h3>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Token</th>
+                        <th>Score</th>
+                        <th>Signal</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="signalsTable">
+                    <tr><td colspan="4" class="text-center">Loading signals...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let sentimentChart = null;
+
+    document.addEventListener('DOMContentLoaded', function() {
+        refreshData();
+    });
+
+    async function refreshData() {
+        try {
+            // 1. Fetch Stats
+            const statsRes = await fetch('/api/ai/stats');
+            const stats = await statsRes.json();
+
+            if (stats.success) {
+                updateMetrics(stats.stats);
+            }
+
+            // 2. Fetch Sentiment History
+            const histRes = await fetch('/api/ai/sentiment');
+            const history = await histRes.json();
+
+            if (history.success) {
+                updateChart(history.data);
+            }
+
+            // 3. Fetch Settings (for Mode)
+            const setRes = await fetch('/api/ai/settings');
+            const settings = await setRes.json();
+            if (settings.success) {
+                const mode = settings.settings.direct_trading ? 'Direct Trade' : 'Support Tool';
+                document.getElementById('tradingMode').textContent = mode;
+                document.getElementById('tradingModeSub').textContent = `Direct Trading: ${settings.settings.direct_trading ? 'On' : 'Off'}`;
+            }
+
+        } catch (e) {
+            console.error('Error fetching AI data:', e);
+        }
+    }
+
+    function updateMetrics(data) {
+        document.getElementById('sentimentScore').textContent = (data.sentiment_score * 100).toFixed(0);
+        document.getElementById('sentimentLabel').textContent = data.sentiment_label;
+        document.getElementById('sentimentLabel').className = `metric-value ${getSentimentColor(data.sentiment_score)}`;
+
+        document.getElementById('activeSignals').textContent = data.active_signals;
+        document.getElementById('modelAccuracy').textContent = (data.accuracy || 0).toFixed(1) + '%';
+
+        const statusEl = document.getElementById('aiStatus');
+        const statusText = document.getElementById('statusText');
+        if (data.status === 'Running') {
+            statusEl.className = 'status-badge status-active';
+            statusText.textContent = 'Active';
+        } else {
+            statusEl.className = 'status-badge status-inactive';
+            statusText.textContent = 'Offline';
+        }
+    }
+
+    function getSentimentColor(score) {
+        if (score > 0.3) return 'text-success';
+        if (score < -0.3) return 'text-danger';
+        return 'text-warning';
+    }
+
+    function updateChart(data) {
+        const ctx = document.getElementById('sentimentChart').getContext('2d');
+
+        const labels = data.map(d => new Date(d.timestamp).toLocaleTimeString());
+        const scores = data.map(d => d.score * 100); // Scale to 0-100
+
+        if (sentimentChart) {
+            sentimentChart.destroy();
+        }
+
+        sentimentChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Sentiment Score',
+                    data: scores,
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: false,
+                        min: -100,
+                        max: 100
+                    }
+                }
+            }
+        });
+    }
+</script>
+{% endblock %}

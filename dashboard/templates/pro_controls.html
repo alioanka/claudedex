@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+    <!-- Module Control -->
+    <div class="col-md-6">
+        <div class="card bg-dark text-white mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Module Control</span>
+                <a href="/module-control" class="btn btn-sm btn-outline-light">Full Control</a>
+            </div>
+            <div class="card-body">
+                <div id="module-status" class="list-group">
+                    <!-- Loaded via JS -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manual Trade -->
+    <div class="col-md-6">
+        <div class="card bg-dark text-white mb-4">
+            <div class="card-header">Manual Trade</div>
+            <div class="card-body">
+                <form id="manual-trade-form">
+                    <div class="mb-3">
+                        <label>Module</label>
+                        <select class="form-select" id="trade-module">
+                            <option value="dex">DEX</option>
+                            <option value="futures">Futures</option>
+                            <option value="solana">Solana</option>
+                            <option value="sniper">Sniper</option>
+                            <option value="ai_analysis">AI Analysis</option>
+                            <option value="arbitrage">Arbitrage</option>
+                            <option value="copy_trading">Copy Trading</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label>Token Address / Symbol</label>
+                        <input type="text" class="form-control" id="trade-token">
+                    </div>
+                    <div class="mb-3">
+                        <label>Side</label>
+                        <select class="form-select" id="trade-side">
+                            <option value="buy">Buy / Long</option>
+                            <option value="sell">Sell / Short</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label>Amount (USD)</label>
+                        <input type="number" class="form-control" id="trade-amount">
+                    </div>
+                    <button type="button" class="btn btn-success w-100" onclick="executeTrade()">Execute</button>
+                </form>
+            </div>
+        </div>
+
+        <button class="btn btn-danger w-100 mb-4" onclick="panicSell()">🚨 PANIC SELL ALL 🚨</button>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', loadModules);
+
+async function loadModules() {
+    try {
+        // Poll status API for all modules
+        const response = await fetch('/api/modules');
+        const result = await response.json();
+
+        if (result.success && result.data && result.data.modules) {
+            const container = document.getElementById('module-status');
+            container.innerHTML = '';
+
+            // Define all modules to display
+            const modules = [
+                { key: 'dex_trading', label: 'DEX' },
+                { key: 'futures_trading', label: 'Futures' },
+                { key: 'solana_strategies', label: 'Solana' },
+                { key: 'sniper', label: 'Sniper' },
+                { key: 'ai_analysis', label: 'AI' },
+                { key: 'arbitrage', label: 'Arbitrage' },
+                { key: 'copy_trading', label: 'Copy Trading' }
+            ];
+
+            modules.forEach(mod => {
+                const modData = result.data.modules[mod.key] || { enabled: false, status: 'DISABLED' };
+                const isRunning = modData.status === 'RUNNING';
+
+                const item = document.createElement('div');
+                item.className = 'list-group-item bg-dark text-white d-flex justify-content-between align-items-center border-secondary';
+                item.innerHTML = `
+                    <div>
+                        <span class="fw-bold">${mod.label}</span>
+                        <span class="badge ${isRunning ? 'bg-success' : 'bg-secondary'} ms-2">${modData.status}</span>
+                    </div>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-success" onclick="controlModule('${mod.key}', 'start')" ${isRunning ? 'disabled' : ''}><i class="fas fa-play"></i></button>
+                        <button class="btn btn-warning" onclick="controlModule('${mod.key}', 'stop')" ${!isRunning ? 'disabled' : ''}><i class="fas fa-stop"></i></button>
+                    </div>
+                `;
+                container.appendChild(item);
+            });
+        }
+    } catch (e) {
+        console.error('Error loading modules:', e);
+    }
+}
+
+async function controlModule(module, action) {
+    // Determine API endpoint based on action (start/stop/enable/disable)
+    // For pro controls, we map start->enable and stop->disable for simplicity, or use specific endpoints
+    const endpoint = action === 'start' ? 'enable' : 'disable';
+
+    try {
+        const res = await fetch(`/api/modules/${module}/${endpoint}`, { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            loadModules(); // Reload status
+        } else {
+            alert('Error: ' + data.error);
+        }
+    } catch (e) {
+        alert('Request failed: ' + e.message);
+    }
+}
+
+async function executeTrade() {
+    const module = document.getElementById('trade-module').value;
+    const token = document.getElementById('trade-token').value;
+    const side = document.getElementById('trade-side').value;
+    const amount = document.getElementById('trade-amount').value;
+
+    await fetch('/api/trade/execute', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ module, token, side, amount })
+    });
+    alert('Trade executed!');
+}
+
+async function panicSell() {
+    if(!confirm("Are you sure you want to close ALL positions across ALL modules?")) return;
+
+    await fetch('/api/bot/emergency_exit', { method: 'POST' });
+    alert('Emergency exit triggered!');
+}
+</script>
+{% endblock %}

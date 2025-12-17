@@ -52,7 +52,9 @@ class ModuleProcess:
         'solana': [
             ('SOLANA_MODULE_PRIVATE_KEY', 'Solana module private key'),
             ('ENCRYPTION_KEY', 'Encryption key for decrypting secrets'),
-        ]
+        ],
+        'sniper': [],
+        'ai_analysis': [('OPENAI_API_KEY', 'OpenAI API Key for Sentiment Analysis')]
     }
 
     def __init__(self, name: str, script_path: str, enabled_env_var: str, module_key: str = None):
@@ -246,23 +248,51 @@ class TradingBotOrchestrator:
         # Define modules
         self.modules['dex'] = ModuleProcess(
             name="DEX Trading",
-            script_path="main_dex.py",
+            script_path="modules/dex_trading/main_dex.py",
             enabled_env_var="DEX_MODULE_ENABLED",
             module_key="dex"
         )
 
         self.modules['futures'] = ModuleProcess(
             name="Futures Trading",
-            script_path="futures_trading/main_futures.py",
+            script_path="modules/futures_trading/main_futures.py",
             enabled_env_var="FUTURES_MODULE_ENABLED",
             module_key="futures"
         )
 
         self.modules['solana'] = ModuleProcess(
             name="Solana Trading",
-            script_path="solana_trading/main_solana.py",
+            script_path="modules/solana_trading/main_solana.py",
             enabled_env_var="SOLANA_MODULE_ENABLED",
             module_key="solana"
+        )
+
+        self.modules['sniper'] = ModuleProcess(
+            name="Sniper Module",
+            script_path="modules/sniper/main_sniper.py",
+            enabled_env_var="SNIPER_MODULE_ENABLED",
+            module_key="sniper"
+        )
+
+        self.modules['ai_analysis'] = ModuleProcess(
+            name="AI Analysis",
+            script_path="modules/ai_analysis/main_ai.py",
+            enabled_env_var="AI_MODULE_ENABLED",
+            module_key="ai_analysis"
+        )
+
+        self.modules['arbitrage'] = ModuleProcess(
+            name="Arbitrage Module",
+            script_path="modules/arbitrage/main_arbitrage.py",
+            enabled_env_var="ARBITRAGE_MODULE_ENABLED",
+            module_key="arbitrage"
+        )
+
+        self.modules['copy_trading'] = ModuleProcess(
+            name="Copy Trading Module",
+            script_path="modules/copy_trading/main_copy.py",
+            enabled_env_var="COPY_TRADING_MODULE_ENABLED",
+            module_key="copy_trading"
         )
 
         # Setup signal handlers

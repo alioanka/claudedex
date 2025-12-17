@@ -789,7 +789,7 @@ class TradingBotEngine:
             # If we get here, score is good enough!
             logger.info(f"   ✅ PASSED: Score {score:.4f} >= {min_score}")
 
-            # ✅ Calculate position size from config
+            # ✅ Calculate position size from config (Kelly Criterion)
             position_size = await self._calculate_position_size(
                 risk_score=risk_score,
                 opportunity_score=score
@@ -1798,10 +1798,27 @@ class TradingBotEngine:
             # Calculate the total capital to risk on this trade
             capital_at_risk = portfolio_balance * risk_per_trade_pct
 
-            # Adjust capital at risk based on opportunity score (higher score = slightly more risk)
-            # A score of 0.5 uses the base risk, 1.0 uses 120% of base risk
+            # Kelly Criterion Calculation
+            # K% = W - (1-W)/R
+            # W = Win Rate (default 0.6 if unknown)
+            # R = Reward/Risk Ratio (default 2.0)
+            win_rate = self.stats['successful_trades'] / max(1, self.stats['total_trades']) if self.stats['total_trades'] > 10 else 0.6
+            profit_factor = 2.0 # Target 2:1
+
+            kelly_pct = win_rate - (1 - win_rate) / profit_factor
+
+            # Use Half-Kelly for safety
+            kelly_fraction = max(0.0, kelly_pct * 0.5)
+
+            # Combine Base Risk with Kelly
+            # If Kelly suggests higher risk and opportunity score is high, boost size
             opportunity_multiplier = 0.8 + (opportunity_score * 0.4) # Range [0.8, 1.2]
-            adjusted_capital_at_risk = capital_at_risk * opportunity_multiplier
+
+            # If Kelly is high (high confidence), allow up to 2x standard risk
+            if kelly_fraction > risk_per_trade_pct:
+                risk_per_trade_pct = min(kelly_fraction, risk_per_trade_pct * 2)
+
+            adjusted_capital_at_risk = portfolio_balance * risk_per_trade_pct * opportunity_multiplier
             
             # Calculate position size based on stop-loss
             # Position Size = Capital at Risk / Stop-Loss Percentage
@@ -1874,24 +1891,26 @@ class TradingBotEngine:
                 position['is_break_even'] = True
                 logger.info(f"  🛡️ Break-even stop-loss activated for {position.get('token_symbol', 'UNKNOWN')} at ${position['entry_price']:.8f}")
 
-            # 5. Progressive Trailing Stop
+            # 5. Ratchet Trailing Stop (Advanced)
             if pnl_percentage > 10: # Activates after 10% profit
                 max_profit = position.get('max_profit', pnl_percentage)
                 position['max_profit'] = max(max_profit, pnl_percentage)
 
-                trailing_stop_pct = 0
-                if max_profit >= 30:
-                    trailing_stop_pct = 2 # Tighten to 2% trail
-                elif max_profit >= 20:
-                    trailing_stop_pct = 4 # Tighten to 4% trail
-                else: # 10% <= max_profit < 20%
-                    trailing_stop_pct = 6 # Start with 6% trail
+                trailing_stop_pct = 6 # Default 6% trail
+
+                # Ratchet Logic
+                if max_profit >= 50:
+                    trailing_stop_pct = 2 # Extremely tight at 50%+ gain
+                elif max_profit >= 30:
+                    trailing_stop_pct = 3 # Tighten to 3%
+                elif max_profit >= 15:
+                    trailing_stop_pct = 5 # Standard trail
                 
                 # Calculate the trailing stop price
                 trailing_stop_price = position['entry_price'] * (Decimal(1) + (Decimal(str(max_profit)) - Decimal(str(trailing_stop_pct))) / Decimal(100))
 
                 if position['current_price'] < trailing_stop_price:
-                    logger.info(f"  📉 Progressive Trailing Stop Hit: Price ${position['current_price']:.8f} < Trail ${trailing_stop_price:.8f}")
+                    logger.info(f"  📉 Ratchet Trailing Stop Hit: Price ${position['current_price']:.8f} < Trail ${trailing_stop_price:.8f}")
                     logger.info(f"     (Max Profit: {max_profit:.2f}%, Trail: {trailing_stop_pct}%)")
                     return True, "trailing_stop"
             

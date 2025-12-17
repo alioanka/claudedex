@@ -26,7 +26,7 @@ import json
 from aiohttp import web
 
 # Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Load environment variables
 load_dotenv()
@@ -457,7 +457,7 @@ class SolanaTradingApplication:
     async def _init_config_manager(self):
         """Initialize and load configuration from database"""
         try:
-            from modules.solana_strategies.solana_config_manager import SolanaConfigManager
+            from modules.solana_trading.config.solana_config_manager import SolanaConfigManager
 
             self.config_manager = SolanaConfigManager(self.db_pool)
             await self.config_manager.initialize()
@@ -493,7 +493,7 @@ class SolanaTradingApplication:
             self.logger.info(f"Strategies: {', '.join(self.strategies)}")
 
             # Import Solana engine
-            from solana_trading.core.solana_engine import SolanaTradingEngine
+            from modules.solana_trading.core.solana_engine import SolanaTradingEngine
 
             # Initialize engine with config manager and database pool
             self.engine = SolanaTradingEngine(
