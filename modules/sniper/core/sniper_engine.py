@@ -47,6 +47,7 @@ class SniperEngine:
         self.max_sell_tax = 15.0
         self.min_liquidity = 1000.0
         self.safety_check_enabled = True
+        self.test_mode = False  # Relaxed safety for testing
 
         # Statistics tracking for rate-limited logging
         self._stats = {
@@ -118,10 +119,24 @@ class SniperEngine:
                             self.min_liquidity = float(val) if val else 1000.0
                         elif key == 'safety_check_enabled':
                             self.safety_check_enabled = val.lower() in ('true', '1', 'yes') if val else True
+                        elif key == 'test_mode':
+                            self.test_mode = val.lower() in ('true', '1', 'yes') if val else False
 
             # Check for DRY_RUN mode
             self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
-            logger.info(f"📋 Sniper settings loaded: trade_amount={self.trade_amount}, slippage={self.slippage}%, dry_run={self.dry_run}")
+
+            # Log mode info
+            mode_info = []
+            if self.dry_run:
+                mode_info.append("DRY_RUN (no real trades)")
+            else:
+                mode_info.append("LIVE TRADING")
+            if self.test_mode:
+                mode_info.append("TEST_MODE (relaxed safety)")
+
+            logger.info(f"📋 Sniper settings loaded: trade_amount={self.trade_amount}, slippage={self.slippage}%")
+            logger.info(f"   Mode: {' | '.join(mode_info)}")
+            logger.info(f"   Safety: max_tax={self.max_buy_tax}%, min_liq=${self.min_liquidity}")
 
         except Exception as e:
             logger.error(f"Error loading sniper settings: {e}")
@@ -214,6 +229,18 @@ class SniperEngine:
             logger.debug(f"Safety check disabled, allowing {token_address}")
             return True
 
+        # Test mode uses relaxed thresholds
+        if self.test_mode:
+            max_buy_tax = 50.0     # Allow up to 50% in test mode
+            max_sell_tax = 50.0
+            min_liquidity = 100.0  # Allow lower liquidity in test mode
+            allow_caution = True   # Allow CAUTION rated tokens
+        else:
+            max_buy_tax = self.max_buy_tax
+            max_sell_tax = self.max_sell_tax
+            min_liquidity = self.min_liquidity
+            allow_caution = False
+
         # Perform comprehensive safety check
         try:
             if self.token_safety:
@@ -240,22 +267,31 @@ class SniperEngine:
 
                 if report.rating == SafetyRating.DANGER:
                     self._stats['danger_ratings'] += 1
-                    logger.debug(f"🚨 DANGER: {token_address[:16]}... (Score: {report.score})")
-                    return False
+                    # In test mode, allow DANGER tokens but log warning
+                    if self.test_mode:
+                        logger.warning(f"⚠️ TEST MODE: Allowing DANGER token {token_address[:16]}...")
+                    else:
+                        logger.debug(f"🚨 DANGER: {token_address[:16]}... (Score: {report.score})")
+                        return False
 
-                if report.buy_tax > self.max_buy_tax or report.sell_tax > self.max_sell_tax:
+                if report.rating == SafetyRating.CAUTION and not allow_caution and not self.test_mode:
+                    logger.debug(f"⚠️ CAUTION: {token_address[:16]}... (Score: {report.score})")
+                    # Allow CAUTION tokens in production (they often have minor issues)
+
+                if report.buy_tax > max_buy_tax or report.sell_tax > max_sell_tax:
                     self._stats['high_tax_rejected'] += 1
                     logger.debug(f"⚠️ High tax: {token_address[:16]}... (Buy: {report.buy_tax:.1f}%, Sell: {report.sell_tax:.1f}%)")
                     return False
 
-                if report.liquidity_usd < self.min_liquidity:
+                if report.liquidity_usd < min_liquidity:
                     self._stats['low_liquidity_rejected'] += 1
                     logger.debug(f"⚠️ Low liquidity: {token_address[:16]}... (${report.liquidity_usd:,.0f})")
                     return False
 
                 # Token passed all checks - log this at INFO level
                 self._stats['passed_safety'] += 1
-                logger.info(f"✅ Safety PASSED: {token_address} (Score: {report.score}/100, Liq: ${report.liquidity_usd:,.0f})")
+                mode_tag = "[TEST] " if self.test_mode else ""
+                logger.info(f"✅ {mode_tag}Safety PASSED: {token_address} (Score: {report.score}/100, Liq: ${report.liquidity_usd:,.0f})")
                 return True
 
         except Exception as e:

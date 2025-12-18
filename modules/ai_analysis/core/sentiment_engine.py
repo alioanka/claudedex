@@ -219,7 +219,9 @@ class SentimentEngine:
 
         # Trading settings (loaded from DB/Config)
         self.direct_trading = False
-        self.confidence_threshold = 0.85
+        # IMPORTANT: Match dashboard threshold (BUY/SELL shown at score >= 0.5)
+        # 0.5 = 50% confidence required for trade execution
+        self.confidence_threshold = 0.5
         self.trade_amount_usd = 50.0
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
@@ -280,15 +282,22 @@ class SentimentEngine:
                     val = row['value']
 
                     if key == 'direct_trading':
-                        self.direct_trading = val.lower() == 'true'
+                        self.direct_trading = val.lower() in ('true', '1', 'yes') if val else False
                     elif key == 'confidence_threshold':
-                        self.confidence_threshold = float(val) / 100.0 if float(val) > 1 else float(val)
+                        # Handle both percentage (50-100) and decimal (0.5-1.0) formats
+                        thresh = float(val)
+                        # If > 1, it's a percentage, convert to decimal
+                        self.confidence_threshold = thresh / 100.0 if thresh > 1 else thresh
                     elif key == 'trade_amount_usd':
                         self.trade_amount_usd = float(val)
                     elif key == 'ai_provider':
                         self.ai_provider = val.lower() if val else 'openai'
 
-            logger.info(f"Loaded AI Settings: provider={self.ai_provider}, direct_trading={self.direct_trading}, threshold={self.confidence_threshold}")
+            logger.info(f"📋 AI Settings loaded:")
+            logger.info(f"   Provider: {self.ai_provider.upper()}")
+            logger.info(f"   Direct Trading: {'ENABLED' if self.direct_trading else 'DISABLED'}")
+            logger.info(f"   Confidence Threshold: {self.confidence_threshold * 100:.0f}% (score >= {self.confidence_threshold:.2f})")
+            logger.info(f"   Trade Amount: ${self.trade_amount_usd:.2f}")
         except Exception as e:
             logger.warning(f"Failed to load AI settings: {e}")
 
@@ -345,9 +354,17 @@ class SentimentEngine:
                     await self._store_sentiment(sentiment_score)
 
                     # 4. Execute Trade if conditions met
-                    if self.direct_trading and abs(sentiment_score) >= self.confidence_threshold:
+                    score_abs = abs(sentiment_score)
+                    meets_threshold = score_abs >= self.confidence_threshold
+
+                    if self.direct_trading and meets_threshold:
+                        logger.info(f"🤖 Trade conditions met: direct_trading=ON, score={sentiment_score:.2f} >= threshold={self.confidence_threshold}")
                         await self._execute_trade(sentiment_score)
                         trades_executed += 1
+                    elif not self.direct_trading:
+                        logger.info(f"ℹ️ Trade skipped: direct_trading=OFF (enable in AI Settings to trade automatically)")
+                    elif not meets_threshold:
+                        logger.info(f"ℹ️ Trade skipped: score {score_abs:.2f} < threshold {self.confidence_threshold} (signal not strong enough)")
                 elif not news_data:
                     logger.info("🧠 No news data retrieved, skipping analysis")
                 elif not can_analyze:

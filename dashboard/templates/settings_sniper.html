@@ -77,6 +77,16 @@
                                     <div class="form-text">Run token safety analysis before sniping (GoPlus, Honeypot.is, RugCheck).</div>
                                 </div>
 
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="test_mode">
+                                    <label class="form-check-label" for="test_mode">🧪 TEST MODE (Relaxed Safety)</label>
+                                    <div class="form-text text-warning">
+                                        <i class="fas fa-exclamation-triangle me-1"></i>
+                                        Allows riskier tokens: up to 50% tax, $100 min liquidity, DANGER-rated tokens (except honeypots).
+                                        <strong>Use only for testing!</strong>
+                                    </div>
+                                </div>
+
                                 <div class="mb-3">
                                     <label class="form-label">Max Buy Tax (%)</label>
                                     <input type="number" class="form-control" id="max_buy_tax" min="0" max="100" step="1" value="10">
@@ -322,6 +332,7 @@
 
                 // Safety check settings
                 document.getElementById('safety_check_enabled').checked = settings.safety_check_enabled !== false; // Default true
+                document.getElementById('test_mode').checked = settings.test_mode === true; // Default false
                 document.getElementById('max_buy_tax').value = settings.max_buy_tax || 10;
                 document.getElementById('max_sell_tax').value = settings.max_sell_tax || 10;
                 document.getElementById('min_liquidity').value = settings.min_liquidity || 1000;
@@ -347,6 +358,7 @@
 
             // Safety check settings
             safety_check_enabled: document.getElementById('safety_check_enabled').checked,
+            test_mode: document.getElementById('test_mode').checked,
             max_buy_tax: parseFloat(document.getElementById('max_buy_tax').value),
             max_sell_tax: parseFloat(document.getElementById('max_sell_tax').value),
             min_liquidity: parseFloat(document.getElementById('min_liquidity').value),
