@@ -236,6 +236,10 @@ class SentimentEngine:
         # Active positions tracking
         self.active_positions: Dict[str, Dict] = {}
 
+        # Cooldown tracking to prevent rapid re-entry
+        self._symbol_cooldowns: Dict[str, datetime] = {}
+        self._cooldown_duration = timedelta(hours=1)  # 1-hour cooldown after closing a position
+
     async def initialize(self):
         logger.info("🧠 Initializing Sentiment Engine...")
 
@@ -650,6 +654,17 @@ class SentimentEngine:
             logger.info(f"⚠️ Already have position in {symbol}, skipping new entry")
             return
 
+        # Check cooldown (prevent rapid re-entry after closing a position)
+        if symbol in self._symbol_cooldowns:
+            cooldown_expires = self._symbol_cooldowns[symbol]
+            if datetime.now() < cooldown_expires:
+                remaining = (cooldown_expires - datetime.now()).total_seconds() / 60
+                logger.info(f"⏳ {symbol} in cooldown ({remaining:.0f} min remaining), skipping")
+                return
+            else:
+                # Cooldown expired, remove from tracking
+                del self._symbol_cooldowns[symbol]
+
         trade_id = f"ai_{int(datetime.now().timestamp())}"
 
         try:
@@ -856,6 +871,10 @@ class SentimentEngine:
 
                 # Remove from active positions
                 del self.active_positions[symbol]
+
+                # Set cooldown to prevent rapid re-entry
+                self._symbol_cooldowns[symbol] = datetime.now() + self._cooldown_duration
+                logger.info(f"⏳ Set {self._cooldown_duration.total_seconds() / 60:.0f} min cooldown for {symbol}")
 
             else:
                 logger.error(f"Failed to close position: {result.get('error')}")
