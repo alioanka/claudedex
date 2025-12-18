@@ -20,6 +20,53 @@ from eth_account.messages import encode_defunct
 
 logger = logging.getLogger("ArbitrageEngine")
 
+
+class PriceFetcher:
+    """Fetch real-time prices from CoinGecko"""
+
+    COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price"
+
+    def __init__(self):
+        self._cache: Dict[str, tuple] = {}  # {symbol: (price, timestamp)}
+        self._cache_ttl = 60  # 1 minute cache
+
+    async def get_price(self, symbol: str) -> float:
+        """Get current USD price for a token"""
+        now = datetime.now()
+
+        # Check cache first
+        if symbol in self._cache:
+            price, cached_at = self._cache[symbol]
+            if (now - cached_at).total_seconds() < self._cache_ttl:
+                return price
+
+        # Fetch from CoinGecko
+        try:
+            symbol_map = {
+                'eth': 'ethereum',
+                'ethereum': 'ethereum',
+                'weth': 'ethereum',
+            }
+            coin_id = symbol_map.get(symbol.lower(), symbol.lower())
+
+            async with aiohttp.ClientSession() as session:
+                params = {'ids': coin_id, 'vs_currencies': 'usd'}
+                async with session.get(self.COINGECKO_API, params=params, timeout=10) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if coin_id in data and 'usd' in data[coin_id]:
+                            price = float(data[coin_id]['usd'])
+                            self._cache[symbol] = (price, now)
+                            return price
+        except Exception as e:
+            logger.debug(f"Price fetch error for {symbol}: {e}")
+
+        # Fallback to cached or default
+        if symbol in self._cache:
+            return self._cache[symbol][0]
+
+        return 2000.0  # Default ETH price
+
 # Uniswap V2 Router ABI (Minimal)
 ROUTER_ABI = [
     {
@@ -316,6 +363,9 @@ class ArbitrageEngine:
         self.use_flash_loans = True
         self.use_flashbots = True
         self.flash_loan_amount = 10 * 10**18  # 10 ETH default
+
+        # Price fetcher for real-time prices
+        self.price_fetcher = PriceFetcher()
 
         # Rate limiting for logging and execution
         self._last_opportunity_time = None
@@ -643,10 +693,20 @@ class ArbitrageEngine:
         try:
             import uuid
             amount_eth = amount / 1e18
-            # Calculate simulated entry/exit prices for display
-            entry_price = 1.0  # Normalized base price
-            exit_price = 1.0 + profit_pct  # Exit = entry + profit%
-            profit_usd = amount_eth * profit_pct * 2000  # Rough ETH price estimate for USD value
+
+            # Get real ETH price
+            eth_price = await self.price_fetcher.get_price('eth')
+
+            # Calculate real USD values
+            entry_usd = amount_eth * eth_price
+            profit_usd = entry_usd * profit_pct
+            exit_usd = entry_usd + profit_usd
+
+            # Use ETH price as entry, calculate exit based on profit
+            entry_price = eth_price
+            exit_price = eth_price * (1 + profit_pct)
+
+            logger.info(f"💰 Arb value: {amount_eth:.4f} ETH @ ${eth_price:.2f} = ${entry_usd:.2f} | Profit: ${profit_usd:.2f}")
 
             async with self.db_pool.acquire() as conn:
                 await conn.execute("""
@@ -663,7 +723,7 @@ class ArbitrageEngine:
                     entry_price,
                     exit_price,
                     amount_eth,
-                    amount_eth * 2000,  # Rough USD value of ETH amount
+                    entry_usd,
                     profit_usd,
                     profit_pct * 100,
                     'closed',
@@ -674,6 +734,7 @@ class ArbitrageEngine:
                         'tx_hash': tx_hash,
                         'buy_dex': buy_dex,
                         'sell_dex': sell_dex,
+                        'eth_price': eth_price,
                         'dry_run': self.dry_run,
                         'spread_pct': profit_pct * 100
                     })

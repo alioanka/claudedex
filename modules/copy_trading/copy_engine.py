@@ -26,12 +26,66 @@ JUPITER_SWAP_API = "https://quote-api.jup.ag/v6/swap"
 WSOL_MINT = "So11111111111111111111111111111111111111112"
 
 
+class PriceFetcher:
+    """Fetch real-time prices from CoinGecko"""
+
+    COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price"
+
+    def __init__(self):
+        self._cache: Dict[str, tuple] = {}  # {symbol: (price, timestamp)}
+        self._cache_ttl = 60  # 1 minute cache
+
+    async def get_price(self, symbol: str) -> float:
+        """Get current USD price for a token (sol, ethereum, etc.)"""
+        now = datetime.now()
+
+        # Check cache first
+        if symbol in self._cache:
+            price, cached_at = self._cache[symbol]
+            if (now - cached_at).total_seconds() < self._cache_ttl:
+                return price
+
+        # Fetch from CoinGecko
+        try:
+            # Map common symbols to CoinGecko IDs
+            symbol_map = {
+                'sol': 'solana',
+                'solana': 'solana',
+                'eth': 'ethereum',
+                'ethereum': 'ethereum',
+                'btc': 'bitcoin',
+                'bitcoin': 'bitcoin',
+            }
+            coin_id = symbol_map.get(symbol.lower(), symbol.lower())
+
+            async with aiohttp.ClientSession() as session:
+                params = {'ids': coin_id, 'vs_currencies': 'usd'}
+                async with session.get(self.COINGECKO_API, params=params, timeout=10) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if coin_id in data and 'usd' in data[coin_id]:
+                            price = float(data[coin_id]['usd'])
+                            self._cache[symbol] = (price, now)
+                            return price
+        except Exception as e:
+            logger.debug(f"Price fetch error for {symbol}: {e}")
+
+        # Fallback to cached or default
+        if symbol in self._cache:
+            return self._cache[symbol][0]
+
+        # Last resort defaults
+        defaults = {'sol': 200.0, 'solana': 200.0, 'eth': 2000.0, 'ethereum': 2000.0}
+        return defaults.get(symbol.lower(), 1.0)
+
+
 class CopyTradeExecutor:
     """Trade executor for Copy Trading module"""
 
     def __init__(self, dry_run: bool = True):
         self.dry_run = dry_run
         self.session: Optional[aiohttp.ClientSession] = None
+        self.price_fetcher = PriceFetcher()
 
         # Solana credentials
         self.solana_rpc_url = os.getenv('SOLANA_RPC_URL')
@@ -736,20 +790,23 @@ class CopyTradingEngine:
             import uuid
             now = datetime.now()
 
-            # Calculate proper values for display
+            # Get real prices from API
             amount = result.get('amount', 0)
             if chain == 'solana':
-                # Convert lamports to SOL, estimate USD
-                amount_sol = amount / 1e9
-                usd_value = amount_sol * 200  # Rough SOL price
-                entry_price = 200.0  # SOL price placeholder
+                # Convert lamports to SOL, get real price
+                amount_native = amount / 1e9
+                native_price = await self.executor.price_fetcher.get_price('sol')
+                usd_value = amount_native * native_price
+                entry_price = native_price
             else:
-                # Convert wei to ETH, estimate USD
-                amount_eth = amount / 1e18
-                usd_value = amount_eth * 2000  # Rough ETH price
-                entry_price = 2000.0  # ETH price placeholder
+                # Convert wei to ETH, get real price
+                amount_native = amount / 1e18
+                native_price = await self.executor.price_fetcher.get_price('eth')
+                usd_value = amount_native * native_price
+                entry_price = native_price
 
             token_address = result.get('output_mint') or result.get('token', 'UNKNOWN')
+            logger.info(f"💰 Trade value: {amount_native:.4f} {'SOL' if chain == 'solana' else 'ETH'} @ ${entry_price:.2f} = ${usd_value:.2f}")
 
             async with self.db_pool.acquire() as conn:
                 await conn.execute("""
@@ -764,10 +821,10 @@ class CopyTradingEngine:
                     chain,
                     'buy',
                     entry_price,
-                    entry_price,  # Same as entry for now
-                    amount if chain == 'solana' else amount / 1e18,
+                    entry_price,  # Same as entry for now (position still open)
+                    amount_native,  # Amount in native token (SOL/ETH)
                     usd_value,
-                    0.0,  # No profit yet
+                    0.0,  # No profit yet - will be calculated on exit
                     0.0,
                     'open' if result.get('success') else 'failed',
                     'copytrading',
@@ -777,6 +834,7 @@ class CopyTradingEngine:
                         'tx_hash': result.get('tx_hash'),
                         'source_tx': source_tx,
                         'source_wallet': source_wallet,
+                        'entry_price_usd': entry_price,
                         'dry_run': self.dry_run
                     })
                 )
