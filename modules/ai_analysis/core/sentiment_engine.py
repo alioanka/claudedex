@@ -412,7 +412,7 @@ class SentimentEngine:
             # Log the OpenAI API request
             openai_logger.info("=" * 80)
             openai_logger.info(f"🤖 OpenAI API Request at {datetime.now().isoformat()}")
-            openai_logger.info(f"   Model: gpt-3.5-turbo")
+            openai_logger.info(f"   Model: gpt-4o-mini")
             openai_logger.info(f"   Headlines count: {len(texts)}")
             for i, headline in enumerate(texts[:5], 1):  # Log first 5 headlines
                 openai_logger.info(f"   [{i}] {headline[:100]}...")
@@ -425,7 +425,7 @@ class SentimentEngine:
                 "Content-Type": "application/json"
             }
             payload = {
-                "model": "gpt-3.5-turbo", # Cost effective
+                "model": "gpt-4o-mini",  # Updated Dec 2025 - cost effective, much better than 3.5
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3
             }
@@ -505,7 +505,7 @@ class SentimentEngine:
                     usage.get('completion_tokens', 0),
                     usage.get('total_tokens', 0),
                     elapsed,
-                    'gpt-3.5-turbo'
+                    'gpt-4o-mini'
                 )
         except Exception as e:
             openai_logger.error(f"Failed to store OpenAI log: {e}")
@@ -522,7 +522,7 @@ class SentimentEngine:
             # Log the Claude API request
             claude_logger.info("=" * 80)
             claude_logger.info(f"🤖 Claude API Request at {datetime.now().isoformat()}")
-            claude_logger.info(f"   Model: claude-3-haiku-20240307")
+            claude_logger.info(f"   Model: claude-3-5-haiku-latest")
             claude_logger.info(f"   Headlines count: {len(texts)}")
             for i, headline in enumerate(texts[:5], 1):
                 claude_logger.info(f"   [{i}] {headline[:100]}...")
@@ -532,11 +532,11 @@ class SentimentEngine:
 
             headers = {
                 "x-api-key": self.anthropic_api_key,
-                "anthropic-version": "2023-06-01",
+                "anthropic-version": "2024-10-22",  # Updated API version
                 "Content-Type": "application/json"
             }
             payload = {
-                "model": "claude-3-haiku-20240307",  # Cost effective
+                "model": "claude-3-5-haiku-latest",  # Updated Dec 2025 - faster and smarter than old haiku
                 "max_tokens": 50,
                 "messages": [{"role": "user", "content": prompt}]
             }
@@ -619,7 +619,7 @@ class SentimentEngine:
                     output_tokens,
                     input_tokens + output_tokens,
                     elapsed,
-                    'claude-3-haiku'
+                    'claude-3-5-haiku'
                 )
         except Exception as e:
             claude_logger.error(f"Failed to store Claude log: {e}")
