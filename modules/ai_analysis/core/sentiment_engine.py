@@ -18,6 +18,7 @@ import os
 
 logger = logging.getLogger("SentimentEngine")
 openai_logger = logging.getLogger("OpenAI_API")
+claude_logger = logging.getLogger("Claude_API")
 
 
 class AITradeExecutor:
@@ -211,6 +212,10 @@ class SentimentEngine:
         self.db_pool = db_pool
         self.is_running = False
         self.openai_api_key = config.get('openai_api_key') or os.getenv('OPENAI_API_KEY')
+        self.anthropic_api_key = config.get('anthropic_api_key') or os.getenv('ANTHROPIC_API_KEY')
+
+        # AI Provider setting: 'openai', 'claude', or 'both'
+        self.ai_provider = 'openai'  # Default, will be loaded from DB
 
         # Trading settings (loaded from DB/Config)
         self.direct_trading = False
@@ -242,11 +247,21 @@ class SentimentEngine:
         # Load active positions from DB
         await self._load_active_positions()
 
-        if not self.openai_api_key:
-            logger.warning("⚠️ No OpenAI API Key found. AI analysis will be skipped.")
-        else:
+        # Log API key status
+        if self.openai_api_key:
             logger.info("✅ OpenAI API Key loaded.")
+        else:
+            logger.warning("⚠️ No OpenAI API Key found.")
 
+        if self.anthropic_api_key:
+            logger.info("✅ Anthropic (Claude) API Key loaded.")
+        else:
+            logger.warning("⚠️ No Anthropic API Key found.")
+
+        if not self.openai_api_key and not self.anthropic_api_key:
+            logger.error("❌ No AI API keys found! AI analysis will be disabled.")
+
+        logger.info(f"   AI Provider: {self.ai_provider.upper()}")
         logger.info(f"   Mode: {'DRY_RUN (Simulated)' if self.dry_run else 'LIVE TRADING'}")
         logger.info(f"   Direct Trading: {'Enabled' if self.direct_trading else 'Disabled'}")
         logger.info(f"   Exit Strategy: TP={self.take_profit_pct}%, SL={self.stop_loss_pct}%")
@@ -270,8 +285,10 @@ class SentimentEngine:
                         self.confidence_threshold = float(val) / 100.0 if float(val) > 1 else float(val)
                     elif key == 'trade_amount_usd':
                         self.trade_amount_usd = float(val)
+                    elif key == 'ai_provider':
+                        self.ai_provider = val.lower() if val else 'openai'
 
-            logger.info(f"Loaded AI Settings: direct_trading={self.direct_trading}, threshold={self.confidence_threshold}")
+            logger.info(f"Loaded AI Settings: provider={self.ai_provider}, direct_trading={self.direct_trading}, threshold={self.confidence_threshold}")
         except Exception as e:
             logger.warning(f"Failed to load AI settings: {e}")
 
@@ -297,11 +314,31 @@ class SentimentEngine:
                 # 1. Fetch Market News
                 news_data = await self._fetch_news()
 
-                if news_data and self.openai_api_key:
-                    logger.info(f"🧠 Retrieved {len(news_data)} headlines, analyzing...")
+                # Check if we have any AI API key
+                has_openai = bool(self.openai_api_key)
+                has_claude = bool(self.anthropic_api_key)
+                can_analyze = has_openai or has_claude
 
-                    # 2. Analyze Sentiment with LLM
-                    sentiment_score = await self._analyze_with_llm(news_data)
+                if news_data and can_analyze:
+                    logger.info(f"🧠 Retrieved {len(news_data)} headlines, analyzing with {self.ai_provider.upper()}...")
+
+                    # 2. Analyze Sentiment with selected AI provider
+                    sentiment_score = 0.0
+
+                    if self.ai_provider == 'both' and has_openai and has_claude:
+                        # Use both and average the results
+                        openai_score = await self._analyze_with_llm(news_data)
+                        claude_score = await self._analyze_with_claude(news_data)
+                        sentiment_score = (openai_score + claude_score) / 2
+                        logger.info(f"🧠 Combined Sentiment: OpenAI={openai_score:.2f}, Claude={claude_score:.2f}, Avg={sentiment_score:.2f}")
+                    elif self.ai_provider == 'claude' and has_claude:
+                        sentiment_score = await self._analyze_with_claude(news_data)
+                    elif has_openai:
+                        sentiment_score = await self._analyze_with_llm(news_data)
+                    elif has_claude:
+                        # Fallback to Claude if OpenAI not available
+                        sentiment_score = await self._analyze_with_claude(news_data)
+
                     logger.info(f"🧠 Market Sentiment Score: {sentiment_score:.2f}")
 
                     # 3. Store Result in DB
@@ -313,8 +350,8 @@ class SentimentEngine:
                         trades_executed += 1
                 elif not news_data:
                     logger.info("🧠 No news data retrieved, skipping analysis")
-                elif not self.openai_api_key:
-                    logger.debug("🧠 No OpenAI API key, skipping LLM analysis")
+                elif not can_analyze:
+                    logger.debug("🧠 No AI API keys available, skipping analysis")
 
                 logger.info(f"🧠 Cycle {cycle_count} complete. Positions: {len(self.active_positions)}. Total trades: {trades_executed}")
                 await asyncio.sleep(900)  # Run every 15 minutes to save API credits
@@ -455,6 +492,120 @@ class SentimentEngine:
                 )
         except Exception as e:
             openai_logger.error(f"Failed to store OpenAI log: {e}")
+
+    async def _analyze_with_claude(self, texts: List[str]) -> float:
+        """Send headlines to Claude (Anthropic) and get a sentiment score (-1 to 1)"""
+        try:
+            prompt = (
+                "Analyze the sentiment of the following crypto news headlines. "
+                "Return a single float number between -1.0 (extremely bearish) and 1.0 (extremely bullish). "
+                "Only return the number, nothing else.\n\n" + "\n".join(texts)
+            )
+
+            # Log the Claude API request
+            claude_logger.info("=" * 80)
+            claude_logger.info(f"🤖 Claude API Request at {datetime.now().isoformat()}")
+            claude_logger.info(f"   Model: claude-3-haiku-20240307")
+            claude_logger.info(f"   Headlines count: {len(texts)}")
+            for i, headline in enumerate(texts[:5], 1):
+                claude_logger.info(f"   [{i}] {headline[:100]}...")
+            if len(texts) > 5:
+                claude_logger.info(f"   ... and {len(texts) - 5} more headlines")
+            claude_logger.info("-" * 40)
+
+            headers = {
+                "x-api-key": self.anthropic_api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": "claude-3-haiku-20240307",  # Cost effective
+                "max_tokens": 50,
+                "messages": [{"role": "user", "content": prompt}]
+            }
+
+            async with aiohttp.ClientSession() as session:
+                start_time = datetime.now()
+                async with session.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload) as resp:
+                    elapsed = (datetime.now() - start_time).total_seconds()
+
+                    if resp.status == 200:
+                        data = await resp.json()
+                        content = data['content'][0]['text'].strip()
+                        usage = data.get('usage', {})
+
+                        # Log the response
+                        claude_logger.info(f"✅ Claude API Response (Status: 200)")
+                        claude_logger.info(f"   Response time: {elapsed:.2f}s")
+                        claude_logger.info(f"   Raw response: {content}")
+                        claude_logger.info(f"   Tokens used: input={usage.get('input_tokens', 'N/A')}, output={usage.get('output_tokens', 'N/A')}")
+
+                        try:
+                            score = float(content)
+                            claude_logger.info(f"   Parsed sentiment score: {score:.4f}")
+
+                            # Store detailed log in database
+                            await self._store_claude_log(texts, content, score, usage, elapsed)
+
+                            return score
+                        except ValueError:
+                            claude_logger.error(f"❌ Could not parse response as float: {content}")
+                            return 0.0
+                    else:
+                        error_text = await resp.text()
+                        claude_logger.error(f"❌ Claude API Error: {resp.status}")
+                        claude_logger.error(f"   Response: {error_text[:500]}")
+                        logger.error(f"Claude API Error: {resp.status}")
+                        return 0.0
+        except Exception as e:
+            claude_logger.error(f"❌ Claude analysis failed: {e}")
+            logger.error(f"Claude analysis failed: {e}")
+            return 0.0
+
+    async def _store_claude_log(self, headlines: List[str], response: str, score: float, usage: Dict, elapsed: float):
+        """Store detailed Claude API log in database"""
+        if not self.db_pool:
+            return
+
+        try:
+            async with self.db_pool.acquire() as conn:
+                # Check if table exists, create if not
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS ai_analysis_logs (
+                        id SERIAL PRIMARY KEY,
+                        timestamp TIMESTAMP DEFAULT NOW(),
+                        headlines JSONB,
+                        raw_response TEXT,
+                        sentiment_score FLOAT,
+                        prompt_tokens INTEGER,
+                        completion_tokens INTEGER,
+                        total_tokens INTEGER,
+                        response_time_sec FLOAT,
+                        model VARCHAR(50)
+                    )
+                """)
+
+                input_tokens = usage.get('input_tokens', 0)
+                output_tokens = usage.get('output_tokens', 0)
+
+                await conn.execute("""
+                    INSERT INTO ai_analysis_logs (
+                        headlines, raw_response, sentiment_score,
+                        prompt_tokens, completion_tokens, total_tokens,
+                        response_time_sec, model
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                """,
+                    json.dumps(headlines),
+                    response,
+                    score,
+                    input_tokens,
+                    output_tokens,
+                    input_tokens + output_tokens,
+                    elapsed,
+                    'claude-3-haiku'
+                )
+        except Exception as e:
+            claude_logger.error(f"Failed to store Claude log: {e}")
 
     async def _store_sentiment(self, score: float):
         """Log sentiment score to database"""

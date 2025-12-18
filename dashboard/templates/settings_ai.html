@@ -59,6 +59,16 @@
                                 <h6 class="text-uppercase text-muted mb-3">Analysis Settings</h6>
 
                                 <div class="mb-3">
+                                    <label class="form-label"><i class="fas fa-brain me-2"></i>AI Provider</label>
+                                    <select class="form-select" id="ai_provider">
+                                        <option value="openai">OpenAI (GPT-3.5 Turbo)</option>
+                                        <option value="claude">Anthropic (Claude 3 Haiku)</option>
+                                        <option value="both">Both (Average Score)</option>
+                                    </select>
+                                    <div class="form-text">Select which AI model(s) to use for sentiment analysis. Using "Both" will call both APIs and average the sentiment scores.</div>
+                                </div>
+
+                                <div class="mb-3">
                                     <label class="form-label">Sentiment Source</label>
                                     <select class="form-select" id="sentiment_source">
                                         <option value="news">News Headlines</option>
@@ -71,6 +81,11 @@
                                     <label class="form-label">Analysis Interval (Minutes)</label>
                                     <input type="number" class="form-control" id="analysis_interval" min="5" step="5">
                                     <div class="form-text">How often to fetch and analyze data.</div>
+                                </div>
+
+                                <div class="alert alert-success mt-3" id="api-status">
+                                    <i class="fas fa-check-circle me-2"></i>
+                                    <span id="api-status-text">Checking API status...</span>
                                 </div>
                             </div>
                         </div>
@@ -384,6 +399,9 @@
                 document.getElementById('sentiment_source').value = settings.sentiment_source || 'news';
                 document.getElementById('analysis_interval').value = settings.analysis_interval || 15;
 
+                // AI Provider
+                document.getElementById('ai_provider').value = settings.ai_provider || 'openai';
+
                 // Exit strategy settings
                 document.getElementById('take_profit_pct').value = settings.take_profit_pct || 5;
                 document.getElementById('stop_loss_pct').value = settings.stop_loss_pct || 3;
@@ -391,12 +409,36 @@
 
                 // Execution settings
                 document.getElementById('leverage').value = settings.leverage || 5;
+
+                // Update API status
+                updateApiStatus(settings);
             }
         } catch (error) {
             console.error('Error loading settings:', error);
             if (typeof showNotification === 'function') {
                 showNotification('Error loading settings', 'error');
             }
+        }
+    }
+
+    function updateApiStatus(settings) {
+        const statusEl = document.getElementById('api-status');
+        const statusText = document.getElementById('api-status-text');
+        const hasOpenAI = settings.openai_api_configured || false;
+        const hasClaude = settings.claude_api_configured || false;
+
+        if (hasOpenAI && hasClaude) {
+            statusEl.className = 'alert alert-success mt-3';
+            statusText.innerHTML = '<strong>Both APIs configured:</strong> OpenAI and Claude are ready to use.';
+        } else if (hasOpenAI) {
+            statusEl.className = 'alert alert-info mt-3';
+            statusText.innerHTML = '<strong>OpenAI configured:</strong> Set ANTHROPIC_API_KEY in .env to enable Claude.';
+        } else if (hasClaude) {
+            statusEl.className = 'alert alert-info mt-3';
+            statusText.innerHTML = '<strong>Claude configured:</strong> Set OPENAI_API_KEY in .env to enable OpenAI.';
+        } else {
+            statusEl.className = 'alert alert-danger mt-3';
+            statusText.innerHTML = '<strong>No API keys configured!</strong> Add OPENAI_API_KEY and/or ANTHROPIC_API_KEY to .env file.';
         }
     }
 
@@ -410,6 +452,9 @@
             trading_pair: document.getElementById('trading_pair').value,
             sentiment_source: document.getElementById('sentiment_source').value,
             analysis_interval: parseInt(document.getElementById('analysis_interval').value),
+
+            // AI Provider
+            ai_provider: document.getElementById('ai_provider').value,
 
             // Exit strategy settings
             take_profit_pct: parseFloat(document.getElementById('take_profit_pct').value),

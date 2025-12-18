@@ -63,17 +63,35 @@ openai_logger.setLevel(logging.INFO)
 openai_logger.addHandler(openai_log_handler)
 openai_logger.addHandler(console)
 
+# Also add Claude API log
+claude_log_handler = RotatingFileHandler(log_dir / 'claude_api.log', maxBytes=10*1024*1024, backupCount=5)
+claude_log_handler.setFormatter(log_formatter)
+claude_logger = logging.getLogger("Claude_API")
+claude_logger.setLevel(logging.INFO)
+claude_logger.addHandler(claude_log_handler)
+claude_logger.addHandler(console)
+
 async def main():
     logger.info("🧠 AI Analysis Module Starting...")
     logger.info(f"   Working dir: {Path.cwd()}")
     logger.info(f"   Log dir: {log_dir.absolute()}")
 
-    # Check OpenAI API Key
+    # Check API Keys
     openai_key = os.getenv('OPENAI_API_KEY')
-    if not openai_key:
-        logger.warning("⚠️ No OPENAI_API_KEY found - AI analysis will be limited")
-    else:
+    anthropic_key = os.getenv('ANTHROPIC_API_KEY')
+
+    if openai_key:
         logger.info(f"   OpenAI API Key: {openai_key[:20]}...")
+    else:
+        logger.warning("⚠️ No OPENAI_API_KEY found")
+
+    if anthropic_key:
+        logger.info(f"   Anthropic API Key: {anthropic_key[:20]}...")
+    else:
+        logger.warning("⚠️ No ANTHROPIC_API_KEY found")
+
+    if not openai_key and not anthropic_key:
+        logger.error("❌ No AI API keys found - AI analysis will be disabled")
 
     # Init DB
     db_url = os.getenv('DATABASE_URL')
@@ -95,7 +113,8 @@ async def main():
 
     # Init Engine
     config = {
-        'openai_api_key': openai_key
+        'openai_api_key': openai_key,
+        'anthropic_api_key': anthropic_key
     }
     engine = SentimentEngine(config, db_pool)
 
