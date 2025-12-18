@@ -289,6 +289,18 @@ class CopyTradingEngine:
         self._known_tx_hashes = set()
         self._known_solana_sigs = set()
 
+        # Rate limiting - cooldown per wallet (5 min)
+        self._wallet_last_copy_time: Dict[str, datetime] = {}
+        self._wallet_cooldown_seconds = 300  # 5 minutes
+
+        # Statistics
+        self._stats = {
+            'cycles': 0,
+            'evm_copies': 0,
+            'sol_copies': 0,
+            'last_stats_log': datetime.now()
+        }
+
     async def run(self):
         self.is_running = True
         logger.info("👯 Copy Trading Engine Started")
@@ -303,33 +315,49 @@ class CopyTradingEngine:
         # Initial load of settings
         await self._load_settings()
 
-        cycle_count = 0
-        evm_trades_copied = 0
-        sol_trades_copied = 0
-
         while self.is_running:
             try:
-                cycle_count += 1
+                self._stats['cycles'] += 1
+
                 # Reload settings periodically to catch updates
                 await self._load_settings()
 
                 if self.targets:
                     # Monitor EVM wallets
                     evm_copied = await self._monitor_evm_wallets()
-                    evm_trades_copied += evm_copied
+                    self._stats['evm_copies'] += evm_copied
 
                     # Monitor Solana wallets
                     sol_copied = await self._monitor_solana_wallets()
-                    sol_trades_copied += sol_copied
+                    self._stats['sol_copies'] += sol_copied
 
-                # Log status every 20 cycles (5 minutes at 15s interval)
-                if cycle_count % 20 == 0:
-                    logger.info(f"👯 Status: {cycle_count} cycles, {len(self.targets)} wallets tracked, {evm_trades_copied} EVM + {sol_trades_copied} Solana trades copied")
+                # Log stats every 5 minutes
+                await self._log_stats_if_needed()
 
-                await asyncio.sleep(15) # Poll every 15s
+                await asyncio.sleep(15)  # Poll every 15s
             except Exception as e:
                 logger.error(f"Copy loop error: {e}")
                 await asyncio.sleep(15)
+
+    async def _log_stats_if_needed(self):
+        """Log statistics every 5 minutes"""
+        now = datetime.now()
+        elapsed = (now - self._stats['last_stats_log']).total_seconds()
+
+        if elapsed >= 300:  # 5 minutes
+            logger.info(f"📊 COPY TRADING STATS (Last 5 min): "
+                       f"Cycles: {self._stats['cycles']} | "
+                       f"Wallets: {len(self.targets)} | "
+                       f"EVM Copies: {self._stats['evm_copies']} | "
+                       f"Solana Copies: {self._stats['sol_copies']}")
+
+            # Reset stats
+            self._stats = {
+                'cycles': 0,
+                'evm_copies': 0,
+                'sol_copies': 0,
+                'last_stats_log': now
+            }
 
     async def _load_settings(self):
         """Load Copy Trading settings from database"""
@@ -477,6 +505,12 @@ class CopyTradingEngine:
     async def _analyze_and_copy_evm(self, tx) -> bool:
         """Analyze EVM transaction and execute copy if it's a swap"""
         try:
+            wallet = tx.get('from', '')
+
+            # Check wallet cooldown first
+            if self._check_wallet_cooldown(wallet):
+                return False  # Skip silently - wallet in cooldown
+
             input_data = tx.get('input', '')
             if len(input_data) < 10:
                 return False
@@ -493,7 +527,11 @@ class CopyTradingEngine:
 
             if method_id in SWAP_METHODS:
                 method_name = SWAP_METHODS[method_id]
-                logger.info(f"👯 EVM COPY TRIGGER: Wallet {tx['from']} executed {method_name}")
+
+                # Update cooldown before executing
+                self._update_wallet_cooldown(wallet)
+
+                logger.info(f"👯 EVM COPY TRIGGER: Wallet {wallet[:16]}... executed {method_name}")
                 await self._execute_evm_copy_trade(tx, method_name)
                 return True
 
@@ -548,17 +586,38 @@ class CopyTradingEngine:
             if result.get('success'):
                 logger.info(f"✅ EVM Copy Trade {'Executed' if not self.dry_run else 'Simulated'}: {result.get('tx_hash')}")
 
-                # Log to database
-                await self._log_copy_trade('ethereum', tx_hash, result)
+                # Log to database with source wallet
+                source_wallet = source_tx.get('from', '')
+                await self._log_copy_trade('ethereum', tx_hash, result, source_wallet)
             else:
                 logger.error(f"❌ EVM Copy Trade Failed: {result.get('error')}")
 
         except Exception as e:
             logger.error(f"Error executing EVM copy trade: {e}")
 
+    def _check_wallet_cooldown(self, wallet: str) -> bool:
+        """Check if wallet is in cooldown period. Returns True if we should skip."""
+        now = datetime.now()
+        last_copy = self._wallet_last_copy_time.get(wallet)
+
+        if last_copy:
+            elapsed = (now - last_copy).total_seconds()
+            if elapsed < self._wallet_cooldown_seconds:
+                return True  # Still in cooldown, skip
+
+        return False  # Not in cooldown, proceed
+
+    def _update_wallet_cooldown(self, wallet: str):
+        """Update wallet's last copy time"""
+        self._wallet_last_copy_time[wallet] = datetime.now()
+
     async def _analyze_and_copy_solana(self, wallet: str, signature: str) -> bool:
         """Analyze Solana transaction and execute copy if it's a swap"""
         try:
+            # Check wallet cooldown first
+            if self._check_wallet_cooldown(wallet):
+                return False  # Skip silently - wallet in cooldown
+
             # Get transaction details
             payload = {
                 "jsonrpc": "2.0",
@@ -598,7 +657,10 @@ class CopyTradingEngine:
                             break
 
                     if is_swap:
-                        logger.info(f"👯 SOLANA COPY TRIGGER: Wallet {wallet} executed swap {signature[:20]}...")
+                        # Update cooldown before executing
+                        self._update_wallet_cooldown(wallet)
+
+                        logger.info(f"👯 SOLANA COPY TRIGGER: Wallet {wallet[:16]}... executed swap {signature[:20]}...")
                         await self._execute_solana_copy_trade(wallet, signature, tx)
                         return True
 
@@ -657,46 +719,94 @@ class CopyTradingEngine:
             if result.get('success'):
                 logger.info(f"✅ Solana Copy Trade {'Executed' if not self.dry_run else 'Simulated'}: {result.get('tx_hash')}")
 
-                # Log to database
-                await self._log_copy_trade('solana', signature, result)
+                # Log to database with source wallet
+                await self._log_copy_trade('solana', signature, result, wallet)
             else:
                 logger.error(f"❌ Solana Copy Trade Failed: {result.get('error')}")
 
         except Exception as e:
             logger.error(f"Error executing Solana copy trade: {e}")
 
-    async def _log_copy_trade(self, chain: str, source_tx: str, result: Dict):
+    async def _log_copy_trade(self, chain: str, source_tx: str, result: Dict, source_wallet: str = None):
         """Log copy trade to database"""
         if not self.db_pool:
             return
 
         try:
             import uuid
+            now = datetime.now()
+
+            # Calculate proper values for display
+            amount = result.get('amount', 0)
+            if chain == 'solana':
+                # Convert lamports to SOL, estimate USD
+                amount_sol = amount / 1e9
+                usd_value = amount_sol * 200  # Rough SOL price
+                entry_price = 200.0  # SOL price placeholder
+            else:
+                # Convert wei to ETH, estimate USD
+                amount_eth = amount / 1e18
+                usd_value = amount_eth * 2000  # Rough ETH price
+                entry_price = 2000.0  # ETH price placeholder
+
+            token_address = result.get('output_mint') or result.get('token', 'UNKNOWN')
+
             async with self.db_pool.acquire() as conn:
                 await conn.execute("""
                     INSERT INTO trades (
-                        trade_id, token_address, chain, side, entry_price,
-                        amount, usd_value, status, strategy, entry_timestamp, metadata
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                        trade_id, token_address, chain, side, entry_price, exit_price,
+                        amount, usd_value, profit_loss, profit_loss_percentage,
+                        status, strategy, entry_timestamp, exit_timestamp, metadata
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
                 """,
                     f"copy_{uuid.uuid4().hex[:12]}",
-                    result.get('output_mint') or result.get('token', 'UNKNOWN'),
+                    token_address,
                     chain,
                     'buy',
-                    0,  # Price not easily available
-                    result.get('amount', 0),
-                    result.get('usd_value', 0),
+                    entry_price,
+                    entry_price,  # Same as entry for now
+                    amount if chain == 'solana' else amount / 1e18,
+                    usd_value,
+                    0.0,  # No profit yet
+                    0.0,
                     'open' if result.get('success') else 'failed',
                     'copytrading',
-                    datetime.now(),
+                    now,
+                    now,
                     json.dumps({
                         'tx_hash': result.get('tx_hash'),
                         'source_tx': source_tx,
+                        'source_wallet': source_wallet,
                         'dry_run': self.dry_run
                     })
                 )
+
+                # Update wallet stats if source_wallet provided
+                if source_wallet and result.get('success'):
+                    await self._update_wallet_stats(conn, source_wallet)
+
         except Exception as e:
             logger.error(f"Error logging copy trade: {e}")
+
+    async def _update_wallet_stats(self, conn, wallet: str):
+        """Update wallet statistics after a copy trade"""
+        try:
+            # Count trades copied from this wallet
+            count = await conn.fetchval("""
+                SELECT COUNT(*) FROM trades
+                WHERE strategy = 'copytrading'
+                AND metadata::jsonb->>'source_wallet' = $1
+            """, wallet)
+
+            # Update the wallet's copied trades count in config if tracking
+            await conn.execute("""
+                INSERT INTO config_settings (config_type, key, value)
+                VALUES ('wallet_stats', $1, $2)
+                ON CONFLICT (config_type, key) DO UPDATE SET value = $2
+            """, wallet, str(count))
+
+        except Exception as e:
+            logger.debug(f"Error updating wallet stats: {e}")
 
     async def stop(self):
         """Stop the engine"""
