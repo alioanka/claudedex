@@ -309,6 +309,10 @@
                 <label>Search Type</label>
                 <select id="searchType">
                     <option value="top_traders">Top Traders (Last 30 Days)</option>
+                    <option value="top_traders_7d">Top Traders (Last 7 Days)</option>
+                    <option value="top_volume">Top Volume Traders</option>
+                    <option value="meme_hunters">Meme Coin Hunters</option>
+                    <option value="dex_whales">DEX Whales</option>
                     <option value="token_traders">Top Traders for Token</option>
                     <option value="analyze_wallet">Analyze Specific Wallet</option>
                 </select>
@@ -323,14 +327,42 @@
             </div>
             <div class="search-field">
                 <label>Min Win Rate (%)</label>
-                <input type="number" id="minWinRate" value="50" min="0" max="100">
+                <input type="number" id="minWinRate" value="40" min="0" max="100">
             </div>
             <div class="search-field">
                 <label>Min Trades</label>
-                <input type="number" id="minTrades" value="10" min="1">
+                <input type="number" id="minTrades" value="5" min="1">
+            </div>
+        </div>
+        <!-- Additional Filters Row -->
+        <div class="search-row" style="margin-top: 12px;">
+            <div class="search-field">
+                <label>Min PnL ($)</label>
+                <input type="number" id="minPnl" value="0" step="100">
+            </div>
+            <div class="search-field">
+                <label>Max Results</label>
+                <select id="maxResults">
+                    <option value="10">10 wallets</option>
+                    <option value="25" selected>25 wallets</option>
+                    <option value="50">50 wallets</option>
+                    <option value="100">100 wallets</option>
+                </select>
+            </div>
+            <div class="search-field">
+                <label>Sort By</label>
+                <select id="sortBy">
+                    <option value="score">Performance Score</option>
+                    <option value="pnl">Total PnL</option>
+                    <option value="winrate">Win Rate</option>
+                    <option value="trades">Trade Count</option>
+                </select>
             </div>
             <button class="btn btn-primary" onclick="searchWallets()">
                 <i class="fas fa-search"></i> Search
+            </button>
+            <button class="btn btn-secondary" onclick="resetFilters()">
+                <i class="fas fa-undo"></i> Reset
             </button>
         </div>
     </div>
@@ -416,6 +448,9 @@
         const searchType = document.getElementById('searchType').value;
         const minWinRate = parseFloat(document.getElementById('minWinRate').value);
         const minTrades = parseInt(document.getElementById('minTrades').value);
+        const minPnl = parseFloat(document.getElementById('minPnl').value) || 0;
+        const maxResults = parseInt(document.getElementById('maxResults').value);
+        const sortBy = document.getElementById('sortBy').value;
         const tokenAddress = document.getElementById('tokenAddress').value;
         const walletAddress = document.getElementById('walletAddress').value;
 
@@ -424,6 +459,7 @@
             <div class="loading-state">
                 <div class="loading-spinner"></div>
                 <p>Searching for top wallets...</p>
+                <small class="text-muted">This may take a moment...</small>
             </div>
         `;
         document.getElementById('resultsStats').style.display = 'none';
@@ -433,6 +469,9 @@
                 type: searchType,
                 min_win_rate: minWinRate,
                 min_trades: minTrades,
+                min_pnl: minPnl,
+                max_results: maxResults,
+                sort_by: sortBy,
                 token_address: tokenAddress,
                 wallet_address: walletAddress
             });
@@ -441,7 +480,15 @@
             const data = await response.json();
 
             if (data.success && data.wallets && data.wallets.length > 0) {
-                displayResults(data.wallets);
+                // Sort results based on selection
+                let sorted = [...data.wallets];
+                switch(sortBy) {
+                    case 'pnl': sorted.sort((a, b) => b.total_pnl - a.total_pnl); break;
+                    case 'winrate': sorted.sort((a, b) => b.win_rate - a.win_rate); break;
+                    case 'trades': sorted.sort((a, b) => b.total_trades - a.total_trades); break;
+                    default: sorted.sort((a, b) => b.score - a.score);
+                }
+                displayResults(sorted.slice(0, maxResults));
             } else if (data.error) {
                 showError(data.error);
             } else {
@@ -451,6 +498,19 @@
             console.error('Search error:', error);
             showError('Failed to search wallets. Please try again.');
         }
+    }
+
+    function resetFilters() {
+        document.getElementById('searchType').value = 'top_traders';
+        document.getElementById('minWinRate').value = '40';
+        document.getElementById('minTrades').value = '5';
+        document.getElementById('minPnl').value = '0';
+        document.getElementById('maxResults').value = '25';
+        document.getElementById('sortBy').value = 'score';
+        document.getElementById('tokenAddress').value = '';
+        document.getElementById('walletAddress').value = '';
+        document.getElementById('tokenAddressField').style.display = 'none';
+        document.getElementById('walletAddressField').style.display = 'none';
     }
 
     function displayResults(wallets) {

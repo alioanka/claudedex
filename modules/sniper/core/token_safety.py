@@ -512,7 +512,7 @@ class TokenSafetyChecker:
         return SafetyRating.DANGER
 
     def _log_report(self, report: SafetyReport):
-        """Log safety report"""
+        """Log safety report - only log SAFE/CAUTION at INFO, others at DEBUG"""
         emoji = {
             SafetyRating.SAFE: "✅",
             SafetyRating.CAUTION: "⚠️",
@@ -520,13 +520,20 @@ class TokenSafetyChecker:
             SafetyRating.HONEYPOT: "🍯"
         }.get(report.rating, "❓")
 
-        logger.info(f"{emoji} Safety Check: {report.token_address[:8]}... "
-                   f"Rating: {report.rating.value.upper()} | Score: {report.score}/100 | "
-                   f"Honeypot: {report.is_honeypot} | Tax: {report.buy_tax:.1f}%/{report.sell_tax:.1f}% | "
-                   f"Liquidity: ${report.liquidity_usd:,.0f}")
+        log_msg = (f"{emoji} Safety: {report.token_address[:12]}... "
+                   f"| {report.rating.value.upper()} | Score: {report.score} | "
+                   f"Tax: {report.buy_tax:.0f}%/{report.sell_tax:.0f}% | "
+                   f"Liq: ${report.liquidity_usd:,.0f}")
 
-        for warning in report.warnings[:5]:  # Limit logged warnings
-            logger.warning(f"  {warning}")
+        # Only log SAFE/CAUTION tokens at INFO level to reduce spam
+        if report.rating in [SafetyRating.SAFE, SafetyRating.CAUTION]:
+            logger.info(log_msg)
+            # Only show warnings for tokens that might be traded
+            for warning in report.warnings[:3]:
+                logger.debug(f"  {warning}")
+        else:
+            # Log DANGER/HONEYPOT at DEBUG to reduce spam
+            logger.debug(log_msg)
 
 
 # Convenience function for quick checks

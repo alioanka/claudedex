@@ -48,6 +48,18 @@ class SniperEngine:
         self.min_liquidity = 1000.0
         self.safety_check_enabled = True
 
+        # Statistics tracking for rate-limited logging
+        self._stats = {
+            'tokens_analyzed': 0,
+            'honeypots_detected': 0,
+            'danger_ratings': 0,
+            'high_tax_rejected': 0,
+            'low_liquidity_rejected': 0,
+            'passed_safety': 0,
+            'last_stats_log': datetime.now()
+        }
+        self._rejected_cache: Dict[str, datetime] = {}  # Track recently rejected tokens
+
     async def initialize(self):
         """Initialize sniper components"""
         logger.info("🔫 Initializing Sniper Engine...")
@@ -191,6 +203,12 @@ class SniperEngine:
         if not token_address:
             return False
 
+        # Update stats
+        self._stats['tokens_analyzed'] += 1
+
+        # Log stats periodically (every 5 minutes)
+        await self._log_stats_if_needed()
+
         # Skip safety check if disabled
         if not self.safety_check_enabled:
             logger.debug(f"Safety check disabled, allowing {token_address}")
@@ -214,28 +232,30 @@ class SniperEngine:
                     'warnings': report.warnings[:5]
                 }
 
-                # Check if safe to snipe
+                # Check if safe to snipe (rate-limited logging - only log at DEBUG level)
                 if report.is_honeypot:
-                    logger.warning(f"🍯 HONEYPOT DETECTED: {token_address} - SKIPPING")
+                    self._stats['honeypots_detected'] += 1
+                    logger.debug(f"🍯 HONEYPOT: {token_address[:16]}...")
                     return False
 
                 if report.rating == SafetyRating.DANGER:
-                    logger.warning(f"🚨 DANGER RATING: {token_address} - SKIPPING")
+                    self._stats['danger_ratings'] += 1
+                    logger.debug(f"🚨 DANGER: {token_address[:16]}... (Score: {report.score})")
                     return False
 
-                if report.buy_tax > self.max_buy_tax:
-                    logger.warning(f"⚠️ High buy tax ({report.buy_tax:.1f}%): {token_address} - SKIPPING")
-                    return False
-
-                if report.sell_tax > self.max_sell_tax:
-                    logger.warning(f"⚠️ High sell tax ({report.sell_tax:.1f}%): {token_address} - SKIPPING")
+                if report.buy_tax > self.max_buy_tax or report.sell_tax > self.max_sell_tax:
+                    self._stats['high_tax_rejected'] += 1
+                    logger.debug(f"⚠️ High tax: {token_address[:16]}... (Buy: {report.buy_tax:.1f}%, Sell: {report.sell_tax:.1f}%)")
                     return False
 
                 if report.liquidity_usd < self.min_liquidity:
-                    logger.warning(f"⚠️ Low liquidity (${report.liquidity_usd:,.0f}): {token_address} - SKIPPING")
+                    self._stats['low_liquidity_rejected'] += 1
+                    logger.debug(f"⚠️ Low liquidity: {token_address[:16]}... (${report.liquidity_usd:,.0f})")
                     return False
 
-                logger.info(f"✅ Safety check passed: {token_address} (Score: {report.score}/100)")
+                # Token passed all checks - log this at INFO level
+                self._stats['passed_safety'] += 1
+                logger.info(f"✅ Safety PASSED: {token_address} (Score: {report.score}/100, Liq: ${report.liquidity_usd:,.0f})")
                 return True
 
         except Exception as e:
@@ -244,6 +264,35 @@ class SniperEngine:
             return False
 
         return True
+
+    async def _log_stats_if_needed(self):
+        """Log filter statistics every 5 minutes"""
+        now = datetime.now()
+        elapsed = (now - self._stats['last_stats_log']).total_seconds()
+
+        if elapsed >= 300:  # 5 minutes
+            total = self._stats['tokens_analyzed']
+            passed = self._stats['passed_safety']
+            pass_rate = (passed / total * 100) if total > 0 else 0
+
+            logger.info(f"📊 SNIPER STATS (Last 5 min): "
+                       f"Analyzed: {total} | "
+                       f"Passed: {passed} ({pass_rate:.1f}%) | "
+                       f"Honeypots: {self._stats['honeypots_detected']} | "
+                       f"Danger: {self._stats['danger_ratings']} | "
+                       f"High Tax: {self._stats['high_tax_rejected']} | "
+                       f"Low Liq: {self._stats['low_liquidity_rejected']}")
+
+            # Reset stats
+            self._stats = {
+                'tokens_analyzed': 0,
+                'honeypots_detected': 0,
+                'danger_ratings': 0,
+                'high_tax_rejected': 0,
+                'low_liquidity_rejected': 0,
+                'passed_safety': 0,
+                'last_stats_log': now
+            }
 
     async def _process_targets(self):
         """Execute buy orders for pending targets"""

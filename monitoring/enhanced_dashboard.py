@@ -6920,83 +6920,147 @@ class DashboardEndpoints:
         import os
         import aiohttp
         from datetime import datetime, timedelta
+        import hashlib
 
         try:
             # Get query parameters
             search_type = request.query.get('type', 'top_traders')
-            min_win_rate = float(request.query.get('min_win_rate', 50))
-            min_trades = int(request.query.get('min_trades', 10))
+            min_win_rate = float(request.query.get('min_win_rate', 40))
+            min_trades = int(request.query.get('min_trades', 5))
+            min_pnl = float(request.query.get('min_pnl', 0))
+            max_results = int(request.query.get('max_results', 25))
             token_address = request.query.get('token_address', '')
             wallet_address = request.query.get('wallet_address', '')
 
             helius_api_key = os.getenv('HELIUS_API_KEY')
             solana_rpc_url = os.getenv('SOLANA_RPC_URL')
 
-            if not helius_api_key and not solana_rpc_url:
-                return web.json_response({
-                    'success': False,
-                    'error': 'No Helius API key or Solana RPC configured. Add HELIUS_API_KEY to .env'
-                })
-
             wallets = []
 
-            # For demonstration purposes, generate simulated wallet data
-            # In production, this would query Helius/Birdeye APIs
             if search_type == 'analyze_wallet' and wallet_address:
                 # Analyze specific wallet
-                wallet_data = await self._analyze_solana_wallet(wallet_address, helius_api_key, solana_rpc_url)
-                if wallet_data:
-                    wallets = [wallet_data]
+                if helius_api_key or solana_rpc_url:
+                    wallet_data = await self._analyze_solana_wallet(wallet_address, helius_api_key, solana_rpc_url)
+                    if wallet_data:
+                        wallets = [wallet_data]
+                else:
+                    # Return demo analysis
+                    wallets = [self._generate_demo_wallet(wallet_address, search_type)]
             else:
-                # Get top traders (simulated for now, would use Helius/Birdeye in production)
-                # This demonstrates the expected data format
+                # Generate demo wallets based on search type
+                # In production, integrate with Helius/Birdeye/DexScreener APIs
                 import random
-                sample_wallets = [
-                    '7Lw3VqYPCNhZBPUzDdXXgxEE3wA7K7xNqXPPnCpcmPXv',
-                    '3tRKxE5QfzF3HA2dWJZvyHXBJN2SdXVh3KY8WeLAHGZ4',
-                    'BQcdHdAQW1hczDbBi9hiegXAR7A98Q9jx3X3iBBBDiq4',
-                    '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
-                    'DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL',
-                ]
 
-                for addr in sample_wallets:
-                    # Generate realistic-looking metrics
-                    win_rate = random.uniform(45, 85)
-                    if win_rate >= min_win_rate:
-                        total_trades = random.randint(min_trades, 200)
-                        avg_profit = random.uniform(-5, 25)
-                        total_pnl = avg_profit * total_trades * random.uniform(0.3, 0.7)
+                # Different wallet pools based on search type
+                wallet_seeds = {
+                    'top_traders': ['TopTrader', 'ProDefi', 'AlphaSol', 'WhaleSol', 'SolMaster'],
+                    'top_traders_7d': ['Weekly', 'Active7d', 'HotTrader', 'NewPro', 'Rising'],
+                    'top_volume': ['Volume', 'BigVol', 'Whale', 'HighVol', 'MegaTrade'],
+                    'meme_hunters': ['Meme', 'Degen', 'Ape', 'Moon', 'Pepe'],
+                    'dex_whales': ['DexWhale', 'Jupiter', 'Raydium', 'Orca', 'BigSwap'],
+                    'token_traders': ['Token', 'Holder', 'Trader', 'Sniper', 'Early'],
+                }
 
-                        # Calculate score
-                        score = (win_rate * 0.4) + (min(total_pnl / 100, 30) * 0.3) + (min(total_trades / 10, 15) * 0.15) + (random.uniform(5, 15))
-                        score = min(score, 100)
+                seeds = wallet_seeds.get(search_type, wallet_seeds['top_traders'])
 
-                        days_ago = random.randint(0, 7)
-                        last_active = (datetime.now() - timedelta(days=days_ago)).strftime('%Y-%m-%d')
+                # Generate more wallets (up to max_results)
+                num_wallets = min(max_results * 2, 100)  # Generate extra for filtering
 
-                        wallets.append({
-                            'address': addr,
-                            'score': score,
-                            'win_rate': win_rate,
-                            'total_trades': total_trades,
-                            'total_pnl': total_pnl,
-                            'avg_trade_size': random.uniform(50, 500),
-                            'last_active': last_active
-                        })
+                for i in range(num_wallets):
+                    seed = seeds[i % len(seeds)]
+                    # Generate deterministic but realistic-looking address
+                    hash_input = f"{seed}_{search_type}_{i}".encode()
+                    addr = hashlib.sha256(hash_input).hexdigest()[:44]
+                    # Make it look like a Solana address (base58-like)
+                    addr = addr.replace('0', 'A').replace('1', 'B').replace('l', 'L').replace('O', 'o')
 
-                # Sort by score
+                    # Generate metrics based on search type
+                    if search_type == 'meme_hunters':
+                        win_rate = random.uniform(35, 75)  # More volatile
+                        total_trades = random.randint(20, 500)
+                        avg_profit = random.uniform(-20, 100)  # High variance
+                    elif search_type == 'dex_whales':
+                        win_rate = random.uniform(55, 80)
+                        total_trades = random.randint(50, 1000)
+                        avg_profit = random.uniform(5, 50)
+                    elif search_type == 'top_volume':
+                        win_rate = random.uniform(50, 75)
+                        total_trades = random.randint(100, 2000)
+                        avg_profit = random.uniform(0, 30)
+                    elif search_type == 'top_traders_7d':
+                        win_rate = random.uniform(55, 90)
+                        total_trades = random.randint(10, 100)
+                        avg_profit = random.uniform(5, 40)
+                    else:  # top_traders (30d)
+                        win_rate = random.uniform(50, 85)
+                        total_trades = random.randint(min_trades, 300)
+                        avg_profit = random.uniform(0, 35)
+
+                    total_pnl = avg_profit * total_trades * random.uniform(0.2, 0.5)
+
+                    # Apply filters
+                    if win_rate < min_win_rate:
+                        continue
+                    if total_trades < min_trades:
+                        continue
+                    if total_pnl < min_pnl:
+                        continue
+
+                    # Calculate score
+                    score = (win_rate * 0.4) + (min(total_pnl / 100, 30) * 0.3) + (min(total_trades / 10, 15) * 0.15) + (random.uniform(5, 15))
+                    score = min(max(score, 0), 100)
+
+                    days_ago = random.randint(0, 7 if search_type == 'top_traders_7d' else 30)
+                    last_active = (datetime.now() - timedelta(days=days_ago)).strftime('%Y-%m-%d')
+
+                    wallets.append({
+                        'address': addr,
+                        'score': round(score, 1),
+                        'win_rate': round(win_rate, 1),
+                        'total_trades': total_trades,
+                        'total_pnl': round(total_pnl, 2),
+                        'avg_trade_size': round(random.uniform(50, 500), 2),
+                        'last_active': last_active,
+                        'category': search_type
+                    })
+
+                # Sort by score and limit
                 wallets.sort(key=lambda x: x['score'], reverse=True)
+                wallets = wallets[:max_results]
 
             return web.json_response({
                 'success': True,
                 'wallets': wallets,
                 'count': len(wallets),
-                'note': 'Demo data - integrate with Helius/Birdeye API for real wallet analytics'
+                'search_type': search_type,
+                'note': 'Demo data - For live data, configure HELIUS_API_KEY or integrate with Birdeye/DexScreener APIs'
             })
 
         except Exception as e:
             logger.error(f"Error in wallet discovery: {e}")
             return web.json_response({'success': False, 'error': str(e)})
+
+    def _generate_demo_wallet(self, address: str, search_type: str):
+        """Generate demo wallet analysis data"""
+        import random
+        from datetime import datetime, timedelta
+
+        win_rate = random.uniform(45, 80)
+        total_trades = random.randint(20, 200)
+        avg_profit = random.uniform(5, 30)
+        total_pnl = avg_profit * total_trades * random.uniform(0.3, 0.5)
+        score = (win_rate * 0.4) + (min(total_pnl / 100, 30) * 0.3) + (min(total_trades / 10, 15) * 0.15) + 10
+
+        return {
+            'address': address,
+            'score': round(min(score, 100), 1),
+            'win_rate': round(win_rate, 1),
+            'total_trades': total_trades,
+            'total_pnl': round(total_pnl, 2),
+            'avg_trade_size': round(random.uniform(50, 500), 2),
+            'last_active': datetime.now().strftime('%Y-%m-%d'),
+            'category': 'analyzed'
+        }
 
     async def _analyze_solana_wallet(self, wallet_address: str, helius_api_key: str, solana_rpc_url: str):
         """Analyze a specific Solana wallet's trading performance"""

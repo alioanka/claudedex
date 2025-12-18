@@ -20,6 +20,31 @@ load_dotenv()
 log_dir = Path("logs/sniper")
 log_dir.mkdir(parents=True, exist_ok=True)
 
+# Redirect stderr to a rotating file to prevent 100MB+ stderr.log
+class StderrToRotatingFile:
+    """Redirect stderr to a rotating file handler"""
+    def __init__(self, filepath, max_bytes=5*1024*1024, backup_count=3):
+        self.handler = RotatingFileHandler(filepath, maxBytes=max_bytes, backupCount=backup_count)
+        self.handler.setFormatter(logging.Formatter('%(asctime)s - STDERR - %(message)s'))
+        self.original_stderr = sys.stderr
+
+    def write(self, message):
+        if message.strip():  # Only write non-empty messages
+            self.handler.stream.write(f"{message}")
+            self.handler.doRollover() if self.handler.shouldRollover(None) else None
+        # Also write to original stderr for console visibility
+        if self.original_stderr:
+            self.original_stderr.write(message)
+
+    def flush(self):
+        self.handler.stream.flush()
+        if self.original_stderr:
+            self.original_stderr.flush()
+
+# Install stderr redirect with rotation (5MB max, 3 backups)
+stderr_redirect = StderrToRotatingFile(log_dir / 'stderr.log')
+sys.stderr = stderr_redirect
+
 # Formatters
 log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 trade_formatter = logging.Formatter('%(asctime)s - %(message)s')
