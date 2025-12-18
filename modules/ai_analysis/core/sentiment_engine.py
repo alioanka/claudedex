@@ -532,7 +532,7 @@ class SentimentEngine:
 
             headers = {
                 "x-api-key": self.anthropic_api_key,
-                "anthropic-version": "2024-10-22",  # Updated API version
+                "anthropic-version": "2023-06-01",  # Stable API version
                 "Content-Type": "application/json"
             }
             payload = {
