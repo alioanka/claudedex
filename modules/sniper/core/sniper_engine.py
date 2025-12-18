@@ -5,15 +5,87 @@ Sniper Engine - High-speed new token sniping
 import asyncio
 import logging
 from typing import Dict, Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import os
+import aiohttp
 
 from config.config_manager import ConfigManager
 from data.storage.database import DatabaseManager
 from monitoring.alerts import AlertManager
 
 logger = logging.getLogger("SniperEngine")
+
+
+class PriceFetcher:
+    """Fetch real-time cryptocurrency prices from CoinGecko"""
+
+    COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price"
+
+    # Token symbol to CoinGecko ID mapping
+    TOKEN_IDS = {
+        'sol': 'solana',
+        'eth': 'ethereum',
+        'bnb': 'binancecoin',
+        'matic': 'matic-network',
+        'avax': 'avalanche-2',
+        'arb': 'arbitrum',
+        'base': 'base-protocol'
+    }
+
+    # Fallback prices (only used if API fails completely)
+    FALLBACK_PRICES = {
+        'sol': 200.0,
+        'eth': 3500.0,
+        'bnb': 600.0,
+        'matic': 0.85,
+        'avax': 35.0,
+        'arb': 1.0,
+        'base': 1.0
+    }
+
+    def __init__(self):
+        self._price_cache: Dict[str, float] = {}
+        self._cache_time: Dict[str, datetime] = {}
+        self._cache_duration = timedelta(minutes=1)  # 1-minute cache
+
+    async def get_price(self, symbol: str) -> float:
+        """Get current USD price for a token symbol"""
+        symbol = symbol.lower()
+
+        # Check cache first
+        if symbol in self._price_cache:
+            cache_age = datetime.now() - self._cache_time.get(symbol, datetime.min)
+            if cache_age < self._cache_duration:
+                return self._price_cache[symbol]
+
+        # Get CoinGecko ID
+        coingecko_id = self.TOKEN_IDS.get(symbol)
+        if not coingecko_id:
+            return self.FALLBACK_PRICES.get(symbol, 0.0)
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                params = {
+                    'ids': coingecko_id,
+                    'vs_currencies': 'usd'
+                }
+                async with session.get(self.COINGECKO_API, params=params, timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        price = data.get(coingecko_id, {}).get('usd', 0)
+                        if price > 0:
+                            # Update cache
+                            self._price_cache[symbol] = price
+                            self._cache_time[symbol] = datetime.now()
+                            return price
+        except Exception as e:
+            logger.debug(f"Price fetch error for {symbol}: {e}")
+
+        # Return cached price if available, otherwise fallback
+        if symbol in self._price_cache:
+            return self._price_cache[symbol]
+        return self.FALLBACK_PRICES.get(symbol, 0.0)
 
 class SniperEngine:
     """
@@ -59,7 +131,13 @@ class SniperEngine:
             'passed_safety': 0,
             'last_stats_log': datetime.now()
         }
+
+        # Cooldown tracking for rejected/analyzed tokens
         self._rejected_cache: Dict[str, datetime] = {}  # Track recently rejected tokens
+        self._cooldown_duration = timedelta(minutes=5)  # 5-minute cooldown per token
+
+        # Price fetcher for real USD values
+        self.price_fetcher = PriceFetcher()
 
     async def initialize(self):
         """Initialize sniper components"""
@@ -218,6 +296,16 @@ class SniperEngine:
         if not token_address:
             return False
 
+        # COOLDOWN CHECK: Skip if we recently analyzed/rejected this token
+        if token_address in self._rejected_cache:
+            last_check = self._rejected_cache[token_address]
+            if datetime.now() - last_check < self._cooldown_duration:
+                # Still in cooldown, skip silently
+                return False
+            else:
+                # Cooldown expired, remove from cache
+                del self._rejected_cache[token_address]
+
         # Update stats
         self._stats['tokens_analyzed'] += 1
 
@@ -262,6 +350,7 @@ class SniperEngine:
                 # Check if safe to snipe (rate-limited logging - only log at DEBUG level)
                 if report.is_honeypot:
                     self._stats['honeypots_detected'] += 1
+                    self._rejected_cache[token_address] = datetime.now()  # Add to cooldown
                     logger.debug(f"🍯 HONEYPOT: {token_address[:16]}...")
                     return False
 
@@ -271,6 +360,7 @@ class SniperEngine:
                     if self.test_mode:
                         logger.warning(f"⚠️ TEST MODE: Allowing DANGER token {token_address[:16]}...")
                     else:
+                        self._rejected_cache[token_address] = datetime.now()  # Add to cooldown
                         logger.debug(f"🚨 DANGER: {token_address[:16]}... (Score: {report.score})")
                         return False
 
@@ -280,11 +370,13 @@ class SniperEngine:
 
                 if report.buy_tax > max_buy_tax or report.sell_tax > max_sell_tax:
                     self._stats['high_tax_rejected'] += 1
+                    self._rejected_cache[token_address] = datetime.now()  # Add to cooldown
                     logger.debug(f"⚠️ High tax: {token_address[:16]}... (Buy: {report.buy_tax:.1f}%, Sell: {report.sell_tax:.1f}%)")
                     return False
 
                 if report.liquidity_usd < min_liquidity:
                     self._stats['low_liquidity_rejected'] += 1
+                    self._rejected_cache[token_address] = datetime.now()  # Add to cooldown
                     logger.debug(f"⚠️ Low liquidity: {token_address[:16]}... (${report.liquidity_usd:,.0f})")
                     return False
 
@@ -376,11 +468,20 @@ class SniperEngine:
                 logger.info(f"✅ SNIPE SUCCESS: {token_address}")
                 logger.info(f"   TX: {result.tx_hash} | Amount: {result.amount_out}")
 
+                # Determine native token and get real USD price
+                native_token = 'sol' if chain == 'solana' else 'eth'
+                native_price = await self.price_fetcher.get_price(native_token)
+                entry_usd = self.trade_amount * native_price
+
                 data['status'] = 'active'
                 data['entry_price'] = self.trade_amount / result.amount_out if result.amount_out > 0 else 0
                 data['amount_bought'] = result.amount_out
                 data['tx_hash'] = result.tx_hash
                 data['entry_time'] = result.timestamp
+                data['entry_usd'] = entry_usd  # Store USD value for accurate exit PnL
+                data['native_price_at_entry'] = native_price
+
+                logger.info(f"   Entry value: ${entry_usd:.2f} ({self.trade_amount:.4f} {native_token.upper()} @ ${native_price:.2f})")
 
                 self.active_snipes[token_address] = data
                 del self.pending_targets[token_address]
@@ -398,10 +499,20 @@ class SniperEngine:
             data['error'] = str(e)
 
     async def _log_snipe_to_db(self, data: Dict, result):
-        """Log snipe trade to database"""
+        """Log snipe trade to database with real USD values"""
         try:
             if self.db_pool:
                 import uuid
+
+                # Determine native token based on chain
+                chain_type = data.get('chain_type', 'solana')
+                native_token = 'sol' if chain_type == 'solana' else 'eth'
+
+                # Fetch real native token price for USD conversion
+                native_price = await self.price_fetcher.get_price(native_token)
+                trade_amount_native = result.amount_in  # Amount spent in native token
+                usd_value = trade_amount_native * native_price
+
                 async with self.db_pool.acquire() as conn:
                     await conn.execute("""
                         INSERT INTO trades (
@@ -411,19 +522,22 @@ class SniperEngine:
                     """,
                         f"snipe_{uuid.uuid4().hex[:12]}",
                         data['target'].get('token_address', 'UNKNOWN'),
-                        data.get('chain_type', 'solana'),
+                        chain_type,
                         'buy',
                         data.get('entry_price', 0),
                         result.amount_out,
-                        result.amount_in,
+                        usd_value,  # Real USD value calculated from native price
                         'open' if result.success else 'failed',
                         'sniper',
                         result.timestamp,
                         json.dumps({
                             'tx_hash': result.tx_hash,
-                            'safety_report': data.get('target', {}).get('safety_report', {})
+                            'safety_report': data.get('target', {}).get('safety_report', {}),
+                            'native_token_price': native_price,
+                            'trade_amount_native': trade_amount_native
                         })
                     )
+                logger.debug(f"💾 Logged snipe: ${usd_value:.2f} ({trade_amount_native:.4f} {native_token.upper()} @ ${native_price:.2f})")
         except Exception as e:
             logger.error(f"Error logging snipe to DB: {e}")
 
@@ -551,15 +665,38 @@ class SniperEngine:
             logger.error(f"Error exiting position: {e}")
 
     async def _log_exit_to_db(self, data: Dict, result, reason: str):
-        """Log exit trade to database"""
+        """Log exit trade to database with real USD values"""
         try:
             if self.db_pool:
                 import uuid
                 token_address = data['target'].get('token_address', 'UNKNOWN')
+                chain_type = data.get('chain_type', 'solana')
+
+                # Determine native token based on chain
+                native_token = 'sol' if chain_type == 'solana' else 'eth'
+
+                # Fetch real native token price for USD conversion
+                native_price = await self.price_fetcher.get_price(native_token)
+
+                # Entry price per token (in native token)
                 entry_price = data.get('entry_price', 0)
+                # Exit price per token (in native token)
                 exit_price = data.get('exit_price', 0)
-                pnl = (exit_price - entry_price) * result.amount_in if entry_price > 0 else 0
-                pnl_pct = ((exit_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
+
+                # Amount of tokens sold
+                tokens_sold = result.amount_in
+                # Amount of native token received
+                native_received = result.amount_out
+
+                # Calculate USD values
+                # Entry value: tokens * entry_price_per_token * native_price
+                # But we stored entry_usd in the entry metadata - use that if available
+                entry_usd = data.get('entry_usd', self.trade_amount * native_price)
+                exit_usd = native_received * native_price
+
+                # Calculate real PnL in USD
+                pnl_usd = exit_usd - entry_usd
+                pnl_pct = ((exit_usd - entry_usd) / entry_usd * 100) if entry_usd > 0 else 0
 
                 async with self.db_pool.acquire() as conn:
                     await conn.execute("""
@@ -571,13 +708,13 @@ class SniperEngine:
                     """,
                         f"snipe_exit_{uuid.uuid4().hex[:12]}",
                         token_address,
-                        data.get('chain_type', 'solana'),
+                        chain_type,
                         'sell',
                         entry_price,
                         exit_price,
-                        result.amount_in,
-                        result.amount_out,
-                        pnl,
+                        tokens_sold,
+                        exit_usd,  # Real USD value from exit
+                        pnl_usd,   # Real PnL in USD
                         pnl_pct,
                         'closed' if result.success else 'failed',
                         'sniper',
@@ -585,9 +722,14 @@ class SniperEngine:
                         result.timestamp,
                         json.dumps({
                             'tx_hash': result.tx_hash,
-                            'exit_reason': reason
+                            'exit_reason': reason,
+                            'native_token_price': native_price,
+                            'native_received': native_received,
+                            'entry_usd': entry_usd,
+                            'exit_usd': exit_usd
                         })
                     )
+                logger.debug(f"💾 Logged exit: ${exit_usd:.2f} (PnL: ${pnl_usd:.2f} / {pnl_pct:.1f}%)")
         except Exception as e:
             logger.error(f"Error logging exit to DB: {e}")
 
