@@ -367,6 +367,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/ai/trades', self.api_get_ai_trades)
         self.app.router.add_get('/api/ai/settings', self.api_get_ai_settings)
         self.app.router.add_post('/api/ai/settings', self.api_save_ai_settings)
+        self.app.router.add_get('/api/ai/logs', self.api_get_ai_logs)
 
         # API - Full Dashboard Charts
         self.app.router.add_get('/api/dashboard/charts/full', self.api_get_full_dashboard_charts)
@@ -567,6 +568,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/ai/sentiment', self._ai_sentiment)
         self.app.router.add_get('/ai/performance', self._ai_performance)
         self.app.router.add_get('/ai/settings', self._ai_settings)
+        self.app.router.add_get('/ai/logs', self._ai_logs)
 
         # API endpoints that return empty data when module_manager is unavailable
         self.app.router.add_get('/api/modules', self._fallback_api_modules)
@@ -6606,6 +6608,10 @@ class DashboardEndpoints:
         template = self.jinja_env.get_template('settings_ai.html')
         return web.Response(text=template.render(page='ai_settings'), content_type='text/html')
 
+    async def _ai_logs(self, request):
+        template = self.jinja_env.get_template('logs_ai.html')
+        return web.Response(text=template.render(page='ai_logs'), content_type='text/html')
+
     async def api_get_ai_stats(self, request):
         """Get AI module stats from DB"""
         try:
@@ -6761,6 +6767,53 @@ class DashboardEndpoints:
             return web.json_response({'success': True, 'message': 'Settings saved'})
         except Exception as e:
             return web.json_response({'success': False, 'error': str(e)})
+
+    async def api_get_ai_logs(self, request):
+        """Get detailed OpenAI API logs from database"""
+        try:
+            logs = []
+            limit = int(request.query.get('limit', 100))
+
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    # Check if table exists
+                    table_exists = await conn.fetchval("""
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables
+                            WHERE table_name = 'ai_analysis_logs'
+                        )
+                    """)
+
+                    if table_exists:
+                        rows = await conn.fetch("""
+                            SELECT
+                                id, timestamp, headlines, raw_response, sentiment_score,
+                                prompt_tokens, completion_tokens, total_tokens,
+                                response_time_sec, model
+                            FROM ai_analysis_logs
+                            ORDER BY timestamp DESC
+                            LIMIT $1
+                        """, limit)
+
+                        for row in rows:
+                            import json
+                            logs.append({
+                                'id': row['id'],
+                                'timestamp': row['timestamp'].isoformat() if row['timestamp'] else None,
+                                'headlines': row['headlines'] if row['headlines'] else '[]',
+                                'raw_response': row['raw_response'],
+                                'sentiment_score': float(row['sentiment_score']) if row['sentiment_score'] else 0,
+                                'prompt_tokens': row['prompt_tokens'] or 0,
+                                'completion_tokens': row['completion_tokens'] or 0,
+                                'total_tokens': row['total_tokens'] or 0,
+                                'response_time_sec': float(row['response_time_sec']) if row['response_time_sec'] else 0,
+                                'model': row['model'] or 'gpt-3.5-turbo'
+                            })
+
+            return web.json_response({'success': True, 'logs': logs})
+        except Exception as e:
+            logger.error(f"Error getting AI logs: {e}")
+            return web.json_response({'success': False, 'error': str(e), 'logs': []})
 
     # ==================== FULL DASHBOARD HANDLERS ====================
 

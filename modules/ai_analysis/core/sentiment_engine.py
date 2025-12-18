@@ -17,6 +17,7 @@ import aiohttp
 import os
 
 logger = logging.getLogger("SentimentEngine")
+openai_logger = logging.getLogger("OpenAI_API")
 
 
 class AITradeExecutor:
@@ -354,6 +355,17 @@ class SentimentEngine:
                 "Only return the number.\n\n" + "\n".join(texts)
             )
 
+            # Log the OpenAI API request
+            openai_logger.info("=" * 80)
+            openai_logger.info(f"🤖 OpenAI API Request at {datetime.now().isoformat()}")
+            openai_logger.info(f"   Model: gpt-3.5-turbo")
+            openai_logger.info(f"   Headlines count: {len(texts)}")
+            for i, headline in enumerate(texts[:5], 1):  # Log first 5 headlines
+                openai_logger.info(f"   [{i}] {headline[:100]}...")
+            if len(texts) > 5:
+                openai_logger.info(f"   ... and {len(texts) - 5} more headlines")
+            openai_logger.info("-" * 40)
+
             headers = {
                 "Authorization": f"Bearer {self.openai_api_key}",
                 "Content-Type": "application/json"
@@ -365,17 +377,84 @@ class SentimentEngine:
             }
 
             async with aiohttp.ClientSession() as session:
+                start_time = datetime.now()
                 async with session.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload) as resp:
+                    elapsed = (datetime.now() - start_time).total_seconds()
+
                     if resp.status == 200:
                         data = await resp.json()
                         content = data['choices'][0]['message']['content'].strip()
-                        return float(content)
+                        usage = data.get('usage', {})
+
+                        # Log the response
+                        openai_logger.info(f"✅ OpenAI API Response (Status: 200)")
+                        openai_logger.info(f"   Response time: {elapsed:.2f}s")
+                        openai_logger.info(f"   Raw response: {content}")
+                        openai_logger.info(f"   Tokens used: prompt={usage.get('prompt_tokens', 'N/A')}, completion={usage.get('completion_tokens', 'N/A')}, total={usage.get('total_tokens', 'N/A')}")
+
+                        try:
+                            score = float(content)
+                            openai_logger.info(f"   Parsed sentiment score: {score:.4f}")
+
+                            # Store detailed log in database
+                            await self._store_openai_log(texts, content, score, usage, elapsed)
+
+                            return score
+                        except ValueError:
+                            openai_logger.error(f"❌ Could not parse response as float: {content}")
+                            return 0.0
                     else:
+                        error_text = await resp.text()
+                        openai_logger.error(f"❌ OpenAI API Error: {resp.status}")
+                        openai_logger.error(f"   Response: {error_text[:500]}")
                         logger.error(f"OpenAI API Error: {resp.status}")
                         return 0.0
         except Exception as e:
+            openai_logger.error(f"❌ LLM analysis failed: {e}")
             logger.error(f"LLM analysis failed: {e}")
             return 0.0
+
+    async def _store_openai_log(self, headlines: List[str], response: str, score: float, usage: Dict, elapsed: float):
+        """Store detailed OpenAI API log in database"""
+        if not self.db_pool:
+            return
+
+        try:
+            async with self.db_pool.acquire() as conn:
+                # Check if table exists, create if not
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS ai_analysis_logs (
+                        id SERIAL PRIMARY KEY,
+                        timestamp TIMESTAMP DEFAULT NOW(),
+                        headlines JSONB,
+                        raw_response TEXT,
+                        sentiment_score FLOAT,
+                        prompt_tokens INTEGER,
+                        completion_tokens INTEGER,
+                        total_tokens INTEGER,
+                        response_time_sec FLOAT,
+                        model VARCHAR(50)
+                    )
+                """)
+
+                await conn.execute("""
+                    INSERT INTO ai_analysis_logs (
+                        headlines, raw_response, sentiment_score,
+                        prompt_tokens, completion_tokens, total_tokens,
+                        response_time_sec, model
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                """,
+                    json.dumps(headlines),
+                    response,
+                    score,
+                    usage.get('prompt_tokens', 0),
+                    usage.get('completion_tokens', 0),
+                    usage.get('total_tokens', 0),
+                    elapsed,
+                    'gpt-3.5-turbo'
+                )
+        except Exception as e:
+            openai_logger.error(f"Failed to store OpenAI log: {e}")
 
     async def _store_sentiment(self, score: float):
         """Log sentiment score to database"""

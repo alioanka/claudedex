@@ -44,11 +44,36 @@ console = logging.StreamHandler()
 console.setFormatter(log_formatter)
 logger.addHandler(console)
 
-from modules.ai_analysis.core.sentiment_engine import SentimentEngine
+from modules.ai_analysis.core.sentiment_engine import SentimentEngine, AITradeExecutor
 from config.config_manager import ConfigManager
+
+# Also configure logging for the engine classes
+for engine_name in ["SentimentEngine", "AITradeExecutor"]:
+    engine_logger = logging.getLogger(engine_name)
+    engine_logger.setLevel(logging.INFO)
+    engine_logger.addHandler(main_handler)
+    engine_logger.addHandler(error_handler)
+    engine_logger.addHandler(console)
+
+# Also add OpenAI API log
+openai_log_handler = RotatingFileHandler(log_dir / 'openai_api.log', maxBytes=10*1024*1024, backupCount=5)
+openai_log_handler.setFormatter(log_formatter)
+openai_logger = logging.getLogger("OpenAI_API")
+openai_logger.setLevel(logging.INFO)
+openai_logger.addHandler(openai_log_handler)
+openai_logger.addHandler(console)
 
 async def main():
     logger.info("🧠 AI Analysis Module Starting...")
+    logger.info(f"   Working dir: {Path.cwd()}")
+    logger.info(f"   Log dir: {log_dir.absolute()}")
+
+    # Check OpenAI API Key
+    openai_key = os.getenv('OPENAI_API_KEY')
+    if not openai_key:
+        logger.warning("⚠️ No OPENAI_API_KEY found - AI analysis will be limited")
+    else:
+        logger.info(f"   OpenAI API Key: {openai_key[:20]}...")
 
     # Init DB
     db_url = os.getenv('DATABASE_URL')
@@ -56,8 +81,13 @@ async def main():
         logger.error("No DATABASE_URL found")
         return
 
-    import asyncpg
-    db_pool = await asyncpg.create_pool(db_url)
+    try:
+        import asyncpg
+        db_pool = await asyncpg.create_pool(db_url)
+        logger.info("✅ Database connected")
+    except Exception as e:
+        logger.error(f"❌ Database connection failed: {e}")
+        return
 
     # Init Config
     config_manager = ConfigManager()
@@ -65,14 +95,27 @@ async def main():
 
     # Init Engine
     config = {
-        'openai_api_key': os.getenv('OPENAI_API_KEY')
+        'openai_api_key': openai_key
     }
     engine = SentimentEngine(config, db_pool)
-    await engine.initialize()
+
+    try:
+        await engine.initialize()
+        logger.info("✅ Sentiment Engine initialized successfully")
+    except Exception as e:
+        logger.error(f"❌ Engine initialization failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return
 
     try:
         await engine.run()
     except KeyboardInterrupt:
+        await engine.stop()
+    except Exception as e:
+        logger.error(f"❌ Engine error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         await engine.stop()
 
 if __name__ == "__main__":

@@ -57,8 +57,28 @@ from modules.sniper.core.sniper_engine import SniperEngine
 from config.config_manager import ConfigManager
 from data.storage.database import DatabaseManager
 
+# Also configure logging for all engine components
+for engine_name in ["SniperEngine", "EVMListener", "SolanaListener", "TokenSafetyChecker", "TradeExecutor"]:
+    engine_logger = logging.getLogger(engine_name)
+    engine_logger.setLevel(logging.INFO)
+    engine_logger.addHandler(main_handler)
+    engine_logger.addHandler(error_handler)
+    engine_logger.addHandler(console)
+
 async def main():
     logger.info("🔫 Sniper Module Starting...")
+    logger.info(f"   Working dir: {Path.cwd()}")
+    logger.info(f"   Log dir: {log_dir.absolute()}")
+
+    # Check for RPC URLs
+    solana_rpc = os.getenv('SOLANA_RPC_URL')
+    evm_rpc = os.getenv('WEB3_PROVIDER_URL') or os.getenv('ETHEREUM_RPC_URL')
+
+    logger.info(f"   Solana RPC: {'Configured' if solana_rpc else 'Not configured'}")
+    logger.info(f"   EVM RPC: {'Configured' if evm_rpc else 'Not configured'}")
+
+    if not solana_rpc and not evm_rpc:
+        logger.warning("⚠️ No RPC URLs configured - sniper will have limited functionality")
 
     # Init DB
     db_url = os.getenv('DATABASE_URL')
@@ -66,25 +86,43 @@ async def main():
         logger.error("No DATABASE_URL found")
         return
 
-    import asyncpg
-    db_pool = await asyncpg.create_pool(db_url)
+    try:
+        import asyncpg
+        db_pool = await asyncpg.create_pool(db_url)
+        logger.info("✅ Database connected")
+    except Exception as e:
+        logger.error(f"❌ Database connection failed: {e}")
+        return
 
     # Init Config
     config_manager = ConfigManager()
     await config_manager.initialize()
     config = {
         'sniper': {
-            'evm_enabled': True,
-            'solana_enabled': True
+            'evm_enabled': bool(evm_rpc),
+            'solana_enabled': bool(solana_rpc)
         }
     }
 
     engine = SniperEngine(config, config_manager, db_pool)
-    await engine.initialize()
+
+    try:
+        await engine.initialize()
+        logger.info("✅ Sniper Engine initialized successfully")
+    except Exception as e:
+        logger.error(f"❌ Engine initialization failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return
 
     try:
         await engine.run()
     except KeyboardInterrupt:
+        await engine.stop()
+    except Exception as e:
+        logger.error(f"❌ Engine error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         await engine.stop()
 
 if __name__ == "__main__":

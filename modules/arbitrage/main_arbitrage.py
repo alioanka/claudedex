@@ -56,8 +56,30 @@ logger.addHandler(console)
 from modules.arbitrage.arbitrage_engine import ArbitrageEngine
 from config.config_manager import ConfigManager
 
+# Also configure logging for the engine
+engine_logger = logging.getLogger("ArbitrageEngine")
+engine_logger.setLevel(logging.INFO)
+engine_logger.addHandler(main_handler)
+engine_logger.addHandler(error_handler)
+engine_logger.addHandler(console)
+
 async def main():
     logger.info("⚖️ Arbitrage Module Starting...")
+    logger.info(f"   Working dir: {Path.cwd()}")
+    logger.info(f"   Log dir: {log_dir.absolute()}")
+
+    # Check RPC URL
+    rpc_url = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
+    if not rpc_url:
+        logger.error("❌ No ETHEREUM_RPC_URL or WEB3_PROVIDER_URL found in .env")
+        logger.error("   Arbitrage module requires an EVM RPC URL to function")
+        # Don't exit - keep module alive but log status
+        while True:
+            logger.info("⚖️ Arbitrage Module IDLE - Waiting for RPC configuration...")
+            await asyncio.sleep(300)
+        return
+
+    logger.info(f"   RPC URL: {rpc_url[:50]}...")
 
     # Init DB
     db_url = os.getenv('DATABASE_URL')
@@ -65,8 +87,13 @@ async def main():
         logger.error("No DATABASE_URL found")
         return
 
-    import asyncpg
-    db_pool = await asyncpg.create_pool(db_url)
+    try:
+        import asyncpg
+        db_pool = await asyncpg.create_pool(db_url)
+        logger.info("✅ Database connected")
+    except Exception as e:
+        logger.error(f"❌ Database connection failed: {e}")
+        return
 
     # Init Config
     config_manager = ConfigManager()
@@ -75,11 +102,24 @@ async def main():
     # Init Engine
     config = {'arbitrage_enabled': True}
     engine = ArbitrageEngine(config, db_pool)
-    await engine.initialize()
+
+    try:
+        await engine.initialize()
+        logger.info("✅ Arbitrage Engine initialized successfully")
+    except Exception as e:
+        logger.error(f"❌ Engine initialization failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return
 
     try:
         await engine.run()
     except KeyboardInterrupt:
+        await engine.stop()
+    except Exception as e:
+        logger.error(f"❌ Engine error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         await engine.stop()
 
 if __name__ == "__main__":
