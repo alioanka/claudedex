@@ -317,6 +317,17 @@ class ArbitrageEngine:
         self.use_flashbots = True
         self.flash_loan_amount = 10 * 10**18  # 10 ETH default
 
+        # Rate limiting for logging and execution
+        self._last_opportunity_time = None
+        self._last_opportunity_key = None
+        self._opportunity_cooldown = 300  # 5 minutes cooldown for same opportunity
+        self._stats = {
+            'scans': 0,
+            'opportunities_found': 0,
+            'opportunities_executed': 0,
+            'last_stats_log': datetime.now()
+        }
+
     async def initialize(self):
         logger.info("⚖️ Initializing Arbitrage Engine...")
 
@@ -367,25 +378,39 @@ class ArbitrageEngine:
             logger.error("RPC not connected, arbitrage disabled.")
             return
 
-        scan_count = 0
-        opportunities_found = 0
-
         while self.is_running:
             try:
-                scan_count += 1
-                # Scan WETH/USDC
-                found = await self._check_arb_opportunity(TOKENS['WETH'], TOKENS['USDC'])
-                if found:
-                    opportunities_found += 1
+                self._stats['scans'] += 1
 
-                # Log status every 60 scans (5 minutes at 5s interval)
-                if scan_count % 60 == 0:
-                    logger.info(f"⚖️ Status: {scan_count} scans completed, {opportunities_found} opportunities found")
+                # Scan WETH/USDC
+                await self._check_arb_opportunity(TOKENS['WETH'], TOKENS['USDC'])
+
+                # Log stats every 5 minutes
+                await self._log_stats_if_needed()
 
                 await asyncio.sleep(5)
             except Exception as e:
                 logger.error(f"Arb loop error: {e}")
                 await asyncio.sleep(5)
+
+    async def _log_stats_if_needed(self):
+        """Log statistics every 5 minutes"""
+        now = datetime.now()
+        elapsed = (now - self._stats['last_stats_log']).total_seconds()
+
+        if elapsed >= 300:  # 5 minutes
+            logger.info(f"📊 ARBITRAGE STATS (Last 5 min): "
+                       f"Scans: {self._stats['scans']} | "
+                       f"Opportunities: {self._stats['opportunities_found']} | "
+                       f"Executed: {self._stats['opportunities_executed']}")
+
+            # Reset stats
+            self._stats = {
+                'scans': 0,
+                'opportunities_found': 0,
+                'opportunities_executed': 0,
+                'last_stats_log': now
+            }
 
     async def _check_arb_opportunity(self, token_in, token_out) -> bool:
         """Check price difference between two DEXs. Returns True if opportunity found."""
@@ -413,7 +438,25 @@ class ArbitrageEngine:
             spread = (sell_price - buy_price) / buy_price
 
             if spread > self.min_profit_threshold:
+                self._stats['opportunities_found'] += 1
+
+                # Create unique key for this opportunity
+                opp_key = f"{best_buy_dex}_{best_sell_dex}_{token_in}"
+
+                # Check cooldown - don't spam same opportunity
+                now = datetime.now()
+                if self._last_opportunity_key == opp_key and self._last_opportunity_time:
+                    elapsed = (now - self._last_opportunity_time).total_seconds()
+                    if elapsed < self._opportunity_cooldown:
+                        # Same opportunity within cooldown, skip silently
+                        return True
+
+                # New opportunity or cooldown expired - log and execute
+                self._last_opportunity_key = opp_key
+                self._last_opportunity_time = now
+
                 logger.info(f"🚨 ARBITRAGE OPPORTUNITY: Buy on {best_buy_dex}, Sell on {best_sell_dex}. Spread: {spread:.2%}")
+                self._stats['opportunities_executed'] += 1
 
                 # Execute arbitrage
                 await self._execute_flash_swap(
@@ -599,30 +642,40 @@ class ArbitrageEngine:
 
         try:
             import uuid
+            amount_eth = amount / 1e18
+            # Calculate simulated entry/exit prices for display
+            entry_price = 1.0  # Normalized base price
+            exit_price = 1.0 + profit_pct  # Exit = entry + profit%
+            profit_usd = amount_eth * profit_pct * 2000  # Rough ETH price estimate for USD value
+
             async with self.db_pool.acquire() as conn:
                 await conn.execute("""
                     INSERT INTO trades (
-                        trade_id, token_address, chain, side, entry_price,
-                        amount, usd_value, profit_loss_percentage,
-                        status, strategy, entry_timestamp, metadata
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                        trade_id, token_address, chain, side, entry_price, exit_price,
+                        amount, usd_value, profit_loss, profit_loss_percentage,
+                        status, strategy, entry_timestamp, exit_timestamp, metadata
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
                 """,
                     f"arb_{uuid.uuid4().hex[:12]}",
                     token,
                     'ethereum',
                     'buy',
-                    0,  # Arbitrage doesn't have a single entry price
-                    amount / 1e18,
-                    profit_pct * 100,  # Estimated USD value based on profit
+                    entry_price,
+                    exit_price,
+                    amount_eth,
+                    amount_eth * 2000,  # Rough USD value of ETH amount
+                    profit_usd,
                     profit_pct * 100,
                     'closed',
                     'arbitrage',
                     datetime.now(),
+                    datetime.now(),  # Exit timestamp same as entry for arb
                     json.dumps({
                         'tx_hash': tx_hash,
                         'buy_dex': buy_dex,
                         'sell_dex': sell_dex,
-                        'dry_run': self.dry_run
+                        'dry_run': self.dry_run,
+                        'spread_pct': profit_pct * 100
                     })
                 )
         except Exception as e:
