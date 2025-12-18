@@ -598,22 +598,28 @@ class ArbitrageEngine:
             return
 
         try:
+            import uuid
             async with self.db_pool.acquire() as conn:
                 await conn.execute("""
                     INSERT INTO trades (
-                        timestamp, symbol, side, price, quantity,
-                        status, source, tx_hash, notes
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                        trade_id, token_address, chain, side, entry_price,
+                        amount, usd_value, profit_loss_percentage,
+                        status, strategy, entry_timestamp, metadata
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                 """,
-                    datetime.now(),
-                    token[:10],
-                    'ARB',
-                    profit_pct * 100,
+                    f"arb_{uuid.uuid4().hex[:12]}",
+                    token,
+                    'ethereum',
+                    'buy',
+                    0,  # Arbitrage doesn't have a single entry price
                     amount / 1e18,
-                    'FILLED',
+                    profit_pct * 100,  # Estimated USD value based on profit
+                    profit_pct * 100,
+                    'closed',
                     'arbitrage',
-                    tx_hash,
+                    datetime.now(),
                     json.dumps({
+                        'tx_hash': tx_hash,
                         'buy_dex': buy_dex,
                         'sell_dex': sell_dex,
                         'dry_run': self.dry_run

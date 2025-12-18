@@ -316,23 +316,28 @@ class SniperEngine:
         """Log snipe trade to database"""
         try:
             if self.db_pool:
+                import uuid
                 async with self.db_pool.acquire() as conn:
                     await conn.execute("""
                         INSERT INTO trades (
-                            timestamp, symbol, side, price, quantity,
-                            quote_quantity, status, source, tx_hash, notes
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                            trade_id, token_address, chain, side, entry_price, amount,
+                            usd_value, status, strategy, entry_timestamp, metadata
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                     """,
-                        result.timestamp,
+                        f"snipe_{uuid.uuid4().hex[:12]}",
                         data['target'].get('token_address', 'UNKNOWN'),
-                        'BUY',
+                        data.get('chain_type', 'solana'),
+                        'buy',
                         data.get('entry_price', 0),
                         result.amount_out,
                         result.amount_in,
-                        'FILLED' if result.success else 'FAILED',
+                        'open' if result.success else 'failed',
                         'sniper',
-                        result.tx_hash,
-                        json.dumps(data.get('target', {}).get('safety_report', {}))
+                        result.timestamp,
+                        json.dumps({
+                            'tx_hash': result.tx_hash,
+                            'safety_report': data.get('target', {}).get('safety_report', {})
+                        })
                     )
         except Exception as e:
             logger.error(f"Error logging snipe to DB: {e}")
@@ -464,23 +469,39 @@ class SniperEngine:
         """Log exit trade to database"""
         try:
             if self.db_pool:
+                import uuid
+                token_address = data['target'].get('token_address', 'UNKNOWN')
+                entry_price = data.get('entry_price', 0)
+                exit_price = data.get('exit_price', 0)
+                pnl = (exit_price - entry_price) * result.amount_in if entry_price > 0 else 0
+                pnl_pct = ((exit_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
+
                 async with self.db_pool.acquire() as conn:
                     await conn.execute("""
                         INSERT INTO trades (
-                            timestamp, symbol, side, price, quantity,
-                            quote_quantity, status, source, tx_hash, notes
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                            trade_id, token_address, chain, side, entry_price, exit_price,
+                            amount, usd_value, profit_loss, profit_loss_percentage,
+                            status, strategy, entry_timestamp, exit_timestamp, metadata
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
                     """,
-                        result.timestamp,
-                        data['target'].get('token_address', 'UNKNOWN'),
-                        'SELL',
-                        data.get('exit_price', 0),
+                        f"snipe_exit_{uuid.uuid4().hex[:12]}",
+                        token_address,
+                        data.get('chain_type', 'solana'),
+                        'sell',
+                        entry_price,
+                        exit_price,
                         result.amount_in,
                         result.amount_out,
-                        'FILLED' if result.success else 'FAILED',
+                        pnl,
+                        pnl_pct,
+                        'closed' if result.success else 'failed',
                         'sniper',
-                        result.tx_hash,
-                        f"Exit reason: {reason}"
+                        data.get('snipe_time', result.timestamp),
+                        result.timestamp,
+                        json.dumps({
+                            'tx_hash': result.tx_hash,
+                            'exit_reason': reason
+                        })
                     )
         except Exception as e:
             logger.error(f"Error logging exit to DB: {e}")

@@ -69,6 +69,25 @@
         font-size: 0.9rem;
     }
 
+    .search-field select option {
+        background: var(--input-bg);
+        color: var(--text-primary);
+        padding: 10px;
+    }
+
+    /* Fix for dark theme dropdown options */
+    [data-theme="dark"] .search-field select,
+    [data-theme="dark"] .search-field select option {
+        background-color: #374151;
+        color: #f9fafb;
+    }
+
+    [data-theme="light"] .search-field select,
+    [data-theme="light"] .search-field select option {
+        background-color: #ffffff;
+        color: #111827;
+    }
+
     .btn {
         display: inline-flex;
         align-items: center;

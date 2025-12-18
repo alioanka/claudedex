@@ -671,23 +671,26 @@ class CopyTradingEngine:
             return
 
         try:
+            import uuid
             async with self.db_pool.acquire() as conn:
                 await conn.execute("""
                     INSERT INTO trades (
-                        timestamp, symbol, side, price, quantity,
-                        status, source, tx_hash, notes
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                        trade_id, token_address, chain, side, entry_price,
+                        amount, usd_value, status, strategy, entry_timestamp, metadata
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 """,
-                    datetime.now(),
+                    f"copy_{uuid.uuid4().hex[:12]}",
                     result.get('output_mint') or result.get('token', 'UNKNOWN'),
-                    'BUY',
+                    chain,
+                    'buy',
                     0,  # Price not easily available
                     result.get('amount', 0),
-                    'FILLED' if result.get('success') else 'FAILED',
+                    result.get('usd_value', 0),
+                    'open' if result.get('success') else 'failed',
                     'copytrading',
-                    result.get('tx_hash'),
+                    datetime.now(),
                     json.dumps({
-                        'chain': chain,
+                        'tx_hash': result.get('tx_hash'),
                         'source_tx': source_tx,
                         'dry_run': self.dry_run
                     })

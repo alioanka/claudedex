@@ -566,6 +566,8 @@ class DashboardEndpoints:
         self.app.router.add_get('/copytrading/performance', self._copytrading_performance)
         self.app.router.add_get('/copytrading/settings', self._copytrading_settings)
         self.app.router.add_get('/copytrading/discovery', self._copytrading_discovery)
+        self.app.router.add_get('/copytrading/wallets', self._copytrading_wallets)
+        self.app.router.add_get('/api/copytrading/wallets', self.api_get_copytrading_wallets)
 
         # AI Analysis Module Pages
         self.app.router.add_get('/ai/dashboard', self._ai_dashboard)
@@ -6209,7 +6211,7 @@ class DashboardEndpoints:
                             COUNT(*) FILTER (WHERE profit_loss < 0) as losing_trades,
                             COALESCE(SUM(profit_loss), 0) as total_pnl
                         FROM trades
-                        WHERE source = 'sniper'
+                        WHERE strategy = 'sniper'
                     """)
                     if row:
                         stats['total_trades'] = row['total_trades'] or 0
@@ -6222,7 +6224,7 @@ class DashboardEndpoints:
                     # Get active positions (open status)
                     active = await conn.fetchval("""
                         SELECT COUNT(*) FROM trades
-                        WHERE source = 'sniper' AND status = 'open'
+                        WHERE strategy = 'sniper' AND status = 'open'
                     """)
                     stats['active_positions'] = active or 0
                     stats['status'] = 'Online' if stats['total_trades'] > 0 else 'Idle'
@@ -6240,25 +6242,33 @@ class DashboardEndpoints:
                 async with self.db.pool.acquire() as conn:
                     rows = await conn.fetch("""
                         SELECT
-                            trade_id, symbol, side, price as entry_price, quantity as size,
-                            quote_quantity as notional_value, status, timestamp,
-                            profit_loss as unrealized_pnl, tx_hash, notes
+                            trade_id, token_address, side, entry_price, amount,
+                            usd_value, status, entry_timestamp,
+                            profit_loss, metadata
                         FROM trades
-                        WHERE source = 'sniper' AND status = 'open'
-                        ORDER BY timestamp DESC
+                        WHERE strategy = 'sniper' AND status = 'open'
+                        ORDER BY entry_timestamp DESC
                     """)
                     for row in rows:
+                        metadata = row['metadata'] or {}
+                        if isinstance(metadata, str):
+                            try:
+                                import json as json_module
+                                metadata = json_module.loads(metadata)
+                            except:
+                                metadata = {}
                         positions.append({
                             'trade_id': row['trade_id'],
-                            'symbol': row['symbol'],
+                            'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
+                            'token_address': row['token_address'],
                             'side': row['side'].lower() if row['side'] else 'long',
                             'entry_price': float(row['entry_price'] or 0),
-                            'size': float(row['size'] or 0),
-                            'notional_value': float(row['notional_value'] or 0),
-                            'unrealized_pnl': float(row['unrealized_pnl'] or 0),
+                            'size': float(row['amount'] or 0),
+                            'notional_value': float(row['usd_value'] or 0),
+                            'unrealized_pnl': float(row['profit_loss'] or 0),
                             'status': row['status'],
-                            'timestamp': row['timestamp'].isoformat() if row['timestamp'] else None,
-                            'tx_hash': row['tx_hash']
+                            'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
+                            'tx_hash': metadata.get('tx_hash', '')
                         })
             return web.json_response({'success': True, 'positions': positions, 'count': len(positions)})
         except Exception as e:
@@ -6274,32 +6284,42 @@ class DashboardEndpoints:
                 async with self.db.pool.acquire() as conn:
                     rows = await conn.fetch("""
                         SELECT
-                            trade_id, symbol, side, price as entry_price, quantity as size,
-                            quote_quantity, status, timestamp, profit_loss as pnl,
-                            tx_hash, notes, exit_price, exit_timestamp, close_reason
+                            trade_id, token_address, side, entry_price, amount,
+                            usd_value, status, entry_timestamp, profit_loss,
+                            profit_loss_percentage, exit_price, exit_timestamp, metadata
                         FROM trades
-                        WHERE source = 'sniper'
-                        ORDER BY timestamp DESC
+                        WHERE strategy = 'sniper'
+                        ORDER BY entry_timestamp DESC
                         LIMIT $1
                     """, limit)
                     for row in rows:
-                        pnl = float(row['pnl'] or 0)
+                        pnl = float(row['profit_loss'] or 0)
                         entry = float(row['entry_price'] or 0)
                         exit_p = float(row['exit_price'] or entry)
-                        pnl_pct = ((exit_p - entry) / entry * 100) if entry > 0 else 0
+                        pnl_pct = float(row['profit_loss_percentage'] or 0)
+                        if pnl_pct == 0 and entry > 0:
+                            pnl_pct = ((exit_p - entry) / entry * 100) if exit_p != entry else 0
+                        metadata = row['metadata'] or {}
+                        if isinstance(metadata, str):
+                            try:
+                                import json as json_module
+                                metadata = json_module.loads(metadata)
+                            except:
+                                metadata = {}
                         trades.append({
                             'trade_id': row['trade_id'],
-                            'symbol': row['symbol'],
+                            'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
+                            'token_address': row['token_address'],
                             'side': row['side'].lower() if row['side'] else 'buy',
                             'entry_price': entry,
                             'exit_price': exit_p,
-                            'size': float(row['size'] or 0),
+                            'size': float(row['amount'] or 0),
                             'pnl': pnl,
                             'pnl_pct': pnl_pct,
                             'status': row['status'],
-                            'close_reason': row['close_reason'] or '-',
-                            'closed_at': row['exit_timestamp'].isoformat() if row['exit_timestamp'] else row['timestamp'].isoformat() if row['timestamp'] else None,
-                            'tx_hash': row['tx_hash']
+                            'close_reason': metadata.get('exit_reason', '-'),
+                            'closed_at': row['exit_timestamp'].isoformat() if row['exit_timestamp'] else row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
+                            'tx_hash': metadata.get('tx_hash', '')
                         })
             return web.json_response({'success': True, 'trades': trades, 'count': len(trades)})
         except Exception as e:
@@ -6325,21 +6345,22 @@ class DashboardEndpoints:
         """Close a sniper position (mark as closed in DB)"""
         try:
             data = await request.json()
-            symbol = data.get('symbol')
-            if not symbol:
-                return web.json_response({'success': False, 'error': 'Symbol required'}, status=400)
+            token_address = data.get('symbol') or data.get('token_address')
+            if not token_address:
+                return web.json_response({'success': False, 'error': 'Token address required'}, status=400)
 
             if self.db:
                 async with self.db.pool.acquire() as conn:
                     result = await conn.execute("""
                         UPDATE trades
-                        SET status = 'closed', close_reason = 'manual_close', exit_timestamp = NOW()
-                        WHERE source = 'sniper' AND symbol = $1 AND status = 'open'
-                    """, symbol)
+                        SET status = 'closed', exit_timestamp = NOW(),
+                            metadata = jsonb_set(COALESCE(metadata, '{}'), '{exit_reason}', '"manual_close"')
+                        WHERE strategy = 'sniper' AND token_address = $1 AND status = 'open'
+                    """, token_address)
                     if 'UPDATE 0' in result:
                         return web.json_response({'success': False, 'error': 'Position not found', 'already_closed': True})
 
-            return web.json_response({'success': True, 'message': f'Position {symbol} closed'})
+            return web.json_response({'success': True, 'message': f'Position {token_address[:16]}... closed'})
         except Exception as e:
             logger.error(f"Error closing sniper position: {e}")
             return web.json_response({'success': False, 'error': str(e)})
@@ -6351,8 +6372,9 @@ class DashboardEndpoints:
                 async with self.db.pool.acquire() as conn:
                     await conn.execute("""
                         UPDATE trades
-                        SET status = 'closed', close_reason = 'manual_close_all', exit_timestamp = NOW()
-                        WHERE source = 'sniper' AND status = 'open'
+                        SET status = 'closed', exit_timestamp = NOW(),
+                            metadata = jsonb_set(COALESCE(metadata, '{}'), '{exit_reason}', '"manual_close_all"')
+                        WHERE strategy = 'sniper' AND status = 'open'
                     """)
             return web.json_response({'success': True, 'message': 'All sniper positions closed'})
         except Exception as e:
@@ -6446,7 +6468,7 @@ class DashboardEndpoints:
                             COUNT(*) FILTER (WHERE profit_loss < 0) as losing_trades,
                             COALESCE(SUM(profit_loss), 0) as total_pnl
                         FROM trades
-                        WHERE source = 'arbitrage'
+                        WHERE strategy = 'arbitrage'
                     """)
                     if row:
                         stats['total_trades'] = row['total_trades'] or 0
@@ -6458,7 +6480,7 @@ class DashboardEndpoints:
 
                     active = await conn.fetchval("""
                         SELECT COUNT(*) FROM trades
-                        WHERE source = 'arbitrage' AND status = 'open'
+                        WHERE strategy = 'arbitrage' AND status = 'open'
                     """)
                     stats['active_positions'] = active or 0
                     stats['status'] = 'Online' if stats['total_trades'] > 0 else 'Idle'
@@ -6476,23 +6498,31 @@ class DashboardEndpoints:
                 async with self.db.pool.acquire() as conn:
                     rows = await conn.fetch("""
                         SELECT
-                            trade_id, symbol, side, price, quantity,
-                            status, timestamp, profit_loss, tx_hash, notes
+                            trade_id, token_address, side, entry_price, amount,
+                            status, entry_timestamp, profit_loss, metadata
                         FROM trades
-                        WHERE source = 'arbitrage' AND status = 'open'
-                        ORDER BY timestamp DESC
+                        WHERE strategy = 'arbitrage' AND status = 'open'
+                        ORDER BY entry_timestamp DESC
                     """)
                     for row in rows:
+                        metadata = row['metadata'] or {}
+                        if isinstance(metadata, str):
+                            try:
+                                import json as json_module
+                                metadata = json_module.loads(metadata)
+                            except:
+                                metadata = {}
                         positions.append({
                             'trade_id': row['trade_id'],
-                            'symbol': row['symbol'],
+                            'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
+                            'token_address': row['token_address'],
                             'side': row['side'],
-                            'price': float(row['price'] or 0),
-                            'quantity': float(row['quantity'] or 0),
+                            'price': float(row['entry_price'] or 0),
+                            'quantity': float(row['amount'] or 0),
                             'profit_loss': float(row['profit_loss'] or 0),
                             'status': row['status'],
-                            'timestamp': row['timestamp'].isoformat() if row['timestamp'] else None,
-                            'tx_hash': row['tx_hash']
+                            'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
+                            'tx_hash': metadata.get('tx_hash', '')
                         })
             return web.json_response({'success': True, 'positions': positions, 'count': len(positions)})
         except Exception as e:
@@ -6508,34 +6538,35 @@ class DashboardEndpoints:
                 async with self.db.pool.acquire() as conn:
                     rows = await conn.fetch("""
                         SELECT
-                            trade_id, symbol, side, price, quantity,
-                            status, timestamp, profit_loss, tx_hash, notes
+                            trade_id, token_address, side, entry_price, amount,
+                            status, entry_timestamp, profit_loss, profit_loss_percentage, metadata
                         FROM trades
-                        WHERE source = 'arbitrage'
-                        ORDER BY timestamp DESC
+                        WHERE strategy = 'arbitrage'
+                        ORDER BY entry_timestamp DESC
                         LIMIT $1
                     """, limit)
                     for row in rows:
                         import json as json_module
-                        notes = {}
-                        try:
-                            if row['notes']:
-                                notes = json_module.loads(row['notes'])
-                        except:
-                            pass
+                        metadata = row['metadata'] or {}
+                        if isinstance(metadata, str):
+                            try:
+                                metadata = json_module.loads(metadata)
+                            except:
+                                metadata = {}
                         trades.append({
                             'trade_id': row['trade_id'],
-                            'symbol': row['symbol'],
+                            'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
+                            'token_address': row['token_address'],
                             'side': row['side'],
-                            'profit_pct': float(row['price'] or 0),
-                            'amount': float(row['quantity'] or 0),
+                            'profit_pct': float(row['profit_loss_percentage'] or 0),
+                            'amount': float(row['amount'] or 0),
                             'profit_loss': float(row['profit_loss'] or 0),
                             'status': row['status'],
-                            'timestamp': row['timestamp'].isoformat() if row['timestamp'] else None,
-                            'tx_hash': row['tx_hash'],
-                            'buy_dex': notes.get('buy_dex', '-'),
-                            'sell_dex': notes.get('sell_dex', '-'),
-                            'dry_run': notes.get('dry_run', True)
+                            'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
+                            'tx_hash': metadata.get('tx_hash', ''),
+                            'buy_dex': metadata.get('buy_dex', '-'),
+                            'sell_dex': metadata.get('sell_dex', '-'),
+                            'dry_run': metadata.get('dry_run', True)
                         })
             return web.json_response({'success': True, 'trades': trades, 'count': len(trades)})
         except Exception as e:
@@ -6606,6 +6637,60 @@ class DashboardEndpoints:
         template = self.jinja_env.get_template('discovery_copytrading.html')
         return web.Response(text=template.render(page='copytrading_discovery'), content_type='text/html')
 
+    async def _copytrading_wallets(self, request):
+        template = self.jinja_env.get_template('wallets_copytrading.html')
+        return web.Response(text=template.render(page='copytrading_wallets'), content_type='text/html')
+
+    async def api_get_copytrading_wallets(self, request):
+        """Get tracked wallets with their activity status"""
+        wallets = []
+        try:
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    # Get target wallets from settings
+                    wallets_row = await conn.fetchval(
+                        "SELECT value FROM config_settings WHERE config_type = 'copytrading_config' AND key = 'target_wallets'"
+                    )
+
+                    if wallets_row:
+                        import json as json_module
+                        try:
+                            wallet_list = json_module.loads(wallets_row)
+                        except:
+                            wallet_list = [w.strip() for w in wallets_row.split(',') if w.strip()]
+
+                        # For each wallet, get trade stats
+                        for addr in wallet_list:
+                            if not addr:
+                                continue
+
+                            # Get trades copied from this wallet (stored in metadata)
+                            trades_row = await conn.fetchrow("""
+                                SELECT
+                                    COUNT(*) as total_trades,
+                                    COUNT(*) FILTER (WHERE profit_loss > 0) as winning,
+                                    COALESCE(SUM(profit_loss), 0) as total_pnl,
+                                    MAX(entry_timestamp) as last_trade
+                                FROM trades
+                                WHERE strategy = 'copytrading'
+                                AND metadata->>'source_wallet' = $1
+                            """, addr)
+
+                            wallets.append({
+                                'address': addr,
+                                'short_address': f"{addr[:8]}...{addr[-6:]}" if len(addr) > 14 else addr,
+                                'total_trades': trades_row['total_trades'] if trades_row else 0,
+                                'winning_trades': trades_row['winning'] if trades_row else 0,
+                                'total_pnl': float(trades_row['total_pnl'] or 0) if trades_row else 0,
+                                'last_trade': trades_row['last_trade'].isoformat() if trades_row and trades_row['last_trade'] else None,
+                                'status': 'active'
+                            })
+
+            return web.json_response({'success': True, 'wallets': wallets, 'count': len(wallets)})
+        except Exception as e:
+            logger.error(f"Error getting copytrading wallets: {e}")
+            return web.json_response({'success': False, 'error': str(e), 'wallets': []})
+
     async def api_get_copytrading_stats(self, request):
         """Get Copy Trading module stats from DB"""
         stats = {
@@ -6629,7 +6714,7 @@ class DashboardEndpoints:
                             COUNT(*) FILTER (WHERE profit_loss < 0) as losing_trades,
                             COALESCE(SUM(profit_loss), 0) as total_pnl
                         FROM trades
-                        WHERE source = 'copytrading'
+                        WHERE strategy = 'copytrading'
                     """)
                     if row:
                         stats['total_trades'] = row['total_trades'] or 0
@@ -6641,7 +6726,7 @@ class DashboardEndpoints:
 
                     active = await conn.fetchval("""
                         SELECT COUNT(*) FROM trades
-                        WHERE source = 'copytrading' AND status = 'open'
+                        WHERE strategy = 'copytrading' AND status = 'open'
                     """)
                     stats['active_positions'] = active or 0
                     stats['status'] = 'Online' if stats['total_trades'] > 0 else 'Idle'
@@ -6670,32 +6755,33 @@ class DashboardEndpoints:
                 async with self.db.pool.acquire() as conn:
                     rows = await conn.fetch("""
                         SELECT
-                            trade_id, symbol, side, price, quantity,
-                            status, timestamp, profit_loss, tx_hash, notes
+                            trade_id, token_address, chain, side, entry_price, amount,
+                            status, entry_timestamp, profit_loss, metadata
                         FROM trades
-                        WHERE source = 'copytrading' AND status = 'open'
-                        ORDER BY timestamp DESC
+                        WHERE strategy = 'copytrading' AND status = 'open'
+                        ORDER BY entry_timestamp DESC
                     """)
                     for row in rows:
                         import json as json_module
-                        notes = {}
-                        try:
-                            if row['notes']:
-                                notes = json_module.loads(row['notes'])
-                        except:
-                            pass
+                        metadata = row['metadata'] or {}
+                        if isinstance(metadata, str):
+                            try:
+                                metadata = json_module.loads(metadata)
+                            except:
+                                metadata = {}
                         positions.append({
                             'trade_id': row['trade_id'],
-                            'symbol': row['symbol'],
+                            'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
+                            'token_address': row['token_address'],
                             'side': row['side'],
-                            'price': float(row['price'] or 0),
-                            'quantity': float(row['quantity'] or 0),
+                            'price': float(row['entry_price'] or 0),
+                            'quantity': float(row['amount'] or 0),
                             'profit_loss': float(row['profit_loss'] or 0),
                             'status': row['status'],
-                            'timestamp': row['timestamp'].isoformat() if row['timestamp'] else None,
-                            'tx_hash': row['tx_hash'],
-                            'chain': notes.get('chain', '-'),
-                            'source_tx': notes.get('source_tx', '-')
+                            'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
+                            'tx_hash': metadata.get('tx_hash', ''),
+                            'chain': row['chain'] or metadata.get('chain', '-'),
+                            'source_tx': metadata.get('source_tx', '-')
                         })
             return web.json_response({'success': True, 'positions': positions, 'count': len(positions)})
         except Exception as e:
@@ -6711,34 +6797,35 @@ class DashboardEndpoints:
                 async with self.db.pool.acquire() as conn:
                     rows = await conn.fetch("""
                         SELECT
-                            trade_id, symbol, side, price, quantity,
-                            status, timestamp, profit_loss, tx_hash, notes
+                            trade_id, token_address, chain, side, entry_price, amount,
+                            status, entry_timestamp, profit_loss, metadata
                         FROM trades
-                        WHERE source = 'copytrading'
-                        ORDER BY timestamp DESC
+                        WHERE strategy = 'copytrading'
+                        ORDER BY entry_timestamp DESC
                         LIMIT $1
                     """, limit)
                     for row in rows:
                         import json as json_module
-                        notes = {}
-                        try:
-                            if row['notes']:
-                                notes = json_module.loads(row['notes'])
-                        except:
-                            pass
+                        metadata = row['metadata'] or {}
+                        if isinstance(metadata, str):
+                            try:
+                                metadata = json_module.loads(metadata)
+                            except:
+                                metadata = {}
                         trades.append({
                             'trade_id': row['trade_id'],
-                            'symbol': row['symbol'],
+                            'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
+                            'token_address': row['token_address'],
                             'side': row['side'],
-                            'price': float(row['price'] or 0),
-                            'quantity': float(row['quantity'] or 0),
+                            'price': float(row['entry_price'] or 0),
+                            'quantity': float(row['amount'] or 0),
                             'profit_loss': float(row['profit_loss'] or 0),
                             'status': row['status'],
-                            'timestamp': row['timestamp'].isoformat() if row['timestamp'] else None,
-                            'tx_hash': row['tx_hash'],
-                            'chain': notes.get('chain', '-'),
-                            'source_tx': notes.get('source_tx', '-'),
-                            'dry_run': notes.get('dry_run', True)
+                            'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
+                            'tx_hash': metadata.get('tx_hash', ''),
+                            'chain': row['chain'] or metadata.get('chain', '-'),
+                            'source_tx': metadata.get('source_tx', '-'),
+                            'dry_run': metadata.get('dry_run', True)
                         })
             return web.json_response({'success': True, 'trades': trades, 'count': len(trades)})
         except Exception as e:

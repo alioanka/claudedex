@@ -202,18 +202,19 @@ class TokenSafetyChecker:
             if holder_count < 50:
                 warnings.append(f"⚠️ Low holder count: {holder_count}")
 
-            holders = token_info.get('holders', [])
-            if holders:
+            holders = token_info.get('holders') or []
+            if holders and isinstance(holders, list):
                 top_holder_pct = float(holders[0].get('percent', 100) or 100) * 100
                 if top_holder_pct > 30:
                     warnings.append(f"⚠️ Top holder owns {top_holder_pct:.1f}%")
 
             # Liquidity
-            lp_holders = token_info.get('lp_holders', [])
-            for lp in lp_holders:
-                if lp.get('is_locked') == 1:
-                    liquidity_locked = True
-                    break
+            lp_holders = token_info.get('lp_holders') or []
+            if isinstance(lp_holders, list):
+                for lp in lp_holders:
+                    if lp.get('is_locked') == 1:
+                        liquidity_locked = True
+                        break
 
             total_supply = float(token_info.get('total_supply', 0) or 0)
 
@@ -290,30 +291,31 @@ class TokenSafetyChecker:
             risk_score = rugcheck_data.get('score', 100)
 
             # Risks array
-            risks = rugcheck_data.get('risks', [])
-            for risk in risks:
-                risk_name = risk.get('name', '')
-                risk_level = risk.get('level', '')
-                risk_desc = risk.get('description', '')
+            risks = rugcheck_data.get('risks') or []
+            if isinstance(risks, list):
+                for risk in risks:
+                    risk_name = risk.get('name', '')
+                    risk_level = risk.get('level', '')
+                    risk_desc = risk.get('description', '')
 
-                if risk_level in ['critical', 'high']:
-                    warnings.append(f"🚨 {risk_name}: {risk_desc}")
-                elif risk_level == 'medium':
-                    warnings.append(f"⚠️ {risk_name}: {risk_desc}")
+                    if risk_level in ['critical', 'high']:
+                        warnings.append(f"🚨 {risk_name}: {risk_desc}")
+                    elif risk_level == 'medium':
+                        warnings.append(f"⚠️ {risk_name}: {risk_desc}")
 
-                # Check for specific risks
-                if 'freeze' in risk_name.lower():
-                    is_honeypot = True
-                    warnings.append("🍯 Token can be frozen (honeypot risk)")
+                    # Check for specific risks
+                    if 'freeze' in risk_name.lower():
+                        is_honeypot = True
+                        warnings.append("🍯 Token can be frozen (honeypot risk)")
 
             # Token info
             token_info = rugcheck_data.get('token', {})
             holder_count = token_info.get('holderCount', 0)
 
             # Top holder percentage
-            top_holders = rugcheck_data.get('topHolders', [])
-            if top_holders:
-                top_holder_pct = top_holders[0].get('percentage', 100)
+            top_holders = rugcheck_data.get('topHolders') or []
+            if top_holders and isinstance(top_holders, list) and len(top_holders) > 0:
+                top_holder_pct = top_holders[0].get('percentage', 100) or 100
                 if top_holder_pct > 30:
                     warnings.append(f"⚠️ Top holder owns {top_holder_pct:.1f}%")
 
