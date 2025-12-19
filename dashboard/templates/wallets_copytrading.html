@@ -223,6 +223,37 @@
         100% { transform: rotate(360deg); }
     }
 
+    .sort-control {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .sort-control label {
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+    }
+
+    .sort-control select {
+        padding: 8px 12px;
+        border-radius: 6px;
+        border: 1px solid var(--border-color);
+        background: var(--card-bg);
+        color: var(--text-primary);
+        font-size: 0.85rem;
+        cursor: pointer;
+    }
+
+    [data-theme="dark"] .sort-control select {
+        background-color: #374151;
+        color: #f9fafb;
+    }
+
+    [data-theme="light"] .sort-control select {
+        background-color: #ffffff;
+        color: #111827;
+    }
+
     [data-theme="dark"] {
         --card-bg: #1f2937;
         --border-color: #374151;
@@ -252,7 +283,19 @@
             </h1>
             <p class="page-subtitle">Monitor tracked wallets and their copy trading performance</p>
         </div>
-        <div>
+        <div style="display: flex; align-items: center; gap: 16px;">
+            <div class="sort-control">
+                <label for="sortWallets">Sort by:</label>
+                <select id="sortWallets" onchange="sortAndDisplayWallets()">
+                    <option value="trades_desc">Trades Copied (High-Low)</option>
+                    <option value="trades_asc">Trades Copied (Low-High)</option>
+                    <option value="pnl_desc">Total PnL (High-Low)</option>
+                    <option value="pnl_asc">Total PnL (Low-High)</option>
+                    <option value="winrate_desc">Win Rate (High-Low)</option>
+                    <option value="winrate_asc">Win Rate (Low-High)</option>
+                    <option value="recent">Most Recent Trade</option>
+                </select>
+            </div>
             <a href="/copytrading/discovery" class="btn btn-primary">
                 <i class="fas fa-search-plus"></i> Find New Wallets
             </a>
@@ -295,14 +338,18 @@
 </div>
 
 <script>
+    // Global wallets array for sorting
+    let allWallets = [];
+
     async function loadWallets() {
         try {
             const response = await fetch('/api/copytrading/wallets');
             const data = await response.json();
 
             if (data.success) {
-                displayWallets(data.wallets);
-                updateStats(data.wallets);
+                allWallets = data.wallets || [];
+                sortAndDisplayWallets();
+                updateStats(allWallets);
             } else {
                 showError(data.error || 'Failed to load wallets');
             }
@@ -310,6 +357,32 @@
             console.error('Error loading wallets:', error);
             showError('Failed to load wallets');
         }
+    }
+
+    function sortAndDisplayWallets() {
+        const sortBy = document.getElementById('sortWallets').value;
+        let sorted = [...allWallets];
+
+        sorted.sort((a, b) => {
+            const aWinRate = a.total_trades > 0 ? (a.winning_trades / a.total_trades) * 100 : 0;
+            const bWinRate = b.total_trades > 0 ? (b.winning_trades / b.total_trades) * 100 : 0;
+
+            switch(sortBy) {
+                case 'trades_desc': return b.total_trades - a.total_trades;
+                case 'trades_asc': return a.total_trades - b.total_trades;
+                case 'pnl_desc': return b.total_pnl - a.total_pnl;
+                case 'pnl_asc': return a.total_pnl - b.total_pnl;
+                case 'winrate_desc': return bWinRate - aWinRate;
+                case 'winrate_asc': return aWinRate - bWinRate;
+                case 'recent':
+                    const aDate = a.last_trade ? new Date(a.last_trade) : new Date(0);
+                    const bDate = b.last_trade ? new Date(b.last_trade) : new Date(0);
+                    return bDate - aDate;
+                default: return 0;
+            }
+        });
+
+        displayWallets(sorted);
     }
 
     function displayWallets(wallets) {
@@ -332,33 +405,42 @@
         let html = '<div class="wallet-grid">';
 
         wallets.forEach(wallet => {
-            const pnlClass = wallet.total_pnl >= 0 ? 'positive' : 'negative';
-            const winRate = wallet.total_trades > 0
-                ? ((wallet.winning_trades / wallet.total_trades) * 100).toFixed(1)
-                : '0';
+            // Safely get values with fallbacks
+            const totalTrades = wallet.total_trades || 0;
+            const winningTrades = wallet.winning_trades || 0;
+            const totalPnl = parseFloat(wallet.total_pnl) || 0;
+
+            // Calculate win rate safely
+            const winRate = totalTrades > 0
+                ? ((winningTrades / totalTrades) * 100).toFixed(1)
+                : '0.0';
+
+            // Determine PnL styling
+            const pnlClass = totalPnl >= 0 ? 'positive' : 'negative';
+            const pnlSign = totalPnl >= 0 ? '+' : '';
 
             html += `
                 <div class="wallet-card">
                     <div class="wallet-header">
                         <span class="wallet-address" title="${wallet.address}">
-                            ${wallet.short_address}
+                            ${wallet.short_address || wallet.address.substring(0, 8) + '...' + wallet.address.slice(-6)}
                         </span>
-                        <span class="wallet-status status-${wallet.status}">
+                        <span class="wallet-status status-${wallet.status || 'active'}">
                             ${wallet.status === 'active' ? 'Active' : 'Inactive'}
                         </span>
                     </div>
                     <div class="wallet-stats">
                         <div class="wallet-stat">
                             <div class="wallet-stat-label">Trades Copied</div>
-                            <div class="wallet-stat-value">${wallet.total_trades}</div>
+                            <div class="wallet-stat-value">${totalTrades}</div>
                         </div>
                         <div class="wallet-stat">
                             <div class="wallet-stat-label">Win Rate</div>
-                            <div class="wallet-stat-value">${winRate}%</div>
+                            <div class="wallet-stat-value ${parseFloat(winRate) >= 50 ? 'positive' : ''}">${winRate}%</div>
                         </div>
                         <div class="wallet-stat">
                             <div class="wallet-stat-label">Total PnL</div>
-                            <div class="wallet-stat-value ${pnlClass}">$${wallet.total_pnl.toFixed(2)}</div>
+                            <div class="wallet-stat-value ${pnlClass}">${pnlSign}$${Math.abs(totalPnl).toFixed(2)}</div>
                         </div>
                         <div class="wallet-stat">
                             <div class="wallet-stat-label">Last Trade</div>
@@ -383,16 +465,21 @@
 
     function updateStats(wallets) {
         const totalWallets = wallets.length;
-        const totalCopies = wallets.reduce((a, w) => a + w.total_trades, 0);
-        const totalPnl = wallets.reduce((a, w) => a + w.total_pnl, 0);
-        const totalWins = wallets.reduce((a, w) => a + w.winning_trades, 0);
-        const winRate = totalCopies > 0 ? ((totalWins / totalCopies) * 100).toFixed(1) : '0';
+        const totalCopies = wallets.reduce((a, w) => a + (w.total_trades || 0), 0);
+        const totalPnl = wallets.reduce((a, w) => a + (parseFloat(w.total_pnl) || 0), 0);
+        const totalWins = wallets.reduce((a, w) => a + (w.winning_trades || 0), 0);
+        const winRate = totalCopies > 0 ? ((totalWins / totalCopies) * 100).toFixed(1) : '0.0';
 
         document.getElementById('stat-wallets').textContent = totalWallets;
         document.getElementById('stat-copies').textContent = totalCopies;
-        document.getElementById('stat-pnl').textContent = '$' + totalPnl.toFixed(2);
+
+        // Display PnL with proper sign
+        const pnlSign = totalPnl >= 0 ? '+' : '';
+        document.getElementById('stat-pnl').textContent = pnlSign + '$' + Math.abs(totalPnl).toFixed(2);
         document.getElementById('stat-pnl').className = 'stat-value ' + (totalPnl >= 0 ? 'positive' : 'negative');
+
         document.getElementById('stat-winrate').textContent = winRate + '%';
+        document.getElementById('stat-winrate').className = 'stat-value ' + (parseFloat(winRate) >= 50 ? 'positive' : '');
     }
 
     function formatDate(isoString) {
