@@ -6538,8 +6538,9 @@ class DashboardEndpoints:
                 async with self.db.pool.acquire() as conn:
                     rows = await conn.fetch("""
                         SELECT
-                            trade_id, token_address, side, entry_price, amount,
-                            status, entry_timestamp, profit_loss, profit_loss_percentage, metadata
+                            trade_id, token_address, side, entry_price, exit_price, amount,
+                            usd_value, status, entry_timestamp, exit_timestamp,
+                            profit_loss, profit_loss_percentage, metadata
                         FROM trades
                         WHERE strategy = 'arbitrage'
                         ORDER BY entry_timestamp DESC
@@ -6558,15 +6559,20 @@ class DashboardEndpoints:
                             'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
                             'token_address': row['token_address'],
                             'side': row['side'],
-                            'profit_pct': float(row['profit_loss_percentage'] or 0),
+                            'entry_price': float(row['entry_price'] or 0),
+                            'exit_price': float(row['exit_price'] or 0),
                             'amount': float(row['amount'] or 0),
+                            'usd_value': float(row['usd_value'] or 0),
+                            'profit_pct': float(row['profit_loss_percentage'] or 0),
                             'profit_loss': float(row['profit_loss'] or 0),
                             'status': row['status'],
                             'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
+                            'exit_timestamp': row['exit_timestamp'].isoformat() if row['exit_timestamp'] else None,
                             'tx_hash': metadata.get('tx_hash', ''),
                             'buy_dex': metadata.get('buy_dex', '-'),
                             'sell_dex': metadata.get('sell_dex', '-'),
-                            'dry_run': metadata.get('dry_run', True)
+                            'dry_run': metadata.get('dry_run', True),
+                            'spread_pct': metadata.get('spread_pct', 0)
                         })
             return web.json_response({'success': True, 'trades': trades, 'count': len(trades)})
         except Exception as e:
@@ -6797,8 +6803,9 @@ class DashboardEndpoints:
                 async with self.db.pool.acquire() as conn:
                     rows = await conn.fetch("""
                         SELECT
-                            trade_id, token_address, chain, side, entry_price, amount,
-                            status, entry_timestamp, profit_loss, metadata
+                            trade_id, token_address, chain, side, entry_price, exit_price, amount,
+                            usd_value, status, entry_timestamp, exit_timestamp,
+                            profit_loss, profit_loss_percentage, metadata
                         FROM trades
                         WHERE strategy = 'copytrading'
                         ORDER BY entry_timestamp DESC
@@ -6817,13 +6824,20 @@ class DashboardEndpoints:
                             'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
                             'token_address': row['token_address'],
                             'side': row['side'],
-                            'price': float(row['entry_price'] or 0),
+                            'entry_price': float(row['entry_price'] or 0),
+                            'exit_price': float(row['exit_price'] or 0),
+                            'price': float(row['entry_price'] or 0),  # backwards compat
                             'quantity': float(row['amount'] or 0),
+                            'amount': float(row['amount'] or 0),
+                            'usd_value': float(row['usd_value'] or 0),
                             'profit_loss': float(row['profit_loss'] or 0),
+                            'profit_pct': float(row['profit_loss_percentage'] or 0),
                             'status': row['status'],
                             'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
+                            'exit_timestamp': row['exit_timestamp'].isoformat() if row['exit_timestamp'] else None,
                             'tx_hash': metadata.get('tx_hash', ''),
                             'chain': row['chain'] or metadata.get('chain', '-'),
+                            'source_wallet': metadata.get('source_wallet', '-'),
                             'source_tx': metadata.get('source_tx', '-'),
                             'dry_run': metadata.get('dry_run', True)
                         })

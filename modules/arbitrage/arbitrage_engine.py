@@ -370,7 +370,13 @@ class ArbitrageEngine:
         # Rate limiting for logging and execution
         self._last_opportunity_time = None
         self._last_opportunity_key = None
-        self._opportunity_cooldown = 300  # 5 minutes cooldown for same opportunity
+        self._opportunity_cooldown = 3600  # 1 hour cooldown for same opportunity (prevent spam)
+
+        # Per-pair daily execution limit (realistic arbitrage opportunities are rare)
+        self._pair_execution_count: Dict[str, int] = {}  # pair_key -> count today
+        self._pair_execution_date: str = ""  # Track which day we're on
+        self._max_executions_per_pair_per_day = 5  # Max 5 arbitrage trades per DEX pair per day
+
         self._stats = {
             'scans': 0,
             'opportunities_found': 0,
@@ -492,9 +498,22 @@ class ArbitrageEngine:
 
                 # Create unique key for this opportunity
                 opp_key = f"{best_buy_dex}_{best_sell_dex}_{token_in}"
+                now = datetime.now()
+                today = now.strftime("%Y-%m-%d")
+
+                # Reset daily counters if new day
+                if self._pair_execution_date != today:
+                    self._pair_execution_count = {}
+                    self._pair_execution_date = today
+                    logger.info(f"📅 New day - reset arbitrage execution counters")
+
+                # Check daily execution limit per pair
+                current_count = self._pair_execution_count.get(opp_key, 0)
+                if current_count >= self._max_executions_per_pair_per_day:
+                    # Silently skip - already hit daily limit for this pair
+                    return True
 
                 # Check cooldown - don't spam same opportunity
-                now = datetime.now()
                 if self._last_opportunity_key == opp_key and self._last_opportunity_time:
                     elapsed = (now - self._last_opportunity_time).total_seconds()
                     if elapsed < self._opportunity_cooldown:
@@ -505,7 +524,11 @@ class ArbitrageEngine:
                 self._last_opportunity_key = opp_key
                 self._last_opportunity_time = now
 
-                logger.info(f"🚨 ARBITRAGE OPPORTUNITY: Buy on {best_buy_dex}, Sell on {best_sell_dex}. Spread: {spread:.2%}")
+                # Update daily execution count
+                self._pair_execution_count[opp_key] = current_count + 1
+                remaining = self._max_executions_per_pair_per_day - (current_count + 1)
+
+                logger.info(f"🚨 ARBITRAGE OPPORTUNITY: Buy on {best_buy_dex}, Sell on {best_sell_dex}. Spread: {spread:.2%} (#{current_count + 1} today, {remaining} remaining)")
                 self._stats['opportunities_executed'] += 1
 
                 # Execute arbitrage
