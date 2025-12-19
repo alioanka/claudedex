@@ -105,19 +105,44 @@ class SolanaListener:
     async def _run_websocket_listener(self):
         """Main WebSocket listener loop with reconnection logic"""
         reconnect_delay = 1
+        rate_limit_count = 0
 
         while self.is_running:
             try:
                 await self._connect_and_subscribe()
                 reconnect_delay = 1  # Reset delay on successful connection
+                rate_limit_count = 0  # Reset rate limit counter on success
+            except aiohttp.ClientResponseError as e:
+                if e.status == 429:
+                    rate_limit_count += 1
+                    # Use much longer delays for rate limiting
+                    reconnect_delay = min(60 * rate_limit_count, 300)  # Up to 5 min delay
+                    logger.warning(f"⚠️ Rate limited by Helius (429). Attempt {rate_limit_count}. "
+                                 f"Waiting {reconnect_delay}s before retry.")
+                    if rate_limit_count >= 5:
+                        logger.error("🚨 Persistent rate limiting detected. Consider:")
+                        logger.error("   1. Upgrading to a paid Helius plan")
+                        logger.error("   2. Using a different RPC provider (Alchemy, QuickNode)")
+                        logger.error("   3. Reducing the number of subscriptions")
+                else:
+                    logger.error(f"WebSocket HTTP error: {e.status} - {e.message}")
+                self.ws_connected = False
             except Exception as e:
-                logger.error(f"WebSocket error: {e}")
+                error_str = str(e)
+                if "429" in error_str:
+                    rate_limit_count += 1
+                    reconnect_delay = min(60 * rate_limit_count, 300)
+                    logger.warning(f"⚠️ Rate limited (429). Waiting {reconnect_delay}s...")
+                else:
+                    logger.error(f"WebSocket error: {e}")
                 self.ws_connected = False
 
             if self.is_running:
                 logger.info(f"Reconnecting in {reconnect_delay}s...")
                 await asyncio.sleep(reconnect_delay)
-                reconnect_delay = min(reconnect_delay * 2, 60)  # Exponential backoff, max 60s
+                # For non-rate-limit errors, use standard exponential backoff
+                if rate_limit_count == 0:
+                    reconnect_delay = min(reconnect_delay * 2, 60)
 
     async def _connect_and_subscribe(self):
         """Connect to WebSocket and subscribe to program logs"""
