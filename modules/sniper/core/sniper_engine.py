@@ -199,6 +199,12 @@ class SniperEngine:
                             self.safety_check_enabled = val.lower() in ('true', '1', 'yes') if val else True
                         elif key == 'test_mode':
                             self.test_mode = val.lower() in ('true', '1', 'yes') if val else False
+                        elif key == 'chain':
+                            self.target_chain = val if val else 'solana'  # 'all', 'solana', 'ethereum', etc.
+                        elif key == 'take_profit_pct':
+                            self.take_profit_pct = float(val) if val else 50.0
+                        elif key == 'stop_loss_pct':
+                            self.stop_loss_pct = float(val) if val else 20.0
 
             # Check for DRY_RUN mode
             self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
@@ -212,9 +218,12 @@ class SniperEngine:
             if self.test_mode:
                 mode_info.append("TEST_MODE (relaxed safety)")
 
+            target = getattr(self, 'target_chain', 'solana')
             logger.info(f"📋 Sniper settings loaded: trade_amount={self.trade_amount}, slippage={self.slippage}%")
             logger.info(f"   Mode: {' | '.join(mode_info)}")
+            logger.info(f"   Target Chain: {target.upper()} {'(All Chains)' if target == 'all' else ''}")
             logger.info(f"   Safety: max_tax={self.max_buy_tax}%, min_liq=${self.min_liquidity}")
+            logger.info(f"   Exit: TP={getattr(self, 'take_profit_pct', 50)}%, SL={getattr(self, 'stop_loss_pct', 20)}%")
 
         except Exception as e:
             logger.error(f"Error loading sniper settings: {e}")

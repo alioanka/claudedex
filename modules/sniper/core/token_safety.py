@@ -156,16 +156,23 @@ class TokenSafetyChecker:
         # 1. GoPlus Security Check
         goplus_data = await self._call_goplus(token_address, chain)
         if goplus_data:
-            token_info = goplus_data.get(token_address.lower(), {})
+            # CRITICAL: use (x or {}) to handle explicit null values from API
+            token_info = goplus_data.get(token_address.lower()) or {}
+            if not isinstance(token_info, dict):
+                token_info = {}
 
             # Honeypot check
             if token_info.get('is_honeypot') == '1':
                 is_honeypot = True
                 warnings.append("🍯 HONEYPOT: Cannot sell this token")
 
-            # Tax checks
-            buy_tax = float(token_info.get('buy_tax', 0) or 0) * 100
-            sell_tax = float(token_info.get('sell_tax', 0) or 0) * 100
+            # Tax checks - handle None/null values
+            try:
+                buy_tax = float(token_info.get('buy_tax') or 0) * 100
+                sell_tax = float(token_info.get('sell_tax') or 0) * 100
+            except (TypeError, ValueError):
+                buy_tax = 0.0
+                sell_tax = 0.0
 
             if buy_tax > 10:
                 warnings.append(f"⚠️ High buy tax: {buy_tax:.1f}%")
@@ -197,43 +204,65 @@ class TokenSafetyChecker:
             if token_info.get('is_anti_whale') == '1':
                 warnings.append("ℹ️ Anti-whale mechanism")
 
-            # Holder analysis
-            holder_count = int(token_info.get('holder_count', 0) or 0)
+            # Holder analysis - handle None/null values
+            try:
+                holder_count = int(token_info.get('holder_count') or 0)
+            except (TypeError, ValueError):
+                holder_count = 0
             if holder_count < 50:
                 warnings.append(f"⚠️ Low holder count: {holder_count}")
 
             holders = token_info.get('holders') or []
-            if holders and isinstance(holders, list):
-                top_holder_pct = float(holders[0].get('percent', 100) or 100) * 100
-                if top_holder_pct > 30:
-                    warnings.append(f"⚠️ Top holder owns {top_holder_pct:.1f}%")
+            if holders and isinstance(holders, list) and len(holders) > 0:
+                first_holder = holders[0]
+                if isinstance(first_holder, dict):
+                    try:
+                        top_holder_pct = float(first_holder.get('percent') or 100) * 100
+                    except (TypeError, ValueError):
+                        top_holder_pct = 100.0
+                    if top_holder_pct > 30:
+                        warnings.append(f"⚠️ Top holder owns {top_holder_pct:.1f}%")
 
             # Liquidity
             lp_holders = token_info.get('lp_holders') or []
             if isinstance(lp_holders, list):
                 for lp in lp_holders:
-                    if lp.get('is_locked') == 1:
+                    if isinstance(lp, dict) and lp.get('is_locked') == 1:
                         liquidity_locked = True
                         break
 
-            total_supply = float(token_info.get('total_supply', 0) or 0)
+            try:
+                total_supply = float(token_info.get('total_supply') or 0)
+            except (TypeError, ValueError):
+                total_supply = 0.0
 
         # 2. Honeypot.is additional check (more accurate for honeypot detection)
         honeypot_data = await self._call_honeypot_is(token_address, chain)
-        if honeypot_data:
-            hp_result = honeypot_data.get('honeypotResult', {})
-            if hp_result.get('isHoneypot'):
+        if honeypot_data and isinstance(honeypot_data, dict):
+            # CRITICAL: use (x or {}) to handle explicit null values
+            hp_result = honeypot_data.get('honeypotResult') or {}
+            if isinstance(hp_result, dict) and hp_result.get('isHoneypot'):
                 is_honeypot = True
-                warnings.append(f"🍯 HONEYPOT: {hp_result.get('honeypotReason', 'Unknown reason')}")
+                warnings.append(f"🍯 HONEYPOT: {hp_result.get('honeypotReason') or 'Unknown reason'}")
 
-            simulation = honeypot_data.get('simulationResult', {})
-            if simulation:
-                buy_tax = float(simulation.get('buyTax', buy_tax) or buy_tax)
-                sell_tax = float(simulation.get('sellTax', sell_tax) or sell_tax)
+            simulation = honeypot_data.get('simulationResult') or {}
+            if isinstance(simulation, dict):
+                try:
+                    sim_buy = simulation.get('buyTax')
+                    sim_sell = simulation.get('sellTax')
+                    if sim_buy is not None:
+                        buy_tax = float(sim_buy)
+                    if sim_sell is not None:
+                        sell_tax = float(sim_sell)
+                except (TypeError, ValueError):
+                    pass
 
-            pair = honeypot_data.get('pair', {})
-            if pair:
-                liquidity_usd = float(pair.get('liquidity', 0) or 0)
+            pair = honeypot_data.get('pair') or {}
+            if isinstance(pair, dict):
+                try:
+                    liquidity_usd = float(pair.get('liquidity') or 0)
+                except (TypeError, ValueError):
+                    liquidity_usd = 0.0
 
         # Calculate safety score
         score = self._calculate_score(
@@ -288,15 +317,17 @@ class TokenSafetyChecker:
         rugcheck_data = await self._call_rugcheck(token_address)
         if rugcheck_data:
             # Risk score (0-100, lower is safer in RugCheck)
-            risk_score = rugcheck_data.get('score', 100)
+            risk_score = rugcheck_data.get('score', 100) or 100
 
-            # Risks array
+            # Risks array - use (x or []) pattern to handle explicit null
             risks = rugcheck_data.get('risks') or []
             if isinstance(risks, list):
                 for risk in risks:
-                    risk_name = risk.get('name', '')
-                    risk_level = risk.get('level', '')
-                    risk_desc = risk.get('description', '')
+                    if not isinstance(risk, dict):
+                        continue
+                    risk_name = risk.get('name', '') or ''
+                    risk_level = risk.get('level', '') or ''
+                    risk_desc = risk.get('description', '') or ''
 
                     if risk_level in ['critical', 'high']:
                         warnings.append(f"🚨 {risk_name}: {risk_desc}")
@@ -308,21 +339,25 @@ class TokenSafetyChecker:
                         is_honeypot = True
                         warnings.append("🍯 Token can be frozen (honeypot risk)")
 
-            # Token info
-            token_info = rugcheck_data.get('token', {})
-            holder_count = token_info.get('holderCount', 0)
+            # Token info - CRITICAL: use (x or {}) to handle explicit null
+            token_info = rugcheck_data.get('token') or {}
+            if isinstance(token_info, dict):
+                holder_count = token_info.get('holderCount', 0) or 0
 
-            # Top holder percentage
+            # Top holder percentage - CRITICAL: handle null values
             top_holders = rugcheck_data.get('topHolders') or []
             if top_holders and isinstance(top_holders, list) and len(top_holders) > 0:
-                top_holder_pct = top_holders[0].get('percentage', 100) or 100
-                if top_holder_pct > 30:
-                    warnings.append(f"⚠️ Top holder owns {top_holder_pct:.1f}%")
+                first_holder = top_holders[0]
+                if isinstance(first_holder, dict):
+                    top_holder_pct = first_holder.get('percentage', 100) or 100
+                    if top_holder_pct > 30:
+                        warnings.append(f"⚠️ Top holder owns {top_holder_pct:.1f}%")
 
-            # Liquidity
-            liquidity = rugcheck_data.get('liquidity', {})
-            liquidity_usd = liquidity.get('usd', 0)
-            liquidity_locked = liquidity.get('locked', False)
+            # Liquidity - CRITICAL: use (x or {}) to handle explicit null
+            liquidity = rugcheck_data.get('liquidity') or {}
+            if isinstance(liquidity, dict):
+                liquidity_usd = liquidity.get('usd', 0) or 0
+                liquidity_locked = liquidity.get('locked', False) or False
 
             # Mint authority (renounced = safer)
             mint_authority = rugcheck_data.get('mintAuthority')
@@ -338,9 +373,9 @@ class TokenSafetyChecker:
         else:
             # Fallback: Try Helius API for basic token info
             helius_data = await self._call_helius_token_info(token_address)
-            if helius_data:
+            if helius_data and isinstance(helius_data, dict):
                 # Basic info from Helius
-                holder_count = helius_data.get('holderCount', 0)
+                holder_count = helius_data.get('holderCount', 0) or 0
 
         # Calculate score (invert for Solana since RugCheck gives risk, not safety)
         score = self._calculate_score(

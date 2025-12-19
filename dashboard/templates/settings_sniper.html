@@ -50,11 +50,16 @@
                                 <div class="mb-3">
                                     <label class="form-label">Target Chain</label>
                                     <select class="form-select" id="chain">
+                                        <option value="all">🌐 ALL Chains (Multi-Chain)</option>
                                         <option value="solana">Solana (Pump.fun/Raydium)</option>
                                         <option value="ethereum">Ethereum</option>
                                         <option value="bsc">BSC</option>
                                         <option value="base">Base</option>
                                     </select>
+                                    <div class="form-text">
+                                        <strong>ALL Chains:</strong> Monitors and executes trades on all supported chains simultaneously.
+                                        Requires RPC URLs configured for each chain in .env file.
+                                    </div>
                                 </div>
 
                                 <div class="mb-3">

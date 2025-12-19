@@ -14,7 +14,7 @@ from typing import List, Dict, Optional, Set
 import aiohttp
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import base64
 import struct
 
@@ -59,6 +59,15 @@ class SolanaListener:
         self.ws_connected = False
         self.ws_task: Optional[asyncio.Task] = None
         self.is_running = False
+
+        # Rate-limited logging to reduce log spam
+        self._stats = {
+            'potential_pools_detected': 0,
+            'pools_queued': 0,
+            'pools_failed_fetch': 0,
+            'last_log_time': datetime.now()
+        }
+        self._log_interval = timedelta(minutes=5)  # Log stats every 5 minutes
 
     async def initialize(self):
         """Initialize the Solana listener"""
@@ -199,18 +208,49 @@ class SolanaListener:
             is_pool_init = self._check_for_pool_init(logs)
 
             if is_pool_init:
-                logger.info(f"🆕 Potential new pool detected: {signature[:16]}...")
+                # Increment stats counter instead of logging every detection
+                self._stats['potential_pools_detected'] += 1
                 self.known_signatures.add(signature)
+
+                # Log at DEBUG level to reduce spam
+                logger.debug(f"Potential new pool detected: {signature[:16]}...")
 
                 # Fetch full transaction details to extract token addresses
                 pool_info = await self._fetch_pool_details(signature)
 
                 if pool_info:
+                    self._stats['pools_queued'] += 1
                     await self.new_pools_queue.put(pool_info)
-                    logger.info(f"🎯 New pool queued: {pool_info.get('token_address', 'unknown')[:16]}...")
+                    # Log at DEBUG level to reduce spam
+                    logger.debug(f"New pool queued: {pool_info.get('token_address', 'unknown')[:16]}...")
+                else:
+                    self._stats['pools_failed_fetch'] += 1
+
+                # Log summary stats periodically (every 5 minutes)
+                await self._log_stats_if_needed()
 
         except Exception as e:
             logger.error(f"Error processing log notification: {e}")
+
+    async def _log_stats_if_needed(self):
+        """Log detection stats periodically to reduce log spam"""
+        now = datetime.now()
+        if now - self._stats['last_log_time'] >= self._log_interval:
+            detected = self._stats['potential_pools_detected']
+            queued = self._stats['pools_queued']
+            failed = self._stats['pools_failed_fetch']
+
+            if detected > 0:  # Only log if there was activity
+                logger.info(f"📊 Solana Pool Detection (Last 5 min): "
+                           f"Detected: {detected} | Queued: {queued} | Failed: {failed}")
+
+            # Reset stats
+            self._stats = {
+                'potential_pools_detected': 0,
+                'pools_queued': 0,
+                'pools_failed_fetch': 0,
+                'last_log_time': now
+            }
 
     def _check_for_pool_init(self, logs: List[str]) -> bool:
         """Check if logs indicate a new pool initialization"""

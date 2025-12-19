@@ -41,17 +41,25 @@ class RotatingLogFile:
     A file-like object that rotates logs based on size.
     Can be used as stdout/stderr for subprocess.Popen.
 
-    Note: subprocess writes directly to the file descriptor, bypassing write().
-    Use check_and_rotate() periodically to enforce size limits.
+    CRITICAL FIX: When a subprocess writes via file descriptor, it writes to the
+    inode, not the filename. After rotation (renaming file to .1), the subprocess
+    continues writing to .1 because the fd still points to that inode.
+
+    Solution: Use os.dup2() to redirect the original fd to the new file after rotation.
+    This ensures the subprocess writes to the new file without needing a restart.
     """
     def __init__(self, filepath: Path, max_bytes: int = 10*1024*1024, backup_count: int = 3):
         self.filepath = Path(filepath)
         self.max_bytes = max_bytes
         self.backup_count = backup_count
         self._file = None
+        self._original_fd = None  # Store the original fd that subprocess uses
         # Check and rotate at startup if file is already too large
         self._check_and_rotate_if_needed()
         self._open()
+        # Store the original fd after first open - this is what subprocess will use
+        if self._file:
+            self._original_fd = self._file.fileno()
 
     def _open(self):
         """Open or reopen the log file"""
@@ -97,16 +105,42 @@ class RotatingLogFile:
         """
         Check file size and rotate if needed.
         Call this periodically since subprocess writes bypass write().
+
+        CRITICAL: Uses os.dup2() to redirect the original fd to the new file,
+        so subprocess continues writing to the correct (new) file after rotation.
+
         Returns True if rotation occurred.
         """
+        import os
         try:
             if self.filepath.exists() and self.filepath.stat().st_size >= self.max_bytes:
-                # Close file, rotate, reopen
+                # Flush current file
                 if self._file:
                     self._file.flush()
+                    os.fsync(self._file.fileno())
+
+                # Close file, rotate, reopen
+                old_fd = self._file.fileno() if self._file else None
+                if self._file:
                     self._file.close()
+                    self._file = None
+
                 self._do_rollover_external()
+
+                # Open new file
                 self._open()
+
+                # CRITICAL: Redirect original fd to new file using dup2
+                # This makes the subprocess write to the new file
+                if self._original_fd is not None and self._file:
+                    new_fd = self._file.fileno()
+                    if new_fd != self._original_fd:
+                        try:
+                            os.dup2(new_fd, self._original_fd)
+                            logger.debug(f"Redirected fd {self._original_fd} to new file {self.filepath}")
+                        except OSError as e:
+                            logger.warning(f"Failed to dup2 fd: {e}")
+
                 return True
         except Exception as e:
             logger.warning(f"Error checking log rotation for {self.filepath}: {e}")
