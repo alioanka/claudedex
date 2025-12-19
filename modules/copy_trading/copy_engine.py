@@ -806,38 +806,43 @@ class CopyTradingEngine:
                 entry_price = native_price
 
             token_address = result.get('output_mint') or result.get('token', 'UNKNOWN')
+            trade_id = f"copy_{uuid.uuid4().hex[:12]}"
             logger.info(f"💰 Trade value: {amount_native:.4f} {'SOL' if chain == 'solana' else 'ETH'} @ ${entry_price:.2f} = ${usd_value:.2f}")
 
             async with self.db_pool.acquire() as conn:
+                # Insert into dedicated copytrading_trades table
                 await conn.execute("""
-                    INSERT INTO trades (
-                        trade_id, token_address, chain, side, entry_price, exit_price,
-                        amount, usd_value, profit_loss, profit_loss_percentage,
-                        status, strategy, entry_timestamp, exit_timestamp, metadata
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                    INSERT INTO copytrading_trades (
+                        trade_id, token_address, chain, source_wallet, source_tx,
+                        side, entry_price, exit_price, amount,
+                        entry_usd, exit_usd, profit_loss, profit_loss_pct,
+                        status, is_simulated, entry_timestamp,
+                        tx_hash, native_price_at_trade, metadata
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
                 """,
-                    f"copy_{uuid.uuid4().hex[:12]}",
+                    trade_id,
                     token_address,
                     chain,
+                    source_wallet or 'unknown',
+                    source_tx,
                     'buy',
                     entry_price,
                     entry_price,  # Same as entry for now (position still open)
-                    amount_native,  # Amount in native token (SOL/ETH)
+                    amount_native,
                     usd_value,
+                    0.0,  # Exit USD - will be set on exit
                     0.0,  # No profit yet - will be calculated on exit
                     0.0,
                     'open' if result.get('success') else 'failed',
-                    'copytrading',
+                    self.dry_run,
                     now,
-                    now,
+                    result.get('tx_hash'),
+                    native_price,
                     json.dumps({
-                        'tx_hash': result.get('tx_hash'),
-                        'source_tx': source_tx,
-                        'source_wallet': source_wallet,
-                        'entry_price_usd': entry_price,
                         'dry_run': self.dry_run
                     })
                 )
+                logger.debug(f"💾 Logged to copytrading_trades: {trade_id}")
 
                 # Update wallet stats if source_wallet provided
                 if source_wallet and result.get('success'):
@@ -849,11 +854,10 @@ class CopyTradingEngine:
     async def _update_wallet_stats(self, conn, wallet: str):
         """Update wallet statistics after a copy trade"""
         try:
-            # Count trades copied from this wallet
+            # Count trades copied from this wallet (use dedicated table)
             count = await conn.fetchval("""
-                SELECT COUNT(*) FROM trades
-                WHERE strategy = 'copytrading'
-                AND metadata::jsonb->>'source_wallet' = $1
+                SELECT COUNT(*) FROM copytrading_trades
+                WHERE source_wallet = $1
             """, wallet)
 
             # Update the wallet's copied trades count in config if tracking

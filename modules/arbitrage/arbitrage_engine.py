@@ -731,37 +731,45 @@ class ArbitrageEngine:
 
             logger.info(f"💰 Arb value: {amount_eth:.4f} ETH @ ${eth_price:.2f} = ${entry_usd:.2f} | Profit: ${profit_usd:.2f}")
 
+            trade_id = f"arb_{uuid.uuid4().hex[:12]}"
+
             async with self.db_pool.acquire() as conn:
+                # Insert into dedicated arbitrage_trades table
                 await conn.execute("""
-                    INSERT INTO trades (
-                        trade_id, token_address, chain, side, entry_price, exit_price,
-                        amount, usd_value, profit_loss, profit_loss_percentage,
-                        status, strategy, entry_timestamp, exit_timestamp, metadata
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                    INSERT INTO arbitrage_trades (
+                        trade_id, token_address, chain, buy_dex, sell_dex,
+                        side, entry_price, exit_price, amount, amount_eth,
+                        entry_usd, exit_usd, profit_loss, profit_loss_pct, spread_pct,
+                        status, is_simulated, entry_timestamp, exit_timestamp,
+                        tx_hash, eth_price_at_trade, metadata
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
                 """,
-                    f"arb_{uuid.uuid4().hex[:12]}",
+                    trade_id,
                     token,
                     'ethereum',
+                    buy_dex,
+                    sell_dex,
                     'buy',
                     entry_price,
                     exit_price,
                     amount_eth,
+                    amount_eth,
                     entry_usd,
+                    exit_usd,
                     profit_usd,
                     profit_pct * 100,
+                    profit_pct * 100,
                     'closed',
-                    'arbitrage',
+                    self.dry_run,
                     datetime.now(),
-                    datetime.now(),  # Exit timestamp same as entry for arb
+                    datetime.now(),
+                    tx_hash,
+                    eth_price,
                     json.dumps({
-                        'tx_hash': tx_hash,
-                        'buy_dex': buy_dex,
-                        'sell_dex': sell_dex,
-                        'eth_price': eth_price,
-                        'dry_run': self.dry_run,
-                        'spread_pct': profit_pct * 100
+                        'dry_run': self.dry_run
                     })
                 )
+            logger.debug(f"💾 Logged to arbitrage_trades: {trade_id}")
         except Exception as e:
             logger.error(f"Error logging arb trade: {e}")
 
