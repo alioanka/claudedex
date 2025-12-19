@@ -6189,7 +6189,7 @@ class DashboardEndpoints:
         return web.Response(text=template.render(page='sniper_settings'), content_type='text/html')
 
     async def api_get_sniper_stats(self, request):
-        """Get Sniper module stats from dedicated sniper_trades table"""
+        """Get Sniper module stats including settings and mode info"""
         stats = {
             'module': 'sniper',
             'status': 'Offline',
@@ -6199,9 +6199,25 @@ class DashboardEndpoints:
             'active_positions': 0,
             'total_pnl': 0.0,
             'win_rate': 0.0,
-            'avg_safety_score': 0.0
+            'avg_safety_score': 0.0,
+            # Settings/mode info for dashboard
+            'dry_run': True,
+            'test_mode': False,
+            'safety_enabled': True,
+            'chain': 'solana',
+            'trade_amount': 0.1,
+            'slippage': 10.0,
+            'tokens_detected': 0,
+            'tokens_sniped': 0,
+            'pools_detected': 0,
+            'pools_evaluated': 0,
+            'pools_passed': 0,
+            'pools_rejected': 0
         }
         try:
+            # Check DRY_RUN from environment
+            stats['dry_run'] = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
+
             if self.db:
                 async with self.db.pool.acquire() as conn:
                     # Get trade stats from sniper_trades table
@@ -6230,12 +6246,38 @@ class DashboardEndpoints:
                         WHERE status = 'open'
                     """)
                     stats['active_positions'] = active or 0
-                    stats['status'] = 'Online' if stats['total_trades'] > 0 or stats['active_positions'] > 0 else 'Idle'
+                    stats['tokens_sniped'] = stats['total_trades'] + stats['active_positions']
 
-            return web.json_response({'success': True, 'stats': stats})
+                    # Get tokens detected (last 24h)
+                    detected_24h = await conn.fetchval("""
+                        SELECT COUNT(*) FROM sniper_trades
+                        WHERE entry_timestamp > NOW() - INTERVAL '24 hours'
+                    """)
+                    stats['tokens_detected'] = detected_24h or 0
+
+                    # Load settings from config_settings
+                    settings_rows = await conn.fetch(
+                        "SELECT key, value FROM config_settings WHERE config_type = 'sniper_config'"
+                    )
+                    for srow in settings_rows:
+                        key, val = srow['key'], srow['value']
+                        if key == 'test_mode':
+                            stats['test_mode'] = val.lower() in ('true', '1', 'yes') if val else False
+                        elif key == 'safety_check_enabled':
+                            stats['safety_enabled'] = val.lower() in ('true', '1', 'yes') if val else True
+                        elif key == 'chain':
+                            stats['chain'] = val if val else 'solana'
+                        elif key == 'trade_amount':
+                            stats['trade_amount'] = float(val) if val else 0.1
+                        elif key == 'slippage':
+                            stats['slippage'] = float(val) if val else 10.0
+
+                    stats['status'] = 'Online' if os.getenv('SNIPER_MODULE_ENABLED', 'false').lower() == 'true' else 'Offline'
+
+            return web.json_response({'success': True, **stats})
         except Exception as e:
             logger.error(f"Error getting sniper stats: {e}")
-            return web.json_response({'success': False, 'error': str(e), 'stats': stats})
+            return web.json_response({'success': False, 'error': str(e), **stats})
 
     async def api_get_sniper_positions(self, request):
         """Get Sniper open positions from sniper_trades table"""
