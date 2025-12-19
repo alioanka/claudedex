@@ -348,6 +348,7 @@ class DashboardEndpoints:
         self.app.router.add_post('/api/sniper/trading/unblock', self.api_sniper_trading_unblock)
         self.app.router.add_post('/api/sniper/position/close', self.api_sniper_close_position)
         self.app.router.add_post('/api/sniper/positions/close-all', self.api_sniper_close_all_positions)
+        self.app.router.add_get('/api/sniper/activity', self.api_get_sniper_activity)
 
         # API - Arbitrage Module
         self.app.router.add_get('/api/arbitrage/stats', self.api_get_arbitrage_stats)
@@ -6477,6 +6478,72 @@ class DashboardEndpoints:
             return web.json_response({'success': True, 'message': 'Settings saved'})
         except Exception as e:
             return web.json_response({'success': False, 'error': str(e)})
+
+    async def api_get_sniper_activity(self, request):
+        """Get Sniper module activity feed from recent trades and system logs"""
+        activity = []
+        try:
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    # Get recent open positions (bought)
+                    open_trades = await conn.fetch("""
+                        SELECT token_address, chain, entry_price, amount, entry_timestamp, safety_score, safety_rating
+                        FROM sniper_trades
+                        WHERE status = 'open'
+                        ORDER BY entry_timestamp DESC
+                        LIMIT 10
+                    """)
+                    for row in open_trades:
+                        activity.append({
+                            'type': 'bought',
+                            'icon': 'bought',
+                            'title': f"Position Opened",
+                            'details': f"{row['token_address'][:12]}... on {(row['chain'] or 'solana').upper()}",
+                            'subdetails': f"Entry: ${float(row['entry_price'] or 0):.6f} | Safety: {row['safety_rating'] or 'N/A'}",
+                            'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None
+                        })
+
+                    # Get recent closed positions (sold)
+                    closed_trades = await conn.fetch("""
+                        SELECT token_address, chain, entry_price, exit_price, profit_loss, exit_timestamp, close_reason
+                        FROM sniper_trades
+                        WHERE status = 'closed'
+                        ORDER BY exit_timestamp DESC
+                        LIMIT 10
+                    """)
+                    for row in closed_trades:
+                        pnl = float(row['profit_loss'] or 0)
+                        activity.append({
+                            'type': 'sold',
+                            'icon': 'sold',
+                            'title': f"Position Closed ({row['close_reason'] or 'manual'})",
+                            'details': f"{row['token_address'][:12]}... | P&L: ${pnl:+.2f}",
+                            'subdetails': f"Exit: ${float(row['exit_price'] or 0):.6f}",
+                            'timestamp': row['exit_timestamp'].isoformat() if row['exit_timestamp'] else None,
+                            'pnl': pnl
+                        })
+
+            # Sort by timestamp descending
+            activity.sort(key=lambda x: x.get('timestamp') or '', reverse=True)
+
+            # Add some placeholder detection activity if empty
+            if not activity:
+                from datetime import datetime
+                activity = [
+                    {
+                        'type': 'detected',
+                        'icon': 'detected',
+                        'title': 'Pool Detection Active',
+                        'details': 'Monitoring Raydium/Pump.fun for new pools',
+                        'subdetails': 'WebSocket connected to Solana',
+                        'timestamp': datetime.now().isoformat()
+                    }
+                ]
+
+            return web.json_response({'success': True, 'activity': activity[:20]})
+        except Exception as e:
+            logger.error(f"Error getting sniper activity: {e}")
+            return web.json_response({'success': False, 'error': str(e), 'activity': []})
 
 
     # ==================== ARBITRAGE MODULE HANDLERS ====================

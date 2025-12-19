@@ -574,6 +574,15 @@ async function loadSniperData() {
             }
         }
 
+        // Load activity feed
+        const activityResponse = await fetch('/api/sniper/activity');
+        if (activityResponse.ok) {
+            const activityData = await activityResponse.json();
+            if (activityData.success && activityData.activity) {
+                updateActivityFeed(activityData.activity);
+            }
+        }
+
     } catch (error) {
         console.error('Error loading sniper data:', error);
     }
@@ -639,6 +648,47 @@ function getDexForChain(chain) {
         'base': 'Uniswap V3'
     };
     return dexMap[chain] || chain;
+}
+
+function updateActivityFeed(activity) {
+    const feed = document.getElementById('activity-feed');
+
+    if (!activity || activity.length === 0) {
+        feed.innerHTML = `
+            <div class="empty-state">
+                <p>No recent activity. Pool detection will appear here.</p>
+            </div>
+        `;
+        return;
+    }
+
+    feed.innerHTML = activity.map(item => {
+        const time = item.timestamp ? new Date(item.timestamp).toLocaleTimeString() : '';
+        return `
+            <div class="activity-item">
+                <div class="activity-icon ${item.icon}">
+                    <i class="fas fa-${getActivityIcon(item.icon)}"></i>
+                </div>
+                <div class="activity-content">
+                    <div class="activity-title">${item.title}</div>
+                    <div class="activity-details">${item.details}</div>
+                    ${item.subdetails ? `<div class="activity-details" style="font-size: 0.75rem; opacity: 0.7;">${item.subdetails}</div>` : ''}
+                </div>
+                <div class="activity-time">${time}</div>
+            </div>
+        `;
+    }).join('');
+}
+
+function getActivityIcon(iconType) {
+    const icons = {
+        'detected': 'eye',
+        'evaluating': 'search',
+        'bought': 'arrow-down',
+        'sold': 'arrow-up',
+        'rejected': 'times-circle'
+    };
+    return icons[iconType] || 'info-circle';
 }
 
 function updatePositions(positions) {
