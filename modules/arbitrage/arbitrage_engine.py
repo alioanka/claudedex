@@ -114,11 +114,70 @@ AAVE_POOL_ABI = [
 
 # Common Token Addresses (Ethereum Mainnet)
 TOKENS = {
+    # Major tokens
     'WETH': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
     'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-    'DAI': '0x6B175474E89094C44Da98b954EesvcZDECB80656',
+    'DAI': '0x6B175474E89094C44Da98b954EeAdDcB80656c63',
+    'WBTC': '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
+
+    # DeFi tokens
+    'UNI': '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984',
+    'LINK': '0x514910771AF9Ca656af840dff83E8264EcF986CA',
+    'AAVE': '0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9',
+    'CRV': '0xD533a949740bb3306d119CC777fa900bA034cd52',
+    'MKR': '0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2',
+    'COMP': '0xc00e94Cb662C3520282E6f5717214004A7f26888',
+    'SUSHI': '0x6B3595068778DD592e39A122f4f5a5cF09C90fE2',
+    'SNX': '0xC011a73ee8576Fb46F5E1c5751cA3B9Fe0af2a6F',
+
+    # Layer 2 / Scaling
+    'MATIC': '0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0',
+    'LDO': '0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32',
+    'ARB': '0xB50721BCf8d664c30412Cfbc6cf7a15145234ad1',
+    'OP': '0x4200000000000000000000000000000000000042',
+
+    # Stablecoins
+    'FRAX': '0x853d955aCEf822Db058eb8505911ED77F175b99e',
+    'LUSD': '0x5f98805A4E8be255a32880FDeC7F6728C6568bA0',
+    'TUSD': '0x0000000000085d4780B73119b644AE5ecd22b376',
+
+    # Meme/Popular
+    'SHIB': '0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE',
+    'PEPE': '0x6982508145454Ce325dDbE47a25d4ec3d2311933',
+
+    # Other DeFi
+    'BAL': '0xba100000625a3754423978a60c9317c58a424e3D',
+    'YFI': '0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e',
+    'INCH': '0x111111111117dC0aa78b770fA6A738034120C302',
+    'GRT': '0xc944E90C64B2c07662A292be6244BDf05Cda44a7',
+    'ENS': '0xC18360217D8F7Ab5e7c516566761Ea12Ce7F9D72',
 }
+
+# Token pairs to monitor for arbitrage (token_in, token_out)
+# These are the most liquid pairs that frequently have price discrepancies
+ARB_PAIRS = [
+    ('WETH', 'USDC'),
+    ('WETH', 'USDT'),
+    ('WETH', 'DAI'),
+    ('WBTC', 'WETH'),
+    ('LINK', 'WETH'),
+    ('UNI', 'WETH'),
+    ('AAVE', 'WETH'),
+    ('MATIC', 'WETH'),
+    ('SUSHI', 'WETH'),
+    ('CRV', 'WETH'),
+    ('LDO', 'WETH'),
+    ('SNX', 'WETH'),
+    ('COMP', 'WETH'),
+    ('MKR', 'WETH'),
+    ('BAL', 'WETH'),
+    ('YFI', 'WETH'),
+    ('GRT', 'WETH'),
+    ('ENS', 'WETH'),
+    ('SHIB', 'WETH'),
+    ('PEPE', 'WETH'),
+]
 
 # Routers
 ROUTERS = {
@@ -429,22 +488,35 @@ class ArbitrageEngine:
     async def run(self):
         self.is_running = True
         logger.info("⚖️ Arbitrage Engine Started")
+        logger.info(f"   Monitoring {len(ARB_PAIRS)} token pairs across {len(self.router_contracts)} DEXs")
 
         if not self.w3:
             logger.error("RPC not connected, arbitrage disabled.")
             return
 
+        pair_index = 0  # Track which pair we're scanning
+
         while self.is_running:
             try:
                 self._stats['scans'] += 1
 
-                # Scan WETH/USDC
-                await self._check_arb_opportunity(TOKENS['WETH'], TOKENS['USDC'])
+                # Get current pair to scan
+                token_in_symbol, token_out_symbol = ARB_PAIRS[pair_index]
+                token_in = TOKENS.get(token_in_symbol)
+                token_out = TOKENS.get(token_out_symbol)
+
+                if token_in and token_out:
+                    await self._check_arb_opportunity(token_in, token_out, token_in_symbol)
+
+                # Move to next pair (round-robin)
+                pair_index = (pair_index + 1) % len(ARB_PAIRS)
 
                 # Log stats every 5 minutes
                 await self._log_stats_if_needed()
 
-                await asyncio.sleep(5)
+                # Sleep between scans (short delay to not overwhelm RPC)
+                await asyncio.sleep(2)
+
             except Exception as e:
                 logger.error(f"Arb loop error: {e}")
                 await asyncio.sleep(5)
@@ -468,7 +540,7 @@ class ArbitrageEngine:
                 'last_stats_log': now
             }
 
-    async def _check_arb_opportunity(self, token_in, token_out) -> bool:
+    async def _check_arb_opportunity(self, token_in: str, token_out: str, token_symbol: str = "UNKNOWN") -> bool:
         """Check price difference between two DEXs. Returns True if opportunity found."""
         try:
             amount_in = self.flash_loan_amount  # Use configured flash loan amount
@@ -478,8 +550,9 @@ class ArbitrageEngine:
                 try:
                     amounts = contract.functions.getAmountsOut(amount_in, [token_in, token_out]).call()
                     prices[name] = amounts[1]
-                except Exception as e:
-                    logger.debug(f"Failed to get price from {name}: {e}")
+                except Exception:
+                    # Silently skip - many pairs won't have liquidity on all DEXs
+                    pass
 
             if len(prices) < 2:
                 return False
@@ -491,13 +564,16 @@ class ArbitrageEngine:
             buy_price = prices[best_buy_dex]
             sell_price = prices[best_sell_dex]
 
+            if buy_price == 0:
+                return False
+
             spread = (sell_price - buy_price) / buy_price
 
             if spread > self.min_profit_threshold:
                 self._stats['opportunities_found'] += 1
 
                 # Create unique key for this opportunity
-                opp_key = f"{best_buy_dex}_{best_sell_dex}_{token_in}"
+                opp_key = f"{best_buy_dex}_{best_sell_dex}_{token_symbol}"
                 now = datetime.now()
                 today = now.strftime("%Y-%m-%d")
 
@@ -528,7 +604,7 @@ class ArbitrageEngine:
                 self._pair_execution_count[opp_key] = current_count + 1
                 remaining = self._max_executions_per_pair_per_day - (current_count + 1)
 
-                logger.info(f"🚨 ARBITRAGE OPPORTUNITY: Buy on {best_buy_dex}, Sell on {best_sell_dex}. Spread: {spread:.2%} (#{current_count + 1} today, {remaining} remaining)")
+                logger.info(f"🚨 ARBITRAGE OPPORTUNITY [{token_symbol}]: Buy on {best_buy_dex}, Sell on {best_sell_dex}. Spread: {spread:.2%} (#{current_count + 1} today, {remaining} remaining)")
                 self._stats['opportunities_executed'] += 1
 
                 # Execute arbitrage
@@ -538,13 +614,14 @@ class ArbitrageEngine:
                     token_in=token_in,
                     token_out=token_out,
                     amount=amount_in,
-                    expected_profit=spread
+                    expected_profit=spread,
+                    token_symbol=token_symbol
                 )
                 return True
             return False
 
         except Exception as e:
-            logger.error(f"Arb check failed: {e}")
+            logger.error(f"Arb check failed for {token_symbol}: {e}")
             return False
 
     async def _execute_flash_swap(
@@ -554,16 +631,17 @@ class ArbitrageEngine:
         token_in: str,
         token_out: str,
         amount: int,
-        expected_profit: float
+        expected_profit: float,
+        token_symbol: str = "UNKNOWN"
     ):
         """Execute the arbitrage trade using flash loans and Flashbots"""
-        logger.info(f"⚡ Executing Arbitrage: {buy_dex} -> {sell_dex} | Amount: {amount/1e18:.4f} ETH | Expected: +{expected_profit:.2%}")
+        logger.info(f"⚡ Executing Arbitrage [{token_symbol}]: {buy_dex} -> {sell_dex} | Amount: {amount/1e18:.4f} ETH | Expected: +{expected_profit:.2%}")
 
         if self.dry_run:
             # Simulate execution
             await asyncio.sleep(0.5)
-            logger.info("✅ Flash Swap Executed (DRY RUN)")
-            await self._log_arb_trade(buy_dex, sell_dex, token_in, amount, expected_profit, "DRY_RUN")
+            logger.info(f"✅ Flash Swap Executed (DRY RUN) [{token_symbol}]")
+            await self._log_arb_trade(buy_dex, sell_dex, token_in, amount, expected_profit, "DRY_RUN", token_symbol)
             return
 
         try:
@@ -579,13 +657,13 @@ class ArbitrageEngine:
                 )
 
             if tx_hash:
-                logger.info(f"✅ Arbitrage executed: {tx_hash}")
-                await self._log_arb_trade(buy_dex, sell_dex, token_in, amount, expected_profit, tx_hash)
+                logger.info(f"✅ Arbitrage executed [{token_symbol}]: {tx_hash}")
+                await self._log_arb_trade(buy_dex, sell_dex, token_in, amount, expected_profit, tx_hash, token_symbol)
             else:
-                logger.error("❌ Arbitrage execution failed")
+                logger.error(f"❌ Arbitrage execution failed [{token_symbol}]")
 
         except Exception as e:
-            logger.error(f"Arbitrage execution error: {e}")
+            logger.error(f"Arbitrage execution error [{token_symbol}]: {e}")
 
     async def _execute_with_flash_loan(
         self,
@@ -707,7 +785,8 @@ class ArbitrageEngine:
         token: str,
         amount: int,
         profit_pct: float,
-        tx_hash: str
+        tx_hash: str,
+        token_symbol: str = "UNKNOWN"
     ):
         """Log arbitrage trade to database"""
         if not self.db_pool:
@@ -729,7 +808,7 @@ class ArbitrageEngine:
             entry_price = eth_price
             exit_price = eth_price * (1 + profit_pct)
 
-            logger.info(f"💰 Arb value: {amount_eth:.4f} ETH @ ${eth_price:.2f} = ${entry_usd:.2f} | Profit: ${profit_usd:.2f}")
+            logger.info(f"💰 Arb value [{token_symbol}]: {amount_eth:.4f} ETH @ ${eth_price:.2f} = ${entry_usd:.2f} | Profit: ${profit_usd:.2f}")
 
             trade_id = f"arb_{uuid.uuid4().hex[:12]}"
 
@@ -766,10 +845,11 @@ class ArbitrageEngine:
                     tx_hash,
                     eth_price,
                     json.dumps({
-                        'dry_run': self.dry_run
+                        'dry_run': self.dry_run,
+                        'token_symbol': token_symbol
                     })
                 )
-            logger.debug(f"💾 Logged to arbitrage_trades: {trade_id}")
+            logger.debug(f"💾 Logged to arbitrage_trades: {trade_id} [{token_symbol}]")
         except Exception as e:
             logger.error(f"Error logging arb trade: {e}")
 
