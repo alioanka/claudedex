@@ -142,6 +142,76 @@
                                 </div>
                             </div>
                         </div>
+
+                        <hr class="my-4">
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6 class="text-uppercase text-muted mb-3"><i class="fas fa-layer-group me-2"></i>Position Management</h6>
+
+                                <div class="mb-3">
+                                    <label class="form-label">On Reverse Signal</label>
+                                    <select class="form-select" id="reverse_signal_action">
+                                        <option value="ignore">Ignore (Keep current position)</option>
+                                        <option value="close">Close current position only</option>
+                                        <option value="flip">Close and open reverse position</option>
+                                    </select>
+                                    <div class="form-text">What to do when a signal in the opposite direction is received while holding a position.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">On Same Direction Signal</label>
+                                    <select class="form-select" id="same_signal_action">
+                                        <option value="ignore">Ignore (Skip duplicate signals)</option>
+                                        <option value="add">Add to position (average entry)</option>
+                                    </select>
+                                    <div class="form-text">What to do when another signal in the same direction is received while already holding a position.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Max Concurrent Positions</label>
+                                    <select class="form-select" id="max_positions">
+                                        <option value="1">1 position only</option>
+                                        <option value="2">Up to 2 positions</option>
+                                        <option value="3">Up to 3 positions</option>
+                                        <option value="5">Up to 5 positions</option>
+                                    </select>
+                                    <div class="form-text">Maximum number of concurrent AI positions allowed. Each uses the configured trade amount.</div>
+                                </div>
+
+                                <div class="alert alert-info mt-3">
+                                    <i class="fas fa-info-circle me-2"></i>
+                                    <strong>Current Behavior:</strong> By default, only ONE position per symbol is allowed. When a signal is received while holding a position, it is ignored. Adjust settings above to change this behavior.
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <h6 class="text-uppercase text-muted mb-3"><i class="fas fa-shield-alt me-2"></i>Risk Management</h6>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Daily Loss Limit (USD)</label>
+                                    <input type="number" class="form-control" id="daily_loss_limit" min="0" step="10" value="100">
+                                    <div class="form-text">Stop trading for the day if total losses exceed this amount. Set to 0 to disable.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Max Daily Trades</label>
+                                    <input type="number" class="form-control" id="max_daily_trades" min="0" step="1" value="10">
+                                    <div class="form-text">Maximum trades per day. Set to 0 for unlimited.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Cooldown After Trade (Minutes)</label>
+                                    <input type="number" class="form-control" id="trade_cooldown" min="0" step="5" value="15">
+                                    <div class="form-text">Minimum time between trades to prevent rapid re-entry.</div>
+                                </div>
+
+                                <div class="alert alert-danger mt-3">
+                                    <i class="fas fa-exclamation-triangle me-2"></i>
+                                    <strong>Risk Warning:</strong> AI trading carries significant risk. Always start with DRY RUN mode and small amounts. Past sentiment accuracy does not guarantee future performance.
+                                </div>
+                            </div>
+                        </div>
                     </form>
                 </div>
             </div>
@@ -410,6 +480,16 @@
                 // Execution settings
                 document.getElementById('leverage').value = settings.leverage || 5;
 
+                // Position management
+                document.getElementById('reverse_signal_action').value = settings.reverse_signal_action || 'ignore';
+                document.getElementById('same_signal_action').value = settings.same_signal_action || 'ignore';
+                document.getElementById('max_positions').value = settings.max_positions || 1;
+
+                // Risk management
+                document.getElementById('daily_loss_limit').value = settings.daily_loss_limit || 100;
+                document.getElementById('max_daily_trades').value = settings.max_daily_trades || 10;
+                document.getElementById('trade_cooldown').value = settings.trade_cooldown || 15;
+
                 // Update API status
                 updateApiStatus(settings);
             }
@@ -462,7 +542,17 @@
             max_hold_hours: parseInt(document.getElementById('max_hold_hours').value),
 
             // Execution settings
-            leverage: parseInt(document.getElementById('leverage').value)
+            leverage: parseInt(document.getElementById('leverage').value),
+
+            // Position management
+            reverse_signal_action: document.getElementById('reverse_signal_action').value,
+            same_signal_action: document.getElementById('same_signal_action').value,
+            max_positions: parseInt(document.getElementById('max_positions').value),
+
+            // Risk management
+            daily_loss_limit: parseFloat(document.getElementById('daily_loss_limit').value),
+            max_daily_trades: parseInt(document.getElementById('max_daily_trades').value),
+            trade_cooldown: parseInt(document.getElementById('trade_cooldown').value)
         };
 
         try {

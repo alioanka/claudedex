@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}AI Performance{% endblock %}
+{% block title %}AI Performance Analytics - ClaudeDex{% endblock %}
 
 {% block extra_head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -41,14 +41,34 @@
         background: var(--card-bg);
         border: 1px solid var(--border-color);
         border-radius: 12px;
-        padding: 16px;
+        padding: 20px;
     }
 
+    .stat-icon {
+        width: 42px;
+        height: 42px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 12px;
+        font-size: 1.1rem;
+    }
+
+    .stat-icon.trades { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+    .stat-icon.winrate { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .stat-icon.pnl { background: rgba(139, 92, 246, 0.2); color: #8b5cf6; }
+    .stat-icon.signals { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .stat-icon.best { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+    .stat-icon.worst { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+    .stat-icon.avg { background: rgba(99, 102, 241, 0.2); color: #6366f1; }
+    .stat-icon.active { background: rgba(236, 72, 153, 0.2); color: #ec4899; }
+
     .stat-label {
-        font-size: 0.875rem;
+        font-size: 0.75rem;
         color: var(--text-secondary);
+        text-transform: uppercase;
         margin-bottom: 6px;
-        font-weight: 500;
     }
 
     .stat-value {
@@ -59,6 +79,13 @@
 
     .stat-value.positive { color: #10b981; }
     .stat-value.negative { color: #ef4444; }
+    .stat-value.neutral { color: #f59e0b; }
+
+    .stat-sub {
+        font-size: 0.7rem;
+        color: var(--text-secondary);
+        margin-top: 4px;
+    }
 
     .section-card {
         background: var(--card-bg);
@@ -80,14 +107,12 @@
 
     .chart-container {
         position: relative;
-        height: 350px;
-        margin-top: 20px;
+        height: 300px;
     }
 
     .chart-container-small {
         position: relative;
-        height: 280px;
-        margin-top: 20px;
+        height: 220px;
     }
 
     .grid-2 {
@@ -96,34 +121,42 @@
         gap: 24px;
     }
 
+    .grid-3 {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 24px;
+    }
+
     .btn {
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        padding: 8px 16px;
-        border-radius: 6px;
-        font-size: 0.875rem;
+        padding: 10px 20px;
+        border-radius: 8px;
+        font-size: 0.9rem;
         font-weight: 500;
         cursor: pointer;
         border: none;
         transition: all 0.2s;
     }
 
-    .btn-secondary { background: #6b7280; color: white; }
-    .btn-secondary:hover { background: #4b5563; }
-
-    .loading-state {
-        text-align: center;
-        padding: 40px;
-        color: var(--text-secondary);
+    .btn-primary {
+        background: linear-gradient(135deg, #8b5cf6, #6366f1);
+        color: white;
     }
 
-    .signal-table {
+    .btn-secondary {
+        background: #374151;
+        color: #e5e7eb;
+    }
+
+    /* Table Styles */
+    .trades-table {
         width: 100%;
         border-collapse: collapse;
     }
 
-    .signal-table th {
+    .trades-table th {
         background: var(--metric-bg);
         padding: 12px 10px;
         text-align: left;
@@ -131,103 +164,191 @@
         color: var(--text-secondary);
         font-size: 0.75rem;
         text-transform: uppercase;
-        white-space: nowrap;
     }
 
-    .signal-table td {
+    .trades-table td {
         padding: 12px 10px;
         border-bottom: 1px solid var(--border-color);
-        white-space: nowrap;
+        font-size: 0.85rem;
     }
 
-    .signal-table tr:hover {
+    .trades-table tr:hover {
         background: var(--metric-bg);
     }
 
-    .table-responsive {
-        overflow-x: auto;
-    }
-
-    .sentiment-badge {
+    .side-badge {
         padding: 4px 10px;
         border-radius: 12px;
-        font-size: 0.75rem;
+        font-size: 0.7rem;
         font-weight: 600;
     }
 
-    .sentiment-bullish {
-        background: rgba(16, 185, 129, 0.2);
-        color: #10b981;
+    .side-long { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .side-short { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+
+    .status-badge {
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.7rem;
+        font-weight: 600;
     }
 
-    .sentiment-bearish {
-        background: rgba(239, 68, 68, 0.2);
-        color: #ef4444;
+    .status-open { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+    .status-closed { background: rgba(107, 114, 128, 0.2); color: #9ca3af; }
+    .status-simulated { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+
+    .empty-state {
+        text-align: center;
+        padding: 50px 20px;
+        color: var(--text-secondary);
     }
 
-    .sentiment-neutral {
-        background: rgba(107, 114, 128, 0.2);
-        color: #6b7280;
+    .empty-state i {
+        font-size: 3rem;
+        opacity: 0.3;
+        margin-bottom: 15px;
+    }
+
+    .info-banner {
+        background: rgba(59, 130, 246, 0.1);
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        border-radius: 10px;
+        padding: 16px 20px;
+        margin-bottom: 24px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .info-banner i {
+        color: #3b82f6;
+        font-size: 1.25rem;
     }
 
     [data-theme="dark"] {
         --card-bg: #1f2937;
         --border-color: #374151;
         --text-primary: #f9fafb;
-        --text-secondary: #d1d5db;
+        --text-secondary: #9ca3af;
         --metric-bg: #111827;
+    }
+
+    [data-theme="light"] {
+        --card-bg: #ffffff;
+        --border-color: #e5e7eb;
+        --text-primary: #111827;
+        --text-secondary: #6b7280;
+        --metric-bg: #f3f4f6;
     }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="page-container">
+    <!-- Header -->
     <div class="page-header">
         <div>
             <h1 class="page-title">
-                <i class="fas fa-brain"></i>
-                AI Analysis Performance
+                <i class="fas fa-chart-bar"></i>
+                AI Performance Analytics
             </h1>
-            <p class="page-subtitle">Performance metrics for AI-triggered trades and sentiment accuracy</p>
+            <p class="page-subtitle">Performance metrics for AI-triggered trades and signal analysis</p>
         </div>
-        <button class="btn btn-secondary" onclick="loadPerformance()">
-            <i class="fas fa-sync"></i> Refresh
-        </button>
+        <div style="display: flex; gap: 12px;">
+            <select id="timeFilter" class="btn btn-secondary" onchange="loadPerformance()">
+                <option value="all">All Time</option>
+                <option value="24h">Last 24 Hours</option>
+                <option value="7d">Last 7 Days</option>
+                <option value="30d">Last 30 Days</option>
+            </select>
+            <button class="btn btn-primary" onclick="loadPerformance()">
+                <i class="fas fa-sync-alt"></i> Refresh
+            </button>
+        </div>
     </div>
 
-    <!-- Overall Stats -->
+    <!-- Info Banner -->
+    <div class="info-banner" id="infoBanner">
+        <i class="fas fa-info-circle"></i>
+        <div>
+            <strong>Performance Tracking:</strong>
+            AI trades are logged when sentiment score exceeds threshold. Stats update when trades are closed.
+            <span id="modeInfo"></span>
+        </div>
+    </div>
+
+    <!-- Stats Grid -->
     <div class="stats-grid">
         <div class="stat-card">
+            <div class="stat-icon trades">
+                <i class="fas fa-exchange-alt"></i>
+            </div>
             <div class="stat-label">Total AI Trades</div>
-            <div class="stat-value" id="stat-total-trades">0</div>
+            <div class="stat-value" id="totalTrades">0</div>
+            <div class="stat-sub"><span id="openTrades">0</span> open / <span id="closedTrades">0</span> closed</div>
         </div>
+
         <div class="stat-card">
+            <div class="stat-icon winrate">
+                <i class="fas fa-trophy"></i>
+            </div>
             <div class="stat-label">Win Rate</div>
-            <div class="stat-value" id="stat-winrate">0%</div>
+            <div class="stat-value" id="winRate">0.0%</div>
+            <div class="stat-sub"><span id="winCount">0</span> wins / <span id="lossCount">0</span> losses</div>
         </div>
+
         <div class="stat-card">
+            <div class="stat-icon pnl">
+                <i class="fas fa-dollar-sign"></i>
+            </div>
             <div class="stat-label">Total P&L</div>
-            <div class="stat-value" id="stat-pnl">$0.00</div>
+            <div class="stat-value positive" id="totalPnl">$0.00</div>
+            <div class="stat-sub" id="pnlPct">+0.00%</div>
         </div>
+
         <div class="stat-card">
-            <div class="stat-label">Signal Accuracy</div>
-            <div class="stat-value" id="stat-accuracy">0%</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-label">Avg Sentiment Score</div>
-            <div class="stat-value" id="stat-avg-sentiment">0.00</div>
-        </div>
-        <div class="stat-card">
+            <div class="stat-icon signals">
+                <i class="fas fa-signal"></i>
+            </div>
             <div class="stat-label">Signals Generated</div>
-            <div class="stat-value" id="stat-signals">0</div>
+            <div class="stat-value" id="totalSignals">0</div>
+            <div class="stat-sub"><span id="buySignals">0</span> buy / <span id="sellSignals">0</span> sell</div>
         </div>
+
         <div class="stat-card">
+            <div class="stat-icon avg">
+                <i class="fas fa-chart-line"></i>
+            </div>
+            <div class="stat-label">Avg Sentiment</div>
+            <div class="stat-value" id="avgSentiment">0.00</div>
+            <div class="stat-sub">Average score</div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon best">
+                <i class="fas fa-arrow-up"></i>
+            </div>
             <div class="stat-label">Best Trade</div>
-            <div class="stat-value positive" id="stat-best-trade">$0.00</div>
+            <div class="stat-value positive" id="bestTrade">$0.00</div>
+            <div class="stat-sub" id="bestPct">+0.00%</div>
         </div>
+
         <div class="stat-card">
+            <div class="stat-icon worst">
+                <i class="fas fa-arrow-down"></i>
+            </div>
             <div class="stat-label">Worst Trade</div>
-            <div class="stat-value negative" id="stat-worst-trade">$0.00</div>
+            <div class="stat-value negative" id="worstTrade">$0.00</div>
+            <div class="stat-sub" id="worstPct">0.00%</div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon active">
+                <i class="fas fa-clock"></i>
+            </div>
+            <div class="stat-label">Avg Hold Time</div>
+            <div class="stat-value" id="avgHoldTime">--</div>
+            <div class="stat-sub">Average duration</div>
         </div>
     </div>
 
@@ -235,34 +356,34 @@
     <div class="grid-2">
         <div class="section-card">
             <div class="section-title">
-                <i class="fas fa-chart-line"></i>
-                Sentiment Trend
-            </div>
-            <div class="chart-container">
-                <canvas id="sentimentChart"></canvas>
-            </div>
-        </div>
-
-        <div class="section-card">
-            <div class="section-title">
-                <i class="fas fa-chart-bar"></i>
-                AI Trade P&L
+                <i class="fas fa-chart-area"></i>
+                Cumulative P&L
             </div>
             <div class="chart-container">
                 <canvas id="pnlChart"></canvas>
             </div>
         </div>
+
+        <div class="section-card">
+            <div class="section-title">
+                <i class="fas fa-chart-line"></i>
+                Sentiment vs Market Performance
+            </div>
+            <div class="chart-container">
+                <canvas id="sentimentChart"></canvas>
+            </div>
+        </div>
     </div>
 
-    <!-- Sentiment Distribution -->
-    <div class="grid-2">
+    <!-- Distribution Charts -->
+    <div class="grid-3">
         <div class="section-card">
             <div class="section-title">
                 <i class="fas fa-chart-pie"></i>
-                Sentiment Distribution
+                Signal Distribution
             </div>
-            <div class="chart-container" style="height: 280px; max-width: 400px; margin: 0 auto;">
-                <canvas id="sentimentDistChart"></canvas>
+            <div class="chart-container-small">
+                <canvas id="signalDistChart"></canvas>
             </div>
         </div>
 
@@ -271,33 +392,51 @@
                 <i class="fas fa-trophy"></i>
                 Win/Loss Distribution
             </div>
-            <div class="chart-container" style="height: 280px; max-width: 400px; margin: 0 auto;">
+            <div class="chart-container-small">
                 <canvas id="winLossChart"></canvas>
+            </div>
+        </div>
+
+        <div class="section-card">
+            <div class="section-title">
+                <i class="fas fa-brain"></i>
+                AI Provider Performance
+            </div>
+            <div class="chart-container-small">
+                <canvas id="providerChart"></canvas>
             </div>
         </div>
     </div>
 
-    <!-- Recent AI Signals -->
+    <!-- AI Trades Table -->
     <div class="section-card">
         <div class="section-title">
             <i class="fas fa-history"></i>
-            Recent AI Signals & Trades
+            AI Trade History
+            <span style="margin-left: auto; font-size: 0.8rem; color: var(--text-secondary);" id="tradeCount">0 trades</span>
         </div>
-        <div class="table-responsive">
-            <table class="signal-table" id="signalTable">
+        <div style="overflow-x: auto;">
+            <table class="trades-table" id="tradesTable">
                 <thead>
                     <tr>
                         <th>Time</th>
-                        <th>Sentiment Score</th>
-                        <th>Signal</th>
-                        <th>Action</th>
-                        <th>Trade P&L</th>
+                        <th>Symbol</th>
+                        <th>Side</th>
+                        <th>Entry Price</th>
+                        <th>Exit Price</th>
+                        <th>Sentiment</th>
+                        <th>P&L</th>
                         <th>Status</th>
+                        <th>Mode</th>
                     </tr>
                 </thead>
-                <tbody id="signalTableBody">
+                <tbody id="tradesBody">
                     <tr>
-                        <td colspan="6" style="text-align:center;color:var(--text-secondary);padding:20px;">Loading...</td>
+                        <td colspan="9" class="empty-state">
+                            <i class="fas fa-robot"></i>
+                            <p>No AI trades yet</p>
+                            <p style="font-size: 0.8rem;">Trades will appear here when the AI module executes based on sentiment signals.</p>
+                        </td>
                     </tr>
                 </tbody>
             </table>
@@ -306,100 +445,260 @@
 </div>
 
 <script>
-let sentimentChart = null;
 let pnlChart = null;
-let sentimentDistChart = null;
+let sentimentChart = null;
+let signalDistChart = null;
 let winLossChart = null;
+let providerChart = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadPerformance();
+    setInterval(loadPerformance, 60000);
+});
 
 async function loadPerformance() {
     try {
-        // Load AI performance metrics
-        const perfResponse = await fetch('/api/ai/performance');
-        const perfData = await perfResponse.json();
+        const [perfRes, sentimentRes, tradesRes, settingsRes] = await Promise.all([
+            fetch('/api/ai/performance'),
+            fetch('/api/ai/sentiment'),
+            fetch('/api/ai/trades'),
+            fetch('/api/ai/settings')
+        ]);
 
-        // Load sentiment history
-        const sentimentResponse = await fetch('/api/ai/sentiment');
-        const sentimentData = await sentimentResponse.json();
+        const perf = await perfRes.json();
+        const sentiment = await sentimentRes.json();
+        const trades = await tradesRes.json();
+        const settings = await settingsRes.json();
 
-        // Load AI trades
-        const tradesResponse = await fetch('/api/ai/trades');
-        const tradesData = await tradesResponse.json();
-
-        if (perfData.success) {
-            updateStats(perfData.metrics, sentimentData.data || [], tradesData.trades || []);
+        if (perf.success) updateStats(perf.metrics);
+        if (sentiment.success) updateSentimentData(sentiment.data || []);
+        if (trades.success) {
+            updateTradesTable(trades.trades || []);
+            updateCharts(trades.trades || [], sentiment.data || []);
         }
-
-        if (sentimentData.success && sentimentData.data) {
-            updateSentimentChart(sentimentData.data);
-            updateSentimentDistribution(sentimentData.data);
-        }
-
-        if (tradesData.success && tradesData.trades) {
-            updatePnlChart(tradesData.trades);
-            updateWinLossChart(tradesData.trades);
-            updateSignalTable(sentimentData.data || [], tradesData.trades);
-        } else {
-            updateSignalTable(sentimentData.data || [], []);
-        }
+        if (settings.success) updateModeInfo(settings.settings);
 
     } catch (error) {
-        console.error('Error loading AI performance:', error);
-        showEmptyState();
+        console.error('Error loading performance:', error);
     }
 }
 
-function updateStats(metrics, sentiments, trades) {
-    document.getElementById('stat-total-trades').textContent = metrics.trades || 0;
+function updateStats(metrics) {
+    // Total Trades
+    document.getElementById('totalTrades').textContent = metrics.trades || 0;
 
-    const winRateEl = document.getElementById('stat-winrate');
-    winRateEl.textContent = (metrics.win_rate || 0).toFixed(1) + '%';
+    // Win Rate
+    const winRateEl = document.getElementById('winRate');
+    const winRate = metrics.win_rate || 0;
+    winRateEl.textContent = winRate.toFixed(1) + '%';
+    winRateEl.className = 'stat-value ' + (winRate >= 50 ? 'positive' : winRate > 0 ? 'neutral' : '');
 
-    const pnlEl = document.getElementById('stat-pnl');
+    // P&L
+    const pnlEl = document.getElementById('totalPnl');
     const pnl = metrics.total_pnl || 0;
-    pnlEl.textContent = `$${pnl.toFixed(2)}`;
+    pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(2);
     pnlEl.className = 'stat-value ' + (pnl >= 0 ? 'positive' : 'negative');
 
-    // Calculate signal accuracy (how often sentiment correctly predicted market direction)
-    document.getElementById('stat-accuracy').textContent = (metrics.win_rate || 0).toFixed(1) + '%';
+    // Average Sentiment
+    document.getElementById('avgSentiment').textContent = (metrics.avg_sentiment || 0).toFixed(2);
 
-    // Calculate average sentiment
-    if (sentiments.length > 0) {
-        const avgSentiment = sentiments.reduce((a, b) => a + b.score, 0) / sentiments.length;
-        document.getElementById('stat-avg-sentiment').textContent = avgSentiment.toFixed(2);
-    }
+    // Best/Worst Trade
+    const bestEl = document.getElementById('bestTrade');
+    const best = metrics.best_trade || 0;
+    bestEl.textContent = '+$' + Math.abs(best).toFixed(2);
 
-    document.getElementById('stat-signals').textContent = sentiments.length;
+    const worstEl = document.getElementById('worstTrade');
+    const worst = metrics.worst_trade || 0;
+    worstEl.textContent = '-$' + Math.abs(worst).toFixed(2);
+}
 
-    // Best and worst trades
-    if (trades.length > 0) {
-        const pnls = trades.map(t => t.pnl || t.profit_loss || 0);
-        document.getElementById('stat-best-trade').textContent = `$${Math.max(...pnls).toFixed(2)}`;
-        document.getElementById('stat-worst-trade').textContent = `$${Math.min(...pnls).toFixed(2)}`;
+function updateSentimentData(data) {
+    document.getElementById('totalSignals').textContent = data.length;
+
+    let buyCount = 0, sellCount = 0;
+    let avgScore = 0;
+    data.forEach(d => {
+        avgScore += d.score;
+        if (d.score >= 0.5) buyCount++;
+        else if (d.score <= -0.5) sellCount++;
+    });
+
+    document.getElementById('buySignals').textContent = buyCount;
+    document.getElementById('sellSignals').textContent = sellCount;
+
+    if (data.length > 0) {
+        document.getElementById('avgSentiment').textContent = ((avgScore / data.length) * 100).toFixed(0);
     }
 }
 
-function showEmptyState() {
-    document.getElementById('stat-total-trades').textContent = '0';
-    document.getElementById('stat-winrate').textContent = '0%';
-    document.getElementById('stat-pnl').textContent = '$0.00';
-    document.getElementById('stat-accuracy').textContent = '0%';
-    document.getElementById('stat-avg-sentiment').textContent = '0.00';
-    document.getElementById('stat-signals').textContent = '0';
-    document.getElementById('stat-best-trade').textContent = '$0.00';
-    document.getElementById('stat-worst-trade').textContent = '$0.00';
-    document.getElementById('signalTableBody').innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-secondary);padding:20px;">No AI signals or trades yet</td></tr>';
+function updateModeInfo(settings) {
+    const dryRun = settings.dry_run !== false;
+    const directTrading = settings.direct_trading === true;
+
+    let modeText = '';
+    if (dryRun) {
+        modeText = ' Running in <strong style="color: #f59e0b;">DRY RUN</strong> mode (simulated trades).';
+    } else {
+        modeText = ' Running in <strong style="color: #10b981;">LIVE</strong> mode with real execution.';
+    }
+
+    if (!directTrading) {
+        modeText += ' Direct trading is <strong>disabled</strong> - signals are logged but not executed.';
+    }
+
+    document.getElementById('modeInfo').innerHTML = modeText;
+}
+
+function updateTradesTable(trades) {
+    const tbody = document.getElementById('tradesBody');
+    document.getElementById('tradeCount').textContent = trades.length + ' trades';
+
+    // Count open/closed
+    const openCount = trades.filter(t => t.status === 'open').length;
+    const closedCount = trades.filter(t => t.status === 'closed').length;
+    document.getElementById('openTrades').textContent = openCount;
+    document.getElementById('closedTrades').textContent = closedCount;
+
+    // Count wins/losses
+    const wins = trades.filter(t => t.status === 'closed' && t.pnl > 0).length;
+    const losses = trades.filter(t => t.status === 'closed' && t.pnl < 0).length;
+    document.getElementById('winCount').textContent = wins;
+    document.getElementById('lossCount').textContent = losses;
+
+    if (trades.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="9" class="empty-state">
+                    <i class="fas fa-robot"></i>
+                    <p>No AI trades yet</p>
+                    <p style="font-size: 0.8rem;">Trades will appear here when the AI module executes based on sentiment signals.</p>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    let html = '';
+    trades.slice(0, 50).forEach(trade => {
+        const sideClass = trade.side === 'buy' ? 'side-long' : 'side-short';
+        const sideLabel = trade.side === 'buy' ? 'LONG' : 'SHORT';
+        const pnl = trade.pnl || 0;
+        const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+        const statusClass = trade.status === 'open' ? 'status-open' : 'status-closed';
+        const modeLabel = trade.is_simulated ? 'DRY RUN' : 'LIVE';
+        const modeClass = trade.is_simulated ? 'status-simulated' : 'status-open';
+
+        html += `
+            <tr>
+                <td><small>${trade.entry_timestamp ? new Date(trade.entry_timestamp).toLocaleString() : '-'}</small></td>
+                <td><strong>${trade.symbol || 'BTCUSDT'}</strong></td>
+                <td><span class="side-badge ${sideClass}">${sideLabel}</span></td>
+                <td>$${(trade.entry_price || 0).toFixed(2)}</td>
+                <td>${trade.exit_price ? '$' + trade.exit_price.toFixed(2) : '-'}</td>
+                <td>${((trade.sentiment_score || 0) * 100).toFixed(0)}</td>
+                <td class="${pnlClass}" style="font-weight: 600;">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</td>
+                <td><span class="status-badge ${statusClass}">${trade.status.toUpperCase()}</span></td>
+                <td><span class="status-badge ${modeClass}">${modeLabel}</span></td>
+            </tr>
+        `;
+    });
+
+    tbody.innerHTML = html;
+}
+
+function updateCharts(trades, sentimentData) {
+    // P&L Chart
+    updatePnlChart(trades);
+
+    // Sentiment Chart
+    updateSentimentChart(sentimentData);
+
+    // Signal Distribution
+    updateSignalDistChart(sentimentData);
+
+    // Win/Loss Chart
+    updateWinLossChart(trades);
+
+    // Provider Chart (placeholder)
+    updateProviderChart();
+}
+
+function updatePnlChart(trades) {
+    const ctx = document.getElementById('pnlChart').getContext('2d');
+    if (pnlChart) pnlChart.destroy();
+
+    const closedTrades = trades.filter(t => t.status === 'closed').sort((a, b) =>
+        new Date(a.exit_timestamp) - new Date(b.exit_timestamp)
+    );
+
+    if (closedTrades.length === 0) {
+        pnlChart = new Chart(ctx, {
+            type: 'line',
+            data: { labels: [], datasets: [] },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: { display: true, text: 'No closed trades yet', color: '#94a3b8' }
+                }
+            }
+        });
+        return;
+    }
+
+    let cumulative = 0;
+    const labels = closedTrades.map((t, i) => `Trade ${i + 1}`);
+    const data = closedTrades.map(t => {
+        cumulative += (t.pnl || 0);
+        return cumulative;
+    });
+
+    pnlChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Cumulative P&L',
+                data: data,
+                borderColor: '#8b5cf6',
+                backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { color: 'rgba(148, 163, 184, 0.1)' }, ticks: { color: '#94a3b8' } },
+                y: {
+                    grid: { color: 'rgba(148, 163, 184, 0.1)' },
+                    ticks: { color: '#94a3b8', callback: v => '$' + v }
+                }
+            }
+        }
+    });
 }
 
 function updateSentimentChart(data) {
     const ctx = document.getElementById('sentimentChart').getContext('2d');
-
     if (sentimentChart) sentimentChart.destroy();
+
+    if (data.length === 0) {
+        sentimentChart = new Chart(ctx, {
+            type: 'line',
+            data: { labels: [], datasets: [] },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+        return;
+    }
 
     const labels = data.map(d => {
         const date = new Date(d.timestamp);
-        return date.toLocaleTimeString();
+        return date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
     });
-    const scores = data.map(d => d.score);
+    const scores = data.map(d => d.score * 100);
 
     sentimentChart = new Chart(ctx, {
         type: 'line',
@@ -412,25 +711,17 @@ function updateSentimentChart(data) {
                 backgroundColor: 'rgba(139, 92, 246, 0.1)',
                 fill: true,
                 tension: 0.4,
-                pointRadius: 3,
-                pointHoverRadius: 5
+                pointRadius: 1
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: {
-                legend: { display: false }
-            },
+            plugins: { legend: { display: false } },
             scales: {
-                x: {
-                    display: true,
-                    grid: { color: 'rgba(148, 163, 184, 0.1)' },
-                    ticks: { color: '#94a3b8', maxTicksLimit: 10 }
-                },
+                x: { grid: { color: 'rgba(148, 163, 184, 0.1)' }, ticks: { color: '#94a3b8', maxTicksLimit: 8 } },
                 y: {
-                    min: -1,
-                    max: 1,
+                    min: -100, max: 100,
                     grid: { color: 'rgba(148, 163, 184, 0.1)' },
                     ticks: { color: '#94a3b8' }
                 }
@@ -439,81 +730,23 @@ function updateSentimentChart(data) {
     });
 }
 
-function updatePnlChart(trades) {
-    const ctx = document.getElementById('pnlChart').getContext('2d');
+function updateSignalDistChart(data) {
+    const ctx = document.getElementById('signalDistChart').getContext('2d');
+    if (signalDistChart) signalDistChart.destroy();
 
-    if (pnlChart) pnlChart.destroy();
-
-    if (trades.length === 0) {
-        pnlChart = new Chart(ctx, {
-            type: 'bar',
-            data: { labels: [], datasets: [{ data: [] }] },
-            options: { responsive: true, maintainAspectRatio: false }
-        });
-        return;
-    }
-
-    const labels = trades.map((t, i) => `Trade ${i + 1}`);
-    const pnls = trades.map(t => t.pnl || t.profit_loss || 0);
-
-    pnlChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'P&L',
-                data: pnls,
-                backgroundColor: pnls.map(p => p >= 0 ? 'rgba(16, 185, 129, 0.7)' : 'rgba(239, 68, 68, 0.7)'),
-                borderColor: pnls.map(p => p >= 0 ? '#10b981' : '#ef4444'),
-                borderWidth: 1
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    callbacks: {
-                        label: ctx => `$${ctx.raw.toFixed(2)}`
-                    }
-                }
-            },
-            scales: {
-                x: {
-                    grid: { display: false },
-                    ticks: { color: '#94a3b8' }
-                },
-                y: {
-                    grid: { color: 'rgba(148, 163, 184, 0.1)' },
-                    ticks: {
-                        color: '#94a3b8',
-                        callback: value => `$${value}`
-                    }
-                }
-            }
-        }
-    });
-}
-
-function updateSentimentDistribution(data) {
-    const ctx = document.getElementById('sentimentDistChart').getContext('2d');
-
-    if (sentimentDistChart) sentimentDistChart.destroy();
-
-    let bullish = 0, bearish = 0, neutral = 0;
+    let buyCount = 0, sellCount = 0, holdCount = 0;
     data.forEach(d => {
-        if (d.score > 0.3) bullish++;
-        else if (d.score < -0.3) bearish++;
-        else neutral++;
+        if (d.score >= 0.5) buyCount++;
+        else if (d.score <= -0.5) sellCount++;
+        else holdCount++;
     });
 
-    sentimentDistChart = new Chart(ctx, {
+    signalDistChart = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: ['Bullish', 'Neutral', 'Bearish'],
+            labels: ['Buy', 'Hold', 'Sell'],
             datasets: [{
-                data: [bullish, neutral, bearish],
+                data: [buyCount, holdCount, sellCount],
                 backgroundColor: ['#10b981', '#6b7280', '#ef4444'],
                 borderWidth: 0
             }]
@@ -522,10 +755,7 @@ function updateSentimentDistribution(data) {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                legend: {
-                    position: 'bottom',
-                    labels: { color: '#94a3b8' }
-                }
+                legend: { position: 'bottom', labels: { color: '#94a3b8', boxWidth: 12 } }
             }
         }
     });
@@ -533,11 +763,11 @@ function updateSentimentDistribution(data) {
 
 function updateWinLossChart(trades) {
     const ctx = document.getElementById('winLossChart').getContext('2d');
-
     if (winLossChart) winLossChart.destroy();
 
-    const wins = trades.filter(t => (t.pnl || t.profit_loss || 0) > 0).length;
-    const losses = trades.filter(t => (t.pnl || t.profit_loss || 0) < 0).length;
+    const closedTrades = trades.filter(t => t.status === 'closed');
+    const wins = closedTrades.filter(t => t.pnl > 0).length;
+    const losses = closedTrades.filter(t => t.pnl < 0).length;
 
     winLossChart = new Chart(ctx, {
         type: 'doughnut',
@@ -553,66 +783,40 @@ function updateWinLossChart(trades) {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                legend: {
-                    position: 'bottom',
-                    labels: { color: '#94a3b8' }
-                }
+                legend: { position: 'bottom', labels: { color: '#94a3b8', boxWidth: 12 } }
             }
         }
     });
 }
 
-function updateSignalTable(sentiments, trades) {
-    const tbody = document.getElementById('signalTableBody');
+function updateProviderChart() {
+    const ctx = document.getElementById('providerChart').getContext('2d');
+    if (providerChart) providerChart.destroy();
 
-    if (sentiments.length === 0 && trades.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-secondary);padding:20px;">No AI signals or trades yet</td></tr>';
-        return;
-    }
-
-    // Combine sentiment data with trade data
-    const rows = sentiments.slice(0, 20).map(s => {
-        const score = s.score;
-        let signal = 'HOLD';
-        let signalClass = 'sentiment-neutral';
-
-        if (score > 0.5) {
-            signal = 'BUY';
-            signalClass = 'sentiment-bullish';
-        } else if (score < -0.5) {
-            signal = 'SELL';
-            signalClass = 'sentiment-bearish';
+    // Placeholder - would need to track provider-specific performance
+    providerChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: ['OpenAI', 'Claude', 'Combined'],
+            datasets: [{
+                label: 'Accuracy',
+                data: [0, 0, 0],
+                backgroundColor: ['#3b82f6', '#8b5cf6', '#10b981']
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                title: { display: true, text: 'Provider comparison coming soon', color: '#94a3b8' }
+            },
+            scales: {
+                x: { grid: { display: false }, ticks: { color: '#94a3b8' } },
+                y: { max: 100, grid: { color: 'rgba(148, 163, 184, 0.1)' }, ticks: { color: '#94a3b8' } }
+            }
         }
-
-        // Find matching trade if any
-        const matchingTrade = trades.find(t => {
-            const tTime = new Date(t.entry_timestamp || t.created_at);
-            const sTime = new Date(s.timestamp);
-            return Math.abs(tTime - sTime) < 60000; // Within 1 minute
-        });
-
-        const tradePnl = matchingTrade ? (matchingTrade.pnl || matchingTrade.profit_loss || 0) : null;
-        const tradeStatus = matchingTrade ? matchingTrade.status : '-';
-
-        return `
-            <tr>
-                <td>${new Date(s.timestamp).toLocaleString()}</td>
-                <td>${score.toFixed(2)}</td>
-                <td><span class="sentiment-badge ${signalClass}">${signal}</span></td>
-                <td>${Math.abs(score) >= 0.5 ? (score > 0 ? 'LONG' : 'SHORT') : '-'}</td>
-                <td class="${tradePnl !== null ? (tradePnl >= 0 ? 'positive' : 'negative') : ''}">${tradePnl !== null ? '$' + tradePnl.toFixed(2) : '-'}</td>
-                <td>${tradeStatus}</td>
-            </tr>
-        `;
     });
-
-    tbody.innerHTML = rows.join('') || '<tr><td colspan="6" style="text-align:center;color:var(--text-secondary);padding:20px;">No recent signals</td></tr>';
 }
-
-// Load on page load
-loadPerformance();
-
-// Auto-refresh every 60 seconds
-setInterval(loadPerformance, 60000);
 </script>
 {% endblock %}
