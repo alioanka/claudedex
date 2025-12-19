@@ -5,7 +5,10 @@
 -- ============================================================================
 -- SNIPER TRADES TABLE
 -- ============================================================================
-CREATE TABLE IF NOT EXISTS sniper_trades (
+-- Drop existing table if it has wrong schema (from partial migration)
+DROP TABLE IF EXISTS sniper_trades CASCADE;
+
+CREATE TABLE sniper_trades (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     trade_id VARCHAR(50) UNIQUE NOT NULL,
     token_address VARCHAR(100) NOT NULL,
@@ -62,7 +65,9 @@ CREATE INDEX IF NOT EXISTS idx_sniper_trades_token ON sniper_trades(token_addres
 -- ============================================================================
 -- SNIPER POSITIONS TABLE (for active snipes)
 -- ============================================================================
-CREATE TABLE IF NOT EXISTS sniper_positions (
+DROP TABLE IF EXISTS sniper_positions CASCADE;
+
+CREATE TABLE sniper_positions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     trade_id VARCHAR(50) UNIQUE NOT NULL,
     token_address VARCHAR(100) NOT NULL,
@@ -87,7 +92,9 @@ CREATE INDEX IF NOT EXISTS idx_sniper_positions_chain ON sniper_positions(chain)
 -- ============================================================================
 -- AI TRADES TABLE
 -- ============================================================================
-CREATE TABLE IF NOT EXISTS ai_trades (
+DROP TABLE IF EXISTS ai_trades CASCADE;
+
+CREATE TABLE ai_trades (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     trade_id VARCHAR(50) UNIQUE NOT NULL,
     token_symbol VARCHAR(20) NOT NULL,
@@ -135,7 +142,9 @@ CREATE INDEX IF NOT EXISTS idx_ai_trades_symbol ON ai_trades(token_symbol);
 -- ============================================================================
 -- AI POSITIONS TABLE (for active AI trades)
 -- ============================================================================
-CREATE TABLE IF NOT EXISTS ai_positions (
+DROP TABLE IF EXISTS ai_positions CASCADE;
+
+CREATE TABLE ai_positions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     trade_id VARCHAR(50) UNIQUE NOT NULL,
     token_symbol VARCHAR(20) NOT NULL,
