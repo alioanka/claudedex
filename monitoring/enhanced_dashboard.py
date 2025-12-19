@@ -6444,8 +6444,8 @@ class DashboardEndpoints:
         return web.Response(text=template.render(page='arbitrage_dashboard'), content_type='text/html')
 
     async def _arbitrage_positions(self, request):
-        template = self.jinja_env.get_template('positions_arbitrage.html')
-        return web.Response(text=template.render(page='arbitrage_positions'), content_type='text/html')
+        # Arbitrage is instant execution - no open positions, redirect to trades
+        raise web.HTTPFound('/arbitrage/trades')
 
     async def _arbitrage_trades(self, request):
         template = self.jinja_env.get_template('trades_arbitrage.html')
@@ -6513,7 +6513,7 @@ class DashboardEndpoints:
                 async with self.db.pool.acquire() as conn:
                     rows = await conn.fetch("""
                         SELECT
-                            trade_id, token_address, buy_dex, sell_dex, side,
+                            trade_id, token_address, chain, buy_dex, sell_dex,
                             entry_price, amount, entry_usd, status, opened_at
                         FROM arbitrage_positions
                         WHERE status = 'open'
@@ -6524,9 +6524,9 @@ class DashboardEndpoints:
                             'trade_id': row['trade_id'],
                             'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
                             'token_address': row['token_address'],
+                            'chain': row['chain'],
                             'buy_dex': row['buy_dex'],
                             'sell_dex': row['sell_dex'],
-                            'side': row['side'],
                             'entry_price': float(row['entry_price'] or 0),
                             'price': float(row['entry_price'] or 0),
                             'quantity': float(row['amount'] or 0),
