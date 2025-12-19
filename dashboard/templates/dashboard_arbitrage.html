@@ -338,6 +338,36 @@
         </div>
     </div>
 
+    <!-- Multi-Chain Stats -->
+    <div class="section-card">
+        <div class="section-title">
+            <i class="fas fa-link"></i>
+            Multi-Chain Performance
+        </div>
+        <div class="status-grid" id="chainStatsGrid">
+            <div class="status-item">
+                <div class="status-item-label"><i class="fab fa-ethereum"></i> Ethereum</div>
+                <div class="status-item-value" id="eth-trades">0 trades</div>
+                <div class="stat-change positive" id="eth-pnl">$0.00</div>
+            </div>
+            <div class="status-item">
+                <div class="status-item-label"><i class="fas fa-sun"></i> Solana</div>
+                <div class="status-item-value" id="sol-trades">0 trades</div>
+                <div class="stat-change positive" id="sol-pnl">$0.00</div>
+            </div>
+            <div class="status-item">
+                <div class="status-item-label"><i class="fas fa-route"></i> Triangular</div>
+                <div class="status-item-value" id="tri-trades">0 trades</div>
+                <div class="stat-change positive" id="tri-pnl">$0.00</div>
+            </div>
+            <div class="status-item">
+                <div class="status-item-label"><i class="fas fa-exchange-alt"></i> Direct</div>
+                <div class="status-item-value" id="direct-trades">0 trades</div>
+                <div class="stat-change positive" id="direct-pnl">$0.00</div>
+            </div>
+        </div>
+    </div>
+
     <!-- Trading Status Card -->
     <div class="section-card">
         <div class="section-header">
@@ -477,6 +507,40 @@ function updateStats(stats) {
 
     const avgSpread = stats.avg_spread || 0;
     document.getElementById('stat-avg-spread').textContent = `${avgSpread.toFixed(2)}%`;
+
+    // Update multi-chain stats
+    if (stats.chains) {
+        // Ethereum
+        const ethStats = stats.chains.ethereum || {};
+        document.getElementById('eth-trades').textContent = `${ethStats.trades || 0} trades`;
+        const ethPnlEl = document.getElementById('eth-pnl');
+        ethPnlEl.textContent = `$${(ethStats.pnl || 0).toFixed(2)}`;
+        ethPnlEl.className = 'stat-change ' + ((ethStats.pnl || 0) >= 0 ? 'positive' : 'negative');
+
+        // Solana
+        const solStats = stats.chains.solana || {};
+        document.getElementById('sol-trades').textContent = `${solStats.trades || 0} trades`;
+        const solPnlEl = document.getElementById('sol-pnl');
+        solPnlEl.textContent = `$${(solStats.pnl || 0).toFixed(2)}`;
+        solPnlEl.className = 'stat-change ' + ((solStats.pnl || 0) >= 0 ? 'positive' : 'negative');
+    }
+
+    // Update trade type stats
+    if (stats.trade_types) {
+        // Triangular
+        const triStats = stats.trade_types.triangular || {};
+        document.getElementById('tri-trades').textContent = `${triStats.trades || 0} trades`;
+        const triPnlEl = document.getElementById('tri-pnl');
+        triPnlEl.textContent = `$${(triStats.pnl || 0).toFixed(2)}`;
+        triPnlEl.className = 'stat-change ' + ((triStats.pnl || 0) >= 0 ? 'positive' : 'negative');
+
+        // Direct
+        const directStats = stats.trade_types.direct || {};
+        document.getElementById('direct-trades').textContent = `${directStats.trades || 0} trades`;
+        const directPnlEl = document.getElementById('direct-pnl');
+        directPnlEl.textContent = `$${(directStats.pnl || 0).toFixed(2)}`;
+        directPnlEl.className = 'stat-change ' + ((directStats.pnl || 0) >= 0 ? 'positive' : 'negative');
+    }
 }
 
 function updateStatsFromTrades(trades) {

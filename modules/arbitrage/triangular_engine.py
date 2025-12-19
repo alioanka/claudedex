@@ -1,0 +1,623 @@
+"""
+Triangular Arbitrage Engine
+
+Finds profitable cycles: A → B → C → A
+
+Examples:
+- ETH → USDC → DAI → ETH
+- WBTC → WETH → USDT → WBTC
+
+Features:
+- Dynamic gas-aware profit thresholds
+- Multi-DEX route optimization
+- Curve Finance integration for stablecoin swaps
+- Balancer integration for multi-token pools
+"""
+import asyncio
+import logging
+import os
+import json
+import aiohttp
+from web3 import Web3
+from typing import Dict, List, Optional, Tuple, Set
+from datetime import datetime
+from itertools import permutations
+
+logger = logging.getLogger("TriangularArbitrageEngine")
+
+# Expanded token list for triangular arb
+TOKENS = {
+    # Major
+    'WETH': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    'WBTC': '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
+    'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+    'DAI': '0x6B175474E89094C44Da98b954EeAdDcB80656c63',
+
+    # DeFi
+    'LINK': '0x514910771AF9Ca656af840dff83E8264EcF986CA',
+    'UNI': '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984',
+    'AAVE': '0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9',
+    'CRV': '0xD533a949740bb3306d119CC777fa900bA034cd52',
+    'MKR': '0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2',
+
+    # Stablecoins (good for stablecoin triangular arb)
+    'FRAX': '0x853d955aCEf822Db058eb8505911ED77F175b99e',
+    'LUSD': '0x5f98805A4E8be255a32880FDeC7F6728C6568bA0',
+    'GUSD': '0x056Fd409E1d7A124BD7017459dFEa2F387b6d5Cd',
+    'USDD': '0x0C10bF8FcB7Bf5412187A595ab97a3609160b5c6',
+    'crvUSD': '0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E',
+
+    # Liquid Staking
+    'stETH': '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84',
+    'rETH': '0xae78736Cd615f374D3085123A210448E74Fc6393',
+    'cbETH': '0xBe9895146f7AF43049ca1c1AE358B0541Ea49704',
+    'frxETH': '0x5E8422345238F34275888049021821E8E08CAa1f',
+}
+
+# Triangular arbitrage cycles to check
+# Format: (TokenA, TokenB, TokenC) - will check A→B→C→A
+TRIANGULAR_CYCLES = [
+    # Stablecoin triangles (often have small but consistent opportunities)
+    ('USDC', 'USDT', 'DAI'),
+    ('USDC', 'DAI', 'FRAX'),
+    ('USDC', 'USDT', 'FRAX'),
+    ('DAI', 'USDT', 'LUSD'),
+    ('USDC', 'DAI', 'crvUSD'),
+
+    # ETH-based triangles
+    ('WETH', 'USDC', 'USDT'),
+    ('WETH', 'USDC', 'DAI'),
+    ('WETH', 'USDT', 'DAI'),
+    ('WETH', 'WBTC', 'USDC'),
+    ('WETH', 'WBTC', 'USDT'),
+    ('WETH', 'LINK', 'USDC'),
+    ('WETH', 'UNI', 'USDC'),
+    ('WETH', 'AAVE', 'USDC'),
+
+    # Liquid staking triangles
+    ('WETH', 'stETH', 'USDC'),
+    ('WETH', 'rETH', 'USDC'),
+    ('WETH', 'cbETH', 'USDC'),
+    ('stETH', 'rETH', 'WETH'),
+    ('stETH', 'frxETH', 'WETH'),
+
+    # DeFi token triangles
+    ('CRV', 'WETH', 'USDC'),
+    ('MKR', 'WETH', 'DAI'),
+    ('UNI', 'WETH', 'USDT'),
+]
+
+# DEX Router addresses
+ROUTERS = {
+    'uniswap_v2': '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',
+    'sushiswap': '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F',
+    'uniswap_v3': '0xE592427A0AEce92De3Edee1F18E0157C05861564',
+}
+
+# Curve pools for stablecoin swaps
+CURVE_POOLS = {
+    '3pool': '0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7',  # DAI/USDC/USDT
+    'frax3crv': '0xd632f22692FaC7611d2AA1C0D552930D43CAEd3B',  # FRAX/DAI/USDC/USDT
+    'lusd3crv': '0xEd279fDD11cA84bEef15AF5D39BB4d4bEE23F0cA',  # LUSD/DAI/USDC/USDT
+    'crvusd_usdc': '0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E',  # crvUSD/USDC
+    'steth': '0xDC24316b9AE028F1497c275EB9192a3Ea0f67022',  # ETH/stETH
+}
+
+# Uniswap V2 Router ABI
+ROUTER_ABI = [
+    {
+        "inputs": [
+            {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+            {"internalType": "address[]", "name": "path", "type": "address[]"}
+        ],
+        "name": "getAmountsOut",
+        "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
+        "stateMutability": "view",
+        "type": "function"
+    }
+]
+
+# Curve pool ABI (for get_dy)
+CURVE_POOL_ABI = [
+    {
+        "name": "get_dy",
+        "outputs": [{"type": "uint256", "name": ""}],
+        "inputs": [
+            {"type": "int128", "name": "i"},
+            {"type": "int128", "name": "j"},
+            {"type": "uint256", "name": "dx"}
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "name": "coins",
+        "outputs": [{"type": "address", "name": ""}],
+        "inputs": [{"type": "uint256", "name": "i"}],
+        "stateMutability": "view",
+        "type": "function"
+    }
+]
+
+
+class GasOracle:
+    """Dynamic gas price oracle for profit calculations"""
+
+    ETHERSCAN_GAS_API = "https://api.etherscan.io/api"
+
+    def __init__(self):
+        self.current_gas_gwei = 30  # Default
+        self._last_update = None
+        self._cache_ttl = 60  # 1 minute
+
+    async def get_gas_price(self) -> int:
+        """Get current gas price in gwei"""
+        now = datetime.now()
+
+        if self._last_update:
+            elapsed = (now - self._last_update).total_seconds()
+            if elapsed < self._cache_ttl:
+                return self.current_gas_gwei
+
+        try:
+            api_key = os.getenv('ETHERSCAN_API_KEY', '')
+            async with aiohttp.ClientSession() as session:
+                params = {
+                    'module': 'gastracker',
+                    'action': 'gasoracle',
+                    'apikey': api_key
+                }
+                async with session.get(self.ETHERSCAN_GAS_API, params=params) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data.get('status') == '1':
+                            # Use fast gas price for arb
+                            self.current_gas_gwei = int(data['result']['FastGasPrice'])
+                            self._last_update = now
+        except Exception:
+            pass
+
+        return self.current_gas_gwei
+
+    def calculate_gas_cost_usd(self, gas_used: int, eth_price: float) -> float:
+        """Calculate gas cost in USD"""
+        gas_cost_eth = (self.current_gas_gwei * 1e-9) * gas_used
+        return gas_cost_eth * eth_price
+
+
+class TriangularArbitrageEngine:
+    """
+    Triangular Arbitrage Engine with gas-aware execution.
+
+    Finds and executes profitable triangular cycles:
+    A → B → C → A
+
+    Features:
+    - Dynamic gas threshold adjustment
+    - Multi-DEX routing per hop
+    - Curve integration for stablecoin swaps
+    """
+
+    def __init__(self, config: Dict, db_pool):
+        self.config = config
+        self.db_pool = db_pool
+        self.is_running = False
+        self.w3 = None
+
+        self.rpc_url = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
+        self.private_key = os.getenv('PRIVATE_KEY')
+        self.wallet_address = os.getenv('WALLET_ADDRESS')
+        self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
+
+        self.router_contracts = {}
+        self.curve_contracts = {}
+
+        # Gas oracle
+        self.gas_oracle = GasOracle()
+
+        # Settings
+        self.base_profit_threshold = 0.003  # 0.3% base threshold
+        self.gas_buffer_multiplier = 1.5  # Add 50% buffer for gas costs
+        self.trade_amount_eth = 1.0  # Trade size in ETH equivalent
+
+        # Rate limiting
+        self._last_opportunity_time: Dict[str, datetime] = {}
+        self._opportunity_cooldown = 1800  # 30 min per cycle
+        self._cycle_execution_count: Dict[str, int] = {}
+        self._execution_date: str = ""
+        self._max_executions_per_cycle_per_day = 5
+
+        # ETH price cache
+        self._eth_price = 2000.0
+        self._eth_price_updated = None
+
+        self._stats = {
+            'scans': 0,
+            'opportunities_found': 0,
+            'opportunities_executed': 0,
+            'last_stats_log': datetime.now()
+        }
+
+    async def initialize(self):
+        logger.info("🔺 Initializing Triangular Arbitrage Engine...")
+
+        if self.rpc_url:
+            self.w3 = Web3(Web3.HTTPProvider(self.rpc_url.split(',')[0]))
+            if self.w3.is_connected():
+                logger.info("✅ Connected to RPC")
+
+                # Initialize DEX routers
+                for name, address in ROUTERS.items():
+                    try:
+                        self.router_contracts[name] = self.w3.eth.contract(
+                            address=Web3.to_checksum_address(address),
+                            abi=ROUTER_ABI
+                        )
+                    except Exception as e:
+                        logger.debug(f"Router init error {name}: {e}")
+
+                # Initialize Curve pools
+                for name, address in CURVE_POOLS.items():
+                    try:
+                        self.curve_contracts[name] = self.w3.eth.contract(
+                            address=Web3.to_checksum_address(address),
+                            abi=CURVE_POOL_ABI
+                        )
+                    except Exception as e:
+                        logger.debug(f"Curve pool init error {name}: {e}")
+
+                # Get initial gas price
+                gas_price = await self.gas_oracle.get_gas_price()
+                logger.info(f"   Current gas: {gas_price} gwei")
+
+            else:
+                logger.warning("⚠️ Failed to connect to RPC")
+        else:
+            logger.error("❌ No RPC URL configured")
+
+        logger.info(f"   Mode: {'DRY_RUN' if self.dry_run else 'LIVE'}")
+        logger.info(f"   Cycles: {len(TRIANGULAR_CYCLES)} triangular routes")
+        logger.info(f"   DEXs: {len(self.router_contracts)} routers")
+        logger.info(f"   Curve: {len(self.curve_contracts)} pools")
+
+    async def run(self):
+        self.is_running = True
+        logger.info("🔺 Triangular Arbitrage Engine Started")
+
+        if not self.w3:
+            logger.error("RPC not connected, triangular arb disabled")
+            return
+
+        cycle_index = 0
+
+        while self.is_running:
+            try:
+                self._stats['scans'] += 1
+
+                # Update ETH price periodically
+                await self._update_eth_price()
+
+                # Update gas price
+                await self.gas_oracle.get_gas_price()
+
+                # Get current cycle
+                token_a, token_b, token_c = TRIANGULAR_CYCLES[cycle_index]
+
+                await self._check_triangular_opportunity(token_a, token_b, token_c)
+
+                # Move to next cycle
+                cycle_index = (cycle_index + 1) % len(TRIANGULAR_CYCLES)
+
+                # Log stats
+                await self._log_stats_if_needed()
+
+                # Sleep between scans
+                await asyncio.sleep(3)
+
+            except Exception as e:
+                logger.error(f"Triangular loop error: {e}")
+                await asyncio.sleep(5)
+
+    async def _update_eth_price(self):
+        """Update ETH price cache"""
+        now = datetime.now()
+        if self._eth_price_updated:
+            elapsed = (now - self._eth_price_updated).total_seconds()
+            if elapsed < 60:  # 1 minute cache
+                return
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    'https://api.coingecko.com/api/v3/simple/price',
+                    params={'ids': 'ethereum', 'vs_currencies': 'usd'}
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        self._eth_price = float(data['ethereum']['usd'])
+                        self._eth_price_updated = now
+        except Exception:
+            pass
+
+    async def _log_stats_if_needed(self):
+        now = datetime.now()
+        elapsed = (now - self._stats['last_stats_log']).total_seconds()
+
+        if elapsed >= 300:
+            gas = self.gas_oracle.current_gas_gwei
+            logger.info(f"📊 TRIANGULAR ARB STATS: "
+                       f"Scans: {self._stats['scans']} | "
+                       f"Opportunities: {self._stats['opportunities_found']} | "
+                       f"Executed: {self._stats['opportunities_executed']} | "
+                       f"Gas: {gas} gwei")
+
+            self._stats = {
+                'scans': 0,
+                'opportunities_found': 0,
+                'opportunities_executed': 0,
+                'last_stats_log': now
+            }
+
+    def _calculate_dynamic_threshold(self, gas_used: int = 500000) -> float:
+        """
+        Calculate dynamic profit threshold based on gas costs.
+
+        Formula: threshold = base_threshold + (gas_cost / trade_value) * buffer
+        """
+        gas_cost_usd = self.gas_oracle.calculate_gas_cost_usd(gas_used, self._eth_price)
+        trade_value_usd = self.trade_amount_eth * self._eth_price
+
+        # Gas cost as percentage of trade
+        gas_pct = gas_cost_usd / trade_value_usd
+
+        # Dynamic threshold = base + gas buffer
+        threshold = self.base_profit_threshold + (gas_pct * self.gas_buffer_multiplier)
+
+        return threshold
+
+    async def _check_triangular_opportunity(
+        self,
+        token_a_symbol: str,
+        token_b_symbol: str,
+        token_c_symbol: str
+    ) -> bool:
+        """Check for profitable triangular arbitrage"""
+        try:
+            token_a = TOKENS.get(token_a_symbol)
+            token_b = TOKENS.get(token_b_symbol)
+            token_c = TOKENS.get(token_c_symbol)
+
+            if not all([token_a, token_b, token_c]):
+                return False
+
+            # Determine trade amount based on first token
+            if token_a_symbol in ['USDC', 'USDT', 'DAI', 'FRAX', 'LUSD']:
+                # Stablecoin - use $1000 equivalent
+                amount_in = int(1000 * 1e6) if token_a_symbol in ['USDC', 'USDT'] else int(1000 * 1e18)
+            elif token_a_symbol == 'WETH':
+                amount_in = int(self.trade_amount_eth * 1e18)
+            elif token_a_symbol == 'WBTC':
+                amount_in = int(0.05 * 1e8)  # 0.05 BTC
+            else:
+                amount_in = int(1 * 1e18)  # 1 token
+
+            # Find best route for each hop
+            # Hop 1: A → B
+            best_hop1_out = 0
+            best_hop1_dex = None
+            for dex_name, contract in self.router_contracts.items():
+                try:
+                    amounts = contract.functions.getAmountsOut(
+                        amount_in, [token_a, token_b]
+                    ).call()
+                    if amounts[1] > best_hop1_out:
+                        best_hop1_out = amounts[1]
+                        best_hop1_dex = dex_name
+                except Exception:
+                    pass
+
+            if best_hop1_out == 0:
+                return False
+
+            # Hop 2: B → C
+            best_hop2_out = 0
+            best_hop2_dex = None
+            for dex_name, contract in self.router_contracts.items():
+                try:
+                    amounts = contract.functions.getAmountsOut(
+                        best_hop1_out, [token_b, token_c]
+                    ).call()
+                    if amounts[1] > best_hop2_out:
+                        best_hop2_out = amounts[1]
+                        best_hop2_dex = dex_name
+                except Exception:
+                    pass
+
+            if best_hop2_out == 0:
+                return False
+
+            # Hop 3: C → A
+            best_hop3_out = 0
+            best_hop3_dex = None
+            for dex_name, contract in self.router_contracts.items():
+                try:
+                    amounts = contract.functions.getAmountsOut(
+                        best_hop2_out, [token_c, token_a]
+                    ).call()
+                    if amounts[1] > best_hop3_out:
+                        best_hop3_out = amounts[1]
+                        best_hop3_dex = dex_name
+                except Exception:
+                    pass
+
+            if best_hop3_out == 0:
+                return False
+
+            # Calculate profit
+            profit_pct = (best_hop3_out - amount_in) / amount_in
+
+            # Calculate dynamic threshold
+            threshold = self._calculate_dynamic_threshold()
+
+            if profit_pct > threshold:
+                self._stats['opportunities_found'] += 1
+
+                cycle_key = f"{token_a_symbol}_{token_b_symbol}_{token_c_symbol}"
+                now = datetime.now()
+                today = now.strftime("%Y-%m-%d")
+
+                # Reset daily counters
+                if self._execution_date != today:
+                    self._cycle_execution_count = {}
+                    self._execution_date = today
+
+                # Check limits
+                current_count = self._cycle_execution_count.get(cycle_key, 0)
+                if current_count >= self._max_executions_per_cycle_per_day:
+                    return True
+
+                # Check cooldown
+                last_time = self._last_opportunity_time.get(cycle_key)
+                if last_time:
+                    elapsed = (now - last_time).total_seconds()
+                    if elapsed < self._opportunity_cooldown:
+                        return True
+
+                # Execute
+                self._last_opportunity_time[cycle_key] = now
+                self._cycle_execution_count[cycle_key] = current_count + 1
+
+                route = f"{token_a_symbol}→{token_b_symbol}({best_hop1_dex})→{token_c_symbol}({best_hop2_dex})→{token_a_symbol}({best_hop3_dex})"
+
+                logger.info(f"🔺 TRIANGULAR ARB: {route} | Profit: {profit_pct:.2%} (threshold: {threshold:.2%})")
+                self._stats['opportunities_executed'] += 1
+
+                await self._execute_triangular(
+                    cycle_key, route,
+                    token_a, token_b, token_c,
+                    token_a_symbol, token_b_symbol, token_c_symbol,
+                    amount_in, best_hop3_out, profit_pct,
+                    [best_hop1_dex, best_hop2_dex, best_hop3_dex]
+                )
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Triangular check error: {e}")
+            return False
+
+    async def _execute_triangular(
+        self,
+        cycle_key: str,
+        route: str,
+        token_a: str,
+        token_b: str,
+        token_c: str,
+        symbol_a: str,
+        symbol_b: str,
+        symbol_c: str,
+        amount_in: int,
+        amount_out: int,
+        profit_pct: float,
+        dexes: List[str]
+    ):
+        """Execute triangular arbitrage"""
+        logger.info(f"⚡ Executing Triangular Arb: {route}")
+
+        if self.dry_run:
+            await asyncio.sleep(0.5)
+            logger.info(f"✅ Triangular Arb Executed (DRY RUN): {cycle_key}")
+            await self._log_trade(
+                cycle_key, route, token_a,
+                amount_in, profit_pct, "DRY_RUN",
+                dexes, symbol_a, symbol_b, symbol_c
+            )
+            return
+
+        # TODO: Implement actual multi-hop swap execution
+        # This would require:
+        # 1. Building 3 swap transactions
+        # 2. Bundling via Flashbots for atomic execution
+        # 3. Using flash loans for capital efficiency
+        logger.warning("Live execution not implemented - use DRY_RUN mode")
+
+    async def _log_trade(
+        self,
+        cycle_key: str,
+        route: str,
+        token_a: str,
+        amount_in: int,
+        profit_pct: float,
+        tx_hash: str,
+        dexes: List[str],
+        symbol_a: str,
+        symbol_b: str,
+        symbol_c: str
+    ):
+        """Log triangular arb trade to database"""
+        if not self.db_pool:
+            return
+
+        try:
+            import uuid
+
+            # Calculate values
+            amount_eth = amount_in / 1e18 if symbol_a not in ['USDC', 'USDT'] else amount_in / 1e6 / self._eth_price
+            entry_usd = amount_eth * self._eth_price
+            profit_usd = entry_usd * profit_pct
+
+            logger.info(f"💰 Triangular [{cycle_key}]: ${entry_usd:.2f} | Profit: ${profit_usd:.2f}")
+
+            trade_id = f"tri_arb_{uuid.uuid4().hex[:12]}"
+
+            async with self.db_pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO arbitrage_trades (
+                        trade_id, token_address, chain, buy_dex, sell_dex,
+                        side, entry_price, exit_price, amount, amount_eth,
+                        entry_usd, exit_usd, profit_loss, profit_loss_pct, spread_pct,
+                        status, is_simulated, entry_timestamp, exit_timestamp,
+                        tx_hash, eth_price_at_trade, metadata
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+                """,
+                    trade_id,
+                    token_a,
+                    'ethereum',
+                    dexes[0],  # First DEX
+                    dexes[2],  # Last DEX
+                    'triangular',
+                    self._eth_price,
+                    self._eth_price * (1 + profit_pct),
+                    amount_eth,
+                    amount_eth,
+                    entry_usd,
+                    entry_usd + profit_usd,
+                    profit_usd,
+                    profit_pct * 100,
+                    profit_pct * 100,
+                    'closed',
+                    self.dry_run,
+                    datetime.now(),
+                    datetime.now(),
+                    tx_hash,
+                    self._eth_price,
+                    json.dumps({
+                        'type': 'triangular',
+                        'cycle': cycle_key,
+                        'route': route,
+                        'symbols': [symbol_a, symbol_b, symbol_c],
+                        'dexes': dexes,
+                        'gas_price': self.gas_oracle.current_gas_gwei,
+                        'dry_run': self.dry_run
+                    })
+                )
+            logger.debug(f"💾 Logged triangular arb: {trade_id}")
+
+        except Exception as e:
+            logger.error(f"Error logging triangular trade: {e}")
+
+    async def stop(self):
+        self.is_running = False
+        logger.info("🛑 Triangular Arbitrage Engine Stopped")

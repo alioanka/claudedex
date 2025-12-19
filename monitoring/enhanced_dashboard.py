@@ -6460,7 +6460,7 @@ class DashboardEndpoints:
         return web.Response(text=template.render(page='arbitrage_settings'), content_type='text/html')
 
     async def api_get_arbitrage_stats(self, request):
-        """Get Arbitrage module stats from dedicated arbitrage_trades table"""
+        """Get Arbitrage module stats from dedicated arbitrage_trades table with multi-chain support"""
         stats = {
             'module': 'arbitrage',
             'status': 'Offline',
@@ -6470,11 +6470,14 @@ class DashboardEndpoints:
             'active_positions': 0,
             'total_pnl': 0.0,
             'win_rate': 0.0,
-            'avg_spread': 0.0
+            'avg_spread': 0.0,
+            'chains': {},
+            'trade_types': {}
         }
         try:
             if self.db:
                 async with self.db.pool.acquire() as conn:
+                    # Overall stats
                     row = await conn.fetchrow("""
                         SELECT
                             COUNT(*) as total_trades,
@@ -6493,12 +6496,52 @@ class DashboardEndpoints:
                         if stats['total_trades'] > 0:
                             stats['win_rate'] = (stats['winning_trades'] / stats['total_trades']) * 100
 
-                    active = await conn.fetchval("""
-                        SELECT COUNT(*) FROM arbitrage_positions
-                        WHERE status = 'open'
+                    # Per-chain stats
+                    chain_rows = await conn.fetch("""
+                        SELECT
+                            chain,
+                            COUNT(*) as trades,
+                            COALESCE(SUM(profit_loss), 0) as pnl,
+                            COALESCE(AVG(spread_pct), 0) as avg_spread
+                        FROM arbitrage_trades
+                        GROUP BY chain
                     """)
-                    stats['active_positions'] = active or 0
-                    stats['status'] = 'Online' if stats['total_trades'] > 0 or stats['active_positions'] > 0 else 'Idle'
+                    for r in chain_rows:
+                        stats['chains'][r['chain'] or 'ethereum'] = {
+                            'trades': r['trades'],
+                            'pnl': float(r['pnl'] or 0),
+                            'avg_spread': float(r['avg_spread'] or 0)
+                        }
+
+                    # Check for triangular trades (in metadata)
+                    tri_row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) as trades,
+                            COALESCE(SUM(profit_loss), 0) as pnl
+                        FROM arbitrage_trades
+                        WHERE metadata::text LIKE '%triangular%'
+                    """)
+                    if tri_row and tri_row['trades'] > 0:
+                        stats['trade_types']['triangular'] = {
+                            'trades': tri_row['trades'],
+                            'pnl': float(tri_row['pnl'] or 0)
+                        }
+
+                    # Regular (non-triangular) trades
+                    reg_row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) as trades,
+                            COALESCE(SUM(profit_loss), 0) as pnl
+                        FROM arbitrage_trades
+                        WHERE metadata::text NOT LIKE '%triangular%' OR metadata IS NULL
+                    """)
+                    if reg_row:
+                        stats['trade_types']['direct'] = {
+                            'trades': reg_row['trades'],
+                            'pnl': float(reg_row['pnl'] or 0)
+                        }
+
+                    stats['status'] = 'Online' if stats['total_trades'] > 0 else 'Idle'
 
             return web.json_response({'success': True, 'stats': stats})
         except Exception as e:
