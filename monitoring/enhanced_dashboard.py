@@ -6189,7 +6189,7 @@ class DashboardEndpoints:
         return web.Response(text=template.render(page='sniper_settings'), content_type='text/html')
 
     async def api_get_sniper_stats(self, request):
-        """Get Sniper module stats from DB"""
+        """Get Sniper module stats from dedicated sniper_trades table"""
         stats = {
             'module': 'sniper',
             'status': 'Offline',
@@ -6198,36 +6198,39 @@ class DashboardEndpoints:
             'losing_trades': 0,
             'active_positions': 0,
             'total_pnl': 0.0,
-            'win_rate': 0.0
+            'win_rate': 0.0,
+            'avg_safety_score': 0.0
         }
         try:
             if self.db:
                 async with self.db.pool.acquire() as conn:
-                    # Get trade stats for sniper module
+                    # Get trade stats from sniper_trades table
                     row = await conn.fetchrow("""
                         SELECT
                             COUNT(*) as total_trades,
                             COUNT(*) FILTER (WHERE profit_loss > 0) as winning_trades,
                             COUNT(*) FILTER (WHERE profit_loss < 0) as losing_trades,
-                            COALESCE(SUM(profit_loss), 0) as total_pnl
-                        FROM trades
-                        WHERE strategy = 'sniper'
+                            COALESCE(SUM(profit_loss), 0) as total_pnl,
+                            COALESCE(AVG(safety_score), 0) as avg_safety_score
+                        FROM sniper_trades
+                        WHERE status = 'closed'
                     """)
                     if row:
                         stats['total_trades'] = row['total_trades'] or 0
                         stats['winning_trades'] = row['winning_trades'] or 0
                         stats['losing_trades'] = row['losing_trades'] or 0
                         stats['total_pnl'] = float(row['total_pnl'] or 0)
+                        stats['avg_safety_score'] = float(row['avg_safety_score'] or 0)
                         if stats['total_trades'] > 0:
                             stats['win_rate'] = (stats['winning_trades'] / stats['total_trades']) * 100
 
                     # Get active positions (open status)
                     active = await conn.fetchval("""
-                        SELECT COUNT(*) FROM trades
-                        WHERE strategy = 'sniper' AND status = 'open'
+                        SELECT COUNT(*) FROM sniper_trades
+                        WHERE status = 'open'
                     """)
                     stats['active_positions'] = active or 0
-                    stats['status'] = 'Online' if stats['total_trades'] > 0 else 'Idle'
+                    stats['status'] = 'Online' if stats['total_trades'] > 0 or stats['active_positions'] > 0 else 'Idle'
 
             return web.json_response({'success': True, 'stats': stats})
         except Exception as e:
@@ -6235,18 +6238,19 @@ class DashboardEndpoints:
             return web.json_response({'success': False, 'error': str(e), 'stats': stats})
 
     async def api_get_sniper_positions(self, request):
-        """Get Sniper open positions from DB"""
+        """Get Sniper open positions from sniper_trades table"""
         positions = []
         try:
             if self.db:
                 async with self.db.pool.acquire() as conn:
                     rows = await conn.fetch("""
                         SELECT
-                            trade_id, token_address, side, entry_price, amount,
-                            usd_value, status, entry_timestamp,
-                            profit_loss, metadata
-                        FROM trades
-                        WHERE strategy = 'sniper' AND status = 'open'
+                            trade_id, token_address, chain, side, entry_price, amount,
+                            entry_usd, native_token, native_price_at_entry,
+                            safety_score, safety_rating, status, entry_timestamp,
+                            entry_tx_hash, metadata
+                        FROM sniper_trades
+                        WHERE status = 'open'
                         ORDER BY entry_timestamp DESC
                     """)
                     for row in rows:
@@ -6261,14 +6265,16 @@ class DashboardEndpoints:
                             'trade_id': row['trade_id'],
                             'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
                             'token_address': row['token_address'],
-                            'side': row['side'].lower() if row['side'] else 'long',
+                            'chain': row['chain'],
+                            'side': row['side'].lower() if row['side'] else 'buy',
                             'entry_price': float(row['entry_price'] or 0),
                             'size': float(row['amount'] or 0),
-                            'notional_value': float(row['usd_value'] or 0),
-                            'unrealized_pnl': float(row['profit_loss'] or 0),
+                            'entry_usd': float(row['entry_usd'] or 0),
+                            'safety_score': row['safety_score'],
+                            'safety_rating': row['safety_rating'],
                             'status': row['status'],
                             'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
-                            'tx_hash': metadata.get('tx_hash', '')
+                            'entry_tx_hash': row['entry_tx_hash'] or ''
                         })
             return web.json_response({'success': True, 'positions': positions, 'count': len(positions)})
         except Exception as e:
@@ -6276,7 +6282,7 @@ class DashboardEndpoints:
             return web.json_response({'success': False, 'error': str(e), 'positions': []})
 
     async def api_get_sniper_trades(self, request):
-        """Get Sniper trade history from DB"""
+        """Get Sniper trade history from dedicated sniper_trades table"""
         trades = []
         try:
             limit = int(request.query.get('limit', 100))
@@ -6284,11 +6290,13 @@ class DashboardEndpoints:
                 async with self.db.pool.acquire() as conn:
                     rows = await conn.fetch("""
                         SELECT
-                            trade_id, token_address, side, entry_price, amount,
-                            usd_value, status, entry_timestamp, profit_loss,
-                            profit_loss_percentage, exit_price, exit_timestamp, metadata
-                        FROM trades
-                        WHERE strategy = 'sniper'
+                            trade_id, token_address, chain, side, entry_price, exit_price,
+                            amount, entry_usd, exit_usd, profit_loss, profit_loss_pct,
+                            native_token, native_price_at_entry, native_price_at_exit,
+                            safety_score, safety_rating, is_honeypot, buy_tax, sell_tax,
+                            liquidity_usd, status, exit_reason, is_simulated,
+                            entry_timestamp, exit_timestamp, entry_tx_hash, exit_tx_hash, metadata
+                        FROM sniper_trades
                         ORDER BY entry_timestamp DESC
                         LIMIT $1
                     """, limit)
@@ -6296,9 +6304,7 @@ class DashboardEndpoints:
                         pnl = float(row['profit_loss'] or 0)
                         entry = float(row['entry_price'] or 0)
                         exit_p = float(row['exit_price'] or entry)
-                        pnl_pct = float(row['profit_loss_percentage'] or 0)
-                        if pnl_pct == 0 and entry > 0:
-                            pnl_pct = ((exit_p - entry) / entry * 100) if exit_p != entry else 0
+                        pnl_pct = float(row['profit_loss_pct'] or 0)
                         metadata = row['metadata'] or {}
                         if isinstance(metadata, str):
                             try:
@@ -6310,16 +6316,23 @@ class DashboardEndpoints:
                             'trade_id': row['trade_id'],
                             'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
                             'token_address': row['token_address'],
+                            'chain': row['chain'],
                             'side': row['side'].lower() if row['side'] else 'buy',
                             'entry_price': entry,
                             'exit_price': exit_p,
                             'size': float(row['amount'] or 0),
+                            'entry_usd': float(row['entry_usd'] or 0),
+                            'exit_usd': float(row['exit_usd'] or 0),
                             'pnl': pnl,
                             'pnl_pct': pnl_pct,
+                            'safety_score': row['safety_score'],
+                            'safety_rating': row['safety_rating'],
                             'status': row['status'],
-                            'close_reason': metadata.get('exit_reason', '-'),
+                            'close_reason': row['exit_reason'] or '-',
+                            'is_simulated': row['is_simulated'],
                             'closed_at': row['exit_timestamp'].isoformat() if row['exit_timestamp'] else row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
-                            'tx_hash': metadata.get('tx_hash', '')
+                            'entry_tx_hash': row['entry_tx_hash'] or '',
+                            'exit_tx_hash': row['exit_tx_hash'] or ''
                         })
             return web.json_response({'success': True, 'trades': trades, 'count': len(trades)})
         except Exception as e:
@@ -7142,7 +7155,7 @@ class DashboardEndpoints:
         return web.Response(text=template.render(page='ai_logs'), content_type='text/html')
 
     async def api_get_ai_stats(self, request):
-        """Get AI module stats from DB"""
+        """Get AI module stats from dedicated ai_trades table"""
         try:
             stats = {
                 'module': 'ai_analysis',
@@ -7150,7 +7163,9 @@ class DashboardEndpoints:
                 'sentiment_score': 0,
                 'sentiment_label': 'Neutral',
                 'active_signals': 0,
-                'accuracy': 0.0
+                'accuracy': 0.0,
+                'total_trades': 0,
+                'total_pnl': 0.0
             }
 
             # Check if running (via env)
@@ -7158,8 +7173,8 @@ class DashboardEndpoints:
                 stats['status'] = 'Running'
 
             if self.db:
-                # Get latest sentiment
                 async with self.db.pool.acquire() as conn:
+                    # Get latest sentiment from sentiment_logs
                     latest = await conn.fetchrow("SELECT score FROM sentiment_logs ORDER BY timestamp DESC LIMIT 1")
                     if latest:
                         score = float(latest['score'])
@@ -7168,9 +7183,23 @@ class DashboardEndpoints:
                         elif score < -0.5: stats['sentiment_label'] = 'Bearish'
                         else: stats['sentiment_label'] = 'Neutral'
 
-                    # Get active signals (placeholder: derived from trades with 'ai_analysis' strategy)
-                    signals_count = await conn.fetchval("SELECT COUNT(*) FROM trades WHERE strategy = 'ai_analysis' AND status = 'open'")
+                    # Get active positions from ai_trades
+                    signals_count = await conn.fetchval("SELECT COUNT(*) FROM ai_trades WHERE status = 'open'")
                     stats['active_signals'] = signals_count or 0
+
+                    # Get trade stats from ai_trades
+                    row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) as total_trades,
+                            COUNT(*) FILTER (WHERE profit_loss > 0) as wins,
+                            COALESCE(SUM(profit_loss), 0) as total_pnl
+                        FROM ai_trades
+                        WHERE status = 'closed'
+                    """)
+                    if row and row['total_trades'] > 0:
+                        stats['total_trades'] = row['total_trades']
+                        stats['total_pnl'] = float(row['total_pnl'] or 0)
+                        stats['accuracy'] = float(row['wins'] / row['total_trades'] * 100)
 
             return web.json_response({'success': True, 'stats': stats})
         except Exception as e:
@@ -7202,23 +7231,36 @@ class DashboardEndpoints:
             return web.json_response({'success': False, 'error': str(e)})
 
     async def api_get_ai_performance(self, request):
-        """Get AI performance metrics"""
+        """Get AI performance metrics from dedicated ai_trades table"""
         try:
-            metrics = {'win_rate': 0, 'total_pnl': 0, 'trades': 0}
+            metrics = {
+                'win_rate': 0,
+                'total_pnl': 0,
+                'trades': 0,
+                'avg_sentiment': 0,
+                'best_trade': 0,
+                'worst_trade': 0
+            }
             if self.db:
                 async with self.db.pool.acquire() as conn:
                     row = await conn.fetchrow("""
                         SELECT
                             COUNT(*) as trades,
-                            SUM(profit_loss) as pnl,
-                            COUNT(*) FILTER (WHERE profit_loss > 0) as wins
-                        FROM trades
-                        WHERE strategy = 'ai_analysis' AND status = 'closed'
+                            COALESCE(SUM(profit_loss), 0) as pnl,
+                            COUNT(*) FILTER (WHERE profit_loss > 0) as wins,
+                            COALESCE(AVG(sentiment_score), 0) as avg_sentiment,
+                            COALESCE(MAX(profit_loss), 0) as best_trade,
+                            COALESCE(MIN(profit_loss), 0) as worst_trade
+                        FROM ai_trades
+                        WHERE status = 'closed'
                     """)
                     if row and row['trades'] > 0:
                         metrics['trades'] = row['trades']
                         metrics['total_pnl'] = float(row['pnl'] or 0)
                         metrics['win_rate'] = float(row['wins'] / row['trades'] * 100)
+                        metrics['avg_sentiment'] = float(row['avg_sentiment'] or 0)
+                        metrics['best_trade'] = float(row['best_trade'] or 0)
+                        metrics['worst_trade'] = float(row['worst_trade'] or 0)
 
             return web.json_response({'success': True, 'metrics': metrics})
         except Exception as e:
@@ -7226,28 +7268,45 @@ class DashboardEndpoints:
             return web.json_response({'success': False, 'error': str(e)})
 
     async def api_get_ai_trades(self, request):
-        """Get AI module trades"""
+        """Get AI module trades from dedicated ai_trades table"""
         try:
             trades = []
+            limit = int(request.query.get('limit', 100))
             if self.db:
                 async with self.db.pool.acquire() as conn:
                     rows = await conn.fetch("""
-                        SELECT trade_id, token_address, chain, strategy, side,
-                               entry_price, exit_price, amount, usd_value,
-                               profit_loss as pnl, status, entry_timestamp, exit_timestamp, metadata
-                        FROM trades
-                        WHERE strategy = 'ai_analysis'
+                        SELECT trade_id, token_symbol, token_address, chain, side,
+                               entry_price, exit_price, amount, entry_usd, exit_usd,
+                               profit_loss, profit_loss_pct, sentiment_score, confidence_score,
+                               ai_provider, status, exit_reason, is_simulated,
+                               entry_timestamp, exit_timestamp, entry_order_id, exit_order_id, metadata
+                        FROM ai_trades
                         ORDER BY entry_timestamp DESC
-                        LIMIT 100
-                    """)
+                        LIMIT $1
+                    """, limit)
                     for row in rows:
-                        trade = dict(row)
-                        # Convert timestamps to ISO format
-                        if trade.get('entry_timestamp'):
-                            trade['entry_timestamp'] = trade['entry_timestamp'].isoformat()
-                        if trade.get('exit_timestamp'):
-                            trade['exit_timestamp'] = trade['exit_timestamp'].isoformat()
-                        trades.append(trade)
+                        trades.append({
+                            'trade_id': row['trade_id'],
+                            'symbol': row['token_symbol'],
+                            'token_address': row['token_address'],
+                            'chain': row['chain'],
+                            'side': row['side'],
+                            'entry_price': float(row['entry_price'] or 0),
+                            'exit_price': float(row['exit_price'] or 0),
+                            'amount': float(row['amount'] or 0),
+                            'entry_usd': float(row['entry_usd'] or 0),
+                            'exit_usd': float(row['exit_usd'] or 0),
+                            'pnl': float(row['profit_loss'] or 0),
+                            'pnl_pct': float(row['profit_loss_pct'] or 0),
+                            'sentiment_score': float(row['sentiment_score'] or 0),
+                            'confidence_score': float(row['confidence_score'] or 0),
+                            'ai_provider': row['ai_provider'],
+                            'status': row['status'],
+                            'exit_reason': row['exit_reason'] or '-',
+                            'is_simulated': row['is_simulated'],
+                            'entry_timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
+                            'exit_timestamp': row['exit_timestamp'].isoformat() if row['exit_timestamp'] else None
+                        })
             return web.json_response({'success': True, 'trades': trades, 'count': len(trades)})
         except Exception as e:
             logger.error(f"Error getting AI trades: {e}")

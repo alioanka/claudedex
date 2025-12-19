@@ -499,7 +499,7 @@ class SniperEngine:
             data['error'] = str(e)
 
     async def _log_snipe_to_db(self, data: Dict, result):
-        """Log snipe trade to database with real USD values"""
+        """Log snipe trade to dedicated sniper_trades table with real USD values"""
         try:
             if self.db_pool:
                 import uuid
@@ -513,31 +513,47 @@ class SniperEngine:
                 trade_amount_native = result.amount_in  # Amount spent in native token
                 usd_value = trade_amount_native * native_price
 
+                # Get safety report if available
+                safety_report = data.get('target', {}).get('safety_report', {})
+                trade_id = f"snipe_{uuid.uuid4().hex[:12]}"
+
                 async with self.db_pool.acquire() as conn:
+                    # Insert into dedicated sniper_trades table
                     await conn.execute("""
-                        INSERT INTO trades (
+                        INSERT INTO sniper_trades (
                             trade_id, token_address, chain, side, entry_price, amount,
-                            usd_value, status, strategy, entry_timestamp, metadata
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                            entry_usd, native_token, native_price_at_entry, trade_amount_native,
+                            safety_score, safety_rating, is_honeypot, buy_tax, sell_tax, liquidity_usd,
+                            status, is_simulated, entry_timestamp, entry_tx_hash, metadata
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
                     """,
-                        f"snipe_{uuid.uuid4().hex[:12]}",
+                        trade_id,
                         data['target'].get('token_address', 'UNKNOWN'),
                         chain_type,
                         'buy',
                         data.get('entry_price', 0),
                         result.amount_out,
-                        usd_value,  # Real USD value calculated from native price
+                        usd_value,
+                        native_token.upper(),
+                        native_price,
+                        trade_amount_native,
+                        safety_report.get('score'),
+                        safety_report.get('rating'),
+                        safety_report.get('is_honeypot', False),
+                        safety_report.get('buy_tax'),
+                        safety_report.get('sell_tax'),
+                        safety_report.get('liquidity_usd'),
                         'open' if result.success else 'failed',
-                        'sniper',
+                        True,  # is_simulated - update based on dry_run mode
                         result.timestamp,
+                        result.tx_hash,
                         json.dumps({
-                            'tx_hash': result.tx_hash,
-                            'safety_report': data.get('target', {}).get('safety_report', {}),
-                            'native_token_price': native_price,
-                            'trade_amount_native': trade_amount_native
+                            'warnings': safety_report.get('warnings', [])
                         })
                     )
-                logger.debug(f"💾 Logged snipe: ${usd_value:.2f} ({trade_amount_native:.4f} {native_token.upper()} @ ${native_price:.2f})")
+                # Store trade_id in data for linking exit trade
+                data['db_trade_id'] = trade_id
+                logger.debug(f"💾 Logged to sniper_trades: {trade_id} ${usd_value:.2f}")
         except Exception as e:
             logger.error(f"Error logging snipe to DB: {e}")
 
@@ -665,32 +681,22 @@ class SniperEngine:
             logger.error(f"Error exiting position: {e}")
 
     async def _log_exit_to_db(self, data: Dict, result, reason: str):
-        """Log exit trade to database with real USD values"""
+        """Update sniper_trades record with exit data"""
         try:
             if self.db_pool:
-                import uuid
-                token_address = data['target'].get('token_address', 'UNKNOWN')
                 chain_type = data.get('chain_type', 'solana')
-
-                # Determine native token based on chain
                 native_token = 'sol' if chain_type == 'solana' else 'eth'
 
                 # Fetch real native token price for USD conversion
                 native_price = await self.price_fetcher.get_price(native_token)
 
-                # Entry price per token (in native token)
-                entry_price = data.get('entry_price', 0)
                 # Exit price per token (in native token)
                 exit_price = data.get('exit_price', 0)
 
-                # Amount of tokens sold
-                tokens_sold = result.amount_in
                 # Amount of native token received
                 native_received = result.amount_out
 
                 # Calculate USD values
-                # Entry value: tokens * entry_price_per_token * native_price
-                # But we stored entry_usd in the entry metadata - use that if available
                 entry_usd = data.get('entry_usd', self.trade_amount * native_price)
                 exit_usd = native_received * native_price
 
@@ -698,38 +704,63 @@ class SniperEngine:
                 pnl_usd = exit_usd - entry_usd
                 pnl_pct = ((exit_usd - entry_usd) / entry_usd * 100) if entry_usd > 0 else 0
 
+                trade_id = data.get('db_trade_id')
+
                 async with self.db_pool.acquire() as conn:
-                    await conn.execute("""
-                        INSERT INTO trades (
-                            trade_id, token_address, chain, side, entry_price, exit_price,
-                            amount, usd_value, profit_loss, profit_loss_percentage,
-                            status, strategy, entry_timestamp, exit_timestamp, metadata
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-                    """,
-                        f"snipe_exit_{uuid.uuid4().hex[:12]}",
-                        token_address,
-                        chain_type,
-                        'sell',
-                        entry_price,
-                        exit_price,
-                        tokens_sold,
-                        exit_usd,  # Real USD value from exit
-                        pnl_usd,   # Real PnL in USD
-                        pnl_pct,
-                        'closed' if result.success else 'failed',
-                        'sniper',
-                        data.get('snipe_time', result.timestamp),
-                        result.timestamp,
-                        json.dumps({
-                            'tx_hash': result.tx_hash,
-                            'exit_reason': reason,
-                            'native_token_price': native_price,
-                            'native_received': native_received,
-                            'entry_usd': entry_usd,
-                            'exit_usd': exit_usd
-                        })
-                    )
-                logger.debug(f"💾 Logged exit: ${exit_usd:.2f} (PnL: ${pnl_usd:.2f} / {pnl_pct:.1f}%)")
+                    if trade_id:
+                        # UPDATE the existing sniper_trades record
+                        await conn.execute("""
+                            UPDATE sniper_trades SET
+                                exit_price = $1,
+                                exit_usd = $2,
+                                profit_loss = $3,
+                                profit_loss_pct = $4,
+                                native_price_at_exit = $5,
+                                status = $6,
+                                exit_reason = $7,
+                                exit_timestamp = $8,
+                                exit_tx_hash = $9
+                            WHERE trade_id = $10
+                        """,
+                            exit_price,
+                            exit_usd,
+                            pnl_usd,
+                            pnl_pct,
+                            native_price,
+                            'closed' if result.success else 'failed',
+                            reason,
+                            result.timestamp,
+                            result.tx_hash,
+                            trade_id
+                        )
+                        logger.debug(f"💾 Updated sniper_trades: {trade_id} exit ${exit_usd:.2f} (PnL: ${pnl_usd:.2f} / {pnl_pct:.1f}%)")
+                    else:
+                        # Fallback: insert new record if no trade_id (shouldn't happen normally)
+                        import uuid
+                        token_address = data['target'].get('token_address', 'UNKNOWN')
+                        await conn.execute("""
+                            INSERT INTO sniper_trades (
+                                trade_id, token_address, chain, side, exit_price,
+                                exit_usd, profit_loss, profit_loss_pct, native_price_at_exit,
+                                status, exit_reason, is_simulated, exit_timestamp, exit_tx_hash
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                        """,
+                            f"snipe_exit_{uuid.uuid4().hex[:12]}",
+                            token_address,
+                            chain_type,
+                            'sell',
+                            exit_price,
+                            exit_usd,
+                            pnl_usd,
+                            pnl_pct,
+                            native_price,
+                            'closed' if result.success else 'failed',
+                            reason,
+                            True,
+                            result.timestamp,
+                            result.tx_hash
+                        )
+                        logger.debug(f"💾 Logged exit to sniper_trades: ${exit_usd:.2f} (PnL: ${pnl_usd:.2f})")
         except Exception as e:
             logger.error(f"Error logging exit to DB: {e}")
 

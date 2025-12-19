@@ -695,35 +695,36 @@ class SentimentEngine:
                 'order_id': result.get('order_id')
             }
 
-            # Log trade to database
+            # Log trade to dedicated ai_trades table
             if self.db_pool:
-                metadata = json.dumps({
-                    'token_symbol': symbol,
-                    'sentiment_score': score,
-                    'is_simulated': self.dry_run,
-                    'reason': f"Sentiment score {score:.2f} >= {self.confidence_threshold}",
-                    'order_id': result.get('order_id')
-                })
-
                 async with self.db_pool.acquire() as conn:
                     await conn.execute("""
-                        INSERT INTO trades (
-                            trade_id, token_address, chain, strategy,
-                            side, entry_price, amount, usd_value, status,
-                            entry_timestamp, metadata
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                        INSERT INTO ai_trades (
+                            trade_id, token_symbol, token_address, chain,
+                            side, entry_price, amount, entry_usd,
+                            sentiment_score, confidence_score, ai_provider,
+                            status, is_simulated, entry_timestamp, entry_order_id,
+                            metadata
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                     """,
                         trade_id,
+                        symbol,
                         "0x0000000000000000000000000000000000000000",
                         "ethereum",
-                        "ai_analysis",
                         side,
                         entry_price,
                         amount,
                         self.trade_amount_usd,
+                        score,
+                        score,  # confidence_score same as sentiment_score
+                        "openai",  # ai_provider
                         "open",
+                        self.dry_run,
                         datetime.now(),
-                        metadata
+                        result.get('order_id'),
+                        json.dumps({
+                            'reason': f"Sentiment score {score:.2f} >= {self.confidence_threshold}"
+                        })
                     )
 
             logger.info(f"✅ AI Trade {'Simulated' if self.dry_run else 'Executed'}: {action_type} {symbol} @ ${entry_price:,.2f}")
@@ -739,15 +740,15 @@ class SentimentEngine:
         try:
             async with self.db_pool.acquire() as conn:
                 rows = await conn.fetch("""
-                    SELECT trade_id, side, entry_price, amount, usd_value, entry_timestamp, metadata
-                    FROM trades
-                    WHERE strategy = 'ai_analysis' AND status = 'open'
+                    SELECT trade_id, token_symbol, side, entry_price, amount, entry_usd,
+                           entry_timestamp, sentiment_score, entry_order_id
+                    FROM ai_trades
+                    WHERE status = 'open'
                     ORDER BY entry_timestamp DESC
                 """)
 
                 for row in rows:
-                    metadata = json.loads(row['metadata']) if row['metadata'] else {}
-                    symbol = metadata.get('token_symbol', 'ETH')
+                    symbol = row['token_symbol'] or 'ETH'
 
                     self.active_positions[symbol] = {
                         'trade_id': row['trade_id'],
@@ -755,9 +756,10 @@ class SentimentEngine:
                         'side': row['side'],
                         'entry_price': float(row['entry_price']),
                         'amount': float(row['amount']),
-                        'amount_usd': float(row['usd_value']),
+                        'amount_usd': float(row['entry_usd']),
                         'entry_time': row['entry_timestamp'],
-                        'sentiment_score': metadata.get('sentiment_score', 0)
+                        'sentiment_score': float(row['sentiment_score'] or 0),
+                        'order_id': row['entry_order_id']
                     }
 
                 logger.info(f"Loaded {len(self.active_positions)} active AI positions")
@@ -850,22 +852,33 @@ class SentimentEngine:
             if result.get('success'):
                 logger.info(f"✅ Position closed: {symbol} | P&L: {pnl_pct:+.2f}% | Reason: {exit_reason}")
 
-                # Update database
+                # Update dedicated ai_trades table
                 if self.db_pool:
+                    entry_price = position['entry_price']
+                    entry_usd = position['amount_usd']
+                    exit_usd = amount * exit_price
+                    pnl_usd = exit_usd - entry_usd
+
                     async with self.db_pool.acquire() as conn:
                         await conn.execute("""
-                            UPDATE trades
+                            UPDATE ai_trades
                             SET status = 'closed',
                                 exit_price = $1,
-                                exit_timestamp = $2,
-                                pnl = $3,
-                                metadata = metadata || $4::jsonb
-                            WHERE trade_id = $5
+                                exit_usd = $2,
+                                profit_loss = $3,
+                                profit_loss_pct = $4,
+                                exit_reason = $5,
+                                exit_timestamp = $6,
+                                exit_order_id = $7
+                            WHERE trade_id = $8
                         """,
                             exit_price,
+                            exit_usd,
+                            pnl_usd,
+                            pnl_pct,
+                            exit_reason,
                             datetime.now(),
-                            (exit_price - position['entry_price']) * amount,
-                            json.dumps({'exit_reason': exit_reason, 'exit_order_id': result.get('order_id')}),
+                            result.get('order_id'),
                             trade_id
                         )
 
