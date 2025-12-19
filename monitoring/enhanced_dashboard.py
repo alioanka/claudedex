@@ -6460,7 +6460,7 @@ class DashboardEndpoints:
         return web.Response(text=template.render(page='arbitrage_settings'), content_type='text/html')
 
     async def api_get_arbitrage_stats(self, request):
-        """Get Arbitrage module stats from DB"""
+        """Get Arbitrage module stats from dedicated arbitrage_trades table"""
         stats = {
             'module': 'arbitrage',
             'status': 'Offline',
@@ -6469,7 +6469,8 @@ class DashboardEndpoints:
             'losing_trades': 0,
             'active_positions': 0,
             'total_pnl': 0.0,
-            'win_rate': 0.0
+            'win_rate': 0.0,
+            'avg_spread': 0.0
         }
         try:
             if self.db:
@@ -6479,24 +6480,25 @@ class DashboardEndpoints:
                             COUNT(*) as total_trades,
                             COUNT(*) FILTER (WHERE profit_loss > 0) as winning_trades,
                             COUNT(*) FILTER (WHERE profit_loss < 0) as losing_trades,
-                            COALESCE(SUM(profit_loss), 0) as total_pnl
-                        FROM trades
-                        WHERE strategy = 'arbitrage'
+                            COALESCE(SUM(profit_loss), 0) as total_pnl,
+                            COALESCE(AVG(spread_pct), 0) as avg_spread
+                        FROM arbitrage_trades
                     """)
                     if row:
                         stats['total_trades'] = row['total_trades'] or 0
                         stats['winning_trades'] = row['winning_trades'] or 0
                         stats['losing_trades'] = row['losing_trades'] or 0
                         stats['total_pnl'] = float(row['total_pnl'] or 0)
+                        stats['avg_spread'] = float(row['avg_spread'] or 0)
                         if stats['total_trades'] > 0:
                             stats['win_rate'] = (stats['winning_trades'] / stats['total_trades']) * 100
 
                     active = await conn.fetchval("""
-                        SELECT COUNT(*) FROM trades
-                        WHERE strategy = 'arbitrage' AND status = 'open'
+                        SELECT COUNT(*) FROM arbitrage_positions
+                        WHERE status = 'open'
                     """)
                     stats['active_positions'] = active or 0
-                    stats['status'] = 'Online' if stats['total_trades'] > 0 else 'Idle'
+                    stats['status'] = 'Online' if stats['total_trades'] > 0 or stats['active_positions'] > 0 else 'Idle'
 
             return web.json_response({'success': True, 'stats': stats})
         except Exception as e:
@@ -6672,21 +6674,20 @@ class DashboardEndpoints:
                         except:
                             wallet_list = [w.strip() for w in wallets_row.split(',') if w.strip()]
 
-                        # For each wallet, get trade stats
+                        # For each wallet, get trade stats from copytrading_trades
                         for addr in wallet_list:
                             if not addr:
                                 continue
 
-                            # Get trades copied from this wallet (stored in metadata)
+                            # Get trades copied from this wallet using source_wallet column
                             trades_row = await conn.fetchrow("""
                                 SELECT
                                     COUNT(*) as total_trades,
                                     COUNT(*) FILTER (WHERE profit_loss > 0) as winning,
                                     COALESCE(SUM(profit_loss), 0) as total_pnl,
                                     MAX(entry_timestamp) as last_trade
-                                FROM trades
-                                WHERE strategy = 'copytrading'
-                                AND metadata->>'source_wallet' = $1
+                                FROM copytrading_trades
+                                WHERE source_wallet = $1
                             """, addr)
 
                             wallets.append({
@@ -6705,7 +6706,7 @@ class DashboardEndpoints:
             return web.json_response({'success': False, 'error': str(e), 'wallets': []})
 
     async def api_get_copytrading_stats(self, request):
-        """Get Copy Trading module stats from DB"""
+        """Get Copy Trading module stats from dedicated copytrading_trades table"""
         stats = {
             'module': 'copytrading',
             'status': 'Offline',
@@ -6715,7 +6716,8 @@ class DashboardEndpoints:
             'active_positions': 0,
             'total_pnl': 0.0,
             'win_rate': 0.0,
-            'wallets_tracked': 0
+            'wallets_tracked': 0,
+            'unique_wallets': 0
         }
         try:
             if self.db:
@@ -6725,33 +6727,38 @@ class DashboardEndpoints:
                             COUNT(*) as total_trades,
                             COUNT(*) FILTER (WHERE profit_loss > 0) as winning_trades,
                             COUNT(*) FILTER (WHERE profit_loss < 0) as losing_trades,
-                            COALESCE(SUM(profit_loss), 0) as total_pnl
-                        FROM trades
-                        WHERE strategy = 'copytrading'
+                            COALESCE(SUM(profit_loss), 0) as total_pnl,
+                            COUNT(DISTINCT source_wallet) as unique_wallets
+                        FROM copytrading_trades
                     """)
                     if row:
                         stats['total_trades'] = row['total_trades'] or 0
                         stats['winning_trades'] = row['winning_trades'] or 0
                         stats['losing_trades'] = row['losing_trades'] or 0
                         stats['total_pnl'] = float(row['total_pnl'] or 0)
+                        stats['unique_wallets'] = row['unique_wallets'] or 0
                         if stats['total_trades'] > 0:
                             stats['win_rate'] = (stats['winning_trades'] / stats['total_trades']) * 100
 
                     active = await conn.fetchval("""
-                        SELECT COUNT(*) FROM trades
-                        WHERE strategy = 'copytrading' AND status = 'open'
+                        SELECT COUNT(*) FROM copytrading_positions
+                        WHERE status = 'open'
                     """)
                     stats['active_positions'] = active or 0
-                    stats['status'] = 'Online' if stats['total_trades'] > 0 else 'Idle'
+                    stats['status'] = 'Online' if stats['total_trades'] > 0 or stats['active_positions'] > 0 else 'Idle'
 
-                    # Get number of tracked wallets
+                    # Get number of tracked wallets from config
                     wallets_row = await conn.fetchval(
                         "SELECT value FROM config_settings WHERE config_type = 'copytrading_config' AND key = 'target_wallets'"
                     )
                     if wallets_row:
                         try:
-                            wallets = wallets_row.split(',')
-                            stats['wallets_tracked'] = len([w for w in wallets if w.strip()])
+                            import json as json_module
+                            try:
+                                wallets = json_module.loads(wallets_row)
+                            except:
+                                wallets = [w.strip() for w in wallets_row.split(',') if w.strip()]
+                            stats['wallets_tracked'] = len(wallets)
                         except:
                             pass
 
