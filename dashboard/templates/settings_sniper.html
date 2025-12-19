@@ -25,6 +25,12 @@
                                     <div class="form-text">Master switch for the sniper module.</div>
                                 </div>
 
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="dry_run" checked>
+                                    <label class="form-check-label" for="dry_run">DRY RUN Mode</label>
+                                    <div class="form-text">Simulate trades without real execution. <strong class="text-danger">Disable for LIVE trading.</strong></div>
+                                </div>
+
                                 <div class="mb-3">
                                     <label class="form-label">Trade Amount (SOL/ETH)</label>
                                     <input type="number" class="form-control" id="trade_amount" step="0.1" value="0.1">
@@ -34,6 +40,7 @@
                                 <div class="mb-3">
                                     <label class="form-label">Max Slippage (%)</label>
                                     <input type="number" class="form-control" id="slippage" min="1" max="100" value="10">
+                                    <div class="form-text">Maximum acceptable slippage for new token trades.</div>
                                 </div>
                             </div>
 
@@ -43,17 +50,85 @@
                                 <div class="mb-3">
                                     <label class="form-label">Target Chain</label>
                                     <select class="form-select" id="chain">
+                                        <option value="all">🌐 ALL Chains (Multi-Chain)</option>
                                         <option value="solana">Solana (Pump.fun/Raydium)</option>
                                         <option value="ethereum">Ethereum</option>
                                         <option value="bsc">BSC</option>
                                         <option value="base">Base</option>
                                     </select>
+                                    <div class="form-text">
+                                        <strong>ALL Chains:</strong> Monitors and executes trades on all supported chains simultaneously.
+                                        Requires RPC URLs configured for each chain in .env file.
+                                    </div>
                                 </div>
 
                                 <div class="mb-3">
                                     <label class="form-label">Priority Fee (Gwei/Lamports)</label>
                                     <input type="number" class="form-control" id="priority_fee" min="0" value="5000">
-                                    <div class="form-text">Higher fee = faster inclusion.</div>
+                                    <div class="form-text">Higher fee = faster inclusion. Solana: 5000-50000 lamports. EVM: 50-200 Gwei.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <hr class="my-4">
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6 class="text-uppercase text-muted mb-3"><i class="fas fa-shield-alt me-2"></i>Token Safety Checks</h6>
+
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="safety_check_enabled" checked>
+                                    <label class="form-check-label" for="safety_check_enabled">Enable Safety Checks</label>
+                                    <div class="form-text">Run token safety analysis before sniping (GoPlus, Honeypot.is, RugCheck).</div>
+                                </div>
+
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="test_mode">
+                                    <label class="form-check-label" for="test_mode">🧪 TEST MODE (Relaxed Safety)</label>
+                                    <div class="form-text text-warning">
+                                        <i class="fas fa-exclamation-triangle me-1"></i>
+                                        Allows riskier tokens: up to 50% tax, $100 min liquidity, DANGER-rated tokens (except honeypots).
+                                        <strong>Use only for testing!</strong>
+                                    </div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Max Buy Tax (%)</label>
+                                    <input type="number" class="form-control" id="max_buy_tax" min="0" max="100" step="1" value="10">
+                                    <div class="form-text">Skip tokens with buy tax above this threshold. 0 = any tax allowed.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Max Sell Tax (%)</label>
+                                    <input type="number" class="form-control" id="max_sell_tax" min="0" max="100" step="1" value="10">
+                                    <div class="form-text">Skip tokens with sell tax above this threshold. High sell tax = potential honeypot.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Min Liquidity (USD)</label>
+                                    <input type="number" class="form-control" id="min_liquidity" min="0" step="100" value="1000">
+                                    <div class="form-text">Minimum liquidity pool value required to snipe.</div>
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <h6 class="text-uppercase text-muted mb-3"><i class="fas fa-door-open me-2"></i>Exit Strategy (Take Profit / Stop Loss)</h6>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Take Profit (%)</label>
+                                    <input type="number" class="form-control" id="take_profit_pct" min="1" max="1000" step="5" value="50">
+                                    <div class="form-text">Auto-sell when profit reaches this percentage. Default: 50% (1.5x).</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Stop Loss (%)</label>
+                                    <input type="number" class="form-control" id="stop_loss_pct" min="1" max="100" step="5" value="20">
+                                    <div class="form-text">Auto-sell when loss reaches this percentage. Default: 20%.</div>
+                                </div>
+
+                                <div class="alert alert-info mt-3">
+                                    <i class="fas fa-info-circle me-2"></i>
+                                    <strong>Exit Strategy:</strong> Active positions are monitored every 30 seconds. When TP or SL is hit, the position is automatically closed via Jupiter (Solana) or DEX router (EVM).
                                 </div>
                             </div>
                         </div>
@@ -63,22 +138,179 @@
         </div>
     </div>
 
-    <!-- Guide -->
+    <!-- Comprehensive Guide -->
     <div class="row">
         <div class="col-12">
             <div class="card">
                 <div class="card-header">
-                    <h5 class="mb-0"><i class="fas fa-book me-2"></i>Sniper Guide</h5>
+                    <h5 class="mb-0"><i class="fas fa-book me-2"></i>Sniper Module - Complete User Guide</h5>
                 </div>
                 <div class="card-body">
-                    <h6>Overview</h6>
-                    <p>The Sniper Module allows you to be the first to buy new token launches. It monitors the mempool (EVM) or new account creations (Solana) to detect liquidity adds.</p>
+                    <!-- Overview Section -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-crosshairs me-2"></i>Overview</h5>
+                        <p>The Sniper Module monitors blockchain networks for new token launches and executes rapid buy orders to capture early price appreciation. It detects liquidity additions on DEXs and can execute trades within milliseconds of launch.</p>
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <strong>Current Status:</strong> Operational in DRY RUN mode. Both EVM and Solana listeners are initialized.
+                        </div>
+                    </div>
 
-                    <h6>Configuration</h6>
-                    <ul>
-                        <li><strong>Trade Amount:</strong> Fixed amount of native currency to spend.</li>
-                        <li><strong>Priority Fee:</strong> Critical for being first in block. On Solana, use >10000 Lamports for hype launches.</li>
-                    </ul>
+                    <!-- File Structure -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-folder-tree me-2"></i>Module Architecture</h5>
+                        <div class="bg-dark text-light p-3 rounded" style="font-family: monospace; font-size: 0.85rem;">
+                            modules/sniper/<br>
+                            ├── main_sniper.py &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Entry point<br>
+                            ├── core/<br>
+                            │&nbsp;&nbsp;&nbsp;├── sniper_engine.py &nbsp;&nbsp;&nbsp;# Main orchestrator with TP/SL exit strategy<br>
+                            │&nbsp;&nbsp;&nbsp;├── evm_listener.py &nbsp;&nbsp;&nbsp;&nbsp;# EVM (Uniswap) pair detection<br>
+                            │&nbsp;&nbsp;&nbsp;├── solana_listener.py &nbsp;# Solana (Raydium) WebSocket pool detection<br>
+                            │&nbsp;&nbsp;&nbsp;├── token_safety.py &nbsp;&nbsp;&nbsp;&nbsp;# Token safety analysis (GoPlus, Honeypot.is, RugCheck)<br>
+                            │&nbsp;&nbsp;&nbsp;└── trade_executor.py &nbsp;&nbsp;# Trade execution (Jupiter/Uniswap)
+                        </div>
+                    </div>
+
+                    <!-- Dashboard Pages -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-desktop me-2"></i>Dashboard Pages</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm">
+                                <thead class="table-light">
+                                    <tr><th>Page</th><th>URL</th><th>Description</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>Dashboard</td><td><code>/sniper/dashboard</code></td><td>Main overview with stats and positions</td></tr>
+                                    <tr><td>Positions</td><td><code>/sniper/positions</code></td><td>Active snipe positions</td></tr>
+                                    <tr><td>Trades</td><td><code>/sniper/trades</code></td><td>Complete trade history</td></tr>
+                                    <tr><td>Performance</td><td><code>/sniper/performance</code></td><td>P&L metrics and charts</td></tr>
+                                    <tr><td>Settings</td><td><code>/sniper/settings</code></td><td>This configuration page</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Settings Reference -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-sliders-h me-2"></i>Settings Reference</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm">
+                                <thead class="table-light">
+                                    <tr><th>Setting</th><th>Description</th><th>Recommended Value</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td><strong>Enable Sniper</strong></td><td>Master switch for the module</td><td>Enabled</td></tr>
+                                    <tr><td><strong>DRY RUN Mode</strong></td><td>Simulate trades without execution</td><td>Enabled (until tested)</td></tr>
+                                    <tr><td><strong>Trade Amount</strong></td><td>SOL/ETH to spend per snipe</td><td>0.1</td></tr>
+                                    <tr><td><strong>Max Slippage</strong></td><td>Maximum acceptable slippage %</td><td>10-15%</td></tr>
+                                    <tr><td><strong>Target Chain</strong></td><td>Blockchain to monitor</td><td>Solana</td></tr>
+                                    <tr><td><strong>Priority Fee</strong></td><td>Gas priority (Gwei/Lamports)</td><td>Solana: 5000-50000</td></tr>
+                                    <tr class="table-info"><td colspan="3"><strong>Token Safety Checks</strong></td></tr>
+                                    <tr><td><strong>Enable Safety Checks</strong></td><td>Run safety analysis before sniping</td><td>Enabled</td></tr>
+                                    <tr><td><strong>Max Buy Tax</strong></td><td>Skip tokens with higher buy tax</td><td>10%</td></tr>
+                                    <tr><td><strong>Max Sell Tax</strong></td><td>Skip tokens with higher sell tax</td><td>10%</td></tr>
+                                    <tr><td><strong>Min Liquidity</strong></td><td>Minimum liquidity pool USD value</td><td>$1000+</td></tr>
+                                    <tr class="table-info"><td colspan="3"><strong>Exit Strategy</strong></td></tr>
+                                    <tr><td><strong>Take Profit %</strong></td><td>Auto-sell when profit reaches this %</td><td>50% (1.5x)</td></tr>
+                                    <tr><td><strong>Stop Loss %</strong></td><td>Auto-sell when loss reaches this %</td><td>20%</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- How It Works -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-cogs me-2"></i>How It Works</h5>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="card bg-light">
+                                    <div class="card-header"><strong>EVM Chains (Ethereum, BSC, etc.)</strong></div>
+                                    <div class="card-body">
+                                        <ol class="mb-0">
+                                            <li>Monitors Uniswap V2 Factory for <code>PairCreated</code> events</li>
+                                            <li>Optionally watches mempool for <code>addLiquidity</code> transactions</li>
+                                            <li>Detects new token pairs with WETH</li>
+                                            <li>Executes buy order via DEX router</li>
+                                        </ol>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="card bg-light">
+                                    <div class="card-header"><strong>Solana Chain</strong></div>
+                                    <div class="card-body">
+                                        <ol class="mb-0">
+                                            <li>Monitors Raydium/Pump.fun for new pool creations</li>
+                                            <li>Uses WebSocket for real-time detection</li>
+                                            <li>Evaluates token safety (liquidity, holder count)</li>
+                                            <li>Executes buy via Jupiter aggregator</li>
+                                        </ol>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Implementation Status -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-tasks me-2"></i>Implementation Status</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm">
+                                <thead class="table-light">
+                                    <tr><th>Feature</th><th>Status</th><th>Notes</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>EVM Listener (PairCreated)</td><td><span class="badge bg-success">Functional</span></td><td>Monitors Uniswap V2 Factory events</td></tr>
+                                    <tr><td>Solana Listener (Raydium WebSocket)</td><td><span class="badge bg-success">Functional</span></td><td>Real-time pool detection via WebSocket subscription</td></tr>
+                                    <tr><td>Token Safety Checks</td><td><span class="badge bg-success">Functional</span></td><td>GoPlus API, Honeypot.is, RugCheck integration</td></tr>
+                                    <tr><td>Trade Execution (DRY RUN)</td><td><span class="badge bg-success">Functional</span></td><td>Full simulation with logging</td></tr>
+                                    <tr><td>Trade Execution (LIVE)</td><td><span class="badge bg-success">Functional</span></td><td>Jupiter (Solana) + Uniswap V2 Router (EVM)</td></tr>
+                                    <tr><td>Exit Strategy (TP/SL)</td><td><span class="badge bg-success">Functional</span></td><td>Position monitoring every 30s, auto-exit on TP/SL</td></tr>
+                                    <tr><td>Helius Enhanced RPC</td><td><span class="badge bg-success">Functional</span></td><td>Optional: Uses Helius API for enhanced detection</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Required .env Keys -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-key me-2"></i>Required Environment Variables</h5>
+                        <div class="bg-dark text-light p-3 rounded" style="font-family: monospace; font-size: 0.85rem;">
+                            # For Solana Sniping<br>
+                            SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=...<br>
+                            SOLANA_MODULE_PRIVATE_KEY=... (encrypted)<br>
+                            SOLANA_MODULE_WALLET=...<br>
+                            HELIUS_API_KEY=...<br><br>
+                            # For EVM Sniping<br>
+                            ETHEREUM_RPC_URLS=...<br>
+                            PRIVATE_KEY=... (encrypted)<br>
+                            WALLET_ADDRESS=...
+                        </div>
+                    </div>
+
+                    <!-- Risk Warning -->
+                    <div class="mb-4">
+                        <div class="alert alert-danger">
+                            <h6><i class="fas fa-exclamation-triangle me-2"></i>Risk Warning</h6>
+                            <ul class="mb-0">
+                                <li><strong>High Risk:</strong> Sniping new tokens is extremely risky. Many launches are scams (rugs, honeypots).</li>
+                                <li><strong>Front-running:</strong> Other bots may front-run your transactions with higher gas fees.</li>
+                                <li><strong>Capital at Risk:</strong> Only use funds you can afford to lose completely.</li>
+                                <li><strong>Start with DRY RUN:</strong> Always test with simulated trades first.</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Best Practices -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-lightbulb me-2"></i>Best Practices</h5>
+                        <ul>
+                            <li><strong>Priority Fee:</strong> For Solana hype launches, use 10,000-50,000 Lamports. For EVM, 50-200 Gwei.</li>
+                            <li><strong>Trade Amount:</strong> Start small (0.05-0.1 SOL/ETH) until you understand the risks.</li>
+                            <li><strong>Slippage:</strong> 10-20% is common for new tokens with low liquidity.</li>
+                            <li><strong>Exit Strategy:</strong> Plan your exit before entering. Many tokens dump within minutes of launch.</li>
+                        </ul>
+                    </div>
                 </div>
             </div>
         </div>
@@ -95,11 +327,24 @@
 
             if (data.success) {
                 const settings = data.settings;
+                // Basic settings
                 document.getElementById('enabled').checked = settings.enabled === true;
+                document.getElementById('dry_run').checked = settings.dry_run !== false; // Default true
                 document.getElementById('trade_amount').value = settings.trade_amount || 0.1;
                 document.getElementById('slippage').value = settings.slippage || 10;
                 document.getElementById('chain').value = settings.chain || 'solana';
                 document.getElementById('priority_fee').value = settings.priority_fee || 5000;
+
+                // Safety check settings
+                document.getElementById('safety_check_enabled').checked = settings.safety_check_enabled !== false; // Default true
+                document.getElementById('test_mode').checked = settings.test_mode === true; // Default false
+                document.getElementById('max_buy_tax').value = settings.max_buy_tax || 10;
+                document.getElementById('max_sell_tax').value = settings.max_sell_tax || 10;
+                document.getElementById('min_liquidity').value = settings.min_liquidity || 1000;
+
+                // Exit strategy settings
+                document.getElementById('take_profit_pct').value = settings.take_profit_pct || 50;
+                document.getElementById('stop_loss_pct').value = settings.stop_loss_pct || 20;
             }
         } catch (error) {
             console.error('Error loading settings:', error);
@@ -108,11 +353,24 @@
 
     async function saveSettings() {
         const settings = {
+            // Basic settings
             enabled: document.getElementById('enabled').checked,
+            dry_run: document.getElementById('dry_run').checked,
             trade_amount: parseFloat(document.getElementById('trade_amount').value),
             slippage: parseFloat(document.getElementById('slippage').value),
             chain: document.getElementById('chain').value,
-            priority_fee: parseInt(document.getElementById('priority_fee').value)
+            priority_fee: parseInt(document.getElementById('priority_fee').value),
+
+            // Safety check settings
+            safety_check_enabled: document.getElementById('safety_check_enabled').checked,
+            test_mode: document.getElementById('test_mode').checked,
+            max_buy_tax: parseFloat(document.getElementById('max_buy_tax').value),
+            max_sell_tax: parseFloat(document.getElementById('max_sell_tax').value),
+            min_liquidity: parseFloat(document.getElementById('min_liquidity').value),
+
+            // Exit strategy settings
+            take_profit_pct: parseFloat(document.getElementById('take_profit_pct').value),
+            stop_loss_pct: parseFloat(document.getElementById('stop_loss_pct').value)
         };
 
         try {
@@ -122,7 +380,7 @@
                 body: JSON.stringify(settings)
             });
             const data = await response.json();
-            if(data.success) alert('Settings saved!');
+            if(data.success) alert('Settings saved successfully!');
             else alert('Error: ' + data.error);
         } catch (error) {
             alert('Error saving settings');

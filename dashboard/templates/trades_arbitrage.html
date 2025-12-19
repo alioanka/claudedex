@@ -4,9 +4,7 @@
 
 {% block extra_head %}
 <style>
-    .page-container {
-        padding: 20px;
-    }
+    .page-container { padding: 20px; }
 
     .page-header {
         display: flex;
@@ -35,7 +33,6 @@
         flex-wrap: wrap;
     }
 
-    /* Filter Section */
     .filters-section {
         background: var(--card-bg);
         border: 1px solid var(--border-color);
@@ -64,7 +61,7 @@
         text-transform: uppercase;
     }
 
-    .filter-select, .filter-input {
+    .filter-select {
         background: var(--metric-bg);
         border: 1px solid var(--border-color);
         border-radius: 6px;
@@ -72,33 +69,6 @@
         color: var(--text-primary);
         font-size: 0.875rem;
         min-width: 140px;
-        /* Ensure dropdown options are readable */
-        -webkit-appearance: none;
-        -moz-appearance: none;
-        appearance: none;
-        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239ca3af' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
-        background-repeat: no-repeat;
-        background-position: right 10px center;
-        padding-right: 30px;
-    }
-
-    .filter-select option {
-        background: #1f2937;
-        color: #f9fafb;
-        padding: 8px;
-    }
-
-    .filter-select:focus, .filter-input:focus {
-        outline: none;
-        border-color: #8b5cf6;
-    }
-
-    /* Light mode option styling */
-    @media (prefers-color-scheme: light) {
-        .filter-select option {
-            background: #ffffff;
-            color: #111827;
-        }
     }
 
     .filter-btn {
@@ -108,80 +78,11 @@
         font-weight: 500;
         cursor: pointer;
         border: none;
-        transition: all 0.2s;
-    }
-
-    .filter-btn-primary {
-        background: #8b5cf6;
-        color: white;
-    }
-
-    .filter-btn-primary:hover {
-        background: #7c3aed;
-    }
-
-    .filter-btn-secondary {
         background: #6b7280;
         color: white;
     }
 
-    .filter-btn-secondary:hover {
-        background: #4b5563;
-    }
-
-    .active-filters {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-top: 12px;
-        padding-top: 12px;
-        border-top: 1px solid var(--border-color);
-    }
-
-    .filter-tag {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        background: rgba(139, 92, 246, 0.1);
-        color: #8b5cf6;
-        padding: 4px 10px;
-        border-radius: 16px;
-        font-size: 0.75rem;
-        font-weight: 500;
-    }
-
-    .filter-tag-remove {
-        cursor: pointer;
-        opacity: 0.7;
-    }
-
-    .filter-tag-remove:hover {
-        opacity: 1;
-    }
-
-    .section-card {
-        background: var(--card-bg);
-        border: 1px solid var(--border-color);
-        border-radius: 12px;
-        padding: 24px;
-        margin-bottom: 24px;
-    }
-
-    .section-title {
-        font-size: 1.25rem;
-        font-weight: 600;
-        color: var(--text-primary);
-        margin-bottom: 20px;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-
-    .empty-state {
-        text-align: center;
-        padding: 40px;
-        color: var(--text-secondary);
-    }
+    .filter-btn:hover { background: #4b5563; }
 
     .stats-grid {
         display: grid;
@@ -211,16 +112,39 @@
     .positive { color: #10b981; }
     .negative { color: #ef4444; }
 
+    .section-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+
+    .section-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: var(--text-secondary);
+    }
+
     .table-responsive {
         width: 100%;
         overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
     }
 
     .trades-table {
         width: 100%;
         border-collapse: collapse;
-        min-width: 1100px;
+        min-width: 900px;
     }
 
     .trades-table th {
@@ -233,22 +157,9 @@
         text-transform: uppercase;
         white-space: nowrap;
         cursor: pointer;
-        user-select: none;
     }
 
-    .trades-table th:hover {
-        background: var(--border-color);
-    }
-
-    .trades-table th .sort-icon {
-        margin-left: 4px;
-        opacity: 0.5;
-    }
-
-    .trades-table th.sorted-asc .sort-icon,
-    .trades-table th.sorted-desc .sort-icon {
-        opacity: 1;
-    }
+    .trades-table th:hover { background: var(--border-color); }
 
     .trades-table td {
         padding: 12px 10px;
@@ -256,31 +167,37 @@
         white-space: nowrap;
     }
 
-    .trades-table tr:hover {
-        background: var(--metric-bg);
-    }
+    .trades-table tr:hover { background: var(--metric-bg); }
 
-    .badge {
+    .dex-badge {
         display: inline-block;
         padding: 4px 8px;
         border-radius: 4px;
         font-size: 0.75rem;
         font-weight: 600;
+        background: rgba(59, 130, 246, 0.2);
+        color: #3b82f6;
     }
 
-    .badge-long { background: #d1fae5; color: #065f46; }
-    .badge-short { background: #fee2e2; color: #991b1b; }
-
-    .exit-reason {
+    .spread-badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
         font-size: 0.75rem;
+        font-weight: 600;
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
+    }
+
+    .simulated-badge {
+        display: inline-block;
         padding: 2px 6px;
         border-radius: 4px;
-        background: var(--metric-bg);
+        font-size: 0.65rem;
+        font-weight: 600;
+        background: rgba(245, 158, 11, 0.2);
+        color: #f59e0b;
     }
-    .exit-reason.tp_hit { background: #d1fae5; color: #065f46; }
-    .exit-reason.sl_hit { background: #fee2e2; color: #991b1b; }
-    .exit-reason.tsl_hit { background: #ede9fe; color: #5b21b6; }
-    .exit-reason.manual { background: #fef3c7; color: #92400e; }
 
     .btn {
         display: inline-flex;
@@ -292,7 +209,6 @@
         font-weight: 500;
         cursor: pointer;
         border: none;
-        transition: all 0.2s;
     }
 
     .btn-primary { background: #8b5cf6; color: white; }
@@ -300,7 +216,6 @@
     .btn-secondary { background: #6b7280; color: white; }
     .btn-secondary:hover { background: #4b5563; }
 
-    /* Pagination */
     .pagination {
         display: flex;
         justify-content: center;
@@ -320,20 +235,9 @@
         font-size: 0.875rem;
     }
 
-    .pagination-btn:hover {
-        background: var(--metric-bg);
-    }
-
-    .pagination-btn.active {
-        background: #8b5cf6;
-        color: white;
-        border-color: #8b5cf6;
-    }
-
-    .pagination-btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
+    .pagination-btn:hover { background: var(--metric-bg); }
+    .pagination-btn.active { background: #8b5cf6; color: white; border-color: #8b5cf6; }
+    .pagination-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .pagination-info {
         color: var(--text-secondary);
@@ -347,31 +251,6 @@
         --text-secondary: #d1d5db;
         --metric-bg: #111827;
     }
-
-    [data-theme="dark"] .filter-select,
-    [data-theme="dark"] .filter-input {
-        background-color: #111827;
-        color: #f9fafb;
-        border-color: #374151;
-    }
-
-    [data-theme="dark"] .filter-select option {
-        background-color: #1f2937;
-        color: #f9fafb;
-    }
-
-    [data-theme="dark"] .badge-long { background: #065f46; color: #d1fae5; }
-    [data-theme="dark"] .badge-short { background: #991b1b; color: #fee2e2; }
-    [data-theme="dark"] .exit-reason.tp_hit { background: #065f46; color: #d1fae5; }
-    [data-theme="dark"] .exit-reason.sl_hit { background: #991b1b; color: #fee2e2; }
-    [data-theme="dark"] .exit-reason.tsl_hit { background: #5b21b6; color: #ede9fe; }
-    [data-theme="dark"] .exit-reason.manual { background: #92400e; color: #fef3c7; }
-
-    /* Force dark colors on select options (browser-specific) */
-    .filter-select option {
-        background-color: #1f2937 !important;
-        color: #f9fafb !important;
-    }
 </style>
 {% endblock %}
 
@@ -383,7 +262,7 @@
                 <i class="fas fa-exchange-alt"></i>
                 Arbitrage Trades
             </h1>
-            <p class="page-subtitle">Complete trade history with filtering and export</p>
+            <p class="page-subtitle">Complete arbitrage trade history</p>
         </div>
         <div class="header-actions">
             <button class="btn btn-secondary" onclick="loadTrades()">
@@ -392,13 +271,10 @@
             <button class="btn btn-primary" onclick="exportCSV()">
                 <i class="fas fa-file-csv"></i> Export CSV
             </button>
-            <button class="btn btn-primary" onclick="exportXLSX()">
-                <i class="fas fa-file-excel"></i> Export Excel
-            </button>
         </div>
     </div>
 
-    <!-- Filters Section -->
+    <!-- Filters -->
     <div class="filters-section">
         <div class="filters-row">
             <div class="filter-group">
@@ -408,41 +284,13 @@
                     <option value="today">Today</option>
                     <option value="7d">Last 7 Days</option>
                     <option value="30d">Last 30 Days</option>
-                    <option value="90d">Last 90 Days</option>
-                    <option value="custom">Custom Range</option>
-                </select>
-            </div>
-
-            <div class="filter-group" id="date-from-group" style="display: none;">
-                <label class="filter-label">From</label>
-                <input type="date" id="filter-date-from" class="filter-input" onchange="applyFilters()">
-            </div>
-
-            <div class="filter-group" id="date-to-group" style="display: none;">
-                <label class="filter-label">To</label>
-                <input type="date" id="filter-date-to" class="filter-input" onchange="applyFilters()">
-            </div>
-
-            <div class="filter-group">
-                <label class="filter-label">Pair</label>
-                <select id="filter-pair" class="filter-select" onchange="applyFilters()">
-                    <option value="all">All Pairs</option>
                 </select>
             </div>
 
             <div class="filter-group">
-                <label class="filter-label">Side</label>
-                <select id="filter-side" class="filter-select" onchange="applyFilters()">
-                    <option value="all">All Sides</option>
-                    <option value="long">Long</option>
-                    <option value="short">Short</option>
-                </select>
-            </div>
-
-            <div class="filter-group">
-                <label class="filter-label">Exit Reason</label>
-                <select id="filter-exit" class="filter-select" onchange="applyFilters()">
-                    <option value="all">All Reasons</option>
+                <label class="filter-label">Route</label>
+                <select id="filter-route" class="filter-select" onchange="applyFilters()">
+                    <option value="all">All Routes</option>
                 </select>
             </div>
 
@@ -455,29 +303,21 @@
                 </select>
             </div>
 
-            <button class="filter-btn filter-btn-secondary" onclick="resetFilters()">
+            <button class="filter-btn" onclick="resetFilters()">
                 <i class="fas fa-undo"></i> Reset
             </button>
         </div>
-
-        <div class="active-filters" id="active-filters" style="display: none;">
-            <!-- Active filter tags will be inserted here -->
-        </div>
     </div>
 
-    <!-- Stats Summary -->
+    <!-- Stats -->
     <div class="stats-grid">
         <div class="stat-card">
-            <div class="stat-label">Filtered Trades</div>
-            <div class="stat-value" id="stat-total-trades">0</div>
+            <div class="stat-label">Total Trades</div>
+            <div class="stat-value" id="stat-total">0</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Winning</div>
             <div class="stat-value positive" id="stat-winning">0</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-label">Losing</div>
-            <div class="stat-value negative" id="stat-losing">0</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Win Rate</div>
@@ -488,298 +328,129 @@
             <div class="stat-value" id="stat-pnl">$0.00</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Avg P&L</div>
-            <div class="stat-value" id="stat-avg-pnl">$0.00</div>
+            <div class="stat-label">Avg Spread</div>
+            <div class="stat-value" id="stat-spread">0.00%</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Total Fees</div>
-            <div class="stat-value" id="stat-fees">$0.00</div>
+            <div class="stat-label">Total Volume</div>
+            <div class="stat-value" id="stat-volume">0.00 ETH</div>
         </div>
     </div>
 
+    <!-- Trade Table -->
     <div class="section-card">
         <div class="section-title">
             <i class="fas fa-history"></i>
-            Trade History (<span id="trade-count">0</span> of <span id="total-count">0</span>)
+            Trade History (<span id="trade-count">0</span>)
         </div>
         <div id="trades-empty" class="empty-state">
             <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
-            <p>No trades found. Adjust your filters or wait for trades to complete.</p>
+            <p>No arbitrage trades found.</p>
         </div>
         <div class="table-responsive">
             <table class="trades-table" id="trades-table" style="display: none;">
                 <thead>
                     <tr>
-                        <th data-sort="time" onclick="sortTable('time')">Time <span class="sort-icon">↕</span></th>
-                        <th data-sort="symbol" onclick="sortTable('symbol')">Symbol <span class="sort-icon">↕</span></th>
-                        <th data-sort="side" onclick="sortTable('side')">Side <span class="sort-icon">↕</span></th>
-                        <th data-sort="entry_price" onclick="sortTable('entry_price')">Entry <span class="sort-icon">↕</span></th>
-                        <th data-sort="exit_price" onclick="sortTable('exit_price')">Exit <span class="sort-icon">↕</span></th>
-                        <th data-sort="size" onclick="sortTable('size')">Size <span class="sort-icon">↕</span></th>
-                        <th data-sort="leverage" onclick="sortTable('leverage')">Leverage <span class="sort-icon">↕</span></th>
-                        <th data-sort="pnl" onclick="sortTable('pnl')">P&L <span class="sort-icon">↕</span></th>
-                        <th data-sort="pnl_pct" onclick="sortTable('pnl_pct')">P&L % <span class="sort-icon">↕</span></th>
-                        <th data-sort="fees" onclick="sortTable('fees')">Fees <span class="sort-icon">↕</span></th>
-                        <th data-sort="exit_reason" onclick="sortTable('exit_reason')">Exit Reason <span class="sort-icon">↕</span></th>
-                        <th data-sort="duration" onclick="sortTable('duration')">Duration <span class="sort-icon">↕</span></th>
+                        <th onclick="sortTable('time')">Time ↕</th>
+                        <th onclick="sortTable('token')">Token ↕</th>
+                        <th onclick="sortTable('route')">Route ↕</th>
+                        <th onclick="sortTable('amount')">Amount ↕</th>
+                        <th onclick="sortTable('spread')">Spread ↕</th>
+                        <th onclick="sortTable('pnl')">Profit ↕</th>
+                        <th onclick="sortTable('eth_price')">ETH Price ↕</th>
+                        <th>Type</th>
                     </tr>
                 </thead>
-                <tbody id="tradesTableBody">
-                </tbody>
+                <tbody id="tradesTableBody"></tbody>
             </table>
         </div>
-
-        <!-- Pagination -->
-        <div class="pagination" id="pagination">
-        </div>
+        <div class="pagination" id="pagination"></div>
     </div>
 </div>
 
 <script>
-// Global state
 let allTrades = [];
 let filteredTrades = [];
-let displayedTrades = [];
-let availablePairs = [];
-let availableExitReasons = [];
 let currentSort = { column: 'time', direction: 'desc' };
 let currentPage = 1;
 const pageSize = 50;
 
 async function loadTrades() {
     try {
-        // Fetch trades from the futures module API
         const response = await fetch('/api/arbitrage/trades?limit=2000');
-        if (!response.ok) throw new Error('Failed to fetch trades');
         const data = await response.json();
 
         if (data.success && data.trades) {
             allTrades = data.trades;
-            extractFilterOptions();
-            applyFilters();
-        } else {
-            allTrades = [];
-            extractFilterOptions();
+            extractRoutes();
             applyFilters();
         }
     } catch (error) {
         console.error('Error loading trades:', error);
-        // Try fallback to simulator data
-        try {
-            const fallbackResponse = await fetch('/api/simulator/data');
-            if (fallbackResponse.ok) {
-                const fallbackData = await fallbackResponse.json();
-                if (fallbackData.futures && fallbackData.futures.trades) {
-                    allTrades = fallbackData.futures.trades;
-                    extractFilterOptions();
-                    applyFilters();
-                }
-            }
-        } catch (e) {
-            console.error('Fallback also failed:', e);
-            allTrades = [];
-            extractFilterOptions();
-            applyFilters();
-        }
     }
 }
 
-function extractFilterOptions() {
-    // Extract unique pairs from data
-    const pairSet = new Set();
-    const exitReasonSet = new Set();
-
-    allTrades.forEach(trade => {
-        if (trade.symbol) pairSet.add(trade.symbol);
-        const reason = trade.close_reason || trade.exit_reason;
-        if (reason) exitReasonSet.add(reason);
+function extractRoutes() {
+    const routes = new Set();
+    allTrades.forEach(t => {
+        if (t.buy_dex && t.sell_dex) {
+            routes.add(`${t.buy_dex} → ${t.sell_dex}`);
+        }
     });
 
-    availablePairs = Array.from(pairSet).sort();
-    availableExitReasons = Array.from(exitReasonSet).sort();
-
-    // Populate pair filter
-    const pairSelect = document.getElementById('filter-pair');
-    const currentPair = pairSelect.value;
-    pairSelect.innerHTML = '<option value="all">All Pairs</option>';
-    availablePairs.forEach(pair => {
+    const select = document.getElementById('filter-route');
+    select.innerHTML = '<option value="all">All Routes</option>';
+    Array.from(routes).sort().forEach(route => {
         const option = document.createElement('option');
-        option.value = pair;
-        option.textContent = pair;
-        pairSelect.appendChild(option);
+        option.value = route;
+        option.textContent = route;
+        select.appendChild(option);
     });
-    if (currentPair !== 'all' && availablePairs.includes(currentPair)) {
-        pairSelect.value = currentPair;
-    }
-
-    // Populate exit reason filter
-    const exitSelect = document.getElementById('filter-exit');
-    const currentExit = exitSelect.value;
-    exitSelect.innerHTML = '<option value="all">All Reasons</option>';
-    availableExitReasons.forEach(reason => {
-        const option = document.createElement('option');
-        option.value = reason;
-        option.textContent = formatExitReasonLabel(reason);
-        exitSelect.appendChild(option);
-    });
-    if (currentExit !== 'all' && availableExitReasons.includes(currentExit)) {
-        exitSelect.value = currentExit;
-    }
 }
 
 function applyFilters() {
     const timeframe = document.getElementById('filter-timeframe').value;
-    const dateFrom = document.getElementById('filter-date-from').value;
-    const dateTo = document.getElementById('filter-date-to').value;
-    const pair = document.getElementById('filter-pair').value;
-    const side = document.getElementById('filter-side').value;
-    const exitReason = document.getElementById('filter-exit').value;
+    const route = document.getElementById('filter-route').value;
     const result = document.getElementById('filter-result').value;
 
-    // Show/hide custom date inputs
-    const showCustomDates = timeframe === 'custom';
-    document.getElementById('date-from-group').style.display = showCustomDates ? 'flex' : 'none';
-    document.getElementById('date-to-group').style.display = showCustomDates ? 'flex' : 'none';
-
-    // Calculate date range
     let startDate = null;
-    let endDate = new Date();
-    endDate.setHours(23, 59, 59, 999);
-
     const now = new Date();
-    switch (timeframe) {
-        case 'today':
-            startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-            break;
-        case '7d':
-            startDate = new Date(now);
-            startDate.setDate(startDate.getDate() - 7);
-            break;
-        case '30d':
-            startDate = new Date(now);
-            startDate.setDate(startDate.getDate() - 30);
-            break;
-        case '90d':
-            startDate = new Date(now);
-            startDate.setDate(startDate.getDate() - 90);
-            break;
-        case 'custom':
-            if (dateFrom) startDate = new Date(dateFrom);
-            if (dateTo) {
-                endDate = new Date(dateTo);
-                endDate.setHours(23, 59, 59, 999);
-            }
-            break;
+
+    if (timeframe === 'today') {
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    } else if (timeframe === '7d') {
+        startDate = new Date(now - 7 * 24 * 60 * 60 * 1000);
+    } else if (timeframe === '30d') {
+        startDate = new Date(now - 30 * 24 * 60 * 60 * 1000);
     }
 
-    // Filter trades
     filteredTrades = allTrades.filter(trade => {
-        // Time filter
-        if (startDate || endDate) {
-            const tradeDate = new Date(trade.closed_at || trade.time || trade.exit_time);
-            if (startDate && tradeDate < startDate) return false;
-            if (endDate && tradeDate > endDate) return false;
+        if (startDate) {
+            const tradeDate = new Date(trade.timestamp || trade.entry_timestamp);
+            if (tradeDate < startDate) return false;
         }
 
-        // Pair filter
-        if (pair !== 'all' && trade.symbol !== pair) return false;
+        if (route !== 'all') {
+            const tradeRoute = `${trade.buy_dex} → ${trade.sell_dex}`;
+            if (tradeRoute !== route) return false;
+        }
 
-        // Side filter
-        if (side !== 'all' && trade.side !== side) return false;
-
-        // Exit reason filter
-        const tradeExitReason = trade.close_reason || trade.exit_reason;
-        if (exitReason !== 'all' && tradeExitReason !== exitReason) return false;
-
-        // Result filter
-        const pnl = trade.pnl || trade.net_pnl || 0;
+        const pnl = parseFloat(trade.profit_loss || 0);
         if (result === 'profit' && pnl <= 0) return false;
         if (result === 'loss' && pnl > 0) return false;
 
         return true;
     });
 
-    // Update active filters display
-    updateActiveFilters();
-
-    // Reset to page 1 when filters change
     currentPage = 1;
-
-    // Sort and display
-    sortFilteredTrades();
-    updateStats(filteredTrades);
+    sortTrades();
+    updateStats();
     updateDisplay();
-}
-
-function updateActiveFilters() {
-    const container = document.getElementById('active-filters');
-    const tags = [];
-
-    const timeframe = document.getElementById('filter-timeframe').value;
-    const pair = document.getElementById('filter-pair').value;
-    const side = document.getElementById('filter-side').value;
-    const exitReason = document.getElementById('filter-exit').value;
-    const result = document.getElementById('filter-result').value;
-
-    if (timeframe !== 'all') {
-        const labels = { 'today': 'Today', '7d': '7 Days', '30d': '30 Days', '90d': '90 Days', 'custom': 'Custom Range' };
-        tags.push({ key: 'timeframe', label: labels[timeframe] || timeframe });
-    }
-    if (pair !== 'all') {
-        tags.push({ key: 'pair', label: `Pair: ${pair}` });
-    }
-    if (side !== 'all') {
-        tags.push({ key: 'side', label: `Side: ${side.toUpperCase()}` });
-    }
-    if (exitReason !== 'all') {
-        tags.push({ key: 'exit', label: `Exit: ${formatExitReasonLabel(exitReason)}` });
-    }
-    if (result !== 'all') {
-        tags.push({ key: 'result', label: result === 'profit' ? 'Profitable' : 'Loss' });
-    }
-
-    if (tags.length === 0) {
-        container.style.display = 'none';
-        return;
-    }
-
-    container.style.display = 'flex';
-    container.innerHTML = tags.map(tag => `
-        <span class="filter-tag">
-            ${tag.label}
-            <span class="filter-tag-remove" onclick="clearFilter('${tag.key}')">&times;</span>
-        </span>
-    `).join('');
-}
-
-function clearFilter(key) {
-    switch (key) {
-        case 'timeframe':
-            document.getElementById('filter-timeframe').value = 'all';
-            break;
-        case 'pair':
-            document.getElementById('filter-pair').value = 'all';
-            break;
-        case 'side':
-            document.getElementById('filter-side').value = 'all';
-            break;
-        case 'exit':
-            document.getElementById('filter-exit').value = 'all';
-            break;
-        case 'result':
-            document.getElementById('filter-result').value = 'all';
-            break;
-    }
-    applyFilters();
 }
 
 function resetFilters() {
     document.getElementById('filter-timeframe').value = 'all';
-    document.getElementById('filter-date-from').value = '';
-    document.getElementById('filter-date-to').value = '';
-    document.getElementById('filter-pair').value = 'all';
-    document.getElementById('filter-side').value = 'all';
-    document.getElementById('filter-exit').value = 'all';
+    document.getElementById('filter-route').value = 'all';
     document.getElementById('filter-result').value = 'all';
     applyFilters();
 }
@@ -789,23 +460,13 @@ function sortTable(column) {
         currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
     } else {
         currentSort.column = column;
-        currentSort.direction = column === 'time' ? 'desc' : 'asc';
+        currentSort.direction = 'desc';
     }
-
-    // Update header styles
-    document.querySelectorAll('.trades-table th').forEach(th => {
-        th.classList.remove('sorted-asc', 'sorted-desc');
-    });
-    const activeHeader = document.querySelector(`th[data-sort="${column}"]`);
-    if (activeHeader) {
-        activeHeader.classList.add(currentSort.direction === 'asc' ? 'sorted-asc' : 'sorted-desc');
-    }
-
-    sortFilteredTrades();
+    sortTrades();
     updateDisplay();
 }
 
-function sortFilteredTrades() {
+function sortTrades() {
     const col = currentSort.column;
     const dir = currentSort.direction === 'asc' ? 1 : -1;
 
@@ -814,52 +475,32 @@ function sortFilteredTrades() {
 
         switch (col) {
             case 'time':
-                aVal = new Date(a.closed_at || a.time || a.exit_time).getTime();
-                bVal = new Date(b.closed_at || b.time || b.exit_time).getTime();
+                aVal = new Date(a.timestamp || a.entry_timestamp).getTime();
+                bVal = new Date(b.timestamp || b.entry_timestamp).getTime();
                 break;
-            case 'symbol':
-                aVal = a.symbol || '';
-                bVal = b.symbol || '';
+            case 'token':
+                aVal = a.token_address || '';
+                bVal = b.token_address || '';
                 return dir * aVal.localeCompare(bVal);
-            case 'side':
-                aVal = a.side || '';
-                bVal = b.side || '';
+            case 'route':
+                aVal = `${a.buy_dex}-${a.sell_dex}`;
+                bVal = `${b.buy_dex}-${b.sell_dex}`;
                 return dir * aVal.localeCompare(bVal);
-            case 'entry_price':
-                aVal = parseFloat(a.entry_price) || 0;
-                bVal = parseFloat(b.entry_price) || 0;
+            case 'amount':
+                aVal = parseFloat(a.amount_eth || 0);
+                bVal = parseFloat(b.amount_eth || 0);
                 break;
-            case 'exit_price':
-                aVal = parseFloat(a.exit_price) || 0;
-                bVal = parseFloat(b.exit_price) || 0;
-                break;
-            case 'size':
-                aVal = parseFloat(a.size) || 0;
-                bVal = parseFloat(b.size) || 0;
-                break;
-            case 'leverage':
-                aVal = a.leverage || 1;
-                bVal = b.leverage || 1;
+            case 'spread':
+                aVal = parseFloat(a.spread_pct || 0);
+                bVal = parseFloat(b.spread_pct || 0);
                 break;
             case 'pnl':
-                aVal = a.pnl || a.net_pnl || 0;
-                bVal = b.pnl || b.net_pnl || 0;
+                aVal = parseFloat(a.profit_loss || 0);
+                bVal = parseFloat(b.profit_loss || 0);
                 break;
-            case 'pnl_pct':
-                aVal = a.pnl_pct || 0;
-                bVal = b.pnl_pct || 0;
-                break;
-            case 'fees':
-                aVal = a.fees || 0;
-                bVal = b.fees || 0;
-                break;
-            case 'exit_reason':
-                aVal = a.close_reason || a.exit_reason || '';
-                bVal = b.close_reason || b.exit_reason || '';
-                return dir * aVal.localeCompare(bVal);
-            case 'duration':
-                aVal = a.duration_seconds || 0;
-                bVal = b.duration_seconds || 0;
+            case 'eth_price':
+                aVal = parseFloat(a.eth_price || 0);
+                bVal = parseFloat(b.eth_price || 0);
                 break;
             default:
                 return 0;
@@ -869,45 +510,31 @@ function sortFilteredTrades() {
     });
 }
 
-function updateStats(trades) {
-    const total = trades.length;
-    const wins = trades.filter(t => (t.pnl || t.net_pnl || 0) > 0).length;
-    const losses = trades.filter(t => (t.pnl || t.net_pnl || 0) <= 0).length;
-    const winRate = total > 0 ? ((wins / total) * 100).toFixed(1) : 0;
-    const totalPnl = trades.reduce((sum, t) => sum + (t.pnl || t.net_pnl || 0), 0);
-    const avgPnl = total > 0 ? totalPnl / total : 0;
-    const totalFees = trades.reduce((sum, t) => sum + (t.fees || 0), 0);
+function updateStats() {
+    const total = filteredTrades.length;
+    const wins = filteredTrades.filter(t => parseFloat(t.profit_loss || 0) > 0).length;
+    const totalPnl = filteredTrades.reduce((sum, t) => sum + parseFloat(t.profit_loss || 0), 0);
+    const avgSpread = total > 0 ? filteredTrades.reduce((sum, t) => sum + parseFloat(t.spread_pct || 0), 0) / total : 0;
+    const totalVolume = filteredTrades.reduce((sum, t) => sum + parseFloat(t.amount_eth || 0), 0);
+    const winRate = total > 0 ? (wins / total * 100) : 0;
 
-    document.getElementById('stat-total-trades').textContent = total;
+    document.getElementById('stat-total').textContent = total;
     document.getElementById('stat-winning').textContent = wins;
-    document.getElementById('stat-losing').textContent = losses;
-    document.getElementById('stat-winrate').textContent = winRate + '%';
+    document.getElementById('stat-winrate').textContent = winRate.toFixed(1) + '%';
 
     const pnlEl = document.getElementById('stat-pnl');
     pnlEl.textContent = `$${totalPnl.toFixed(2)}`;
     pnlEl.className = 'stat-value ' + (totalPnl >= 0 ? 'positive' : 'negative');
 
-    const avgPnlEl = document.getElementById('stat-avg-pnl');
-    avgPnlEl.textContent = `$${avgPnl.toFixed(2)}`;
-    avgPnlEl.className = 'stat-value ' + (avgPnl >= 0 ? 'positive' : 'negative');
-
-    document.getElementById('stat-fees').textContent = `$${totalFees.toFixed(2)}`;
+    document.getElementById('stat-spread').textContent = avgSpread.toFixed(2) + '%';
+    document.getElementById('stat-volume').textContent = totalVolume.toFixed(4) + ' ETH';
 }
 
 function updateDisplay() {
-    const tableBody = document.getElementById('tradesTableBody');
+    const tbody = document.getElementById('tradesTableBody');
     const emptyState = document.getElementById('trades-empty');
     const table = document.getElementById('trades-table');
     const countEl = document.getElementById('trade-count');
-    const totalCountEl = document.getElementById('total-count');
-
-    totalCountEl.textContent = allTrades.length;
-
-    // Calculate pagination
-    const totalPages = Math.ceil(filteredTrades.length / pageSize);
-    const startIndex = (currentPage - 1) * pageSize;
-    const endIndex = startIndex + pageSize;
-    displayedTrades = filteredTrades.slice(startIndex, endIndex);
 
     countEl.textContent = filteredTrades.length;
 
@@ -921,86 +548,58 @@ function updateDisplay() {
     emptyState.style.display = 'none';
     table.style.display = 'table';
 
-    tableBody.innerHTML = displayedTrades.map(trade => {
-        const pnl = trade.pnl || trade.net_pnl || 0;
-        const pnlPct = trade.pnl_pct || 0;
-        const exitReason = formatExitReason(trade.close_reason || trade.exit_reason || 'unknown');
-        const closedAt = trade.closed_at || trade.time || trade.exit_time;
-        const duration = formatDuration(trade.duration_seconds);
+    const totalPages = Math.ceil(filteredTrades.length / pageSize);
+    const start = (currentPage - 1) * pageSize;
+    const displayed = filteredTrades.slice(start, start + pageSize);
+
+    tbody.innerHTML = displayed.map(trade => {
+        const timestamp = trade.timestamp || trade.entry_timestamp;
+        const timeStr = timestamp ? new Date(timestamp).toLocaleString() : 'N/A';
+        const pnl = parseFloat(trade.profit_loss || 0);
+        const spread = parseFloat(trade.spread_pct || 0);
+        const amount = parseFloat(trade.amount_eth || trade.amount || 0);
+        const ethPrice = parseFloat(trade.eth_price || 0);
+        const isDryRun = trade.dry_run || trade.is_simulated;
+
+        const token = trade.token_address || '';
+        const shortToken = token.length > 10 ? `${token.slice(0, 6)}...${token.slice(-4)}` : token;
 
         return `
             <tr>
-                <td>${closedAt ? new Date(closedAt).toLocaleString() : 'N/A'}</td>
-                <td><strong>${trade.symbol}</strong></td>
-                <td><span class="badge badge-${trade.side}">${trade.side.toUpperCase()}</span></td>
-                <td>$${parseFloat(trade.entry_price).toFixed(4)}</td>
-                <td>$${parseFloat(trade.exit_price).toFixed(4)}</td>
-                <td>${parseFloat(trade.size).toFixed(6)}</td>
-                <td>${trade.leverage || 1}x</td>
-                <td class="${pnl >= 0 ? 'positive' : 'negative'}">$${pnl.toFixed(2)}</td>
-                <td class="${pnlPct >= 0 ? 'positive' : 'negative'}">${pnlPct.toFixed(2)}%</td>
-                <td>$${(trade.fees || 0).toFixed(4)}</td>
-                <td>${exitReason}</td>
-                <td>${duration}</td>
+                <td>${timeStr}</td>
+                <td title="${token}"><strong>${shortToken}</strong></td>
+                <td>
+                    <span class="dex-badge">${trade.buy_dex || 'DEX'}</span>
+                    →
+                    <span class="dex-badge">${trade.sell_dex || 'DEX'}</span>
+                </td>
+                <td>${amount.toFixed(4)} ETH</td>
+                <td><span class="spread-badge">${spread.toFixed(2)}%</span></td>
+                <td class="${pnl >= 0 ? 'positive' : 'negative'}"><strong>$${pnl.toFixed(2)}</strong></td>
+                <td>$${ethPrice.toFixed(2)}</td>
+                <td>${isDryRun ? '<span class="simulated-badge">SIMULATED</span>' : '<span class="dex-badge" style="background: rgba(16, 185, 129, 0.2); color: #10b981;">LIVE</span>'}</td>
             </tr>
         `;
     }).join('');
 
-    // Update pagination
     updatePagination(totalPages);
 }
 
 function updatePagination(totalPages) {
     const container = document.getElementById('pagination');
-
     if (totalPages <= 1) {
         container.innerHTML = '';
         return;
     }
 
-    let html = '';
+    let html = `<button class="pagination-btn" onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>←</button>`;
 
-    // Previous button
-    html += `<button class="pagination-btn" onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>
-        <i class="fas fa-chevron-left"></i>
-    </button>`;
-
-    // Page numbers
-    const maxVisiblePages = 5;
-    let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
-    let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
-
-    if (endPage - startPage < maxVisiblePages - 1) {
-        startPage = Math.max(1, endPage - maxVisiblePages + 1);
-    }
-
-    if (startPage > 1) {
-        html += `<button class="pagination-btn" onclick="goToPage(1)">1</button>`;
-        if (startPage > 2) {
-            html += `<span class="pagination-info">...</span>`;
-        }
-    }
-
-    for (let i = startPage; i <= endPage; i++) {
+    for (let i = Math.max(1, currentPage - 2); i <= Math.min(totalPages, currentPage + 2); i++) {
         html += `<button class="pagination-btn ${i === currentPage ? 'active' : ''}" onclick="goToPage(${i})">${i}</button>`;
     }
 
-    if (endPage < totalPages) {
-        if (endPage < totalPages - 1) {
-            html += `<span class="pagination-info">...</span>`;
-        }
-        html += `<button class="pagination-btn" onclick="goToPage(${totalPages})">${totalPages}</button>`;
-    }
-
-    // Next button
-    html += `<button class="pagination-btn" onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>
-        <i class="fas fa-chevron-right"></i>
-    </button>`;
-
-    // Page info
-    const startItem = (currentPage - 1) * pageSize + 1;
-    const endItem = Math.min(currentPage * pageSize, filteredTrades.length);
-    html += `<span class="pagination-info" style="margin-left: 16px;">Showing ${startItem}-${endItem} of ${filteredTrades.length}</span>`;
+    html += `<button class="pagination-btn" onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>→</button>`;
+    html += `<span class="pagination-info">Page ${currentPage} of ${totalPages}</span>`;
 
     container.innerHTML = html;
 }
@@ -1010,159 +609,38 @@ function goToPage(page) {
     if (page < 1 || page > totalPages) return;
     currentPage = page;
     updateDisplay();
-    // Scroll to top of table
-    document.querySelector('.section-card').scrollIntoView({ behavior: 'smooth' });
 }
 
-function formatExitReason(reason) {
-    if (!reason || reason === 'unknown' || reason === '-') {
-        return '<span class="exit-reason">-</span>';
-    }
-    const reasonMap = {
-        'take_profit': { label: 'TP Hit', class: 'tp_hit' },
-        'take_profit_1': { label: 'TP1 Hit', class: 'tp_hit' },
-        'take_profit_2': { label: 'TP2 Hit', class: 'tp_hit' },
-        'take_profit_3': { label: 'TP3 Hit', class: 'tp_hit' },
-        'take_profit_4': { label: 'TP4 Hit', class: 'tp_hit' },
-        'stop_loss': { label: 'SL Hit', class: 'sl_hit' },
-        'trailing_stop': { label: 'TSL Hit', class: 'tsl_hit' },
-        'manual_close': { label: 'Manual', class: 'manual' },
-        'signal_reversal': { label: 'Signal', class: '' },
-        'signal': { label: 'Signal', class: '' },
-        'liquidation_protection': { label: 'Liq Prot', class: 'sl_hit' },
-        'liquidation': { label: 'Liquidation', class: 'sl_hit' }
-    };
-    const info = reasonMap[reason];
-    if (!info) {
-        return `<span class="exit-reason">${reason}</span>`;
-    }
-    return `<span class="exit-reason ${info.class}">${info.label}</span>`;
-}
-
-function formatExitReasonLabel(reason) {
-    const labels = {
-        'take_profit': 'TP Hit',
-        'take_profit_1': 'TP1 Hit',
-        'take_profit_2': 'TP2 Hit',
-        'take_profit_3': 'TP3 Hit',
-        'take_profit_4': 'TP4 Hit',
-        'stop_loss': 'Stop Loss',
-        'trailing_stop': 'Trailing Stop',
-        'manual_close': 'Manual Close',
-        'signal_reversal': 'Signal Reversal',
-        'signal': 'Signal',
-        'liquidation_protection': 'Liq Protection',
-        'liquidation': 'Liquidation'
-    };
-    return labels[reason] || reason;
-}
-
-function formatDuration(seconds) {
-    if (!seconds) return '-';
-    if (seconds < 60) return `${seconds}s`;
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-    const hours = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    if (hours < 24) return `${hours}h ${mins}m`;
-    const days = Math.floor(hours / 24);
-    const remainingHours = hours % 24;
-    return `${days}d ${remainingHours}h`;
-}
-
-// Export functions - export filtered trades
 function exportCSV() {
-    const trades = filteredTrades;
-    if (trades.length === 0) {
+    if (filteredTrades.length === 0) {
         alert('No trades to export');
         return;
     }
 
-    const headers = ['Time', 'Symbol', 'Side', 'Entry Price', 'Exit Price', 'Size', 'Leverage', 'P&L', 'P&L %', 'Fees', 'Exit Reason', 'Duration (s)'];
-    const rows = trades.map(t => [
-        t.closed_at || t.time || t.exit_time || '',
-        t.symbol,
-        t.side,
-        t.entry_price,
-        t.exit_price,
-        t.size,
-        t.leverage || 1,
-        (t.pnl || t.net_pnl || 0).toFixed(4),
-        (t.pnl_pct || 0).toFixed(2),
-        (t.fees || 0).toFixed(4),
-        t.close_reason || t.exit_reason || '',
-        t.duration_seconds || 0
+    const headers = ['Time', 'Token', 'Buy DEX', 'Sell DEX', 'Amount (ETH)', 'Spread %', 'Profit', 'ETH Price', 'Simulated'];
+    const rows = filteredTrades.map(t => [
+        t.timestamp || t.entry_timestamp || '',
+        t.token_address,
+        t.buy_dex,
+        t.sell_dex,
+        parseFloat(t.amount_eth || 0).toFixed(4),
+        parseFloat(t.spread_pct || 0).toFixed(2),
+        parseFloat(t.profit_loss || 0).toFixed(2),
+        parseFloat(t.eth_price || 0).toFixed(2),
+        t.is_simulated ? 'Yes' : 'No'
     ]);
 
-    let csvContent = headers.join(',') + '\n';
-    rows.forEach(row => {
-        csvContent += row.map(cell => `"${cell}"`).join(',') + '\n';
-    });
+    let csv = headers.join(',') + '\n';
+    rows.forEach(row => csv += row.map(c => `"${c}"`).join(',') + '\n');
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob([csv], { type: 'text/csv' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = `arbitrage_trades_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
-    URL.revokeObjectURL(link.href);
 }
 
-async function exportXLSX() {
-    const trades = filteredTrades;
-    if (trades.length === 0) {
-        alert('No trades to export');
-        return;
-    }
-
-    // Load SheetJS library if not already loaded
-    if (typeof XLSX === 'undefined') {
-        await loadScript('https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js');
-    }
-
-    const wsData = [
-        ['Time', 'Symbol', 'Side', 'Entry Price', 'Exit Price', 'Size', 'Leverage', 'P&L', 'P&L %', 'Fees', 'Exit Reason', 'Duration (s)'],
-        ...trades.map(t => [
-            t.closed_at || t.time || t.exit_time || '',
-            t.symbol,
-            t.side,
-            parseFloat(t.entry_price),
-            parseFloat(t.exit_price),
-            parseFloat(t.size),
-            t.leverage || 1,
-            parseFloat((t.pnl || t.net_pnl || 0).toFixed(4)),
-            parseFloat((t.pnl_pct || 0).toFixed(2)),
-            parseFloat((t.fees || 0).toFixed(4)),
-            t.close_reason || t.exit_reason || '',
-            t.duration_seconds || 0
-        ])
-    ];
-
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Arbitrage Trades');
-
-    // Auto-size columns
-    const colWidths = wsData[0].map((_, i) => ({
-        wch: Math.max(...wsData.map(row => String(row[i]).length)) + 2
-    }));
-    ws['!cols'] = colWidths;
-
-    XLSX.writeFile(wb, `arbitrage_trades_${new Date().toISOString().split('T')[0]}.xlsx`);
-}
-
-function loadScript(src) {
-    return new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = src;
-        script.onload = resolve;
-        script.onerror = reject;
-        document.head.appendChild(script);
-    });
-}
-
-// Load on page load
 loadTrades();
-
-// Auto-refresh every 60 seconds
 setInterval(loadTrades, 60000);
 </script>
 {% endblock %}

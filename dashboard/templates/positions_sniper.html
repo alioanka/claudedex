@@ -9,6 +9,9 @@
     }
 
     .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
         margin-bottom: 30px;
     }
 
@@ -23,6 +26,41 @@
         color: var(--text-secondary);
         font-size: 1rem;
     }
+
+    .header-actions {
+        display: flex;
+        gap: 12px;
+    }
+
+    /* Summary Stats */
+    .stats-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+
+    .stat-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 16px;
+    }
+
+    .stat-label {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+    }
+
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+
+    .positive { color: #10b981; }
+    .negative { color: #ef4444; }
 
     .section-card {
         background: var(--card-bg);
@@ -45,51 +83,50 @@
     .table-responsive {
         width: 100%;
         overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
     }
 
     .position-table {
         width: 100%;
         border-collapse: collapse;
-        min-width: 1000px;
+        min-width: 900px;
     }
 
     .position-table th {
         background: var(--metric-bg);
-        padding: 10px 8px;
+        padding: 12px;
         text-align: left;
         font-weight: 600;
         color: var(--text-secondary);
         font-size: 0.75rem;
         text-transform: uppercase;
-        white-space: nowrap;
     }
 
     .position-table td {
-        padding: 10px 8px;
+        padding: 12px;
         border-bottom: 1px solid var(--border-color);
-        white-space: nowrap;
     }
 
     .position-table tr:hover {
         background: var(--metric-bg);
     }
 
-    /* Make Actions column sticky on right side */
-    .position-table th:last-child,
-    .position-table td:last-child {
-        position: sticky;
-        right: 0;
-        background: var(--card-bg);
-        z-index: 1;
-        box-shadow: -2px 0 4px rgba(0,0,0,0.1);
+    .token-info {
+        display: flex;
+        flex-direction: column;
     }
 
-    .position-table th:last-child {
-        background: var(--metric-bg);
+    .token-address {
+        font-family: monospace;
+        font-size: 0.85rem;
+        color: #8b5cf6;
     }
 
-    .badge {
+    .token-symbol {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+    }
+
+    .chain-badge {
         display: inline-block;
         padding: 4px 8px;
         border-radius: 4px;
@@ -97,28 +134,41 @@
         font-weight: 600;
     }
 
-    .badge-long {
-        background: #d1fae5;
-        color: #065f46;
+    .chain-badge.solana { background: rgba(220, 38, 127, 0.2); color: #dc2680; }
+    .chain-badge.ethereum { background: rgba(98, 126, 234, 0.2); color: #627eea; }
+    .chain-badge.bsc { background: rgba(243, 186, 47, 0.2); color: #f3ba2f; }
+    .chain-badge.base { background: rgba(0, 82, 255, 0.2); color: #0052ff; }
+
+    .safety-score {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
     }
 
-    .badge-short {
-        background: #fee2e2;
-        color: #991b1b;
+    .safety-score.safe { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .safety-score.caution { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .safety-score.danger { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+
+    .exit-levels {
+        font-size: 0.8rem;
     }
 
-    .positive {
-        color: #10b981;
-    }
-
-    .negative {
-        color: #ef4444;
-    }
+    .exit-levels .tp { color: #10b981; }
+    .exit-levels .sl { color: #ef4444; }
 
     .empty-state {
         text-align: center;
-        padding: 40px;
+        padding: 60px;
         color: var(--text-secondary);
+    }
+
+    .empty-state i {
+        font-size: 4rem;
+        margin-bottom: 20px;
+        display: block;
+        opacity: 0.5;
     }
 
     .btn {
@@ -132,6 +182,15 @@
         cursor: pointer;
         border: none;
         transition: all 0.2s;
+    }
+
+    .btn-secondary {
+        background: #6b7280;
+        color: white;
+    }
+
+    .btn-secondary:hover {
+        background: #4b5563;
     }
 
     .btn-danger {
@@ -148,86 +207,33 @@
         cursor: not-allowed;
     }
 
-    .btn-warning {
-        background: #f59e0b;
-        color: white;
-    }
-
-    .btn-warning:hover {
-        background: #d97706;
-    }
-
     .btn-sm {
         padding: 4px 10px;
         font-size: 0.75rem;
     }
 
-    .header-actions {
-        display: flex;
-        gap: 12px;
-        align-items: center;
+    /* Position card for mobile */
+    @media (max-width: 768px) {
+        .position-table {
+            display: none;
+        }
+
+        .position-cards {
+            display: block;
+        }
+
+        .position-card {
+            background: var(--metric-bg);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }
     }
 
-    .section-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 20px;
-    }
-
-    .price-levels {
-        font-size: 0.75rem;
-        color: var(--text-secondary);
-    }
-
-    .price-levels .sl { color: #ef4444; }
-    .price-levels .tp { color: #10b981; }
-    .price-levels .tsl { color: #8b5cf6; }
-
-    .tp-levels-container {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        font-size: 0.7rem;
-    }
-
-    .tp-level {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-    }
-
-    .tp-level.hit {
-        text-decoration: line-through;
-        opacity: 0.5;
-    }
-
-    .tp-badge {
-        display: inline-block;
-        padding: 1px 4px;
-        border-radius: 3px;
-        font-weight: 600;
-        font-size: 0.6rem;
-    }
-
-    .tp-badge.tp1 { background: rgba(16, 185, 129, 0.2); color: #10b981; }
-    .tp-badge.tp2 { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
-    .tp-badge.tp3 { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
-    .tp-badge.tp4 { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
-
-    .sl-tsl-container {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        font-size: 0.75rem;
-    }
-
-    .sl-tsl-container .sl {
-        color: #ef4444;
-    }
-
-    .sl-tsl-container .tsl {
-        color: #8b5cf6;
+    @media (min-width: 769px) {
+        .position-cards {
+            display: none;
+        }
     }
 
     [data-theme="dark"] {
@@ -243,50 +249,79 @@
 {% block content %}
 <div class="page-container">
     <div class="page-header">
-        <h1 class="page-title">
-            <i class="fas fa-wallet"></i>
-            Sniper Positions
-        </h1>
-        <p class="page-subtitle">Active perpetual futures positions</p>
+        <div>
+            <h1 class="page-title">
+                <i class="fas fa-wallet"></i>
+                Sniper Positions
+            </h1>
+            <p class="page-subtitle">Active sniped tokens awaiting exit</p>
+        </div>
+        <div class="header-actions">
+            <button class="btn btn-secondary" onclick="loadPositions()">
+                <i class="fas fa-sync"></i> Refresh
+            </button>
+            <button class="btn btn-danger" id="closeAllBtn" onclick="closeAllPositions()" disabled>
+                <i class="fas fa-times-circle"></i> Close All
+            </button>
+        </div>
+    </div>
+
+    <!-- Summary Stats -->
+    <div class="stats-row">
+        <div class="stat-card">
+            <div class="stat-label">Active Positions</div>
+            <div class="stat-value" id="stat-count">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Total Invested</div>
+            <div class="stat-value" id="stat-invested">$0.00</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Current Value</div>
+            <div class="stat-value" id="stat-value">$0.00</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Unrealized P&L</div>
+            <div class="stat-value" id="stat-pnl">$0.00</div>
+        </div>
     </div>
 
     <div class="section-card">
-        <div class="section-header">
-            <div class="section-title" style="margin-bottom: 0;">
-                <i class="fas fa-chart-line"></i>
-                Open Positions (<span id="position-count">0</span>)
-            </div>
-            <div class="header-actions">
-                <button class="btn btn-danger" id="closeAllBtn" onclick="closeAllPositions()" disabled>
-                    <i class="fas fa-times-circle"></i>
-                    Close All Positions
-                </button>
-            </div>
+        <div class="section-title">
+            <i class="fas fa-coins"></i>
+            Open Positions (<span id="position-count">0</span>)
         </div>
+
         <div id="positions-empty" class="empty-state">
-            <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
-            <p>No active futures positions.</p>
+            <i class="fas fa-inbox"></i>
+            <p>No active positions.</p>
+            <p style="font-size: 0.9rem; opacity: 0.7;">Tokens will appear here once sniped.</p>
         </div>
-        <div class="table-responsive">
-            <table class="position-table" id="positions-table" style="display: none;">
+
+        <div class="table-responsive" id="positions-container" style="display: none;">
+            <table class="position-table">
                 <thead>
                     <tr>
-                        <th>Symbol</th>
-                        <th>Side</th>
-                        <th>Size</th>
+                        <th>Token</th>
+                        <th>Chain</th>
+                        <th>Amount</th>
+                        <th>Entry Price</th>
+                        <th>Current Price</th>
                         <th>Value</th>
-                        <th>Lev</th>
-                        <th>Entry</th>
-                        <th>Current</th>
-                        <th>SL/TSL</th>
-                        <th>Take Profits</th>
                         <th>P&L</th>
-                        <th>Actions</th>
+                        <th>Safety</th>
+                        <th>TP/SL</th>
+                        <th>Age</th>
+                        <th>Action</th>
                     </tr>
                 </thead>
                 <tbody id="positionsTableBody">
                 </tbody>
             </table>
+        </div>
+
+        <!-- Mobile Cards -->
+        <div class="position-cards" id="positionCards">
         </div>
     </div>
 </div>
@@ -294,30 +329,49 @@
 <script>
 async function loadPositions() {
     try {
-        // Use the new dedicated positions endpoint for full details
         const response = await fetch('/api/sniper/positions');
-        if (!response.ok) throw new Error('Failed to fetch positions');
-        const data = await response.json();
+        if (!response.ok) throw new Error('Failed to fetch');
 
+        const data = await response.json();
         if (data.success && data.positions) {
             updatePositions(data.positions);
+            updateStats(data.positions);
         } else {
-            // Fallback to simulator data
-            const simResponse = await fetch('/api/simulator/data');
-            const simData = await simResponse.json();
-            if (simData.futures && simData.futures.positions) {
-                updatePositions(simData.futures.positions);
-            }
+            updatePositions([]);
+            updateStats([]);
         }
     } catch (error) {
         console.error('Error loading positions:', error);
     }
 }
 
+function updateStats(positions) {
+    const count = positions.length;
+    let totalInvested = 0;
+    let totalValue = 0;
+    let totalPnl = 0;
+
+    positions.forEach(pos => {
+        const invested = parseFloat(pos.invested_usd || pos.entry_price * pos.amount || 0);
+        const currentValue = parseFloat(pos.current_value_usd || pos.current_price * pos.amount || 0);
+        totalInvested += invested;
+        totalValue += currentValue;
+        totalPnl += parseFloat(pos.unrealized_pnl || 0);
+    });
+
+    document.getElementById('stat-count').textContent = count;
+    document.getElementById('stat-invested').textContent = `$${totalInvested.toFixed(2)}`;
+    document.getElementById('stat-value').textContent = `$${totalValue.toFixed(2)}`;
+
+    const pnlEl = document.getElementById('stat-pnl');
+    pnlEl.textContent = `$${totalPnl.toFixed(2)}`;
+    pnlEl.className = 'stat-value ' + (totalPnl >= 0 ? 'positive' : 'negative');
+}
+
 function updatePositions(positions) {
-    const tableBody = document.getElementById('positionsTableBody');
+    const container = document.getElementById('positions-container');
     const emptyState = document.getElementById('positions-empty');
-    const table = document.getElementById('positions-table');
+    const tableBody = document.getElementById('positionsTableBody');
     const countEl = document.getElementById('position-count');
     const closeAllBtn = document.getElementById('closeAllBtn');
 
@@ -326,85 +380,55 @@ function updatePositions(positions) {
 
     if (positions.length === 0) {
         emptyState.style.display = 'block';
-        table.style.display = 'none';
+        container.style.display = 'none';
         return;
     }
 
     emptyState.style.display = 'none';
-    table.style.display = 'table';
+    container.style.display = 'block';
 
     tableBody.innerHTML = positions.map(pos => {
-        // Handle both old format (from simulator) and new format (from positions endpoint)
-        const symbol = pos.symbol;
-        const side = pos.side;
-        const size = pos.size || 0;
-        const notionalValue = pos.notional_value || 0;
-        const leverage = pos.leverage || 1;
-        const entryPrice = pos.entry_price || pos.entry || 0;
-        const currentPrice = pos.current_price || pos.current || 0;
-        const stopLoss = pos.stop_loss;
-        const trailingStopPrice = pos.trailing_stop_price;
-        const trailingStopEnabled = pos.trailing_stop;
-        const highestPrice = pos.highest_price;
-        const lowestPrice = pos.lowest_price;
-        const tpLevels = pos.tp_levels || [];
-        const pnlUsd = pos.unrealized_pnl !== undefined ? pos.unrealized_pnl : parseFloat((pos.pnl_usd || '0').replace('$', ''));
-        const pnlPct = pos.unrealized_pnl_pct !== undefined ? pos.unrealized_pnl_pct : parseFloat(pos.pnl_pct || 0);
-
-        // Build SL/TSL display
-        let slTslHtml = '<div class="sl-tsl-container">';
-        if (stopLoss) {
-            slTslHtml += `<div><span class="sl">SL: $${parseFloat(stopLoss).toFixed(4)}</span></div>`;
-        }
-        if (trailingStopPrice) {
-            slTslHtml += `<div><span class="tsl">TSL: $${parseFloat(trailingStopPrice).toFixed(4)}</span></div>`;
-        } else if (trailingStopEnabled) {
-            slTslHtml += `<div><span class="tsl" style="opacity: 0.6;">TSL: waiting</span></div>`;
-        }
-        slTslHtml += '</div>';
-        if (slTslHtml === '<div class="sl-tsl-container"></div>') {
-            slTslHtml = '-';
-        }
-
-        // Build TP levels display
-        let tpHtml = '';
-        if (tpLevels.length > 0) {
-            tpHtml = '<div class="tp-levels-container">';
-            tpLevels.forEach(tp => {
-                const hitClass = tp.hit ? 'hit' : '';
-                const icon = tp.hit ? '✓' : '○';
-                tpHtml += `
-                    <div class="tp-level ${hitClass}">
-                        <span class="tp-badge tp${tp.level}">TP${tp.level}</span>
-                        <span>$${parseFloat(tp.price).toFixed(4)}</span>
-                        <span style="color: #9ca3af;">(${tp.size_pct}%)</span>
-                        <span>${icon}</span>
-                    </div>
-                `;
-            });
-            tpHtml += '</div>';
-        } else if (pos.take_profit) {
-            // Fallback to single TP if no tp_levels
-            tpHtml = `<span class="tp">$${parseFloat(pos.take_profit).toFixed(4)}</span>`;
-        } else {
-            tpHtml = '-';
-        }
+        const tokenAddress = pos.token_address || pos.symbol || 'Unknown';
+        const symbol = pos.symbol || '';
+        const chain = pos.chain || 'solana';
+        const amount = parseFloat(pos.amount || pos.size || 0);
+        const entryPrice = parseFloat(pos.entry_price || 0);
+        const currentPrice = parseFloat(pos.current_price || 0);
+        const currentValue = currentPrice * amount;
+        const pnl = parseFloat(pos.unrealized_pnl || 0);
+        const pnlPct = parseFloat(pos.unrealized_pnl_pct || 0);
+        const safetyScore = pos.safety_score || 0;
+        const tp = pos.take_profit_pct || 50;
+        const sl = pos.stop_loss_pct || 20;
+        const age = formatAge(pos.opened_at);
 
         return `
-            <tr data-symbol="${symbol}">
-                <td><strong>${symbol}</strong></td>
-                <td><span class="badge badge-${side}">${side.toUpperCase()}</span></td>
-                <td>${parseFloat(size).toFixed(6)}</td>
-                <td>$${parseFloat(notionalValue).toFixed(2)}</td>
-                <td>${leverage}x</td>
-                <td>$${parseFloat(entryPrice).toLocaleString()}</td>
-                <td>$${parseFloat(currentPrice).toLocaleString()}</td>
-                <td class="price-levels">${slTslHtml}</td>
-                <td>${tpHtml}</td>
-                <td class="${pnlUsd >= 0 ? 'positive' : 'negative'}">$${pnlUsd.toFixed(2)} (${pnlPct.toFixed(2)}%)</td>
+            <tr data-token="${tokenAddress}">
                 <td>
-                    <button class="btn btn-danger btn-sm" onclick="closeSniperPosition('${symbol}')" title="Close Position">
-                        <i class="fas fa-times"></i> Close
+                    <div class="token-info">
+                        <span class="token-address">${shortenAddress(tokenAddress)}</span>
+                        ${symbol ? `<span class="token-symbol">${symbol}</span>` : ''}
+                    </div>
+                </td>
+                <td><span class="chain-badge ${chain}">${chain.toUpperCase()}</span></td>
+                <td>${amount.toFixed(4)}</td>
+                <td>$${entryPrice.toFixed(8)}</td>
+                <td>$${currentPrice.toFixed(8)}</td>
+                <td>$${currentValue.toFixed(2)}</td>
+                <td class="${pnl >= 0 ? 'positive' : 'negative'}">
+                    $${pnl.toFixed(2)} (${pnlPct.toFixed(1)}%)
+                </td>
+                <td>${formatSafetyScore(safetyScore)}</td>
+                <td>
+                    <div class="exit-levels">
+                        <div class="tp">TP: +${tp}%</div>
+                        <div class="sl">SL: -${sl}%</div>
+                    </div>
+                </td>
+                <td>${age}</td>
+                <td>
+                    <button class="btn btn-danger btn-sm" onclick="closePosition('${tokenAddress}')">
+                        <i class="fas fa-times"></i> Sell
                     </button>
                 </td>
             </tr>
@@ -412,13 +436,32 @@ function updatePositions(positions) {
     }).join('');
 }
 
-async function closeSniperPosition(symbol) {
-    if (!confirm(`Are you sure you want to close the ${symbol} position?`)) {
-        return;
-    }
+function shortenAddress(address) {
+    if (!address || address.length < 12) return address || 'Unknown';
+    return address.slice(0, 6) + '...' + address.slice(-4);
+}
 
-    // Disable the button to prevent double-clicks
-    const btn = document.querySelector(`tr[data-symbol="${symbol}"] .btn-danger`);
+function formatSafetyScore(score) {
+    if (score >= 70) return `<span class="safety-score safe">${score}</span>`;
+    if (score >= 40) return `<span class="safety-score caution">${score}</span>`;
+    return `<span class="safety-score danger">${score}</span>`;
+}
+
+function formatAge(timestamp) {
+    if (!timestamp) return '-';
+    const diff = Date.now() - new Date(timestamp).getTime();
+    const mins = Math.floor(diff / 60000);
+    const hours = Math.floor(mins / 60);
+    const days = Math.floor(hours / 24);
+    if (days > 0) return `${days}d ${hours % 24}h`;
+    if (hours > 0) return `${hours}h ${mins % 60}m`;
+    return `${mins}m`;
+}
+
+async function closePosition(tokenAddress) {
+    if (!confirm(`Sell position for ${shortenAddress(tokenAddress)}?`)) return;
+
+    const btn = document.querySelector(`tr[data-token="${tokenAddress}"] .btn-danger`);
     if (btn) {
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
@@ -428,63 +471,48 @@ async function closeSniperPosition(symbol) {
         const response = await fetch('/api/sniper/position/close', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ symbol: symbol })
+            body: JSON.stringify({ symbol: tokenAddress })
         });
 
         const data = await response.json();
-
         if (data.success) {
-            showToast('success', data.message || `Position ${symbol} closed successfully`);
-        } else if (response.status === 404 || data.already_closed) {
-            // Position not found - show debug info
-            const activeList = data.active_positions ? data.active_positions.join(', ') : 'unknown';
-            console.error(`Close failed - Symbol: '${symbol}', Active: [${activeList}]`);
-            showToast('warning', `Position ${symbol} not found. Active: ${activeList}`);
+            showToast('success', data.message || 'Position sold successfully');
         } else {
-            showToast('error', data.error || 'Failed to close position');
+            showToast('error', data.error || 'Failed to sell position');
         }
     } catch (error) {
-        console.error('Error closing position:', error);
-        showToast('error', 'Failed to close position: ' + error.message);
+        showToast('error', 'Failed: ' + error.message);
     } finally {
-        // Always refresh the positions list
         loadPositions();
     }
 }
 
 async function closeAllPositions() {
-    if (!confirm('Are you sure you want to close ALL futures positions? This action cannot be undone.')) {
-        return;
-    }
+    if (!confirm('Sell ALL positions? This will market sell all tokens.')) return;
 
-    const closeAllBtn = document.getElementById('closeAllBtn');
-    closeAllBtn.disabled = true;
-    closeAllBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Closing...';
+    const btn = document.getElementById('closeAllBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Selling...';
 
     try {
         const response = await fetch('/api/sniper/positions/close-all', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
+            method: 'POST'
         });
 
         const data = await response.json();
-
         if (data.success) {
-            showToast('success', data.message || 'All positions closed successfully');
-            loadPositions(); // Refresh the list
+            showToast('success', data.message || 'All positions sold');
         } else {
-            showToast('error', data.error || 'Failed to close positions');
+            showToast('error', data.error || 'Failed to sell positions');
         }
     } catch (error) {
-        console.error('Error closing all positions:', error);
-        showToast('error', 'Failed to close positions: ' + error.message);
+        showToast('error', 'Failed: ' + error.message);
     } finally {
-        closeAllBtn.innerHTML = '<i class="fas fa-times-circle"></i> Close All Positions';
-        loadPositions(); // Refresh to update button state
+        btn.innerHTML = '<i class="fas fa-times-circle"></i> Close All';
+        loadPositions();
     }
 }
 
-// Toast notification helper (if not already defined globally)
 function showToast(type, message) {
     if (typeof window.showToast === 'function') {
         window.showToast(type, message);
@@ -493,7 +521,7 @@ function showToast(type, message) {
     }
 }
 
-// Load on page load
+// Initial load
 loadPositions();
 
 // Auto-refresh every 5 seconds

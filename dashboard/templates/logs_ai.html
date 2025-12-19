@@ -1,0 +1,453 @@
+{% extends "base.html" %}
+
+{% block title %}AI Analysis Logs{% endblock %}
+
+{% block extra_head %}
+<style>
+    .page-container {
+        padding: 20px;
+    }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 30px;
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+
+    .page-title {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        margin-bottom: 8px;
+    }
+
+    .page-subtitle {
+        color: var(--text-secondary);
+        font-size: 1rem;
+    }
+
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 16px;
+        margin-bottom: 30px;
+    }
+
+    .stat-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 16px;
+    }
+
+    .stat-label {
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+        margin-bottom: 6px;
+        font-weight: 500;
+    }
+
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+
+    .section-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+
+    .section-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s;
+    }
+
+    .btn-secondary { background: #6b7280; color: white; }
+    .btn-secondary:hover { background: #4b5563; }
+
+    .log-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .log-table th {
+        background: var(--metric-bg);
+        padding: 12px 10px;
+        text-align: left;
+        font-weight: 600;
+        color: var(--text-secondary);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        white-space: nowrap;
+    }
+
+    .log-table td {
+        padding: 12px 10px;
+        border-bottom: 1px solid var(--border-color);
+        vertical-align: top;
+    }
+
+    .log-table tr:hover {
+        background: var(--metric-bg);
+    }
+
+    .table-responsive {
+        overflow-x: auto;
+    }
+
+    .log-entry {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 16px;
+    }
+
+    .log-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .log-timestamp {
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .model-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .model-openai {
+        background: rgba(16, 163, 127, 0.2);
+        color: #10a37f;
+    }
+
+    .model-claude {
+        background: rgba(217, 119, 6, 0.2);
+        color: #d97706;
+    }
+
+    .log-score {
+        font-size: 1.5rem;
+        font-weight: 700;
+        padding: 4px 12px;
+        border-radius: 8px;
+    }
+
+    .score-positive {
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
+    }
+
+    .score-negative {
+        background: rgba(239, 68, 68, 0.2);
+        color: #ef4444;
+    }
+
+    .score-neutral {
+        background: rgba(107, 114, 128, 0.2);
+        color: #6b7280;
+    }
+
+    .log-headlines {
+        background: var(--metric-bg);
+        border-radius: 6px;
+        padding: 12px;
+        margin-bottom: 12px;
+    }
+
+    .log-headlines h4 {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+        margin-bottom: 8px;
+    }
+
+    .headline-item {
+        font-size: 0.875rem;
+        color: var(--text-primary);
+        padding: 4px 0;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .headline-item:last-child {
+        border-bottom: none;
+    }
+
+    .log-details {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 12px;
+    }
+
+    .log-detail {
+        padding: 8px 12px;
+        background: var(--metric-bg);
+        border-radius: 6px;
+    }
+
+    .log-detail-label {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        margin-bottom: 4px;
+    }
+
+    .log-detail-value {
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--text-secondary);
+    }
+
+    .empty-state i {
+        font-size: 3rem;
+        margin-bottom: 20px;
+        opacity: 0.5;
+    }
+
+    [data-theme="dark"] {
+        --card-bg: #1f2937;
+        --border-color: #374151;
+        --text-primary: #f9fafb;
+        --text-secondary: #d1d5db;
+        --metric-bg: #111827;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-container">
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">
+                <i class="fas fa-file-alt"></i>
+                AI Analysis Logs
+            </h1>
+            <p class="page-subtitle">Detailed logs of OpenAI API calls and sentiment analysis</p>
+        </div>
+        <button class="btn btn-secondary" onclick="loadLogs()">
+            <i class="fas fa-sync"></i> Refresh
+        </button>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">Total API Calls</div>
+            <div class="stat-value" id="stat-total-calls">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Total Tokens Used</div>
+            <div class="stat-value" id="stat-total-tokens">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Avg Response Time</div>
+            <div class="stat-value" id="stat-avg-response">0.0s</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Avg Sentiment</div>
+            <div class="stat-value" id="stat-avg-sentiment">0.00</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Est. API Cost (24h)</div>
+            <div class="stat-value" id="stat-est-cost">$0.00</div>
+        </div>
+    </div>
+
+    <!-- Recent Logs -->
+    <div class="section-card">
+        <div class="section-title">
+            <i class="fas fa-history"></i>
+            Recent OpenAI API Calls
+        </div>
+        <div id="logsContainer">
+            <div class="empty-state">
+                <i class="fas fa-spinner fa-spin"></i>
+                <p>Loading logs...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+async function loadLogs() {
+    try {
+        const response = await fetch('/api/ai/logs');
+        const data = await response.json();
+
+        if (data.success && data.logs && data.logs.length > 0) {
+            updateStats(data.logs);
+            renderLogs(data.logs);
+        } else {
+            showEmptyState();
+        }
+    } catch (error) {
+        console.error('Error loading logs:', error);
+        showEmptyState();
+    }
+}
+
+function updateStats(logs) {
+    document.getElementById('stat-total-calls').textContent = logs.length;
+
+    const totalTokens = logs.reduce((sum, log) => sum + (log.total_tokens || 0), 0);
+    document.getElementById('stat-total-tokens').textContent = totalTokens.toLocaleString();
+
+    const avgResponse = logs.reduce((sum, log) => sum + (log.response_time_sec || 0), 0) / logs.length;
+    document.getElementById('stat-avg-response').textContent = avgResponse.toFixed(2) + 's';
+
+    const avgSentiment = logs.reduce((sum, log) => sum + (log.sentiment_score || 0), 0) / logs.length;
+    document.getElementById('stat-avg-sentiment').textContent = avgSentiment.toFixed(2);
+
+    // Estimate cost (GPT-3.5-turbo: ~$0.002 per 1K tokens)
+    const estCost = (totalTokens / 1000) * 0.002;
+    document.getElementById('stat-est-cost').textContent = '$' + estCost.toFixed(4);
+}
+
+function renderLogs(logs) {
+    const container = document.getElementById('logsContainer');
+
+    if (logs.length === 0) {
+        showEmptyState();
+        return;
+    }
+
+    const html = logs.map(log => {
+        const score = log.sentiment_score || 0;
+        let scoreClass = 'score-neutral';
+        if (score > 0.3) scoreClass = 'score-positive';
+        else if (score < -0.3) scoreClass = 'score-negative';
+
+        const headlines = JSON.parse(log.headlines || '[]');
+        const headlinesHtml = headlines.slice(0, 5).map(h =>
+            `<div class="headline-item">${escapeHtml(h)}</div>`
+        ).join('');
+
+        const timestamp = new Date(log.timestamp).toLocaleString();
+
+        const modelName = log.model || 'gpt-3.5-turbo';
+        const isClaude = modelName.toLowerCase().includes('claude');
+        const modelBadgeClass = isClaude ? 'model-claude' : 'model-openai';
+        const modelIcon = isClaude ? 'fa-robot' : 'fa-brain';
+
+        return `
+            <div class="log-entry">
+                <div class="log-header">
+                    <div class="log-timestamp">
+                        <i class="fas fa-clock"></i> ${timestamp}
+                        <span class="model-badge ${modelBadgeClass}">
+                            <i class="fas ${modelIcon}"></i> ${modelName}
+                        </span>
+                    </div>
+                    <div class="log-score ${scoreClass}">
+                        ${score >= 0 ? '+' : ''}${score.toFixed(2)}
+                    </div>
+                </div>
+
+                <div class="log-headlines">
+                    <h4><i class="fas fa-newspaper"></i> Headlines Analyzed (${headlines.length})</h4>
+                    ${headlinesHtml}
+                    ${headlines.length > 5 ? `<div class="headline-item" style="color: var(--text-secondary);">... and ${headlines.length - 5} more</div>` : ''}
+                </div>
+
+                <div class="log-details">
+                    <div class="log-detail">
+                        <div class="log-detail-label">Raw Response</div>
+                        <div class="log-detail-value">${log.raw_response || 'N/A'}</div>
+                    </div>
+                    <div class="log-detail">
+                        <div class="log-detail-label">Response Time</div>
+                        <div class="log-detail-value">${(log.response_time_sec || 0).toFixed(2)}s</div>
+                    </div>
+                    <div class="log-detail">
+                        <div class="log-detail-label">Prompt Tokens</div>
+                        <div class="log-detail-value">${(log.prompt_tokens || 0).toLocaleString()}</div>
+                    </div>
+                    <div class="log-detail">
+                        <div class="log-detail-label">Completion Tokens</div>
+                        <div class="log-detail-value">${(log.completion_tokens || 0).toLocaleString()}</div>
+                    </div>
+                    <div class="log-detail">
+                        <div class="log-detail-label">Total Tokens</div>
+                        <div class="log-detail-value">${(log.total_tokens || 0).toLocaleString()}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    container.innerHTML = html;
+}
+
+function showEmptyState() {
+    document.getElementById('logsContainer').innerHTML = `
+        <div class="empty-state">
+            <i class="fas fa-file-alt"></i>
+            <p>No AI analysis logs found</p>
+            <p style="font-size: 0.875rem;">Logs will appear here after the AI module runs analysis cycles</p>
+        </div>
+    `;
+
+    document.getElementById('stat-total-calls').textContent = '0';
+    document.getElementById('stat-total-tokens').textContent = '0';
+    document.getElementById('stat-avg-response').textContent = '0.0s';
+    document.getElementById('stat-avg-sentiment').textContent = '0.00';
+    document.getElementById('stat-est-cost').textContent = '$0.00';
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Load on page load
+loadLogs();
+
+// Auto-refresh every 60 seconds
+setInterval(loadLogs, 60000);
+</script>
+{% endblock %}

@@ -2,87 +2,284 @@
 
 {% block title %}AI Sentiment Analysis - ClaudeDex{% endblock %}
 
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    .sentiment-gauge {
+        text-align: center;
+        padding: 30px;
+        background: var(--card-bg);
+        border-radius: 16px;
+        border: 1px solid var(--border-color);
+    }
+
+    .gauge-score {
+        font-size: 4rem;
+        font-weight: 700;
+        line-height: 1;
+    }
+
+    .gauge-label {
+        font-size: 1.5rem;
+        margin-top: 10px;
+    }
+
+    .action-badge {
+        display: inline-block;
+        padding: 8px 24px;
+        border-radius: 20px;
+        font-size: 1.25rem;
+        font-weight: 700;
+        margin-top: 15px;
+    }
+
+    .action-buy { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .action-sell { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+    .action-hold { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+
+    .info-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 16px;
+    }
+
+    .info-card h6 {
+        color: var(--text-secondary);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+    }
+
+    .info-card .value {
+        font-size: 1.5rem;
+        font-weight: 600;
+    }
+
+    .threshold-bar {
+        height: 8px;
+        background: linear-gradient(to right, #ef4444 0%, #f59e0b 35%, #f59e0b 65%, #10b981 100%);
+        border-radius: 4px;
+        position: relative;
+        margin: 20px 0;
+    }
+
+    .threshold-marker {
+        position: absolute;
+        top: -8px;
+        width: 3px;
+        height: 24px;
+        background: white;
+        border: 2px solid #1f2937;
+        border-radius: 2px;
+        transform: translateX(-50%);
+    }
+
+    .threshold-labels {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+    }
+
+    .explanation-box {
+        background: rgba(139, 92, 246, 0.1);
+        border: 1px solid rgba(139, 92, 246, 0.3);
+        border-radius: 8px;
+        padding: 16px;
+        margin-top: 20px;
+    }
+
+    .explanation-box h6 {
+        color: #8b5cf6;
+        margin-bottom: 10px;
+    }
+
+    [data-theme="dark"] {
+        --card-bg: #1f2937;
+        --border-color: #374151;
+        --text-secondary: #9ca3af;
+    }
+
+    [data-theme="light"] {
+        --card-bg: #ffffff;
+        --border-color: #e5e7eb;
+        --text-secondary: #6b7280;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid">
+    <!-- Main Sentiment Display -->
     <div class="row mb-4">
-        <div class="col-12">
-            <div class="card">
-                <div class="card-header">
-                    <h5 class="mb-0">Market Sentiment Analysis</h5>
+        <div class="col-md-4">
+            <div class="sentiment-gauge">
+                <div class="gauge-score" id="sentimentScore">--</div>
+                <div class="gauge-label" id="sentimentLabel">Loading...</div>
+                <div class="action-badge action-hold" id="actionBadge">ANALYZING...</div>
+
+                <!-- Threshold Bar -->
+                <div style="margin-top: 30px;">
+                    <div class="threshold-bar">
+                        <div class="threshold-marker" id="scoreMarker" style="left: 50%;"></div>
+                    </div>
+                    <div class="threshold-labels">
+                        <span>-100 (Sell)</span>
+                        <span>0 (Hold)</span>
+                        <span>+100 (Buy)</span>
+                    </div>
+                </div>
+
+                <div class="explanation-box">
+                    <h6><i class="fas fa-info-circle"></i> How it works</h6>
+                    <small>
+                        <strong>Score Range:</strong> -100 to +100<br>
+                        <strong>BUY Signal:</strong> Score ≥ +50 (Strong bullish sentiment)<br>
+                        <strong>SELL Signal:</strong> Score ≤ -50 (Strong bearish sentiment)<br>
+                        <strong>HOLD:</strong> Score between -50 and +50 (Neutral/uncertain)<br>
+                        <em>Trades execute only when Direct Trading is enabled AND confidence threshold is met.</em>
+                    </small>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-8">
+            <div class="card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="fas fa-chart-line"></i> Sentiment Trend (24h)</h5>
+                    <span class="badge bg-secondary" id="dataPoints">0 data points</span>
                 </div>
                 <div class="card-body">
-                    <div class="row">
-                        <div class="col-md-4 text-center">
-                            <h6 class="text-muted">Current Sentiment</h6>
-                            <h2 id="sentimentScore" class="display-4 fw-bold">--</h2>
-                            <p id="sentimentLabel" class="text-muted">Loading...</p>
-                        </div>
-                        <div class="col-md-8">
-                            <canvas id="sentimentChart" height="200"></canvas>
-                        </div>
-                    </div>
+                    <canvas id="sentimentChart" height="250"></canvas>
                 </div>
             </div>
         </div>
     </div>
 
+    <!-- Info Cards Row -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="info-card">
+                <h6>Analysis Interval</h6>
+                <div class="value">15 min</div>
+                <small class="text-muted">News analyzed every 15 minutes</small>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="info-card">
+                <h6>Data Source</h6>
+                <div class="value">CryptoCompare</div>
+                <small class="text-muted">Top 10 news headlines</small>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="info-card">
+                <h6>AI Model</h6>
+                <div class="value" id="aiModel">Loading...</div>
+                <small class="text-muted">Sentiment analysis model</small>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="info-card">
+                <h6>Last Analysis</h6>
+                <div class="value" id="lastAnalysis">--</div>
+                <small class="text-muted">Time since last update</small>
+            </div>
+        </div>
+    </div>
+
     <div class="row">
+        <!-- Signal History -->
         <div class="col-md-6">
             <div class="card">
                 <div class="card-header">
-                    <h5 class="mb-0">Recent Signals</h5>
+                    <h5 class="mb-0"><i class="fas fa-history"></i> Signal History</h5>
                 </div>
-                <div class="card-body">
+                <div class="card-body p-0">
                     <div class="table-responsive">
-                        <table class="table table-hover" id="signalsTable">
+                        <table class="table table-hover mb-0" id="signalsTable">
                             <thead>
                                 <tr>
                                     <th>Time</th>
-                                    <th>Source</th>
                                     <th>Score</th>
-                                    <th>Action</th>
+                                    <th>Signal</th>
+                                    <th>Headlines</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                <!-- Populated by JS -->
+                                <tr><td colspan="4" class="text-center py-4">Loading signals...</td></tr>
                             </tbody>
                         </table>
                     </div>
                 </div>
             </div>
         </div>
+
+        <!-- AI Performance -->
         <div class="col-md-6">
-            <div class="card">
+            <div class="card mb-3">
                 <div class="card-header">
-                    <h5 class="mb-0">AI Performance</h5>
+                    <h5 class="mb-0"><i class="fas fa-chart-pie"></i> AI Trading Performance</h5>
                 </div>
                 <div class="card-body">
-                    <div class="d-flex justify-content-between mb-3">
-                        <span>Total AI Trades:</span>
-                        <span id="totalAiTrades" class="fw-bold">0</span>
+                    <div class="row text-center">
+                        <div class="col-4">
+                            <h3 id="totalAiTrades" class="mb-0">0</h3>
+                            <small class="text-muted">Total Trades</small>
+                        </div>
+                        <div class="col-4">
+                            <h3 id="aiWinRate" class="mb-0 text-success">0%</h3>
+                            <small class="text-muted">Win Rate</small>
+                        </div>
+                        <div class="col-4">
+                            <h3 id="aiNetPnl" class="mb-0">$0</h3>
+                            <small class="text-muted">Net P&L</small>
+                        </div>
                     </div>
-                    <div class="d-flex justify-content-between mb-3">
-                        <span>AI Win Rate:</span>
-                        <span id="aiWinRate" class="fw-bold">0%</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-cog"></i> Current Settings</h5>
+                </div>
+                <div class="card-body">
+                    <div class="d-flex justify-content-between mb-2">
+                        <span>Direct Trading</span>
+                        <span id="directTrading" class="badge bg-secondary">Off</span>
+                    </div>
+                    <div class="d-flex justify-content-between mb-2">
+                        <span>Confidence Threshold</span>
+                        <span id="confThreshold">85%</span>
+                    </div>
+                    <div class="d-flex justify-content-between mb-2">
+                        <span>Trade Amount</span>
+                        <span id="tradeAmount">$50</span>
                     </div>
                     <div class="d-flex justify-content-between">
-                        <span>Net PnL:</span>
-                        <span id="aiNetPnl" class="fw-bold">$0.00</span>
+                        <span>AI Provider</span>
+                        <span id="aiProvider">OpenAI</span>
                     </div>
+                    <hr>
+                    <a href="/ai/settings" class="btn btn-outline-primary btn-sm w-100">
+                        <i class="fas fa-sliders-h"></i> Configure Settings
+                    </a>
                 </div>
             </div>
         </div>
     </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
     document.addEventListener('DOMContentLoaded', initDashboard);
 
     async function initDashboard() {
         await loadSentimentData();
         await loadPerformance();
-        setInterval(loadSentimentData, 60000); // Refresh every minute
+        await loadSettings();
+        setInterval(loadSentimentData, 60000);
     }
 
     async function loadSentimentData() {
@@ -90,33 +287,58 @@
             const response = await fetch('/api/ai/sentiment');
             const data = await response.json();
 
-            if (data.success && data.data.length > 0) {
+            if (data.success && data.data && data.data.length > 0) {
                 const history = data.data;
                 const latest = history[history.length - 1];
 
-                // Update Score
+                // Update Score Display
                 const score = latest.score;
+                const scoreDisplay = (score * 100).toFixed(0);
                 const scoreEl = document.getElementById('sentimentScore');
                 const labelEl = document.getElementById('sentimentLabel');
+                const actionEl = document.getElementById('actionBadge');
+                const markerEl = document.getElementById('scoreMarker');
 
-                scoreEl.textContent = (score * 100).toFixed(0);
+                scoreEl.textContent = scoreDisplay;
 
-                if (score > 0.5) {
-                    scoreEl.className = 'display-4 fw-bold text-success';
+                // Position marker (score is -1 to 1, map to 0-100%)
+                const markerPos = ((score + 1) / 2) * 100;
+                markerEl.style.left = markerPos + '%';
+
+                // Determine action and styling
+                if (score >= 0.5) {
+                    scoreEl.className = 'gauge-score text-success';
                     labelEl.textContent = 'Bullish';
-                } else if (score < -0.5) {
-                    scoreEl.className = 'display-4 fw-bold text-danger';
+                    actionEl.textContent = 'BUY SIGNAL';
+                    actionEl.className = 'action-badge action-buy';
+                } else if (score <= -0.5) {
+                    scoreEl.className = 'gauge-score text-danger';
                     labelEl.textContent = 'Bearish';
+                    actionEl.textContent = 'SELL SIGNAL';
+                    actionEl.className = 'action-badge action-sell';
                 } else {
-                    scoreEl.className = 'display-4 fw-bold text-warning';
+                    scoreEl.className = 'gauge-score text-warning';
                     labelEl.textContent = 'Neutral';
+                    actionEl.textContent = 'HOLD';
+                    actionEl.className = 'action-badge action-hold';
                 }
+
+                // Update data points count
+                document.getElementById('dataPoints').textContent = history.length + ' data points';
+
+                // Update last analysis time
+                const lastTime = new Date(latest.timestamp);
+                const diff = Math.floor((Date.now() - lastTime) / 60000);
+                document.getElementById('lastAnalysis').textContent = diff < 1 ? 'Just now' : diff + ' min ago';
 
                 // Update Chart
                 updateChart(history);
 
-                // Update Table (mock for now using history)
-                updateTable(history.slice().reverse().slice(0, 5));
+                // Update Table
+                updateTable(history.slice().reverse().slice(0, 10));
+            } else {
+                document.querySelector('#signalsTable tbody').innerHTML =
+                    '<tr><td colspan="4" class="text-center py-4">No data yet. Analysis runs every 15 minutes.</td></tr>';
             }
         } catch (error) {
             console.error('Error loading sentiment:', error);
@@ -130,15 +352,35 @@
 
             if (data.success) {
                 const metrics = data.metrics;
-                document.getElementById('totalAiTrades').textContent = metrics.trades;
-                document.getElementById('aiWinRate').textContent = metrics.win_rate.toFixed(1) + '%';
+                document.getElementById('totalAiTrades').textContent = metrics.trades || 0;
+                document.getElementById('aiWinRate').textContent = (metrics.win_rate || 0).toFixed(1) + '%';
 
                 const pnlEl = document.getElementById('aiNetPnl');
-                pnlEl.textContent = '$' + metrics.total_pnl.toFixed(2);
-                pnlEl.className = 'fw-bold ' + (metrics.total_pnl >= 0 ? 'text-success' : 'text-danger');
+                const pnl = metrics.total_pnl || 0;
+                pnlEl.textContent = '$' + pnl.toFixed(2);
+                pnlEl.className = pnl >= 0 ? 'mb-0 text-success' : 'mb-0 text-danger';
             }
         } catch (error) {
             console.error('Error loading performance:', error);
+        }
+    }
+
+    async function loadSettings() {
+        try {
+            const response = await fetch('/api/ai/settings');
+            const data = await response.json();
+
+            if (data.success) {
+                const s = data.settings;
+                document.getElementById('directTrading').textContent = s.direct_trading ? 'On' : 'Off';
+                document.getElementById('directTrading').className = 'badge ' + (s.direct_trading ? 'bg-success' : 'bg-secondary');
+                document.getElementById('confThreshold').textContent = (s.confidence_threshold || 85) + '%';
+                document.getElementById('tradeAmount').textContent = '$' + (s.trade_amount_usd || 50);
+                document.getElementById('aiProvider').textContent = (s.ai_provider || 'openai').toUpperCase();
+                document.getElementById('aiModel').textContent = s.ai_provider === 'claude' ? 'Claude' : 'GPT-3.5';
+            }
+        } catch (error) {
+            console.error('Error loading settings:', error);
         }
     }
 
@@ -149,9 +391,7 @@
         const labels = history.map(h => new Date(h.timestamp).toLocaleTimeString());
         const data = history.map(h => h.score * 100);
 
-        if (chartInstance) {
-            chartInstance.destroy();
-        }
+        if (chartInstance) chartInstance.destroy();
 
         chartInstance = new Chart(ctx, {
             type: 'line',
@@ -160,17 +400,34 @@
                 datasets: [{
                     label: 'Sentiment Score',
                     data: data,
-                    borderColor: '#4e73df',
-                    tension: 0.1,
-                    fill: false
+                    borderColor: '#8b5cf6',
+                    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                    tension: 0.4,
+                    fill: true
                 }]
             },
             options: {
                 responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    annotation: {
+                        annotations: {
+                            buyLine: { type: 'line', yMin: 50, yMax: 50, borderColor: '#10b981', borderWidth: 1, borderDash: [5, 5] },
+                            sellLine: { type: 'line', yMin: -50, yMax: -50, borderColor: '#ef4444', borderWidth: 1, borderDash: [5, 5] }
+                        }
+                    }
+                },
                 scales: {
                     y: {
                         min: -100,
-                        max: 100
+                        max: 100,
+                        ticks: {
+                            callback: function(value) {
+                                if (value === 50) return 'BUY ▲';
+                                if (value === -50) return 'SELL ▼';
+                                return value;
+                            }
+                        }
                     }
                 }
             }
@@ -181,20 +438,30 @@
         const tbody = document.querySelector('#signalsTable tbody');
         tbody.innerHTML = '';
 
+        if (recentLogs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center py-4">No signals recorded</td></tr>';
+            return;
+        }
+
         recentLogs.forEach(log => {
             const row = document.createElement('tr');
             const score = log.score;
-            let action = 'HOLD';
-            let cls = 'text-muted';
+            const scoreDisplay = (score * 100).toFixed(0);
 
-            if (score > 0.8) { action = 'BUY'; cls = 'text-success fw-bold'; }
-            else if (score < -0.8) { action = 'SELL'; cls = 'text-danger fw-bold'; }
+            let action, cls, badge;
+            if (score >= 0.5) {
+                action = 'BUY'; cls = 'text-success'; badge = 'bg-success';
+            } else if (score <= -0.5) {
+                action = 'SELL'; cls = 'text-danger'; badge = 'bg-danger';
+            } else {
+                action = 'HOLD'; cls = 'text-warning'; badge = 'bg-warning';
+            }
 
             row.innerHTML = `
-                <td>${new Date(log.timestamp).toLocaleTimeString()}</td>
-                <td>AI Analysis</td>
-                <td>${(score * 100).toFixed(0)}</td>
-                <td class="${cls}">${action}</td>
+                <td><small>${new Date(log.timestamp).toLocaleString()}</small></td>
+                <td class="${cls} fw-bold">${scoreDisplay}</td>
+                <td><span class="badge ${badge}">${action}</span></td>
+                <td><small class="text-muted">10 headlines analyzed</small></td>
             `;
             tbody.appendChild(row);
         });

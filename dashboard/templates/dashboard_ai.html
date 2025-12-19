@@ -126,6 +126,7 @@
 
             if (history.success) {
                 updateChart(history.data);
+                updateSignalsTable(history.data);
             }
 
             // 3. Fetch Settings (for Mode)
@@ -140,6 +141,46 @@
         } catch (e) {
             console.error('Error fetching AI data:', e);
         }
+    }
+
+    function updateSignalsTable(data) {
+        const tbody = document.getElementById('signalsTable');
+
+        if (!data || data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center">No signals yet. Analysis runs every 15 minutes.</td></tr>';
+            return;
+        }
+
+        // Take last 10 signals and reverse to show newest first
+        const recent = data.slice(-10).reverse();
+
+        let html = '';
+        recent.forEach(signal => {
+            const score = signal.score;
+            const scoreDisplay = (score * 100).toFixed(0);
+            const action = getSignalAction(score);
+            const actionClass = action === 'BUY' ? 'text-success' : action === 'SELL' ? 'text-danger' : 'text-warning';
+            const badgeClass = action === 'BUY' ? 'badge-success' : action === 'SELL' ? 'badge-danger' : 'badge-secondary';
+
+            html += `
+                <tr>
+                    <td><strong>BTC/ETH</strong><br><small class="text-muted">Market</small></td>
+                    <td><span class="${actionClass}">${scoreDisplay}</span></td>
+                    <td><span class="badge ${badgeClass}">${action}</span></td>
+                    <td><small>${new Date(signal.timestamp).toLocaleTimeString()}</small></td>
+                </tr>
+            `;
+        });
+
+        tbody.innerHTML = html || '<tr><td colspan="4" class="text-center">No signals available</td></tr>';
+    }
+
+    function getSignalAction(score) {
+        // Score is -1 to 1
+        // Buy if strongly bullish (> 0.5), Sell if strongly bearish (< -0.5), else Hold
+        if (score >= 0.5) return 'BUY';
+        if (score <= -0.5) return 'SELL';
+        return 'HOLD';
     }
 
     function updateMetrics(data) {

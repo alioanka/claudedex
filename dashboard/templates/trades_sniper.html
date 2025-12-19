@@ -383,7 +383,7 @@
                 <i class="fas fa-exchange-alt"></i>
                 Sniper Trades
             </h1>
-            <p class="page-subtitle">Complete trade history with filtering and export</p>
+            <p class="page-subtitle">Complete history of sniped token trades</p>
         </div>
         <div class="header-actions">
             <button class="btn btn-secondary" onclick="loadTrades()">
@@ -431,11 +431,13 @@
             </div>
 
             <div class="filter-group">
-                <label class="filter-label">Side</label>
-                <select id="filter-side" class="filter-select" onchange="applyFilters()">
-                    <option value="all">All Sides</option>
-                    <option value="long">Long</option>
-                    <option value="short">Short</option>
+                <label class="filter-label">Chain</label>
+                <select id="filter-chain" class="filter-select" onchange="applyFilters()">
+                    <option value="all">All Chains</option>
+                    <option value="solana">Solana</option>
+                    <option value="ethereum">Ethereum</option>
+                    <option value="bsc">BSC</option>
+                    <option value="base">Base</option>
                 </select>
             </div>
 
@@ -511,15 +513,14 @@
                 <thead>
                     <tr>
                         <th data-sort="time" onclick="sortTable('time')">Time <span class="sort-icon">↕</span></th>
-                        <th data-sort="symbol" onclick="sortTable('symbol')">Symbol <span class="sort-icon">↕</span></th>
-                        <th data-sort="side" onclick="sortTable('side')">Side <span class="sort-icon">↕</span></th>
+                        <th data-sort="symbol" onclick="sortTable('symbol')">Token <span class="sort-icon">↕</span></th>
+                        <th data-sort="chain" onclick="sortTable('chain')">Chain <span class="sort-icon">↕</span></th>
                         <th data-sort="entry_price" onclick="sortTable('entry_price')">Entry <span class="sort-icon">↕</span></th>
                         <th data-sort="exit_price" onclick="sortTable('exit_price')">Exit <span class="sort-icon">↕</span></th>
-                        <th data-sort="size" onclick="sortTable('size')">Size <span class="sort-icon">↕</span></th>
-                        <th data-sort="leverage" onclick="sortTable('leverage')">Leverage <span class="sort-icon">↕</span></th>
+                        <th data-sort="size" onclick="sortTable('size')">Amount <span class="sort-icon">↕</span></th>
                         <th data-sort="pnl" onclick="sortTable('pnl')">P&L <span class="sort-icon">↕</span></th>
                         <th data-sort="pnl_pct" onclick="sortTable('pnl_pct')">P&L % <span class="sort-icon">↕</span></th>
-                        <th data-sort="fees" onclick="sortTable('fees')">Fees <span class="sort-icon">↕</span></th>
+                        <th data-sort="safety" onclick="sortTable('safety')">Safety <span class="sort-icon">↕</span></th>
                         <th data-sort="exit_reason" onclick="sortTable('exit_reason')">Exit Reason <span class="sort-icon">↕</span></th>
                         <th data-sort="duration" onclick="sortTable('duration')">Duration <span class="sort-icon">↕</span></th>
                     </tr>
@@ -927,27 +928,50 @@ function updateDisplay() {
         const exitReason = formatExitReason(trade.close_reason || trade.exit_reason || 'unknown');
         const closedAt = trade.closed_at || trade.time || trade.exit_time;
         const duration = formatDuration(trade.duration_seconds);
+        const chain = trade.chain || 'solana';
+        const safetyScore = trade.safety_score || 0;
+        const tokenAddress = trade.token_address || trade.symbol || '';
 
         return `
             <tr>
                 <td>${closedAt ? new Date(closedAt).toLocaleString() : 'N/A'}</td>
-                <td><strong>${trade.symbol}</strong></td>
-                <td><span class="badge badge-${trade.side}">${trade.side.toUpperCase()}</span></td>
-                <td>$${parseFloat(trade.entry_price).toFixed(4)}</td>
-                <td>$${parseFloat(trade.exit_price).toFixed(4)}</td>
-                <td>${parseFloat(trade.size).toFixed(6)}</td>
-                <td>${trade.leverage || 1}x</td>
+                <td>
+                    <div style="font-family: monospace; font-size: 0.85rem; color: #8b5cf6;">${shortenAddress(tokenAddress)}</div>
+                    ${trade.symbol ? `<div style="font-size: 0.75rem; color: var(--text-secondary);">${trade.symbol}</div>` : ''}
+                </td>
+                <td><span class="badge badge-${chain}" style="background: ${getChainColor(chain)}; color: white;">${chain.toUpperCase()}</span></td>
+                <td>$${parseFloat(trade.entry_price).toFixed(8)}</td>
+                <td>$${parseFloat(trade.exit_price).toFixed(8)}</td>
+                <td>${parseFloat(trade.size).toFixed(4)}</td>
                 <td class="${pnl >= 0 ? 'positive' : 'negative'}">$${pnl.toFixed(2)}</td>
                 <td class="${pnlPct >= 0 ? 'positive' : 'negative'}">${pnlPct.toFixed(2)}%</td>
-                <td>$${(trade.fees || 0).toFixed(4)}</td>
+                <td>${formatSafetyScore(safetyScore)}</td>
                 <td>${exitReason}</td>
                 <td>${duration}</td>
             </tr>
         `;
     }).join('');
+}
 
-    // Update pagination
-    updatePagination(totalPages);
+function shortenAddress(address) {
+    if (!address || address.length < 12) return address || 'Unknown';
+    return address.slice(0, 6) + '...' + address.slice(-4);
+}
+
+function getChainColor(chain) {
+    const colors = {
+        'solana': '#dc2680',
+        'ethereum': '#627eea',
+        'bsc': '#f3ba2f',
+        'base': '#0052ff'
+    };
+    return colors[chain] || '#6b7280';
+}
+
+function formatSafetyScore(score) {
+    if (score >= 70) return `<span style="background: rgba(16, 185, 129, 0.2); color: #10b981; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;">${score}</span>`;
+    if (score >= 40) return `<span style="background: rgba(245, 158, 11, 0.2); color: #f59e0b; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;">${score}</span>`;
+    return `<span style="background: rgba(239, 68, 68, 0.2); color: #ef4444; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;">${score}</span>`;
 }
 
 function updatePagination(totalPages) {

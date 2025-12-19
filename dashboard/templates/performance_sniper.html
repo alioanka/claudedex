@@ -291,17 +291,17 @@
         </div>
     </div>
 
-    <!-- Per-Pair Performance Section -->
+    <!-- Per-Token Performance Section -->
     <div class="section-card">
         <div class="section-title">
             <i class="fas fa-coins"></i>
-            Performance by Pair
+            Performance by Token/Chain
         </div>
         <div class="table-responsive">
             <table class="pair-table" id="pairTable">
                 <thead>
                     <tr>
-                        <th onclick="sortPairTable('symbol')">Symbol <span class="sort-icon">↕</span></th>
+                        <th onclick="sortPairTable('symbol')">Token <span class="sort-icon">↕</span></th>
                         <th onclick="sortPairTable('trades')">Trades <span class="sort-icon">↕</span></th>
                         <th onclick="sortPairTable('wins')">Wins <span class="sort-icon">↕</span></th>
                         <th onclick="sortPairTable('losses')">Losses <span class="sort-icon">↕</span></th>
@@ -319,12 +319,12 @@
         </div>
     </div>
 
-    <!-- Charts Row 2: Per-Pair Charts -->
+    <!-- Charts Row 2: Per-Token Charts -->
     <div class="grid-3">
         <div class="section-card">
             <div class="section-title">
                 <i class="fas fa-chart-bar"></i>
-                P&L by Pair
+                P&L by Token
             </div>
             <div class="chart-container-small">
                 <canvas id="pairPnlChart"></canvas>
@@ -334,7 +334,7 @@
         <div class="section-card">
             <div class="section-title">
                 <i class="fas fa-percentage"></i>
-                Win Rate by Pair
+                Win Rate by Token
             </div>
             <div class="chart-container-small">
                 <canvas id="pairWinRateChart"></canvas>
@@ -344,7 +344,7 @@
         <div class="section-card">
             <div class="section-title">
                 <i class="fas fa-chart-pie"></i>
-                Trade Distribution
+                Trades by Chain
             </div>
             <div class="chart-container-small">
                 <canvas id="pairDistributionChart"></canvas>

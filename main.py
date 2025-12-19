@@ -36,6 +36,154 @@ logging.basicConfig(
 logger = logging.getLogger("Orchestrator")
 
 
+class RotatingLogFile:
+    """
+    A file-like object that rotates logs based on size.
+    Can be used as stdout/stderr for subprocess.Popen.
+
+    CRITICAL FIX: When a subprocess writes via file descriptor, it writes to the
+    inode, not the filename. After rotation (renaming file to .1), the subprocess
+    continues writing to .1 because the fd still points to that inode.
+
+    Solution: Use os.dup2() to redirect the original fd to the new file after rotation.
+    This ensures the subprocess writes to the new file without needing a restart.
+    """
+    def __init__(self, filepath: Path, max_bytes: int = 10*1024*1024, backup_count: int = 3):
+        self.filepath = Path(filepath)
+        self.max_bytes = max_bytes
+        self.backup_count = backup_count
+        self._file = None
+        self._original_fd = None  # Store the original fd that subprocess uses
+        # Check and rotate at startup if file is already too large
+        self._check_and_rotate_if_needed()
+        self._open()
+        # Store the original fd after first open - this is what subprocess will use
+        if self._file:
+            self._original_fd = self._file.fileno()
+
+    def _open(self):
+        """Open or reopen the log file"""
+        if self._file:
+            try:
+                self._file.close()
+            except:
+                pass
+        self._file = open(self.filepath, 'a', encoding='utf-8', buffering=1)  # Line buffered
+
+    def _check_and_rotate_if_needed(self):
+        """Check file size and rotate if needed - call this periodically"""
+        try:
+            if self.filepath.exists() and self.filepath.stat().st_size >= self.max_bytes:
+                self._do_rollover_external()
+                return True
+        except:
+            pass
+        return False
+
+    def _do_rollover_external(self):
+        """Perform log rotation when file is not open (or before opening)"""
+        try:
+            # Rotate existing backups: .3 -> .4, .2 -> .3, .1 -> .2
+            for i in range(self.backup_count - 1, 0, -1):
+                src = Path(f"{self.filepath}.{i}")
+                dst = Path(f"{self.filepath}.{i + 1}")
+                if src.exists():
+                    if dst.exists():
+                        dst.unlink()
+                    src.rename(dst)
+            # Move current to .1
+            backup_1 = Path(f"{self.filepath}.1")
+            if self.filepath.exists():
+                if backup_1.exists():
+                    backup_1.unlink()
+                self.filepath.rename(backup_1)
+            logger.info(f"Rotated log file: {self.filepath}")
+        except Exception as e:
+            logger.warning(f"Log rotation failed for {self.filepath}: {e}")
+
+    def check_and_rotate(self):
+        """
+        Check file size and rotate if needed.
+        Call this periodically since subprocess writes bypass write().
+
+        CRITICAL: Uses os.dup2() to redirect the original fd to the new file,
+        so subprocess continues writing to the correct (new) file after rotation.
+
+        Returns True if rotation occurred.
+        """
+        import os
+        try:
+            if self.filepath.exists() and self.filepath.stat().st_size >= self.max_bytes:
+                # Flush current file
+                if self._file:
+                    self._file.flush()
+                    os.fsync(self._file.fileno())
+
+                # Close file, rotate, reopen
+                old_fd = self._file.fileno() if self._file else None
+                if self._file:
+                    self._file.close()
+                    self._file = None
+
+                self._do_rollover_external()
+
+                # Open new file
+                self._open()
+
+                # CRITICAL: Redirect original fd to new file using dup2
+                # This makes the subprocess write to the new file
+                if self._original_fd is not None and self._file:
+                    new_fd = self._file.fileno()
+                    if new_fd != self._original_fd:
+                        try:
+                            os.dup2(new_fd, self._original_fd)
+                            logger.debug(f"Redirected fd {self._original_fd} to new file {self.filepath}")
+                        except OSError as e:
+                            logger.warning(f"Failed to dup2 fd: {e}")
+
+                return True
+        except Exception as e:
+            logger.warning(f"Error checking log rotation for {self.filepath}: {e}")
+        return False
+
+    def write(self, data):
+        """Write data to file"""
+        if data:
+            try:
+                if isinstance(data, bytes):
+                    data = data.decode('utf-8', errors='replace')
+                self._file.write(data)
+                self._file.flush()
+            except Exception as e:
+                try:
+                    self._open()
+                    self._file.write(data)
+                except:
+                    pass
+        return len(data) if data else 0
+
+    def flush(self):
+        """Flush the file buffer"""
+        try:
+            if self._file:
+                self._file.flush()
+        except:
+            pass
+
+    def fileno(self):
+        """Return file descriptor for subprocess compatibility"""
+        return self._file.fileno()
+
+    def close(self):
+        """Close the file"""
+        try:
+            if self._file:
+                self._file.close()
+                self._file = None
+        except:
+            pass
+
+
 class ModuleProcess:
     """Represents a trading module process"""
 
@@ -156,11 +304,20 @@ class ModuleProcess:
             log_dir = Path("logs") / self.name.lower().replace(" ", "_")
             log_dir.mkdir(parents=True, exist_ok=True)
 
-            # Open log files for subprocess stdout/stderr
+            # Open rotating log files for subprocess stdout/stderr
             # CRITICAL: Do NOT use subprocess.PIPE without reading from it!
             # If the pipe buffer fills up (~64KB), the subprocess will block/freeze.
-            stdout_file = open(log_dir / "stdout.log", "a")
-            stderr_file = open(log_dir / "stderr.log", "a")
+            # Using RotatingLogFile to prevent logs from growing to 100MB+
+            stdout_file = RotatingLogFile(
+                log_dir / "stdout.log",
+                max_bytes=10*1024*1024,  # 10MB max
+                backup_count=3
+            )
+            stderr_file = RotatingLogFile(
+                log_dir / "stderr.log",
+                max_bytes=10*1024*1024,  # 10MB max
+                backup_count=3
+            )
 
             self.process = subprocess.Popen(
                 [sys.executable, "-u", self.script_path],  # -u for unbuffered stdout
@@ -174,7 +331,7 @@ class ModuleProcess:
             self._stderr_file = stderr_file
 
             logger.info(f"✅ {self.name} started (PID: {self.process.pid})")
-            logger.info(f"   Logs: {log_dir}/stdout.log, {log_dir}/stderr.log")
+            logger.info(f"   Logs: {log_dir}/stdout.log, {log_dir}/stderr.log (rotating, max 10MB)")
             return True
         except Exception as e:
             logger.error(f"❌ Failed to start {self.name}: {e}")
@@ -327,10 +484,12 @@ class TradingBotOrchestrator:
         return True
 
     async def health_monitor(self):
-        """Monitor health of all modules"""
+        """Monitor health of all modules and rotate logs"""
+        log_rotation_counter = 0
         while not self.shutdown_event.is_set():
             try:
                 await asyncio.sleep(self.health_check_interval)
+                log_rotation_counter += 1
 
                 for name, module in self.modules.items():
                     if not module.is_enabled():
@@ -344,6 +503,15 @@ class TradingBotOrchestrator:
                             await module.restart()
                         else:
                             logger.error(f"❌ {module.name} has failed permanently")
+
+                    # Check log rotation every 5 health checks (~5 minutes)
+                    if log_rotation_counter % 5 == 0:
+                        if hasattr(module, '_stdout_file') and module._stdout_file:
+                            if hasattr(module._stdout_file, 'check_and_rotate'):
+                                module._stdout_file.check_and_rotate()
+                        if hasattr(module, '_stderr_file') and module._stderr_file:
+                            if hasattr(module._stderr_file, 'check_and_rotate'):
+                                module._stderr_file.check_and_rotate()
 
             except Exception as e:
                 logger.error(f"Error in health monitor: {e}")

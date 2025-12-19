@@ -32,7 +32,7 @@
 
     .stats-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
         gap: 16px;
         margin-bottom: 30px;
     }
@@ -124,13 +124,13 @@
         color: var(--text-secondary);
     }
 
-    /* Per-Pair Table Styles */
-    .pair-table {
+    /* Route Table Styles */
+    .route-table {
         width: 100%;
         border-collapse: collapse;
     }
 
-    .pair-table th {
+    .route-table th {
         background: var(--metric-bg);
         padding: 12px 10px;
         text-align: left;
@@ -142,32 +142,36 @@
         cursor: pointer;
     }
 
-    .pair-table th:hover {
+    .route-table th:hover {
         background: var(--border-color);
     }
 
-    .pair-table th .sort-icon {
-        margin-left: 4px;
-        opacity: 0.5;
-    }
-
-    .pair-table th.sorted .sort-icon {
-        opacity: 1;
-    }
-
-    .pair-table td {
+    .route-table td {
         padding: 12px 10px;
         border-bottom: 1px solid var(--border-color);
         white-space: nowrap;
     }
 
-    .pair-table tr:hover {
+    .route-table tr:hover {
         background: var(--metric-bg);
     }
 
-    .pair-symbol {
+    .route-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
         font-weight: 600;
         color: var(--text-primary);
+    }
+
+    .dex-tag {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        background: rgba(59, 130, 246, 0.2);
+        color: #3b82f6;
     }
 
     .win-rate-bar {
@@ -209,7 +213,7 @@
                 <i class="fas fa-chart-bar"></i>
                 Arbitrage Performance
             </h1>
-            <p class="page-subtitle">Performance metrics calculated from trade history</p>
+            <p class="page-subtitle">Performance metrics calculated from arbitrage trade history</p>
         </div>
         <button class="btn btn-secondary" onclick="loadPerformance()">
             <i class="fas fa-sync"></i> Refresh
@@ -231,24 +235,20 @@
             <div class="stat-value" id="stat-profit-factor">0.00</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Sharpe Ratio</div>
-            <div class="stat-value" id="stat-sharpe">0.00</div>
+            <div class="stat-label">Avg Spread</div>
+            <div class="stat-value" id="stat-avg-spread">0.00%</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Max Drawdown</div>
-            <div class="stat-value negative" id="stat-drawdown">0.00%</div>
+            <div class="stat-label">Total Volume</div>
+            <div class="stat-value" id="stat-volume">0.00 ETH</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Sortino Ratio</div>
-            <div class="stat-value" id="stat-sortino">0.00</div>
+            <div class="stat-label">Total Trades</div>
+            <div class="stat-value" id="stat-total-trades">0</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Avg Win</div>
-            <div class="stat-value positive" id="stat-avg-win">$0.00</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-label">Avg Loss</div>
-            <div class="stat-value negative" id="stat-avg-loss">$0.00</div>
+            <div class="stat-label">Avg Profit</div>
+            <div class="stat-value positive" id="stat-avg-profit">$0.00</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Best Trade</div>
@@ -259,24 +259,28 @@
             <div class="stat-value negative" id="stat-worst-trade">$0.00</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Total Trades</div>
-            <div class="stat-value" id="stat-total-trades">0</div>
+            <div class="stat-label">Best Spread</div>
+            <div class="stat-value positive" id="stat-best-spread">0.00%</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Current Streak</div>
-            <div class="stat-value" id="stat-streak">0</div>
+            <div class="stat-label">Avg Trade Size</div>
+            <div class="stat-value" id="stat-avg-size">0.00 ETH</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Active Routes</div>
+            <div class="stat-value" id="stat-routes">0</div>
         </div>
     </div>
 
-    <!-- Charts Row 1: Equity & Daily PnL -->
+    <!-- Charts Row 1: Cumulative P&L & Daily P&L -->
     <div class="grid-2">
         <div class="section-card">
             <div class="section-title">
                 <i class="fas fa-chart-area"></i>
-                Equity Curve
+                Cumulative P&L
             </div>
             <div class="chart-container">
-                <canvas id="equityChart"></canvas>
+                <canvas id="cumulativePnlChart"></canvas>
             </div>
         </div>
 
@@ -291,53 +295,52 @@
         </div>
     </div>
 
-    <!-- Per-Pair Performance Section -->
+    <!-- Performance by Route Section -->
     <div class="section-card">
         <div class="section-title">
-            <i class="fas fa-coins"></i>
-            Performance by Pair
+            <i class="fas fa-route"></i>
+            Performance by Route
         </div>
         <div class="table-responsive">
-            <table class="pair-table" id="pairTable">
+            <table class="route-table" id="routeTable">
                 <thead>
                     <tr>
-                        <th onclick="sortPairTable('symbol')">Symbol <span class="sort-icon">↕</span></th>
-                        <th onclick="sortPairTable('trades')">Trades <span class="sort-icon">↕</span></th>
-                        <th onclick="sortPairTable('wins')">Wins <span class="sort-icon">↕</span></th>
-                        <th onclick="sortPairTable('losses')">Losses <span class="sort-icon">↕</span></th>
-                        <th onclick="sortPairTable('winRate')">Win Rate <span class="sort-icon">↕</span></th>
-                        <th onclick="sortPairTable('pnl')">Total P&L <span class="sort-icon">↕</span></th>
-                        <th onclick="sortPairTable('avgPnl')">Avg P&L <span class="sort-icon">↕</span></th>
-                        <th onclick="sortPairTable('profitFactor')">Profit Factor <span class="sort-icon">↕</span></th>
-                        <th onclick="sortPairTable('bestTrade')">Best Trade <span class="sort-icon">↕</span></th>
-                        <th onclick="sortPairTable('worstTrade')">Worst Trade <span class="sort-icon">↕</span></th>
+                        <th onclick="sortRouteTable('route')">Route ↕</th>
+                        <th onclick="sortRouteTable('trades')">Trades ↕</th>
+                        <th onclick="sortRouteTable('wins')">Wins ↕</th>
+                        <th onclick="sortRouteTable('winRate')">Win Rate ↕</th>
+                        <th onclick="sortRouteTable('pnl')">Total P&L ↕</th>
+                        <th onclick="sortRouteTable('avgPnl')">Avg P&L ↕</th>
+                        <th onclick="sortRouteTable('avgSpread')">Avg Spread ↕</th>
+                        <th onclick="sortRouteTable('volume')">Volume ↕</th>
+                        <th onclick="sortRouteTable('bestTrade')">Best Trade ↕</th>
                     </tr>
                 </thead>
-                <tbody id="pairTableBody">
+                <tbody id="routeTableBody">
                 </tbody>
             </table>
         </div>
     </div>
 
-    <!-- Charts Row 2: Per-Pair Charts -->
+    <!-- Charts Row 2: Route Charts -->
     <div class="grid-3">
         <div class="section-card">
             <div class="section-title">
                 <i class="fas fa-chart-bar"></i>
-                P&L by Pair
+                P&L by Route
             </div>
             <div class="chart-container-small">
-                <canvas id="pairPnlChart"></canvas>
+                <canvas id="routePnlChart"></canvas>
             </div>
         </div>
 
         <div class="section-card">
             <div class="section-title">
                 <i class="fas fa-percentage"></i>
-                Win Rate by Pair
+                Win Rate by Route
             </div>
             <div class="chart-container-small">
-                <canvas id="pairWinRateChart"></canvas>
+                <canvas id="routeWinRateChart"></canvas>
             </div>
         </div>
 
@@ -347,12 +350,12 @@
                 Trade Distribution
             </div>
             <div class="chart-container-small">
-                <canvas id="pairDistributionChart"></canvas>
+                <canvas id="routeDistributionChart"></canvas>
             </div>
         </div>
     </div>
 
-    <!-- Exit Reasons Analysis -->
+    <!-- Charts Row 3: Spread Analysis -->
     <div class="grid-2">
         <div class="section-card">
             <div class="section-title">
@@ -366,52 +369,40 @@
 
         <div class="section-card">
             <div class="section-title">
-                <i class="fas fa-sign-out-alt"></i>
-                Exit Reasons
+                <i class="fas fa-chart-line"></i>
+                Spread Distribution
             </div>
-            <div class="chart-container" style="height: 250px; max-width: 400px; margin: 0 auto;">
-                <canvas id="exitReasonsChart"></canvas>
+            <div class="chart-container" style="height: 250px;">
+                <canvas id="spreadDistributionChart"></canvas>
             </div>
         </div>
     </div>
 </div>
 
 <script>
-let equityChart = null;
+let cumulativePnlChart = null;
 let dailyPnlChart = null;
 let winLossChart = null;
-let pairPnlChart = null;
-let pairWinRateChart = null;
-let pairDistributionChart = null;
-let exitReasonsChart = null;
+let routePnlChart = null;
+let routeWinRateChart = null;
+let routeDistributionChart = null;
+let spreadDistributionChart = null;
 let allTrades = [];
-let pairStats = [];
+let routeStats = [];
 let currentSort = { column: 'pnl', direction: 'desc' };
 
 async function loadPerformance() {
     try {
-        // Fetch trades from the futures module API
-        const response = await fetch('/api/arbitrage/trades?limit=1000');
+        const response = await fetch('/api/arbitrage/trades?limit=2000');
         if (!response.ok) throw new Error('Failed to fetch trades');
         const data = await response.json();
 
         if (data.success && data.trades && data.trades.length > 0) {
             allTrades = data.trades;
             calculateAndDisplayMetrics(data.trades);
-            calculatePairMetrics(data.trades);
+            calculateRouteMetrics(data.trades);
         } else {
-            // Try fallback to simulator data
-            const fallbackResponse = await fetch('/api/simulator/data');
-            if (fallbackResponse.ok) {
-                const fallbackData = await fallbackResponse.json();
-                if (fallbackData.futures && fallbackData.futures.trades && fallbackData.futures.trades.length > 0) {
-                    allTrades = fallbackData.futures.trades;
-                    calculateAndDisplayMetrics(fallbackData.futures.trades);
-                    calculatePairMetrics(fallbackData.futures.trades);
-                } else {
-                    showEmptyState();
-                }
-            }
+            showEmptyState();
         }
     } catch (error) {
         console.error('Error loading performance:', error);
@@ -423,74 +414,59 @@ function showEmptyState() {
     document.getElementById('stat-pnl').textContent = '$0.00';
     document.getElementById('stat-winrate').textContent = '0%';
     document.getElementById('stat-profit-factor').textContent = '0.00';
-    document.getElementById('stat-sharpe').textContent = '0.00';
-    document.getElementById('stat-drawdown').textContent = '0.00%';
-    document.getElementById('stat-sortino').textContent = '0.00';
-    document.getElementById('stat-avg-win').textContent = '$0.00';
-    document.getElementById('stat-avg-loss').textContent = '$0.00';
+    document.getElementById('stat-avg-spread').textContent = '0.00%';
+    document.getElementById('stat-volume').textContent = '0.00 ETH';
+    document.getElementById('stat-total-trades').textContent = '0';
+    document.getElementById('stat-avg-profit').textContent = '$0.00';
     document.getElementById('stat-best-trade').textContent = '$0.00';
     document.getElementById('stat-worst-trade').textContent = '$0.00';
-    document.getElementById('stat-total-trades').textContent = '0';
-    document.getElementById('stat-streak').textContent = '0';
-    document.getElementById('pairTableBody').innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-secondary);padding:20px;">No trades yet</td></tr>';
+    document.getElementById('stat-best-spread').textContent = '0.00%';
+    document.getElementById('stat-avg-size').textContent = '0.00 ETH';
+    document.getElementById('stat-routes').textContent = '0';
+    document.getElementById('routeTableBody').innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:20px;">No arbitrage trades yet</td></tr>';
 }
 
 function calculateAndDisplayMetrics(trades) {
     // Sort trades by time (oldest first)
-    trades.sort((a, b) => new Date(a.closed_at || a.time || a.exit_time) - new Date(b.closed_at || b.time || b.exit_time));
+    trades.sort((a, b) => new Date(a.timestamp || a.entry_timestamp) - new Date(b.timestamp || b.entry_timestamp));
 
-    // Calculate basic stats
-    const pnls = trades.map(t => t.pnl || t.net_pnl || 0);
+    // Calculate basic stats using arbitrage fields
+    const pnls = trades.map(t => parseFloat(t.profit_loss || 0));
+    const spreads = trades.map(t => parseFloat(t.spread_pct || 0));
+    const volumes = trades.map(t => parseFloat(t.amount_eth || t.amount || 0));
     const wins = pnls.filter(p => p > 0);
     const losses = pnls.filter(p => p < 0);
 
     const totalPnl = pnls.reduce((a, b) => a + b, 0);
     const winRate = trades.length > 0 ? (wins.length / trades.length) * 100 : 0;
-    const avgWin = wins.length > 0 ? wins.reduce((a, b) => a + b, 0) / wins.length : 0;
-    const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((a, b) => a + b, 0) / losses.length) : 0;
+    const avgSpread = spreads.length > 0 ? spreads.reduce((a, b) => a + b, 0) / spreads.length : 0;
+    const totalVolume = volumes.reduce((a, b) => a + b, 0);
+    const avgProfit = trades.length > 0 ? totalPnl / trades.length : 0;
     const bestTrade = pnls.length > 0 ? Math.max(...pnls) : 0;
     const worstTrade = pnls.length > 0 ? Math.min(...pnls) : 0;
+    const bestSpread = spreads.length > 0 ? Math.max(...spreads) : 0;
+    const avgSize = trades.length > 0 ? totalVolume / trades.length : 0;
+
+    // Calculate unique routes
+    const routes = new Set();
+    trades.forEach(t => {
+        if (t.buy_dex && t.sell_dex) {
+            routes.add(`${t.buy_dex} → ${t.sell_dex}`);
+        }
+    });
 
     // Profit Factor
     const grossProfit = wins.reduce((a, b) => a + b, 0);
     const grossLoss = Math.abs(losses.reduce((a, b) => a + b, 0));
     const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 999.99 : 0;
 
-    // Calculate equity curve and drawdown
-    let equity = 10000; // Starting capital
-    let peak = equity;
-    let maxDrawdown = 0;
-    const equityCurve = [equity];
-
+    // Calculate cumulative P&L
+    let cumPnl = 0;
+    const cumulativePnl = [0];
     pnls.forEach(pnl => {
-        equity += pnl;
-        equityCurve.push(equity);
-        if (equity > peak) peak = equity;
-        const drawdown = (peak - equity) / peak * 100;
-        if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+        cumPnl += pnl;
+        cumulativePnl.push(cumPnl);
     });
-
-    // Sharpe Ratio (annualized, assuming 252 trading days)
-    const avgReturn = pnls.length > 0 ? pnls.reduce((a, b) => a + b, 0) / pnls.length : 0;
-    const stdDev = calculateStdDev(pnls);
-    const sharpeRatio = stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(252) : 0;
-
-    // Sortino Ratio (downside deviation only)
-    const negativeReturns = pnls.filter(p => p < 0);
-    const downsideDev = calculateStdDev(negativeReturns);
-    const sortinoRatio = downsideDev > 0 ? (avgReturn / downsideDev) * Math.sqrt(252) : 0;
-
-    // Current streak
-    let streak = 0;
-    for (let i = pnls.length - 1; i >= 0; i--) {
-        if (i === pnls.length - 1) {
-            streak = pnls[i] > 0 ? 1 : -1;
-        } else if ((pnls[i] > 0 && streak > 0) || (pnls[i] < 0 && streak < 0)) {
-            streak = streak > 0 ? streak + 1 : streak - 1;
-        } else {
-            break;
-        }
-    }
 
     // Update UI
     const pnlEl = document.getElementById('stat-pnl');
@@ -499,83 +475,88 @@ function calculateAndDisplayMetrics(trades) {
 
     document.getElementById('stat-winrate').textContent = winRate.toFixed(1) + '%';
     document.getElementById('stat-profit-factor').textContent = profitFactor >= 999 ? '∞' : profitFactor.toFixed(2);
-    document.getElementById('stat-sharpe').textContent = sharpeRatio.toFixed(2);
-    document.getElementById('stat-drawdown').textContent = maxDrawdown.toFixed(2) + '%';
-    document.getElementById('stat-sortino').textContent = sortinoRatio.toFixed(2);
-    document.getElementById('stat-avg-win').textContent = `$${avgWin.toFixed(2)}`;
-    document.getElementById('stat-avg-loss').textContent = `$${avgLoss.toFixed(2)}`;
+    document.getElementById('stat-avg-spread').textContent = avgSpread.toFixed(2) + '%';
+    document.getElementById('stat-volume').textContent = totalVolume.toFixed(4) + ' ETH';
+    document.getElementById('stat-total-trades').textContent = trades.length;
+    document.getElementById('stat-avg-profit').textContent = `$${avgProfit.toFixed(2)}`;
     document.getElementById('stat-best-trade').textContent = `$${bestTrade.toFixed(2)}`;
     document.getElementById('stat-worst-trade').textContent = `$${worstTrade.toFixed(2)}`;
-    document.getElementById('stat-total-trades').textContent = trades.length;
-    document.getElementById('stat-streak').textContent = streak > 0 ? `+${streak} wins` : streak < 0 ? `${streak} losses` : '0';
+    document.getElementById('stat-best-spread').textContent = bestSpread.toFixed(2) + '%';
+    document.getElementById('stat-avg-size').textContent = avgSize.toFixed(4) + ' ETH';
+    document.getElementById('stat-routes').textContent = routes.size;
 
     // Update charts
-    updateEquityChart(trades, equityCurve);
+    updateCumulativePnlChart(trades, cumulativePnl);
     updateDailyPnlChart(trades);
     updateWinLossChart(wins.length, losses.length);
-    updateExitReasonsChart(trades);
+    updateSpreadDistributionChart(spreads);
 }
 
-function calculatePairMetrics(trades) {
-    // Group trades by symbol
-    const pairMap = {};
+function calculateRouteMetrics(trades) {
+    // Group trades by route (buy_dex → sell_dex)
+    const routeMap = {};
 
     trades.forEach(trade => {
-        const symbol = trade.symbol;
-        if (!pairMap[symbol]) {
-            pairMap[symbol] = {
-                symbol: symbol,
+        const route = `${trade.buy_dex || 'Unknown'} → ${trade.sell_dex || 'Unknown'}`;
+        if (!routeMap[route]) {
+            routeMap[route] = {
+                route: route,
+                buyDex: trade.buy_dex || 'Unknown',
+                sellDex: trade.sell_dex || 'Unknown',
                 trades: 0,
                 wins: 0,
-                losses: 0,
                 totalPnl: 0,
                 grossProfit: 0,
                 grossLoss: 0,
-                pnls: [],
-                bestTrade: -Infinity,
-                worstTrade: Infinity
+                totalSpread: 0,
+                totalVolume: 0,
+                bestTrade: -Infinity
             };
         }
 
-        const pnl = trade.pnl || trade.net_pnl || 0;
-        pairMap[symbol].trades++;
-        pairMap[symbol].totalPnl += pnl;
-        pairMap[symbol].pnls.push(pnl);
+        const pnl = parseFloat(trade.profit_loss || 0);
+        const spread = parseFloat(trade.spread_pct || 0);
+        const volume = parseFloat(trade.amount_eth || trade.amount || 0);
+
+        routeMap[route].trades++;
+        routeMap[route].totalPnl += pnl;
+        routeMap[route].totalSpread += spread;
+        routeMap[route].totalVolume += volume;
 
         if (pnl > 0) {
-            pairMap[symbol].wins++;
-            pairMap[symbol].grossProfit += pnl;
+            routeMap[route].wins++;
+            routeMap[route].grossProfit += pnl;
         } else {
-            pairMap[symbol].losses++;
-            pairMap[symbol].grossLoss += Math.abs(pnl);
+            routeMap[route].grossLoss += Math.abs(pnl);
         }
 
-        if (pnl > pairMap[symbol].bestTrade) pairMap[symbol].bestTrade = pnl;
-        if (pnl < pairMap[symbol].worstTrade) pairMap[symbol].worstTrade = pnl;
+        if (pnl > routeMap[route].bestTrade) routeMap[route].bestTrade = pnl;
     });
 
     // Calculate derived metrics
-    pairStats = Object.values(pairMap).map(pair => ({
-        symbol: pair.symbol,
-        trades: pair.trades,
-        wins: pair.wins,
-        losses: pair.losses,
-        winRate: pair.trades > 0 ? (pair.wins / pair.trades) * 100 : 0,
-        pnl: pair.totalPnl,
-        avgPnl: pair.trades > 0 ? pair.totalPnl / pair.trades : 0,
-        profitFactor: pair.grossLoss > 0 ? pair.grossProfit / pair.grossLoss : (pair.grossProfit > 0 ? 999.99 : 0),
-        bestTrade: pair.bestTrade === -Infinity ? 0 : pair.bestTrade,
-        worstTrade: pair.worstTrade === Infinity ? 0 : pair.worstTrade
+    routeStats = Object.values(routeMap).map(r => ({
+        route: r.route,
+        buyDex: r.buyDex,
+        sellDex: r.sellDex,
+        trades: r.trades,
+        wins: r.wins,
+        winRate: r.trades > 0 ? (r.wins / r.trades) * 100 : 0,
+        pnl: r.totalPnl,
+        avgPnl: r.trades > 0 ? r.totalPnl / r.trades : 0,
+        avgSpread: r.trades > 0 ? r.totalSpread / r.trades : 0,
+        volume: r.totalVolume,
+        profitFactor: r.grossLoss > 0 ? r.grossProfit / r.grossLoss : (r.grossProfit > 0 ? 999.99 : 0),
+        bestTrade: r.bestTrade === -Infinity ? 0 : r.bestTrade
     }));
 
     // Sort and display
-    sortPairStats();
-    updatePairTable();
-    updatePairCharts();
+    sortRouteStats();
+    updateRouteTable();
+    updateRouteCharts();
 }
 
-function sortPairStats() {
-    pairStats.sort((a, b) => {
+function sortRouteStats() {
+    routeStats.sort((a, b) => {
         let aVal = a[currentSort.column];
         let bVal = b[currentSort.column];
 
@@ -589,7 +570,7 @@ function sortPairStats() {
     });
 }
 
-function sortPairTable(column) {
+function sortRouteTable(column) {
     if (currentSort.column === column) {
         currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
     } else {
@@ -597,58 +578,58 @@ function sortPairTable(column) {
         currentSort.direction = 'desc';
     }
 
-    sortPairStats();
-    updatePairTable();
-
-    // Update sort indicators
-    document.querySelectorAll('.pair-table th').forEach(th => th.classList.remove('sorted'));
+    sortRouteStats();
+    updateRouteTable();
 }
 
-function updatePairTable() {
-    const tbody = document.getElementById('pairTableBody');
+function updateRouteTable() {
+    const tbody = document.getElementById('routeTableBody');
 
-    if (pairStats.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-secondary);padding:20px;">No trades yet</td></tr>';
+    if (routeStats.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:20px;">No arbitrage trades yet</td></tr>';
         return;
     }
 
-    tbody.innerHTML = pairStats.map(pair => `
+    tbody.innerHTML = routeStats.map(r => `
         <tr>
-            <td class="pair-symbol">${pair.symbol}</td>
-            <td>${pair.trades}</td>
-            <td class="positive">${pair.wins}</td>
-            <td class="negative">${pair.losses}</td>
+            <td class="route-badge">
+                <span class="dex-tag">${r.buyDex}</span>
+                →
+                <span class="dex-tag">${r.sellDex}</span>
+            </td>
+            <td>${r.trades}</td>
+            <td class="positive">${r.wins}</td>
             <td>
-                ${pair.winRate.toFixed(1)}%
+                ${r.winRate.toFixed(1)}%
                 <div class="win-rate-bar">
-                    <div class="win-rate-bar-fill" style="width: ${pair.winRate}%"></div>
+                    <div class="win-rate-bar-fill" style="width: ${r.winRate}%"></div>
                 </div>
             </td>
-            <td class="${pair.pnl >= 0 ? 'positive' : 'negative'}">$${pair.pnl.toFixed(2)}</td>
-            <td class="${pair.avgPnl >= 0 ? 'positive' : 'negative'}">$${pair.avgPnl.toFixed(2)}</td>
-            <td>${pair.profitFactor >= 999 ? '∞' : pair.profitFactor.toFixed(2)}</td>
-            <td class="positive">$${pair.bestTrade.toFixed(2)}</td>
-            <td class="negative">$${pair.worstTrade.toFixed(2)}</td>
+            <td class="${r.pnl >= 0 ? 'positive' : 'negative'}">$${r.pnl.toFixed(2)}</td>
+            <td class="${r.avgPnl >= 0 ? 'positive' : 'negative'}">$${r.avgPnl.toFixed(2)}</td>
+            <td>${r.avgSpread.toFixed(2)}%</td>
+            <td>${r.volume.toFixed(4)} ETH</td>
+            <td class="positive">$${r.bestTrade.toFixed(2)}</td>
         </tr>
     `).join('');
 }
 
-function updatePairCharts() {
+function updateRouteCharts() {
     // Sort by P&L for charts
-    const sortedByPnl = [...pairStats].sort((a, b) => b.pnl - a.pnl);
-    const symbols = sortedByPnl.map(p => p.symbol);
-    const pnls = sortedByPnl.map(p => p.pnl);
-    const winRates = sortedByPnl.map(p => p.winRate);
-    const tradeCounts = sortedByPnl.map(p => p.trades);
+    const sortedByPnl = [...routeStats].sort((a, b) => b.pnl - a.pnl);
+    const routes = sortedByPnl.map(r => r.route);
+    const pnls = sortedByPnl.map(r => r.pnl);
+    const winRates = sortedByPnl.map(r => r.winRate);
+    const tradeCounts = sortedByPnl.map(r => r.trades);
 
-    // P&L by Pair Chart
-    const pnlCtx = document.getElementById('pairPnlChart').getContext('2d');
-    if (pairPnlChart) pairPnlChart.destroy();
+    // P&L by Route Chart
+    const pnlCtx = document.getElementById('routePnlChart').getContext('2d');
+    if (routePnlChart) routePnlChart.destroy();
 
-    pairPnlChart = new Chart(pnlCtx, {
+    routePnlChart = new Chart(pnlCtx, {
         type: 'bar',
         data: {
-            labels: symbols,
+            labels: routes,
             datasets: [{
                 label: 'P&L',
                 data: pnls,
@@ -679,20 +660,20 @@ function updatePairCharts() {
                 },
                 y: {
                     grid: { display: false },
-                    ticks: { color: '#94a3b8' }
+                    ticks: { color: '#94a3b8', font: { size: 10 } }
                 }
             }
         }
     });
 
-    // Win Rate by Pair Chart
-    const winRateCtx = document.getElementById('pairWinRateChart').getContext('2d');
-    if (pairWinRateChart) pairWinRateChart.destroy();
+    // Win Rate by Route Chart
+    const winRateCtx = document.getElementById('routeWinRateChart').getContext('2d');
+    if (routeWinRateChart) routeWinRateChart.destroy();
 
-    pairWinRateChart = new Chart(winRateCtx, {
+    routeWinRateChart = new Chart(winRateCtx, {
         type: 'bar',
         data: {
-            labels: symbols,
+            labels: routes,
             datasets: [{
                 label: 'Win Rate',
                 data: winRates,
@@ -732,28 +713,28 @@ function updatePairCharts() {
                 },
                 y: {
                     grid: { display: false },
-                    ticks: { color: '#94a3b8' }
+                    ticks: { color: '#94a3b8', font: { size: 10 } }
                 }
             }
         }
     });
 
     // Trade Distribution Pie Chart
-    const distCtx = document.getElementById('pairDistributionChart').getContext('2d');
-    if (pairDistributionChart) pairDistributionChart.destroy();
+    const distCtx = document.getElementById('routeDistributionChart').getContext('2d');
+    if (routeDistributionChart) routeDistributionChart.destroy();
 
     const colors = [
         '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#3b82f6',
         '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#6366f1'
     ];
 
-    pairDistributionChart = new Chart(distCtx, {
+    routeDistributionChart = new Chart(distCtx, {
         type: 'doughnut',
         data: {
-            labels: symbols,
+            labels: routes,
             datasets: [{
                 data: tradeCounts,
-                backgroundColor: colors.slice(0, symbols.length),
+                backgroundColor: colors.slice(0, routes.length),
                 borderWidth: 0
             }]
         },
@@ -766,7 +747,8 @@ function updatePairCharts() {
                     labels: {
                         color: '#94a3b8',
                         boxWidth: 12,
-                        padding: 8
+                        padding: 8,
+                        font: { size: 10 }
                     }
                 },
                 tooltip: {
@@ -774,7 +756,7 @@ function updatePairCharts() {
                         label: ctx => {
                             const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
                             const pct = ((ctx.raw / total) * 100).toFixed(1);
-                            return `${ctx.label}: ${ctx.raw} trades (${pct}%)`;
+                            return `${ctx.raw} trades (${pct}%)`;
                         }
                     }
                 }
@@ -783,104 +765,88 @@ function updatePairCharts() {
     });
 }
 
-function updateExitReasonsChart(trades) {
-    const exitReasons = {};
+function updateSpreadDistributionChart(spreads) {
+    const ctx = document.getElementById('spreadDistributionChart').getContext('2d');
+    if (spreadDistributionChart) spreadDistributionChart.destroy();
 
-    trades.forEach(t => {
-        const reason = t.close_reason || t.exit_reason || 'unknown';
-        exitReasons[reason] = (exitReasons[reason] || 0) + 1;
-    });
-
-    const labels = Object.keys(exitReasons).map(formatExitReasonLabel);
-    const data = Object.values(exitReasons);
-
-    const colors = {
-        'take_profit': '#10b981',
-        'take_profit_1': '#10b981',
-        'take_profit_2': '#22c55e',
-        'take_profit_3': '#34d399',
-        'take_profit_4': '#6ee7b7',
-        'stop_loss': '#ef4444',
-        'trailing_stop': '#8b5cf6',
-        'manual_close': '#f59e0b',
-        'signal_reversal': '#6b7280',
-        'signal': '#6b7280',
-        'liquidation_protection': '#dc2626',
-        'unknown': '#374151'
+    // Create histogram buckets for spread distribution
+    const buckets = {
+        '0-1%': 0,
+        '1-2%': 0,
+        '2-3%': 0,
+        '3-4%': 0,
+        '4-5%': 0,
+        '5%+': 0
     };
 
-    const bgColors = Object.keys(exitReasons).map(r => colors[r] || '#6b7280');
+    spreads.forEach(s => {
+        if (s < 1) buckets['0-1%']++;
+        else if (s < 2) buckets['1-2%']++;
+        else if (s < 3) buckets['2-3%']++;
+        else if (s < 4) buckets['3-4%']++;
+        else if (s < 5) buckets['4-5%']++;
+        else buckets['5%+']++;
+    });
 
-    const ctx = document.getElementById('exitReasonsChart').getContext('2d');
-    if (exitReasonsChart) exitReasonsChart.destroy();
-
-    exitReasonsChart = new Chart(ctx, {
-        type: 'doughnut',
+    spreadDistributionChart = new Chart(ctx, {
+        type: 'bar',
         data: {
-            labels: labels,
+            labels: Object.keys(buckets),
             datasets: [{
-                data: data,
-                backgroundColor: bgColors,
-                borderWidth: 0
+                label: 'Trades',
+                data: Object.values(buckets),
+                backgroundColor: 'rgba(139, 92, 246, 0.7)',
+                borderColor: '#8b5cf6',
+                borderWidth: 1
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                legend: {
-                    position: 'bottom',
-                    labels: { color: '#94a3b8' }
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => `${ctx.raw} trades`
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { display: false },
+                    ticks: { color: '#94a3b8' }
+                },
+                y: {
+                    grid: { color: 'rgba(148, 163, 184, 0.1)' },
+                    ticks: {
+                        color: '#94a3b8',
+                        stepSize: 1
+                    }
                 }
             }
         }
     });
 }
 
-function formatExitReasonLabel(reason) {
-    const labels = {
-        'take_profit': 'TP Hit',
-        'take_profit_1': 'TP1',
-        'take_profit_2': 'TP2',
-        'take_profit_3': 'TP3',
-        'take_profit_4': 'TP4',
-        'stop_loss': 'Stop Loss',
-        'trailing_stop': 'Trailing Stop',
-        'manual_close': 'Manual Close',
-        'signal_reversal': 'Signal Reversal',
-        'signal': 'Signal',
-        'liquidation_protection': 'Liq Protection',
-        'unknown': 'Unknown'
-    };
-    return labels[reason] || reason;
-}
-
-function calculateStdDev(arr) {
-    if (arr.length === 0) return 0;
-    const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
-    const squaredDiffs = arr.map(x => Math.pow(x - mean, 2));
-    return Math.sqrt(squaredDiffs.reduce((a, b) => a + b, 0) / arr.length);
-}
-
-function updateEquityChart(trades, equityCurve) {
-    const ctx = document.getElementById('equityChart').getContext('2d');
+function updateCumulativePnlChart(trades, cumulativePnl) {
+    const ctx = document.getElementById('cumulativePnlChart').getContext('2d');
 
     const labels = ['Start', ...trades.map((t, i) => {
-        const date = new Date(t.closed_at || t.time || t.exit_time);
+        const date = new Date(t.timestamp || t.entry_timestamp);
         return date.toLocaleDateString();
     })];
 
-    if (equityChart) {
-        equityChart.destroy();
+    if (cumulativePnlChart) {
+        cumulativePnlChart.destroy();
     }
 
-    equityChart = new Chart(ctx, {
+    cumulativePnlChart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: labels,
             datasets: [{
-                label: 'Equity',
-                data: equityCurve,
+                label: 'Cumulative P&L',
+                data: cumulativePnl,
                 borderColor: '#8b5cf6',
                 backgroundColor: 'rgba(139, 92, 246, 0.1)',
                 fill: true,
@@ -917,9 +883,9 @@ function updateDailyPnlChart(trades) {
     // Group by date
     const dailyPnl = {};
     trades.forEach(t => {
-        const date = new Date(t.closed_at || t.time || t.exit_time).toLocaleDateString();
+        const date = new Date(t.timestamp || t.entry_timestamp).toLocaleDateString();
         if (!dailyPnl[date]) dailyPnl[date] = 0;
-        dailyPnl[date] += t.pnl || t.net_pnl || 0;
+        dailyPnl[date] += parseFloat(t.profit_loss || 0);
     });
 
     const dates = Object.keys(dailyPnl);
@@ -974,7 +940,7 @@ function updateWinLossChart(wins, losses) {
     winLossChart = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: ['Wins', 'Losses'],
+            labels: ['Profitable', 'Loss'],
             datasets: [{
                 data: [wins, losses],
                 backgroundColor: ['#10b981', '#ef4444'],
@@ -997,7 +963,7 @@ function updateWinLossChart(wins, losses) {
 // Load on page load
 loadPerformance();
 
-// Auto-refresh every 30 seconds
-setInterval(loadPerformance, 30000);
+// Auto-refresh every 60 seconds
+setInterval(loadPerformance, 60000);
 </script>
 {% endblock %}

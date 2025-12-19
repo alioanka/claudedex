@@ -5,6 +5,7 @@ Listens for PairCreated events (Uniswap V2) and Mempool 'addLiquidity' transacti
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import List, Dict, Optional
 from web3 import Web3
 from web3.contract import Contract
@@ -141,4 +142,3 @@ class EVMListener:
         except Exception as e:
             logger.error(f"Log parse error: {e}")
             return None
-from datetime import datetime

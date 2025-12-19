@@ -344,6 +344,10 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/sniper/trades', self.api_get_sniper_trades)
         self.app.router.add_get('/api/sniper/settings', self.api_get_sniper_settings)
         self.app.router.add_post('/api/sniper/settings', self.api_save_sniper_settings)
+        self.app.router.add_get('/api/sniper/trading/status', self.api_sniper_trading_status)
+        self.app.router.add_post('/api/sniper/trading/unblock', self.api_sniper_trading_unblock)
+        self.app.router.add_post('/api/sniper/position/close', self.api_sniper_close_position)
+        self.app.router.add_post('/api/sniper/positions/close-all', self.api_sniper_close_all_positions)
 
         # API - Arbitrage Module
         self.app.router.add_get('/api/arbitrage/stats', self.api_get_arbitrage_stats)
@@ -358,13 +362,16 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/copytrading/trades', self.api_get_copytrading_trades)
         self.app.router.add_get('/api/copytrading/settings', self.api_get_copytrading_settings)
         self.app.router.add_post('/api/copytrading/settings', self.api_save_copytrading_settings)
+        self.app.router.add_get('/api/copytrading/discover', self.api_copytrading_discover)
 
         # API - AI Analysis Module
         self.app.router.add_get('/api/ai/stats', self.api_get_ai_stats)
         self.app.router.add_get('/api/ai/sentiment', self.api_get_ai_sentiment)
         self.app.router.add_get('/api/ai/performance', self.api_get_ai_performance)
+        self.app.router.add_get('/api/ai/trades', self.api_get_ai_trades)
         self.app.router.add_get('/api/ai/settings', self.api_get_ai_settings)
         self.app.router.add_post('/api/ai/settings', self.api_save_ai_settings)
+        self.app.router.add_get('/api/ai/logs', self.api_get_ai_logs)
 
         # API - Full Dashboard Charts
         self.app.router.add_get('/api/dashboard/charts/full', self.api_get_full_dashboard_charts)
@@ -558,12 +565,16 @@ class DashboardEndpoints:
         self.app.router.add_get('/copytrading/trades', self._copytrading_trades)
         self.app.router.add_get('/copytrading/performance', self._copytrading_performance)
         self.app.router.add_get('/copytrading/settings', self._copytrading_settings)
+        self.app.router.add_get('/copytrading/discovery', self._copytrading_discovery)
+        self.app.router.add_get('/copytrading/wallets', self._copytrading_wallets)
+        self.app.router.add_get('/api/copytrading/wallets', self.api_get_copytrading_wallets)
 
         # AI Analysis Module Pages
         self.app.router.add_get('/ai/dashboard', self._ai_dashboard)
         self.app.router.add_get('/ai/sentiment', self._ai_sentiment)
         self.app.router.add_get('/ai/performance', self._ai_performance)
         self.app.router.add_get('/ai/settings', self._ai_settings)
+        self.app.router.add_get('/ai/logs', self._ai_logs)
 
         # API endpoints that return empty data when module_manager is unavailable
         self.app.router.add_get('/api/modules', self._fallback_api_modules)
@@ -6178,7 +6189,7 @@ class DashboardEndpoints:
         return web.Response(text=template.render(page='sniper_settings'), content_type='text/html')
 
     async def api_get_sniper_stats(self, request):
-        """Get Sniper module stats from DB or logs"""
+        """Get Sniper module stats from dedicated sniper_trades table"""
         stats = {
             'module': 'sniper',
             'status': 'Offline',
@@ -6187,18 +6198,205 @@ class DashboardEndpoints:
             'losing_trades': 0,
             'active_positions': 0,
             'total_pnl': 0.0,
-            'win_rate': 0.0
+            'win_rate': 0.0,
+            'avg_safety_score': 0.0
         }
-        # TODO: Implement real DB/Log reading
-        return web.json_response({'success': True, 'stats': stats})
+        try:
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    # Get trade stats from sniper_trades table
+                    row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) as total_trades,
+                            COUNT(*) FILTER (WHERE profit_loss > 0) as winning_trades,
+                            COUNT(*) FILTER (WHERE profit_loss < 0) as losing_trades,
+                            COALESCE(SUM(profit_loss), 0) as total_pnl,
+                            COALESCE(AVG(safety_score), 0) as avg_safety_score
+                        FROM sniper_trades
+                        WHERE status = 'closed'
+                    """)
+                    if row:
+                        stats['total_trades'] = row['total_trades'] or 0
+                        stats['winning_trades'] = row['winning_trades'] or 0
+                        stats['losing_trades'] = row['losing_trades'] or 0
+                        stats['total_pnl'] = float(row['total_pnl'] or 0)
+                        stats['avg_safety_score'] = float(row['avg_safety_score'] or 0)
+                        if stats['total_trades'] > 0:
+                            stats['win_rate'] = (stats['winning_trades'] / stats['total_trades']) * 100
+
+                    # Get active positions (open status)
+                    active = await conn.fetchval("""
+                        SELECT COUNT(*) FROM sniper_trades
+                        WHERE status = 'open'
+                    """)
+                    stats['active_positions'] = active or 0
+                    stats['status'] = 'Online' if stats['total_trades'] > 0 or stats['active_positions'] > 0 else 'Idle'
+
+            return web.json_response({'success': True, 'stats': stats})
+        except Exception as e:
+            logger.error(f"Error getting sniper stats: {e}")
+            return web.json_response({'success': False, 'error': str(e), 'stats': stats})
 
     async def api_get_sniper_positions(self, request):
-        """Get Sniper positions"""
-        return web.json_response({'success': True, 'positions': [], 'count': 0})
+        """Get Sniper open positions from sniper_trades table"""
+        positions = []
+        try:
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    rows = await conn.fetch("""
+                        SELECT
+                            trade_id, token_address, chain, side, entry_price, amount,
+                            entry_usd, native_token, native_price_at_entry,
+                            safety_score, safety_rating, status, entry_timestamp,
+                            entry_tx_hash, metadata
+                        FROM sniper_trades
+                        WHERE status = 'open'
+                        ORDER BY entry_timestamp DESC
+                    """)
+                    for row in rows:
+                        metadata = row['metadata'] or {}
+                        if isinstance(metadata, str):
+                            try:
+                                import json as json_module
+                                metadata = json_module.loads(metadata)
+                            except:
+                                metadata = {}
+                        positions.append({
+                            'trade_id': row['trade_id'],
+                            'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
+                            'token_address': row['token_address'],
+                            'chain': row['chain'],
+                            'side': row['side'].lower() if row['side'] else 'buy',
+                            'entry_price': float(row['entry_price'] or 0),
+                            'size': float(row['amount'] or 0),
+                            'entry_usd': float(row['entry_usd'] or 0),
+                            'safety_score': row['safety_score'],
+                            'safety_rating': row['safety_rating'],
+                            'status': row['status'],
+                            'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
+                            'entry_tx_hash': row['entry_tx_hash'] or ''
+                        })
+            return web.json_response({'success': True, 'positions': positions, 'count': len(positions)})
+        except Exception as e:
+            logger.error(f"Error getting sniper positions: {e}")
+            return web.json_response({'success': False, 'error': str(e), 'positions': []})
 
     async def api_get_sniper_trades(self, request):
-        """Get Sniper trades"""
-        return web.json_response({'success': True, 'trades': [], 'count': 0})
+        """Get Sniper trade history from dedicated sniper_trades table"""
+        trades = []
+        try:
+            limit = int(request.query.get('limit', 100))
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    rows = await conn.fetch("""
+                        SELECT
+                            trade_id, token_address, chain, side, entry_price, exit_price,
+                            amount, entry_usd, exit_usd, profit_loss, profit_loss_pct,
+                            native_token, native_price_at_entry, native_price_at_exit,
+                            safety_score, safety_rating, is_honeypot, buy_tax, sell_tax,
+                            liquidity_usd, status, exit_reason, is_simulated,
+                            entry_timestamp, exit_timestamp, entry_tx_hash, exit_tx_hash, metadata
+                        FROM sniper_trades
+                        ORDER BY entry_timestamp DESC
+                        LIMIT $1
+                    """, limit)
+                    for row in rows:
+                        pnl = float(row['profit_loss'] or 0)
+                        entry = float(row['entry_price'] or 0)
+                        exit_p = float(row['exit_price'] or entry)
+                        pnl_pct = float(row['profit_loss_pct'] or 0)
+                        metadata = row['metadata'] or {}
+                        if isinstance(metadata, str):
+                            try:
+                                import json as json_module
+                                metadata = json_module.loads(metadata)
+                            except:
+                                metadata = {}
+                        trades.append({
+                            'trade_id': row['trade_id'],
+                            'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
+                            'token_address': row['token_address'],
+                            'chain': row['chain'],
+                            'side': row['side'].lower() if row['side'] else 'buy',
+                            'entry_price': entry,
+                            'exit_price': exit_p,
+                            'size': float(row['amount'] or 0),
+                            'entry_usd': float(row['entry_usd'] or 0),
+                            'exit_usd': float(row['exit_usd'] or 0),
+                            'pnl': pnl,
+                            'pnl_pct': pnl_pct,
+                            'safety_score': row['safety_score'],
+                            'safety_rating': row['safety_rating'],
+                            'status': row['status'],
+                            'close_reason': row['exit_reason'] or '-',
+                            'is_simulated': row['is_simulated'],
+                            'closed_at': row['exit_timestamp'].isoformat() if row['exit_timestamp'] else row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
+                            'entry_tx_hash': row['entry_tx_hash'] or '',
+                            'exit_tx_hash': row['exit_tx_hash'] or ''
+                        })
+            return web.json_response({'success': True, 'trades': trades, 'count': len(trades)})
+        except Exception as e:
+            logger.error(f"Error getting sniper trades: {e}")
+            return web.json_response({'success': False, 'error': str(e), 'trades': []})
+
+    async def api_sniper_trading_status(self, request):
+        """Get sniper trading status"""
+        return web.json_response({
+            'success': True,
+            'trading_blocked': False,
+            'block_reasons': [],
+            'daily_pnl': 0,
+            'daily_loss_limit': 100,
+            'consecutive_losses': 0,
+            'max_consecutive_losses': 5,
+            'active_positions': 0,
+            'max_positions': 10,
+            'mode': 'DRY_RUN'
+        })
+
+    async def api_sniper_close_position(self, request):
+        """Close a sniper position (mark as closed in DB)"""
+        try:
+            data = await request.json()
+            token_address = data.get('symbol') or data.get('token_address')
+            if not token_address:
+                return web.json_response({'success': False, 'error': 'Token address required'}, status=400)
+
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    result = await conn.execute("""
+                        UPDATE trades
+                        SET status = 'closed', exit_timestamp = NOW(),
+                            metadata = jsonb_set(COALESCE(metadata, '{}'), '{exit_reason}', '"manual_close"')
+                        WHERE strategy = 'sniper' AND token_address = $1 AND status = 'open'
+                    """, token_address)
+                    if 'UPDATE 0' in result:
+                        return web.json_response({'success': False, 'error': 'Position not found', 'already_closed': True})
+
+            return web.json_response({'success': True, 'message': f'Position {token_address[:16]}... closed'})
+        except Exception as e:
+            logger.error(f"Error closing sniper position: {e}")
+            return web.json_response({'success': False, 'error': str(e)})
+
+    async def api_sniper_close_all_positions(self, request):
+        """Close all sniper positions"""
+        try:
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    await conn.execute("""
+                        UPDATE trades
+                        SET status = 'closed', exit_timestamp = NOW(),
+                            metadata = jsonb_set(COALESCE(metadata, '{}'), '{exit_reason}', '"manual_close_all"')
+                        WHERE strategy = 'sniper' AND status = 'open'
+                    """)
+            return web.json_response({'success': True, 'message': 'All sniper positions closed'})
+        except Exception as e:
+            logger.error(f"Error closing all sniper positions: {e}")
+            return web.json_response({'success': False, 'error': str(e)})
+
+    async def api_sniper_trading_unblock(self, request):
+        """Unblock sniper trading (placeholder)"""
+        return web.json_response({'success': True, 'message': 'Trading unblocked', 'previous_daily_pnl': 0})
 
     async def api_get_sniper_settings(self, request):
         """Get Sniper module settings"""
@@ -6246,8 +6444,8 @@ class DashboardEndpoints:
         return web.Response(text=template.render(page='arbitrage_dashboard'), content_type='text/html')
 
     async def _arbitrage_positions(self, request):
-        template = self.jinja_env.get_template('positions_arbitrage.html')
-        return web.Response(text=template.render(page='arbitrage_positions'), content_type='text/html')
+        # Arbitrage is instant execution - no open positions, redirect to trades
+        raise web.HTTPFound('/arbitrage/trades')
 
     async def _arbitrage_trades(self, request):
         template = self.jinja_env.get_template('trades_arbitrage.html')
@@ -6262,7 +6460,7 @@ class DashboardEndpoints:
         return web.Response(text=template.render(page='arbitrage_settings'), content_type='text/html')
 
     async def api_get_arbitrage_stats(self, request):
-        """Get Arbitrage module stats"""
+        """Get Arbitrage module stats from dedicated arbitrage_trades table with multi-chain support"""
         stats = {
             'module': 'arbitrage',
             'status': 'Offline',
@@ -6271,15 +6469,167 @@ class DashboardEndpoints:
             'losing_trades': 0,
             'active_positions': 0,
             'total_pnl': 0.0,
-            'win_rate': 0.0
+            'win_rate': 0.0,
+            'avg_spread': 0.0,
+            'chains': {},
+            'trade_types': {}
         }
-        return web.json_response({'success': True, 'stats': stats})
+        try:
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    # Overall stats
+                    row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) as total_trades,
+                            COUNT(*) FILTER (WHERE profit_loss > 0) as winning_trades,
+                            COUNT(*) FILTER (WHERE profit_loss < 0) as losing_trades,
+                            COALESCE(SUM(profit_loss), 0) as total_pnl,
+                            COALESCE(AVG(spread_pct), 0) as avg_spread
+                        FROM arbitrage_trades
+                    """)
+                    if row:
+                        stats['total_trades'] = row['total_trades'] or 0
+                        stats['winning_trades'] = row['winning_trades'] or 0
+                        stats['losing_trades'] = row['losing_trades'] or 0
+                        stats['total_pnl'] = float(row['total_pnl'] or 0)
+                        stats['avg_spread'] = float(row['avg_spread'] or 0)
+                        if stats['total_trades'] > 0:
+                            stats['win_rate'] = (stats['winning_trades'] / stats['total_trades']) * 100
+
+                    # Per-chain stats
+                    chain_rows = await conn.fetch("""
+                        SELECT
+                            chain,
+                            COUNT(*) as trades,
+                            COALESCE(SUM(profit_loss), 0) as pnl,
+                            COALESCE(AVG(spread_pct), 0) as avg_spread
+                        FROM arbitrage_trades
+                        GROUP BY chain
+                    """)
+                    for r in chain_rows:
+                        stats['chains'][r['chain'] or 'ethereum'] = {
+                            'trades': r['trades'],
+                            'pnl': float(r['pnl'] or 0),
+                            'avg_spread': float(r['avg_spread'] or 0)
+                        }
+
+                    # Check for triangular trades (in metadata)
+                    tri_row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) as trades,
+                            COALESCE(SUM(profit_loss), 0) as pnl
+                        FROM arbitrage_trades
+                        WHERE metadata::text LIKE '%triangular%'
+                    """)
+                    if tri_row and tri_row['trades'] > 0:
+                        stats['trade_types']['triangular'] = {
+                            'trades': tri_row['trades'],
+                            'pnl': float(tri_row['pnl'] or 0)
+                        }
+
+                    # Regular (non-triangular) trades
+                    reg_row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) as trades,
+                            COALESCE(SUM(profit_loss), 0) as pnl
+                        FROM arbitrage_trades
+                        WHERE metadata::text NOT LIKE '%triangular%' OR metadata IS NULL
+                    """)
+                    if reg_row:
+                        stats['trade_types']['direct'] = {
+                            'trades': reg_row['trades'],
+                            'pnl': float(reg_row['pnl'] or 0)
+                        }
+
+                    stats['status'] = 'Online' if stats['total_trades'] > 0 else 'Idle'
+
+            return web.json_response({'success': True, 'stats': stats})
+        except Exception as e:
+            logger.error(f"Error getting arbitrage stats: {e}")
+            return web.json_response({'success': False, 'error': str(e), 'stats': stats})
 
     async def api_get_arbitrage_positions(self, request):
-        return web.json_response({'success': True, 'positions': [], 'count': 0})
+        """Get Arbitrage open positions from dedicated arbitrage_positions table"""
+        positions = []
+        try:
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    rows = await conn.fetch("""
+                        SELECT
+                            trade_id, token_address, chain, buy_dex, sell_dex,
+                            entry_price, amount, entry_usd, status, opened_at
+                        FROM arbitrage_positions
+                        WHERE status = 'open'
+                        ORDER BY opened_at DESC
+                    """)
+                    for row in rows:
+                        positions.append({
+                            'trade_id': row['trade_id'],
+                            'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
+                            'token_address': row['token_address'],
+                            'chain': row['chain'],
+                            'buy_dex': row['buy_dex'],
+                            'sell_dex': row['sell_dex'],
+                            'entry_price': float(row['entry_price'] or 0),
+                            'price': float(row['entry_price'] or 0),
+                            'quantity': float(row['amount'] or 0),
+                            'entry_usd': float(row['entry_usd'] or 0),
+                            'status': row['status'],
+                            'timestamp': row['opened_at'].isoformat() if row['opened_at'] else None
+                        })
+            return web.json_response({'success': True, 'positions': positions, 'count': len(positions)})
+        except Exception as e:
+            logger.error(f"Error getting arbitrage positions: {e}")
+            return web.json_response({'success': False, 'error': str(e), 'positions': []})
 
     async def api_get_arbitrage_trades(self, request):
-        return web.json_response({'success': True, 'trades': [], 'count': 0})
+        """Get Arbitrage trade history from dedicated arbitrage_trades table"""
+        trades = []
+        try:
+            limit = int(request.query.get('limit', 100))
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    rows = await conn.fetch("""
+                        SELECT
+                            trade_id, token_address, chain, buy_dex, sell_dex,
+                            side, entry_price, exit_price, amount, amount_eth,
+                            entry_usd, exit_usd, profit_loss, profit_loss_pct, spread_pct,
+                            status, is_simulated, entry_timestamp, exit_timestamp,
+                            tx_hash, eth_price_at_trade
+                        FROM arbitrage_trades
+                        ORDER BY entry_timestamp DESC
+                        LIMIT $1
+                    """, limit)
+                    for row in rows:
+                        trades.append({
+                            'trade_id': row['trade_id'],
+                            'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
+                            'token_address': row['token_address'],
+                            'chain': row['chain'],
+                            'buy_dex': row['buy_dex'],
+                            'sell_dex': row['sell_dex'],
+                            'side': row['side'],
+                            'entry_price': float(row['entry_price'] or 0),
+                            'exit_price': float(row['exit_price'] or 0),
+                            'amount': float(row['amount'] or 0),
+                            'amount_eth': float(row['amount_eth'] or 0),
+                            'entry_usd': float(row['entry_usd'] or 0),
+                            'exit_usd': float(row['exit_usd'] or 0),
+                            'usd_value': float(row['entry_usd'] or 0),
+                            'profit_loss': float(row['profit_loss'] or 0),
+                            'profit_pct': float(row['profit_loss_pct'] or 0),
+                            'spread_pct': float(row['spread_pct'] or 0),
+                            'status': row['status'],
+                            'dry_run': row['is_simulated'],
+                            'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
+                            'exit_timestamp': row['exit_timestamp'].isoformat() if row['exit_timestamp'] else None,
+                            'tx_hash': row['tx_hash'] or '',
+                            'eth_price': float(row['eth_price_at_trade'] or 0)
+                        })
+            return web.json_response({'success': True, 'trades': trades, 'count': len(trades)})
+        except Exception as e:
+            logger.error(f"Error getting arbitrage trades: {e}")
+            return web.json_response({'success': False, 'error': str(e), 'trades': []})
 
     async def api_get_arbitrage_settings(self, request):
         """Get Arbitrage module settings"""
@@ -6341,8 +6691,65 @@ class DashboardEndpoints:
         template = self.jinja_env.get_template('settings_copytrading.html')
         return web.Response(text=template.render(page='copytrading_settings'), content_type='text/html')
 
+    async def _copytrading_discovery(self, request):
+        template = self.jinja_env.get_template('discovery_copytrading.html')
+        return web.Response(text=template.render(page='copytrading_discovery'), content_type='text/html')
+
+    async def _copytrading_wallets(self, request):
+        template = self.jinja_env.get_template('wallets_copytrading.html')
+        return web.Response(text=template.render(page='copytrading_wallets'), content_type='text/html')
+
+    async def api_get_copytrading_wallets(self, request):
+        """Get tracked wallets with their activity status"""
+        wallets = []
+        try:
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    # Get target wallets from settings
+                    wallets_row = await conn.fetchval(
+                        "SELECT value FROM config_settings WHERE config_type = 'copytrading_config' AND key = 'target_wallets'"
+                    )
+
+                    if wallets_row:
+                        import json as json_module
+                        try:
+                            wallet_list = json_module.loads(wallets_row)
+                        except:
+                            wallet_list = [w.strip() for w in wallets_row.split(',') if w.strip()]
+
+                        # For each wallet, get trade stats from copytrading_trades
+                        for addr in wallet_list:
+                            if not addr:
+                                continue
+
+                            # Get trades copied from this wallet using source_wallet column
+                            trades_row = await conn.fetchrow("""
+                                SELECT
+                                    COUNT(*) as total_trades,
+                                    COUNT(*) FILTER (WHERE profit_loss > 0) as winning,
+                                    COALESCE(SUM(profit_loss), 0) as total_pnl,
+                                    MAX(entry_timestamp) as last_trade
+                                FROM copytrading_trades
+                                WHERE source_wallet = $1
+                            """, addr)
+
+                            wallets.append({
+                                'address': addr,
+                                'short_address': f"{addr[:8]}...{addr[-6:]}" if len(addr) > 14 else addr,
+                                'total_trades': trades_row['total_trades'] if trades_row else 0,
+                                'winning_trades': trades_row['winning'] if trades_row else 0,
+                                'total_pnl': float(trades_row['total_pnl'] or 0) if trades_row else 0,
+                                'last_trade': trades_row['last_trade'].isoformat() if trades_row and trades_row['last_trade'] else None,
+                                'status': 'active'
+                            })
+
+            return web.json_response({'success': True, 'wallets': wallets, 'count': len(wallets)})
+        except Exception as e:
+            logger.error(f"Error getting copytrading wallets: {e}")
+            return web.json_response({'success': False, 'error': str(e), 'wallets': []})
+
     async def api_get_copytrading_stats(self, request):
-        """Get Copy Trading module stats"""
+        """Get Copy Trading module stats from dedicated copytrading_trades table"""
         stats = {
             'module': 'copytrading',
             'status': 'Offline',
@@ -6351,52 +6758,429 @@ class DashboardEndpoints:
             'losing_trades': 0,
             'active_positions': 0,
             'total_pnl': 0.0,
-            'win_rate': 0.0
+            'win_rate': 0.0,
+            'wallets_tracked': 0,
+            'unique_wallets': 0
         }
-        return web.json_response({'success': True, 'stats': stats})
+        try:
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) as total_trades,
+                            COUNT(*) FILTER (WHERE profit_loss > 0) as winning_trades,
+                            COUNT(*) FILTER (WHERE profit_loss < 0) as losing_trades,
+                            COALESCE(SUM(profit_loss), 0) as total_pnl,
+                            COUNT(DISTINCT source_wallet) as unique_wallets
+                        FROM copytrading_trades
+                    """)
+                    if row:
+                        stats['total_trades'] = row['total_trades'] or 0
+                        stats['winning_trades'] = row['winning_trades'] or 0
+                        stats['losing_trades'] = row['losing_trades'] or 0
+                        stats['total_pnl'] = float(row['total_pnl'] or 0)
+                        stats['unique_wallets'] = row['unique_wallets'] or 0
+                        if stats['total_trades'] > 0:
+                            stats['win_rate'] = (stats['winning_trades'] / stats['total_trades']) * 100
+
+                    active = await conn.fetchval("""
+                        SELECT COUNT(*) FROM copytrading_positions
+                        WHERE status = 'open'
+                    """)
+                    stats['active_positions'] = active or 0
+                    stats['status'] = 'Online' if stats['total_trades'] > 0 or stats['active_positions'] > 0 else 'Idle'
+
+                    # Get number of tracked wallets from config
+                    wallets_row = await conn.fetchval(
+                        "SELECT value FROM config_settings WHERE config_type = 'copytrading_config' AND key = 'target_wallets'"
+                    )
+                    if wallets_row:
+                        try:
+                            import json as json_module
+                            try:
+                                wallets = json_module.loads(wallets_row)
+                            except:
+                                wallets = [w.strip() for w in wallets_row.split(',') if w.strip()]
+                            stats['wallets_tracked'] = len(wallets)
+                        except:
+                            pass
+
+            return web.json_response({'success': True, 'stats': stats})
+        except Exception as e:
+            logger.error(f"Error getting copytrading stats: {e}")
+            return web.json_response({'success': False, 'error': str(e), 'stats': stats})
 
     async def api_get_copytrading_positions(self, request):
-        return web.json_response({'success': True, 'positions': [], 'count': 0})
+        """Get Copy Trading open positions from dedicated copytrading_positions table"""
+        positions = []
+        try:
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    rows = await conn.fetch("""
+                        SELECT
+                            trade_id, token_address, chain, source_wallet, side,
+                            entry_price, current_price, amount, entry_usd,
+                            unrealized_pnl, unrealized_pnl_pct, status, opened_at
+                        FROM copytrading_positions
+                        WHERE status = 'open'
+                        ORDER BY opened_at DESC
+                    """)
+                    for row in rows:
+                        positions.append({
+                            'trade_id': row['trade_id'],
+                            'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
+                            'token_address': row['token_address'],
+                            'chain': row['chain'],
+                            'source_wallet': row['source_wallet'],
+                            'side': row['side'],
+                            'entry_price': float(row['entry_price'] or 0),
+                            'price': float(row['entry_price'] or 0),
+                            'current_price': float(row['current_price'] or 0),
+                            'quantity': float(row['amount'] or 0),
+                            'entry_usd': float(row['entry_usd'] or 0),
+                            'unrealized_pnl': float(row['unrealized_pnl'] or 0),
+                            'unrealized_pnl_pct': float(row['unrealized_pnl_pct'] or 0),
+                            'profit_loss': float(row['unrealized_pnl'] or 0),
+                            'status': row['status'],
+                            'timestamp': row['opened_at'].isoformat() if row['opened_at'] else None
+                        })
+            return web.json_response({'success': True, 'positions': positions, 'count': len(positions)})
+        except Exception as e:
+            logger.error(f"Error getting copytrading positions: {e}")
+            return web.json_response({'success': False, 'error': str(e), 'positions': []})
 
     async def api_get_copytrading_trades(self, request):
-        return web.json_response({'success': True, 'trades': [], 'count': 0})
+        """Get Copy Trading trade history from dedicated copytrading_trades table"""
+        trades = []
+        try:
+            limit = int(request.query.get('limit', 100))
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    rows = await conn.fetch("""
+                        SELECT
+                            trade_id, token_address, chain, source_wallet, source_tx,
+                            side, entry_price, exit_price, amount,
+                            entry_usd, exit_usd, profit_loss, profit_loss_pct,
+                            status, is_simulated, entry_timestamp, exit_timestamp,
+                            tx_hash, native_price_at_trade
+                        FROM copytrading_trades
+                        ORDER BY entry_timestamp DESC
+                        LIMIT $1
+                    """, limit)
+                    for row in rows:
+                        trades.append({
+                            'trade_id': row['trade_id'],
+                            'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
+                            'token_address': row['token_address'],
+                            'chain': row['chain'],
+                            'source_wallet': row['source_wallet'],
+                            'source_tx': row['source_tx'] or '',
+                            'side': row['side'],
+                            'entry_price': float(row['entry_price'] or 0),
+                            'exit_price': float(row['exit_price'] or 0),
+                            'price': float(row['entry_price'] or 0),
+                            'quantity': float(row['amount'] or 0),
+                            'amount': float(row['amount'] or 0),
+                            'entry_usd': float(row['entry_usd'] or 0),
+                            'exit_usd': float(row['exit_usd'] or 0),
+                            'usd_value': float(row['entry_usd'] or 0),
+                            'profit_loss': float(row['profit_loss'] or 0),
+                            'profit_pct': float(row['profit_loss_pct'] or 0),
+                            'status': row['status'],
+                            'dry_run': row['is_simulated'],
+                            'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
+                            'exit_timestamp': row['exit_timestamp'].isoformat() if row['exit_timestamp'] else None,
+                            'tx_hash': row['tx_hash'] or '',
+                            'native_price': float(row['native_price_at_trade'] or 0)
+                        })
+            return web.json_response({'success': True, 'trades': trades, 'count': len(trades)})
+        except Exception as e:
+            logger.error(f"Error getting copytrading trades: {e}")
+            return web.json_response({'success': False, 'error': str(e), 'trades': []})
 
     async def api_get_copytrading_settings(self, request):
         """Get Copy Trading module settings"""
         try:
-            settings = {}
+            settings = {
+                'enabled': False,
+                'max_copy_amount': 100,
+                'copy_ratio': 10,
+                'target_wallets': []
+            }
             if self.db:
                 async with self.db.pool.acquire() as conn:
                     rows = await conn.fetch("SELECT key, value FROM config_settings WHERE config_type = 'copytrading_config'")
                     for row in rows:
+                        key = row['key']
                         val = row['value']
-                        if val.lower() in ('true', 'false'):
-                            val = val.lower() == 'true'
-                        elif val.replace('.', '', 1).isdigit():
-                            if '.' in val:
-                                val = float(val)
+
+                        # Handle target_wallets specially - parse as array
+                        if key == 'target_wallets':
+                            if val:
+                                try:
+                                    # Try parsing as JSON array first
+                                    import json
+                                    parsed = json.loads(val)
+                                    if isinstance(parsed, list):
+                                        settings[key] = [str(w).strip() for w in parsed if w]
+                                    else:
+                                        settings[key] = [val.strip()] if val.strip() else []
+                                except json.JSONDecodeError:
+                                    # Try parsing as Python list literal
+                                    try:
+                                        import ast
+                                        parsed = ast.literal_eval(val)
+                                        if isinstance(parsed, list):
+                                            settings[key] = [str(w).strip() for w in parsed if w]
+                                        else:
+                                            settings[key] = [val.strip()] if val.strip() else []
+                                    except (ValueError, SyntaxError):
+                                        # Fallback: treat as newline/comma separated string
+                                        settings[key] = [w.strip() for w in val.replace(',', '\n').split('\n') if w.strip()]
                             else:
-                                val = int(val)
-                        settings[row['key']] = val
+                                settings[key] = []
+                        elif val.lower() in ('true', 'false'):
+                            settings[key] = val.lower() == 'true'
+                        elif val.replace('.', '', 1).replace('-', '', 1).isdigit():
+                            if '.' in val:
+                                settings[key] = float(val)
+                            else:
+                                settings[key] = int(val)
+                        else:
+                            settings[key] = val
             return web.json_response({'success': True, 'settings': settings})
         except Exception as e:
+            logger.error(f"Error getting copytrading settings: {e}")
             return web.json_response({'success': False, 'error': str(e)})
 
     async def api_save_copytrading_settings(self, request):
         """Save Copy Trading module settings"""
         try:
+            import json
             data = await request.json()
             if self.db:
                 async with self.db.pool.acquire() as conn:
                     for k, v in data.items():
+                        # Handle target_wallets specially - save as JSON array
+                        if k == 'target_wallets':
+                            if isinstance(v, list):
+                                val_str = json.dumps(v)
+                            else:
+                                val_str = str(v)
+                        else:
+                            val_str = str(v)
+
                         await conn.execute("""
                             INSERT INTO config_settings (config_type, key, value, value_type)
                             VALUES ('copytrading_config', $1, $2, 'string')
                             ON CONFLICT (config_type, key) DO UPDATE SET value = $2
-                        """, k, str(v))
+                        """, k, val_str)
+            logger.info(f"Copy trading settings saved: {list(data.keys())}")
             return web.json_response({'success': True, 'message': 'Settings saved'})
         except Exception as e:
+            logger.error(f"Error saving copytrading settings: {e}")
             return web.json_response({'success': False, 'error': str(e)})
+
+    async def api_copytrading_discover(self, request):
+        """Discover best-performing Solana wallets to copy"""
+        import os
+        import aiohttp
+        from datetime import datetime, timedelta
+        import hashlib
+
+        try:
+            # Get query parameters
+            search_type = request.query.get('type', 'top_traders')
+            min_win_rate = float(request.query.get('min_win_rate', 40))
+            min_trades = int(request.query.get('min_trades', 5))
+            min_pnl = float(request.query.get('min_pnl', 0))
+            max_results = int(request.query.get('max_results', 25))
+            token_address = request.query.get('token_address', '')
+            wallet_address = request.query.get('wallet_address', '')
+
+            helius_api_key = os.getenv('HELIUS_API_KEY')
+            solana_rpc_url = os.getenv('SOLANA_RPC_URL')
+
+            wallets = []
+
+            if search_type == 'analyze_wallet' and wallet_address:
+                # Analyze specific wallet
+                if helius_api_key or solana_rpc_url:
+                    wallet_data = await self._analyze_solana_wallet(wallet_address, helius_api_key, solana_rpc_url)
+                    if wallet_data:
+                        wallets = [wallet_data]
+                else:
+                    # Return demo analysis
+                    wallets = [self._generate_demo_wallet(wallet_address, search_type)]
+            else:
+                # Generate demo wallets based on search type
+                # In production, integrate with Helius/Birdeye/DexScreener APIs
+                import random
+
+                # Different wallet pools based on search type
+                wallet_seeds = {
+                    'top_traders': ['TopTrader', 'ProDefi', 'AlphaSol', 'WhaleSol', 'SolMaster'],
+                    'top_traders_7d': ['Weekly', 'Active7d', 'HotTrader', 'NewPro', 'Rising'],
+                    'top_volume': ['Volume', 'BigVol', 'Whale', 'HighVol', 'MegaTrade'],
+                    'meme_hunters': ['Meme', 'Degen', 'Ape', 'Moon', 'Pepe'],
+                    'dex_whales': ['DexWhale', 'Jupiter', 'Raydium', 'Orca', 'BigSwap'],
+                    'token_traders': ['Token', 'Holder', 'Trader', 'Sniper', 'Early'],
+                }
+
+                seeds = wallet_seeds.get(search_type, wallet_seeds['top_traders'])
+
+                # Generate more wallets (up to max_results)
+                num_wallets = min(max_results * 2, 100)  # Generate extra for filtering
+
+                for i in range(num_wallets):
+                    seed = seeds[i % len(seeds)]
+                    # Generate deterministic but realistic-looking address
+                    hash_input = f"{seed}_{search_type}_{i}".encode()
+                    addr = hashlib.sha256(hash_input).hexdigest()[:44]
+                    # Make it look like a Solana address (base58-like)
+                    addr = addr.replace('0', 'A').replace('1', 'B').replace('l', 'L').replace('O', 'o')
+
+                    # Generate metrics based on search type
+                    if search_type == 'meme_hunters':
+                        win_rate = random.uniform(35, 75)  # More volatile
+                        total_trades = random.randint(20, 500)
+                        avg_profit = random.uniform(-20, 100)  # High variance
+                    elif search_type == 'dex_whales':
+                        win_rate = random.uniform(55, 80)
+                        total_trades = random.randint(50, 1000)
+                        avg_profit = random.uniform(5, 50)
+                    elif search_type == 'top_volume':
+                        win_rate = random.uniform(50, 75)
+                        total_trades = random.randint(100, 2000)
+                        avg_profit = random.uniform(0, 30)
+                    elif search_type == 'top_traders_7d':
+                        win_rate = random.uniform(55, 90)
+                        total_trades = random.randint(10, 100)
+                        avg_profit = random.uniform(5, 40)
+                    else:  # top_traders (30d)
+                        win_rate = random.uniform(50, 85)
+                        total_trades = random.randint(min_trades, 300)
+                        avg_profit = random.uniform(0, 35)
+
+                    total_pnl = avg_profit * total_trades * random.uniform(0.2, 0.5)
+
+                    # Apply filters
+                    if win_rate < min_win_rate:
+                        continue
+                    if total_trades < min_trades:
+                        continue
+                    if total_pnl < min_pnl:
+                        continue
+
+                    # Calculate score
+                    score = (win_rate * 0.4) + (min(total_pnl / 100, 30) * 0.3) + (min(total_trades / 10, 15) * 0.15) + (random.uniform(5, 15))
+                    score = min(max(score, 0), 100)
+
+                    days_ago = random.randint(0, 7 if search_type == 'top_traders_7d' else 30)
+                    last_active = (datetime.now() - timedelta(days=days_ago)).strftime('%Y-%m-%d')
+
+                    wallets.append({
+                        'address': addr,
+                        'score': round(score, 1),
+                        'win_rate': round(win_rate, 1),
+                        'total_trades': total_trades,
+                        'total_pnl': round(total_pnl, 2),
+                        'avg_trade_size': round(random.uniform(50, 500), 2),
+                        'last_active': last_active,
+                        'category': search_type
+                    })
+
+                # Sort by score and limit
+                wallets.sort(key=lambda x: x['score'], reverse=True)
+                wallets = wallets[:max_results]
+
+            return web.json_response({
+                'success': True,
+                'wallets': wallets,
+                'count': len(wallets),
+                'search_type': search_type,
+                'note': 'Demo data - For live data, configure HELIUS_API_KEY or integrate with Birdeye/DexScreener APIs'
+            })
+
+        except Exception as e:
+            logger.error(f"Error in wallet discovery: {e}")
+            return web.json_response({'success': False, 'error': str(e)})
+
+    def _generate_demo_wallet(self, address: str, search_type: str):
+        """Generate demo wallet analysis data"""
+        import random
+        from datetime import datetime, timedelta
+
+        win_rate = random.uniform(45, 80)
+        total_trades = random.randint(20, 200)
+        avg_profit = random.uniform(5, 30)
+        total_pnl = avg_profit * total_trades * random.uniform(0.3, 0.5)
+        score = (win_rate * 0.4) + (min(total_pnl / 100, 30) * 0.3) + (min(total_trades / 10, 15) * 0.15) + 10
+
+        return {
+            'address': address,
+            'score': round(min(score, 100), 1),
+            'win_rate': round(win_rate, 1),
+            'total_trades': total_trades,
+            'total_pnl': round(total_pnl, 2),
+            'avg_trade_size': round(random.uniform(50, 500), 2),
+            'last_active': datetime.now().strftime('%Y-%m-%d'),
+            'category': 'analyzed'
+        }
+
+    async def _analyze_solana_wallet(self, wallet_address: str, helius_api_key: str, solana_rpc_url: str):
+        """Analyze a specific Solana wallet's trading performance"""
+        import aiohttp
+        from datetime import datetime
+
+        try:
+            # Get recent transactions using RPC
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getSignaturesForAddress",
+                "params": [wallet_address, {"limit": 100}]
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(solana_rpc_url, json=payload) as resp:
+                    if resp.status != 200:
+                        return None
+
+                    data = await resp.json()
+                    signatures = data.get('result', [])
+
+                    if not signatures:
+                        return None
+
+                    # Count transactions and calculate basic metrics
+                    total_trades = len(signatures)
+                    successful = len([s for s in signatures if s.get('err') is None])
+
+                    # Calculate mock metrics (in production, would analyze actual trade data)
+                    win_rate = (successful / total_trades * 100) if total_trades > 0 else 0
+                    import random
+                    total_pnl = random.uniform(-500, 2000)
+                    score = (win_rate * 0.4) + (min(total_pnl / 100, 30) * 0.3) + (min(total_trades / 10, 15) * 0.15) + 10
+                    score = min(max(score, 0), 100)
+
+                    # Get last active time
+                    last_block_time = signatures[0].get('blockTime', 0) if signatures else 0
+                    last_active = datetime.fromtimestamp(last_block_time).strftime('%Y-%m-%d') if last_block_time else 'Unknown'
+
+                    return {
+                        'address': wallet_address,
+                        'score': score,
+                        'win_rate': win_rate,
+                        'total_trades': total_trades,
+                        'total_pnl': total_pnl,
+                        'avg_trade_size': abs(total_pnl / total_trades) if total_trades > 0 else 0,
+                        'last_active': last_active
+                    }
+
+        except Exception as e:
+            logger.error(f"Error analyzing wallet {wallet_address}: {e}")
+            return None
 
     # ==================== AI MODULE HANDLERS ====================
 
@@ -6416,8 +7200,12 @@ class DashboardEndpoints:
         template = self.jinja_env.get_template('settings_ai.html')
         return web.Response(text=template.render(page='ai_settings'), content_type='text/html')
 
+    async def _ai_logs(self, request):
+        template = self.jinja_env.get_template('logs_ai.html')
+        return web.Response(text=template.render(page='ai_logs'), content_type='text/html')
+
     async def api_get_ai_stats(self, request):
-        """Get AI module stats from DB"""
+        """Get AI module stats from dedicated ai_trades table"""
         try:
             stats = {
                 'module': 'ai_analysis',
@@ -6425,7 +7213,9 @@ class DashboardEndpoints:
                 'sentiment_score': 0,
                 'sentiment_label': 'Neutral',
                 'active_signals': 0,
-                'accuracy': 0.0
+                'accuracy': 0.0,
+                'total_trades': 0,
+                'total_pnl': 0.0
             }
 
             # Check if running (via env)
@@ -6433,8 +7223,8 @@ class DashboardEndpoints:
                 stats['status'] = 'Running'
 
             if self.db:
-                # Get latest sentiment
                 async with self.db.pool.acquire() as conn:
+                    # Get latest sentiment from sentiment_logs
                     latest = await conn.fetchrow("SELECT score FROM sentiment_logs ORDER BY timestamp DESC LIMIT 1")
                     if latest:
                         score = float(latest['score'])
@@ -6443,9 +7233,23 @@ class DashboardEndpoints:
                         elif score < -0.5: stats['sentiment_label'] = 'Bearish'
                         else: stats['sentiment_label'] = 'Neutral'
 
-                    # Get active signals (placeholder: derived from trades with 'ai_analysis' strategy)
-                    signals_count = await conn.fetchval("SELECT COUNT(*) FROM trades WHERE strategy = 'ai_analysis' AND status = 'open'")
+                    # Get active positions from ai_trades
+                    signals_count = await conn.fetchval("SELECT COUNT(*) FROM ai_trades WHERE status = 'open'")
                     stats['active_signals'] = signals_count or 0
+
+                    # Get trade stats from ai_trades
+                    row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) as total_trades,
+                            COUNT(*) FILTER (WHERE profit_loss > 0) as wins,
+                            COALESCE(SUM(profit_loss), 0) as total_pnl
+                        FROM ai_trades
+                        WHERE status = 'closed'
+                    """)
+                    if row and row['total_trades'] > 0:
+                        stats['total_trades'] = row['total_trades']
+                        stats['total_pnl'] = float(row['total_pnl'] or 0)
+                        stats['accuracy'] = float(row['wins'] / row['total_trades'] * 100)
 
             return web.json_response({'success': True, 'stats': stats})
         except Exception as e:
@@ -6477,28 +7281,86 @@ class DashboardEndpoints:
             return web.json_response({'success': False, 'error': str(e)})
 
     async def api_get_ai_performance(self, request):
-        """Get AI performance metrics"""
+        """Get AI performance metrics from dedicated ai_trades table"""
         try:
-            metrics = {'win_rate': 0, 'total_pnl': 0, 'trades': 0}
+            metrics = {
+                'win_rate': 0,
+                'total_pnl': 0,
+                'trades': 0,
+                'avg_sentiment': 0,
+                'best_trade': 0,
+                'worst_trade': 0
+            }
             if self.db:
                 async with self.db.pool.acquire() as conn:
                     row = await conn.fetchrow("""
                         SELECT
                             COUNT(*) as trades,
-                            SUM(profit_loss) as pnl,
-                            COUNT(*) FILTER (WHERE profit_loss > 0) as wins
-                        FROM trades
-                        WHERE strategy = 'ai_analysis' AND status = 'closed'
+                            COALESCE(SUM(profit_loss), 0) as pnl,
+                            COUNT(*) FILTER (WHERE profit_loss > 0) as wins,
+                            COALESCE(AVG(sentiment_score), 0) as avg_sentiment,
+                            COALESCE(MAX(profit_loss), 0) as best_trade,
+                            COALESCE(MIN(profit_loss), 0) as worst_trade
+                        FROM ai_trades
+                        WHERE status = 'closed'
                     """)
                     if row and row['trades'] > 0:
                         metrics['trades'] = row['trades']
                         metrics['total_pnl'] = float(row['pnl'] or 0)
                         metrics['win_rate'] = float(row['wins'] / row['trades'] * 100)
+                        metrics['avg_sentiment'] = float(row['avg_sentiment'] or 0)
+                        metrics['best_trade'] = float(row['best_trade'] or 0)
+                        metrics['worst_trade'] = float(row['worst_trade'] or 0)
 
             return web.json_response({'success': True, 'metrics': metrics})
         except Exception as e:
             logger.error(f"Error getting AI performance: {e}")
             return web.json_response({'success': False, 'error': str(e)})
+
+    async def api_get_ai_trades(self, request):
+        """Get AI module trades from dedicated ai_trades table"""
+        try:
+            trades = []
+            limit = int(request.query.get('limit', 100))
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    rows = await conn.fetch("""
+                        SELECT trade_id, token_symbol, token_address, chain, side,
+                               entry_price, exit_price, amount, entry_usd, exit_usd,
+                               profit_loss, profit_loss_pct, sentiment_score, confidence_score,
+                               ai_provider, status, exit_reason, is_simulated,
+                               entry_timestamp, exit_timestamp, entry_order_id, exit_order_id, metadata
+                        FROM ai_trades
+                        ORDER BY entry_timestamp DESC
+                        LIMIT $1
+                    """, limit)
+                    for row in rows:
+                        trades.append({
+                            'trade_id': row['trade_id'],
+                            'symbol': row['token_symbol'],
+                            'token_address': row['token_address'],
+                            'chain': row['chain'],
+                            'side': row['side'],
+                            'entry_price': float(row['entry_price'] or 0),
+                            'exit_price': float(row['exit_price'] or 0),
+                            'amount': float(row['amount'] or 0),
+                            'entry_usd': float(row['entry_usd'] or 0),
+                            'exit_usd': float(row['exit_usd'] or 0),
+                            'pnl': float(row['profit_loss'] or 0),
+                            'pnl_pct': float(row['profit_loss_pct'] or 0),
+                            'sentiment_score': float(row['sentiment_score'] or 0),
+                            'confidence_score': float(row['confidence_score'] or 0),
+                            'ai_provider': row['ai_provider'],
+                            'status': row['status'],
+                            'exit_reason': row['exit_reason'] or '-',
+                            'is_simulated': row['is_simulated'],
+                            'entry_timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
+                            'exit_timestamp': row['exit_timestamp'].isoformat() if row['exit_timestamp'] else None
+                        })
+            return web.json_response({'success': True, 'trades': trades, 'count': len(trades)})
+        except Exception as e:
+            logger.error(f"Error getting AI trades: {e}")
+            return web.json_response({'success': False, 'error': str(e), 'trades': []})
 
     async def api_get_ai_settings(self, request):
         """Get AI settings"""
@@ -6508,7 +7370,8 @@ class DashboardEndpoints:
                 'confidence_threshold': 85,
                 'trade_amount_usd': 50,
                 'sentiment_source': 'news',
-                'analysis_interval': 15
+                'analysis_interval': 15,
+                'ai_provider': 'openai'
             }
             if self.db:
                 async with self.db.pool.acquire() as conn:
@@ -6524,6 +7387,11 @@ class DashboardEndpoints:
                             else:
                                 val = int(val)
                         settings[row['key']] = val
+
+            # Check API key configuration status
+            settings['openai_api_configured'] = bool(os.getenv('OPENAI_API_KEY'))
+            settings['claude_api_configured'] = bool(os.getenv('ANTHROPIC_API_KEY'))
+
             return web.json_response({'success': True, 'settings': settings})
         except Exception as e:
             return web.json_response({'success': False, 'error': str(e)})
@@ -6543,6 +7411,53 @@ class DashboardEndpoints:
             return web.json_response({'success': True, 'message': 'Settings saved'})
         except Exception as e:
             return web.json_response({'success': False, 'error': str(e)})
+
+    async def api_get_ai_logs(self, request):
+        """Get detailed OpenAI API logs from database"""
+        try:
+            logs = []
+            limit = int(request.query.get('limit', 100))
+
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    # Check if table exists
+                    table_exists = await conn.fetchval("""
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables
+                            WHERE table_name = 'ai_analysis_logs'
+                        )
+                    """)
+
+                    if table_exists:
+                        rows = await conn.fetch("""
+                            SELECT
+                                id, timestamp, headlines, raw_response, sentiment_score,
+                                prompt_tokens, completion_tokens, total_tokens,
+                                response_time_sec, model
+                            FROM ai_analysis_logs
+                            ORDER BY timestamp DESC
+                            LIMIT $1
+                        """, limit)
+
+                        for row in rows:
+                            import json
+                            logs.append({
+                                'id': row['id'],
+                                'timestamp': row['timestamp'].isoformat() if row['timestamp'] else None,
+                                'headlines': row['headlines'] if row['headlines'] else '[]',
+                                'raw_response': row['raw_response'],
+                                'sentiment_score': float(row['sentiment_score']) if row['sentiment_score'] else 0,
+                                'prompt_tokens': row['prompt_tokens'] or 0,
+                                'completion_tokens': row['completion_tokens'] or 0,
+                                'total_tokens': row['total_tokens'] or 0,
+                                'response_time_sec': float(row['response_time_sec']) if row['response_time_sec'] else 0,
+                                'model': row['model'] or 'gpt-3.5-turbo'
+                            })
+
+            return web.json_response({'success': True, 'logs': logs})
+        except Exception as e:
+            logger.error(f"Error getting AI logs: {e}")
+            return web.json_response({'success': False, 'error': str(e), 'logs': []})
 
     # ==================== FULL DASHBOARD HANDLERS ====================
 

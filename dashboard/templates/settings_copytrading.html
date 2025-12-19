@@ -24,6 +24,12 @@
                                     <label class="form-check-label" for="enabled">Enable Copy Trading</label>
                                 </div>
 
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="dry_run" checked>
+                                    <label class="form-check-label" for="dry_run">DRY RUN Mode</label>
+                                    <div class="form-text">Simulate trades without real execution. <strong class="text-danger">Disable for LIVE trading.</strong></div>
+                                </div>
+
                                 <div class="mb-3">
                                     <label class="form-label">Max Copy Amount (USD)</label>
                                     <input type="number" class="form-control" id="max_copy_amount" step="10" value="100">
@@ -35,6 +41,12 @@
                                     <input type="number" class="form-control" id="copy_ratio" min="1" max="100" value="10">
                                     <div class="form-text">Percentage of the target wallet's trade size to copy (capped by Max Amount).</div>
                                 </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Max Slippage (%)</label>
+                                    <input type="number" class="form-control" id="slippage" min="1" max="50" value="5">
+                                    <div class="form-text">Maximum acceptable slippage for copy trades.</div>
+                                </div>
                             </div>
 
                             <div class="col-md-6">
@@ -42,8 +54,13 @@
 
                                 <div class="mb-3">
                                     <label class="form-label">Tracked Addresses</label>
-                                    <textarea class="form-control" id="target_wallets" rows="5" placeholder="0x..."></textarea>
-                                    <div class="form-text">One address per line.</div>
+                                    <textarea class="form-control" id="target_wallets" rows="5" placeholder="0x... (EVM)&#10;4yrH... (Solana)"></textarea>
+                                    <div class="form-text">One address per line. Supports both EVM (0x...) and Solana addresses.</div>
+                                </div>
+
+                                <div class="alert alert-info mt-3">
+                                    <i class="fas fa-search me-2"></i>
+                                    <strong>Need help finding wallets?</strong> Use the <a href="/copytrading/discovery" class="alert-link">Wallet Discovery</a> page to find and analyze profitable wallets to copy.
                                 </div>
                             </div>
                         </div>
@@ -53,25 +70,237 @@
         </div>
     </div>
 
-    <!-- Guide -->
+    <!-- Comprehensive Guide -->
     <div class="row">
         <div class="col-12">
             <div class="card">
                 <div class="card-header">
-                    <h5 class="mb-0"><i class="fas fa-book me-2"></i>Copy Trading Guide</h5>
+                    <h5 class="mb-0"><i class="fas fa-book me-2"></i>Copy Trading Module - Complete User Guide</h5>
                 </div>
                 <div class="card-body">
-                    <h6>Overview</h6>
-                    <p>The Copy Trading Module monitors specific "smart money" wallets and automatically replicates their buy/sell transactions on your account.</p>
+                    <!-- Overview Section -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-users me-2"></i>Overview</h5>
+                        <p>The Copy Trading Module monitors specific "smart money" wallets and automatically replicates their swap transactions on your account. Supports both EVM chains (Ethereum, BSC, etc.) and Solana.</p>
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <strong>Current Status:</strong> Operational in DRY RUN mode. Monitors wallets every 15 seconds.
+                        </div>
+                    </div>
 
-                    <h6>Setup</h6>
-                    <ul>
-                        <li><strong>Target Wallets:</strong> Add the Ethereum/Solana addresses of successful traders you want to copy.</li>
-                        <li><strong>Copy Ratio:</strong> Determines your trade size relative to theirs. If a whale buys 10 ETH and your ratio is 10%, you buy 1 ETH (limited by Max Copy Amount).</li>
-                    </ul>
+                    <!-- File Structure -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-folder-tree me-2"></i>Module Architecture</h5>
+                        <div class="bg-dark text-light p-3 rounded" style="font-family: monospace; font-size: 0.85rem;">
+                            modules/copy_trading/<br>
+                            ├── main_copy.py &nbsp;&nbsp;&nbsp;&nbsp;# Entry point<br>
+                            └── copy_engine.py &nbsp;&nbsp;# Wallet monitoring + CopyTradeExecutor (Jupiter/Uniswap)
+                        </div>
+                        <div class="mt-2 small text-muted">
+                            <strong>Key Components:</strong> CopyTradingEngine (wallet monitoring, swap detection), CopyTradeExecutor (Jupiter for Solana, Uniswap V2 for EVM)
+                        </div>
+                    </div>
 
-                    <h6>Risk Warning</h6>
-                    <p>Copy trading involves significant risk. The wallets you copy may engage in strategies that are high-risk or specific to their portfolio size. Always set a strict Max Copy Amount.</p>
+                    <!-- Dashboard Pages -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-desktop me-2"></i>Dashboard Pages</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm">
+                                <thead class="table-light">
+                                    <tr><th>Page</th><th>URL</th><th>Description</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>Dashboard</td><td><code>/copytrading/dashboard</code></td><td>Tracked wallets overview</td></tr>
+                                    <tr><td>Positions</td><td><code>/copytrading/positions</code></td><td>Copied positions</td></tr>
+                                    <tr><td>Trades</td><td><code>/copytrading/trades</code></td><td>Copy trade history</td></tr>
+                                    <tr><td>Performance</td><td><code>/copytrading/performance</code></td><td>P&L metrics</td></tr>
+                                    <tr class="table-success"><td><strong>Wallet Discovery</strong></td><td><code>/copytrading/discovery</code></td><td>Find and analyze profitable wallets</td></tr>
+                                    <tr><td>Settings</td><td><code>/copytrading/settings</code></td><td>This configuration page</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Supported Chains -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-link me-2"></i>Supported Chains</h5>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="card bg-light">
+                                    <div class="card-header"><strong>EVM Chains (Ethereum, BSC, etc.)</strong></div>
+                                    <div class="card-body">
+                                        <p><strong>Detection:</strong> Etherscan API</p>
+                                        <p><strong>Supported DEXs:</strong></p>
+                                        <ul class="mb-0">
+                                            <li>Uniswap V2/V3</li>
+                                            <li>SushiSwap</li>
+                                            <li>Other DEXs using standard router methods</li>
+                                        </ul>
+                                        <p class="mt-2"><strong>Requires:</strong> <code>ETHERSCAN_API_KEY</code></p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="card bg-light">
+                                    <div class="card-header"><strong>Solana Chain</strong></div>
+                                    <div class="card-body">
+                                        <p><strong>Detection:</strong> Solana RPC</p>
+                                        <p><strong>Supported DEXs:</strong></p>
+                                        <ul class="mb-0">
+                                            <li>Jupiter v4, v6</li>
+                                            <li>Raydium V4</li>
+                                            <li>Raydium CPMM</li>
+                                        </ul>
+                                        <p class="mt-2"><strong>Requires:</strong> <code>SOLANA_RPC_URL</code></p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Wallet Address Format -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-wallet me-2"></i>Wallet Address Format</h5>
+                        <div class="bg-dark text-light p-3 rounded" style="font-family: monospace; font-size: 0.85rem;">
+                            # EVM wallets (Ethereum, BSC, etc.) - start with 0x<br>
+                            0x1234567890abcdef1234567890abcdef12345678<br><br>
+                            # Solana wallets - 32-44 character base58 string<br>
+                            4yrHms7ekgTBgJg2YxXjBmSC8knTjTbvnQf3ZxQCnP2M
+                        </div>
+                    </div>
+
+                    <!-- How It Works -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-cogs me-2"></i>How It Works</h5>
+                        <div class="card bg-light">
+                            <div class="card-body">
+                                <ol>
+                                    <li><strong>Wallet Monitoring:</strong> Polls target wallets every 15 seconds</li>
+                                    <li><strong>Transaction Detection:</strong>
+                                        <ul>
+                                            <li>EVM: Queries Etherscan for recent transactions</li>
+                                            <li>Solana: Uses <code>getSignaturesForAddress</code> RPC method</li>
+                                        </ul>
+                                    </li>
+                                    <li><strong>Swap Analysis:</strong> Checks if transaction is a DEX swap (by method signature or program ID)</li>
+                                    <li><strong>Copy Execution:</strong> If swap detected, executes similar trade with your copy ratio</li>
+                                </ol>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Implementation Status -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-tasks me-2"></i>Implementation Status</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm">
+                                <thead class="table-light">
+                                    <tr><th>Feature</th><th>Status</th><th>Notes</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>EVM Monitoring (Etherscan)</td><td><span class="badge bg-success">Functional</span></td><td>Requires ETHERSCAN_API_KEY</td></tr>
+                                    <tr><td>Solana Monitoring (RPC)</td><td><span class="badge bg-success">Functional</span></td><td>Uses getSignaturesForAddress</td></tr>
+                                    <tr><td>Swap Detection (EVM)</td><td><span class="badge bg-success">Functional</span></td><td>Method signature matching</td></tr>
+                                    <tr><td>Swap Detection (Solana)</td><td><span class="badge bg-success">Functional</span></td><td>Program ID matching (Jupiter, Raydium)</td></tr>
+                                    <tr><td>Settings Save/Load</td><td><span class="badge bg-success">Functional</span></td><td>JSON array storage</td></tr>
+                                    <tr><td>Trade Execution (DRY RUN)</td><td><span class="badge bg-success">Functional</span></td><td>Full simulation with logging</td></tr>
+                                    <tr><td>Trade Execution (LIVE)</td><td><span class="badge bg-success">Functional</span></td><td>Jupiter (Solana) + Uniswap V2 (EVM)</td></tr>
+                                    <tr><td>Wallet Discovery</td><td><span class="badge bg-success">Functional</span></td><td>Helius/Birdeye API with scoring</td></tr>
+                                    <tr><td>Trade Logging</td><td><span class="badge bg-success">Functional</span></td><td>Logs to copy_trades table</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Required .env Keys -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-key me-2"></i>Required Environment Variables</h5>
+                        <div class="bg-dark text-light p-3 rounded" style="font-family: monospace; font-size: 0.85rem;">
+                            # For EVM Copy Trading<br>
+                            ETHERSCAN_API_KEY=your_etherscan_api_key<br>
+                            PRIVATE_KEY=... (encrypted)<br>
+                            WALLET_ADDRESS=0x...<br><br>
+                            # For Solana Copy Trading<br>
+                            SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=...<br>
+                            SOLANA_MODULE_PRIVATE_KEY=... (encrypted)<br>
+                            SOLANA_MODULE_WALLET=...<br>
+                            HELIUS_API_KEY=... (optional, for enhanced features)
+                        </div>
+                        <div class="alert alert-warning mt-2">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            <strong>Note:</strong> <code>ETHERSCAN_API_KEY</code> is not currently set. EVM wallet monitoring is disabled.
+                        </div>
+                    </div>
+
+                    <!-- Settings Reference -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-sliders-h me-2"></i>Settings Reference</h5>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-sm">
+                                <thead class="table-light">
+                                    <tr><th>Setting</th><th>Description</th><th>Recommended Value</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td><strong>Enable Copy Trading</strong></td><td>Master switch for the module</td><td>Enabled</td></tr>
+                                    <tr><td><strong>DRY RUN Mode</strong></td><td>Simulate trades without execution</td><td>Enabled (until tested)</td></tr>
+                                    <tr><td><strong>Max Copy Amount (USD)</strong></td><td>Maximum per copied trade</td><td>$100</td></tr>
+                                    <tr><td><strong>Copy Ratio (%)</strong></td><td>% of whale's trade to copy</td><td>10-25%</td></tr>
+                                    <tr><td><strong>Max Slippage (%)</strong></td><td>Maximum acceptable slippage</td><td>5%</td></tr>
+                                    <tr><td><strong>Tracked Addresses</strong></td><td>Wallets to monitor</td><td>One per line</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Finding Good Wallets -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-search me-2"></i>Finding Good Wallets to Copy</h5>
+                        <div class="alert alert-success mb-3">
+                            <i class="fas fa-rocket me-2"></i>
+                            <strong>NEW!</strong> Use our built-in <a href="/copytrading/discovery" class="alert-link"><strong>Wallet Discovery</strong></a> page to find and analyze profitable wallets automatically using Helius and Birdeye APIs!
+                        </div>
+                        <p>Tips for identifying successful traders:</p>
+                        <ul>
+                            <li><strong>Wallet Discovery (Built-in):</strong> Use <a href="/copytrading/discovery">/copytrading/discovery</a> to search by token or find top traders with automatic scoring</li>
+                            <li><strong>On-chain Analytics:</strong> Use tools like <a href="https://dune.com" target="_blank">Dune Analytics</a>, <a href="https://nansen.ai" target="_blank">Nansen</a>, or <a href="https://debank.com" target="_blank">DeBank</a></li>
+                            <li><strong>Solana:</strong> Use <a href="https://birdeye.so" target="_blank">Birdeye</a> or <a href="https://solscan.io" target="_blank">Solscan</a> to find top traders</li>
+                            <li><strong>Twitter/X:</strong> Follow crypto whales who share their addresses</li>
+                            <li><strong>Look for:</strong>
+                                <ul>
+                                    <li>Consistent profitable trades over 30+ days</li>
+                                    <li>Win rate > 60%</li>
+                                    <li>Reasonable trade sizes (not pump-and-dump)</li>
+                                    <li>Active trading (at least few trades per week)</li>
+                                </ul>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- Risk Warning -->
+                    <div class="mb-4">
+                        <div class="alert alert-danger">
+                            <h6><i class="fas fa-exclamation-triangle me-2"></i>Risk Warning</h6>
+                            <ul class="mb-0">
+                                <li><strong>Latency:</strong> By the time you copy, the whale may have moved the price significantly.</li>
+                                <li><strong>Different Context:</strong> Whale strategies may depend on their portfolio size or insider info.</li>
+                                <li><strong>Exit Timing:</strong> You see entries, but not always the exits. The whale may sell before you.</li>
+                                <li><strong>Fees:</strong> Small trades lose more to fees proportionally.</li>
+                                <li><strong>Start with DRY RUN:</strong> Always test with simulated trades first.</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Best Practices -->
+                    <div class="mb-4">
+                        <h5 class="text-primary"><i class="fas fa-lightbulb me-2"></i>Best Practices</h5>
+                        <ul>
+                            <li><strong>Max Copy Amount:</strong> Set a strict limit. Even good wallets can have bad trades.</li>
+                            <li><strong>Copy Ratio:</strong> Start with 5-10% until you verify wallet performance.</li>
+                            <li><strong>Diversify:</strong> Track multiple wallets with different strategies.</li>
+                            <li><strong>Monitor Performance:</strong> Check /copytrading/performance regularly.</li>
+                            <li><strong>Have an Exit Plan:</strong> Don't just copy entries - plan your own exits.</li>
+                        </ul>
+                    </div>
                 </div>
             </div>
         </div>
@@ -89,8 +318,10 @@
             if (data.success) {
                 const settings = data.settings;
                 document.getElementById('enabled').checked = settings.enabled === true;
+                document.getElementById('dry_run').checked = settings.dry_run !== false; // Default true
                 document.getElementById('max_copy_amount').value = settings.max_copy_amount || 100;
                 document.getElementById('copy_ratio').value = settings.copy_ratio || 10;
+                document.getElementById('slippage').value = settings.slippage || 5;
                 document.getElementById('target_wallets').value = (settings.target_wallets || []).join('\n');
             }
         } catch (error) {
@@ -102,8 +333,10 @@
         const wallets = document.getElementById('target_wallets').value.split('\n').map(w => w.trim()).filter(w => w);
         const settings = {
             enabled: document.getElementById('enabled').checked,
+            dry_run: document.getElementById('dry_run').checked,
             max_copy_amount: parseFloat(document.getElementById('max_copy_amount').value),
             copy_ratio: parseFloat(document.getElementById('copy_ratio').value),
+            slippage: parseFloat(document.getElementById('slippage').value),
             target_wallets: wallets
         };
 
@@ -114,7 +347,7 @@
                 body: JSON.stringify(settings)
             });
             const data = await response.json();
-            if(data.success) alert('Settings saved!');
+            if(data.success) alert('Settings saved successfully!');
             else alert('Error: ' + data.error);
         } catch (error) {
             alert('Error saving settings');
