@@ -20,10 +20,49 @@ import json
 import aiohttp
 from web3 import Web3
 from typing import Dict, List, Optional, Tuple, Set
-from datetime import datetime
+from datetime import datetime, timedelta
 from itertools import permutations
 
 logger = logging.getLogger("TriangularArbitrageEngine")
+
+
+class RPCRateLimiter:
+    """Rate limiter for Ethereum RPC calls to prevent 429 errors"""
+
+    def __init__(self, calls_per_second: float = 5.0):
+        self.min_interval = 1.0 / calls_per_second
+        self.last_call_time: Optional[datetime] = None
+        self._lock = asyncio.Lock()
+        self._consecutive_errors = 0
+        self._backoff_until: Optional[datetime] = None
+
+    async def acquire(self):
+        async with self._lock:
+            # Check backoff
+            if self._backoff_until and datetime.now() < self._backoff_until:
+                await asyncio.sleep((self._backoff_until - datetime.now()).total_seconds())
+                self._backoff_until = None
+
+            now = datetime.now()
+            if self.last_call_time:
+                elapsed = (now - self.last_call_time).total_seconds()
+                if elapsed < self.min_interval:
+                    await asyncio.sleep(self.min_interval - elapsed)
+            self.last_call_time = datetime.now()
+
+    def report_error(self, is_rate_limit: bool = False):
+        """Report an error to trigger backoff"""
+        if is_rate_limit:
+            self._consecutive_errors += 1
+            backoff_seconds = min(60, 2 ** self._consecutive_errors)
+            self._backoff_until = datetime.now() + timedelta(seconds=backoff_seconds)
+            logger.warning(f"⚠️ RPC rate limited - backing off {backoff_seconds}s")
+        else:
+            self._consecutive_errors = max(0, self._consecutive_errors - 1)
+
+    def report_success(self):
+        """Report success to reset error counter"""
+        self._consecutive_errors = 0
 
 # Expanded token list for triangular arb
 TOKENS = {
@@ -216,14 +255,22 @@ class TriangularArbitrageEngine:
         # Gas oracle
         self.gas_oracle = GasOracle()
 
-        # Settings
-        self.base_profit_threshold = 0.003  # 0.3% base threshold
-        self.gas_buffer_multiplier = 1.5  # Add 50% buffer for gas costs
-        self.trade_amount_eth = 1.0  # Trade size in ETH equivalent
+        # RPC rate limiter - default 5 calls/second
+        rpc_rate = float(os.getenv('ETH_RPC_CALLS_PER_SEC', '5.0'))
+        self.rpc_rate_limiter = RPCRateLimiter(rpc_rate)
+
+        # Settings - TUNED for realistic opportunities
+        # Real triangular arb spreads are typically 0.05%-0.3%
+        self.base_profit_threshold = float(os.getenv('TRI_BASE_THRESHOLD', '0.001'))  # 0.1% base
+        self.gas_buffer_multiplier = float(os.getenv('TRI_GAS_BUFFER', '1.1'))  # Minimal buffer
+        self.trade_amount_eth = float(os.getenv('TRI_TRADE_SIZE', '1.0'))  # Trade size in ETH
+
+        # Verbose logging (set to true to see all price checks)
+        self.verbose_logging = os.getenv('TRI_VERBOSE_LOG', 'false').lower() == 'true'
 
         # Rate limiting
         self._last_opportunity_time: Dict[str, datetime] = {}
-        self._opportunity_cooldown = 1800  # 30 min per cycle
+        self._opportunity_cooldown = int(os.getenv('TRI_COOLDOWN', '300'))  # 5 min default (was 30)
         self._cycle_execution_count: Dict[str, int] = {}
         self._execution_date: str = ""
         self._max_executions_per_cycle_per_day = 5
@@ -280,6 +327,8 @@ class TriangularArbitrageEngine:
         logger.info(f"   Cycles: {len(TRIANGULAR_CYCLES)} triangular routes")
         logger.info(f"   DEXs: {len(self.router_contracts)} routers")
         logger.info(f"   Curve: {len(self.curve_contracts)} pools")
+        logger.info(f"   Threshold: {self.base_profit_threshold:.2%} base + gas buffer {self.gas_buffer_multiplier:.1f}x")
+        logger.info(f"   Cooldown: {self._opportunity_cooldown}s | Verbose: {self.verbose_logging}")
 
     async def run(self):
         self.is_running = True
@@ -403,55 +452,85 @@ class TriangularArbitrageEngine:
                 amount_in = int(1 * 1e18)  # 1 token
 
             # Find best route for each hop
+            cycle_key = f"{token_a_symbol}→{token_b_symbol}→{token_c_symbol}"
+
             # Hop 1: A → B
             best_hop1_out = 0
             best_hop1_dex = None
+            hop1_errors = 0
             for dex_name, contract in self.router_contracts.items():
                 try:
+                    await self.rpc_rate_limiter.acquire()
                     amounts = contract.functions.getAmountsOut(
                         amount_in, [token_a, token_b]
                     ).call()
+                    self.rpc_rate_limiter.report_success()
                     if amounts[1] > best_hop1_out:
                         best_hop1_out = amounts[1]
                         best_hop1_dex = dex_name
-                except Exception:
-                    pass
+                except Exception as e:
+                    hop1_errors += 1
+                    # Check if it's a rate limit error
+                    is_rate_limit = '429' in str(e) or 'rate' in str(e).lower()
+                    self.rpc_rate_limiter.report_error(is_rate_limit)
+                    if self.verbose_logging:
+                        logger.debug(f"  {dex_name} {token_a_symbol}→{token_b_symbol}: {e}")
 
             if best_hop1_out == 0:
+                if self.verbose_logging:
+                    logger.warning(f"🔺 {cycle_key}: No quotes for hop1 ({hop1_errors} DEX errors)")
                 return False
 
             # Hop 2: B → C
             best_hop2_out = 0
             best_hop2_dex = None
+            hop2_errors = 0
             for dex_name, contract in self.router_contracts.items():
                 try:
+                    await self.rpc_rate_limiter.acquire()
                     amounts = contract.functions.getAmountsOut(
                         best_hop1_out, [token_b, token_c]
                     ).call()
+                    self.rpc_rate_limiter.report_success()
                     if amounts[1] > best_hop2_out:
                         best_hop2_out = amounts[1]
                         best_hop2_dex = dex_name
-                except Exception:
-                    pass
+                except Exception as e:
+                    hop2_errors += 1
+                    is_rate_limit = '429' in str(e) or 'rate' in str(e).lower()
+                    self.rpc_rate_limiter.report_error(is_rate_limit)
+                    if self.verbose_logging:
+                        logger.debug(f"  {dex_name} {token_b_symbol}→{token_c_symbol}: {e}")
 
             if best_hop2_out == 0:
+                if self.verbose_logging:
+                    logger.warning(f"🔺 {cycle_key}: No quotes for hop2 ({hop2_errors} DEX errors)")
                 return False
 
             # Hop 3: C → A
             best_hop3_out = 0
             best_hop3_dex = None
+            hop3_errors = 0
             for dex_name, contract in self.router_contracts.items():
                 try:
+                    await self.rpc_rate_limiter.acquire()
                     amounts = contract.functions.getAmountsOut(
                         best_hop2_out, [token_c, token_a]
                     ).call()
+                    self.rpc_rate_limiter.report_success()
                     if amounts[1] > best_hop3_out:
                         best_hop3_out = amounts[1]
                         best_hop3_dex = dex_name
-                except Exception:
-                    pass
+                except Exception as e:
+                    hop3_errors += 1
+                    is_rate_limit = '429' in str(e) or 'rate' in str(e).lower()
+                    self.rpc_rate_limiter.report_error(is_rate_limit)
+                    if self.verbose_logging:
+                        logger.debug(f"  {dex_name} {token_c_symbol}→{token_a_symbol}: {e}")
 
             if best_hop3_out == 0:
+                if self.verbose_logging:
+                    logger.warning(f"🔺 {cycle_key}: No quotes for hop3 ({hop3_errors} DEX errors)")
                 return False
 
             # Calculate profit
@@ -459,6 +538,12 @@ class TriangularArbitrageEngine:
 
             # Calculate dynamic threshold
             threshold = self._calculate_dynamic_threshold()
+
+            # Log price check result (always log if verbose, or log good spreads)
+            if self.verbose_logging or profit_pct > 0.0005:  # Log if > 0.05%
+                route = f"{token_a_symbol}({best_hop1_dex})→{token_b_symbol}({best_hop2_dex})→{token_c_symbol}({best_hop3_dex})→{token_a_symbol}"
+                status = "✅ OPPORTUNITY" if profit_pct > threshold else "📊 Below threshold"
+                logger.info(f"🔺 {status}: {route} | Spread: {profit_pct:.3%} | Threshold: {threshold:.3%}")
 
             if profit_pct > threshold:
                 self._stats['opportunities_found'] += 1

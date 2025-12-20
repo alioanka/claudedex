@@ -15,7 +15,7 @@ import json
 import aiohttp
 import base58
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 logger = logging.getLogger("SolanaArbitrageEngine")
@@ -83,12 +83,34 @@ JUPITER_API = "https://quote-api.jup.ag/v6"
 RAYDIUM_API = "https://api.raydium.io/v2"
 
 
+class RateLimiter:
+    """Simple rate limiter to prevent API rate limit errors"""
+
+    def __init__(self, requests_per_second: float = 2.0):
+        self.min_interval = 1.0 / requests_per_second
+        self.last_request_time: Optional[datetime] = None
+        self._lock = asyncio.Lock()
+
+    async def acquire(self):
+        async with self._lock:
+            now = datetime.now()
+            if self.last_request_time:
+                elapsed = (now - self.last_request_time).total_seconds()
+                if elapsed < self.min_interval:
+                    await asyncio.sleep(self.min_interval - elapsed)
+            self.last_request_time = datetime.now()
+
+
 class JupiterClient:
-    """Jupiter Aggregator API client"""
+    """Jupiter Aggregator API client with rate limiting"""
 
     def __init__(self):
         self.base_url = JUPITER_API
         self.session: Optional[aiohttp.ClientSession] = None
+        # Rate limit to 2 requests/second (Jupiter allows more but be safe)
+        self.rate_limiter = RateLimiter(float(os.getenv('JUPITER_RPS', '2.0')))
+        self._consecutive_errors = 0
+        self._backoff_until: Optional[datetime] = None
 
     async def initialize(self):
         timeout = aiohttp.ClientTimeout(total=10)
@@ -109,7 +131,16 @@ class JupiterClient:
         Get quote from Jupiter aggregator.
         Jupiter finds the best route across all Solana DEXs.
         """
+        # Check if we're in backoff period
+        if self._backoff_until:
+            if datetime.now() < self._backoff_until:
+                return None
+            self._backoff_until = None
+
         try:
+            # Apply rate limiting
+            await self.rate_limiter.acquire()
+
             params = {
                 'inputMint': input_mint,
                 'outputMint': output_mint,
@@ -121,11 +152,23 @@ class JupiterClient:
 
             async with self.session.get(f"{self.base_url}/quote", params=params) as resp:
                 if resp.status == 200:
+                    self._consecutive_errors = 0
                     data = await resp.json()
                     return data
+                elif resp.status == 429:
+                    # Rate limited - exponential backoff
+                    self._consecutive_errors += 1
+                    backoff_seconds = min(60, 2 ** self._consecutive_errors)
+                    self._backoff_until = datetime.now() + timedelta(seconds=backoff_seconds)
+                    logger.warning(f"⚠️ Jupiter rate limited - backing off {backoff_seconds}s")
+                    return None
                 else:
+                    logger.debug(f"Jupiter quote error: HTTP {resp.status}")
                     return None
 
+        except asyncio.TimeoutError:
+            logger.debug("Jupiter quote timeout")
+            return None
         except Exception as e:
             logger.debug(f"Jupiter quote error: {e}")
             return None
@@ -349,14 +392,17 @@ class SolanaArbitrageEngine:
         self.jito = JitoClient()
         self.price_fetcher = SolanaPriceFetcher()
 
-        # Settings
-        self.min_profit_threshold = 0.003  # 0.3% minimum (lower than ETH due to lower fees)
-        self.trade_amount_sol = 1.0  # Trade size in SOL
-        self.use_jito = True
+        # Settings - configurable via environment variables
+        self.min_profit_threshold = float(os.getenv('SOL_ARB_THRESHOLD', '0.002'))  # 0.2% min
+        self.trade_amount_sol = float(os.getenv('SOL_ARB_TRADE_SIZE', '1.0'))  # Trade size in SOL
+        self.use_jito = os.getenv('SOL_USE_JITO', 'true').lower() == 'true'
 
-        # Rate limiting
+        # Verbose logging (set to true to see all price checks)
+        self.verbose_logging = os.getenv('SOL_ARB_VERBOSE', 'false').lower() == 'true'
+
+        # Rate limiting - reduced from 30 min to 5 min
         self._last_opportunity_time: Dict[str, datetime] = {}
-        self._opportunity_cooldown = 1800  # 30 min cooldown per pair
+        self._opportunity_cooldown = int(os.getenv('SOL_ARB_COOLDOWN', '300'))  # 5 min default
         self._pair_execution_count: Dict[str, int] = {}
         self._pair_execution_date: str = ""
         self._max_executions_per_pair_per_day = 10
@@ -382,6 +428,8 @@ class SolanaArbitrageEngine:
         logger.info(f"   Mode: {'DRY_RUN (Simulated)' if self.dry_run else 'LIVE TRADING'}")
         logger.info(f"   Jito: {'Enabled' if self.use_jito and self.private_key else 'Disabled'}")
         logger.info(f"   Monitoring {len(SOLANA_ARB_PAIRS)} token pairs")
+        logger.info(f"   Threshold: {self.min_profit_threshold:.2%} | Cooldown: {self._opportunity_cooldown}s")
+        logger.info(f"   Verbose: {self.verbose_logging}")
 
     async def run(self):
         self.is_running = True
@@ -456,22 +504,35 @@ class SolanaArbitrageEngine:
             jupiter_quote = await self.jupiter.get_quote(token_in, token_out, amount)
 
             if not jupiter_quote:
+                if self.verbose_logging:
+                    logger.warning(f"🌊 [{in_symbol}/{out_symbol}]: No forward quote from Jupiter")
                 return False
 
             jupiter_out = int(jupiter_quote.get('outAmount', 0))
             if jupiter_out == 0:
+                if self.verbose_logging:
+                    logger.warning(f"🌊 [{in_symbol}/{out_symbol}]: Jupiter returned 0 output")
                 return False
 
             # Get reverse route quote to check round-trip profitability
             reverse_quote = await self.jupiter.get_quote(token_out, token_in, jupiter_out)
 
             if not reverse_quote:
+                if self.verbose_logging:
+                    logger.warning(f"🌊 [{in_symbol}/{out_symbol}]: No reverse quote from Jupiter")
                 return False
 
             reverse_out = int(reverse_quote.get('outAmount', 0))
 
             # Calculate round-trip profit
             profit_pct = (reverse_out - amount) / amount
+
+            # Log price check result (always log if verbose, or log good spreads)
+            if self.verbose_logging or profit_pct > 0.0005:  # Log if > 0.05%
+                route_info = jupiter_quote.get('routePlan', [])
+                route_str = " → ".join([r.get('swapInfo', {}).get('label', 'DEX') for r in route_info[:3]])
+                status = "✅ OPPORTUNITY" if profit_pct > self.min_profit_threshold else "📊 Below threshold"
+                logger.info(f"🌊 {status} [{in_symbol}/{out_symbol}]: Spread: {profit_pct:.3%} | Threshold: {self.min_profit_threshold:.3%} | Route: {route_str}")
 
             if profit_pct > self.min_profit_threshold:
                 self._stats['opportunities_found'] += 1
