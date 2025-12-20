@@ -78,48 +78,96 @@ class MultiChainArbitrageManager:
         self.db_pool = db_pool
         self.engines = []
         self.tasks = []
+        self.settings = {}
+
+    async def _load_settings_from_db(self):
+        """Load arbitrage settings from database config_settings table"""
+        if not self.db_pool:
+            logger.warning("No DB pool - using default settings")
+            return {}
+
+        settings = {}
+        try:
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT key, value FROM config_settings WHERE config_type = 'arbitrage_config'"
+                )
+                for row in rows:
+                    key = row['key']
+                    val = row['value']
+                    # Parse value types
+                    if val.lower() in ('true', 'false'):
+                        val = val.lower() == 'true'
+                    elif val.replace('.', '', 1).replace('-', '', 1).isdigit():
+                        if '.' in val:
+                            val = float(val)
+                        else:
+                            val = int(val)
+                    settings[key] = val
+
+            logger.info(f"📋 Loaded {len(settings)} arbitrage settings from database")
+        except Exception as e:
+            logger.error(f"Failed to load arbitrage settings from DB: {e}")
+
+        return settings
 
     async def initialize(self):
         logger.info("🌐 Multi-Chain Arbitrage Manager Starting...")
 
+        # Load settings from database
+        self.settings = await self._load_settings_from_db()
+        logger.info(f"   Settings: {self.settings}")
+
         # Check for Ethereum RPC
         eth_rpc = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
-        if eth_rpc:
+        if eth_rpc and self.settings.get('ethereum_enabled', True):
             try:
                 from modules.arbitrage.arbitrage_engine import ArbitrageEngine
-                eth_engine = ArbitrageEngine({'arbitrage_enabled': True}, self.db_pool)
+                config = {'arbitrage_enabled': True, **self.settings}
+                eth_engine = ArbitrageEngine(config, self.db_pool)
                 await eth_engine.initialize()
                 self.engines.append(('ethereum', eth_engine))
                 logger.info("✅ Ethereum Arbitrage Engine initialized")
             except Exception as e:
                 logger.error(f"❌ Failed to init Ethereum engine: {e}")
         else:
-            logger.warning("⚠️ No Ethereum RPC - Ethereum arbitrage disabled")
+            if not eth_rpc:
+                logger.warning("⚠️ No Ethereum RPC - Ethereum arbitrage disabled")
+            else:
+                logger.info("ℹ️ Ethereum arbitrage disabled in settings")
 
         # Check for Solana RPC
         sol_rpc = os.getenv('SOLANA_RPC_URL')
-        if sol_rpc:
+        if sol_rpc and self.settings.get('solana_enabled', False):
             try:
                 from modules.arbitrage.solana_engine import SolanaArbitrageEngine
-                sol_engine = SolanaArbitrageEngine({'arbitrage_enabled': True}, self.db_pool)
+                config = {'arbitrage_enabled': True, **self.settings}
+                sol_engine = SolanaArbitrageEngine(config, self.db_pool)
                 await sol_engine.initialize()
                 self.engines.append(('solana', sol_engine))
                 logger.info("✅ Solana Arbitrage Engine initialized")
             except Exception as e:
                 logger.error(f"❌ Failed to init Solana engine: {e}")
         else:
-            logger.warning("⚠️ No Solana RPC - Solana arbitrage disabled")
+            if not sol_rpc:
+                logger.warning("⚠️ No Solana RPC - Solana arbitrage disabled")
+            else:
+                logger.info("ℹ️ Solana arbitrage disabled in settings")
 
         # Initialize Triangular Arbitrage (uses existing Ethereum connection)
-        if eth_rpc:
+        if eth_rpc and self.settings.get('triangular_enabled', False):
             try:
                 from modules.arbitrage.triangular_engine import TriangularArbitrageEngine
-                tri_engine = TriangularArbitrageEngine({'arbitrage_enabled': True}, self.db_pool)
+                config = {'arbitrage_enabled': True, **self.settings}
+                tri_engine = TriangularArbitrageEngine(config, self.db_pool)
                 await tri_engine.initialize()
                 self.engines.append(('triangular', tri_engine))
                 logger.info("✅ Triangular Arbitrage Engine initialized")
             except Exception as e:
                 logger.warning(f"⚠️ Triangular engine not available: {e}")
+        else:
+            if eth_rpc:
+                logger.info("ℹ️ Triangular arbitrage disabled in settings")
 
         if not self.engines:
             logger.error("❌ No arbitrage engines could be initialized!")

@@ -1,11 +1,11 @@
 """
-Solana Listener for Sniper Module
-Listens for new Raydium/Pump.fun Liquidity Pools via WebSocket subscription.
+Solana Listener for Sniper Module - CREDIT-EFFICIENT VERSION
+Uses polling instead of WebSocket subscriptions to minimize Helius credit usage.
 
 Supports:
-- Raydium V4 AMM new pool detection
+- Raydium V4 AMM new pool detection via polling
 - Pump.fun bonding curve graduation
-- Real-time WebSocket subscription
+- Configurable poll intervals
 """
 
 import logging
@@ -15,8 +15,6 @@ import aiohttp
 import json
 import os
 from datetime import datetime, timedelta
-import base64
-import struct
 
 logger = logging.getLogger("SolanaListener")
 
@@ -28,52 +26,56 @@ PUMP_FUN_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 # WSOL mint address
 WSOL_MINT = "So11111111111111111111111111111111111111112"
 
-# Raydium pool initialization discriminator (first 8 bytes of instruction data)
-RAYDIUM_INIT_DISCRIMINATOR = bytes([0x00])  # Simplified - real is more complex
-
 
 class SolanaListener:
     """
-    Real-time Solana listener using WebSocket subscriptions.
-    Detects new pool creations on Raydium and Pump.fun.
+    Credit-efficient Solana listener using polling instead of WebSocket.
+    Polls for new Raydium pools every 30 seconds (configurable).
+
+    Credit Usage:
+    - Polling mode: ~2-4 API calls per minute (minimal credits)
+    - WebSocket mode: 1000s of messages per second (MASSIVE credits)
     """
 
     def __init__(self, config: Dict):
         self.config = config
         self.rpc_url = config.get('solana', {}).get('rpc_url')
-        self.ws_url = config.get('solana', {}).get('ws_url')
 
         if not self.rpc_url:
             self.rpc_url = os.getenv('SOLANA_RPC_URL')
 
-        if not self.ws_url:
-            # Convert HTTP URL to WebSocket URL
-            if self.rpc_url:
-                self.ws_url = self.rpc_url.replace('https://', 'wss://').replace('http://', 'ws://')
-
         self.helius_api_key = os.getenv('HELIUS_API_KEY')
+
+        # Polling configuration (credit-efficient)
+        self.poll_interval = int(os.getenv('SNIPER_POLL_INTERVAL', '30'))  # seconds
+        self.use_websocket = os.getenv('SNIPER_USE_WEBSOCKET', 'false').lower() == 'true'
 
         # State
         self.known_signatures: Set[str] = set()
         self.new_pools_queue: asyncio.Queue = asyncio.Queue()
-        self.ws_connected = False
-        self.ws_task: Optional[asyncio.Task] = None
         self.is_running = False
+        self.poll_task: Optional[asyncio.Task] = None
+        self.last_slot: Optional[int] = None
 
-        # Rate-limited logging to reduce log spam
+        # Stats for logging
         self._stats = {
-            'potential_pools_detected': 0,
+            'polls': 0,
+            'pools_detected': 0,
             'pools_queued': 0,
-            'pools_failed_fetch': 0,
+            'api_calls': 0,
             'last_log_time': datetime.now()
         }
-        self._log_interval = timedelta(minutes=5)  # Log stats every 5 minutes
+        self._log_interval = timedelta(minutes=5)
+
+        # Limit known signatures to prevent memory bloat
+        self._max_signatures = 1000
 
     async def initialize(self):
-        """Initialize the Solana listener"""
-        logger.info(f"🔌 Initializing Solana Listener...")
-        logger.info(f"   RPC: {self.rpc_url}")
-        logger.info(f"   WebSocket: {self.ws_url}")
+        """Initialize the Solana listener with credit-efficient polling"""
+        logger.info(f"🔌 Initializing Solana Listener (POLLING MODE)...")
+        logger.info(f"   RPC: {self.rpc_url[:50] if self.rpc_url else 'Not configured'}...")
+        logger.info(f"   Poll Interval: {self.poll_interval}s")
+        logger.info(f"   WebSocket Mode: {'ENABLED (high credits!)' if self.use_websocket else 'DISABLED (credit-safe)'}")
 
         if not self.rpc_url:
             logger.error("❌ No RPC URL provided for Solana Listener")
@@ -81,241 +83,188 @@ class SolanaListener:
 
         self.is_running = True
 
-        # Start WebSocket subscription in background
-        self.ws_task = asyncio.create_task(self._run_websocket_listener())
-        logger.info("✅ Solana Listener initialized with WebSocket subscription")
+        if self.use_websocket:
+            logger.warning("⚠️ WebSocket mode enabled - this consumes MASSIVE credits!")
+            logger.warning("   Set SNIPER_USE_WEBSOCKET=false to use credit-efficient polling")
+            # Don't start WebSocket - too expensive
+            logger.info("   WebSocket disabled to protect credits. Using polling instead.")
+
+        # Start credit-efficient polling
+        self.poll_task = asyncio.create_task(self._run_polling_listener())
+        logger.info("✅ Solana Listener initialized with polling (credit-efficient)")
 
     async def get_new_pools(self) -> List[Dict]:
-        """
-        Get newly detected pools from the queue.
-        Non-blocking - returns empty list if no new pools.
-        """
+        """Get newly detected pools from the queue."""
         new_pools = []
-
-        # Drain the queue
         while not self.new_pools_queue.empty():
             try:
                 pool = self.new_pools_queue.get_nowait()
                 new_pools.append(pool)
             except asyncio.QueueEmpty:
                 break
-
         return new_pools
 
-    async def _run_websocket_listener(self):
-        """Main WebSocket listener loop with reconnection logic"""
-        reconnect_delay = 1
+    async def _run_polling_listener(self):
+        """Main polling loop - credit efficient"""
+        logger.info(f"📡 Starting pool detection polling (every {self.poll_interval}s)")
 
         while self.is_running:
             try:
-                await self._connect_and_subscribe()
-                reconnect_delay = 1  # Reset delay on successful connection
+                await self._poll_for_new_pools()
+                self._stats['polls'] += 1
+
+                # Log stats periodically
+                await self._log_stats_if_needed()
+
             except Exception as e:
-                logger.error(f"WebSocket error: {e}")
-                self.ws_connected = False
+                logger.error(f"Polling error: {e}")
 
-            if self.is_running:
-                logger.info(f"Reconnecting in {reconnect_delay}s...")
-                await asyncio.sleep(reconnect_delay)
-                reconnect_delay = min(reconnect_delay * 2, 60)  # Exponential backoff, max 60s
+            # Wait before next poll
+            await asyncio.sleep(self.poll_interval)
 
-    async def _connect_and_subscribe(self):
-        """Connect to WebSocket and subscribe to program logs"""
-        if not self.ws_url:
-            logger.error("No WebSocket URL configured")
-            await asyncio.sleep(30)
-            return
+    async def _poll_for_new_pools(self):
+        """Poll for new Raydium pool signatures"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Get recent signatures for Raydium V4
+                signatures = await self._get_recent_signatures(
+                    session,
+                    RAYDIUM_V4_PROGRAM_ID,
+                    limit=10  # Only check last 10 transactions
+                )
 
-        logger.info(f"🔌 Connecting to Solana WebSocket...")
+                for sig_info in signatures:
+                    signature = sig_info.get('signature')
 
-        async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(self.ws_url, heartbeat=30) as ws:
-                self.ws_connected = True
-                logger.info("✅ WebSocket connected")
+                    if not signature or signature in self.known_signatures:
+                        continue
 
-                # Subscribe to Raydium V4 program logs
-                await self._subscribe_to_program(ws, RAYDIUM_V4_PROGRAM_ID, "raydium_v4")
+                    self.known_signatures.add(signature)
 
-                # Subscribe to Raydium CPMM program logs
-                await self._subscribe_to_program(ws, RAYDIUM_CPMM_PROGRAM_ID, "raydium_cpmm")
+                    # Check if this is a pool initialization
+                    pool_info = await self._check_and_fetch_pool(session, signature)
 
-                # Subscribe to Pump.fun program logs (optional)
-                # await self._subscribe_to_program(ws, PUMP_FUN_PROGRAM_ID, "pump_fun")
+                    if pool_info:
+                        self._stats['pools_detected'] += 1
+                        self._stats['pools_queued'] += 1
+                        await self.new_pools_queue.put(pool_info)
+                        logger.info(f"🆕 New pool detected: {pool_info.get('token_address', 'unknown')[:16]}...")
 
-                # Listen for messages
-                async for msg in ws:
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        await self._handle_ws_message(msg.data)
-                    elif msg.type == aiohttp.WSMsgType.ERROR:
-                        logger.error(f"WebSocket error: {ws.exception()}")
-                        break
-                    elif msg.type == aiohttp.WSMsgType.CLOSED:
-                        logger.warning("WebSocket closed")
-                        break
+                # Cleanup old signatures to prevent memory bloat
+                if len(self.known_signatures) > self._max_signatures:
+                    # Keep only most recent half
+                    self.known_signatures = set(list(self.known_signatures)[-self._max_signatures//2:])
 
-    async def _subscribe_to_program(self, ws, program_id: str, label: str):
-        """Subscribe to logs for a specific program"""
-        subscribe_msg = {
+        except Exception as e:
+            logger.error(f"Error polling for pools: {e}")
+
+    async def _get_recent_signatures(self, session: aiohttp.ClientSession,
+                                      program_id: str, limit: int = 10) -> List[Dict]:
+        """Get recent transaction signatures for a program"""
+        self._stats['api_calls'] += 1
+
+        payload = {
             "jsonrpc": "2.0",
-            "id": hash(program_id) % 10000,
-            "method": "logsSubscribe",
+            "id": 1,
+            "method": "getSignaturesForAddress",
             "params": [
-                {"mentions": [program_id]},
-                {"commitment": "processed"}
+                program_id,
+                {"limit": limit, "commitment": "confirmed"}
             ]
         }
 
-        await ws.send_str(json.dumps(subscribe_msg))
-        logger.info(f"📡 Subscribed to {label} logs ({program_id[:8]}...)")
-
-    async def _handle_ws_message(self, data: str):
-        """Handle incoming WebSocket message"""
         try:
-            msg = json.loads(data)
+            async with session.post(self.rpc_url, json=payload, timeout=15) as response:
+                if response.status == 429:
+                    logger.warning("⚠️ Rate limited - backing off")
+                    await asyncio.sleep(60)
+                    return []
 
-            # Check for subscription confirmation
-            if 'result' in msg and isinstance(msg['result'], int):
-                logger.debug(f"Subscription confirmed: {msg['result']}")
-                return
+                if response.status != 200:
+                    return []
 
-            # Check for log notification
-            if msg.get('method') == 'logsNotification':
-                await self._process_log_notification(msg)
+                data = await response.json()
+                return data.get('result', [])
 
-        except json.JSONDecodeError:
-            logger.debug(f"Invalid JSON received: {data[:100]}")
+        except asyncio.TimeoutError:
+            logger.debug("Timeout getting signatures")
+            return []
         except Exception as e:
-            logger.error(f"Error handling WebSocket message: {e}")
+            logger.debug(f"Error getting signatures: {e}")
+            return []
 
-    async def _process_log_notification(self, msg: Dict):
-        """Process a log notification for potential new pool"""
+    async def _check_and_fetch_pool(self, session: aiohttp.ClientSession,
+                                     signature: str) -> Optional[Dict]:
+        """Check if transaction is a pool init and fetch details"""
+        self._stats['api_calls'] += 1
+
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTransaction",
+            "params": [
+                signature,
+                {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}
+            ]
+        }
+
         try:
-            result = msg.get('params', {}).get('result', {})
-            value = result.get('value', {})
-            signature = value.get('signature')
-            logs = value.get('logs', [])
-            err = value.get('err')
+            async with session.post(self.rpc_url, json=payload, timeout=15) as response:
+                if response.status != 200:
+                    return None
 
-            # Skip failed transactions
-            if err is not None:
-                return
+                data = await response.json()
+                result = data.get('result')
 
-            # Skip already processed signatures
-            if signature in self.known_signatures:
-                return
+                if not result:
+                    return None
 
-            # Check logs for pool initialization
-            is_pool_init = self._check_for_pool_init(logs)
+                # Check if this is a pool initialization
+                meta = result.get('meta', {})
+                if meta.get('err') is not None:
+                    return None  # Failed transaction
 
-            if is_pool_init:
-                # Increment stats counter instead of logging every detection
-                self._stats['potential_pools_detected'] += 1
-                self.known_signatures.add(signature)
+                # Check logs for init keywords
+                log_messages = meta.get('logMessages', [])
+                if not self._is_pool_init(log_messages):
+                    return None
 
-                # Log at DEBUG level to reduce spam
-                logger.debug(f"Potential new pool detected: {signature[:16]}...")
+                # Extract token info
+                token_mint, pool_address = self._parse_pool_transaction(result)
 
-                # Fetch full transaction details to extract token addresses
-                pool_info = await self._fetch_pool_details(signature)
+                if token_mint and token_mint != WSOL_MINT:
+                    return {
+                        'token_address': token_mint,
+                        'pair_address': pool_address or signature,
+                        'chain': 'solana',
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'signature': signature,
+                        'source': 'polling'
+                    }
 
-                if pool_info:
-                    self._stats['pools_queued'] += 1
-                    await self.new_pools_queue.put(pool_info)
-                    # Log at DEBUG level to reduce spam
-                    logger.debug(f"New pool queued: {pool_info.get('token_address', 'unknown')[:16]}...")
-                else:
-                    self._stats['pools_failed_fetch'] += 1
-
-                # Log summary stats periodically (every 5 minutes)
-                await self._log_stats_if_needed()
-
+        except asyncio.TimeoutError:
+            logger.debug(f"Timeout fetching transaction: {signature[:16]}...")
         except Exception as e:
-            logger.error(f"Error processing log notification: {e}")
+            logger.debug(f"Error fetching pool: {e}")
 
-    async def _log_stats_if_needed(self):
-        """Log detection stats periodically to reduce log spam"""
-        now = datetime.now()
-        if now - self._stats['last_log_time'] >= self._log_interval:
-            detected = self._stats['potential_pools_detected']
-            queued = self._stats['pools_queued']
-            failed = self._stats['pools_failed_fetch']
+        return None
 
-            if detected > 0:  # Only log if there was activity
-                logger.info(f"📊 Solana Pool Detection (Last 5 min): "
-                           f"Detected: {detected} | Queued: {queued} | Failed: {failed}")
-
-            # Reset stats
-            self._stats = {
-                'potential_pools_detected': 0,
-                'pools_queued': 0,
-                'pools_failed_fetch': 0,
-                'last_log_time': now
-            }
-
-    def _check_for_pool_init(self, logs: List[str]) -> bool:
-        """Check if logs indicate a new pool initialization"""
+    def _is_pool_init(self, logs: List[str]) -> bool:
+        """Check if logs indicate a pool initialization"""
         init_keywords = [
-            'initialize2',       # Raydium V4
-            'Initialize',        # Generic
-            'InitializePool',    # Some DEXs
-            'create_pool',       # Pump.fun style
-            'Program log: init', # Generic init
+            'initialize2',
+            'Initialize',
+            'InitializePool',
+            'create_pool',
+            'init'
         ]
 
         for log in logs:
+            log_lower = log.lower()
             for keyword in init_keywords:
-                if keyword.lower() in log.lower():
+                if keyword.lower() in log_lower:
                     return True
-
         return False
-
-    async def _fetch_pool_details(self, signature: str) -> Optional[Dict]:
-        """Fetch transaction details and extract pool/token info"""
-        try:
-            async with aiohttp.ClientSession() as session:
-                payload = {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getTransaction",
-                    "params": [
-                        signature,
-                        {
-                            "encoding": "jsonParsed",
-                            "maxSupportedTransactionVersion": 0,
-                            "commitment": "confirmed"
-                        }
-                    ]
-                }
-
-                async with session.post(self.rpc_url, json=payload, timeout=10) as response:
-                    if response.status != 200:
-                        return None
-
-                    data = await response.json()
-                    result = data.get('result')
-
-                    if not result:
-                        return None
-
-                    # Parse transaction to find token mints
-                    token_mint, pool_address = self._parse_pool_transaction(result)
-
-                    if token_mint and token_mint != WSOL_MINT:
-                        return {
-                            'token_address': token_mint,
-                            'pair_address': pool_address or signature,
-                            'chain': 'solana',
-                            'timestamp': datetime.utcnow().isoformat(),
-                            'signature': signature,
-                            'source': 'raydium_websocket'
-                        }
-
-        except asyncio.TimeoutError:
-            logger.debug(f"Timeout fetching transaction: {signature}")
-        except Exception as e:
-            logger.debug(f"Error fetching pool details: {e}")
-
-        return None
 
     def _parse_pool_transaction(self, tx_result: Dict) -> tuple:
         """Parse transaction to extract token mint and pool address"""
@@ -324,28 +273,19 @@ class SolanaListener:
 
         try:
             meta = tx_result.get('meta', {})
-            transaction = tx_result.get('transaction', {})
-            message = transaction.get('message', {})
-
-            # Check account keys for potential token mints
-            account_keys = message.get('accountKeys', [])
 
             # Look through post token balances for new token
             post_balances = meta.get('postTokenBalances', [])
             pre_balances = meta.get('preTokenBalances', [])
-
-            # Find mints that appear in post but not in pre (new positions)
             pre_mints = {b.get('mint') for b in pre_balances}
 
             for balance in post_balances:
                 mint = balance.get('mint')
-                # Skip WSOL
                 if mint and mint != WSOL_MINT and mint not in pre_mints:
-                    # This is likely the new token being added to pool
                     token_mint = mint
                     break
 
-            # If we didn't find new token, look for non-WSOL mint in post balances
+            # Fallback: find any non-WSOL mint
             if not token_mint:
                 for balance in post_balances:
                     mint = balance.get('mint')
@@ -356,53 +296,50 @@ class SolanaListener:
             # Try to find pool address from inner instructions
             inner_instructions = meta.get('innerInstructions', [])
             for inner in inner_instructions:
-                instructions = inner.get('instructions', [])
-                for ix in instructions:
+                for ix in inner.get('instructions', []):
                     if isinstance(ix, dict):
-                        program = ix.get('program')
-                        if program == 'system' and ix.get('parsed', {}).get('type') == 'createAccount':
-                            # This could be the pool account
-                            pool_address = ix.get('parsed', {}).get('info', {}).get('newAccount')
-                            break
+                        if ix.get('program') == 'system':
+                            parsed = ix.get('parsed', {})
+                            if parsed.get('type') == 'createAccount':
+                                pool_address = parsed.get('info', {}).get('newAccount')
+                                break
 
         except Exception as e:
             logger.debug(f"Error parsing transaction: {e}")
 
         return token_mint, pool_address
 
+    async def _log_stats_if_needed(self):
+        """Log detection stats periodically"""
+        now = datetime.now()
+        if now - self._stats['last_log_time'] >= self._log_interval:
+            polls = self._stats['polls']
+            detected = self._stats['pools_detected']
+            queued = self._stats['pools_queued']
+            api_calls = self._stats['api_calls']
+
+            logger.info(f"📊 Solana Listener Stats (Last 5 min): "
+                       f"Polls: {polls} | API Calls: {api_calls} | "
+                       f"Pools Detected: {detected} | Queued: {queued}")
+
+            # Reset stats
+            self._stats = {
+                'polls': 0,
+                'pools_detected': 0,
+                'pools_queued': 0,
+                'api_calls': 0,
+                'last_log_time': now
+            }
+
     async def close(self):
         """Clean up resources"""
         self.is_running = False
-        self.ws_connected = False
 
-        if self.ws_task:
-            self.ws_task.cancel()
+        if self.poll_task:
+            self.poll_task.cancel()
             try:
-                await self.ws_task
+                await self.poll_task
             except asyncio.CancelledError:
                 pass
 
         logger.info("🛑 Solana Listener closed")
-
-
-# Alternative: Helius-based listener for better reliability
-class HeliusSolanaListener(SolanaListener):
-    """
-    Solana listener using Helius webhooks for more reliable detection.
-    Requires HELIUS_API_KEY environment variable.
-    """
-
-    def __init__(self, config: Dict):
-        super().__init__(config)
-        self.helius_ws_url = None
-
-        if self.helius_api_key:
-            self.helius_ws_url = f"wss://atlas-mainnet.helius-rpc.com?api-key={self.helius_api_key}"
-
-    async def initialize(self):
-        """Initialize with Helius WebSocket"""
-        if self.helius_ws_url:
-            self.ws_url = self.helius_ws_url
-            logger.info("🚀 Using Helius WebSocket for enhanced reliability")
-
-        await super().initialize()

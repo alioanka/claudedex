@@ -369,6 +369,39 @@
 </div>
 
 <script>
+// Token address to symbol mapping
+const TOKEN_SYMBOLS = {
+    '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2': 'WETH',
+    '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599': 'WBTC',
+    '0x514910771AF9Ca656af840dff83E8264EcF986CA': 'LINK',
+    '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984': 'UNI',
+    '0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9': 'AAVE',
+    '0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0': 'MATIC',
+    '0xD533a949740bb3306d119CC777fa900bA034cd52': 'CRV',
+    '0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32': 'LDO',
+    '0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2': 'MKR',
+    '0xC011a73ee8576Fb46F5E1c5751cA3B9Fe0af2a6F': 'SNX',
+    '0xc00e94Cb662C3520282E6f5717214004A7f26888': 'COMP',
+    '0xba100000625a3754423978a60c9317c58a424e3D': 'BAL',
+    '0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e': 'YFI',
+    '0xc944E90C64B2c07662A292be6244BDf05Cda44a7': 'GRT',
+    '0xC18360217D8F7Ab5e7c516566761Ea12Ce7F9D72': 'ENS',
+    '0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE': 'SHIB',
+    '0x6982508145454Ce325dDbE47a25d4ec3d2311933': 'PEPE',
+    '0x6B3595068778DD592e39A122f4f5a5cF09C90fE2': 'SUSHI',
+    '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48': 'USDC',
+    '0xdAC17F958D2ee523a2206206994597C13D831ec7': 'USDT'
+};
+
+function getTokenSymbol(address) {
+    if (!address) return 'UNKNOWN';
+    const upper = address.toUpperCase();
+    for (const [addr, symbol] of Object.entries(TOKEN_SYMBOLS)) {
+        if (addr.toUpperCase() === upper) return symbol;
+    }
+    return address.length > 10 ? `${address.slice(0, 6)}...${address.slice(-4)}` : address;
+}
+
 let allTrades = [];
 let filteredTrades = [];
 let currentSort = { column: 'time', direction: 'desc' };
@@ -562,12 +595,16 @@ function updateDisplay() {
         const isDryRun = trade.dry_run || trade.is_simulated;
 
         const token = trade.token_address || '';
+        const tokenSymbol = getTokenSymbol(token);
         const shortToken = token.length > 10 ? `${token.slice(0, 6)}...${token.slice(-4)}` : token;
 
         return `
             <tr>
                 <td>${timeStr}</td>
-                <td title="${token}"><strong>${shortToken}</strong></td>
+                <td title="${token}">
+                    <div style="font-weight: 600;">${tokenSymbol}</div>
+                    <div style="font-size: 0.7rem; color: var(--text-tertiary); font-family: monospace;">${shortToken}</div>
+                </td>
                 <td>
                     <span class="dex-badge">${trade.buy_dex || 'DEX'}</span>
                     →

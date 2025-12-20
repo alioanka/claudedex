@@ -1,248 +1,862 @@
 {% extends "base.html" %}
 
-{% block title %}AI Analysis Dashboard - DexScreener Bot{% endblock %}
+{% block title %}AI Analysis Dashboard - ClaudeDex{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    .page-container {
+        padding: 20px;
+    }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 30px;
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+
+    .page-title {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        margin-bottom: 8px;
+    }
+
+    .page-subtitle {
+        color: var(--text-secondary);
+        font-size: 1rem;
+    }
+
+    .status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-weight: 600;
+        font-size: 0.875rem;
+    }
+
+    .status-active {
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
+    }
+
+    .status-offline {
+        background: rgba(107, 114, 128, 0.2);
+        color: #6b7280;
+    }
+
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+
+    .stat-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 20px;
+    }
+
+    .stat-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 12px;
+        font-size: 1.25rem;
+    }
+
+    .stat-icon.sentiment { background: rgba(139, 92, 246, 0.2); color: #8b5cf6; }
+    .stat-icon.signals { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+    .stat-icon.positions { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .stat-icon.pnl { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .stat-icon.accuracy { background: rgba(99, 102, 241, 0.2); color: #6366f1; }
+    .stat-icon.trades { background: rgba(236, 72, 153, 0.2); color: #ec4899; }
+
+    .stat-label {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        margin-bottom: 6px;
+        font-weight: 500;
+    }
+
+    .stat-value {
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+
+    .stat-sub {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        margin-top: 4px;
+    }
+
+    .stat-value.positive { color: #10b981; }
+    .stat-value.negative { color: #ef4444; }
+    .stat-value.neutral { color: #f59e0b; }
+    .stat-value.bullish { color: #10b981; }
+    .stat-value.bearish { color: #ef4444; }
+
+    .section-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+
+    .section-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .chart-container {
+        position: relative;
+        height: 300px;
+    }
+
+    .grid-2 {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+        gap: 24px;
+    }
+
+    .grid-3 {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 24px;
+    }
+
+    /* Sentiment Gauge */
+    .sentiment-gauge {
+        text-align: center;
+        padding: 30px 20px;
+    }
+
+    .gauge-score {
+        font-size: 4rem;
+        font-weight: 800;
+        line-height: 1;
+        margin-bottom: 10px;
+    }
+
+    .gauge-label {
+        font-size: 1.5rem;
+        font-weight: 600;
+        margin-bottom: 15px;
+    }
+
+    .action-badge {
+        display: inline-block;
+        padding: 10px 24px;
+        border-radius: 25px;
+        font-size: 1.1rem;
+        font-weight: 700;
+    }
+
+    .action-buy { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .action-sell { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+    .action-hold { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+
+    .threshold-bar {
+        height: 10px;
+        background: linear-gradient(to right, #ef4444 0%, #f59e0b 35%, #f59e0b 65%, #10b981 100%);
+        border-radius: 5px;
+        position: relative;
+        margin: 25px 0 10px;
+    }
+
+    .threshold-marker {
+        position: absolute;
+        top: -6px;
+        width: 4px;
+        height: 22px;
+        background: white;
+        border: 2px solid #1f2937;
+        border-radius: 2px;
+        transform: translateX(-50%);
+        transition: left 0.3s ease;
+    }
+
+    .threshold-labels {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.7rem;
+        color: var(--text-secondary);
+    }
+
+    /* Positions Table */
+    .positions-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .positions-table th {
+        background: var(--metric-bg);
+        padding: 12px 10px;
+        text-align: left;
+        font-weight: 600;
+        color: var(--text-secondary);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+    }
+
+    .positions-table td {
+        padding: 14px 10px;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .positions-table tr:hover {
+        background: var(--metric-bg);
+    }
+
+    .side-badge {
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .side-long { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .side-short { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+
+    /* Signals Table */
+    .signals-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .signals-table th {
+        background: var(--metric-bg);
+        padding: 10px 8px;
+        text-align: left;
+        font-weight: 600;
+        color: var(--text-secondary);
+        font-size: 0.7rem;
+        text-transform: uppercase;
+    }
+
+    .signals-table td {
+        padding: 10px 8px;
+        border-bottom: 1px solid var(--border-color);
+        font-size: 0.85rem;
+    }
+
+    .signal-badge {
+        padding: 3px 8px;
+        border-radius: 10px;
+        font-size: 0.7rem;
+        font-weight: 600;
+    }
+
+    .signal-buy { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .signal-sell { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+    .signal-hold { background: rgba(107, 114, 128, 0.2); color: #9ca3af; }
+
+    /* Mode Cards */
+    .mode-card {
+        background: var(--metric-bg);
+        border-radius: 10px;
+        padding: 16px;
+        text-align: center;
+    }
+
+    .mode-label {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        margin-bottom: 6px;
+    }
+
+    .mode-value {
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .mode-value.on { color: #10b981; }
+    .mode-value.off { color: #ef4444; }
+
+    .provider-info {
+        margin-top: 12px;
+        padding: 12px;
+        background: rgba(139, 92, 246, 0.1);
+        border-radius: 8px;
+        font-size: 0.85rem;
+    }
+
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 20px;
+        border-radius: 8px;
+        font-size: 0.9rem;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s;
+    }
+
+    .btn-primary {
+        background: linear-gradient(135deg, #8b5cf6, #6366f1);
+        color: white;
+    }
+
+    .btn-primary:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 40px 20px;
+        color: var(--text-secondary);
+    }
+
+    [data-theme="dark"] {
+        --card-bg: #1f2937;
+        --border-color: #374151;
+        --text-primary: #f9fafb;
+        --text-secondary: #9ca3af;
+        --metric-bg: #111827;
+    }
+
+    [data-theme="light"] {
+        --card-bg: #ffffff;
+        --border-color: #e5e7eb;
+        --text-primary: #111827;
+        --text-secondary: #6b7280;
+        --metric-bg: #f3f4f6;
+    }
+</style>
+{% endblock %}
 
 {% block content %}
-<div class="dashboard-header">
-    <div class="header-title">
-        <h1><i class="fas fa-brain"></i> AI Analysis Dashboard</h1>
-        <p class="subtitle">Real-time market sentiment and predictive modeling</p>
-    </div>
-    <div class="header-controls">
-        <div class="status-badge" id="aiStatus">
-            <span class="dot"></span> <span id="statusText">Offline</span>
+<div class="page-container">
+    <!-- Header -->
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">
+                <i class="fas fa-brain"></i>
+                AI Analysis Dashboard
+            </h1>
+            <p class="page-subtitle">Real-time market sentiment analysis and AI-driven trading signals</p>
         </div>
-        <button class="btn btn-primary" onclick="refreshData()">
-            <i class="fas fa-sync-alt"></i> Refresh
-        </button>
-    </div>
-</div>
-
-<!-- AI Metrics Overview -->
-<div class="metrics-grid">
-    <div class="metric-card">
-        <div class="metric-icon success">
-            <i class="fas fa-smile"></i>
-        </div>
-        <div class="metric-info">
-            <h3>Market Sentiment</h3>
-            <div class="metric-value" id="sentimentLabel">Loading...</div>
-            <div class="metric-sub">Score: <span id="sentimentScore">0</span>/100</div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <div class="status-badge status-offline" id="aiStatus">
+                <span class="dot"></span>
+                <span id="statusText">Checking...</span>
+            </div>
+            <button class="btn btn-primary" onclick="refreshData()">
+                <i class="fas fa-sync-alt"></i> Refresh
+            </button>
         </div>
     </div>
 
-    <div class="metric-card">
-        <div class="metric-icon primary">
-            <i class="fas fa-signal"></i>
+    <!-- Stats Grid -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon sentiment">
+                <i class="fas fa-smile"></i>
+            </div>
+            <div class="stat-label">Current Sentiment</div>
+            <div class="stat-value neutral" id="sentimentScore">0</div>
+            <div class="stat-sub" id="sentimentLabel">Analyzing...</div>
         </div>
-        <div class="metric-info">
-            <h3>Active Signals</h3>
-            <div class="metric-value" id="activeSignals">0</div>
-            <div class="metric-sub">Pending Executions</div>
+
+        <div class="stat-card">
+            <div class="stat-icon signals">
+                <i class="fas fa-signal"></i>
+            </div>
+            <div class="stat-label">Signals Today</div>
+            <div class="stat-value" id="signalsToday">0</div>
+            <div class="stat-sub">Buy: <span id="buySignals">0</span> | Sell: <span id="sellSignals">0</span></div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon positions">
+                <i class="fas fa-chart-line"></i>
+            </div>
+            <div class="stat-label">Active Positions</div>
+            <div class="stat-value" id="activePositions">0</div>
+            <div class="stat-sub" id="positionsValue">$0.00 total</div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon pnl">
+                <i class="fas fa-dollar-sign"></i>
+            </div>
+            <div class="stat-label">Total P&L</div>
+            <div class="stat-value positive" id="totalPnl">$0.00</div>
+            <div class="stat-sub" id="pnlTrades">0 closed trades</div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon accuracy">
+                <i class="fas fa-bullseye"></i>
+            </div>
+            <div class="stat-label">Win Rate</div>
+            <div class="stat-value" id="winRate">0%</div>
+            <div class="stat-sub">Signal accuracy</div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon trades">
+                <i class="fas fa-exchange-alt"></i>
+            </div>
+            <div class="stat-label">Total Trades</div>
+            <div class="stat-value" id="totalTrades">0</div>
+            <div class="stat-sub" id="tradingMode">DRY RUN</div>
         </div>
     </div>
 
-    <div class="metric-card">
-        <div class="metric-icon warning">
-            <i class="fas fa-bullseye"></i>
-        </div>
-        <div class="metric-info">
-            <h3>Model Accuracy</h3>
-            <div class="metric-value" id="modelAccuracy">0.0%</div>
-            <div class="metric-sub">Last 24 Hours</div>
-        </div>
-    </div>
+    <!-- Main Content Grid -->
+    <div class="grid-2">
+        <!-- Left Column: Sentiment Gauge + Chart -->
+        <div>
+            <!-- Current Sentiment -->
+            <div class="section-card">
+                <div class="section-title">
+                    <i class="fas fa-tachometer-alt"></i>
+                    Market Sentiment
+                </div>
+                <div class="sentiment-gauge">
+                    <div class="gauge-score neutral" id="gaugeScore">0</div>
+                    <div class="gauge-label" id="gaugeLabel">Neutral</div>
+                    <div class="action-badge action-hold" id="actionBadge">HOLD</div>
 
-    <div class="metric-card">
-        <div class="metric-icon info">
-            <i class="fas fa-robot"></i>
-        </div>
-        <div class="metric-info">
-            <h3>Trading Mode</h3>
-            <div class="metric-value" id="tradingMode">Support</div>
-            <div class="metric-sub" id="tradingModeSub">Direct Trading: Off</div>
-        </div>
-    </div>
-</div>
+                    <div class="threshold-bar">
+                        <div class="threshold-marker" id="scoreMarker" style="left: 50%;"></div>
+                    </div>
+                    <div class="threshold-labels">
+                        <span>-100 (Sell)</span>
+                        <span>0 (Hold)</span>
+                        <span>+100 (Buy)</span>
+                    </div>
+                </div>
 
-<!-- Main Content Grid -->
-<div class="dashboard-grid">
-    <!-- Sentiment Trend Chart -->
-    <div class="card col-span-2">
-        <div class="card-header">
-            <h3><i class="fas fa-chart-area"></i> Sentiment Trend (24h)</h3>
+                <!-- Provider Info -->
+                <div class="provider-info">
+                    <i class="fas fa-robot"></i>
+                    <strong>AI Provider:</strong> <span id="aiProvider">Loading...</span>
+                    <br><small>Last Analysis: <span id="lastAnalysis">-</span></small>
+                </div>
+            </div>
+
+            <!-- Sentiment Trend Chart -->
+            <div class="section-card">
+                <div class="section-title">
+                    <i class="fas fa-chart-area"></i>
+                    Sentiment Trend (24h)
+                    <span style="margin-left: auto; font-size: 0.75rem; color: var(--text-secondary);" id="dataPoints">0 data points</span>
+                </div>
+                <div class="chart-container">
+                    <canvas id="sentimentChart"></canvas>
+                </div>
+            </div>
         </div>
-        <div class="card-body">
-            <canvas id="sentimentChart" height="300"></canvas>
+
+        <!-- Right Column: Positions + Settings -->
+        <div>
+            <!-- Active Positions -->
+            <div class="section-card">
+                <div class="section-title">
+                    <i class="fas fa-wallet"></i>
+                    Active Positions
+                </div>
+                <div id="positionsContainer">
+                    <div class="empty-state">
+                        <i class="fas fa-inbox" style="font-size: 2rem; margin-bottom: 10px; opacity: 0.5;"></i>
+                        <p>No active positions</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trading Mode -->
+            <div class="section-card">
+                <div class="section-title">
+                    <i class="fas fa-cog"></i>
+                    Trading Configuration
+                </div>
+                <div class="grid-3" style="gap: 12px;">
+                    <div class="mode-card">
+                        <div class="mode-label">Direct Trading</div>
+                        <div class="mode-value off" id="directTradingStatus">Off</div>
+                    </div>
+                    <div class="mode-card">
+                        <div class="mode-label">Mode</div>
+                        <div class="mode-value" id="modeStatus">DRY RUN</div>
+                    </div>
+                    <div class="mode-card">
+                        <div class="mode-label">Threshold</div>
+                        <div class="mode-value" id="thresholdValue">20%</div>
+                    </div>
+                    <div class="mode-card">
+                        <div class="mode-label">Trade Amount</div>
+                        <div class="mode-value" id="tradeAmountValue">$50</div>
+                    </div>
+                    <div class="mode-card">
+                        <div class="mode-label">Take Profit</div>
+                        <div class="mode-value" id="tpValue">5%</div>
+                    </div>
+                    <div class="mode-card">
+                        <div class="mode-label">Stop Loss</div>
+                        <div class="mode-value" id="slValue">3%</div>
+                    </div>
+                </div>
+                <div style="text-align: center; margin-top: 16px;">
+                    <a href="/ai/settings" class="btn btn-primary">
+                        <i class="fas fa-sliders-h"></i> Configure Settings
+                    </a>
+                </div>
+            </div>
         </div>
     </div>
 
     <!-- Recent Signals -->
-    <div class="card">
-        <div class="card-header">
-            <h3><i class="fas fa-list-ul"></i> Live AI Signals</h3>
+    <div class="section-card">
+        <div class="section-title">
+            <i class="fas fa-history"></i>
+            Recent AI Signals
         </div>
-        <div class="card-body p-0">
-            <table class="table table-hover">
+        <div style="overflow-x: auto;">
+            <table class="signals-table">
                 <thead>
                     <tr>
-                        <th>Token</th>
+                        <th>Time</th>
                         <th>Score</th>
+                        <th>OpenAI</th>
+                        <th>Claude</th>
                         <th>Signal</th>
-                        <th>Action</th>
+                        <th>Action Taken</th>
                     </tr>
                 </thead>
                 <tbody id="signalsTable">
-                    <tr><td colspan="4" class="text-center">Loading signals...</td></tr>
+                    <tr>
+                        <td colspan="6" class="empty-state">Loading signals...</td>
+                    </tr>
                 </tbody>
             </table>
         </div>
     </div>
 </div>
 
-{% endblock %}
-
-{% block extra_js %}
 <script>
-    let sentimentChart = null;
+let sentimentChart = null;
 
-    document.addEventListener('DOMContentLoaded', function() {
-        refreshData();
+document.addEventListener('DOMContentLoaded', function() {
+    refreshData();
+    // Auto-refresh every 60 seconds
+    setInterval(refreshData, 60000);
+});
+
+async function refreshData() {
+    try {
+        // Fetch all data in parallel
+        const [statsRes, sentimentRes, tradesRes, settingsRes] = await Promise.all([
+            fetch('/api/ai/stats'),
+            fetch('/api/ai/sentiment'),
+            fetch('/api/ai/trades'),
+            fetch('/api/ai/settings')
+        ]);
+
+        const stats = await statsRes.json();
+        const sentiment = await sentimentRes.json();
+        const trades = await tradesRes.json();
+        const settings = await settingsRes.json();
+
+        if (stats.success) updateStats(stats.stats);
+        if (sentiment.success) updateSentimentDisplay(sentiment.data);
+        if (trades.success) updatePositionsAndTrades(trades.trades);
+        if (settings.success) updateSettings(settings.settings);
+
+    } catch (error) {
+        console.error('Error refreshing data:', error);
+    }
+}
+
+function updateStats(data) {
+    // Status
+    const statusEl = document.getElementById('aiStatus');
+    const statusText = document.getElementById('statusText');
+    if (data.status === 'Running') {
+        statusEl.className = 'status-badge status-active';
+        statusText.textContent = 'Active';
+    } else {
+        statusEl.className = 'status-badge status-offline';
+        statusText.textContent = 'Offline';
+    }
+
+    // Sentiment Score
+    const score = data.sentiment_score || 0;
+    const scoreDisplay = Math.round(score * 100);
+    document.getElementById('sentimentScore').textContent = scoreDisplay;
+    document.getElementById('sentimentLabel').textContent = data.sentiment_label || 'Neutral';
+
+    const scoreClass = score > 0.3 ? 'bullish' : score < -0.3 ? 'bearish' : 'neutral';
+    document.getElementById('sentimentScore').className = 'stat-value ' + scoreClass;
+
+    // Active Positions
+    document.getElementById('activePositions').textContent = data.active_signals || 0;
+
+    // P&L and Trades
+    const pnl = data.total_pnl || 0;
+    document.getElementById('totalPnl').textContent = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(2);
+    document.getElementById('totalPnl').className = 'stat-value ' + (pnl >= 0 ? 'positive' : 'negative');
+    document.getElementById('pnlTrades').textContent = (data.total_trades || 0) + ' closed trades';
+
+    document.getElementById('winRate').textContent = (data.accuracy || 0).toFixed(1) + '%';
+    document.getElementById('totalTrades').textContent = data.total_trades || 0;
+
+    // Update gauge
+    updateGauge(score);
+}
+
+function updateGauge(score) {
+    const scoreDisplay = Math.round(score * 100);
+    document.getElementById('gaugeScore').textContent = scoreDisplay;
+
+    const gaugeScore = document.getElementById('gaugeScore');
+    const gaugeLabel = document.getElementById('gaugeLabel');
+    const actionBadge = document.getElementById('actionBadge');
+    const marker = document.getElementById('scoreMarker');
+
+    // Position marker (score is -1 to 1, map to 0-100%)
+    const markerPos = ((score + 1) / 2) * 100;
+    marker.style.left = markerPos + '%';
+
+    if (score >= 0.5) {
+        gaugeScore.className = 'gauge-score bullish';
+        gaugeLabel.textContent = 'Bullish';
+        gaugeLabel.className = 'gauge-label bullish';
+        actionBadge.textContent = 'BUY SIGNAL';
+        actionBadge.className = 'action-badge action-buy';
+    } else if (score <= -0.5) {
+        gaugeScore.className = 'gauge-score bearish';
+        gaugeLabel.textContent = 'Bearish';
+        gaugeLabel.className = 'gauge-label bearish';
+        actionBadge.textContent = 'SELL SIGNAL';
+        actionBadge.className = 'action-badge action-sell';
+    } else {
+        gaugeScore.className = 'gauge-score neutral';
+        gaugeLabel.textContent = 'Neutral';
+        gaugeLabel.className = 'gauge-label neutral';
+        actionBadge.textContent = 'HOLD';
+        actionBadge.className = 'action-badge action-hold';
+    }
+}
+
+function updateSentimentDisplay(data) {
+    if (!data || data.length === 0) {
+        document.getElementById('signalsTable').innerHTML =
+            '<tr><td colspan="6" class="empty-state">No signals yet. Analysis runs every 15 minutes.</td></tr>';
+        return;
+    }
+
+    // Update data points count
+    document.getElementById('dataPoints').textContent = data.length + ' data points';
+
+    // Update last analysis time
+    const latest = data[data.length - 1];
+    const lastTime = new Date(latest.timestamp);
+    const diff = Math.floor((Date.now() - lastTime) / 60000);
+    document.getElementById('lastAnalysis').textContent = diff < 1 ? 'Just now' : diff + ' min ago';
+
+    // Update chart
+    updateChart(data);
+
+    // Update signals table
+    updateSignalsTable(data);
+
+    // Count buy/sell signals today
+    const today = new Date().toDateString();
+    let buyCount = 0, sellCount = 0;
+    data.forEach(d => {
+        if (new Date(d.timestamp).toDateString() === today) {
+            if (d.score >= 0.5) buyCount++;
+            else if (d.score <= -0.5) sellCount++;
+        }
     });
+    document.getElementById('signalsToday').textContent = data.filter(d =>
+        new Date(d.timestamp).toDateString() === today
+    ).length;
+    document.getElementById('buySignals').textContent = buyCount;
+    document.getElementById('sellSignals').textContent = sellCount;
+}
 
-    async function refreshData() {
-        try {
-            // 1. Fetch Stats
-            const statsRes = await fetch('/api/ai/stats');
-            const stats = await statsRes.json();
+function updateChart(data) {
+    const ctx = document.getElementById('sentimentChart').getContext('2d');
 
-            if (stats.success) {
-                updateMetrics(stats.stats);
-            }
+    if (sentimentChart) sentimentChart.destroy();
 
-            // 2. Fetch Sentiment History
-            const histRes = await fetch('/api/ai/sentiment');
-            const history = await histRes.json();
+    const labels = data.map(d => {
+        const date = new Date(d.timestamp);
+        return date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    });
+    const scores = data.map(d => d.score * 100);
 
-            if (history.success) {
-                updateChart(history.data);
-                updateSignalsTable(history.data);
-            }
-
-            // 3. Fetch Settings (for Mode)
-            const setRes = await fetch('/api/ai/settings');
-            const settings = await setRes.json();
-            if (settings.success) {
-                const mode = settings.settings.direct_trading ? 'Direct Trade' : 'Support Tool';
-                document.getElementById('tradingMode').textContent = mode;
-                document.getElementById('tradingModeSub').textContent = `Direct Trading: ${settings.settings.direct_trading ? 'On' : 'Off'}`;
-            }
-
-        } catch (e) {
-            console.error('Error fetching AI data:', e);
-        }
-    }
-
-    function updateSignalsTable(data) {
-        const tbody = document.getElementById('signalsTable');
-
-        if (!data || data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" class="text-center">No signals yet. Analysis runs every 15 minutes.</td></tr>';
-            return;
-        }
-
-        // Take last 10 signals and reverse to show newest first
-        const recent = data.slice(-10).reverse();
-
-        let html = '';
-        recent.forEach(signal => {
-            const score = signal.score;
-            const scoreDisplay = (score * 100).toFixed(0);
-            const action = getSignalAction(score);
-            const actionClass = action === 'BUY' ? 'text-success' : action === 'SELL' ? 'text-danger' : 'text-warning';
-            const badgeClass = action === 'BUY' ? 'badge-success' : action === 'SELL' ? 'badge-danger' : 'badge-secondary';
-
-            html += `
-                <tr>
-                    <td><strong>BTC/ETH</strong><br><small class="text-muted">Market</small></td>
-                    <td><span class="${actionClass}">${scoreDisplay}</span></td>
-                    <td><span class="badge ${badgeClass}">${action}</span></td>
-                    <td><small>${new Date(signal.timestamp).toLocaleTimeString()}</small></td>
-                </tr>
-            `;
-        });
-
-        tbody.innerHTML = html || '<tr><td colspan="4" class="text-center">No signals available</td></tr>';
-    }
-
-    function getSignalAction(score) {
-        // Score is -1 to 1
-        // Buy if strongly bullish (> 0.5), Sell if strongly bearish (< -0.5), else Hold
-        if (score >= 0.5) return 'BUY';
-        if (score <= -0.5) return 'SELL';
-        return 'HOLD';
-    }
-
-    function updateMetrics(data) {
-        document.getElementById('sentimentScore').textContent = (data.sentiment_score * 100).toFixed(0);
-        document.getElementById('sentimentLabel').textContent = data.sentiment_label;
-        document.getElementById('sentimentLabel').className = `metric-value ${getSentimentColor(data.sentiment_score)}`;
-
-        document.getElementById('activeSignals').textContent = data.active_signals;
-        document.getElementById('modelAccuracy').textContent = (data.accuracy || 0).toFixed(1) + '%';
-
-        const statusEl = document.getElementById('aiStatus');
-        const statusText = document.getElementById('statusText');
-        if (data.status === 'Running') {
-            statusEl.className = 'status-badge status-active';
-            statusText.textContent = 'Active';
-        } else {
-            statusEl.className = 'status-badge status-inactive';
-            statusText.textContent = 'Offline';
-        }
-    }
-
-    function getSentimentColor(score) {
-        if (score > 0.3) return 'text-success';
-        if (score < -0.3) return 'text-danger';
-        return 'text-warning';
-    }
-
-    function updateChart(data) {
-        const ctx = document.getElementById('sentimentChart').getContext('2d');
-
-        const labels = data.map(d => new Date(d.timestamp).toLocaleTimeString());
-        const scores = data.map(d => d.score * 100); // Scale to 0-100
-
-        if (sentimentChart) {
-            sentimentChart.destroy();
-        }
-
-        sentimentChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: 'Sentiment Score',
-                    data: scores,
-                    borderColor: '#10b981',
-                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                    fill: true,
-                    tension: 0.4
-                }]
+    sentimentChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Sentiment',
+                data: scores,
+                borderColor: '#8b5cf6',
+                backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                fill: true,
+                tension: 0.4,
+                pointRadius: 2,
+                pointHoverRadius: 5
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false }
             },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                    y: {
-                        beginAtZero: false,
-                        min: -100,
-                        max: 100
+            scales: {
+                x: {
+                    display: true,
+                    grid: { color: 'rgba(148, 163, 184, 0.1)' },
+                    ticks: { color: '#94a3b8', maxTicksLimit: 8 }
+                },
+                y: {
+                    min: -100,
+                    max: 100,
+                    grid: { color: 'rgba(148, 163, 184, 0.1)' },
+                    ticks: {
+                        color: '#94a3b8',
+                        callback: value => {
+                            if (value === 50) return 'BUY ▲';
+                            if (value === -50) return 'SELL ▼';
+                            return value;
+                        }
                     }
                 }
             }
-        });
+        }
+    });
+}
+
+function updateSignalsTable(data) {
+    const tbody = document.getElementById('signalsTable');
+    const recent = data.slice(-15).reverse();
+
+    let html = '';
+    recent.forEach(signal => {
+        const score = signal.score;
+        const scoreDisplay = (score * 100).toFixed(0);
+        const action = score >= 0.5 ? 'BUY' : score <= -0.5 ? 'SELL' : 'HOLD';
+        const badgeClass = action === 'BUY' ? 'signal-buy' : action === 'SELL' ? 'signal-sell' : 'signal-hold';
+        const scoreClass = score >= 0.5 ? 'positive' : score <= -0.5 ? 'negative' : '';
+
+        // Estimate OpenAI/Claude scores (if combined)
+        const openaiScore = signal.openai_score !== undefined ? (signal.openai_score * 100).toFixed(0) : '-';
+        const claudeScore = signal.claude_score !== undefined ? (signal.claude_score * 100).toFixed(0) : '-';
+
+        const actionTaken = Math.abs(score) >= 0.2 ? (score > 0 ? 'LONG' : 'SHORT') : 'None (below threshold)';
+
+        html += `
+            <tr>
+                <td>${new Date(signal.timestamp).toLocaleString()}</td>
+                <td class="${scoreClass}" style="font-weight: 600;">${scoreDisplay}</td>
+                <td>${openaiScore}</td>
+                <td>${claudeScore}</td>
+                <td><span class="signal-badge ${badgeClass}">${action}</span></td>
+                <td>${actionTaken}</td>
+            </tr>
+        `;
+    });
+
+    tbody.innerHTML = html || '<tr><td colspan="6" class="empty-state">No signals recorded</td></tr>';
+}
+
+function updatePositionsAndTrades(trades) {
+    const container = document.getElementById('positionsContainer');
+
+    // Filter active (open) positions
+    const openPositions = trades.filter(t => t.status === 'open');
+
+    if (openPositions.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-inbox" style="font-size: 2rem; margin-bottom: 10px; opacity: 0.5;"></i>
+                <p>No active positions</p>
+            </div>
+        `;
+        document.getElementById('positionsValue').textContent = '$0.00 total';
+        return;
     }
+
+    let totalValue = 0;
+    let html = '<table class="positions-table"><thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current P&L</th><th>Status</th></tr></thead><tbody>';
+
+    openPositions.forEach(pos => {
+        const sideClass = pos.side === 'buy' ? 'side-long' : 'side-short';
+        const sideLabel = pos.side === 'buy' ? 'LONG' : 'SHORT';
+        const pnl = pos.pnl || 0;
+        const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+        totalValue += pos.entry_usd || 0;
+
+        html += `
+            <tr>
+                <td><strong>${pos.symbol || 'BTCUSDT'}</strong></td>
+                <td><span class="side-badge ${sideClass}">${sideLabel}</span></td>
+                <td>$${(pos.entry_price || 0).toFixed(2)}</td>
+                <td class="${pnlClass}">$${pnl.toFixed(2)}</td>
+                <td>${pos.is_simulated ? 'DRY RUN' : 'LIVE'}</td>
+            </tr>
+        `;
+    });
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+    document.getElementById('positionsValue').textContent = '$' + totalValue.toFixed(2) + ' total';
+}
+
+function updateSettings(settings) {
+    // AI Provider
+    const provider = settings.ai_provider || 'openai';
+    let providerText = 'OpenAI (GPT-4o-mini)';
+    if (provider === 'claude') providerText = 'Claude (Haiku)';
+    else if (provider === 'both') providerText = 'Both (OpenAI + Claude)';
+    document.getElementById('aiProvider').textContent = providerText;
+
+    // Trading settings
+    const directTrading = settings.direct_trading === true;
+    const dtEl = document.getElementById('directTradingStatus');
+    dtEl.textContent = directTrading ? 'On' : 'Off';
+    dtEl.className = 'mode-value ' + (directTrading ? 'on' : 'off');
+
+    const dryRun = settings.dry_run !== false;
+    const modeEl = document.getElementById('modeStatus');
+    modeEl.textContent = dryRun ? 'DRY RUN' : 'LIVE';
+    modeEl.className = 'mode-value ' + (dryRun ? '' : 'on');
+
+    document.getElementById('tradingMode').textContent = dryRun ? 'DRY RUN' : 'LIVE';
+
+    document.getElementById('thresholdValue').textContent = (settings.confidence_threshold || 20) + '%';
+    document.getElementById('tradeAmountValue').textContent = '$' + (settings.trade_amount_usd || 50);
+    document.getElementById('tpValue').textContent = (settings.take_profit_pct || 5) + '%';
+    document.getElementById('slValue').textContent = (settings.stop_loss_pct || 3) + '%';
+}
 </script>
 {% endblock %}

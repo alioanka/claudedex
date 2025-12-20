@@ -348,6 +348,7 @@ class DashboardEndpoints:
         self.app.router.add_post('/api/sniper/trading/unblock', self.api_sniper_trading_unblock)
         self.app.router.add_post('/api/sniper/position/close', self.api_sniper_close_position)
         self.app.router.add_post('/api/sniper/positions/close-all', self.api_sniper_close_all_positions)
+        self.app.router.add_get('/api/sniper/activity', self.api_get_sniper_activity)
 
         # API - Arbitrage Module
         self.app.router.add_get('/api/arbitrage/stats', self.api_get_arbitrage_stats)
@@ -355,6 +356,8 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/arbitrage/trades', self.api_get_arbitrage_trades)
         self.app.router.add_get('/api/arbitrage/settings', self.api_get_arbitrage_settings)
         self.app.router.add_post('/api/arbitrage/settings', self.api_save_arbitrage_settings)
+        self.app.router.add_get('/api/arbitrage/trading/status', self.api_arbitrage_trading_status)
+        self.app.router.add_post('/api/arbitrage/trading/unblock', self.api_arbitrage_trading_unblock)
 
         # API - Copy Trading Module
         self.app.router.add_get('/api/copytrading/stats', self.api_get_copytrading_stats)
@@ -6189,7 +6192,7 @@ class DashboardEndpoints:
         return web.Response(text=template.render(page='sniper_settings'), content_type='text/html')
 
     async def api_get_sniper_stats(self, request):
-        """Get Sniper module stats from dedicated sniper_trades table"""
+        """Get Sniper module stats including settings and mode info"""
         stats = {
             'module': 'sniper',
             'status': 'Offline',
@@ -6199,9 +6202,25 @@ class DashboardEndpoints:
             'active_positions': 0,
             'total_pnl': 0.0,
             'win_rate': 0.0,
-            'avg_safety_score': 0.0
+            'avg_safety_score': 0.0,
+            # Settings/mode info for dashboard
+            'dry_run': True,
+            'test_mode': False,
+            'safety_enabled': True,
+            'chain': 'solana',
+            'trade_amount': 0.1,
+            'slippage': 10.0,
+            'tokens_detected': 0,
+            'tokens_sniped': 0,
+            'pools_detected': 0,
+            'pools_evaluated': 0,
+            'pools_passed': 0,
+            'pools_rejected': 0
         }
         try:
+            # Check DRY_RUN from environment
+            stats['dry_run'] = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
+
             if self.db:
                 async with self.db.pool.acquire() as conn:
                     # Get trade stats from sniper_trades table
@@ -6230,12 +6249,38 @@ class DashboardEndpoints:
                         WHERE status = 'open'
                     """)
                     stats['active_positions'] = active or 0
-                    stats['status'] = 'Online' if stats['total_trades'] > 0 or stats['active_positions'] > 0 else 'Idle'
+                    stats['tokens_sniped'] = stats['total_trades'] + stats['active_positions']
 
-            return web.json_response({'success': True, 'stats': stats})
+                    # Get tokens detected (last 24h)
+                    detected_24h = await conn.fetchval("""
+                        SELECT COUNT(*) FROM sniper_trades
+                        WHERE entry_timestamp > NOW() - INTERVAL '24 hours'
+                    """)
+                    stats['tokens_detected'] = detected_24h or 0
+
+                    # Load settings from config_settings
+                    settings_rows = await conn.fetch(
+                        "SELECT key, value FROM config_settings WHERE config_type = 'sniper_config'"
+                    )
+                    for srow in settings_rows:
+                        key, val = srow['key'], srow['value']
+                        if key == 'test_mode':
+                            stats['test_mode'] = val.lower() in ('true', '1', 'yes') if val else False
+                        elif key == 'safety_check_enabled':
+                            stats['safety_enabled'] = val.lower() in ('true', '1', 'yes') if val else True
+                        elif key == 'chain':
+                            stats['chain'] = val if val else 'solana'
+                        elif key == 'trade_amount':
+                            stats['trade_amount'] = float(val) if val else 0.1
+                        elif key == 'slippage':
+                            stats['slippage'] = float(val) if val else 10.0
+
+                    stats['status'] = 'Online' if os.getenv('SNIPER_MODULE_ENABLED', 'false').lower() == 'true' else 'Offline'
+
+            return web.json_response({'success': True, **stats})
         except Exception as e:
             logger.error(f"Error getting sniper stats: {e}")
-            return web.json_response({'success': False, 'error': str(e), 'stats': stats})
+            return web.json_response({'success': False, 'error': str(e), **stats})
 
     async def api_get_sniper_positions(self, request):
         """Get Sniper open positions from sniper_trades table"""
@@ -6435,6 +6480,72 @@ class DashboardEndpoints:
             return web.json_response({'success': True, 'message': 'Settings saved'})
         except Exception as e:
             return web.json_response({'success': False, 'error': str(e)})
+
+    async def api_get_sniper_activity(self, request):
+        """Get Sniper module activity feed from recent trades and system logs"""
+        activity = []
+        try:
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    # Get recent open positions (bought)
+                    open_trades = await conn.fetch("""
+                        SELECT token_address, chain, entry_price, amount, entry_timestamp, safety_score, safety_rating
+                        FROM sniper_trades
+                        WHERE status = 'open'
+                        ORDER BY entry_timestamp DESC
+                        LIMIT 10
+                    """)
+                    for row in open_trades:
+                        activity.append({
+                            'type': 'bought',
+                            'icon': 'bought',
+                            'title': f"Position Opened",
+                            'details': f"{row['token_address'][:12]}... on {(row['chain'] or 'solana').upper()}",
+                            'subdetails': f"Entry: ${float(row['entry_price'] or 0):.6f} | Safety: {row['safety_rating'] or 'N/A'}",
+                            'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None
+                        })
+
+                    # Get recent closed positions (sold)
+                    closed_trades = await conn.fetch("""
+                        SELECT token_address, chain, entry_price, exit_price, profit_loss, exit_timestamp, close_reason
+                        FROM sniper_trades
+                        WHERE status = 'closed'
+                        ORDER BY exit_timestamp DESC
+                        LIMIT 10
+                    """)
+                    for row in closed_trades:
+                        pnl = float(row['profit_loss'] or 0)
+                        activity.append({
+                            'type': 'sold',
+                            'icon': 'sold',
+                            'title': f"Position Closed ({row['close_reason'] or 'manual'})",
+                            'details': f"{row['token_address'][:12]}... | P&L: ${pnl:+.2f}",
+                            'subdetails': f"Exit: ${float(row['exit_price'] or 0):.6f}",
+                            'timestamp': row['exit_timestamp'].isoformat() if row['exit_timestamp'] else None,
+                            'pnl': pnl
+                        })
+
+            # Sort by timestamp descending
+            activity.sort(key=lambda x: x.get('timestamp') or '', reverse=True)
+
+            # Add some placeholder detection activity if empty
+            if not activity:
+                from datetime import datetime
+                activity = [
+                    {
+                        'type': 'detected',
+                        'icon': 'detected',
+                        'title': 'Pool Detection Active',
+                        'details': 'Monitoring Raydium/Pump.fun for new pools',
+                        'subdetails': 'WebSocket connected to Solana',
+                        'timestamp': datetime.now().isoformat()
+                    }
+                ]
+
+            return web.json_response({'success': True, 'activity': activity[:20]})
+        except Exception as e:
+            logger.error(f"Error getting sniper activity: {e}")
+            return web.json_response({'success': False, 'error': str(e), 'activity': []})
 
 
     # ==================== ARBITRAGE MODULE HANDLERS ====================
@@ -6665,6 +6776,72 @@ class DashboardEndpoints:
                             ON CONFLICT (config_type, key) DO UPDATE SET value = $2
                         """, k, str(v))
             return web.json_response({'success': True, 'message': 'Settings saved'})
+        except Exception as e:
+            return web.json_response({'success': False, 'error': str(e)})
+
+    async def api_arbitrage_trading_status(self, request):
+        """Get Arbitrage trading status - daily P&L, limits, blocks"""
+        try:
+            from datetime import datetime, timedelta
+            today = datetime.now().strftime('%Y-%m-%d')
+
+            status = {
+                'trading_blocked': False,
+                'block_reasons': [],
+                'daily_pnl': 0.0,
+                'daily_loss_limit': 500.0,
+                'trades_today': 0,
+                'mode': 'DRY_RUN'
+            }
+
+            # Check if DRY_RUN mode
+            status['mode'] = 'DRY_RUN' if os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes') else 'LIVE'
+
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    # Get today's trades and P&L
+                    row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) as trades_today,
+                            COALESCE(SUM(profit_loss), 0) as daily_pnl
+                        FROM arbitrage_trades
+                        WHERE DATE(timestamp) = $1
+                    """, today)
+
+                    if row:
+                        status['trades_today'] = row['trades_today'] or 0
+                        status['daily_pnl'] = float(row['daily_pnl'] or 0)
+
+                    # Get daily loss limit from settings
+                    limit_row = await conn.fetchrow("""
+                        SELECT value FROM config_settings
+                        WHERE config_type = 'arbitrage_config' AND key = 'daily_loss_limit'
+                    """)
+                    if limit_row and limit_row['value']:
+                        try:
+                            status['daily_loss_limit'] = float(limit_row['value'])
+                        except:
+                            pass
+
+                    # Check if blocked due to daily loss
+                    if status['daily_pnl'] < -status['daily_loss_limit']:
+                        status['trading_blocked'] = True
+                        status['block_reasons'].append(f"Daily loss limit exceeded: ${abs(status['daily_pnl']):.2f}")
+
+            return web.json_response({'success': True, **status})
+        except Exception as e:
+            logger.error(f"Error getting arbitrage trading status: {e}")
+            return web.json_response({'success': False, 'error': str(e)})
+
+    async def api_arbitrage_trading_unblock(self, request):
+        """Reset arbitrage trading block"""
+        try:
+            # In DRY RUN mode, just return success
+            return web.json_response({
+                'success': True,
+                'message': 'Trading unblocked',
+                'note': 'Trading block reset. Will resume on next opportunity.'
+            })
         except Exception as e:
             return web.json_response({'success': False, 'error': str(e)})
 

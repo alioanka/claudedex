@@ -87,8 +87,18 @@
                                     <label class="form-check-label" for="test_mode">🧪 TEST MODE (Relaxed Safety)</label>
                                     <div class="form-text text-warning">
                                         <i class="fas fa-exclamation-triangle me-1"></i>
-                                        Allows riskier tokens: up to 50% tax, $100 min liquidity, DANGER-rated tokens (except honeypots).
+                                        Allows riskier tokens: up to 50% tax, DANGER-rated tokens (except honeypots).
                                         <strong>Use only for testing!</strong>
+                                    </div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Test Mode Min Liquidity (USD)</label>
+                                    <input type="number" class="form-control" id="test_mode_min_liquidity" min="0" step="1" value="10">
+                                    <div class="form-text text-warning">
+                                        <i class="fas fa-flask me-1"></i>
+                                        Minimum liquidity when TEST MODE is enabled. Set to $0-10 to catch fresh launches.
+                                        <strong>Only applies when TEST MODE is ON.</strong>
                                     </div>
                                 </div>
 
@@ -338,6 +348,7 @@
                 // Safety check settings
                 document.getElementById('safety_check_enabled').checked = settings.safety_check_enabled !== false; // Default true
                 document.getElementById('test_mode').checked = settings.test_mode === true; // Default false
+                document.getElementById('test_mode_min_liquidity').value = settings.test_mode_min_liquidity || 10;
                 document.getElementById('max_buy_tax').value = settings.max_buy_tax || 10;
                 document.getElementById('max_sell_tax').value = settings.max_sell_tax || 10;
                 document.getElementById('min_liquidity').value = settings.min_liquidity || 1000;
@@ -364,6 +375,7 @@
             // Safety check settings
             safety_check_enabled: document.getElementById('safety_check_enabled').checked,
             test_mode: document.getElementById('test_mode').checked,
+            test_mode_min_liquidity: parseFloat(document.getElementById('test_mode_min_liquidity').value),
             max_buy_tax: parseFloat(document.getElementById('max_buy_tax').value),
             max_sell_tax: parseFloat(document.getElementById('max_sell_tax').value),
             min_liquidity: parseFloat(document.getElementById('min_liquidity').value),

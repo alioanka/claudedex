@@ -75,17 +75,105 @@
         padding: 10px;
     }
 
-    /* Fix for dark theme dropdown options */
-    [data-theme="dark"] .search-field select,
-    [data-theme="dark"] .search-field select option {
-        background-color: #374151;
-        color: #f9fafb;
+    /* Fix for dark theme dropdown options - IMPORTANT: Force background colors */
+    [data-theme="dark"] .search-field select {
+        background-color: #374151 !important;
+        color: #f9fafb !important;
     }
 
-    [data-theme="light"] .search-field select,
+    [data-theme="dark"] .search-field select option {
+        background-color: #374151 !important;
+        color: #f9fafb !important;
+    }
+
+    [data-theme="light"] .search-field select {
+        background-color: #ffffff !important;
+        color: #111827 !important;
+    }
+
     [data-theme="light"] .search-field select option {
-        background-color: #ffffff;
-        color: #111827;
+        background-color: #ffffff !important;
+        color: #111827 !important;
+    }
+
+    /* Hot Wallets Section */
+    .hot-wallets-section {
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(99, 102, 241, 0.1));
+        border: 1px solid rgba(139, 92, 246, 0.3);
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+
+    .hot-wallet-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 16px;
+    }
+
+    .hot-wallet-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        padding: 16px;
+        transition: all 0.2s;
+    }
+
+    .hot-wallet-card:hover {
+        border-color: #8b5cf6;
+        transform: translateY(-2px);
+    }
+
+    .hot-wallet-rank {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        font-weight: 700;
+        font-size: 0.85rem;
+        margin-right: 8px;
+    }
+
+    .hot-wallet-rank.gold { background: linear-gradient(135deg, #f59e0b, #d97706); color: white; }
+    .hot-wallet-rank.silver { background: linear-gradient(135deg, #9ca3af, #6b7280); color: white; }
+    .hot-wallet-rank.bronze { background: linear-gradient(135deg, #f97316, #ea580c); color: white; }
+    .hot-wallet-rank.default { background: #374151; color: #9ca3af; }
+
+    .hot-wallet-header {
+        display: flex;
+        align-items: center;
+        margin-bottom: 12px;
+    }
+
+    .hot-wallet-stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+    }
+
+    .hot-wallet-stat {
+        text-align: center;
+    }
+
+    .hot-wallet-stat-label {
+        font-size: 0.65rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        margin-bottom: 2px;
+    }
+
+    .hot-wallet-stat-value {
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .refresh-info {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        margin-left: auto;
     }
 
     .btn {
@@ -299,6 +387,21 @@
                 Best Wallet Discovery
             </h1>
             <p class="page-subtitle">Find and analyze top-performing Solana wallets to copy</p>
+        </div>
+    </div>
+
+    <!-- Hot Wallets Section - Auto-discovered profitable wallets -->
+    <div class="hot-wallets-section">
+        <div class="section-title" style="margin-bottom: 16px;">
+            <i class="fas fa-fire" style="color: #f59e0b;"></i>
+            Hot Wallets This Week
+            <span class="refresh-info" id="hotWalletsRefreshInfo">Auto-refreshes every 5 min</span>
+        </div>
+        <div id="hotWalletsContainer">
+            <div class="loading-state" style="padding: 30px;">
+                <div class="loading-spinner"></div>
+                <p>Discovering hot wallets...</p>
+            </div>
         </div>
     </div>
 
@@ -651,6 +754,8 @@
 
             if (saveData.success) {
                 alert('Wallet added to tracking list!');
+                // Refresh hot wallets to update tracking status
+                loadHotWallets();
             } else {
                 alert('Failed to add wallet: ' + saveData.error);
             }
@@ -659,5 +764,118 @@
             alert('Failed to add wallet to tracking');
         }
     }
+
+    // ===== Hot Wallets Auto-Discovery =====
+    let trackedWallets = [];
+
+    async function loadTrackedWallets() {
+        try {
+            const response = await fetch('/api/copytrading/settings');
+            const data = await response.json();
+            if (data.success && data.settings.target_wallets) {
+                trackedWallets = data.settings.target_wallets;
+            }
+        } catch (error) {
+            console.error('Error loading tracked wallets:', error);
+        }
+    }
+
+    async function loadHotWallets() {
+        const container = document.getElementById('hotWalletsContainer');
+
+        try {
+            // First load tracked wallets to check if already tracking
+            await loadTrackedWallets();
+
+            // Search for top traders in last 7 days with good win rate
+            const params = new URLSearchParams({
+                type: 'top_traders_7d',
+                min_win_rate: 50,
+                min_trades: 3,
+                min_pnl: 100,
+                max_results: 10,
+                sort_by: 'score'
+            });
+
+            const response = await fetch(`/api/copytrading/discover?${params}`);
+            const data = await response.json();
+
+            if (data.success && data.wallets && data.wallets.length > 0) {
+                displayHotWallets(data.wallets.slice(0, 10));
+                document.getElementById('hotWalletsRefreshInfo').textContent =
+                    'Updated: ' + new Date().toLocaleTimeString();
+            } else {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 30px; color: var(--text-secondary);">
+                        <i class="fas fa-fire-alt" style="font-size: 2rem; margin-bottom: 12px; opacity: 0.5;"></i>
+                        <p>No hot wallets found this week. Try searching with custom filters below.</p>
+                    </div>
+                `;
+            }
+        } catch (error) {
+            console.error('Error loading hot wallets:', error);
+            container.innerHTML = `
+                <div style="text-align: center; padding: 30px; color: var(--text-secondary);">
+                    <i class="fas fa-exclamation-triangle" style="color: #f59e0b; font-size: 2rem; margin-bottom: 12px;"></i>
+                    <p>Failed to load hot wallets. Will retry shortly...</p>
+                </div>
+            `;
+        }
+    }
+
+    function displayHotWallets(wallets) {
+        const container = document.getElementById('hotWalletsContainer');
+
+        let html = '<div class="hot-wallet-grid">';
+
+        wallets.forEach((wallet, index) => {
+            const rankClass = index === 0 ? 'gold' : index === 1 ? 'silver' : index === 2 ? 'bronze' : 'default';
+            const pnlClass = wallet.total_pnl >= 0 ? 'positive' : 'negative';
+            const isTracked = trackedWallets.includes(wallet.address);
+
+            html += `
+                <div class="hot-wallet-card">
+                    <div class="hot-wallet-header">
+                        <span class="hot-wallet-rank ${rankClass}">${index + 1}</span>
+                        <span class="wallet-address" title="${wallet.address}" style="flex: 1;">
+                            ${wallet.address.substring(0, 6)}...${wallet.address.slice(-4)}
+                        </span>
+                        <a href="https://solscan.io/account/${wallet.address}" target="_blank" style="color: var(--text-secondary); margin-right: 8px;">
+                            <i class="fas fa-external-link-alt"></i>
+                        </a>
+                        ${isTracked ?
+                            '<span style="color: #10b981; font-size: 0.75rem;"><i class="fas fa-check-circle"></i> Tracked</span>' :
+                            `<button class="btn btn-success" style="padding: 4px 8px; font-size: 0.7rem;" onclick="addToTracking('${wallet.address}')">
+                                <i class="fas fa-plus"></i> Track
+                            </button>`
+                        }
+                    </div>
+                    <div class="hot-wallet-stats">
+                        <div class="hot-wallet-stat">
+                            <div class="hot-wallet-stat-label">Win Rate</div>
+                            <div class="hot-wallet-stat-value">${wallet.win_rate.toFixed(0)}%</div>
+                        </div>
+                        <div class="hot-wallet-stat">
+                            <div class="hot-wallet-stat-label">Trades</div>
+                            <div class="hot-wallet-stat-value">${wallet.total_trades}</div>
+                        </div>
+                        <div class="hot-wallet-stat">
+                            <div class="hot-wallet-stat-label">PnL</div>
+                            <div class="hot-wallet-stat-value ${pnlClass}">$${wallet.total_pnl.toFixed(0)}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+
+        html += '</div>';
+        container.innerHTML = html;
+    }
+
+    // Load hot wallets on page load
+    loadHotWallets();
+
+    // Refresh hot wallets every 5 minutes
+    setInterval(loadHotWallets, 5 * 60 * 1000);
 </script>
 {% endblock %}

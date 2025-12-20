@@ -549,6 +549,85 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Triangular Engine Tuning -->
+            <div class="row mt-4">
+                <div class="col-md-6">
+                    <div class="settings-section">
+                        <div class="settings-title">
+                            <i class="fas fa-route text-warning"></i>
+                            Triangular Engine Tuning
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Base Profit Threshold (%)</label>
+                            <input type="number" class="form-control" id="tri_base_threshold" min="0.01" max="5" step="0.01" value="0.1">
+                            <div class="form-text">Minimum profit before gas costs. Real triangular arb is typically 0.05%-0.3%.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Gas Buffer Multiplier</label>
+                            <input type="number" class="form-control" id="tri_gas_buffer" min="1" max="3" step="0.1" value="1.1">
+                            <div class="form-text">Multiply gas estimate by this factor. 1.1 = 10% buffer.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Cooldown Between Executions (seconds)</label>
+                            <input type="number" class="form-control" id="tri_cooldown" min="60" max="3600" step="60" value="300">
+                            <div class="form-text">Wait time before re-executing same cycle. Default: 5 min.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">RPC Calls Per Second</label>
+                            <input type="number" class="form-control" id="eth_rpc_calls_per_sec" min="1" max="20" step="1" value="5">
+                            <div class="form-text">Rate limit for Ethereum RPC calls to avoid 429 errors.</div>
+                        </div>
+
+                        <div class="mb-3 form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="tri_verbose_log">
+                            <label class="form-check-label">Verbose Logging</label>
+                            <div class="form-text">Log all price checks even when no opportunity found. Useful for debugging.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-6">
+                    <div class="settings-section">
+                        <div class="settings-title">
+                            <i class="fas fa-sun text-info"></i>
+                            Solana Engine Tuning
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Min Profit Threshold (%)</label>
+                            <input type="number" class="form-control" id="sol_arb_threshold" min="0.01" max="5" step="0.01" value="0.2">
+                            <div class="form-text">Minimum round-trip profit. Solana has lower fees so can use lower threshold.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Cooldown Between Executions (seconds)</label>
+                            <input type="number" class="form-control" id="sol_arb_cooldown" min="60" max="3600" step="60" value="300">
+                            <div class="form-text">Wait time before re-executing same pair. Default: 5 min.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Jupiter API Rate Limit (req/sec)</label>
+                            <input type="number" class="form-control" id="jupiter_rps" min="1" max="10" step="0.5" value="2">
+                            <div class="form-text">Rate limit for Jupiter API calls. Default: 2/sec to avoid rate limits.</div>
+                        </div>
+
+                        <div class="mb-3 form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="sol_arb_verbose">
+                            <label class="form-check-label">Verbose Logging</label>
+                            <div class="form-text">Log all Jupiter quote results. Useful for debugging.</div>
+                        </div>
+
+                        <div class="alert alert-info mt-3 mb-0">
+                            <small><i class="fas fa-info-circle me-1"></i> Lower thresholds = more opportunities but higher execution risk. Start conservative and tune based on results.</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Guide Tab -->
@@ -841,6 +920,19 @@ DRY_RUN=true &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&
                 document.getElementById('max_gas_price').value = s.max_gas_price || 100;
                 document.getElementById('estimated_gas').value = s.estimated_gas || 500000;
                 document.getElementById('use_gas_oracle').checked = s.use_gas_oracle !== false;
+
+                // Triangular Engine Tuning
+                document.getElementById('tri_base_threshold').value = s.tri_base_threshold || 0.1;
+                document.getElementById('tri_gas_buffer').value = s.tri_gas_buffer || 1.1;
+                document.getElementById('tri_cooldown').value = s.tri_cooldown || 300;
+                document.getElementById('eth_rpc_calls_per_sec').value = s.eth_rpc_calls_per_sec || 5;
+                document.getElementById('tri_verbose_log').checked = s.tri_verbose_log === true;
+
+                // Solana Engine Tuning
+                document.getElementById('sol_arb_threshold').value = s.sol_arb_threshold || 0.2;
+                document.getElementById('sol_arb_cooldown').value = s.sol_arb_cooldown || 300;
+                document.getElementById('jupiter_rps').value = s.jupiter_rps || 2;
+                document.getElementById('sol_arb_verbose').checked = s.sol_arb_verbose === true;
             }
         } catch (error) {
             console.error('Error loading settings:', error);
@@ -892,7 +984,20 @@ DRY_RUN=true &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&
             use_gas_oracle: document.getElementById('use_gas_oracle').checked,
             log_opportunities: document.getElementById('log_opportunities').checked,
             log_prices: document.getElementById('log_prices').checked,
-            stats_interval: parseInt(document.getElementById('stats_interval').value)
+            stats_interval: parseInt(document.getElementById('stats_interval').value),
+
+            // Triangular Engine Tuning
+            tri_base_threshold: parseFloat(document.getElementById('tri_base_threshold').value),
+            tri_gas_buffer: parseFloat(document.getElementById('tri_gas_buffer').value),
+            tri_cooldown: parseInt(document.getElementById('tri_cooldown').value),
+            eth_rpc_calls_per_sec: parseInt(document.getElementById('eth_rpc_calls_per_sec').value),
+            tri_verbose_log: document.getElementById('tri_verbose_log').checked,
+
+            // Solana Engine Tuning
+            sol_arb_threshold: parseFloat(document.getElementById('sol_arb_threshold').value),
+            sol_arb_cooldown: parseInt(document.getElementById('sol_arb_cooldown').value),
+            jupiter_rps: parseFloat(document.getElementById('jupiter_rps').value),
+            sol_arb_verbose: document.getElementById('sol_arb_verbose').checked
         };
 
         try {

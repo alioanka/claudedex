@@ -41,6 +41,7 @@ class EVMListener:
         self.config = config
         self.w3: Optional[Web3] = None
         self.is_running = False
+        self.is_configured = False  # Track if EVM is properly configured
         self.known_pairs = set()
 
         # Get RPC URL from config or env
@@ -54,17 +55,26 @@ class EVMListener:
         logger.info("🔌 Initializing EVM Listener...")
 
         if not self.rpc_url:
-            logger.error("❌ No RPC URL provided for EVM Listener")
+            logger.warning("⚠️ EVM Listener: No RPC URL configured. Set WEB3_PROVIDER_URL in .env for EVM chain sniping.")
+            logger.info("   Skipping EVM initialization - Solana-only mode active.")
+            self.is_configured = False
             return
 
         try:
-            self.w3 = Web3(Web3.HTTPProvider(self.rpc_url))
+            self.w3 = Web3(Web3.HTTPProvider(self.rpc_url, request_kwargs={'timeout': 10}))
             if self.w3.is_connected():
-                logger.info(f"✅ Connected to EVM Node: {self.rpc_url}")
+                chain_id = self.w3.eth.chain_id
+                chain_name = {1: 'Ethereum', 56: 'BSC', 8453: 'Base', 42161: 'Arbitrum'}.get(chain_id, f'Chain {chain_id}')
+                logger.info(f"✅ Connected to EVM Node ({chain_name}): {self.rpc_url[:50]}...")
+                self.is_configured = True
             else:
-                logger.error("❌ Failed to connect to EVM Node")
+                logger.warning(f"⚠️ EVM Listener: Could not connect to RPC. Check WEB3_PROVIDER_URL.")
+                logger.info("   Continuing without EVM support - Solana-only mode active.")
+                self.is_configured = False
         except Exception as e:
-            logger.error(f"❌ Web3 initialization error: {e}")
+            logger.warning(f"⚠️ EVM Listener initialization failed: {e}")
+            logger.info("   Continuing without EVM support - Solana-only mode active.")
+            self.is_configured = False
 
     async def get_new_pairs(self) -> List[Dict]:
         """
@@ -72,7 +82,7 @@ class EVMListener:
         In a production environment, this would use WebSocket subscription.
         Here we poll logs for simplicity and compatibility with HTTP.
         """
-        if not self.w3 or not self.w3.is_connected():
+        if not self.is_configured or not self.w3 or not self.w3.is_connected():
             return []
 
         new_pairs = []

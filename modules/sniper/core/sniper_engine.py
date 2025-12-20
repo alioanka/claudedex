@@ -118,6 +118,7 @@ class SniperEngine:
         self.max_buy_tax = 15.0
         self.max_sell_tax = 15.0
         self.min_liquidity = 1000.0
+        self.test_mode_min_liquidity = 10.0  # Very relaxed for test mode
         self.safety_check_enabled = True
         self.test_mode = False  # Relaxed safety for testing
 
@@ -195,6 +196,8 @@ class SniperEngine:
                             self.max_sell_tax = float(val) if val else 15.0
                         elif key == 'min_liquidity':
                             self.min_liquidity = float(val) if val else 1000.0
+                        elif key == 'test_mode_min_liquidity':
+                            self.test_mode_min_liquidity = float(val) if val else 10.0
                         elif key == 'safety_check_enabled':
                             self.safety_check_enabled = val.lower() in ('true', '1', 'yes') if val else True
                         elif key == 'test_mode':
@@ -330,7 +333,7 @@ class SniperEngine:
         if self.test_mode:
             max_buy_tax = 50.0     # Allow up to 50% in test mode
             max_sell_tax = 50.0
-            min_liquidity = 100.0  # Allow lower liquidity in test mode
+            min_liquidity = self.test_mode_min_liquidity  # Use configurable test mode liquidity (default $10)
             allow_caution = True   # Allow CAUTION rated tokens
         else:
             max_buy_tax = self.max_buy_tax
