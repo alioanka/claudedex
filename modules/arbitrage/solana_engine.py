@@ -104,11 +104,11 @@ class RateLimiter:
 class JupiterClient:
     """Jupiter Aggregator API client with rate limiting"""
 
-    def __init__(self):
+    def __init__(self, rate_limit: float = 2.0):
         self.base_url = JUPITER_API
         self.session: Optional[aiohttp.ClientSession] = None
-        # Rate limit to 2 requests/second (Jupiter allows more but be safe)
-        self.rate_limiter = RateLimiter(float(os.getenv('JUPITER_RPS', '2.0')))
+        # Rate limit from config (default 2 req/sec)
+        self.rate_limiter = RateLimiter(rate_limit)
         self._consecutive_errors = 0
         self._backoff_until: Optional[datetime] = None
 
@@ -386,23 +386,27 @@ class SolanaArbitrageEngine:
         self.wallet_address = os.getenv('SOLANA_WALLET_ADDRESS')
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
-        # Clients
-        self.jupiter = JupiterClient()
+        # Settings from config (loaded from DB via settings page)
+        # Threshold is stored as percentage (0.2 = 0.2%), convert to decimal (0.002)
+        self.min_profit_threshold = config.get('sol_arb_threshold', 0.2) / 100.0
+        self.trade_amount_sol = config.get('sol_trade_amount', 1.0)
+        self.use_jito = config.get('use_jito', True)
+
+        # Verbose logging (configurable via settings page)
+        self.verbose_logging = config.get('sol_arb_verbose', False)
+
+        # Rate limiting - cooldown from config
+        self._last_opportunity_time: Dict[str, datetime] = {}
+        self._opportunity_cooldown = config.get('sol_arb_cooldown', 300)  # 5 min default
+
+        # Jupiter rate limiter from config
+        jupiter_rps = config.get('jupiter_rps', 2.0)
+
+        # Clients - pass rate limit to Jupiter
+        self.jupiter = JupiterClient(rate_limit=float(jupiter_rps))
         self.raydium = RaydiumClient()
         self.jito = JitoClient()
         self.price_fetcher = SolanaPriceFetcher()
-
-        # Settings - configurable via environment variables
-        self.min_profit_threshold = float(os.getenv('SOL_ARB_THRESHOLD', '0.002'))  # 0.2% min
-        self.trade_amount_sol = float(os.getenv('SOL_ARB_TRADE_SIZE', '1.0'))  # Trade size in SOL
-        self.use_jito = os.getenv('SOL_USE_JITO', 'true').lower() == 'true'
-
-        # Verbose logging (set to true to see all price checks)
-        self.verbose_logging = os.getenv('SOL_ARB_VERBOSE', 'false').lower() == 'true'
-
-        # Rate limiting - reduced from 30 min to 5 min
-        self._last_opportunity_time: Dict[str, datetime] = {}
-        self._opportunity_cooldown = int(os.getenv('SOL_ARB_COOLDOWN', '300'))  # 5 min default
         self._pair_execution_count: Dict[str, int] = {}
         self._pair_execution_date: str = ""
         self._max_executions_per_pair_per_day = 10

@@ -255,22 +255,22 @@ class TriangularArbitrageEngine:
         # Gas oracle
         self.gas_oracle = GasOracle()
 
-        # RPC rate limiter - default 5 calls/second
-        rpc_rate = float(os.getenv('ETH_RPC_CALLS_PER_SEC', '5.0'))
-        self.rpc_rate_limiter = RPCRateLimiter(rpc_rate)
+        # Settings from config (loaded from DB via settings page)
+        # Threshold is stored as percentage (0.1 = 0.1%), convert to decimal (0.001)
+        self.base_profit_threshold = config.get('tri_base_threshold', 0.1) / 100.0
+        self.gas_buffer_multiplier = config.get('tri_gas_buffer', 1.1)
+        self.trade_amount_eth = config.get('eth_trade_amount', 1.0)
 
-        # Settings - TUNED for realistic opportunities
-        # Real triangular arb spreads are typically 0.05%-0.3%
-        self.base_profit_threshold = float(os.getenv('TRI_BASE_THRESHOLD', '0.001'))  # 0.1% base
-        self.gas_buffer_multiplier = float(os.getenv('TRI_GAS_BUFFER', '1.1'))  # Minimal buffer
-        self.trade_amount_eth = float(os.getenv('TRI_TRADE_SIZE', '1.0'))  # Trade size in ETH
+        # Verbose logging (configurable via settings page)
+        self.verbose_logging = config.get('tri_verbose_log', False)
 
-        # Verbose logging (set to true to see all price checks)
-        self.verbose_logging = os.getenv('TRI_VERBOSE_LOG', 'false').lower() == 'true'
+        # RPC rate limiter from config
+        rpc_rate = config.get('eth_rpc_calls_per_sec', 5)
+        self.rpc_rate_limiter = RPCRateLimiter(float(rpc_rate))
 
-        # Rate limiting
+        # Rate limiting - cooldown from config
         self._last_opportunity_time: Dict[str, datetime] = {}
-        self._opportunity_cooldown = int(os.getenv('TRI_COOLDOWN', '300'))  # 5 min default (was 30)
+        self._opportunity_cooldown = config.get('tri_cooldown', 300)  # 5 min default
         self._cycle_execution_count: Dict[str, int] = {}
         self._execution_date: str = ""
         self._max_executions_per_cycle_per_day = 5
