@@ -1,0 +1,930 @@
+{% extends "base.html" %}
+
+{% block title %}RPC/API Settings - ClaudeDex{% endblock %}
+
+{% block extra_head %}
+<style>
+    .nav-pills .nav-link {
+        color: var(--text-secondary);
+        border-radius: 8px;
+        padding: 10px 20px;
+        margin-right: 8px;
+    }
+    .nav-pills .nav-link.active {
+        background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+        color: white;
+    }
+    .nav-pills .nav-link:hover:not(.active) {
+        background: var(--metric-bg);
+    }
+    .settings-section {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+    .settings-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .endpoint-card {
+        background: var(--metric-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+        transition: all 0.2s;
+    }
+    .endpoint-card:hover {
+        border-color: #3b82f6;
+    }
+    .endpoint-card.rate-limited {
+        border-color: #f59e0b;
+        background: rgba(245, 158, 11, 0.1);
+    }
+    .endpoint-card.unhealthy {
+        border-color: #ef4444;
+        background: rgba(239, 68, 68, 0.1);
+    }
+    .endpoint-card.disabled {
+        opacity: 0.5;
+    }
+    .status-badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    .status-active { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .status-rate_limited { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .status-unhealthy { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+    .status-disabled { background: rgba(107, 114, 128, 0.2); color: #6b7280; }
+    .provider-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1rem;
+    }
+    .provider-icon.ethereum { background: linear-gradient(135deg, #627eea, #3c3c3d); color: white; }
+    .provider-icon.solana { background: linear-gradient(135deg, #9945FF, #14F195); color: white; }
+    .provider-icon.bsc { background: linear-gradient(135deg, #f3ba2f, #c99d2f); color: black; }
+    .provider-icon.polygon { background: linear-gradient(135deg, #8247e5, #6f3dac); color: white; }
+    .provider-icon.arbitrum { background: linear-gradient(135deg, #28a0f0, #1d7db5); color: white; }
+    .provider-icon.base { background: linear-gradient(135deg, #0052ff, #0041cc); color: white; }
+    .provider-icon.api { background: linear-gradient(135deg, #3b82f6, #8b5cf6); color: white; }
+    .health-bar {
+        height: 6px;
+        background: var(--border-color);
+        border-radius: 3px;
+        overflow: hidden;
+        margin-top: 8px;
+    }
+    .health-bar-fill {
+        height: 100%;
+        border-radius: 3px;
+        transition: width 0.3s;
+    }
+    .health-good { background: #10b981; }
+    .health-warning { background: #f59e0b; }
+    .health-bad { background: #ef4444; }
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+    .stat-card {
+        background: var(--metric-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+    }
+    .stat-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #3b82f6;
+    }
+    .stat-label {
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+        margin-top: 4px;
+    }
+    .provider-section {
+        margin-bottom: 32px;
+    }
+    .provider-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--border-color);
+    }
+    .provider-title {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 1.1rem;
+        font-weight: 600;
+    }
+    .endpoint-url {
+        font-family: 'Fira Code', monospace;
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        word-break: break-all;
+        max-width: 400px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .endpoint-url:hover {
+        white-space: normal;
+    }
+    .endpoint-actions {
+        display: flex;
+        gap: 8px;
+    }
+    .endpoint-actions .btn {
+        padding: 6px 12px;
+        font-size: 0.8rem;
+    }
+    .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: var(--text-secondary);
+    }
+    .empty-state i {
+        font-size: 3rem;
+        margin-bottom: 16px;
+        opacity: 0.5;
+    }
+    #addEndpointModal .modal-content {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+    }
+    #addEndpointModal .modal-header {
+        border-bottom: 1px solid var(--border-color);
+    }
+    #addEndpointModal .modal-footer {
+        border-top: 1px solid var(--border-color);
+    }
+    .usage-chart {
+        height: 200px;
+        margin-top: 16px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="padding: 20px;">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="mb-1"><i class="fas fa-network-wired me-2"></i>RPC/API Pool Settings</h2>
+            <p class="text-muted mb-0">Manage RPC and API endpoints with intelligent load balancing and health monitoring</p>
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-secondary" onclick="runHealthCheck()">
+                <i class="fas fa-heartbeat me-2"></i>Run Health Check
+            </button>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addEndpointModal">
+                <i class="fas fa-plus me-2"></i>Add Endpoint
+            </button>
+        </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <ul class="nav nav-pills mb-4" id="settingsTabs">
+        <li class="nav-item">
+            <a class="nav-link active" data-bs-toggle="pill" href="#endpoints-rpc">
+                <i class="fas fa-server me-2"></i>RPC Endpoints
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" data-bs-toggle="pill" href="#endpoints-ws">
+                <i class="fas fa-plug me-2"></i>WebSocket
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" data-bs-toggle="pill" href="#endpoints-api">
+                <i class="fas fa-code me-2"></i>API Keys
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" data-bs-toggle="pill" href="#stats">
+                <i class="fas fa-chart-bar me-2"></i>Statistics
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" data-bs-toggle="pill" href="#guide">
+                <i class="fas fa-book me-2"></i>Guide
+            </a>
+        </li>
+    </ul>
+
+    <!-- Tab Content -->
+    <div class="tab-content">
+        <!-- RPC Endpoints Tab -->
+        <div class="tab-pane fade show active" id="endpoints-rpc">
+            <!-- Stats Overview -->
+            <div class="stats-grid" id="rpcStats">
+                <div class="stat-card">
+                    <div class="stat-value" id="totalRpcEndpoints">0</div>
+                    <div class="stat-label">Total RPC Endpoints</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value text-success" id="healthyEndpoints">0</div>
+                    <div class="stat-label">Healthy</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value text-warning" id="rateLimitedEndpoints">0</div>
+                    <div class="stat-label">Rate Limited</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value text-danger" id="unhealthyEndpoints">0</div>
+                    <div class="stat-label">Unhealthy</div>
+                </div>
+            </div>
+
+            <!-- RPC Endpoints by Chain -->
+            <div id="rpcEndpointsList">
+                <div class="empty-state">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <p>Loading endpoints...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- WebSocket Tab -->
+        <div class="tab-pane fade" id="endpoints-ws">
+            <div class="settings-section">
+                <div class="settings-title">
+                    <i class="fas fa-plug text-primary"></i>
+                    WebSocket Endpoints
+                </div>
+                <div id="wsEndpointsList">
+                    <div class="empty-state">
+                        <i class="fas fa-plug"></i>
+                        <p>No WebSocket endpoints configured</p>
+                        <button class="btn btn-primary btn-sm mt-2" data-bs-toggle="modal" data-bs-target="#addEndpointModal">
+                            Add WebSocket Endpoint
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- API Keys Tab -->
+        <div class="tab-pane fade" id="endpoints-api">
+            <div class="settings-section">
+                <div class="settings-title">
+                    <i class="fas fa-key text-primary"></i>
+                    API Endpoints
+                </div>
+                <div id="apiEndpointsList">
+                    <div class="empty-state">
+                        <i class="fas fa-spinner fa-spin"></i>
+                        <p>Loading API endpoints...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistics Tab -->
+        <div class="tab-pane fade" id="stats">
+            <div class="row">
+                <div class="col-lg-6">
+                    <div class="settings-section">
+                        <div class="settings-title">
+                            <i class="fas fa-chart-line text-primary"></i>
+                            Usage Statistics (24h)
+                        </div>
+                        <div id="usageStats">
+                            <div class="row">
+                                <div class="col-6 mb-3">
+                                    <div class="text-muted small">Total Requests</div>
+                                    <div class="h4 mb-0" id="statTotalRequests">-</div>
+                                </div>
+                                <div class="col-6 mb-3">
+                                    <div class="text-muted small">Success Rate</div>
+                                    <div class="h4 mb-0" id="statSuccessRate">-</div>
+                                </div>
+                                <div class="col-6 mb-3">
+                                    <div class="text-muted small">Avg Latency</div>
+                                    <div class="h4 mb-0" id="statAvgLatency">-</div>
+                                </div>
+                                <div class="col-6 mb-3">
+                                    <div class="text-muted small">Endpoints Used</div>
+                                    <div class="h4 mb-0" id="statEndpointsUsed">-</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-6">
+                    <div class="settings-section">
+                        <div class="settings-title">
+                            <i class="fas fa-list text-primary"></i>
+                            Usage by Provider
+                        </div>
+                        <div id="providerUsageList">
+                            <div class="empty-state">
+                                <i class="fas fa-chart-bar"></i>
+                                <p>No usage data available</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Guide Tab -->
+        <div class="tab-pane fade" id="guide">
+            <div class="settings-section">
+                <div class="settings-title">
+                    <i class="fas fa-book text-primary"></i>
+                    RPC/API Pool Guide
+                </div>
+
+                <div class="mb-4">
+                    <h5>How it works</h5>
+                    <p>The RPC/API Pool Engine intelligently manages your endpoints with:</p>
+                    <ul>
+                        <li><strong>Automatic Failover:</strong> When an endpoint is rate-limited or unhealthy, traffic is automatically routed to the next available endpoint</li>
+                        <li><strong>Health Monitoring:</strong> Endpoints are periodically checked for health and availability</li>
+                        <li><strong>Load Balancing:</strong> Requests are distributed across endpoints based on priority and weight</li>
+                        <li><strong>Rate Limit Recovery:</strong> Rate-limited endpoints are automatically recovered when the limit resets</li>
+                    </ul>
+                </div>
+
+                <div class="mb-4">
+                    <h5>Best Practices</h5>
+                    <ul>
+                        <li>Add multiple RPC providers for each chain to ensure high availability</li>
+                        <li>Use different providers (Alchemy, Infura, QuickNode, Ankr) for redundancy</li>
+                        <li>Set lower priority numbers for faster/more reliable endpoints</li>
+                        <li>Monitor the statistics page to identify underperforming endpoints</li>
+                    </ul>
+                </div>
+
+                <div class="mb-4">
+                    <h5>Supported Provider Types</h5>
+                    <div class="row">
+                        <div class="col-md-4">
+                            <h6 class="text-muted">RPC Endpoints</h6>
+                            <ul class="small">
+                                <li>ETHEREUM_RPC</li>
+                                <li>BSC_RPC</li>
+                                <li>POLYGON_RPC</li>
+                                <li>ARBITRUM_RPC</li>
+                                <li>BASE_RPC</li>
+                                <li>SOLANA_RPC</li>
+                                <li>MONAD_RPC</li>
+                                <li>PULSECHAIN_RPC</li>
+                                <li>FANTOM_RPC</li>
+                                <li>CRONOS_RPC</li>
+                                <li>AVALANCHE_RPC</li>
+                            </ul>
+                        </div>
+                        <div class="col-md-4">
+                            <h6 class="text-muted">WebSocket</h6>
+                            <ul class="small">
+                                <li>ETHEREUM_WS</li>
+                                <li>BSC_WS</li>
+                                <li>ARBITRUM_WS</li>
+                                <li>SOLANA_WS</li>
+                            </ul>
+                        </div>
+                        <div class="col-md-4">
+                            <h6 class="text-muted">API Keys</h6>
+                            <ul class="small">
+                                <li>GOPLUS_API</li>
+                                <li>1INCH_API</li>
+                                <li>HELIUS_API</li>
+                                <li>ETHERSCAN_API</li>
+                                <li>JUPITER_API</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Endpoint Modal -->
+<div class="modal fade" id="addEndpointModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-plus me-2"></i>Add New Endpoint</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addEndpointForm">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Provider Type</label>
+                            <select class="form-select" id="newProviderType" required>
+                                <optgroup label="RPC Endpoints">
+                                    <option value="ETHEREUM_RPC">Ethereum RPC</option>
+                                    <option value="BSC_RPC">BSC RPC</option>
+                                    <option value="POLYGON_RPC">Polygon RPC</option>
+                                    <option value="ARBITRUM_RPC">Arbitrum RPC</option>
+                                    <option value="BASE_RPC">Base RPC</option>
+                                    <option value="SOLANA_RPC">Solana RPC</option>
+                                    <option value="MONAD_RPC">Monad RPC</option>
+                                    <option value="PULSECHAIN_RPC">PulseChain RPC</option>
+                                    <option value="FANTOM_RPC">Fantom RPC</option>
+                                    <option value="CRONOS_RPC">Cronos RPC</option>
+                                    <option value="AVALANCHE_RPC">Avalanche RPC</option>
+                                </optgroup>
+                                <optgroup label="WebSocket">
+                                    <option value="ETHEREUM_WS">Ethereum WS</option>
+                                    <option value="BSC_WS">BSC WS</option>
+                                    <option value="ARBITRUM_WS">Arbitrum WS</option>
+                                    <option value="SOLANA_WS">Solana WS</option>
+                                </optgroup>
+                                <optgroup label="API Keys">
+                                    <option value="GOPLUS_API">GoPlus API</option>
+                                    <option value="1INCH_API">1inch API</option>
+                                    <option value="HELIUS_API">Helius API</option>
+                                    <option value="ETHERSCAN_API">Etherscan API</option>
+                                    <option value="JUPITER_API">Jupiter API</option>
+                                </optgroup>
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Name</label>
+                            <input type="text" class="form-control" id="newName" placeholder="e.g., Alchemy Primary" required>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">URL / Endpoint</label>
+                        <input type="text" class="form-control" id="newUrl" placeholder="https://..." required>
+                        <small class="text-muted">Full RPC URL or API base URL</small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">API Key (Optional)</label>
+                        <input type="password" class="form-control" id="newApiKey" placeholder="API key if required">
+                        <small class="text-muted">Leave empty if API key is already in the URL</small>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Priority</label>
+                            <input type="number" class="form-control" id="newPriority" value="100" min="1" max="1000">
+                            <small class="text-muted">Lower = Higher priority (1-1000)</small>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Weight</label>
+                            <input type="number" class="form-control" id="newWeight" value="100" min="1" max="100">
+                            <small class="text-muted">For load balancing (1-100)</small>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="addEndpoint()">
+                    <i class="fas fa-plus me-2"></i>Add Endpoint
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Endpoint Modal -->
+<div class="modal fade" id="editEndpointModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-edit me-2"></i>Edit Endpoint</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editEndpointForm">
+                    <input type="hidden" id="editEndpointId">
+                    <div class="mb-3">
+                        <label class="form-label">Name</label>
+                        <input type="text" class="form-control" id="editName" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">URL</label>
+                        <input type="text" class="form-control" id="editUrl" required>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Priority</label>
+                            <input type="number" class="form-control" id="editPriority" min="1" max="1000">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Weight</label>
+                            <input type="number" class="form-control" id="editWeight" min="1" max="100">
+                        </div>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input type="checkbox" class="form-check-input" id="editEnabled">
+                        <label class="form-check-label" for="editEnabled">Enabled</label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-danger me-auto" onclick="deleteEndpoint()">
+                    <i class="fas fa-trash me-2"></i>Delete
+                </button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveEndpoint()">
+                    <i class="fas fa-save me-2"></i>Save Changes
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let endpoints = [];
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadEndpoints();
+    loadUsageStats();
+});
+
+async function loadEndpoints() {
+    try {
+        const response = await fetch('/api/rpc-pool/endpoints');
+        const data = await response.json();
+
+        if (data.success) {
+            endpoints = data.endpoints || [];
+            renderEndpoints();
+            updateStats();
+        }
+    } catch (error) {
+        console.error('Failed to load endpoints:', error);
+        showToast('Failed to load endpoints', 'error');
+    }
+}
+
+function renderEndpoints() {
+    // Group endpoints by type
+    const rpcEndpoints = endpoints.filter(e => e.provider_type.includes('_RPC'));
+    const wsEndpoints = endpoints.filter(e => e.provider_type.includes('_WS'));
+    const apiEndpoints = endpoints.filter(e => e.provider_type.includes('_API'));
+
+    // Render RPC endpoints
+    renderEndpointList('rpcEndpointsList', rpcEndpoints, 'RPC');
+
+    // Render WS endpoints
+    renderEndpointList('wsEndpointsList', wsEndpoints, 'WebSocket');
+
+    // Render API endpoints
+    renderEndpointList('apiEndpointsList', apiEndpoints, 'API');
+}
+
+function renderEndpointList(containerId, endpointList, type) {
+    const container = document.getElementById(containerId);
+
+    if (!endpointList || endpointList.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-${type === 'RPC' ? 'server' : type === 'WebSocket' ? 'plug' : 'key'}"></i>
+                <p>No ${type} endpoints configured</p>
+                <button class="btn btn-primary btn-sm mt-2" data-bs-toggle="modal" data-bs-target="#addEndpointModal">
+                    Add ${type} Endpoint
+                </button>
+            </div>
+        `;
+        return;
+    }
+
+    // Group by provider type
+    const grouped = {};
+    endpointList.forEach(ep => {
+        if (!grouped[ep.provider_type]) {
+            grouped[ep.provider_type] = [];
+        }
+        grouped[ep.provider_type].push(ep);
+    });
+
+    let html = '';
+    for (const [providerType, eps] of Object.entries(grouped)) {
+        const chain = providerType.replace('_RPC', '').replace('_WS', '').replace('_API', '').toLowerCase();
+        const iconClass = getChainIconClass(chain);
+
+        html += `
+            <div class="provider-section">
+                <div class="provider-header">
+                    <div class="provider-title">
+                        <div class="provider-icon ${iconClass}">
+                            <i class="fas fa-${type === 'API' ? 'key' : 'link'}"></i>
+                        </div>
+                        <span>${formatProviderType(providerType)}</span>
+                        <span class="badge bg-secondary">${eps.length}</span>
+                    </div>
+                    <button class="btn btn-outline-primary btn-sm" onclick="addEndpointForProvider('${providerType}')">
+                        <i class="fas fa-plus me-1"></i>Add
+                    </button>
+                </div>
+                ${eps.map(ep => renderEndpointCard(ep)).join('')}
+            </div>
+        `;
+    }
+
+    container.innerHTML = html;
+}
+
+function renderEndpointCard(endpoint) {
+    const statusClass = `status-${endpoint.status}`;
+    const cardClass = endpoint.status !== 'active' ? `endpoint-card ${endpoint.status}` : 'endpoint-card';
+    const healthClass = endpoint.health_score >= 80 ? 'health-good' : endpoint.health_score >= 50 ? 'health-warning' : 'health-bad';
+
+    return `
+        <div class="${cardClass}">
+            <div class="d-flex justify-content-between align-items-start">
+                <div class="flex-grow-1">
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <strong>${endpoint.name}</strong>
+                        <span class="status-badge ${statusClass}">${endpoint.status}</span>
+                        ${endpoint.is_enabled ? '' : '<span class="badge bg-secondary">Disabled</span>'}
+                    </div>
+                    <div class="endpoint-url" title="${endpoint.url}">${maskUrl(endpoint.url)}</div>
+                    <div class="d-flex gap-4 mt-2 small text-muted">
+                        <span><i class="fas fa-sort-numeric-up me-1"></i>Priority: ${endpoint.priority}</span>
+                        <span><i class="fas fa-check-circle text-success me-1"></i>${endpoint.success_count || 0}</span>
+                        <span><i class="fas fa-times-circle text-danger me-1"></i>${endpoint.failure_count || 0}</span>
+                        ${endpoint.avg_latency_ms ? `<span><i class="fas fa-clock me-1"></i>${endpoint.avg_latency_ms.toFixed(0)}ms</span>` : ''}
+                    </div>
+                    <div class="health-bar">
+                        <div class="health-bar-fill ${healthClass}" style="width: ${endpoint.health_score || 100}%"></div>
+                    </div>
+                </div>
+                <div class="endpoint-actions">
+                    <button class="btn btn-outline-secondary btn-sm" onclick="editEndpoint(${endpoint.id})" title="Edit">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button class="btn btn-outline-primary btn-sm" onclick="testEndpoint(${endpoint.id})" title="Test">
+                        <i class="fas fa-vial"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function updateStats() {
+    const rpcEndpoints = endpoints.filter(e => e.provider_type.includes('_RPC'));
+    document.getElementById('totalRpcEndpoints').textContent = rpcEndpoints.length;
+    document.getElementById('healthyEndpoints').textContent = rpcEndpoints.filter(e => e.status === 'active').length;
+    document.getElementById('rateLimitedEndpoints').textContent = rpcEndpoints.filter(e => e.status === 'rate_limited').length;
+    document.getElementById('unhealthyEndpoints').textContent = rpcEndpoints.filter(e => e.status === 'unhealthy').length;
+}
+
+async function loadUsageStats() {
+    try {
+        const response = await fetch('/api/rpc-pool/stats');
+        const data = await response.json();
+
+        if (data.success && data.stats) {
+            const overall = data.stats.overall || {};
+            document.getElementById('statTotalRequests').textContent = overall.total_requests || 0;
+
+            const successRate = overall.total_requests > 0
+                ? ((overall.successful / overall.total_requests) * 100).toFixed(1) + '%'
+                : '-';
+            document.getElementById('statSuccessRate').textContent = successRate;
+            document.getElementById('statAvgLatency').textContent = overall.avg_latency
+                ? `${overall.avg_latency.toFixed(0)}ms`
+                : '-';
+            document.getElementById('statEndpointsUsed').textContent = overall.endpoints_used || 0;
+
+            // Render provider usage
+            const perProvider = data.stats.per_provider || [];
+            if (perProvider.length > 0) {
+                const html = perProvider.map(p => `
+                    <div class="d-flex justify-content-between align-items-center mb-2 p-2 rounded" style="background: var(--metric-bg);">
+                        <span>${formatProviderType(p.provider_type)}</span>
+                        <div>
+                            <span class="badge bg-primary me-2">${p.requests} requests</span>
+                            <span class="text-muted small">${p.avg_latency ? p.avg_latency.toFixed(0) + 'ms' : '-'}</span>
+                        </div>
+                    </div>
+                `).join('');
+                document.getElementById('providerUsageList').innerHTML = html;
+            }
+        }
+    } catch (error) {
+        console.error('Failed to load usage stats:', error);
+    }
+}
+
+function getChainIconClass(chain) {
+    const chainClasses = {
+        'ethereum': 'ethereum',
+        'solana': 'solana',
+        'bsc': 'bsc',
+        'polygon': 'polygon',
+        'arbitrum': 'arbitrum',
+        'base': 'base'
+    };
+    return chainClasses[chain] || 'api';
+}
+
+function formatProviderType(type) {
+    return type.replace('_RPC', ' RPC')
+               .replace('_WS', ' WebSocket')
+               .replace('_API', ' API')
+               .replace('_', ' ');
+}
+
+function maskUrl(url) {
+    // Mask sensitive parts of URL
+    return url.replace(/api[-_]?key=([^&]+)/i, 'api-key=***')
+              .replace(/\/v\d\/([a-f0-9]{20,})/i, '/v2/***');
+}
+
+async function addEndpoint() {
+    const data = {
+        provider_type: document.getElementById('newProviderType').value,
+        name: document.getElementById('newName').value,
+        url: document.getElementById('newUrl').value,
+        api_key: document.getElementById('newApiKey').value || null,
+        priority: parseInt(document.getElementById('newPriority').value),
+        weight: parseInt(document.getElementById('newWeight').value)
+    };
+
+    try {
+        const response = await fetch('/api/rpc-pool/endpoints', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            showToast('Endpoint added successfully', 'success');
+            bootstrap.Modal.getInstance(document.getElementById('addEndpointModal')).hide();
+            document.getElementById('addEndpointForm').reset();
+            loadEndpoints();
+        } else {
+            showToast(result.error || 'Failed to add endpoint', 'error');
+        }
+    } catch (error) {
+        console.error('Failed to add endpoint:', error);
+        showToast('Failed to add endpoint', 'error');
+    }
+}
+
+function addEndpointForProvider(providerType) {
+    document.getElementById('newProviderType').value = providerType;
+    const modal = new bootstrap.Modal(document.getElementById('addEndpointModal'));
+    modal.show();
+}
+
+function editEndpoint(id) {
+    const endpoint = endpoints.find(e => e.id === id);
+    if (!endpoint) return;
+
+    document.getElementById('editEndpointId').value = id;
+    document.getElementById('editName').value = endpoint.name;
+    document.getElementById('editUrl').value = endpoint.url;
+    document.getElementById('editPriority').value = endpoint.priority;
+    document.getElementById('editWeight').value = endpoint.weight || 100;
+    document.getElementById('editEnabled').checked = endpoint.is_enabled;
+
+    const modal = new bootstrap.Modal(document.getElementById('editEndpointModal'));
+    modal.show();
+}
+
+async function saveEndpoint() {
+    const id = document.getElementById('editEndpointId').value;
+    const data = {
+        name: document.getElementById('editName').value,
+        url: document.getElementById('editUrl').value,
+        priority: parseInt(document.getElementById('editPriority').value),
+        weight: parseInt(document.getElementById('editWeight').value),
+        is_enabled: document.getElementById('editEnabled').checked
+    };
+
+    try {
+        const response = await fetch(`/api/rpc-pool/endpoints/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            showToast('Endpoint updated successfully', 'success');
+            bootstrap.Modal.getInstance(document.getElementById('editEndpointModal')).hide();
+            loadEndpoints();
+        } else {
+            showToast(result.error || 'Failed to update endpoint', 'error');
+        }
+    } catch (error) {
+        console.error('Failed to update endpoint:', error);
+        showToast('Failed to update endpoint', 'error');
+    }
+}
+
+async function deleteEndpoint() {
+    const id = document.getElementById('editEndpointId').value;
+
+    if (!confirm('Are you sure you want to delete this endpoint?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/rpc-pool/endpoints/${id}`, {
+            method: 'DELETE'
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            showToast('Endpoint deleted successfully', 'success');
+            bootstrap.Modal.getInstance(document.getElementById('editEndpointModal')).hide();
+            loadEndpoints();
+        } else {
+            showToast(result.error || 'Failed to delete endpoint', 'error');
+        }
+    } catch (error) {
+        console.error('Failed to delete endpoint:', error);
+        showToast('Failed to delete endpoint', 'error');
+    }
+}
+
+async function testEndpoint(id) {
+    const endpoint = endpoints.find(e => e.id === id);
+    if (!endpoint) return;
+
+    showToast(`Testing ${endpoint.name}...`, 'info');
+
+    try {
+        const response = await fetch(`/api/rpc-pool/endpoints/${id}/test`, {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            showToast(`${endpoint.name}: ${result.latency_ms}ms`, 'success');
+            loadEndpoints();
+        } else {
+            showToast(`${endpoint.name}: ${result.error || 'Test failed'}`, 'error');
+        }
+    } catch (error) {
+        console.error('Test failed:', error);
+        showToast('Test failed', 'error');
+    }
+}
+
+async function runHealthCheck() {
+    showToast('Running health checks...', 'info');
+
+    try {
+        const response = await fetch('/api/rpc-pool/health-check', {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            const r = result.results;
+            showToast(`Health check complete: ${r.healthy} healthy, ${r.unhealthy} unhealthy, ${r.recovered} recovered`, 'success');
+            loadEndpoints();
+        } else {
+            showToast(result.error || 'Health check failed', 'error');
+        }
+    } catch (error) {
+        console.error('Health check failed:', error);
+        showToast('Health check failed', 'error');
+    }
+}
+
+function showToast(message, type = 'info') {
+    // Use existing toast system or create simple alert
+    if (typeof Toastify !== 'undefined') {
+        Toastify({
+            text: message,
+            duration: 3000,
+            gravity: 'bottom',
+            position: 'right',
+            style: {
+                background: type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#3b82f6'
+            }
+        }).showToast();
+    } else {
+        console.log(`[${type.toUpperCase()}] ${message}`);
+    }
+}
+</script>
+{% endblock %}

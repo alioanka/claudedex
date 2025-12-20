@@ -141,9 +141,20 @@ async def main():
     logger.info(f"   Working dir: {Path.cwd()}")
     logger.info(f"   Log dir: {log_dir.absolute()}")
 
-    # Check for RPC URLs
-    solana_rpc = os.getenv('SOLANA_RPC_URL')
-    evm_rpc = os.getenv('WEB3_PROVIDER_URL') or os.getenv('ETHEREUM_RPC_URL')
+    # Check for RPC URLs - use Pool Engine with fallback
+    solana_rpc = None
+    evm_rpc = None
+    try:
+        from config.rpc_provider import RPCProvider
+        solana_rpc = RPCProvider.get_rpc_sync('SOLANA_RPC')
+        evm_rpc = RPCProvider.get_rpc_sync('ETHEREUM_RPC')
+    except Exception:
+        pass
+
+    if not solana_rpc:
+        solana_rpc = os.getenv('SOLANA_RPC_URL')
+    if not evm_rpc:
+        evm_rpc = os.getenv('WEB3_PROVIDER_URL') or os.getenv('ETHEREUM_RPC_URL')
 
     logger.info(f"   Solana RPC: {'Configured' if solana_rpc else 'Not configured'}")
     logger.info(f"   EVM RPC: {'Configured' if evm_rpc else 'Not configured'}")

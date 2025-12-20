@@ -57,7 +57,8 @@ CHAIN_SYMBOLS = {
     Chain.MONAD: "MONAD"
 }
 
-CHAIN_RPC_URLS = {
+# Static fallback RPC URLs (used when Pool Engine is not available)
+_STATIC_CHAIN_RPC_URLS = {
     Chain.ETHEREUM: [
         "https://eth-mainnet.g.alchemy.com/v2/bAwxYCUc1oIDIIYAL3w98NKh00DQK45B",
         "https://mainnet.infura.io/v3/c5cbdbc6ba4f42d293de03e5cd191089",
@@ -106,6 +107,108 @@ CHAIN_RPC_URLS = {
         "https://rpc.ankr.com/monad_mainnet/4daecdbd46f7cc39b14e343e5ee0cc0be57e5f52faa2aff6baefe3826227064d"
     ]
 }
+
+# Backwards compatibility alias
+CHAIN_RPC_URLS = _STATIC_CHAIN_RPC_URLS
+
+# Chain to provider type mapping
+_CHAIN_TO_PROVIDER = {
+    Chain.ETHEREUM: 'ETHEREUM_RPC',
+    Chain.BSC: 'BSC_RPC',
+    Chain.POLYGON: 'POLYGON_RPC',
+    Chain.ARBITRUM: 'ARBITRUM_RPC',
+    Chain.BASE: 'BASE_RPC',
+    Chain.AVALANCHE: 'AVALANCHE_RPC',
+    Chain.FANTOM: 'FANTOM_RPC',
+    Chain.CRONOS: 'CRONOS_RPC',
+    Chain.PULSECHAIN: 'PULSECHAIN_RPC',
+    Chain.MONAD: 'MONAD_RPC',
+}
+
+
+def get_chain_rpc_urls(chain: Chain, max_count: int = 5) -> list:
+    """
+    Get RPC URLs for a chain from the Pool Engine
+
+    This function should be preferred over direct CHAIN_RPC_URLS access
+    as it provides intelligent load balancing and rate limit handling.
+
+    Args:
+        chain: The blockchain chain
+        max_count: Maximum number of URLs to return
+
+    Returns:
+        list: List of RPC URLs
+
+    Example:
+        from utils.constants import Chain, get_chain_rpc_urls
+        eth_rpcs = get_chain_rpc_urls(Chain.ETHEREUM)
+    """
+    try:
+        from config.rpc_provider import RPCProvider
+        provider_type = _CHAIN_TO_PROVIDER.get(chain)
+        if provider_type:
+            urls = RPCProvider.get_rpcs_sync(provider_type, max_count)
+            if urls:
+                return urls
+    except Exception:
+        pass
+
+    # Fallback to static URLs
+    return _STATIC_CHAIN_RPC_URLS.get(chain, [])[:max_count]
+
+
+async def get_chain_rpc_urls_async(chain: Chain, max_count: int = 5) -> list:
+    """
+    Get RPC URLs for a chain from the Pool Engine (async version)
+
+    Args:
+        chain: The blockchain chain
+        max_count: Maximum number of URLs to return
+
+    Returns:
+        list: List of RPC URLs
+    """
+    try:
+        from config.rpc_provider import RPCProvider
+        provider_type = _CHAIN_TO_PROVIDER.get(chain)
+        if provider_type:
+            urls = await RPCProvider.get_rpcs(provider_type, max_count)
+            if urls:
+                return urls
+    except Exception:
+        pass
+
+    # Fallback to static URLs
+    return _STATIC_CHAIN_RPC_URLS.get(chain, [])[:max_count]
+
+
+def get_chain_rpc_url(chain: Chain) -> str:
+    """
+    Get a single RPC URL for a chain
+
+    Args:
+        chain: The blockchain chain
+
+    Returns:
+        str: Best available RPC URL
+    """
+    urls = get_chain_rpc_urls(chain, max_count=1)
+    return urls[0] if urls else None
+
+
+async def get_chain_rpc_url_async(chain: Chain) -> str:
+    """
+    Get a single RPC URL for a chain (async version)
+
+    Args:
+        chain: The blockchain chain
+
+    Returns:
+        str: Best available RPC URL
+    """
+    urls = await get_chain_rpc_urls_async(chain, max_count=1)
+    return urls[0] if urls else None
 
 BLOCK_EXPLORERS = {
     Chain.ETHEREUM: "https://etherscan.io",

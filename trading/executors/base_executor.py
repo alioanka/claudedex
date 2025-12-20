@@ -137,16 +137,18 @@ class TradeExecutor(BaseExecutor):
             logger.critical("🔥 EXECUTOR IN LIVE MODE - REAL MONEY AT RISK 🔥")
         
         # Web3 setup
-        from utils.constants import Chain, CHAIN_RPC_URLS
+        from utils.constants import Chain, get_chain_rpc_urls
         self.chain_id = config.get('chain_id', 1)
 
         try:
             chain_enum = Chain(self.chain_id)
-            rpc_urls = CHAIN_RPC_URLS.get(chain_enum)
+            rpc_urls = get_chain_rpc_urls(chain_enum, max_count=3)
             if not rpc_urls or not rpc_urls[0]:
                 raise ValueError(f"No RPC URL found for chain ID {self.chain_id}")
             provider_url = rpc_urls[0]
             self.w3 = Web3(Web3.HTTPProvider(provider_url))
+            self._rpc_urls = rpc_urls  # Store for fallback
+            self._current_rpc_index = 0
             logger.info(f"Connecting to {chain_enum.name} via {provider_url[:40]}...")
         except (ValueError, KeyError) as e:
             logger.error(f"Failed to configure Web3 provider: {e}")

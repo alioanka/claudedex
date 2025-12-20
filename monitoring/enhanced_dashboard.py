@@ -55,7 +55,8 @@ class DashboardEndpoints:
                  db_manager = None,
                  module_manager = None,
                  analytics_engine = None,
-                 advanced_alerts = None):
+                 advanced_alerts = None,
+                 pool_engine = None):
 
         self.host = host
         self.port = port
@@ -75,6 +76,9 @@ class DashboardEndpoints:
         # Phase 4: Advanced Analytics & Alerts
         self.analytics_engine = analytics_engine
         self.advanced_alerts = advanced_alerts
+
+        # RPC/API Pool Engine
+        self.pool_engine = pool_engine
 
         # Authentication
         self.auth_service = None
@@ -119,6 +123,9 @@ class DashboardEndpoints:
         # Setup analytics routes if analytics engine available
         if self.analytics_engine:
             self._setup_analytics_routes()
+
+        # Setup RPC/API Pool routes
+        self._setup_rpc_pool_routes()
 
         # Register startup handler for auth initialization
         self.app.on_startup.append(self._on_startup)
@@ -521,6 +528,27 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Failed to setup analytics routes: {e}", exc_info=True)
             logger.warning("Module management will not be available")
+
+    def _setup_rpc_pool_routes(self):
+        """Setup RPC/API Pool management routes"""
+        try:
+            from monitoring.rpc_pool_routes import RPCPoolRoutes
+
+            logger.info("Setting up RPC/API Pool routes...")
+
+            # Create RPC pool routes handler
+            rpc_pool_routes = RPCPoolRoutes(
+                pool_engine=self.pool_engine,
+                jinja_env=self.jinja_env
+            )
+
+            # Setup all RPC pool routes
+            rpc_pool_routes.setup_routes(self.app)
+
+            logger.info("RPC/API Pool routes initialized")
+
+        except Exception as e:
+            logger.error(f"Failed to setup RPC pool routes: {e}", exc_info=True)
 
     def _setup_fallback_module_routes(self):
         """Setup fallback routes for module pages when module_manager is not available"""

@@ -864,15 +864,23 @@ class SolanaTradingEngine:
         dry_run_env = os.getenv('DRY_RUN', 'true').strip().lower()
         self.dry_run = dry_run_env in ('true', '1', 'yes')
 
-        # RPC configuration
-        rpc_urls_env = os.getenv('SOLANA_RPC_URLS', '')
-        if rpc_urls_env:
-            rpc_urls = [url.strip() for url in rpc_urls_env.split(',') if url.strip()]
-        else:
-            rpc_urls = [rpc_url]
+        # RPC configuration - use Pool Engine with fallback to env vars
+        rpc_urls = []
+        try:
+            from config.rpc_provider import RPCProvider
+            rpc_urls = RPCProvider.get_rpcs_sync('SOLANA_RPC', max_count=5)
+        except Exception:
+            pass
+
+        if not rpc_urls:
+            rpc_urls_env = os.getenv('SOLANA_RPC_URLS', '')
+            if rpc_urls_env:
+                rpc_urls = [url.strip() for url in rpc_urls_env.split(',') if url.strip()]
+            else:
+                rpc_urls = [rpc_url]
 
         # Ensure primary is first
-        if rpc_url not in rpc_urls:
+        if rpc_url and rpc_url not in rpc_urls:
             rpc_urls.insert(0, rpc_url)
 
         self.rpc_manager = RPCManager(rpc_urls)

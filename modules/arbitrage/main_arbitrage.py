@@ -118,12 +118,20 @@ class MultiChainArbitrageManager:
         self.settings = await self._load_settings_from_db()
         logger.info(f"   Settings: {self.settings}")
 
-        # Check for Ethereum RPC
-        eth_rpc = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
+        # Check for Ethereum RPC - use Pool Engine with fallback
+        eth_rpc = None
+        try:
+            from config.rpc_provider import RPCProvider
+            eth_rpc = RPCProvider.get_rpc_sync('ETHEREUM_RPC')
+        except Exception:
+            pass
+        if not eth_rpc:
+            eth_rpc = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
+
         if eth_rpc and self.settings.get('ethereum_enabled', True):
             try:
                 from modules.arbitrage.arbitrage_engine import ArbitrageEngine
-                config = {'arbitrage_enabled': True, **self.settings}
+                config = {'arbitrage_enabled': True, 'rpc_url': eth_rpc, **self.settings}
                 eth_engine = ArbitrageEngine(config, self.db_pool)
                 await eth_engine.initialize()
                 self.engines.append(('ethereum', eth_engine))
@@ -136,8 +144,15 @@ class MultiChainArbitrageManager:
             else:
                 logger.info("ℹ️ Ethereum arbitrage disabled in settings")
 
-        # Check for Solana RPC
-        sol_rpc = os.getenv('SOLANA_RPC_URL')
+        # Check for Solana RPC - use Pool Engine with fallback
+        sol_rpc = None
+        try:
+            sol_rpc = RPCProvider.get_rpc_sync('SOLANA_RPC')
+        except Exception:
+            pass
+        if not sol_rpc:
+            sol_rpc = os.getenv('SOLANA_RPC_URL')
+
         if sol_rpc and self.settings.get('solana_enabled', False):
             try:
                 from modules.arbitrage.solana_engine import SolanaArbitrageEngine

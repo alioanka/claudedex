@@ -428,6 +428,14 @@ class TradingBotApplication:
             await self.analytics_engine.initialize()
             self.logger.info("✅ Analytics engine initialized")
 
+            # Initialize RPC/API Pool Engine
+            self.logger.info("Initializing RPC/API Pool Engine...")
+            from config.pool_engine import PoolEngine
+            self.pool_engine = PoolEngine.get_instance_sync()
+            db_pool = self.db_manager.pool if hasattr(self.db_manager, 'pool') else None
+            await self.pool_engine.initialize(db_pool)
+            self.logger.info("✅ RPC/API Pool Engine initialized")
+
             self.dashboard = DashboardEndpoints(
                 host="0.0.0.0",
                 port=8080,
@@ -439,7 +447,8 @@ class TradingBotApplication:
                 alerts_system=self.alerts_system,
                 config_manager=self.config_manager,
                 db_manager=self.db_manager,
-                analytics_engine=self.analytics_engine
+                analytics_engine=self.analytics_engine,
+                pool_engine=self.pool_engine
             )
             self.logger.info("Enhanced dashboard initialized")
             
