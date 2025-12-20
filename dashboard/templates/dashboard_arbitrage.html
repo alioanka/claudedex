@@ -140,9 +140,17 @@
         margin-top: 20px;
     }
 
+    .table-wrapper {
+        max-height: 500px;
+        overflow: auto;
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+    }
+
     .trade-table {
         width: 100%;
         border-collapse: collapse;
+        min-width: 900px;
     }
 
     .trade-table th {
@@ -154,6 +162,24 @@
         font-size: 0.75rem;
         text-transform: uppercase;
         white-space: nowrap;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .trade-table th:hover {
+        background: var(--border-color);
+    }
+
+    .trade-table th .sort-icon {
+        margin-left: 4px;
+        opacity: 0.5;
+    }
+
+    .trade-table th.sorted .sort-icon {
+        opacity: 1;
     }
 
     .trade-table td {
@@ -164,6 +190,17 @@
 
     .trade-table tr:hover {
         background: var(--metric-bg);
+    }
+
+    .token-symbol {
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .token-address {
+        font-size: 0.7rem;
+        color: var(--text-tertiary);
+        font-family: monospace;
     }
 
     .dex-badge {
@@ -407,18 +444,19 @@
             <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
             <p>No arbitrage trades yet. Trades will appear here once opportunities are executed.</p>
         </div>
-        <div class="table-responsive">
-            <table class="trade-table" id="trades-table" style="display: none;">
+        <div class="table-wrapper" id="trades-wrapper" style="display: none;">
+            <table class="trade-table" id="trades-table">
                 <thead>
                     <tr>
-                        <th>Time</th>
-                        <th>Token</th>
-                        <th>Route</th>
-                        <th>Amount</th>
-                        <th>Spread</th>
-                        <th>Profit</th>
-                        <th>ETH Price</th>
-                        <th>Type</th>
+                        <th data-sort="time" onclick="sortTable('time')">Time <i class="fas fa-sort sort-icon"></i></th>
+                        <th data-sort="token" onclick="sortTable('token')">Token <i class="fas fa-sort sort-icon"></i></th>
+                        <th data-sort="route">Route</th>
+                        <th data-sort="amount" onclick="sortTable('amount')">Amount <i class="fas fa-sort sort-icon"></i></th>
+                        <th data-sort="size">Token Size</th>
+                        <th data-sort="spread" onclick="sortTable('spread')">Spread <i class="fas fa-sort sort-icon"></i></th>
+                        <th data-sort="profit" onclick="sortTable('profit')">Profit <i class="fas fa-sort sort-icon"></i></th>
+                        <th data-sort="ethprice">ETH Price</th>
+                        <th data-sort="type">Type</th>
                     </tr>
                 </thead>
                 <tbody id="tradesTableBody">
@@ -429,6 +467,55 @@
 </div>
 
 <script>
+// Token address to symbol mapping
+const TOKEN_SYMBOLS = {
+    '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2': 'WETH',
+    '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599': 'WBTC',
+    '0x514910771AF9Ca656af840dff83E8264EcF986CA': 'LINK',
+    '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984': 'UNI',
+    '0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9': 'AAVE',
+    '0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0': 'MATIC',
+    '0xD533a949740bb3306d119CC777fa900bA034cd52': 'CRV',
+    '0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32': 'LDO',
+    '0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2': 'MKR',
+    '0xC011a73ee8576Fb46F5E1c5751cA3B9Fe0af2a6F': 'SNX',
+    '0xc00e94Cb662C3520282E6f5717214004A7f26888': 'COMP',
+    '0xba100000625a3754423978a60c9317c58a424e3D': 'BAL',
+    '0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e': 'YFI',
+    '0xc944E90C64B2c07662A292be6244BDf05Cda44a7': 'GRT',
+    '0xC18360217D8F7Ab5e7c516566761Ea12Ce7F9D72': 'ENS',
+    '0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE': 'SHIB',
+    '0x6982508145454Ce325dDbE47a25d4ec3d2311933': 'PEPE',
+    '0x6B3595068778DD592e39A122f4f5a5cF09C90fE2': 'SUSHI',
+    '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48': 'USDC',
+    '0xdAC17F958D2ee523a2206206994597C13D831ec7': 'USDT',
+    '0x6B175474E89094C44Da98b954EescdecB5E4bEda34': 'DAI'
+};
+
+function getTokenSymbol(address) {
+    if (!address) return 'UNKNOWN';
+    const upper = address.toUpperCase();
+    for (const [addr, symbol] of Object.entries(TOKEN_SYMBOLS)) {
+        if (addr.toUpperCase() === upper) return symbol;
+    }
+    // Return shortened address if not found
+    return address.length > 10 ? `${address.slice(0, 6)}...${address.slice(-4)}` : address;
+}
+
+// Sorting state
+let currentSort = { column: 'time', direction: 'desc' };
+let tradesData = [];
+
+function sortTable(column) {
+    if (currentSort.column === column) {
+        currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+    } else {
+        currentSort.column = column;
+        currentSort.direction = 'desc';
+    }
+    renderTrades();
+}
+
 // P&L Chart
 const ctx = document.getElementById('pnlChart').getContext('2d');
 const pnlChart = new Chart(ctx, {
@@ -591,23 +678,62 @@ function updateStatsFromTrades(trades) {
 }
 
 function updateTrades(trades) {
+    tradesData = trades; // Store for sorting
+    renderTrades();
+}
+
+function renderTrades() {
     const tableBody = document.getElementById('tradesTableBody');
     const emptyState = document.getElementById('trades-empty');
-    const table = document.getElementById('trades-table');
+    const wrapper = document.getElementById('trades-wrapper');
     const countEl = document.getElementById('trades-count');
 
-    countEl.textContent = trades.length;
+    countEl.textContent = tradesData.length;
 
-    if (trades.length === 0) {
+    if (tradesData.length === 0) {
         emptyState.style.display = 'block';
-        table.style.display = 'none';
+        wrapper.style.display = 'none';
         return;
     }
 
     emptyState.style.display = 'none';
-    table.style.display = 'table';
+    wrapper.style.display = 'block';
 
-    tableBody.innerHTML = trades.map(trade => {
+    // Sort trades
+    let sortedTrades = [...tradesData];
+    sortedTrades.sort((a, b) => {
+        let aVal, bVal;
+        switch (currentSort.column) {
+            case 'time':
+                aVal = new Date(a.timestamp || a.entry_timestamp || 0).getTime();
+                bVal = new Date(b.timestamp || b.entry_timestamp || 0).getTime();
+                break;
+            case 'token':
+                aVal = getTokenSymbol(a.token_address);
+                bVal = getTokenSymbol(b.token_address);
+                break;
+            case 'amount':
+                aVal = parseFloat(a.amount_eth || a.amount || 0);
+                bVal = parseFloat(b.amount_eth || b.amount || 0);
+                break;
+            case 'spread':
+                aVal = parseFloat(a.spread_pct || 0);
+                bVal = parseFloat(b.spread_pct || 0);
+                break;
+            case 'profit':
+                aVal = parseFloat(a.profit_loss || 0);
+                bVal = parseFloat(b.profit_loss || 0);
+                break;
+            default:
+                return 0;
+        }
+        if (typeof aVal === 'string') {
+            return currentSort.direction === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+        }
+        return currentSort.direction === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+
+    tableBody.innerHTML = sortedTrades.map(trade => {
         const timestamp = trade.timestamp || trade.entry_timestamp;
         const timeStr = timestamp ? new Date(timestamp).toLocaleString() : 'N/A';
         const pnl = parseFloat(trade.profit_loss || 0);
@@ -616,20 +742,28 @@ function updateTrades(trades) {
         const ethPrice = parseFloat(trade.eth_price || 0);
         const isDryRun = trade.dry_run || trade.is_simulated;
 
-        // Shorten token address for display
+        // Get token symbol
         const token = trade.token_address || '';
+        const tokenSymbol = getTokenSymbol(token);
         const shortToken = token.length > 10 ? `${token.slice(0, 6)}...${token.slice(-4)}` : token;
+
+        // Calculate approximate token size bought (ETH value / token price)
+        const tokenSize = ethPrice > 0 && spread > 0 ? (amount * ethPrice / (spread + 1)).toFixed(2) : '-';
 
         return `
             <tr>
                 <td>${timeStr}</td>
-                <td title="${token}"><strong>${shortToken}</strong></td>
+                <td title="${token}">
+                    <div class="token-symbol">${tokenSymbol}</div>
+                    <div class="token-address">${shortToken}</div>
+                </td>
                 <td>
                     <span class="dex-badge">${trade.buy_dex || 'DEX'}</span>
                     <i class="fas fa-arrow-right" style="margin: 0 4px; color: var(--text-tertiary);"></i>
                     <span class="dex-badge">${trade.sell_dex || 'DEX'}</span>
                 </td>
                 <td>${amount.toFixed(4)} ETH</td>
+                <td>${tokenSize !== '-' ? tokenSize : '-'}</td>
                 <td><span class="spread-badge">${spread.toFixed(2)}%</span></td>
                 <td class="${pnl >= 0 ? 'positive' : 'negative'}"><strong>$${pnl.toFixed(2)}</strong></td>
                 <td>$${ethPrice.toFixed(2)}</td>

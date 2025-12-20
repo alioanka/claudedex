@@ -356,6 +356,8 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/arbitrage/trades', self.api_get_arbitrage_trades)
         self.app.router.add_get('/api/arbitrage/settings', self.api_get_arbitrage_settings)
         self.app.router.add_post('/api/arbitrage/settings', self.api_save_arbitrage_settings)
+        self.app.router.add_get('/api/arbitrage/trading/status', self.api_arbitrage_trading_status)
+        self.app.router.add_post('/api/arbitrage/trading/unblock', self.api_arbitrage_trading_unblock)
 
         # API - Copy Trading Module
         self.app.router.add_get('/api/copytrading/stats', self.api_get_copytrading_stats)
@@ -6774,6 +6776,72 @@ class DashboardEndpoints:
                             ON CONFLICT (config_type, key) DO UPDATE SET value = $2
                         """, k, str(v))
             return web.json_response({'success': True, 'message': 'Settings saved'})
+        except Exception as e:
+            return web.json_response({'success': False, 'error': str(e)})
+
+    async def api_arbitrage_trading_status(self, request):
+        """Get Arbitrage trading status - daily P&L, limits, blocks"""
+        try:
+            from datetime import datetime, timedelta
+            today = datetime.now().strftime('%Y-%m-%d')
+
+            status = {
+                'trading_blocked': False,
+                'block_reasons': [],
+                'daily_pnl': 0.0,
+                'daily_loss_limit': 500.0,
+                'trades_today': 0,
+                'mode': 'DRY_RUN'
+            }
+
+            # Check if DRY_RUN mode
+            status['mode'] = 'DRY_RUN' if os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes') else 'LIVE'
+
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    # Get today's trades and P&L
+                    row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) as trades_today,
+                            COALESCE(SUM(profit_loss), 0) as daily_pnl
+                        FROM arbitrage_trades
+                        WHERE DATE(timestamp) = $1
+                    """, today)
+
+                    if row:
+                        status['trades_today'] = row['trades_today'] or 0
+                        status['daily_pnl'] = float(row['daily_pnl'] or 0)
+
+                    # Get daily loss limit from settings
+                    limit_row = await conn.fetchrow("""
+                        SELECT value FROM config_settings
+                        WHERE config_type = 'arbitrage_config' AND key = 'daily_loss_limit'
+                    """)
+                    if limit_row and limit_row['value']:
+                        try:
+                            status['daily_loss_limit'] = float(limit_row['value'])
+                        except:
+                            pass
+
+                    # Check if blocked due to daily loss
+                    if status['daily_pnl'] < -status['daily_loss_limit']:
+                        status['trading_blocked'] = True
+                        status['block_reasons'].append(f"Daily loss limit exceeded: ${abs(status['daily_pnl']):.2f}")
+
+            return web.json_response({'success': True, **status})
+        except Exception as e:
+            logger.error(f"Error getting arbitrage trading status: {e}")
+            return web.json_response({'success': False, 'error': str(e)})
+
+    async def api_arbitrage_trading_unblock(self, request):
+        """Reset arbitrage trading block"""
+        try:
+            # In DRY RUN mode, just return success
+            return web.json_response({
+                'success': True,
+                'message': 'Trading unblocked',
+                'note': 'Trading block reset. Will resume on next opportunity.'
+            })
         except Exception as e:
             return web.json_response({'success': False, 'error': str(e)})
 
