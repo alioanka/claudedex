@@ -297,6 +297,19 @@ class RPCPoolRoutes:
             try:
                 is_rate_limited = False
 
+                # Helper function to check if error message indicates rate limit
+                def check_rate_limit_message(msg):
+                    if not msg:
+                        return False
+                    msg_lower = str(msg).lower()
+                    rate_limit_keywords = [
+                        'rate limit', 'ratelimit', 'rate-limit',
+                        'too many requests', 'too many request',
+                        'request limit', 'exceeded', 'throttl',
+                        'quota', 'limit exceeded', 'capacity'
+                    ]
+                    return any(kw in msg_lower for kw in rate_limit_keywords)
+
                 if 'RPC' in provider_type or 'WS' in provider_type:
                     # Test RPC endpoint
                     if 'solana' in provider_type.lower():
@@ -310,24 +323,60 @@ class RPCPoolRoutes:
                             json=payload,
                             timeout=aiohttp.ClientTimeout(total=10)
                         ) as response:
+                            response_text = await response.text()
+
                             # Check for rate limit (HTTP 429)
                             if response.status == 429:
                                 is_rate_limited = True
                                 error_message = "Rate limited (HTTP 429)"
                             elif response.status == 401:
-                                error_message = "Authentication failed (HTTP 401)"
-                            elif response.status == 200:
-                                data = await response.json()
-                                if 'result' in data or 'error' not in data:
-                                    success = True
+                                # Check if 401 is actually rate limit (some providers do this)
+                                if check_rate_limit_message(response_text):
+                                    is_rate_limited = True
+                                    error_message = "Rate limited (detected in response)"
                                 else:
-                                    error_message = data.get('error', {}).get('message', 'Unknown error')
-                                    # Check for rate limit in JSON response
-                                    error_code = data.get('error', {}).get('code', 0)
-                                    if error_code == -32005 or 'rate' in str(error_message).lower():
+                                    error_message = "Authentication failed (HTTP 401)"
+                            elif response.status == 403:
+                                # Some providers use 403 for rate limits
+                                if check_rate_limit_message(response_text):
+                                    is_rate_limited = True
+                                    error_message = "Rate limited (HTTP 403)"
+                                else:
+                                    error_message = "Forbidden (HTTP 403)"
+                            elif response.status == 200:
+                                try:
+                                    data = await response.json(content_type=None)
+                                    if 'result' in data:
+                                        success = True
+                                    elif 'error' in data:
+                                        error_obj = data.get('error', {})
+                                        if isinstance(error_obj, dict):
+                                            error_message = error_obj.get('message', 'Unknown error')
+                                            error_code = error_obj.get('code', 0)
+                                        else:
+                                            error_message = str(error_obj)
+                                            error_code = 0
+
+                                        # Check for rate limit in JSON response
+                                        # Common rate limit error codes: -32005, -32097, -32098
+                                        rate_limit_codes = [-32005, -32097, -32098, -32099]
+                                        if error_code in rate_limit_codes or check_rate_limit_message(error_message):
+                                            is_rate_limited = True
+                                    else:
+                                        # No error field, consider it success
+                                        success = True
+                                except Exception as json_err:
+                                    # Check if response text indicates rate limit
+                                    if check_rate_limit_message(response_text):
                                         is_rate_limited = True
+                                        error_message = "Rate limited (detected in response)"
+                                    else:
+                                        error_message = f"Invalid JSON response: {str(json_err)[:50]}"
                             else:
                                 error_message = f"HTTP {response.status}"
+                                # Check response body for rate limit info
+                                if check_rate_limit_message(response_text):
+                                    is_rate_limited = True
                 else:
                     # Test API endpoint with simple GET
                     async with aiohttp.ClientSession() as session:
@@ -335,6 +384,8 @@ class RPCPoolRoutes:
                             url,
                             timeout=aiohttp.ClientTimeout(total=10)
                         ) as response:
+                            response_text = await response.text()
+
                             # Check for rate limit (HTTP 429)
                             if response.status == 429:
                                 is_rate_limited = True
@@ -342,10 +393,21 @@ class RPCPoolRoutes:
                             elif response.status in [200, 201]:
                                 success = True
                             elif response.status == 401:
-                                # 401 means auth error - not success
-                                error_message = "Authentication failed (HTTP 401)"
+                                if check_rate_limit_message(response_text):
+                                    is_rate_limited = True
+                                    error_message = "Rate limited (detected in response)"
+                                else:
+                                    error_message = "Authentication failed (HTTP 401)"
+                            elif response.status == 403:
+                                if check_rate_limit_message(response_text):
+                                    is_rate_limited = True
+                                    error_message = "Rate limited (HTTP 403)"
+                                else:
+                                    error_message = "Forbidden (HTTP 403)"
                             else:
                                 error_message = f"HTTP {response.status}"
+                                if check_rate_limit_message(response_text):
+                                    is_rate_limited = True
 
             except asyncio.TimeoutError:
                 error_message = "Connection timeout"

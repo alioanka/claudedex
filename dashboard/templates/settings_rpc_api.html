@@ -4,18 +4,105 @@
 
 {% block extra_head %}
 <style>
+    /* ============================================= */
+    /* Bootstrap Overrides for Dark Theme           */
+    /* ============================================= */
+
+    /* Fix Bootstrap tabs/pills - ensure they're clickable */
     .nav-pills .nav-link {
-        color: var(--text-secondary);
-        border-radius: 8px;
-        padding: 10px 20px;
-        margin-right: 8px;
+        color: var(--text-secondary, #94a3b8) !important;
+        border-radius: 8px !important;
+        padding: 10px 20px !important;
+        margin-right: 8px !important;
+        cursor: pointer !important;
+        pointer-events: auto !important;
+        position: relative !important;
+        z-index: 1 !important;
+        background: transparent !important;
+        border: 1px solid transparent !important;
     }
     .nav-pills .nav-link.active {
-        background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-        color: white;
+        background: linear-gradient(135deg, #3b82f6, #8b5cf6) !important;
+        color: white !important;
     }
     .nav-pills .nav-link:hover:not(.active) {
-        background: var(--metric-bg);
+        background: var(--metric-bg, #1e293b) !important;
+        color: var(--text-primary, #f1f5f9) !important;
+    }
+
+    /* Fix Bootstrap buttons - ensure proper styling and clickability */
+    .btn {
+        cursor: pointer !important;
+        pointer-events: auto !important;
+        position: relative !important;
+        z-index: 1 !important;
+    }
+    .btn-outline-secondary {
+        color: var(--text-secondary, #94a3b8) !important;
+        border-color: var(--border-color, #334155) !important;
+        background: transparent !important;
+    }
+    .btn-outline-secondary:hover {
+        color: var(--text-primary, #f1f5f9) !important;
+        background: var(--metric-bg, #1e293b) !important;
+        border-color: var(--border-color, #334155) !important;
+    }
+    .btn-primary {
+        background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
+        border: none !important;
+        color: white !important;
+    }
+    .btn-primary:hover {
+        background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
+    }
+    .btn-outline-primary {
+        color: #3b82f6 !important;
+        border-color: #3b82f6 !important;
+        background: transparent !important;
+    }
+    .btn-outline-primary:hover {
+        color: white !important;
+        background: #3b82f6 !important;
+    }
+
+    /* Fix Bootstrap modal - override custom modal styles from main.css */
+    .modal.fade {
+        opacity: 1 !important;
+        pointer-events: none !important;
+        display: none !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        transform: none !important;
+        background: transparent !important;
+    }
+    .modal.fade.show {
+        display: block !important;
+        pointer-events: auto !important;
+    }
+    .modal-dialog {
+        position: relative !important;
+        margin: 1.75rem auto !important;
+        max-width: 500px !important;
+        transform: none !important;
+        pointer-events: auto !important;
+    }
+    .modal-dialog.modal-lg {
+        max-width: 800px !important;
+    }
+    .modal-backdrop {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        background-color: rgba(0, 0, 0, 0.5) !important;
+        z-index: 1040 !important;
+    }
+    .modal-backdrop.show {
+        opacity: 1 !important;
     }
     .settings-section {
         background: var(--card-bg);
@@ -974,7 +1061,6 @@ async function testEndpoint(id) {
         const result = await response.json();
         if (result.success) {
             showToast(`${endpoint.name}: OK (${result.latency_ms}ms latency)`, 'success');
-            // Update button to show success briefly
             if (btn) {
                 btn.innerHTML = '<i class="fas fa-check text-success"></i>';
                 setTimeout(() => {
@@ -982,7 +1068,16 @@ async function testEndpoint(id) {
                     btn.disabled = false;
                 }, 2000);
             }
-            loadEndpoints();
+        } else if (result.rate_limited) {
+            // Rate limited - show warning
+            showToast(`${endpoint.name}: RATE LIMITED - ${result.error || 'Too many requests'}`, 'warning');
+            if (btn) {
+                btn.innerHTML = '<i class="fas fa-clock text-warning"></i>';
+                setTimeout(() => {
+                    btn.innerHTML = '<i class="fas fa-vial"></i>';
+                    btn.disabled = false;
+                }, 2000);
+            }
         } else {
             showToast(`${endpoint.name}: FAILED - ${result.error || 'Unknown error'}`, 'error');
             if (btn) {
@@ -993,6 +1088,8 @@ async function testEndpoint(id) {
                 }, 2000);
             }
         }
+        // Always reload endpoints to show updated priority/status
+        loadEndpoints();
     } catch (error) {
         console.error('Test failed:', error);
         showToast(`Test failed: ${error.message}`, 'error');
@@ -1000,6 +1097,7 @@ async function testEndpoint(id) {
             btn.innerHTML = '<i class="fas fa-vial"></i>';
             btn.disabled = false;
         }
+        loadEndpoints();
     }
 }
 
