@@ -4,6 +4,7 @@ RPC/API Pool Management Routes for Dashboard
 API endpoints for managing RPC and API endpoints through the web interface
 """
 
+import asyncio
 import logging
 import time
 import aiohttp
@@ -326,8 +327,10 @@ class RPCPoolRoutes:
                             if not success:
                                 error_message = f"HTTP {response.status}"
 
-            except aiohttp.ClientTimeout:
+            except asyncio.TimeoutError:
                 error_message = "Connection timeout"
+            except aiohttp.ClientError as e:
+                error_message = f"Connection error: {str(e)}"
             except Exception as e:
                 error_message = str(e)
 

@@ -262,6 +262,18 @@ async def main():
         logger.error(f"❌ Database connection failed: {e}")
         return
 
+    # Initialize Pool Engine BEFORE using RPCProvider
+    try:
+        from config.pool_engine import PoolEngine
+        from config.rpc_provider import RPCProvider
+
+        pool_engine = await PoolEngine.get_instance()
+        await pool_engine.initialize(db_pool)
+        RPCProvider.set_pool_engine(pool_engine)
+        logger.info("✅ Pool Engine initialized for RPC management")
+    except Exception as e:
+        logger.warning(f"⚠️ Pool Engine init failed, using .env fallback: {e}")
+
     # Init Config
     config_manager = ConfigManager()
     await config_manager.initialize()

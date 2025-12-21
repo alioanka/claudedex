@@ -896,6 +896,13 @@ async function testEndpoint(id) {
     const endpoint = endpoints.find(e => e.id === id);
     if (!endpoint) return;
 
+    // Find the test button and show loading state
+    const btn = document.querySelector(`button[onclick="testEndpoint(${id})"]`);
+    if (btn) {
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        btn.disabled = true;
+    }
+
     showToast(`Testing ${endpoint.name}...`, 'info');
 
     try {
@@ -905,19 +912,45 @@ async function testEndpoint(id) {
 
         const result = await response.json();
         if (result.success) {
-            showToast(`${endpoint.name}: ${result.latency_ms}ms`, 'success');
+            showToast(`${endpoint.name}: OK (${result.latency_ms}ms latency)`, 'success');
+            // Update button to show success briefly
+            if (btn) {
+                btn.innerHTML = '<i class="fas fa-check text-success"></i>';
+                setTimeout(() => {
+                    btn.innerHTML = '<i class="fas fa-vial"></i>';
+                    btn.disabled = false;
+                }, 2000);
+            }
             loadEndpoints();
         } else {
-            showToast(`${endpoint.name}: ${result.error || 'Test failed'}`, 'error');
+            showToast(`${endpoint.name}: FAILED - ${result.error || 'Unknown error'}`, 'error');
+            if (btn) {
+                btn.innerHTML = '<i class="fas fa-times text-danger"></i>';
+                setTimeout(() => {
+                    btn.innerHTML = '<i class="fas fa-vial"></i>';
+                    btn.disabled = false;
+                }, 2000);
+            }
         }
     } catch (error) {
         console.error('Test failed:', error);
-        showToast('Test failed', 'error');
+        showToast(`Test failed: ${error.message}`, 'error');
+        if (btn) {
+            btn.innerHTML = '<i class="fas fa-vial"></i>';
+            btn.disabled = false;
+        }
     }
 }
 
 async function runHealthCheck() {
-    showToast('Running health checks...', 'info');
+    // Update button state
+    const btn = document.querySelector('button[onclick="runHealthCheck()"]');
+    if (btn) {
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Checking...';
+        btn.disabled = true;
+    }
+
+    showToast('Running health checks on all endpoints...', 'info');
 
     try {
         const response = await fetch('/api/rpc-pool/health-check', {
@@ -928,31 +961,96 @@ async function runHealthCheck() {
         if (result.success) {
             const r = result.results;
             showToast(`Health check complete: ${r.healthy} healthy, ${r.unhealthy} unhealthy, ${r.recovered} recovered`, 'success');
+
+            // Show detailed results in a modal or alert
+            showHealthCheckResults(r);
             loadEndpoints();
         } else {
             showToast(result.error || 'Health check failed', 'error');
         }
     } catch (error) {
         console.error('Health check failed:', error);
-        showToast('Health check failed', 'error');
+        showToast(`Health check failed: ${error.message}`, 'error');
+    } finally {
+        if (btn) {
+            btn.innerHTML = '<i class="fas fa-heartbeat me-2"></i>Run Health Check';
+            btn.disabled = false;
+        }
     }
 }
 
+function showHealthCheckResults(results) {
+    // Create a summary alert
+    const alertDiv = document.createElement('div');
+    alertDiv.className = 'alert alert-info alert-dismissible fade show position-fixed';
+    alertDiv.style.cssText = 'top: 80px; right: 20px; z-index: 9999; min-width: 300px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);';
+    alertDiv.innerHTML = `
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        <h5 class="alert-heading"><i class="fas fa-heartbeat me-2"></i>Health Check Complete</h5>
+        <hr>
+        <p class="mb-1"><i class="fas fa-check-circle text-success me-2"></i><strong>${results.healthy || 0}</strong> Healthy</p>
+        <p class="mb-1"><i class="fas fa-exclamation-triangle text-warning me-2"></i><strong>${results.rate_limited || 0}</strong> Rate Limited</p>
+        <p class="mb-1"><i class="fas fa-times-circle text-danger me-2"></i><strong>${results.unhealthy || 0}</strong> Unhealthy</p>
+        <p class="mb-0"><i class="fas fa-sync text-info me-2"></i><strong>${results.recovered || 0}</strong> Recovered</p>
+    `;
+    document.body.appendChild(alertDiv);
+
+    // Auto-dismiss after 10 seconds
+    setTimeout(() => {
+        alertDiv.classList.remove('show');
+        setTimeout(() => alertDiv.remove(), 150);
+    }, 10000);
+}
+
 function showToast(message, type = 'info') {
-    // Use existing toast system or create simple alert
-    if (typeof Toastify !== 'undefined') {
-        Toastify({
-            text: message,
-            duration: 3000,
-            gravity: 'bottom',
-            position: 'right',
-            style: {
-                background: type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#3b82f6'
-            }
-        }).showToast();
-    } else {
-        console.log(`[${type.toUpperCase()}] ${message}`);
+    // Create toast container if it doesn't exist
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        container.style.cssText = 'position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px;';
+        document.body.appendChild(container);
     }
+
+    // Create toast element
+    const toast = document.createElement('div');
+    const bgColor = type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : type === 'warning' ? '#f59e0b' : '#3b82f6';
+    const icon = type === 'success' ? 'check-circle' : type === 'error' ? 'times-circle' : type === 'warning' ? 'exclamation-triangle' : 'info-circle';
+
+    toast.style.cssText = `
+        background: ${bgColor};
+        color: white;
+        padding: 12px 20px;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        max-width: 400px;
+        animation: slideIn 0.3s ease;
+    `;
+    toast.innerHTML = `<i class="fas fa-${icon}"></i><span>${message}</span>`;
+    container.appendChild(toast);
+
+    // Add animation keyframes if not present
+    if (!document.getElementById('toast-animations')) {
+        const style = document.createElement('style');
+        style.id = 'toast-animations';
+        style.textContent = `
+            @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+            @keyframes slideOut { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0; } }
+        `;
+        document.head.appendChild(style);
+    }
+
+    // Auto-dismiss after 4 seconds
+    setTimeout(() => {
+        toast.style.animation = 'slideOut 0.3s ease';
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
+
+    // Also log to console
+    console.log(`[${type.toUpperCase()}] ${message}`);
 }
 </script>
 {% endblock %}

@@ -176,6 +176,25 @@ async def main():
         logger.error(f"❌ Database connection failed: {e}")
         return
 
+    # Initialize Pool Engine BEFORE using RPCProvider
+    try:
+        from config.pool_engine import PoolEngine
+        from config.rpc_provider import RPCProvider
+
+        pool_engine = await PoolEngine.get_instance()
+        await pool_engine.initialize(db_pool)
+        RPCProvider.set_pool_engine(pool_engine)
+        logger.info("✅ Pool Engine initialized for RPC management")
+
+        # Now get RPCs from Pool Engine (with proper initialization)
+        solana_rpc = await RPCProvider.get_rpc('SOLANA_RPC')
+        evm_rpc = await RPCProvider.get_rpc('ETHEREUM_RPC')
+        logger.info(f"   Solana RPC from Pool Engine: {'OK' if solana_rpc else 'Not available'}")
+        logger.info(f"   EVM RPC from Pool Engine: {'OK' if evm_rpc else 'Not available'}")
+    except Exception as e:
+        logger.warning(f"⚠️ Pool Engine init failed, using .env fallback: {e}")
+        # Keep the RPCs we already fetched from env above
+
     # Init Config
     config_manager = ConfigManager()
     await config_manager.initialize()
@@ -183,7 +202,9 @@ async def main():
         'sniper': {
             'evm_enabled': bool(evm_rpc),
             'solana_enabled': bool(solana_rpc)
-        }
+        },
+        'solana': {'rpc_url': solana_rpc},
+        'web3': {'provider_url': evm_rpc}
     }
 
     engine = SniperEngine(config, config_manager, db_pool)
