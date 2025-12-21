@@ -168,15 +168,52 @@
         margin-bottom: 16px;
         opacity: 0.5;
     }
-    #addEndpointModal .modal-content {
-        background: var(--card-bg);
-        border: 1px solid var(--border-color);
+    /* Modal styling for dark theme - use explicit colors as fallback */
+    .modal-content {
+        background: var(--card-bg, #1e293b) !important;
+        border: 1px solid var(--border-color, #334155) !important;
+        color: var(--text-primary, #f1f5f9) !important;
     }
-    #addEndpointModal .modal-header {
-        border-bottom: 1px solid var(--border-color);
+    .modal-header {
+        border-bottom: 1px solid var(--border-color, #334155) !important;
+        background: var(--metric-bg, #0f172a) !important;
     }
-    #addEndpointModal .modal-footer {
-        border-top: 1px solid var(--border-color);
+    .modal-header .modal-title {
+        color: var(--text-primary, #f1f5f9) !important;
+    }
+    .modal-header .btn-close {
+        filter: invert(1) !important;
+    }
+    .modal-footer {
+        border-top: 1px solid var(--border-color, #334155) !important;
+        background: var(--metric-bg, #0f172a) !important;
+    }
+    .modal-body {
+        background: var(--card-bg, #1e293b) !important;
+    }
+    .modal .form-control, .modal .form-select {
+        background: var(--metric-bg, #0f172a) !important;
+        border-color: var(--border-color, #334155) !important;
+        color: var(--text-primary, #f1f5f9) !important;
+    }
+    .modal .form-control::placeholder {
+        color: var(--text-secondary, #94a3b8) !important;
+    }
+    .modal .form-label {
+        color: var(--text-primary, #f1f5f9) !important;
+    }
+    .modal .form-check-label {
+        color: var(--text-primary, #f1f5f9) !important;
+    }
+    .modal .text-muted {
+        color: var(--text-secondary, #94a3b8) !important;
+    }
+    /* Ensure modal backdrop doesn't hide modal */
+    .modal-backdrop {
+        z-index: 1040 !important;
+    }
+    .modal {
+        z-index: 1050 !important;
     }
     .usage-chart {
         height: 200px;

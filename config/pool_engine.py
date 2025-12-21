@@ -796,6 +796,9 @@ class PoolEngine:
             logger.warning(unhealthy_msg)
             health_logger.warning(unhealthy_msg)
 
+        # Persist changes to database
+        await self._update_endpoint_status(endpoint)
+
         # Log usage
         await self._log_usage(endpoint, False, error_type=error_type, error_message=error_message)
 
@@ -949,10 +952,28 @@ class PoolEngine:
                                 endpoint.status = EndpointStatus.ACTIVE
                                 endpoint.consecutive_failures = 0
                                 results['recovered'] += 1
+                                health_logger.info(f"Endpoint recovered: {endpoint.name}")
                         else:
                             results['unhealthy'] += 1
+                            # Mark endpoint as unhealthy if check fails
+                            endpoint.consecutive_failures += 1
+                            if endpoint.status != EndpointStatus.RATE_LIMITED:
+                                endpoint.status = EndpointStatus.UNHEALTHY
+                                endpoint.health_score = max(0, endpoint.health_score - 15)
+                                health_logger.warning(f"Endpoint unhealthy: {endpoint.name} (consecutive failures: {endpoint.consecutive_failures})")
                     except Exception as e:
                         logger.debug(f"Health check failed for {endpoint.name}: {e}")
+                        results['unhealthy'] += 1
+                        endpoint.consecutive_failures += 1
+                        if endpoint.status != EndpointStatus.RATE_LIMITED:
+                            endpoint.status = EndpointStatus.UNHEALTHY
+                else:
+                    # Count non-RPC endpoints based on their current status
+                    if endpoint.status == EndpointStatus.ACTIVE:
+                        results['healthy'] += 1
+                    elif endpoint.status == EndpointStatus.RATE_LIMITED:
+                        results['rate_limited'] += 1
+                    elif endpoint.status == EndpointStatus.UNHEALTHY:
                         results['unhealthy'] += 1
 
                 # Update last health check time

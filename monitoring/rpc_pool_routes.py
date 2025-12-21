@@ -295,6 +295,8 @@ class RPCPoolRoutes:
             error_message = None
 
             try:
+                is_rate_limited = False
+
                 if 'RPC' in provider_type or 'WS' in provider_type:
                     # Test RPC endpoint
                     if 'solana' in provider_type.lower():
@@ -308,12 +310,22 @@ class RPCPoolRoutes:
                             json=payload,
                             timeout=aiohttp.ClientTimeout(total=10)
                         ) as response:
-                            if response.status == 200:
+                            # Check for rate limit (HTTP 429)
+                            if response.status == 429:
+                                is_rate_limited = True
+                                error_message = "Rate limited (HTTP 429)"
+                            elif response.status == 401:
+                                error_message = "Authentication failed (HTTP 401)"
+                            elif response.status == 200:
                                 data = await response.json()
                                 if 'result' in data or 'error' not in data:
                                     success = True
                                 else:
                                     error_message = data.get('error', {}).get('message', 'Unknown error')
+                                    # Check for rate limit in JSON response
+                                    error_code = data.get('error', {}).get('code', 0)
+                                    if error_code == -32005 or 'rate' in str(error_message).lower():
+                                        is_rate_limited = True
                             else:
                                 error_message = f"HTTP {response.status}"
                 else:
@@ -323,8 +335,16 @@ class RPCPoolRoutes:
                             url,
                             timeout=aiohttp.ClientTimeout(total=10)
                         ) as response:
-                            success = response.status in [200, 201, 401]  # 401 means API is reachable but needs key
-                            if not success:
+                            # Check for rate limit (HTTP 429)
+                            if response.status == 429:
+                                is_rate_limited = True
+                                error_message = "Rate limited (HTTP 429)"
+                            elif response.status in [200, 201]:
+                                success = True
+                            elif response.status == 401:
+                                # 401 means auth error - not success
+                                error_message = "Authentication failed (HTTP 401)"
+                            else:
                                 error_message = f"HTTP {response.status}"
 
             except asyncio.TimeoutError:
@@ -339,13 +359,17 @@ class RPCPoolRoutes:
             # Report result to pool engine
             if success:
                 await self.pool_engine.report_success(provider_type, url, latency_ms)
+            elif is_rate_limited:
+                # Report rate limit with 5 minute cooldown
+                await self.pool_engine.report_rate_limit(provider_type, url, duration_seconds=300, error_message=error_message)
             else:
                 await self.pool_engine.report_failure(provider_type, url, 'test_failure', error_message)
 
             return web.json_response({
                 'success': success,
                 'latency_ms': latency_ms,
-                'error': error_message
+                'error': error_message,
+                'rate_limited': is_rate_limited
             })
 
         except Exception as e:
