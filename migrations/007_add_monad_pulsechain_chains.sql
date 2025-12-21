@@ -54,7 +54,4 @@ INSERT INTO config_settings (config_type, key, value, value_type, description, i
 ('chain', 'max_pairs_per_chain', '50', 'int', 'Maximum trading pairs per chain', TRUE, FALSE)
 ON CONFLICT (config_type, key) DO NOTHING;
 
--- Record migration in migrations table if exists
-INSERT INTO migrations (version, description, applied_at)
-VALUES ('007', 'Add Monad and PulseChain chains support', NOW())
-ON CONFLICT (version) DO NOTHING;
+-- Note: Migration tracking is handled by MigrationManager (schema_migrations table)

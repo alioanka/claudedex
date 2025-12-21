@@ -80,7 +80,4 @@ SELECT
 FROM solana_trades
 GROUP BY is_simulated, strategy;
 
--- Record migration
-INSERT INTO migrations (version, description, applied_at)
-VALUES ('008', 'Add Solana trades and positions tables', NOW())
-ON CONFLICT (version) DO NOTHING;
+-- Note: Migration tracking is handled by MigrationManager (schema_migrations table)

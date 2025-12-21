@@ -273,8 +273,4 @@ ON CONFLICT (name) DO NOTHING;
 -- ============================================================================
 -- MIGRATION COMPLETE
 -- ============================================================================
-
--- Record this migration
-INSERT INTO migrations (version, description)
-VALUES ('002', 'Add Module Support - Phase 1 Modular Architecture')
-ON CONFLICT (version) DO NOTHING;
+-- Note: Migration tracking is handled by MigrationManager (schema_migrations table)
