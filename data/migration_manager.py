@@ -87,6 +87,16 @@ class MigrationManager:
             # Execute migration in a transaction
             async with self.pool.acquire() as conn:
                 async with conn.transaction():
+                    # Double-check migration isn't already applied (race condition protection)
+                    already_applied = await conn.fetchval("""
+                        SELECT 1 FROM schema_migrations
+                        WHERE migration_name = $1 AND success = TRUE
+                    """, migration_file.name)
+
+                    if already_applied:
+                        logger.info(f"⏭️ Migration already applied by another process: {migration_file.name}")
+                        return True
+
                     # Execute the migration SQL
                     await conn.execute(content)
 
@@ -95,7 +105,7 @@ class MigrationManager:
                         INSERT INTO schema_migrations (migration_name, checksum, success)
                         VALUES ($1, $2, TRUE)
                         ON CONFLICT (migration_name) DO UPDATE
-                        SET checksum = $2, applied_at = NOW()
+                        SET checksum = $2, applied_at = NOW(), success = TRUE
                     """, migration_file.name, checksum)
 
             logger.info(f"✅ Migration applied successfully: {migration_file.name}")
