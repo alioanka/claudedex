@@ -119,7 +119,7 @@ class MigrationManager:
 
     async def run_migrations(self, fail_fast: bool = True) -> int:
         """
-        Run all pending migrations
+        Run all pending migrations with advisory lock to prevent concurrent runs.
 
         Args:
             fail_fast: Stop on first failure if True, continue if False
@@ -128,35 +128,52 @@ class MigrationManager:
             Number of migrations applied
         """
         try:
-            # Initialize tracking table
-            await self.initialize()
+            # Use PostgreSQL advisory lock to prevent concurrent migration runs
+            # Lock ID 8675309 is arbitrary but unique for migrations
+            async with self.pool.acquire() as lock_conn:
+                # Try to acquire exclusive lock (non-blocking)
+                lock_acquired = await lock_conn.fetchval(
+                    "SELECT pg_try_advisory_lock(8675309)"
+                )
 
-            # Get pending migrations
-            pending = await self.get_pending_migrations()
+                if not lock_acquired:
+                    logger.info("⏳ Another process is running migrations, skipping...")
+                    return 0
 
-            if not pending:
-                logger.info("✅ No pending migrations")
-                return 0
+                try:
+                    # Initialize tracking table
+                    await self.initialize()
 
-            logger.info(f"📋 Found {len(pending)} pending migration(s)")
+                    # Get pending migrations
+                    pending = await self.get_pending_migrations()
 
-            applied_count = 0
+                    if not pending:
+                        logger.info("✅ No pending migrations")
+                        return 0
 
-            for migration_file in pending:
-                success = await self.apply_migration(migration_file)
+                    logger.info(f"📋 Found {len(pending)} pending migration(s)")
 
-                if success:
-                    applied_count += 1
-                elif fail_fast:
-                    logger.error("Migration failed - stopping (fail_fast=True)")
-                    break
+                    applied_count = 0
 
-            if applied_count == len(pending):
-                logger.info(f"✅ All {applied_count} migration(s) applied successfully")
-            else:
-                logger.warning(f"⚠️  Applied {applied_count}/{len(pending)} migrations")
+                    for migration_file in pending:
+                        success = await self.apply_migration(migration_file)
 
-            return applied_count
+                        if success:
+                            applied_count += 1
+                        elif fail_fast:
+                            logger.error("Migration failed - stopping (fail_fast=True)")
+                            break
+
+                    if applied_count == len(pending):
+                        logger.info(f"✅ All {applied_count} migration(s) applied successfully")
+                    else:
+                        logger.warning(f"⚠️  Applied {applied_count}/{len(pending)} migrations")
+
+                    return applied_count
+
+                finally:
+                    # Always release the advisory lock
+                    await lock_conn.execute("SELECT pg_advisory_unlock(8675309)")
 
         except Exception as e:
             logger.error(f"❌ Error running migrations: {e}", exc_info=True)
