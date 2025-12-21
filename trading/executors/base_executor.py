@@ -242,10 +242,27 @@ class TradeExecutor(BaseExecutor):
 
     async def initialize(self):
         """Initialize EVM executor"""
-        # Test Web3 connection
-        if not self.w3.is_connected():
-            raise ConnectionError("Web3 connection failed")
-        
+        # Test Web3 connection - try multiple RPCs if first fails
+        connected = False
+        last_error = None
+
+        for attempt, rpc_url in enumerate(self._rpc_urls):
+            try:
+                self.w3 = Web3(Web3.HTTPProvider(rpc_url))
+                if self.w3.is_connected():
+                    connected = True
+                    self._current_rpc_index = attempt
+                    logger.info(f"✅ Web3 connected via {rpc_url[:50]}...")
+                    break
+                else:
+                    logger.warning(f"RPC not responding: {rpc_url[:50]}...")
+            except Exception as e:
+                last_error = e
+                logger.warning(f"RPC connection failed: {rpc_url[:50]}... ({e})")
+
+        if not connected:
+            raise ConnectionError(f"Web3 connection failed - tried {len(self._rpc_urls)} RPC(s). Last error: {last_error}")
+
         # ✅ FIXED: Initialize nonce
         self.current_nonce = self.w3.eth.get_transaction_count(self.wallet_address)
         

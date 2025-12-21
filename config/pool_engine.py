@@ -28,15 +28,58 @@ Usage:
 import os
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
 import time
 import random
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 import aiohttp
 
-logger = logging.getLogger(__name__)
+# =========================================================================
+# Dedicated Pool Engine Logging
+# =========================================================================
+log_dir = Path("logs/pool_engine")
+log_dir.mkdir(parents=True, exist_ok=True)
+
+log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# Pool Engine Logger
+logger = logging.getLogger("PoolEngine")
+logger.setLevel(logging.INFO)
+
+# Main Log - all activity
+main_handler = RotatingFileHandler(log_dir / 'pool_engine.log', maxBytes=10*1024*1024, backupCount=5)
+main_handler.setFormatter(log_formatter)
+main_handler.setLevel(logging.INFO)
+logger.addHandler(main_handler)
+
+# Error Log - errors only
+error_handler = RotatingFileHandler(log_dir / 'pool_engine_errors.log', maxBytes=5*1024*1024, backupCount=3)
+error_handler.setFormatter(log_formatter)
+error_handler.setLevel(logging.ERROR)
+logger.addHandler(error_handler)
+
+# Rate Limit Log - rate limit events specifically
+rate_limit_handler = RotatingFileHandler(log_dir / 'pool_engine_rate_limits.log', maxBytes=5*1024*1024, backupCount=3)
+rate_limit_handler.setFormatter(log_formatter)
+rate_limit_logger = logging.getLogger("PoolEngine.RateLimit")
+rate_limit_logger.setLevel(logging.INFO)
+rate_limit_logger.addHandler(rate_limit_handler)
+
+# Health Check Log - health check results
+health_handler = RotatingFileHandler(log_dir / 'pool_engine_health.log', maxBytes=5*1024*1024, backupCount=3)
+health_handler.setFormatter(log_formatter)
+health_logger = logging.getLogger("PoolEngine.Health")
+health_logger.setLevel(logging.INFO)
+health_logger.addHandler(health_handler)
+
+# Console output (shared across all pool engine loggers)
+console = logging.StreamHandler()
+console.setFormatter(log_formatter)
+logger.addHandler(console)
 
 
 class EndpointStatus(Enum):
@@ -60,8 +103,11 @@ class Endpoint:
     priority: int = 100
     weight: int = 100
     rate_limit_until: Optional[datetime] = None
+    rate_limit_count: int = 0
+    last_rate_limit_at: Optional[datetime] = None
     last_success_at: Optional[datetime] = None
     last_failure_at: Optional[datetime] = None
+    last_health_check_at: Optional[datetime] = None
     success_count: int = 0
     failure_count: int = 0
     avg_latency_ms: float = 0
@@ -603,10 +649,12 @@ class PoolEngine:
         # Move to end of queue by increasing priority
         endpoint.priority = min(endpoint.priority + 50, 1000)
 
-        logger.warning(
+        rate_limit_msg = (
             f"Rate limited: {provider_type} - {endpoint.name} "
             f"(until {endpoint.rate_limit_until}, count={endpoint.rate_limit_count})"
         )
+        logger.warning(rate_limit_msg)
+        rate_limit_logger.info(rate_limit_msg)
 
         # Update database
         await self._update_endpoint_status(endpoint)
@@ -687,10 +735,12 @@ class PoolEngine:
         # Mark as unhealthy if too many consecutive failures
         if endpoint.consecutive_failures >= self._max_consecutive_failures:
             endpoint.status = EndpointStatus.UNHEALTHY
-            logger.warning(
+            unhealthy_msg = (
                 f"Endpoint marked unhealthy: {provider_type} - {endpoint.name} "
                 f"(consecutive failures: {endpoint.consecutive_failures})"
             )
+            logger.warning(unhealthy_msg)
+            health_logger.warning(unhealthy_msg)
 
         # Log usage
         await self._log_usage(endpoint, False, error_type=error_type, error_message=error_message)
@@ -831,7 +881,9 @@ class PoolEngine:
                         endpoint.status = EndpointStatus.ACTIVE
                         endpoint.rate_limit_until = None
                         results['recovered'] += 1
-                        logger.info(f"Endpoint recovered from rate limit: {endpoint.name}")
+                        recovery_msg = f"Endpoint recovered from rate limit: {endpoint.name}"
+                        logger.info(recovery_msg)
+                        health_logger.info(recovery_msg)
 
                 # For RPC endpoints, try a simple health check
                 if 'RPC' in provider_type and endpoint.is_enabled:
@@ -855,11 +907,13 @@ class PoolEngine:
         # Sync to database
         await self._sync_to_database()
 
-        logger.info(
+        health_check_msg = (
             f"Health check complete: {results['checked']} checked, "
             f"{results['healthy']} healthy, {results['unhealthy']} unhealthy, "
             f"{results['recovered']} recovered"
         )
+        logger.info(health_check_msg)
+        health_logger.info(health_check_msg)
 
         return results
 

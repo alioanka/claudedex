@@ -288,10 +288,7 @@ class TradingBotApplication:
             
             self.logger.info("Connecting to database...")
             await self.db_manager.connect()
-
-            # Run database migrations
-            self.logger.info("Running database migrations...")
-            await self._run_migrations()
+            # Note: DatabaseManager.connect() already runs migrations via MigrationManager
 
             # Set database pool in config manager and reload configs from database
             self.logger.info("Connecting config manager to database...")
