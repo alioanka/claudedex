@@ -570,10 +570,38 @@ async function loadEndpoints() {
             endpoints = data.endpoints || [];
             renderEndpoints();
             updateStats();
+        } else {
+            // Handle API error - show error message
+            console.error('API error:', data.error);
+            document.getElementById('rpcEndpointsList').innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-exclamation-triangle text-warning"></i>
+                    <p>Error: ${data.error || 'Failed to load endpoints'}</p>
+                    <p class="small text-muted">Please check if the Pool Engine is initialized properly.</p>
+                    <button class="btn btn-primary btn-sm mt-2" onclick="loadEndpoints()">
+                        <i class="fas fa-sync me-2"></i>Retry
+                    </button>
+                </div>
+            `;
+            document.getElementById('apiEndpointsList').innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-exclamation-triangle text-warning"></i>
+                    <p>Error: ${data.error || 'Failed to load API endpoints'}</p>
+                </div>
+            `;
         }
     } catch (error) {
         console.error('Failed to load endpoints:', error);
         showToast('Failed to load endpoints', 'error');
+        document.getElementById('rpcEndpointsList').innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-exclamation-triangle text-danger"></i>
+                <p>Network error: Could not connect to API</p>
+                <button class="btn btn-primary btn-sm mt-2" onclick="loadEndpoints()">
+                    <i class="fas fa-sync me-2"></i>Retry
+                </button>
+            </div>
+        `;
     }
 }
 
