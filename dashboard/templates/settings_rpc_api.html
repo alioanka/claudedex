@@ -724,18 +724,27 @@ async function loadUsageStats() {
         const response = await fetch('/api/rpc-pool/stats');
         const data = await response.json();
 
+        console.log('Usage stats response:', data);
+
         if (data.success && data.stats) {
             const overall = data.stats.overall || {};
-            document.getElementById('statTotalRequests').textContent = overall.total_requests || 0;
+            const totalRequests = overall.total_requests || 0;
 
-            const successRate = overall.total_requests > 0
-                ? ((overall.successful / overall.total_requests) * 100).toFixed(1) + '%'
-                : '-';
-            document.getElementById('statSuccessRate').textContent = successRate;
-            document.getElementById('statAvgLatency').textContent = overall.avg_latency
-                ? `${overall.avg_latency.toFixed(0)}ms`
-                : '-';
-            document.getElementById('statEndpointsUsed').textContent = overall.endpoints_used || 0;
+            // Display stats - show 0 if no data instead of dash
+            document.getElementById('statTotalRequests').textContent = totalRequests;
+
+            if (totalRequests > 0) {
+                const successRate = ((overall.successful / totalRequests) * 100).toFixed(1) + '%';
+                document.getElementById('statSuccessRate').textContent = successRate;
+                document.getElementById('statAvgLatency').textContent = overall.avg_latency
+                    ? `${Math.round(overall.avg_latency)}ms`
+                    : '0ms';
+                document.getElementById('statEndpointsUsed').textContent = overall.endpoints_used || 0;
+            } else {
+                document.getElementById('statSuccessRate').textContent = 'N/A';
+                document.getElementById('statAvgLatency').textContent = 'N/A';
+                document.getElementById('statEndpointsUsed').textContent = '0';
+            }
 
             // Render provider usage
             const perProvider = data.stats.per_provider || [];
@@ -745,15 +754,30 @@ async function loadUsageStats() {
                         <span>${formatProviderType(p.provider_type)}</span>
                         <div>
                             <span class="badge bg-primary me-2">${p.requests} requests</span>
-                            <span class="text-muted small">${p.avg_latency ? p.avg_latency.toFixed(0) + 'ms' : '-'}</span>
+                            <span class="badge bg-success me-2">${p.successful || 0} OK</span>
+                            <span class="text-muted small">${p.avg_latency ? Math.round(p.avg_latency) + 'ms' : '-'}</span>
                         </div>
                     </div>
                 `).join('');
                 document.getElementById('providerUsageList').innerHTML = html;
+            } else {
+                document.getElementById('providerUsageList').innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-chart-bar text-muted"></i>
+                        <p class="mb-0">No usage data in the last 24 hours</p>
+                        <p class="small text-muted">Usage will appear as modules use RPC endpoints</p>
+                    </div>
+                `;
             }
+        } else {
+            console.warn('Stats API returned:', data);
         }
     } catch (error) {
         console.error('Failed to load usage stats:', error);
+        document.getElementById('statTotalRequests').textContent = 'Error';
+        document.getElementById('statSuccessRate').textContent = 'Error';
+        document.getElementById('statAvgLatency').textContent = 'Error';
+        document.getElementById('statEndpointsUsed').textContent = 'Error';
     }
 }
 

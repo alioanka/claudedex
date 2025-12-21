@@ -62,6 +62,14 @@ error_handler.setFormatter(log_formatter)
 error_handler.setLevel(logging.ERROR)
 logger.addHandler(error_handler)
 
+# Full Activity Log - comprehensive logging of all operations
+full_handler = RotatingFileHandler(log_dir / 'pool_engine_full.log', maxBytes=20*1024*1024, backupCount=5)
+full_handler.setFormatter(log_formatter)
+full_handler.setLevel(logging.DEBUG)
+full_logger = logging.getLogger("PoolEngine.Full")
+full_logger.setLevel(logging.DEBUG)
+full_logger.addHandler(full_handler)
+
 # Rate Limit Log - rate limit events specifically
 rate_limit_handler = RotatingFileHandler(log_dir / 'pool_engine_rate_limits.log', maxBytes=5*1024*1024, backupCount=3)
 rate_limit_handler.setFormatter(log_formatter)
@@ -549,6 +557,12 @@ class PoolEngine:
             logger.warning(f"No available endpoints for: {provider_type}")
             return self._get_env_fallback(provider_type)
 
+        # Log selection to full logger
+        full_logger.debug(
+            f"SELECTED: {provider_type} -> {endpoint.name} "
+            f"(priority={endpoint.priority}, health={endpoint.health_score:.1f})"
+        )
+
         return endpoint.get_effective_url()
 
     async def get_all_endpoints(self, provider_type: str) -> List[str]:
@@ -651,10 +665,11 @@ class PoolEngine:
 
         rate_limit_msg = (
             f"Rate limited: {provider_type} - {endpoint.name} "
-            f"(until {endpoint.rate_limit_until}, count={endpoint.rate_limit_count})"
+            f"(until {endpoint.rate_limit_until}, count={endpoint.rate_limit_count}, priority: {endpoint.priority})"
         )
         logger.warning(rate_limit_msg)
         rate_limit_logger.info(rate_limit_msg)
+        full_logger.warning(rate_limit_msg)
 
         # Update database
         await self._update_endpoint_status(endpoint)
@@ -689,6 +704,12 @@ class PoolEngine:
             if not endpoint.rate_limit_until or datetime.utcnow() >= endpoint.rate_limit_until:
                 endpoint.status = EndpointStatus.ACTIVE
                 endpoint.rate_limit_until = None
+                full_logger.info(f"Endpoint recovered from rate limit: {endpoint.name}")
+
+        # Reset status if it was unhealthy
+        if endpoint.status == EndpointStatus.UNHEALTHY:
+            endpoint.status = EndpointStatus.ACTIVE
+            full_logger.info(f"Endpoint recovered from unhealthy: {endpoint.name}")
 
         # Update latency (rolling average)
         if latency_ms:
@@ -701,6 +722,25 @@ class PoolEngine:
         success_rate = endpoint.success_count / max(1, endpoint.success_count + endpoint.failure_count)
         latency_score = max(0, 100 - (endpoint.avg_latency_ms / 10))  # Lower latency = higher score
         endpoint.health_score = min(100, (success_rate * 70) + (latency_score * 0.3))
+
+        # PRIORITY RECOVERY: If priority was penalized, gradually recover it
+        # Base priority is typically 100, so if it's higher, we can improve it
+        base_priority = 100
+        if endpoint.priority > base_priority:
+            # Recover 5 priority points on each success (min base_priority)
+            old_priority = endpoint.priority
+            endpoint.priority = max(base_priority, endpoint.priority - 5)
+            if endpoint.priority != old_priority:
+                full_logger.debug(
+                    f"Priority improved for {endpoint.name}: {old_priority} -> {endpoint.priority}"
+                )
+
+        # Log to full activity log
+        full_logger.debug(
+            f"SUCCESS: {provider_type} - {endpoint.name} | "
+            f"latency={latency_ms}ms | priority={endpoint.priority} | "
+            f"health={endpoint.health_score:.1f}"
+        )
 
         # Log usage (don't await to avoid blocking)
         asyncio.create_task(self._log_usage(endpoint, True, latency_ms=latency_ms))
@@ -732,12 +772,26 @@ class PoolEngine:
         # Decrease health score
         endpoint.health_score = max(0, endpoint.health_score - 5)
 
+        # PRIORITY PENALTY: Increase priority (lower = better, higher = worse)
+        # Penalize by 10 points per failure (smaller than rate limit penalty of 50)
+        old_priority = endpoint.priority
+        endpoint.priority = min(endpoint.priority + 10, 500)
+
+        # Log to full activity log
+        full_logger.info(
+            f"FAILURE: {provider_type} - {endpoint.name} | "
+            f"error={error_type or 'unknown'} | priority: {old_priority} -> {endpoint.priority} | "
+            f"consecutive_failures={endpoint.consecutive_failures}"
+        )
+
         # Mark as unhealthy if too many consecutive failures
         if endpoint.consecutive_failures >= self._max_consecutive_failures:
             endpoint.status = EndpointStatus.UNHEALTHY
+            # Additional priority penalty for unhealthy endpoints
+            endpoint.priority = min(endpoint.priority + 100, 1000)
             unhealthy_msg = (
                 f"Endpoint marked unhealthy: {provider_type} - {endpoint.name} "
-                f"(consecutive failures: {endpoint.consecutive_failures})"
+                f"(consecutive failures: {endpoint.consecutive_failures}, priority: {endpoint.priority})"
             )
             logger.warning(unhealthy_msg)
             health_logger.warning(unhealthy_msg)
