@@ -1202,6 +1202,18 @@ class PoolEngine:
 
     async def get_usage_stats(self, hours: int = 24) -> Dict[str, Any]:
         """Get usage statistics for dashboard"""
+        from decimal import Decimal
+
+        def serialize_value(val):
+            """Convert Decimal and other non-JSON types to serializable values"""
+            if isinstance(val, Decimal):
+                return float(val)
+            return val
+
+        def serialize_dict(d):
+            """Serialize all values in a dict"""
+            return {k: serialize_value(v) for k, v in d.items()}
+
         if not self.db_pool:
             return {}
 
@@ -1234,8 +1246,8 @@ class PoolEngine:
                 """ % hours)
 
                 return {
-                    'overall': dict(overall) if overall else {},
-                    'per_provider': [dict(row) for row in per_provider],
+                    'overall': serialize_dict(dict(overall)) if overall else {},
+                    'per_provider': [serialize_dict(dict(row)) for row in per_provider],
                     'period_hours': hours
                 }
 
