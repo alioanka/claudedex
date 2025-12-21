@@ -1113,7 +1113,16 @@ class PoolEngine:
                     ORDER BY provider_type, priority
                 """)
 
-                return [dict(row) for row in rows]
+                # Convert to list of dicts with datetime serialization
+                result = []
+                for row in rows:
+                    d = dict(row)
+                    # Serialize datetime objects to ISO strings
+                    for key, val in d.items():
+                        if isinstance(val, datetime):
+                            d[key] = val.isoformat() if val else None
+                    result.append(d)
+                return result
 
         except Exception as e:
             logger.error(f"Failed to get endpoints: {e}")
