@@ -23,12 +23,23 @@ async def migrate_database():
     print("DATABASE MIGRATION SYSTEM")
     print("=" * 70)
 
-    # Database connection parameters from environment
-    db_host = os.getenv("DB_HOST", "localhost")
-    db_port = int(os.getenv("DB_PORT", "5432"))
-    db_name = os.getenv("DB_NAME", "tradingbot")
-    db_user = os.getenv("DB_USER", "bot_user")
-    db_password = os.getenv("DB_PASSWORD", "bot_password")
+    # Database connection parameters from Docker secrets or environment
+    # Import here to avoid circular imports
+    try:
+        from security.docker_secrets import get_db_credentials
+        db_creds = get_db_credentials()
+        db_host = db_creds['host']
+        db_port = int(db_creds['port'])
+        db_name = db_creds['name']
+        db_user = db_creds['user']
+        db_password = db_creds['password']
+    except ImportError:
+        # Fallback if docker_secrets not available
+        db_host = os.getenv("DB_HOST", "localhost")
+        db_port = int(os.getenv("DB_PORT", "5432"))
+        db_name = os.getenv("DB_NAME", "tradingbot")
+        db_user = os.getenv("DB_USER", "bot_user")
+        db_password = os.getenv("DB_PASSWORD", "")
 
     print(f"\n📊 Connecting to: {db_user}@{db_host}:{db_port}/{db_name}")
 

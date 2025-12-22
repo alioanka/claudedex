@@ -239,3 +239,6 @@ ssl_certificates/
 # Docker secrets (infrastructure credentials)
 secrets/
 *.secret
+
+# Backup folder (unused files before publishing)
+backup/

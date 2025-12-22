@@ -441,16 +441,26 @@ SELECT add_continuous_aggregate_policy('trading.price_hourly',
 -- PERMISSIONS
 -- =====================================================
 
--- Create read-only user for dashboard
-CREATE ROLE dashboard_user WITH LOGIN PASSWORD 'dashboard_password';
-GRANT USAGE ON SCHEMA trading, ml, analytics TO dashboard_user;
-GRANT SELECT ON ALL TABLES IN SCHEMA trading, ml, analytics TO dashboard_user;
+-- NOTE: bot_user is created by PostgreSQL via Docker secrets (POSTGRES_USER_FILE, POSTGRES_PASSWORD_FILE)
+-- These GRANT statements only run if the user exists (won't fail if not)
 
--- Create bot user with full permissions
-CREATE ROLE bot_user WITH LOGIN PASSWORD 'bot_password';
-GRANT ALL PRIVILEGES ON SCHEMA trading, ml, analytics TO bot_user;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA trading, ml, analytics TO bot_user;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA trading, ml, analytics TO bot_user;
+-- Grant permissions to bot_user (created via Docker secrets)
+DO $$
+BEGIN
+    IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'bot_user') THEN
+        GRANT USAGE ON SCHEMA trading, ml, analytics TO bot_user;
+        GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA trading, ml, analytics TO bot_user;
+        GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA trading, ml, analytics TO bot_user;
+        -- Grant on future tables
+        ALTER DEFAULT PRIVILEGES IN SCHEMA trading GRANT ALL ON TABLES TO bot_user;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA ml GRANT ALL ON TABLES TO bot_user;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA analytics GRANT ALL ON TABLES TO bot_user;
+        RAISE NOTICE 'Granted permissions to bot_user';
+    ELSE
+        RAISE NOTICE 'bot_user does not exist yet - permissions will be granted on next run';
+    END IF;
+END
+$$;
 
 -- =====================================================
 -- INITIAL DATA
