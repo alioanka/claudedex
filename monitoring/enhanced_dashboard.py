@@ -127,6 +127,9 @@ class DashboardEndpoints:
         # Setup RPC/API Pool routes
         self._setup_rpc_pool_routes()
 
+        # Setup Credentials Management routes
+        self._setup_credentials_routes()
+
         # Register startup handler for auth initialization
         self.app.on_startup.append(self._on_startup)
 
@@ -599,6 +602,34 @@ class DashboardEndpoints:
                 logger.info("✅ Pool Engine initialized asynchronously")
         except Exception as e:
             logger.error(f"Failed to initialize Pool Engine async: {e}", exc_info=True)
+
+    def _setup_credentials_routes(self):
+        """Setup Credentials Management routes"""
+        try:
+            from monitoring.credentials_routes import setup_credentials_routes
+
+            logger.info("Setting up Credentials Management routes...")
+
+            # Try to import secrets manager
+            secrets_manager = None
+            try:
+                from security.secrets_manager import secrets
+                secrets_manager = secrets
+            except ImportError:
+                logger.warning("SecureSecretsManager not available")
+
+            # Setup credentials routes
+            setup_credentials_routes(
+                app=self.app,
+                db_pool=self.db_pool,
+                jinja_env=self.jinja_env,
+                secrets_manager=secrets_manager
+            )
+
+            logger.info("✅ Credentials Management routes initialized")
+
+        except Exception as e:
+            logger.error(f"Failed to setup credentials routes: {e}", exc_info=True)
 
     def _setup_fallback_module_routes(self):
         """Setup fallback routes for module pages when module_manager is not available"""
