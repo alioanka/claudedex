@@ -329,6 +329,19 @@
             pointer-events: auto !important;
         }
 
+        /* FIX: Ensure hidden overlays don't block clicks */
+        .user-menu-dropdown:not(.active),
+        .notification-panel:not(.active),
+        .sidebar-overlay:not(.active),
+        .modal-overlay:not(.active) {
+            pointer-events: none !important;
+        }
+
+        .user-menu-dropdown.active,
+        .notification-panel.active {
+            pointer-events: auto !important;
+        }
+
         /* Modal content styling for dark theme */
         .modal-content {
             background: var(--bg-secondary, #1e293b) !important;
