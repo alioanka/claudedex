@@ -127,8 +127,8 @@ class DashboardEndpoints:
         # Setup RPC/API Pool routes
         self._setup_rpc_pool_routes()
 
-        # Setup Credentials Management routes
-        self._setup_credentials_routes()
+        # NOTE: Credentials routes are now setup in _on_startup AFTER db is ready
+        # This was moved to ensure db_pool is available for the credentials API
 
         # Register startup handler for auth initialization
         self.app.on_startup.append(self._on_startup)
@@ -180,13 +180,19 @@ class DashboardEndpoints:
             elif not self.pool_engine:
                 logger.warning("⚠️ Pool Engine not available - RPC config page will have limited functionality")
 
-            # Update credentials routes with db_pool if it wasn't available during init
-            if hasattr(self, '_credentials_routes') and self._credentials_routes:
-                if hasattr(self, 'db') and hasattr(self.db, 'pool') and self.db.pool:
-                    if not self._credentials_routes.db_pool:
-                        logger.info("Updating credentials routes with db_pool...")
-                        self._credentials_routes.db_pool = self.db.pool
-                        logger.info("✅ Credentials routes updated with db_pool")
+            # Setup credentials routes NOW (after database is confirmed ready)
+            # This is done here instead of __init__ to ensure db_pool is available
+            logger.info("Setting up Credentials Management routes (with confirmed db_pool)...")
+            db_pool = None
+            if hasattr(self, 'db') and hasattr(self.db, 'pool') and self.db.pool:
+                db_pool = self.db.pool
+                logger.info(f"✅ Database pool available for credentials routes: {db_pool is not None}")
+            else:
+                logger.warning("⚠️ Database pool not available - credentials will use fallback mode")
+
+            # Now setup the credentials routes with the confirmed db_pool
+            self._setup_credentials_routes(db_pool=db_pool)
+            logger.info("✅ Credentials Management routes initialized with database connection")
 
         except Exception as e:
             logger.error(f"❌ CRITICAL: Startup handler failed: {e}", exc_info=True)
@@ -611,8 +617,12 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Failed to initialize Pool Engine async: {e}", exc_info=True)
 
-    def _setup_credentials_routes(self):
-        """Setup Credentials Management routes"""
+    def _setup_credentials_routes(self, db_pool=None):
+        """Setup Credentials Management routes
+
+        Args:
+            db_pool: Database connection pool. If None, will try to get from self.db
+        """
         try:
             from monitoring.credentials_routes import setup_credentials_routes
 
@@ -626,10 +636,11 @@ class DashboardEndpoints:
             except ImportError:
                 logger.warning("SecureSecretsManager not available")
 
-            # Get db_pool - try multiple sources
-            db_pool = self.db_pool
-            if not db_pool and hasattr(self, 'db') and self.db:
-                db_pool = getattr(self.db, 'pool', None)
+            # Use passed db_pool, or try to get from self
+            if not db_pool:
+                db_pool = self.db_pool
+                if not db_pool and hasattr(self, 'db') and self.db:
+                    db_pool = getattr(self.db, 'pool', None)
 
             logger.info(f"Credentials routes db_pool available: {db_pool is not None}")
 
