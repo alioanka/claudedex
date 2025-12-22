@@ -138,19 +138,26 @@ class CredentialsRoutes:
     async def api_list_credentials(self, request: web.Request) -> web.Response:
         """List all credentials with masked values"""
         try:
-            if self.secrets_manager and self.db_pool:
-                # Initialize if needed
-                if not self.secrets_manager._initialized:
+            logger.info(f"Listing credentials - db_pool: {self.db_pool is not None}, secrets_manager: {self.secrets_manager is not None}")
+
+            # Always try database directly first for reliability
+            if self.db_pool:
+                return await self._list_credentials_from_db()
+
+            # Fallback to secrets_manager if available
+            if self.secrets_manager:
+                if not getattr(self.secrets_manager, '_initialized', False) and self.db_pool:
                     self.secrets_manager.initialize(self.db_pool)
 
                 credentials = await self.secrets_manager.get_all_credentials()
-                return web.json_response(credentials)
-            else:
-                # Fallback: return from database directly
-                return await self._list_credentials_from_db()
+                if credentials:
+                    return web.json_response(credentials)
+
+            logger.warning("No database pool or secrets manager available for credentials")
+            return web.json_response([])
 
         except Exception as e:
-            logger.error(f"Error listing credentials: {e}")
+            logger.error(f"Error listing credentials: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
 
     async def _list_credentials_from_db(self) -> web.Response:
@@ -409,16 +416,14 @@ class CredentialsRoutes:
 
     async def api_get_stats(self, request: web.Request) -> web.Response:
         """Get credential statistics"""
-        if self.secrets_manager and self.db_pool:
-            if not self.secrets_manager._initialized:
-                self.secrets_manager.initialize(self.db_pool)
-            stats = await self.secrets_manager.get_stats()
-            return web.json_response(stats)
+        logger.info(f"Getting stats - db_pool: {self.db_pool is not None}")
 
         if not self.db_pool:
             return web.json_response({
                 'total': 0,
                 'configured': 0,
+                'required': 0,
+                'required_configured': 0,
                 'is_bootstrap_mode': True,
                 'has_encryption': bool(os.getenv('ENCRYPTION_KEY'))
             })
@@ -445,7 +450,7 @@ class CredentialsRoutes:
                 })
 
         except Exception as e:
-            logger.error(f"Error getting stats: {e}")
+            logger.error(f"Error getting stats: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
 
     async def api_get_categories(self, request: web.Request) -> web.Response:
