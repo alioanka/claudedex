@@ -420,6 +420,71 @@
         .btn, button, a.btn, input[type="button"], input[type="submit"] {
             pointer-events: auto !important;
         }
+
+        /* ============================================= */
+        /* NUCLEAR FIX: Ensure nothing blocks clicks    */
+        /* ============================================= */
+        /* Make all non-interactive elements pass through clicks */
+        .main-content,
+        .main-content .container,
+        .main-content .container-fluid,
+        .main-content .row,
+        .main-content .col,
+        .main-content [class*="col-"],
+        .main-content div:not(.btn):not(.nav-link):not(.modal):not(.dropdown-menu) {
+            pointer-events: none;
+        }
+
+        /* Re-enable pointer events for all interactive elements */
+        .main-content a,
+        .main-content button,
+        .main-content input,
+        .main-content select,
+        .main-content textarea,
+        .main-content label,
+        .main-content .btn,
+        .main-content .nav-link,
+        .main-content .nav-item,
+        .main-content .nav-pills,
+        .main-content .nav-tabs,
+        .main-content .form-control,
+        .main-content .form-select,
+        .main-content .form-check,
+        .main-content .form-check-input,
+        .main-content .dropdown,
+        .main-content .dropdown-menu,
+        .main-content .dropdown-item,
+        .main-content .card,
+        .main-content .endpoint-card,
+        .main-content .stat-card,
+        .main-content .settings-section,
+        .main-content .table,
+        .main-content .table-responsive,
+        .main-content table,
+        .main-content tr,
+        .main-content td,
+        .main-content th,
+        .main-content .alert,
+        .main-content .badge,
+        .main-content [onclick],
+        .main-content [data-bs-toggle],
+        .main-content [data-bs-target],
+        .main-content [role="button"],
+        .main-content [tabindex] {
+            pointer-events: auto !important;
+        }
+
+        /* Ensure overlays are truly hidden */
+        .modal-overlay,
+        .sidebar-overlay,
+        #modalOverlay,
+        #sidebarOverlay {
+            pointer-events: none !important;
+        }
+        .modal-overlay.active,
+        .sidebar-overlay.active {
+            pointer-events: auto !important;
+        }
     </style>
 
     {% block extra_css %}{% endblock %}
