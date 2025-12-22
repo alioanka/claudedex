@@ -61,7 +61,10 @@ CREDENTIAL_MAPPINGS = {
 
     # Database
     'DB_PASSWORD': {'category': 'database', 'subcategory': 'postgres', 'is_sensitive': True, 'is_required': True, 'display_name': 'Database Password'},
+    'DATABASE_URL': {'category': 'database', 'subcategory': 'postgres', 'is_sensitive': True, 'is_required': True, 'display_name': 'Database URL'},
+    'DB_URL': {'category': 'database', 'subcategory': 'postgres', 'is_sensitive': True, 'display_name': 'Database URL (alternate)'},
     'REDIS_PASSWORD': {'category': 'database', 'subcategory': 'redis', 'is_sensitive': True, 'display_name': 'Redis Password'},
+    'REDIS_URL': {'category': 'database', 'subcategory': 'redis', 'is_sensitive': True, 'display_name': 'Redis URL'},
 
     # API
     'GOPLUS_API_KEY': {'category': 'api', 'subcategory': 'goplus', 'is_sensitive': True, 'display_name': 'GoPlus API Key'},
