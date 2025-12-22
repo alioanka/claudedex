@@ -422,68 +422,51 @@
         }
 
         /* ============================================= */
-        /* NUCLEAR FIX: Ensure nothing blocks clicks    */
+        /* OVERLAY FIX: Hide overlays on desktop        */
         /* ============================================= */
-        /* Make all non-interactive elements pass through clicks */
-        .main-content,
-        .main-content .container,
-        .main-content .container-fluid,
-        .main-content .row,
-        .main-content .col,
-        .main-content [class*="col-"],
-        .main-content div:not(.btn):not(.nav-link):not(.modal):not(.dropdown-menu) {
-            pointer-events: none;
-        }
-
-        /* Re-enable pointer events for all interactive elements */
-        .main-content a,
-        .main-content button,
-        .main-content input,
-        .main-content select,
-        .main-content textarea,
-        .main-content label,
-        .main-content .btn,
-        .main-content .nav-link,
-        .main-content .nav-item,
-        .main-content .nav-pills,
-        .main-content .nav-tabs,
-        .main-content .form-control,
-        .main-content .form-select,
-        .main-content .form-check,
-        .main-content .form-check-input,
-        .main-content .dropdown,
-        .main-content .dropdown-menu,
-        .main-content .dropdown-item,
-        .main-content .card,
-        .main-content .endpoint-card,
-        .main-content .stat-card,
-        .main-content .settings-section,
-        .main-content .table,
-        .main-content .table-responsive,
-        .main-content table,
-        .main-content tr,
-        .main-content td,
-        .main-content th,
-        .main-content .alert,
-        .main-content .badge,
-        .main-content [onclick],
-        .main-content [data-bs-toggle],
-        .main-content [data-bs-target],
-        .main-content [role="button"],
-        .main-content [tabindex] {
-            pointer-events: auto !important;
-        }
-
-        /* Ensure overlays are truly hidden */
-        .modal-overlay,
-        .sidebar-overlay,
-        #modalOverlay,
-        #sidebarOverlay {
+        /* Sidebar overlay - MUST be hidden on desktop by default */
+        .sidebar-overlay {
+            display: none !important;
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
             pointer-events: none !important;
+            z-index: -1 !important;
+            opacity: 0 !important;
+            visibility: hidden !important;
+        }
+        .sidebar-overlay.active {
+            display: block !important;
+            pointer-events: auto !important;
+            z-index: 999 !important;
+            opacity: 1 !important;
+            visibility: visible !important;
+            background: rgba(0, 0, 0, 0.5) !important;
+        }
+
+        /* Modal overlay - ensure it's completely hidden when not active */
+        .modal-overlay,
+        #modalOverlay {
+            display: none !important;
+            pointer-events: none !important;
+            z-index: -1 !important;
+            opacity: 0 !important;
+            visibility: hidden !important;
         }
         .modal-overlay.active,
-        .sidebar-overlay.active {
+        #modalOverlay.active {
+            display: block !important;
             pointer-events: auto !important;
+            z-index: 1100 !important;
+            opacity: 1 !important;
+            visibility: visible !important;
+        }
+
+        /* Ensure notification panel doesn't block when off-screen */
+        .notification-panel:not(.active) {
+            pointer-events: none !important;
         }
     </style>
 

@@ -1193,6 +1193,29 @@ select.form-control {
 .gap-2 { gap: var(--spacing-md); }
 .gap-3 { gap: var(--spacing-lg); }
 
+/* Sidebar Overlay - MUST be hidden by default on ALL screen sizes */
+.sidebar-overlay {
+    display: none !important;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+    z-index: -1;
+    opacity: 0;
+    visibility: hidden;
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.sidebar-overlay.active {
+    display: block !important;
+    pointer-events: auto;
+    z-index: 999;
+    opacity: 1;
+    visibility: visible;
+}
+
 /* Responsive - Mobile Support */
 @media (max-width: 1024px) {
     .sidebar {
@@ -1208,20 +1231,9 @@ select.form-control {
         margin-left: 0 !important;
     }
 
-    /* Overlay when sidebar is open */
+    /* Overlay when sidebar is open on mobile */
     .sidebar-overlay {
-        display: none;
-        position: fixed;
         top: var(--topnav-height);
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: rgba(0, 0, 0, 0.5);
-        z-index: 999;
-    }
-
-    .sidebar-overlay.active {
-        display: block;
     }
 }
 
