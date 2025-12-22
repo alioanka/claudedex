@@ -443,20 +443,18 @@
         }
 
         /* ============================================= */
-        /* OVERLAY FIX: Hide overlays on desktop        */
+        /* OVERLAY FIX: Hide ALL overlays completely    */
         /* ============================================= */
-        /* Sidebar overlay - MUST be hidden on desktop by default */
+
+        /* Sidebar overlay - MUST be hidden by default */
         .sidebar-overlay {
             display: none !important;
-            position: fixed !important;
-            top: 0 !important;
-            left: 0 !important;
-            right: 0 !important;
-            bottom: 0 !important;
             pointer-events: none !important;
-            z-index: -1 !important;
+            z-index: -9999 !important;
             opacity: 0 !important;
             visibility: hidden !important;
+            width: 0 !important;
+            height: 0 !important;
         }
         .sidebar-overlay.active {
             display: block !important;
@@ -464,17 +462,24 @@
             z-index: 999 !important;
             opacity: 1 !important;
             visibility: visible !important;
+            width: 100% !important;
+            height: 100% !important;
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
             background: rgba(0, 0, 0, 0.5) !important;
         }
 
-        /* Modal overlay - ensure it's completely hidden when not active */
+        /* Modal overlay - MUST be hidden by default */
         .modal-overlay,
         #modalOverlay {
             display: none !important;
             pointer-events: none !important;
-            z-index: -1 !important;
+            z-index: -9999 !important;
             opacity: 0 !important;
             visibility: hidden !important;
+            width: 0 !important;
+            height: 0 !important;
         }
         .modal-overlay.active,
         #modalOverlay.active {
@@ -483,11 +488,48 @@
             z-index: 1100 !important;
             opacity: 1 !important;
             visibility: visible !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
         }
 
-        /* Ensure notification panel doesn't block when off-screen */
+        /* Custom confirm modal (NOT Bootstrap) - MUST be hidden by default */
+        #confirmModal:not(.active) {
+            display: none !important;
+            pointer-events: none !important;
+            z-index: -9999 !important;
+            opacity: 0 !important;
+            visibility: hidden !important;
+            width: 0 !important;
+            height: 0 !important;
+            transform: translate(-50%, -50%) scale(0) !important;
+        }
+        #confirmModal.active {
+            display: flex !important;
+            pointer-events: auto !important;
+            z-index: 1200 !important;
+            opacity: 1 !important;
+            visibility: visible !important;
+            width: auto !important;
+            height: auto !important;
+        }
+
+        /* Notification panel - hide when not active */
         .notification-panel:not(.active) {
             pointer-events: none !important;
+            transform: translateX(100%) !important;
+        }
+
+        /* Toast container - should never block */
+        .toast-container,
+        #toastContainer {
+            pointer-events: none !important;
+        }
+        .toast-container > *,
+        #toastContainer > * {
+            pointer-events: auto !important;
         }
     </style>
 
@@ -997,16 +1039,16 @@
     <!-- Modal Overlay -->
     <div class="modal-overlay" id="modalOverlay"></div>
     
-    <!-- Confirmation Modal -->
-    <div class="modal" id="confirmModal">
-        <div class="modal-content">
-            <div class="modal-header">
+    <!-- Confirmation Modal (Custom - NOT Bootstrap) -->
+    <div class="custom-modal" id="confirmModal">
+        <div class="custom-modal-content">
+            <div class="custom-modal-header">
                 <h3 id="confirmTitle">Confirm Action</h3>
             </div>
-            <div class="modal-body">
+            <div class="custom-modal-body">
                 <p id="confirmMessage">Are you sure?</p>
             </div>
-            <div class="modal-footer">
+            <div class="custom-modal-footer">
                 <button class="btn btn-secondary" id="confirmCancel">Cancel</button>
                 <button class="btn btn-primary" id="confirmOk">Confirm</button>
             </div>

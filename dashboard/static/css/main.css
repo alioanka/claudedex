@@ -905,6 +905,8 @@ select.form-control {
 
 /* Modals - Custom modal system (NOT Bootstrap) */
 /* Use .custom-modal class for non-Bootstrap modals */
+
+/* Modal overlay - hidden by default */
 .modal-overlay {
     position: fixed;
     top: 0;
@@ -912,56 +914,91 @@ select.form-control {
     right: 0;
     bottom: 0;
     background-color: rgba(0, 0, 0, 0.7);
-    display: none;
-    z-index: 1100;
-    pointer-events: none;
+    display: none !important;
+    z-index: -9999;
+    pointer-events: none !important;
+    opacity: 0;
+    visibility: hidden;
+    width: 0;
+    height: 0;
 }
 
 .modal-overlay.active {
-    display: block;
-    pointer-events: auto;
+    display: block !important;
+    z-index: 1100;
+    pointer-events: auto !important;
+    opacity: 1;
+    visibility: visible;
+    width: 100vw;
+    height: 100vh;
 }
 
-/* Custom modal (non-Bootstrap) - scoped to avoid conflicts */
-.custom-modal,
-#confirmModal {
+/* Custom modal (non-Bootstrap) - MUST be hidden by default */
+.custom-modal {
     position: fixed;
     top: 50%;
     left: 50%;
-    transform: translate(-50%, -50%) scale(0.9);
+    transform: translate(-50%, -50%) scale(0);
     background-color: var(--bg-secondary);
     border-radius: var(--radius-lg);
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-    max-width: 800px;
+    max-width: 500px;
     width: 90%;
     max-height: 90vh;
-    z-index: 1200;
+    z-index: -9999;
     opacity: 0;
-    pointer-events: none;
-    transition: all var(--transition-normal);
-    display: flex;
+    pointer-events: none !important;
+    visibility: hidden;
+    display: none !important;
     flex-direction: column;
 }
 
-.custom-modal.active,
-#confirmModal.active {
+.custom-modal.active {
+    display: flex !important;
     transform: translate(-50%, -50%) scale(1);
     opacity: 1;
-    pointer-events: all;
+    pointer-events: auto !important;
+    visibility: visible;
+    z-index: 1200;
 }
 
-.modal-header {
+/* Custom modal internal structure */
+.custom-modal-content {
+    background-color: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+.custom-modal-header {
     padding: var(--spacing-lg);
     border-bottom: 1px solid var(--border-color);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+    background: var(--bg-tertiary);
 }
 
-.modal-header h3 {
+.custom-modal-header h3 {
     margin: 0;
+    color: var(--text-primary);
 }
 
+.custom-modal-body {
+    padding: var(--spacing-lg);
+}
+
+.custom-modal-body p {
+    margin: 0;
+    color: var(--text-secondary);
+}
+
+.custom-modal-footer {
+    padding: var(--spacing-lg);
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-md);
+    background: var(--bg-tertiary);
+}
+
+/* Legacy modal classes (for backward compatibility) */
 .close-modal {
     background: none;
     border: none;
@@ -981,18 +1018,6 @@ select.form-control {
 .close-modal:hover {
     background-color: var(--bg-tertiary);
     color: var(--text-primary);
-}
-
-.modal-body {
-    padding: var(--spacing-lg);
-}
-
-.modal-footer {
-    padding: var(--spacing-lg);
-    border-top: 1px solid var(--border-color);
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--spacing-md);
 }
 
 /* Toast Notifications */
