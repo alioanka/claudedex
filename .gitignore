@@ -46,14 +46,25 @@ wallet_keys.json
 mnemonic.txt
 seed_phrase.txt
 
-# Environment Files
+# Environment Files - CRITICAL SECURITY
 .env
 .env.local
 .env.production
 .env.development
 .env.test
+.env.final
+.env.backup
 .env.*
 !.env.example
+
+# Encryption Keys - NEVER COMMIT
+.encryption_key
+*.encryption_key
+encryption.key
+master.key
+.master_key
+*.fernet
+secrets.key
 
 # Database
 *.db
