@@ -128,7 +128,7 @@ class CredentialsRoutes:
             template = self.jinja_env.get_template('settings_credentials.html')
             html = template.render(
                 page_title='Secure Credentials',
-                current_page='credentials'
+                page='credentials'
             )
             return web.Response(text=html, content_type='text/html')
         except Exception as e:
