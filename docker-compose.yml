@@ -17,6 +17,8 @@ version: '3.8'
 # - DEX_MODULE_ENABLED=true/false
 # - FUTURES_MODULE_ENABLED=true/false
 # - SOLANA_MODULE_ENABLED=true/false
+#
+# 🔐 SECURITY: All credentials are loaded from .env file (not tracked in git)
 
 services:
   postgres:
@@ -24,18 +26,20 @@ services:
     container_name: trading-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: tradingbot
-      POSTGRES_USER: bot_user
-      POSTGRES_PASSWORD: bot_password
+      POSTGRES_DB: ${DB_NAME:-tradingbot}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    env_file:
+      - .env
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
-      - "127.0.0.1:5432:5432"  # CHANGE THIS LINE - Add 127.0.0.1:
+      - "127.0.0.1:5432:5432"
     networks:
       - trading-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U bot_user -d tradingbot"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-bot_user} -d ${DB_NAME:-tradingbot}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -59,32 +63,31 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: trading-bot
-    # restart: unless-stopped
-    restart: "no"  # Changed to prevent restart loop
+    restart: "no"
     ports:
       - "8080:8080"
     environment:
-      DATABASE_URL: postgresql://bot_user:bot_password@postgres:5432/tradingbot
+      # Database connection - uses variables from .env
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-tradingbot}
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_NAME: tradingbot
-      DB_USER: bot_user
-      DB_PASSWORD: bot_password
+      DB_NAME: ${DB_NAME:-tradingbot}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
       LOG_LEVEL: INFO
       PYTHONUNBUFFERED: "1"
-      # Module Enable/Disable Flags (Modular Architecture)
-      # Set to 'true' to enable each trading module
+      # Module Enable/Disable Flags
       DEX_MODULE_ENABLED: ${DEX_MODULE_ENABLED:-true}
       FUTURES_MODULE_ENABLED: ${FUTURES_MODULE_ENABLED:-false}
       SOLANA_MODULE_ENABLED: ${SOLANA_MODULE_ENABLED:-false}
     env_file:
-      - .env  # REDIS_URL and REDIS_PASSWORD are loaded from .env
+      - .env
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
       - ./config:/app/config
-      - ./models:/app/models  # Persist trained ML models across Docker restarts
-      - ./.encryption_key:/app/.encryption_key:ro  # Read-only for security
+      - ./models:/app/models
+      - ./.encryption_key:/app/.encryption_key:ro
     depends_on:
       postgres:
         condition: service_healthy
