@@ -163,9 +163,11 @@ class CredentialsRoutes:
     async def _list_credentials_from_db(self) -> web.Response:
         """List credentials directly from database"""
         if not self.db_pool:
+            logger.warning("_list_credentials_from_db called but db_pool is None")
             return web.json_response([])
 
         try:
+            logger.info("Fetching credentials from database...")
             async with self.db_pool.acquire() as conn:
                 rows = await conn.fetch("""
                     SELECT id, key_name, display_name, description, category,
@@ -177,6 +179,8 @@ class CredentialsRoutes:
                     WHERE is_active = TRUE
                     ORDER BY category, key_name
                 """)
+
+                logger.info(f"Found {len(rows)} credentials in database")
 
                 result = []
                 for row in rows:
@@ -190,6 +194,8 @@ class CredentialsRoutes:
 
                     result.append(cred)
 
+                configured_count = sum(1 for c in result if c.get('has_value'))
+                logger.info(f"Returning {len(result)} credentials ({configured_count} configured)")
                 return web.json_response(result)
 
         except Exception as e:
