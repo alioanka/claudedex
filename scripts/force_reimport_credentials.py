@@ -137,8 +137,12 @@ async def force_reimport():
         logger.error(f"❌ Encryption key validation failed: {e}")
         return
 
-    # Connect to database
-    db_url = os.getenv('DATABASE_URL', 'postgresql://bot_user:bot_password@postgres:5432/tradingbot')
+    # Connect to database using Docker secrets or environment
+    try:
+        from security.docker_secrets import get_database_url
+        db_url = get_database_url()
+    except ImportError:
+        db_url = os.getenv('DATABASE_URL', 'postgresql://bot_user@postgres:5432/tradingbot')
     try:
         conn = await asyncpg.connect(db_url)
         logger.info("✅ Connected to database")
