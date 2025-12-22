@@ -114,7 +114,15 @@ class TradeExecutor:
         if self.evm_private_key and not self.dry_run:
             try:
                 from web3 import Web3
-                rpc_url = os.getenv('WEB3_PROVIDER_URL') or os.getenv('ETHEREUM_RPC_URL')
+                # Get RPC from Pool Engine with fallback
+                rpc_url = None
+                try:
+                    from config.rpc_provider import RPCProvider
+                    rpc_url = RPCProvider.get_rpc_sync('ETHEREUM_RPC')
+                except Exception:
+                    pass
+                if not rpc_url:
+                    rpc_url = os.getenv('WEB3_PROVIDER_URL') or os.getenv('ETHEREUM_RPC_URL')
                 if rpc_url:
                     self.w3 = Web3(Web3.HTTPProvider(rpc_url))
                     if self.w3.is_connected():

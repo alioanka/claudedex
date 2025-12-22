@@ -7,13 +7,37 @@ import os
 from typing import Dict, List
 
 
+def _get_solana_rpc() -> str:
+    """Get Solana RPC URL from Pool Engine or env fallback"""
+    try:
+        from config.rpc_provider import RPCProvider
+        url = RPCProvider.get_rpc_sync('SOLANA_RPC')
+        if url:
+            return url
+    except Exception:
+        pass
+    return os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
+
+
+def _get_solana_ws() -> str:
+    """Get Solana WebSocket URL from Pool Engine or env fallback"""
+    try:
+        from config.rpc_provider import RPCProvider
+        url = RPCProvider.get_rpc_sync('SOLANA_WS')
+        if url:
+            return url
+    except Exception:
+        pass
+    return os.getenv('SOLANA_WS_URL', 'wss://api.mainnet-beta.solana.com')
+
+
 class SolanaConfig:
     """Configuration for Solana trading"""
 
     def __init__(self):
-        # Solana connection
-        self.rpc_url = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
-        self.ws_url = os.getenv('SOLANA_WS_URL', 'wss://api.mainnet-beta.solana.com')
+        # Solana connection - use Pool Engine with env fallback
+        self.rpc_url = _get_solana_rpc()
+        self.ws_url = _get_solana_ws()
         self.commitment = os.getenv('SOLANA_COMMITMENT', 'confirmed')
 
         # Wallet - SOLANA MODULE uses separate wallet from DEX module

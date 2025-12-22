@@ -1324,5 +1324,165 @@ class ConfigManager:
             elif isinstance(data, list):
                 return [encrypt_recursive(item) for item in data]
             return data
-        
+
         return encrypt_recursive(config_data.copy())
+
+    # =========================================================================
+    # RPC/API Pool Engine Integration
+    # =========================================================================
+
+    _pool_engine = None
+
+    @classmethod
+    async def get_pool_engine(cls):
+        """Get the Pool Engine singleton instance"""
+        if cls._pool_engine is None:
+            try:
+                from config.pool_engine import PoolEngine
+                cls._pool_engine = await PoolEngine.get_instance()
+            except Exception as e:
+                logger.error(f"Failed to get Pool Engine: {e}")
+        return cls._pool_engine
+
+    @classmethod
+    async def get_rpc_url(cls, provider_type: str) -> Optional[str]:
+        """
+        Get an RPC URL from the Pool Engine
+
+        Args:
+            provider_type: Type of provider (e.g., 'ETHEREUM_RPC', 'SOLANA_RPC')
+
+        Returns:
+            str: RPC URL or None if not available
+        """
+        pool = await cls.get_pool_engine()
+        if pool and pool.initialized:
+            return await pool.get_endpoint(provider_type)
+
+        # Fallback to .env
+        return cls._get_env_rpc_fallback(provider_type)
+
+    @classmethod
+    async def get_rpc_urls(cls, provider_type: str, max_count: int = 5) -> List[str]:
+        """
+        Get multiple RPC URLs from the Pool Engine
+
+        Args:
+            provider_type: Type of provider
+            max_count: Maximum number of URLs to return
+
+        Returns:
+            List[str]: List of RPC URLs
+        """
+        pool = await cls.get_pool_engine()
+        if pool and pool.initialized:
+            return await pool.get_endpoint_with_fallbacks(provider_type, max_count)
+
+        # Fallback to .env
+        fallback = cls._get_env_rpc_fallback(provider_type)
+        return [fallback] if fallback else []
+
+    @classmethod
+    async def get_api_key(cls, provider_type: str) -> Optional[str]:
+        """
+        Get an API key/URL from the Pool Engine
+
+        Args:
+            provider_type: Type of provider (e.g., 'HELIUS_API', 'JUPITER_API')
+
+        Returns:
+            str: API key or URL or None if not available
+        """
+        pool = await cls.get_pool_engine()
+        if pool and pool.initialized:
+            return await pool.get_endpoint(provider_type)
+
+        # Fallback to .env
+        return cls._get_env_api_fallback(provider_type)
+
+    @classmethod
+    async def report_rpc_rate_limit(
+        cls,
+        provider_type: str,
+        url: str,
+        duration_seconds: int = 300
+    ) -> None:
+        """
+        Report that an RPC endpoint has been rate limited
+
+        Args:
+            provider_type: Type of provider
+            url: The endpoint URL that was rate limited
+            duration_seconds: How long until rate limit resets
+        """
+        pool = await cls.get_pool_engine()
+        if pool and pool.initialized:
+            await pool.report_rate_limit(provider_type, url, duration_seconds)
+
+    @classmethod
+    async def report_rpc_success(
+        cls,
+        provider_type: str,
+        url: str,
+        latency_ms: int = None
+    ) -> None:
+        """Report successful request to an RPC endpoint"""
+        pool = await cls.get_pool_engine()
+        if pool and pool.initialized:
+            await pool.report_success(provider_type, url, latency_ms)
+
+    @classmethod
+    async def report_rpc_failure(
+        cls,
+        provider_type: str,
+        url: str,
+        error_type: str = None,
+        error_message: str = None
+    ) -> None:
+        """Report failed request to an RPC endpoint"""
+        pool = await cls.get_pool_engine()
+        if pool and pool.initialized:
+            await pool.report_failure(provider_type, url, error_type, error_message)
+
+    @staticmethod
+    def _get_env_rpc_fallback(provider_type: str) -> Optional[str]:
+        """Get RPC URL fallback from environment variables"""
+        env_mappings = {
+            'ETHEREUM_RPC': ['ETHEREUM_RPC_URL', 'WEB3_PROVIDER_URL'],
+            'BSC_RPC': ['BSC_RPC_URL'],
+            'POLYGON_RPC': ['POLYGON_RPC_URL'],
+            'ARBITRUM_RPC': ['ARBITRUM_RPC_URL'],
+            'BASE_RPC': ['BASE_RPC_URL'],
+            'SOLANA_RPC': ['SOLANA_RPC_URL'],
+            'MONAD_RPC': ['MONAD_RPC_URL'],
+            'PULSECHAIN_RPC': ['PULSECHAIN_RPC_URL'],
+            'FANTOM_RPC': ['FANTOM_RPC_URL'],
+            'CRONOS_RPC': ['CRONOS_RPC_URL'],
+            'AVALANCHE_RPC': ['AVALANCHE_RPC_URL'],
+            'SOLANA_WS': ['SOLANA_WS_URL'],
+        }
+
+        env_vars = env_mappings.get(provider_type, [])
+        for env_var in env_vars:
+            value = os.getenv(env_var)
+            if value and value not in ('null', 'None', ''):
+                return value
+        return None
+
+    @staticmethod
+    def _get_env_api_fallback(provider_type: str) -> Optional[str]:
+        """Get API key/URL fallback from environment variables"""
+        env_mappings = {
+            'GOPLUS_API': 'GOPLUS_API_KEY',
+            '1INCH_API': '1INCH_API_KEY',
+            'HELIUS_API': 'HELIUS_API_KEY',
+            'ETHERSCAN_API': 'ETHERSCAN_API_KEY',
+            'JUPITER_API': 'JUPITER_API_URL',
+        }
+
+        env_var = env_mappings.get(provider_type)
+        if env_var:
+            value = os.getenv(env_var)
+            if value and value not in ('null', 'None', ''):
+                return value
+        return None

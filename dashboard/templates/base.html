@@ -1,15 +1,26 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-bs-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}DexScreener Trading Bot{% endblock %}</title>
-    
-    <!-- CSS -->
+
+    <!-- Bootstrap 5 CSS - MUST be loaded BEFORE custom CSS so our styles take precedence -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+          rel="stylesheet"
+          crossorigin="anonymous">
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+          crossorigin="anonymous"
+          referrerpolicy="no-referrer">
+
+    <!-- Custom CSS - Loaded AFTER Bootstrap to override Bootstrap styles -->
     <link rel="stylesheet" href="/static/css/main.css">
     <link rel="stylesheet" href="/static/css/dashboard.css">
     <link rel="stylesheet" href="/static/css/charts.css">
-    
+
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"
             crossorigin="anonymous"></script>
@@ -18,11 +29,9 @@
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"
             crossorigin="anonymous"></script>
 
-    <!-- Font Awesome -->
-    <link rel="stylesheet"
-          href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
-          crossorigin="anonymous"
-          referrerpolicy="no-referrer">
+    <!-- Bootstrap 5 JS Bundle (includes Popper) -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
+            crossorigin="anonymous"></script>
 
     <!-- Submenu Styling -->
     <style>
@@ -136,6 +145,391 @@
 
         .btn-danger:hover {
             background: #dc2626;
+        }
+
+        /* ============================================= */
+        /* Bootstrap Overrides for Dark Theme           */
+        /* These apply to ALL pages using Bootstrap     */
+        /* ============================================= */
+
+        /* Fix Bootstrap tabs/pills - ensure they're clickable */
+        .nav-pills,
+        .nav-tabs {
+            position: relative !important;
+            z-index: 100 !important;
+            display: flex !important;
+            flex-wrap: wrap !important;
+            isolation: isolate !important;
+        }
+        .nav-pills .nav-item,
+        .nav-tabs .nav-item {
+            position: relative !important;
+            z-index: 100 !important;
+            pointer-events: auto !important;
+        }
+        .nav-pills .nav-link,
+        .nav-tabs .nav-link {
+            color: var(--text-secondary, #94a3b8) !important;
+            border-radius: 8px !important;
+            padding: 10px 20px !important;
+            margin-right: 8px !important;
+            margin-bottom: 8px !important;
+            cursor: pointer !important;
+            pointer-events: auto !important;
+            position: relative !important;
+            z-index: 100 !important;
+            background: var(--bg-tertiary, #1e293b) !important;
+            border: 1px solid var(--border-color, #334155) !important;
+            display: inline-block !important;
+            text-decoration: none !important;
+            user-select: none !important;
+        }
+        .nav-pills .nav-link.active,
+        .nav-tabs .nav-link.active {
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6) !important;
+            color: white !important;
+            border-color: transparent !important;
+        }
+        .nav-pills .nav-link:hover:not(.active),
+        .nav-tabs .nav-link:hover:not(.active) {
+            background: var(--bg-hover, #2d3548) !important;
+            color: var(--text-primary, #f1f5f9) !important;
+            border-color: var(--text-secondary, #94a3b8) !important;
+        }
+        /* Ensure nothing blocks the nav container */
+        .mb-4:has(.nav-pills),
+        .mb-4:has(.nav-tabs) {
+            position: relative !important;
+            z-index: 50 !important;
+        }
+
+        /* Fix Bootstrap buttons - ensure proper styling and clickability */
+        .btn {
+            cursor: pointer !important;
+            pointer-events: auto !important;
+            position: relative !important;
+            z-index: 1 !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            padding: 0.5rem 1rem !important;
+            min-height: 38px !important;
+        }
+        .btn-outline-secondary {
+            color: var(--text-secondary, #94a3b8) !important;
+            border: 1px solid var(--border-color, #475569) !important;
+            background: transparent !important;
+        }
+        .btn-outline-secondary:hover {
+            color: var(--text-primary, #f1f5f9) !important;
+            background: var(--bg-tertiary, #1e293b) !important;
+            border-color: var(--text-secondary, #94a3b8) !important;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
+            border: none !important;
+            color: white !important;
+        }
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
+        }
+        .btn-outline-primary {
+            color: #3b82f6 !important;
+            border: 1px solid #3b82f6 !important;
+            background: transparent !important;
+        }
+        .btn-outline-primary:hover {
+            color: white !important;
+            background: #3b82f6 !important;
+        }
+
+        /* Fix Bootstrap close button in modals */
+        .btn-close {
+            width: 2rem !important;
+            height: 2rem !important;
+            padding: 0.75rem !important;
+            cursor: pointer !important;
+            pointer-events: auto !important;
+            position: relative !important;
+            z-index: 9999 !important;
+            opacity: 1 !important;
+            filter: invert(1) !important;
+            box-sizing: content-box !important;
+            background-size: 1rem !important;
+            border-radius: 4px !important;
+        }
+        .btn-close:hover {
+            opacity: 0.75 !important;
+            background-color: rgba(255, 255, 255, 0.1) !important;
+        }
+        /* Ensure modal header doesn't block close button */
+        .modal-header {
+            position: relative !important;
+            z-index: 1 !important;
+        }
+        .modal-header .btn-close {
+            position: absolute !important;
+            right: 1rem !important;
+            top: 50% !important;
+            transform: translateY(-50%) !important;
+            margin: 0 !important;
+        }
+        .modal-header .modal-title {
+            padding-right: 3rem !important;
+        }
+
+        /* Fix Bootstrap modal - override custom modal styles from main.css */
+        .modal.fade {
+            opacity: 1 !important;
+            pointer-events: none !important;
+            display: none !important;
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            transform: none !important;
+            background: transparent !important;
+        }
+        .modal.fade.show {
+            display: block !important;
+            pointer-events: auto !important;
+        }
+        .modal-dialog {
+            position: relative !important;
+            margin: 1.75rem auto !important;
+            max-width: 500px !important;
+            transform: none !important;
+            pointer-events: auto !important;
+        }
+        .modal-dialog.modal-lg {
+            max-width: 800px !important;
+        }
+        .modal-backdrop {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            background-color: rgba(0, 0, 0, 0.5) !important;
+            z-index: 1040 !important;
+        }
+        .modal-backdrop.show {
+            opacity: 1 !important;
+        }
+        .modal {
+            z-index: 1050 !important;
+        }
+
+        /* FIX: Ensure toast container doesn't block clicks */
+        .toast-container {
+            pointer-events: none !important;
+        }
+        .toast {
+            pointer-events: auto !important;
+        }
+
+        /* FIX: Ensure hidden overlays don't block clicks */
+        .user-menu-dropdown:not(.active),
+        .notification-panel:not(.active),
+        .sidebar-overlay:not(.active),
+        .modal-overlay:not(.active) {
+            pointer-events: none !important;
+        }
+
+        .user-menu-dropdown.active,
+        .notification-panel.active {
+            pointer-events: auto !important;
+        }
+
+        /* Modal content styling for dark theme */
+        .modal-content {
+            background: var(--bg-secondary, #1e293b) !important;
+            border: 1px solid var(--border-color, #334155) !important;
+            color: var(--text-primary, #f1f5f9) !important;
+        }
+        .modal-header {
+            border-bottom: 1px solid var(--border-color, #334155) !important;
+            background: var(--bg-tertiary, #0f172a) !important;
+        }
+        .modal-header .modal-title {
+            color: var(--text-primary, #f1f5f9) !important;
+        }
+        .modal-header .btn-close {
+            filter: invert(1) !important;
+        }
+        .modal-footer {
+            border-top: 1px solid var(--border-color, #334155) !important;
+            background: var(--bg-tertiary, #0f172a) !important;
+        }
+        .modal-body {
+            background: var(--bg-secondary, #1e293b) !important;
+        }
+        .modal .form-control,
+        .modal .form-select {
+            background: var(--bg-tertiary, #0f172a) !important;
+            border-color: var(--border-color, #334155) !important;
+            color: var(--text-primary, #f1f5f9) !important;
+        }
+        .modal .form-control::placeholder {
+            color: var(--text-secondary, #94a3b8) !important;
+        }
+        .modal .form-label {
+            color: var(--text-primary, #f1f5f9) !important;
+        }
+        .modal .form-check-label {
+            color: var(--text-primary, #f1f5f9) !important;
+        }
+        .modal .text-muted {
+            color: var(--text-secondary, #94a3b8) !important;
+        }
+
+        /* Bootstrap form controls for dark theme */
+        .form-control,
+        .form-select {
+            background-color: var(--bg-tertiary, #242b3d) !important;
+            border-color: var(--border-color, #2d3548) !important;
+            color: var(--text-primary, #e8eaed) !important;
+        }
+        .form-control:focus,
+        .form-select:focus {
+            background-color: var(--bg-tertiary, #242b3d) !important;
+            border-color: var(--accent-primary, #3b82f6) !important;
+            color: var(--text-primary, #e8eaed) !important;
+            box-shadow: 0 0 0 0.25rem rgba(59, 130, 246, 0.25) !important;
+        }
+
+        /* Tab content styling */
+        .tab-content {
+            position: relative !important;
+            z-index: 1 !important;
+        }
+        .tab-pane {
+            display: none;
+        }
+        .tab-pane.active {
+            display: block;
+        }
+
+        /* Fix flex layout issues - prevent invisible overlapping */
+        .d-flex.justify-content-between > div:first-child {
+            flex: 0 1 auto !important;
+            max-width: 60% !important;
+            overflow: hidden !important;
+        }
+        .d-flex.justify-content-between > div:last-child {
+            flex: 0 0 auto !important;
+            position: relative !important;
+            z-index: 10 !important;
+        }
+
+        /* Ensure all clickable elements are above text content */
+        .d-flex.gap-2 {
+            position: relative !important;
+            z-index: 10 !important;
+        }
+
+        /* Fix header/title areas not blocking buttons */
+        h1, h2, h3, h4, h5, h6, p {
+            pointer-events: none;
+        }
+        h1 a, h2 a, h3 a, h4 a, h5 a, h6 a, p a {
+            pointer-events: auto;
+        }
+
+        /* Ensure buttons inside headings/paragraphs are clickable */
+        .btn, button, a.btn, input[type="button"], input[type="submit"] {
+            pointer-events: auto !important;
+        }
+
+        /* ============================================= */
+        /* OVERLAY FIX: Hide ALL overlays completely    */
+        /* ============================================= */
+
+        /* Sidebar overlay - MUST be hidden by default */
+        .sidebar-overlay {
+            display: none !important;
+            pointer-events: none !important;
+            z-index: -9999 !important;
+            opacity: 0 !important;
+            visibility: hidden !important;
+            width: 0 !important;
+            height: 0 !important;
+        }
+        .sidebar-overlay.active {
+            display: block !important;
+            pointer-events: auto !important;
+            z-index: 999 !important;
+            opacity: 1 !important;
+            visibility: visible !important;
+            width: 100% !important;
+            height: 100% !important;
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            background: rgba(0, 0, 0, 0.5) !important;
+        }
+
+        /* Modal overlay - MUST be hidden by default */
+        .modal-overlay,
+        #modalOverlay {
+            display: none !important;
+            pointer-events: none !important;
+            z-index: -9999 !important;
+            opacity: 0 !important;
+            visibility: hidden !important;
+            width: 0 !important;
+            height: 0 !important;
+        }
+        .modal-overlay.active,
+        #modalOverlay.active {
+            display: block !important;
+            pointer-events: auto !important;
+            z-index: 1100 !important;
+            opacity: 1 !important;
+            visibility: visible !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+        }
+
+        /* Custom confirm modal (NOT Bootstrap) - MUST be hidden by default */
+        #confirmModal:not(.active) {
+            display: none !important;
+            pointer-events: none !important;
+            z-index: -9999 !important;
+            opacity: 0 !important;
+            visibility: hidden !important;
+            width: 0 !important;
+            height: 0 !important;
+            transform: translate(-50%, -50%) scale(0) !important;
+        }
+        #confirmModal.active {
+            display: flex !important;
+            pointer-events: auto !important;
+            z-index: 1200 !important;
+            opacity: 1 !important;
+            visibility: visible !important;
+            width: auto !important;
+            height: auto !important;
+        }
+
+        /* Notification panel - hide when not active */
+        .notification-panel:not(.active) {
+            pointer-events: none !important;
+            transform: translateX(100%) !important;
+        }
+
+        /* Toast container - should never block */
+        .toast-container,
+        #toastContainer {
+            pointer-events: none !important;
+        }
+        .toast-container > *,
+        #toastContainer > * {
+            pointer-events: auto !important;
         }
     </style>
 
@@ -562,6 +956,14 @@
                 </a>
             </li>
 
+            <!-- RPC/API Pool Config -->
+            <li class="nav-item {% if page == 'settings_rpc_api' %}active{% endif %}">
+                <a href="/settings/rpc-api">
+                    <i class="fas fa-server"></i>
+                    <span>RPC/API Config</span>
+                </a>
+            </li>
+
             <!-- Trade Simulator -->
             <li class="nav-item {% if page == 'simulator' %}active{% endif %}">
                 <a href="/simulator">
@@ -637,16 +1039,16 @@
     <!-- Modal Overlay -->
     <div class="modal-overlay" id="modalOverlay"></div>
     
-    <!-- Confirmation Modal -->
-    <div class="modal" id="confirmModal">
-        <div class="modal-content">
-            <div class="modal-header">
+    <!-- Confirmation Modal (Custom - NOT Bootstrap) -->
+    <div class="custom-modal" id="confirmModal">
+        <div class="custom-modal-content">
+            <div class="custom-modal-header">
                 <h3 id="confirmTitle">Confirm Action</h3>
             </div>
-            <div class="modal-body">
+            <div class="custom-modal-body">
                 <p id="confirmMessage">Are you sure?</p>
             </div>
-            <div class="modal-footer">
+            <div class="custom-modal-footer">
                 <button class="btn btn-secondary" id="confirmCancel">Cancel</button>
                 <button class="btn btn-primary" id="confirmOk">Confirm</button>
             </div>

@@ -55,7 +55,8 @@ class DashboardEndpoints:
                  db_manager = None,
                  module_manager = None,
                  analytics_engine = None,
-                 advanced_alerts = None):
+                 advanced_alerts = None,
+                 pool_engine = None):
 
         self.host = host
         self.port = port
@@ -75,6 +76,9 @@ class DashboardEndpoints:
         # Phase 4: Advanced Analytics & Alerts
         self.analytics_engine = analytics_engine
         self.advanced_alerts = advanced_alerts
+
+        # RPC/API Pool Engine
+        self.pool_engine = pool_engine
 
         # Authentication
         self.auth_service = None
@@ -120,6 +124,9 @@ class DashboardEndpoints:
         if self.analytics_engine:
             self._setup_analytics_routes()
 
+        # Setup RPC/API Pool routes
+        self._setup_rpc_pool_routes()
+
         # Register startup handler for auth initialization
         self.app.on_startup.append(self._on_startup)
 
@@ -143,13 +150,33 @@ class DashboardEndpoints:
         return obj
 
     async def _on_startup(self, app):
-        """Called when app starts - initialize auth system before serving requests"""
+        """Called when app starts - initialize auth system and Pool Engine before serving requests"""
         try:
             logger.info("=" * 80)
             logger.info("🚀 APP STARTUP HANDLER CALLED")
             logger.info("=" * 80)
+
+            # Initialize authentication system
             logger.info("Initializing authentication system...")
             await self._initialize_auth_async()
+
+            # Initialize Pool Engine if not already initialized
+            if self.pool_engine and not getattr(self.pool_engine, 'initialized', False):
+                logger.info("Initializing Pool Engine...")
+                try:
+                    db_pool = None
+                    if hasattr(self, 'db') and hasattr(self.db, 'pool'):
+                        db_pool = self.db.pool
+                    await self.pool_engine.initialize(db_pool)
+                    # Update routes handler
+                    if hasattr(self, '_rpc_pool_routes'):
+                        await self._rpc_pool_routes.set_pool_engine(self.pool_engine)
+                    logger.info("✅ Pool Engine initialized successfully")
+                except Exception as pe:
+                    logger.error(f"Failed to initialize Pool Engine: {pe}", exc_info=True)
+            elif not self.pool_engine:
+                logger.warning("⚠️ Pool Engine not available - RPC config page will have limited functionality")
+
         except Exception as e:
             logger.error(f"❌ CRITICAL: Startup handler failed: {e}", exc_info=True)
 
@@ -521,6 +548,57 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Failed to setup analytics routes: {e}", exc_info=True)
             logger.warning("Module management will not be available")
+
+    def _setup_rpc_pool_routes(self):
+        """Setup RPC/API Pool management routes"""
+        try:
+            from monitoring.rpc_pool_routes import RPCPoolRoutes
+
+            logger.info("Setting up RPC/API Pool routes...")
+
+            # Initialize Pool Engine if not provided
+            if not self.pool_engine:
+                logger.warning("Pool Engine not provided, attempting to initialize...")
+                try:
+                    from config.pool_engine import PoolEngine
+                    self.pool_engine = PoolEngine.get_instance_sync()
+                    # Schedule async initialization
+                    if hasattr(self, 'db') and hasattr(self.db, 'pool'):
+                        import asyncio
+                        asyncio.create_task(self._init_pool_engine_async())
+                    logger.info("Pool Engine instance created (async init pending)")
+                except Exception as pe:
+                    logger.error(f"Failed to create Pool Engine: {pe}")
+                    self.pool_engine = None
+
+            # Create RPC pool routes handler
+            rpc_pool_routes = RPCPoolRoutes(
+                pool_engine=self.pool_engine,
+                jinja_env=self.jinja_env
+            )
+
+            # Store reference for later initialization
+            self._rpc_pool_routes = rpc_pool_routes
+
+            # Setup all RPC pool routes
+            rpc_pool_routes.setup_routes(self.app)
+
+            logger.info("RPC/API Pool routes initialized")
+
+        except Exception as e:
+            logger.error(f"Failed to setup RPC pool routes: {e}", exc_info=True)
+
+    async def _init_pool_engine_async(self):
+        """Initialize Pool Engine asynchronously after startup"""
+        try:
+            if self.pool_engine and hasattr(self, 'db') and hasattr(self.db, 'pool'):
+                await self.pool_engine.initialize(self.db.pool)
+                # Update the routes handler with initialized pool engine
+                if hasattr(self, '_rpc_pool_routes'):
+                    await self._rpc_pool_routes.set_pool_engine(self.pool_engine)
+                logger.info("✅ Pool Engine initialized asynchronously")
+        except Exception as e:
+            logger.error(f"Failed to initialize Pool Engine async: {e}", exc_info=True)
 
     def _setup_fallback_module_routes(self):
         """Setup fallback routes for module pages when module_manager is not available"""

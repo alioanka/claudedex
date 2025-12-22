@@ -406,7 +406,18 @@ class ArbitrageEngine:
         self.db_pool = db_pool
         self.is_running = False
         self.w3 = None
-        self.rpc_url = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
+
+        # Get RPC URL from config (passed from main_arbitrage), Pool Engine, or env fallback
+        self.rpc_url = config.get('rpc_url')
+        if not self.rpc_url:
+            try:
+                from config.rpc_provider import RPCProvider
+                self.rpc_url = RPCProvider.get_rpc_sync('ETHEREUM_RPC')
+            except Exception:
+                pass
+        if not self.rpc_url:
+            self.rpc_url = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
+
         self.private_key = os.getenv('PRIVATE_KEY')
         self.wallet_address = os.getenv('WALLET_ADDRESS')
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')

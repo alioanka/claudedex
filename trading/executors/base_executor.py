@@ -137,16 +137,18 @@ class TradeExecutor(BaseExecutor):
             logger.critical("🔥 EXECUTOR IN LIVE MODE - REAL MONEY AT RISK 🔥")
         
         # Web3 setup
-        from utils.constants import Chain, CHAIN_RPC_URLS
+        from utils.constants import Chain, get_chain_rpc_urls
         self.chain_id = config.get('chain_id', 1)
 
         try:
             chain_enum = Chain(self.chain_id)
-            rpc_urls = CHAIN_RPC_URLS.get(chain_enum)
+            rpc_urls = get_chain_rpc_urls(chain_enum, max_count=3)
             if not rpc_urls or not rpc_urls[0]:
                 raise ValueError(f"No RPC URL found for chain ID {self.chain_id}")
             provider_url = rpc_urls[0]
             self.w3 = Web3(Web3.HTTPProvider(provider_url))
+            self._rpc_urls = rpc_urls  # Store for fallback
+            self._current_rpc_index = 0
             logger.info(f"Connecting to {chain_enum.name} via {provider_url[:40]}...")
         except (ValueError, KeyError) as e:
             logger.error(f"Failed to configure Web3 provider: {e}")
@@ -240,10 +242,27 @@ class TradeExecutor(BaseExecutor):
 
     async def initialize(self):
         """Initialize EVM executor"""
-        # Test Web3 connection
-        if not self.w3.is_connected():
-            raise ConnectionError("Web3 connection failed")
-        
+        # Test Web3 connection - try multiple RPCs if first fails
+        connected = False
+        last_error = None
+
+        for attempt, rpc_url in enumerate(self._rpc_urls):
+            try:
+                self.w3 = Web3(Web3.HTTPProvider(rpc_url))
+                if self.w3.is_connected():
+                    connected = True
+                    self._current_rpc_index = attempt
+                    logger.info(f"✅ Web3 connected via {rpc_url[:50]}...")
+                    break
+                else:
+                    logger.warning(f"RPC not responding: {rpc_url[:50]}...")
+            except Exception as e:
+                last_error = e
+                logger.warning(f"RPC connection failed: {rpc_url[:50]}... ({e})")
+
+        if not connected:
+            raise ConnectionError(f"Web3 connection failed - tried {len(self._rpc_urls)} RPC(s). Last error: {last_error}")
+
         # ✅ FIXED: Initialize nonce
         self.current_nonce = self.w3.eth.get_transaction_count(self.wallet_address)
         

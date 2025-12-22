@@ -44,8 +44,14 @@ class EVMListener:
         self.is_configured = False  # Track if EVM is properly configured
         self.known_pairs = set()
 
-        # Get RPC URL from config or env
+        # Get RPC URL from config, Pool Engine, or env
         self.rpc_url = config.get('web3', {}).get('provider_url')
+        if not self.rpc_url:
+            try:
+                from config.rpc_provider import RPCProvider
+                self.rpc_url = RPCProvider.get_rpc_sync('ETHEREUM_RPC')
+            except Exception:
+                pass
         if not self.rpc_url:
             import os
             self.rpc_url = os.getenv('WEB3_PROVIDER_URL')

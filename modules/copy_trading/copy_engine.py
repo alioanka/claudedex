@@ -87,15 +87,30 @@ class CopyTradeExecutor:
         self.session: Optional[aiohttp.ClientSession] = None
         self.price_fetcher = PriceFetcher()
 
-        # Solana credentials
-        self.solana_rpc_url = os.getenv('SOLANA_RPC_URL')
+        # Solana credentials - use Pool Engine with fallback
+        self.solana_rpc_url = None
+        try:
+            from config.rpc_provider import RPCProvider
+            self.solana_rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC')
+        except Exception:
+            pass
+        if not self.solana_rpc_url:
+            self.solana_rpc_url = os.getenv('SOLANA_RPC_URL')
+
         self.solana_private_key = os.getenv('SOLANA_MODULE_PRIVATE_KEY')
         self.solana_wallet = os.getenv('SOLANA_MODULE_WALLET')
 
-        # EVM credentials
+        # EVM credentials - use Pool Engine with fallback
         self.evm_private_key = os.getenv('PRIVATE_KEY')
         self.evm_wallet = os.getenv('WALLET_ADDRESS')
-        self.web3_provider = os.getenv('WEB3_PROVIDER_URL')
+        self.web3_provider = None
+        try:
+            from config.rpc_provider import RPCProvider
+            self.web3_provider = RPCProvider.get_rpc_sync('ETHEREUM_RPC')
+        except Exception:
+            pass
+        if not self.web3_provider:
+            self.web3_provider = os.getenv('WEB3_PROVIDER_URL')
 
     async def initialize(self):
         """Initialize executor"""
@@ -327,9 +342,18 @@ class CopyTradingEngine:
         self.db_pool = db_pool
         self.is_running = False
         self.targets = []  # Initialize empty, load from DB
-        self.etherscan_api_key = os.getenv('ETHERSCAN_API_KEY')
-        self.solana_rpc_url = os.getenv('SOLANA_RPC_URL')
-        self.helius_api_key = os.getenv('HELIUS_API_KEY')
+
+        # Use Pool Engine with .env fallback
+        try:
+            from config.rpc_provider import RPCProvider
+            self.etherscan_api_key = RPCProvider.get_api_sync('ETHERSCAN_API') or os.getenv('ETHERSCAN_API_KEY')
+            self.solana_rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC') or os.getenv('SOLANA_RPC_URL')
+            self.helius_api_key = RPCProvider.get_api_sync('HELIUS_API') or os.getenv('HELIUS_API_KEY')
+        except ImportError:
+            self.etherscan_api_key = os.getenv('ETHERSCAN_API_KEY')
+            self.solana_rpc_url = os.getenv('SOLANA_RPC_URL')
+            self.helius_api_key = os.getenv('HELIUS_API_KEY')
+
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
         # Copy trading settings
@@ -478,11 +502,22 @@ class CopyTradingEngine:
         if not evm_wallets:
             return 0
 
-        for wallet in evm_wallets:
-            try:
-                url = f"https://api.etherscan.io/api?module=account&action=txlist&address={wallet}&startblock=0&endblock=99999999&sort=desc&apikey={self.etherscan_api_key}"
-                async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession() as session:
+            for wallet in evm_wallets:
+                try:
+                    url = f"https://api.etherscan.io/api?module=account&action=txlist&address={wallet}&startblock=0&endblock=99999999&sort=desc&apikey={self.etherscan_api_key}"
                     async with session.get(url) as resp:
+                        # Handle rate limiting
+                        if resp.status == 429:
+                            logger.warning("⚠️ Etherscan rate limited - backing off")
+                            try:
+                                from config.rpc_provider import RPCProvider
+                                await RPCProvider.report_rate_limit('ETHERSCAN_API', 'etherscan.io', 300)
+                            except Exception:
+                                pass
+                            await asyncio.sleep(30)
+                            continue
+
                         data = await resp.json()
                         if data['status'] == '1' and data.get('result'):
                             latest_tx = data['result'][0]
@@ -498,8 +533,8 @@ class CopyTradingEngine:
                                 self._known_tx_hashes.add(tx_hash)
                                 if await self._analyze_and_copy_evm(latest_tx):
                                     trades_copied += 1
-            except Exception as e:
-                logger.debug(f"Failed to check EVM wallet {wallet}: {e}")
+                except Exception as e:
+                    logger.debug(f"Failed to check EVM wallet {wallet}: {e}")
 
         return trades_copied
 
@@ -514,18 +549,34 @@ class CopyTradingEngine:
         if not sol_wallets:
             return 0
 
-        for wallet in sol_wallets:
-            try:
-                # Use getSignaturesForAddress to get recent transactions
-                payload = {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getSignaturesForAddress",
-                    "params": [wallet, {"limit": 5}]
-                }
+        async with aiohttp.ClientSession() as session:
+            for wallet in sol_wallets:
+                try:
+                    # Use getSignaturesForAddress to get recent transactions
+                    payload = {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "getSignaturesForAddress",
+                        "params": [wallet, {"limit": 5}]
+                    }
 
-                async with aiohttp.ClientSession() as session:
                     async with session.post(self.solana_rpc_url, json=payload) as resp:
+                        # Handle rate limiting
+                        if resp.status == 429:
+                            logger.warning("⚠️ Solana RPC rate limited - backing off")
+                            try:
+                                from config.rpc_provider import RPCProvider
+                                await RPCProvider.report_rate_limit('SOLANA_RPC', self.solana_rpc_url, 300)
+                                # Try to get a new RPC endpoint
+                                new_url = await RPCProvider.get_rpc('SOLANA_RPC')
+                                if new_url and new_url != self.solana_rpc_url:
+                                    self.solana_rpc_url = new_url
+                                    logger.info("🔄 Rotated to new Solana RPC")
+                            except Exception:
+                                pass
+                            await asyncio.sleep(30)
+                            continue
+
                         if resp.status != 200:
                             continue
 
@@ -551,8 +602,8 @@ class CopyTradingEngine:
                                 if await self._analyze_and_copy_solana(wallet, sig):
                                     trades_copied += 1
 
-            except Exception as e:
-                logger.debug(f"Failed to check Solana wallet {wallet}: {e}")
+                except Exception as e:
+                    logger.debug(f"Failed to check Solana wallet {wallet}: {e}")
 
         return trades_copied
 

@@ -41,10 +41,25 @@ class SolanaListener:
         self.config = config
         self.rpc_url = config.get('solana', {}).get('rpc_url')
 
+        # Use Pool Engine with fallback
+        if not self.rpc_url:
+            try:
+                from config.rpc_provider import RPCProvider
+                self.rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC')
+            except Exception:
+                pass
         if not self.rpc_url:
             self.rpc_url = os.getenv('SOLANA_RPC_URL')
 
-        self.helius_api_key = os.getenv('HELIUS_API_KEY')
+        # Get Helius API from Pool Engine or env
+        self.helius_api_key = None
+        try:
+            from config.rpc_provider import RPCProvider
+            self.helius_api_key = RPCProvider.get_api_sync('HELIUS_API')
+        except Exception:
+            pass
+        if not self.helius_api_key:
+            self.helius_api_key = os.getenv('HELIUS_API_KEY')
 
         # Polling configuration (credit-efficient)
         self.poll_interval = int(os.getenv('SNIPER_POLL_INTERVAL', '30'))  # seconds
@@ -176,7 +191,18 @@ class SolanaListener:
         try:
             async with session.post(self.rpc_url, json=payload, timeout=15) as response:
                 if response.status == 429:
-                    logger.warning("⚠️ Rate limited - backing off")
+                    logger.warning("⚠️ Rate limited - backing off and reporting to pool")
+                    # Report to Pool Engine for rotation
+                    try:
+                        from config.rpc_provider import RPCProvider
+                        await RPCProvider.report_rate_limit('SOLANA_RPC', self.rpc_url, 300)
+                        # Get new RPC URL for next request
+                        new_url = await RPCProvider.get_rpc('SOLANA_RPC')
+                        if new_url and new_url != self.rpc_url:
+                            self.rpc_url = new_url
+                            logger.info(f"🔄 Rotated to new RPC endpoint")
+                    except Exception:
+                        pass
                     await asyncio.sleep(60)
                     return []
 

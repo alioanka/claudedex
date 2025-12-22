@@ -296,12 +296,14 @@ a:hover {
     transform: translateY(-10px);
     transition: all var(--transition-fast);
     z-index: 1001;
+    pointer-events: none; /* Fix: Prevent clicking hidden menu items */
 }
 
 .user-menu-dropdown.active {
     opacity: 1;
     visibility: visible;
     transform: translateY(0);
+    pointer-events: auto; /* Fix: Enable clicks when active */
 }
 
 .user-menu-item {
@@ -901,7 +903,10 @@ select.form-control {
     display: block;
 }
 
-/* Modals */
+/* Modals - Custom modal system (NOT Bootstrap) */
+/* Use .custom-modal class for non-Bootstrap modals */
+
+/* Modal overlay - hidden by default */
 .modal-overlay {
     position: fixed;
     top: 0;
@@ -909,55 +914,91 @@ select.form-control {
     right: 0;
     bottom: 0;
     background-color: rgba(0, 0, 0, 0.7);
-    display: none;
-    z-index: 1100;
+    display: none !important;
+    z-index: -9999;
+    pointer-events: none !important;
+    opacity: 0;
+    visibility: hidden;
+    width: 0;
+    height: 0;
 }
 
 .modal-overlay.active {
-    display: block;
+    display: block !important;
+    z-index: 1100;
+    pointer-events: auto !important;
+    opacity: 1;
+    visibility: visible;
+    width: 100vw;
+    height: 100vh;
 }
 
-.modal {
+/* Custom modal (non-Bootstrap) - MUST be hidden by default */
+.custom-modal {
     position: fixed;
     top: 50%;
     left: 50%;
-    transform: translate(-50%, -50%) scale(0.9);
+    transform: translate(-50%, -50%) scale(0);
     background-color: var(--bg-secondary);
     border-radius: var(--radius-lg);
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-    max-width: 800px; /* Increased max-width */
+    max-width: 500px;
     width: 90%;
-    max-height: 90vh; /* Added max-height */
-    z-index: 1200;
+    max-height: 90vh;
+    z-index: -9999;
     opacity: 0;
-    pointer-events: none;
-    transition: all var(--transition-normal);
-    display: flex; /* Added for flex layout */
-    flex-direction: column; /* Added for flex layout */
+    pointer-events: none !important;
+    visibility: hidden;
+    display: none !important;
+    flex-direction: column;
 }
 
-.modal-body {
-    overflow-y: auto; /* Make body scrollable */
-}
-
-.modal.active {
+.custom-modal.active {
+    display: flex !important;
     transform: translate(-50%, -50%) scale(1);
     opacity: 1;
-    pointer-events: all;
+    pointer-events: auto !important;
+    visibility: visible;
+    z-index: 1200;
 }
 
-.modal-header {
+/* Custom modal internal structure */
+.custom-modal-content {
+    background-color: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+.custom-modal-header {
     padding: var(--spacing-lg);
     border-bottom: 1px solid var(--border-color);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+    background: var(--bg-tertiary);
 }
 
-.modal-header h3 {
+.custom-modal-header h3 {
     margin: 0;
+    color: var(--text-primary);
 }
 
+.custom-modal-body {
+    padding: var(--spacing-lg);
+}
+
+.custom-modal-body p {
+    margin: 0;
+    color: var(--text-secondary);
+}
+
+.custom-modal-footer {
+    padding: var(--spacing-lg);
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-md);
+    background: var(--bg-tertiary);
+}
+
+/* Legacy modal classes (for backward compatibility) */
 .close-modal {
     background: none;
     border: none;
@@ -979,18 +1020,6 @@ select.form-control {
     color: var(--text-primary);
 }
 
-.modal-body {
-    padding: var(--spacing-lg);
-}
-
-.modal-footer {
-    padding: var(--spacing-lg);
-    border-top: 1px solid var(--border-color);
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--spacing-md);
-}
-
 /* Toast Notifications */
 .toast-container {
     position: fixed;
@@ -1000,9 +1029,11 @@ select.form-control {
     display: flex;
     flex-direction: column;
     gap: var(--spacing-sm);
+    pointer-events: none; /* Fix: Allow clicks to pass through container */
 }
 
 .toast {
+    pointer-events: auto; /* Fix: Enable clicks on actual toast messages */
     background-color: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
@@ -1099,10 +1130,12 @@ select.form-control {
     z-index: 1000;
     display: flex;
     flex-direction: column;
+    pointer-events: none; /* Fix: Prevent clicking when hidden/translated */
 }
 
 .notification-panel.active {
     transform: translateX(0);
+    pointer-events: auto; /* Fix: Enable clicks when active */
 }
 
 .panel-header {
@@ -1191,6 +1224,29 @@ select.form-control {
 .gap-2 { gap: var(--spacing-md); }
 .gap-3 { gap: var(--spacing-lg); }
 
+/* Sidebar Overlay - MUST be hidden by default on ALL screen sizes */
+.sidebar-overlay {
+    display: none !important;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+    z-index: -1;
+    opacity: 0;
+    visibility: hidden;
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.sidebar-overlay.active {
+    display: block !important;
+    pointer-events: auto;
+    z-index: 999;
+    opacity: 1;
+    visibility: visible;
+}
+
 /* Responsive - Mobile Support */
 @media (max-width: 1024px) {
     .sidebar {
@@ -1206,20 +1262,9 @@ select.form-control {
         margin-left: 0 !important;
     }
 
-    /* Overlay when sidebar is open */
+    /* Overlay when sidebar is open on mobile */
     .sidebar-overlay {
-        display: none;
-        position: fixed;
         top: var(--topnav-height);
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: rgba(0, 0, 0, 0.5);
-        z-index: 999;
-    }
-
-    .sidebar-overlay.active {
-        display: block;
     }
 }
 
@@ -1289,55 +1334,9 @@ select.form-control {
 }
 
 /* ===== NOTIFICATION PANEL ===== */
-.notification-panel {
-    position: fixed;
-    top: var(--topnav-height, 60px);
-    right: -400px;
-    width: 400px;
-    height: calc(100vh - var(--topnav-height, 60px));
-    background-color: var(--bg-secondary);
-    border-left: 1px solid var(--border-color);
-    box-shadow: -2px 0 10px var(--shadow);
-    transition: right 0.3s ease;
-    z-index: 999;
-    overflow-y: auto;
-}
-
-.notification-panel.active {
-    right: 0;
-}
-
-.notification-panel .panel-header {
-    padding: 1rem;
-    border-bottom: 1px solid var(--border-color);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.notification-panel .panel-header h3 {
-    margin: 0;
-    font-size: 1.25rem;
-}
-
-.notification-panel .close-btn {
-    background: none;
-    border: none;
-    color: var(--text-primary);
-    font-size: 1.25rem;
-    cursor: pointer;
-    padding: 0.5rem;
-    border-radius: var(--radius-sm);
-    transition: background-color 0.2s;
-}
-
-.notification-panel .close-btn:hover {
-    background-color: var(--bg-hover);
-}
-
-.notification-panel .panel-content {
-    padding: 1rem;
-}
+/* Note: Duplicate .notification-panel definition removed.
+   The primary definition is above around line 1030.
+   Styles merged into primary definition if needed. */
 
 .notification-badge {
     position: absolute;

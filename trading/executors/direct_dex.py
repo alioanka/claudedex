@@ -106,23 +106,33 @@ class DirectDEXExecutor(BaseExecutor):
 
     async def initialize(self) -> None:
         """Initialize Web3 connections and contracts"""
+        from utils.constants import Chain, get_chain_rpc_url
+
         try:
             # Initialize Web3 for each chain
-            for chain, rpc_url in CHAIN_RPC_URLS.items():
-                w3 = Web3(Web3.HTTPProvider(rpc_url))
-                
-                # Add middleware for PoA chains
-                if chain in ['bsc', 'polygon']:
-                    w3.middleware_onion.inject(geth_poa_middleware, layer=0)
-                    
-                if w3.isConnected():
-                    self.w3_connections[chain] = w3
-                    logger.info(f"Connected to {chain} at block {w3.eth.block_number}")
-                    
-                    # Initialize DEX contracts for this chain
-                    await self._initialize_dex_contracts(chain, w3)
-                else:
-                    logger.warning(f"Failed to connect to {chain}")
+            for chain in Chain:
+                try:
+                    rpc_url = get_chain_rpc_url(chain)
+                    if not rpc_url:
+                        logger.debug(f"No RPC URL available for {chain.name}")
+                        continue
+
+                    w3 = Web3(Web3.HTTPProvider(rpc_url))
+
+                    # Add middleware for PoA chains
+                    if chain in [Chain.BSC, Chain.POLYGON]:
+                        w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+
+                    if w3.is_connected():
+                        self.w3_connections[chain] = w3
+                        logger.info(f"Connected to {chain.name} at block {w3.eth.block_number}")
+
+                        # Initialize DEX contracts for this chain
+                        await self._initialize_dex_contracts(chain, w3)
+                    else:
+                        logger.warning(f"Failed to connect to {chain.name}")
+                except Exception as chain_error:
+                    logger.warning(f"Error initializing {chain.name}: {chain_error}")
                     
         except Exception as e:
             logger.error(f"Failed to initialize Direct DEX Executor: {e}")
