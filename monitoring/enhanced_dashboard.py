@@ -180,6 +180,14 @@ class DashboardEndpoints:
             elif not self.pool_engine:
                 logger.warning("⚠️ Pool Engine not available - RPC config page will have limited functionality")
 
+            # Update credentials routes with db_pool if it wasn't available during init
+            if hasattr(self, '_credentials_routes') and self._credentials_routes:
+                if hasattr(self, 'db') and hasattr(self.db, 'pool') and self.db.pool:
+                    if not self._credentials_routes.db_pool:
+                        logger.info("Updating credentials routes with db_pool...")
+                        self._credentials_routes.db_pool = self.db.pool
+                        logger.info("✅ Credentials routes updated with db_pool")
+
         except Exception as e:
             logger.error(f"❌ CRITICAL: Startup handler failed: {e}", exc_info=True)
 
@@ -618,10 +626,17 @@ class DashboardEndpoints:
             except ImportError:
                 logger.warning("SecureSecretsManager not available")
 
-            # Setup credentials routes
-            setup_credentials_routes(
+            # Get db_pool - try multiple sources
+            db_pool = self.db_pool
+            if not db_pool and hasattr(self, 'db') and self.db:
+                db_pool = getattr(self.db, 'pool', None)
+
+            logger.info(f"Credentials routes db_pool available: {db_pool is not None}")
+
+            # Setup credentials routes and store reference for later updates
+            self._credentials_routes = setup_credentials_routes(
                 app=self.app,
-                db_pool=self.db_pool,
+                db_pool=db_pool,
                 jinja_env=self.jinja_env,
                 secrets_manager=secrets_manager
             )
