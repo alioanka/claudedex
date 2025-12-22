@@ -87,21 +87,34 @@ async def import_env_secrets():
         print("   python scripts/generate_encryption_key.py")
         return False
 
-    # Connect to database
+    # Connect to database using Docker secrets or environment
     database_url = os.getenv("DATABASE_URL")
 
     if database_url:
         print(f"Connecting using DATABASE_URL...")
         conn = await asyncpg.connect(database_url)
     else:
-        print(f"Connecting using individual DB env vars...")
-        conn = await asyncpg.connect(
-            host=os.getenv("DB_HOST", "postgres"),
-            port=int(os.getenv("DB_PORT", 5432)),
-            database=os.getenv("DB_NAME", "tradingbot"),
-            user=os.getenv("DB_USER", "bot_user"),
-            password=os.getenv("DB_PASSWORD", "bot_password")
-        )
+        # Try Docker secrets first
+        try:
+            from security.docker_secrets import get_db_credentials
+            db_creds = get_db_credentials()
+            print(f"Connecting using Docker secrets...")
+            conn = await asyncpg.connect(
+                host=db_creds['host'],
+                port=int(db_creds['port']),
+                database=db_creds['name'],
+                user=db_creds['user'],
+                password=db_creds['password']
+            )
+        except ImportError:
+            print(f"Connecting using individual DB env vars...")
+            conn = await asyncpg.connect(
+                host=os.getenv("DB_HOST", "postgres"),
+                port=int(os.getenv("DB_PORT", 5432)),
+                database=os.getenv("DB_NAME", "tradingbot"),
+                user=os.getenv("DB_USER", "bot_user"),
+                password=os.getenv("DB_PASSWORD", "")
+            )
 
     print("✅ Connected to database")
     print()

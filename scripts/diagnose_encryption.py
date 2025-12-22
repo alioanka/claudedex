@@ -69,13 +69,25 @@ async def main():
         if database_url:
             conn = await asyncpg.connect(database_url)
         else:
-            conn = await asyncpg.connect(
-                host=os.getenv("DB_HOST", "postgres"),
-                port=int(os.getenv("DB_PORT", 5432)),
-                database=os.getenv("DB_NAME", "tradingbot"),
-                user=os.getenv("DB_USER", "bot_user"),
-                password=os.getenv("DB_PASSWORD", "bot_password")
-            )
+            # Try Docker secrets first
+            try:
+                from security.docker_secrets import get_db_credentials
+                db_creds = get_db_credentials()
+                conn = await asyncpg.connect(
+                    host=db_creds['host'],
+                    port=int(db_creds['port']),
+                    database=db_creds['name'],
+                    user=db_creds['user'],
+                    password=db_creds['password']
+                )
+            except ImportError:
+                conn = await asyncpg.connect(
+                    host=os.getenv("DB_HOST", "postgres"),
+                    port=int(os.getenv("DB_PORT", 5432)),
+                    database=os.getenv("DB_NAME", "tradingbot"),
+                    user=os.getenv("DB_USER", "bot_user"),
+                    password=os.getenv("DB_PASSWORD", "")
+                )
         print("   ✅ Connected to database")
     except Exception as e:
         print(f"   ❌ Database connection failed: {e}")
