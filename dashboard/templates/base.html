@@ -321,6 +321,14 @@
             z-index: 1050 !important;
         }
 
+        /* FIX: Ensure toast container doesn't block clicks */
+        .toast-container {
+            pointer-events: none !important;
+        }
+        .toast {
+            pointer-events: auto !important;
+        }
+
         /* Modal content styling for dark theme */
         .modal-content {
             background: var(--bg-secondary, #1e293b) !important;

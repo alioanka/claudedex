@@ -1002,9 +1002,11 @@ select.form-control {
     display: flex;
     flex-direction: column;
     gap: var(--spacing-sm);
+    pointer-events: none; /* Fix: Allow clicks to pass through container */
 }
 
 .toast {
+    pointer-events: auto; /* Fix: Enable clicks on actual toast messages */
     background-color: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
@@ -1303,55 +1305,9 @@ select.form-control {
 }
 
 /* ===== NOTIFICATION PANEL ===== */
-.notification-panel {
-    position: fixed;
-    top: var(--topnav-height, 60px);
-    right: -400px;
-    width: 400px;
-    height: calc(100vh - var(--topnav-height, 60px));
-    background-color: var(--bg-secondary);
-    border-left: 1px solid var(--border-color);
-    box-shadow: -2px 0 10px var(--shadow);
-    transition: right 0.3s ease;
-    z-index: 999;
-    overflow-y: auto;
-}
-
-.notification-panel.active {
-    right: 0;
-}
-
-.notification-panel .panel-header {
-    padding: 1rem;
-    border-bottom: 1px solid var(--border-color);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.notification-panel .panel-header h3 {
-    margin: 0;
-    font-size: 1.25rem;
-}
-
-.notification-panel .close-btn {
-    background: none;
-    border: none;
-    color: var(--text-primary);
-    font-size: 1.25rem;
-    cursor: pointer;
-    padding: 0.5rem;
-    border-radius: var(--radius-sm);
-    transition: background-color 0.2s;
-}
-
-.notification-panel .close-btn:hover {
-    background-color: var(--bg-hover);
-}
-
-.notification-panel .panel-content {
-    padding: 1rem;
-}
+/* Note: Duplicate .notification-panel definition removed.
+   The primary definition is above around line 1030.
+   Styles merged into primary definition if needed. */
 
 .notification-badge {
     position: absolute;
