@@ -3,22 +3,21 @@ version: '3.8'
 # ⚠️  IMPORTANT: Database Persistence
 # - Use: docker-compose up -d --build           (REBUILDS code, KEEPS data ✅)
 # - Avoid: docker-compose down -v               (WIPES ALL DATA including admin user & secrets ❌)
-# - If you accidentally wipe volumes:
-#   1. Run: docker exec -it trading-bot python scripts/import_env_secrets.py
-#   2. Admin user will be recreated with password: admin123
+#
+# 🔐 SECURITY SETUP (run once before first start):
+#   1. Create secrets directory: mkdir -p ./secrets && chmod 700 ./secrets
+#   2. Create secret files:
+#      echo "your_db_user" > ./secrets/db_user
+#      echo "your_strong_db_password" > ./secrets/db_password
+#      echo "your_strong_redis_password" > ./secrets/redis_password
+#   3. Set permissions: chmod 600 ./secrets/*
+#   4. Add to .gitignore: echo "secrets/" >> .gitignore
 #
 # 🏗️  MODULAR ARCHITECTURE:
-# - main.py: Orchestrator that manages all trading modules as separate processes
-# - main_dex.py: DEX Trading Module (EVM chains: ETH, BSC, Polygon, Arbitrum, Base)
-# - futures_trading/main_futures.py: Futures Trading Module (Binance/Bybit)
-# - solana_trading/main_solana.py: Solana Trading Module (Jupiter/Drift/Pump.fun)
-#
-# Enable/disable modules via .env file:
-# - DEX_MODULE_ENABLED=true/false
-# - FUTURES_MODULE_ENABLED=true/false
-# - SOLANA_MODULE_ENABLED=true/false
-#
-# 🔐 SECURITY: All credentials are loaded from .env file (not tracked in git)
+# - main.py: Orchestrator that manages all trading modules
+# - main_dex.py: DEX Trading Module (EVM chains)
+# - futures_trading/main_futures.py: Futures Trading Module
+# - solana_trading/main_solana.py: Solana Trading Module
 
 services:
   postgres:
@@ -26,11 +25,12 @@ services:
     container_name: trading-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${DB_NAME:-tradingbot}
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-    env_file:
-      - .env
+      POSTGRES_DB: tradingbot
+      POSTGRES_USER_FILE: /run/secrets/db_user
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_user
+      - db_password
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -39,7 +39,7 @@ services:
     networks:
       - trading-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-bot_user} -d ${DB_NAME:-tradingbot}"]
+      test: ["CMD-SHELL", "pg_isready -d tradingbot"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -48,9 +48,10 @@ services:
     image: redis:7-alpine
     container_name: trading-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
-    env_file:
-      - .env
+    command: >
+      sh -c "redis-server --appendonly yes --requirepass $$(cat /run/secrets/redis_password)"
+    secrets:
+      - redis_password
     volumes:
       - redis-data:/data
     ports:
@@ -67,21 +68,20 @@ services:
     ports:
       - "8080:8080"
     environment:
-      # Database connection - uses variables from .env
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-tradingbot}
+      # Non-sensitive configuration
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_NAME: ${DB_NAME:-tradingbot}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: tradingbot
       LOG_LEVEL: INFO
       PYTHONUNBUFFERED: "1"
       # Module Enable/Disable Flags
       DEX_MODULE_ENABLED: ${DEX_MODULE_ENABLED:-true}
       FUTURES_MODULE_ENABLED: ${FUTURES_MODULE_ENABLED:-false}
       SOLANA_MODULE_ENABLED: ${SOLANA_MODULE_ENABLED:-false}
-    env_file:
-      - .env
+    secrets:
+      - db_user
+      - db_password
+      - redis_password
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
@@ -95,6 +95,15 @@ services:
         condition: service_started
     networks:
       - trading-network
+
+# Docker secrets - stored in files, not in git
+secrets:
+  db_user:
+    file: ./secrets/db_user
+  db_password:
+    file: ./secrets/db_password
+  redis_password:
+    file: ./secrets/redis_password
 
 volumes:
   postgres-data:

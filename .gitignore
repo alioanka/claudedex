@@ -236,3 +236,6 @@ ssl_certificates/
 !.env.example
 !pytest.ini
 !.dockerignore
+# Docker secrets (infrastructure credentials)
+secrets/
+*.secret
