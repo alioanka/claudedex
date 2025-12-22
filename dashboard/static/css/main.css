@@ -296,12 +296,14 @@ a:hover {
     transform: translateY(-10px);
     transition: all var(--transition-fast);
     z-index: 1001;
+    pointer-events: none; /* Fix: Prevent clicking hidden menu items */
 }
 
 .user-menu-dropdown.active {
     opacity: 1;
     visibility: visible;
     transform: translateY(0);
+    pointer-events: auto; /* Fix: Enable clicks when active */
 }
 
 .user-menu-item {
@@ -1103,10 +1105,12 @@ select.form-control {
     z-index: 1000;
     display: flex;
     flex-direction: column;
+    pointer-events: none; /* Fix: Prevent clicking when hidden/translated */
 }
 
 .notification-panel.active {
     transform: translateX(0);
+    pointer-events: auto; /* Fix: Enable clicks when active */
 }
 
 .panel-header {
