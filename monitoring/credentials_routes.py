@@ -66,6 +66,8 @@ class CredentialsRoutes:
         'HELIUS_API_KEY': {'category': 'api', 'subcategory': 'helius', 'is_sensitive': True},
         'JUPITER_API_KEY': {'category': 'api', 'subcategory': 'jupiter', 'is_sensitive': True},
         'ETHERSCAN_API_KEY': {'category': 'api', 'subcategory': 'etherscan', 'is_sensitive': True},
+        'OPENAI_API_KEY': {'category': 'api', 'subcategory': 'openai', 'is_sensitive': True},
+        'ANTHROPIC_API_KEY': {'category': 'api', 'subcategory': 'anthropic', 'is_sensitive': True},
 
         # Notification
         'TELEGRAM_BOT_TOKEN': {'category': 'notification', 'subcategory': 'telegram', 'is_sensitive': True},
