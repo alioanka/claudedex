@@ -20,11 +20,35 @@ Routes:
 import os
 import logging
 import hashlib
+from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime
 from aiohttp import web
 
 logger = logging.getLogger(__name__)
+
+
+def get_encryption_key() -> Optional[str]:
+    """
+    Get encryption key from file first, then environment.
+    This matches how the bot reads the key.
+    """
+    # Try file first (preferred - matches bot behavior)
+    key_file = Path('.encryption_key')
+    if key_file.exists():
+        key = key_file.read_text().strip()
+        if key:
+            logger.debug("Using encryption key from .encryption_key file")
+            return key
+
+    # Fallback to environment
+    key = os.getenv('ENCRYPTION_KEY')
+    if key:
+        logger.debug("Using encryption key from environment")
+        return key
+
+    logger.warning("No encryption key found")
+    return None
 
 
 class CredentialsRoutes:
@@ -277,7 +301,7 @@ class CredentialsRoutes:
 
         try:
             # Get encryption key for encrypting
-            encryption_key = os.getenv('ENCRYPTION_KEY')
+            encryption_key = get_encryption_key()
             encrypted_value = data['value']
 
             if encryption_key and data.get('is_sensitive', True):
@@ -358,7 +382,7 @@ class CredentialsRoutes:
 
             # Handle value update separately (needs encryption)
             if 'value' in data and data['value']:
-                encryption_key = os.getenv('ENCRYPTION_KEY')
+                encryption_key = get_encryption_key()
                 encrypted_value = data['value']
 
                 if encryption_key:
@@ -436,7 +460,7 @@ class CredentialsRoutes:
                 'required': 0,
                 'required_configured': 0,
                 'is_bootstrap_mode': True,
-                'has_encryption': bool(os.getenv('ENCRYPTION_KEY'))
+                'has_encryption': bool(get_encryption_key())
             })
 
         try:
@@ -457,7 +481,7 @@ class CredentialsRoutes:
                     'required': row['required'],
                     'required_configured': row['required_configured'],
                     'is_bootstrap_mode': self.secrets_manager is None or getattr(self.secrets_manager, '_bootstrap_mode', True),
-                    'has_encryption': bool(os.getenv('ENCRYPTION_KEY'))
+                    'has_encryption': bool(get_encryption_key())
                 })
 
         except Exception as e:
@@ -495,7 +519,7 @@ class CredentialsRoutes:
         if not self.db_pool:
             return web.json_response({'error': 'Database not available'}, status=503)
 
-        encryption_key = os.getenv('ENCRYPTION_KEY')
+        encryption_key = get_encryption_key()
         fernet = None
         if encryption_key:
             try:
