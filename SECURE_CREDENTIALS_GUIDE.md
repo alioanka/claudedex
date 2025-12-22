@@ -107,7 +107,7 @@ During this phase, everything continues to work with .env. No changes to running
 
 ```bash
 # Inside Docker container
-docker exec -it claudedex_dex bash
+docker exec -it trading-bot bash
 
 # Run migration to create secure_credentials table
 psql -h postgres -U bot_user -d tradingbot -f migrations/012_add_secure_credentials_table.sql
@@ -119,7 +119,7 @@ python data/migration_manager.py
 #### Step 1.2: Verify Table Created
 
 ```bash
-docker exec -it claudedex_postgres psql -U bot_user -d tradingbot -c "\d secure_credentials"
+docker exec -it trading-postgres psql -U bot_user -d tradingbot -c "\d secure_credentials"
 ```
 
 ### Phase 2: Migrate Credentials to Database
@@ -128,21 +128,21 @@ docker exec -it claudedex_postgres psql -U bot_user -d tradingbot -c "\d secure_
 
 ```bash
 # Preview what will be migrated (no changes made)
-docker exec -it claudedex_dex python scripts/migrate_credentials_to_db.py --dry-run
+docker exec -it trading-bot python scripts/migrate_credentials_to_db.py --dry-run
 ```
 
 #### Step 2.2: Execute Migration
 
 ```bash
 # Actually migrate credentials
-docker exec -it claudedex_dex python scripts/migrate_credentials_to_db.py
+docker exec -it trading-bot python scripts/migrate_credentials_to_db.py
 ```
 
 #### Step 2.3: Verify Migration
 
 ```bash
 # Validate credentials in database
-docker exec -it claudedex_dex python scripts/migrate_credentials_to_db.py --validate
+docker exec -it trading-bot python scripts/migrate_credentials_to_db.py --validate
 ```
 
 ### Phase 3: Access Dashboard
@@ -261,7 +261,7 @@ secrets:
 services:
   dex:
     build: .
-    container_name: claudedex_dex
+    container_name: trading-bot
     restart: unless-stopped
     depends_on:
       - postgres
@@ -279,7 +279,7 @@ services:
 
   postgres:
     image: postgres:15
-    container_name: claudedex_postgres
+    container_name: trading-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: bot_user
@@ -290,7 +290,7 @@ services:
 
   redis:
     image: redis:7
-    container_name: claudedex_redis
+    container_name: trading-redis
     restart: unless-stopped
     command: redis-server --requirepass ${REDIS_PASSWORD}
 
@@ -302,7 +302,7 @@ volumes:
 
 ```bash
 # Enter the container
-docker exec -it claudedex_dex bash
+docker exec -it trading-bot bash
 
 # Run migration
 python scripts/migrate_credentials_to_db.py
@@ -423,7 +423,7 @@ git log --all -p | grep -i "api_key\|secret\|password\|private_key" | head -50
 
 ```bash
 # Connect to PostgreSQL
-docker exec -it claudedex_postgres psql -U postgres
+docker exec -it trading-postgres psql -U postgres
 
 # Change password
 ALTER USER bot_user WITH PASSWORD 'your_new_secure_password';
@@ -445,7 +445,7 @@ DB_PASSWORD=your_new_secure_password
 After restart, update the stored password:
 
 ```bash
-docker exec -it claudedex_dex python -c "
+docker exec -it trading-bot python -c "
 import asyncio
 from security.secrets_manager import secrets
 asyncio.run(secrets.set('DB_PASSWORD', 'your_new_secure_password', 'database'))
@@ -519,7 +519,7 @@ docker-compose up -d
 sleep 10
 
 # Run all migrations
-docker exec -it claudedex_dex python data/migration_manager.py
+docker exec -it trading-bot python data/migration_manager.py
 ```
 
 ### Step 7: Add Credentials via Dashboard
@@ -554,7 +554,7 @@ ls -la /secure/encryption.key
 sudo chmod 600 /secure/encryption.key
 
 # Verify mount in Docker
-docker exec -it claudedex_dex cat /run/secrets/encryption_key
+docker exec -it trading-bot cat /run/secrets/encryption_key
 ```
 
 ### Issue: "Database connection failed"
@@ -565,7 +565,7 @@ docker exec -it claudedex_dex cat /run/secrets/encryption_key
 docker ps | grep postgres
 
 # Check connection
-docker exec -it claudedex_postgres psql -U bot_user -d tradingbot -c "SELECT 1"
+docker exec -it trading-postgres psql -U bot_user -d tradingbot -c "SELECT 1"
 ```
 
 ### Issue: "Credential not found" but it's in .env
@@ -573,10 +573,10 @@ docker exec -it claudedex_postgres psql -U bot_user -d tradingbot -c "SELECT 1"
 **Solution:**
 ```bash
 # Check if migration was run
-docker exec -it claudedex_dex python scripts/migrate_credentials_to_db.py --validate
+docker exec -it trading-bot python scripts/migrate_credentials_to_db.py --validate
 
 # Re-run migration if needed
-docker exec -it claudedex_dex python scripts/migrate_credentials_to_db.py
+docker exec -it trading-bot python scripts/migrate_credentials_to_db.py
 ```
 
 ### Issue: Dashboard shows "Bootstrap Mode"
@@ -588,7 +588,7 @@ docker exec -it claudedex_dex python scripts/migrate_credentials_to_db.py
 2. Check database connection
 3. Verify credentials in database:
 ```bash
-docker exec -it claudedex_postgres psql -U bot_user -d tradingbot -c \
+docker exec -it trading-postgres psql -U bot_user -d tradingbot -c \
   "SELECT key_name, encrypted_value != 'PLACEHOLDER' as has_value FROM secure_credentials"
 ```
 
@@ -599,7 +599,7 @@ docker exec -it claudedex_postgres psql -U bot_user -d tradingbot -c \
 **Solution:**
 ```bash
 # Re-encrypt with new key
-docker exec -it claudedex_dex python scripts/migrate_credentials_to_db.py
+docker exec -it trading-bot python scripts/migrate_credentials_to_db.py
 ```
 
 ---
@@ -630,4 +630,4 @@ docker exec -it claudedex_dex python scripts/migrate_credentials_to_db.py
 For issues, create a GitHub issue with:
 - Error messages
 - Steps to reproduce
-- Docker logs (`docker logs claudedex_dex`)
+- Docker logs (`docker logs trading-bot`)
