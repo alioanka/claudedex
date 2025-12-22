@@ -159,11 +159,13 @@
             z-index: 100 !important;
             display: flex !important;
             flex-wrap: wrap !important;
+            isolation: isolate !important;
         }
         .nav-pills .nav-item,
         .nav-tabs .nav-item {
             position: relative !important;
             z-index: 100 !important;
+            pointer-events: auto !important;
         }
         .nav-pills .nav-link,
         .nav-tabs .nav-link {
@@ -171,6 +173,7 @@
             border-radius: 8px !important;
             padding: 10px 20px !important;
             margin-right: 8px !important;
+            margin-bottom: 8px !important;
             cursor: pointer !important;
             pointer-events: auto !important;
             position: relative !important;
@@ -179,6 +182,7 @@
             border: 1px solid var(--border-color, #334155) !important;
             display: inline-block !important;
             text-decoration: none !important;
+            user-select: none !important;
         }
         .nav-pills .nav-link.active,
         .nav-tabs .nav-link.active {
@@ -191,6 +195,12 @@
             background: var(--bg-hover, #2d3548) !important;
             color: var(--text-primary, #f1f5f9) !important;
             border-color: var(--text-secondary, #94a3b8) !important;
+        }
+        /* Ensure nothing blocks the nav container */
+        .mb-4:has(.nav-pills),
+        .mb-4:has(.nav-tabs) {
+            position: relative !important;
+            z-index: 50 !important;
         }
 
         /* Fix Bootstrap buttons - ensure proper styling and clickability */
@@ -235,19 +245,37 @@
 
         /* Fix Bootstrap close button in modals */
         .btn-close {
-            width: 1.5rem !important;
-            height: 1.5rem !important;
-            padding: 0.5rem !important;
+            width: 2rem !important;
+            height: 2rem !important;
+            padding: 0.75rem !important;
             cursor: pointer !important;
             pointer-events: auto !important;
             position: relative !important;
-            z-index: 10 !important;
+            z-index: 9999 !important;
             opacity: 1 !important;
             filter: invert(1) !important;
             box-sizing: content-box !important;
+            background-size: 1rem !important;
+            border-radius: 4px !important;
         }
         .btn-close:hover {
             opacity: 0.75 !important;
+            background-color: rgba(255, 255, 255, 0.1) !important;
+        }
+        /* Ensure modal header doesn't block close button */
+        .modal-header {
+            position: relative !important;
+            z-index: 1 !important;
+        }
+        .modal-header .btn-close {
+            position: absolute !important;
+            right: 1rem !important;
+            top: 50% !important;
+            transform: translateY(-50%) !important;
+            margin: 0 !important;
+        }
+        .modal-header .modal-title {
+            padding-right: 3rem !important;
         }
 
         /* Fix Bootstrap modal - override custom modal styles from main.css */
@@ -360,6 +388,37 @@
         }
         .tab-pane.active {
             display: block;
+        }
+
+        /* Fix flex layout issues - prevent invisible overlapping */
+        .d-flex.justify-content-between > div:first-child {
+            flex: 0 1 auto !important;
+            max-width: 60% !important;
+            overflow: hidden !important;
+        }
+        .d-flex.justify-content-between > div:last-child {
+            flex: 0 0 auto !important;
+            position: relative !important;
+            z-index: 10 !important;
+        }
+
+        /* Ensure all clickable elements are above text content */
+        .d-flex.gap-2 {
+            position: relative !important;
+            z-index: 10 !important;
+        }
+
+        /* Fix header/title areas not blocking buttons */
+        h1, h2, h3, h4, h5, h6, p {
+            pointer-events: none;
+        }
+        h1 a, h2 a, h3 a, h4 a, h5 a, h6 a, p a {
+            pointer-events: auto;
+        }
+
+        /* Ensure buttons inside headings/paragraphs are clickable */
+        .btn, button, a.btn, input[type="button"], input[type="submit"] {
+            pointer-events: auto !important;
         }
     </style>
 
