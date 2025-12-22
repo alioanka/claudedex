@@ -58,7 +58,10 @@ class CredentialsRoutes:
 
         # Database
         'DB_PASSWORD': {'category': 'database', 'subcategory': 'postgres', 'is_sensitive': True, 'is_required': True},
+        'DATABASE_URL': {'category': 'database', 'subcategory': 'postgres', 'is_sensitive': True, 'is_required': True},
+        'DB_URL': {'category': 'database', 'subcategory': 'postgres', 'is_sensitive': True},
         'REDIS_PASSWORD': {'category': 'database', 'subcategory': 'redis', 'is_sensitive': True},
+        'REDIS_URL': {'category': 'database', 'subcategory': 'redis', 'is_sensitive': True},
 
         # API
         'GOPLUS_API_KEY': {'category': 'api', 'subcategory': 'goplus', 'is_sensitive': True},
@@ -66,6 +69,8 @@ class CredentialsRoutes:
         'HELIUS_API_KEY': {'category': 'api', 'subcategory': 'helius', 'is_sensitive': True},
         'JUPITER_API_KEY': {'category': 'api', 'subcategory': 'jupiter', 'is_sensitive': True},
         'ETHERSCAN_API_KEY': {'category': 'api', 'subcategory': 'etherscan', 'is_sensitive': True},
+        'OPENAI_API_KEY': {'category': 'api', 'subcategory': 'openai', 'is_sensitive': True},
+        'ANTHROPIC_API_KEY': {'category': 'api', 'subcategory': 'anthropic', 'is_sensitive': True},
 
         # Notification
         'TELEGRAM_BOT_TOKEN': {'category': 'notification', 'subcategory': 'telegram', 'is_sensitive': True},
