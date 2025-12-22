@@ -396,6 +396,121 @@
                         </div>
                     </div>
                 </div>
+
+                <hr class="my-4">
+
+                <div class="mb-4">
+                    <h5><i class="fas fa-key me-2 text-warning"></i>How API Keys Work in the Pool Engine</h5>
+                    <p>The Pool Engine provides centralized API key management with automatic fallback to <code>.env</code> file.</p>
+
+                    <div class="alert alert-info mb-3">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>Architecture:</strong> Pool Engine (Database) → Primary source | <code>.env</code> file → Fallback when Pool Engine not initialized
+                    </div>
+
+                    <h6 class="mt-4">How Modules Get API Keys</h6>
+                    <p>All modules use <code>RPCProvider</code> from <code>config/rpc_provider.py</code>:</p>
+                    <pre class="bg-dark text-light p-3 rounded small"><code>from config.rpc_provider import RPCProvider
+
+# Modules call:
+helius_key = await RPCProvider.get_api('HELIUS_API')
+jupiter_url = await RPCProvider.get_api('JUPITER_API')
+etherscan_key = await RPCProvider.get_api('ETHERSCAN_API')</code></pre>
+
+                    <h6 class="mt-4">Setting Up APIs from UI</h6>
+                    <p>Go to the <strong>API Keys tab</strong> and add each API with the following settings:</p>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>Provider Type</th>
+                                    <th>Name</th>
+                                    <th>URL</th>
+                                    <th>API Key</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><code>HELIUS_API</code></td>
+                                    <td>Helius API</td>
+                                    <td><code>https://mainnet.helius-rpc.com</code></td>
+                                    <td>Your Helius API Key</td>
+                                </tr>
+                                <tr>
+                                    <td><code>JUPITER_API</code></td>
+                                    <td>Jupiter API</td>
+                                    <td><code>https://lite-api.jup.ag</code></td>
+                                    <td>Your Jupiter API Key</td>
+                                </tr>
+                                <tr>
+                                    <td><code>ETHERSCAN_API</code></td>
+                                    <td>Etherscan</td>
+                                    <td><code>https://api.etherscan.io</code></td>
+                                    <td>Your Etherscan Key</td>
+                                </tr>
+                                <tr>
+                                    <td><code>GOPLUS_API</code></td>
+                                    <td>GoPlus</td>
+                                    <td><code>https://api.gopluslabs.io</code></td>
+                                    <td>Your GoPlus Key</td>
+                                </tr>
+                                <tr>
+                                    <td><code>1INCH_API</code></td>
+                                    <td>1Inch</td>
+                                    <td><code>https://api.1inch.io</code></td>
+                                    <td>Your 1Inch Key</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <h6 class="mt-4">Which Modules Use Each API</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>API</th>
+                                    <th>Used By</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><code>HELIUS_API</code></td>
+                                    <td>Sniper, Solana Trading, Arbitrage (Solana features)</td>
+                                </tr>
+                                <tr>
+                                    <td><code>JUPITER_API</code></td>
+                                    <td>Solana Strategies, Arbitrage (DEX routing)</td>
+                                </tr>
+                                <tr>
+                                    <td><code>ETHERSCAN_API</code></td>
+                                    <td>Copy Trading (wallet analysis)</td>
+                                </tr>
+                                <tr>
+                                    <td><code>GOPLUS_API</code></td>
+                                    <td>Token safety checks in Sniper</td>
+                                </tr>
+                                <tr>
+                                    <td><code>1INCH_API</code></td>
+                                    <td>Arbitrage (DEX routing on EVM chains)</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="alert alert-warning mt-3">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        <strong>Fallback Behavior:</strong> If you don't add APIs here, modules will still work using <code>.env</code> values (e.g., <code>HELIUS_API_KEY</code>, <code>JUPITER_API_URL</code>).
+                    </div>
+
+                    <h6 class="mt-4">Benefits of UI-based Setup</h6>
+                    <ul>
+                        <li><i class="fas fa-sync text-primary me-1"></i> Change APIs without restarting the bot</li>
+                        <li><i class="fas fa-heartbeat text-success me-1"></i> Health monitoring and rate limit tracking</li>
+                        <li><i class="fas fa-sort-numeric-up text-info me-1"></i> Priority-based selection if you have multiple keys</li>
+                        <li><i class="fas fa-chart-bar text-warning me-1"></i> Usage statistics and analytics</li>
+                    </ul>
+                </div>
             </div>
         </div>
     </div>
