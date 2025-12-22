@@ -84,7 +84,7 @@ services:
       - ./data:/app/data
       - ./config:/app/config
       - ./models:/app/models  # Persist trained ML models across Docker restarts
-      - ./.encryption_key:/app/.encryption_key  # Persist encryption key across restarts
+      - ./.encryption_key:/app/.encryption_key:ro  # Read-only for security
     depends_on:
       postgres:
         condition: service_healthy
