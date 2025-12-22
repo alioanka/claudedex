@@ -901,7 +901,8 @@ select.form-control {
     display: block;
 }
 
-/* Modals */
+/* Modals - Custom modal system (NOT Bootstrap) */
+/* Use .custom-modal class for non-Bootstrap modals */
 .modal-overlay {
     position: fixed;
     top: 0;
@@ -911,13 +912,17 @@ select.form-control {
     background-color: rgba(0, 0, 0, 0.7);
     display: none;
     z-index: 1100;
+    pointer-events: none;
 }
 
 .modal-overlay.active {
     display: block;
+    pointer-events: auto;
 }
 
-.modal {
+/* Custom modal (non-Bootstrap) - scoped to avoid conflicts */
+.custom-modal,
+#confirmModal {
     position: fixed;
     top: 50%;
     left: 50%;
@@ -925,22 +930,19 @@ select.form-control {
     background-color: var(--bg-secondary);
     border-radius: var(--radius-lg);
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-    max-width: 800px; /* Increased max-width */
+    max-width: 800px;
     width: 90%;
-    max-height: 90vh; /* Added max-height */
+    max-height: 90vh;
     z-index: 1200;
     opacity: 0;
     pointer-events: none;
     transition: all var(--transition-normal);
-    display: flex; /* Added for flex layout */
-    flex-direction: column; /* Added for flex layout */
+    display: flex;
+    flex-direction: column;
 }
 
-.modal-body {
-    overflow-y: auto; /* Make body scrollable */
-}
-
-.modal.active {
+.custom-modal.active,
+#confirmModal.active {
     transform: translate(-50%, -50%) scale(1);
     opacity: 1;
     pointer-events: all;

@@ -153,6 +153,18 @@
         /* ============================================= */
 
         /* Fix Bootstrap tabs/pills - ensure they're clickable */
+        .nav-pills,
+        .nav-tabs {
+            position: relative !important;
+            z-index: 100 !important;
+            display: flex !important;
+            flex-wrap: wrap !important;
+        }
+        .nav-pills .nav-item,
+        .nav-tabs .nav-item {
+            position: relative !important;
+            z-index: 100 !important;
+        }
         .nav-pills .nav-link,
         .nav-tabs .nav-link {
             color: var(--text-secondary, #94a3b8) !important;
@@ -162,19 +174,23 @@
             cursor: pointer !important;
             pointer-events: auto !important;
             position: relative !important;
-            z-index: 1 !important;
-            background: transparent !important;
-            border: 1px solid transparent !important;
+            z-index: 100 !important;
+            background: var(--bg-tertiary, #1e293b) !important;
+            border: 1px solid var(--border-color, #334155) !important;
+            display: inline-block !important;
+            text-decoration: none !important;
         }
         .nav-pills .nav-link.active,
         .nav-tabs .nav-link.active {
             background: linear-gradient(135deg, #3b82f6, #8b5cf6) !important;
             color: white !important;
+            border-color: transparent !important;
         }
         .nav-pills .nav-link:hover:not(.active),
         .nav-tabs .nav-link:hover:not(.active) {
-            background: var(--bg-tertiary, #1e293b) !important;
+            background: var(--bg-hover, #2d3548) !important;
             color: var(--text-primary, #f1f5f9) !important;
+            border-color: var(--text-secondary, #94a3b8) !important;
         }
 
         /* Fix Bootstrap buttons - ensure proper styling and clickability */
@@ -183,16 +199,21 @@
             pointer-events: auto !important;
             position: relative !important;
             z-index: 1 !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            padding: 0.5rem 1rem !important;
+            min-height: 38px !important;
         }
         .btn-outline-secondary {
             color: var(--text-secondary, #94a3b8) !important;
-            border-color: var(--border-color, #334155) !important;
+            border: 1px solid var(--border-color, #475569) !important;
             background: transparent !important;
         }
         .btn-outline-secondary:hover {
             color: var(--text-primary, #f1f5f9) !important;
             background: var(--bg-tertiary, #1e293b) !important;
-            border-color: var(--border-color, #334155) !important;
+            border-color: var(--text-secondary, #94a3b8) !important;
         }
         .btn-primary {
             background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
@@ -204,12 +225,29 @@
         }
         .btn-outline-primary {
             color: #3b82f6 !important;
-            border-color: #3b82f6 !important;
+            border: 1px solid #3b82f6 !important;
             background: transparent !important;
         }
         .btn-outline-primary:hover {
             color: white !important;
             background: #3b82f6 !important;
+        }
+
+        /* Fix Bootstrap close button in modals */
+        .btn-close {
+            width: 1.5rem !important;
+            height: 1.5rem !important;
+            padding: 0.5rem !important;
+            cursor: pointer !important;
+            pointer-events: auto !important;
+            position: relative !important;
+            z-index: 10 !important;
+            opacity: 1 !important;
+            filter: invert(1) !important;
+            box-sizing: content-box !important;
+        }
+        .btn-close:hover {
+            opacity: 0.75 !important;
         }
 
         /* Fix Bootstrap modal - override custom modal styles from main.css */
