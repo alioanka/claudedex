@@ -223,6 +223,10 @@ class SecureSecretsManager:
         Returns:
             str: The credential value or default
         """
+        # Lazy initialization of encryption (in case get() is called before initialize())
+        if self._fernet is None and CRYPTO_AVAILABLE:
+            self._init_encryption()
+
         # Check cache first (but not if value is encrypted)
         if key in self._cache:
             cached = self._cache[key]
@@ -353,6 +357,10 @@ class SecureSecretsManager:
 
     async def get_async(self, key: str, default: str = None) -> Optional[str]:
         """Async version of get()"""
+        # Lazy initialization of encryption (in case get_async() is called before initialize())
+        if self._fernet is None and CRYPTO_AVAILABLE:
+            self._init_encryption()
+
         # Check cache (but not if value is encrypted)
         if key in self._cache:
             cached = self._cache[key]
