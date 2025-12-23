@@ -302,18 +302,27 @@ class SecureSecretsManager:
 
     def _get_from_database_sync(self, key: str) -> Optional[str]:
         """Get credential from database (synchronous wrapper)"""
+        import concurrent.futures
+
+        def run_in_thread():
+            """Run async database query in a new thread with its own event loop"""
+            return asyncio.run(self._get_from_database(key))
+
         try:
-            # Try to get the current event loop
+            # Check if there's a running event loop in the current thread
             try:
-                loop = asyncio.get_running_loop()
-                # If we're in an async context, create a task
-                future = asyncio.run_coroutine_threadsafe(
-                    self._get_from_database(key), loop
-                )
-                return future.result(timeout=5)
+                asyncio.get_running_loop()
+                # There IS a running loop in this thread - we need to use a separate thread
+                # to avoid deadlock. Using ThreadPoolExecutor to run async code.
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(run_in_thread)
+                    return future.result(timeout=10)
             except RuntimeError:
-                # No event loop running, create one temporarily
+                # No event loop running, safe to use asyncio.run directly
                 return asyncio.run(self._get_from_database(key))
+        except concurrent.futures.TimeoutError:
+            logger.warning(f"Timeout getting credential {key} from database")
+            return None
         except Exception as e:
             logger.warning(f"Failed to get credential from database: {e}")
             return None
