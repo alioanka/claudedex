@@ -994,6 +994,61 @@ class SolanaTradingEngine:
             logger.error(f"Failed to initialize engine: {e}")
             raise
 
+    async def _get_decrypted_private_key(self) -> str:
+        """
+        Get decrypted private key from secrets manager or database.
+
+        Priority:
+        1. Secrets manager (Docker secrets, database, env)
+        2. Direct environment variable with decryption
+        """
+        try:
+            # Try secrets manager first
+            try:
+                from security.secrets_manager import secrets
+                # Initialize with db_pool if available
+                if self.db_pool and not secrets._initialized:
+                    secrets.initialize(self.db_pool)
+
+                private_key = await secrets.get_async('SOLANA_MODULE_PRIVATE_KEY')
+                if private_key:
+                    logger.info("✅ Loaded Solana private key from secrets manager")
+                    return private_key
+            except Exception as e:
+                logger.debug(f"Secrets manager not available: {e}")
+
+            # Fallback: Get from environment and decrypt if needed
+            encrypted_key = os.getenv('SOLANA_MODULE_PRIVATE_KEY')
+            if not encrypted_key:
+                return None
+
+            # Get encryption key from file or environment
+            encryption_key = None
+            key_file = Path('.encryption_key')
+            if key_file.exists():
+                encryption_key = key_file.read_text().strip()
+            if not encryption_key:
+                encryption_key = os.getenv('ENCRYPTION_KEY')
+
+            # Decrypt if encrypted (Fernet tokens start with gAAAAAB)
+            if encrypted_key.startswith('gAAAAAB') and encryption_key:
+                try:
+                    from cryptography.fernet import Fernet
+                    f = Fernet(encryption_key.encode() if isinstance(encryption_key, str) else encryption_key)
+                    private_key = f.decrypt(encrypted_key.encode()).decode()
+                    logger.info("✅ Successfully decrypted Solana module private key")
+                    return private_key
+                except Exception as e:
+                    logger.error(f"Failed to decrypt Solana module private key: {e}")
+                    return None
+            else:
+                # Not encrypted, return as-is
+                return encrypted_key
+
+        except Exception as e:
+            logger.error(f"Error getting private key: {e}")
+            return None
+
     async def _init_solana_client(self):
         """Initialize Solana RPC client and wallet"""
         try:
@@ -1010,24 +1065,10 @@ class SolanaTradingEngine:
                 self.rpc_manager.mark_failed(self.rpc_manager.current_url)
                 self.client = AsyncClient(self.rpc_manager.get_healthy_url())
 
-            # Load wallet from encrypted private key
-            encrypted_key = os.getenv('SOLANA_MODULE_PRIVATE_KEY')
-            encryption_key = os.getenv('ENCRYPTION_KEY')
-
-            if not encrypted_key:
+            # Load wallet from encrypted private key (using secrets manager)
+            private_key = await self._get_decrypted_private_key()
+            if not private_key:
                 raise ValueError("SOLANA_MODULE_PRIVATE_KEY required for Solana trading module")
-
-            # Decrypt private key if encrypted
-            private_key = encrypted_key
-            if encrypted_key.startswith('gAAAAAB') and encryption_key:
-                try:
-                    from cryptography.fernet import Fernet
-                    f = Fernet(encryption_key.encode())
-                    private_key = f.decrypt(encrypted_key.encode()).decode()
-                    logger.info("✅ Successfully decrypted Solana module private key")
-                except Exception as e:
-                    logger.error(f"Failed to decrypt Solana module private key: {e}")
-                    raise ValueError("Cannot decrypt SOLANA_MODULE_PRIVATE_KEY")
 
             # Decode private key (try base58 first, then hex)
             try:
@@ -1073,22 +1114,18 @@ class SolanaTradingEngine:
             # Initialize JupiterHelper for live swap execution (if not in dry run)
             if not self.dry_run and JUPITER_HELPER_AVAILABLE:
                 try:
-                    # Get the decrypted private key for signing
-                    private_key = os.getenv('SOLANA_MODULE_PRIVATE_KEY', '')
-                    encryption_key = os.getenv('ENCRYPTION_KEY', '')
-
-                    # Decrypt if needed
-                    if private_key.startswith('gAAAAAB') and encryption_key:
-                        from cryptography.fernet import Fernet
-                        f = Fernet(encryption_key.encode())
-                        private_key = f.decrypt(private_key.encode()).decode()
-
-                    self.jupiter_helper = JupiterHelper(
-                        solana_rpc_url=self.primary_rpc,
-                        private_key=private_key
-                    )
-                    await self.jupiter_helper.initialize()
-                    logger.info("✅ JupiterHelper initialized for LIVE swap execution")
+                    # Get the decrypted private key for signing (reuse helper)
+                    private_key = await self._get_decrypted_private_key()
+                    if private_key:
+                        self.jupiter_helper = JupiterHelper(
+                            solana_rpc_url=self.primary_rpc,
+                            private_key=private_key
+                        )
+                        await self.jupiter_helper.initialize()
+                        logger.info("✅ JupiterHelper initialized for LIVE swap execution")
+                    else:
+                        logger.warning("⚠️ JupiterHelper not available - no private key")
+                        self.jupiter_helper = None
                 except Exception as e:
                     logger.warning(f"⚠️ JupiterHelper not available for live swaps: {e}")
                     self.jupiter_helper = None
@@ -1119,15 +1156,21 @@ class SolanaTradingEngine:
                 # Initialize DriftHelper for live perpetual trading
                 if not self.dry_run and DRIFT_HELPER_AVAILABLE:
                     try:
-                        self.drift_helper = DriftHelper(
-                            rpc_url=self.primary_rpc,
-                            private_key=os.getenv('SOLANA_MODULE_PRIVATE_KEY', '')
-                        )
-                        initialized = await self.drift_helper.initialize()
-                        if initialized:
-                            logger.info("✅ DriftHelper initialized for LIVE perpetual trading")
+                        # Get decrypted private key for signing
+                        private_key = await self._get_decrypted_private_key()
+                        if private_key:
+                            self.drift_helper = DriftHelper(
+                                rpc_url=self.primary_rpc,
+                                private_key=private_key
+                            )
+                            initialized = await self.drift_helper.initialize()
+                            if initialized:
+                                logger.info("✅ DriftHelper initialized for LIVE perpetual trading")
+                            else:
+                                logger.warning("⚠️ DriftHelper initialization failed")
+                                self.drift_helper = None
                         else:
-                            logger.warning("⚠️ DriftHelper initialization failed")
+                            logger.warning("⚠️ DriftHelper not available - no private key")
                             self.drift_helper = None
                     except Exception as e:
                         logger.warning(f"⚠️ DriftHelper not available: {e}")

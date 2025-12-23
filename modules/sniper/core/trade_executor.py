@@ -95,16 +95,64 @@ class TradeExecutor:
         # Settings
         self.dry_run = True
 
+    async def _get_decrypted_key(self, key_name: str) -> Optional[str]:
+        """
+        Get decrypted private key from secrets manager or environment.
+
+        Priority:
+        1. Secrets manager (Docker secrets, database)
+        2. Environment variable with decryption
+        """
+        try:
+            # Try secrets manager first
+            try:
+                from security.secrets_manager import secrets
+                value = await secrets.get_async(key_name)
+                if value:
+                    return value
+            except Exception:
+                pass
+
+            # Fallback to environment with decryption
+            encrypted_key = os.getenv(key_name)
+            if not encrypted_key:
+                return None
+
+            # Get encryption key from file or environment
+            encryption_key = None
+            from pathlib import Path
+            key_file = Path('.encryption_key')
+            if key_file.exists():
+                encryption_key = key_file.read_text().strip()
+            if not encryption_key:
+                encryption_key = os.getenv('ENCRYPTION_KEY')
+
+            # Decrypt if Fernet encrypted
+            if encrypted_key.startswith('gAAAAAB') and encryption_key:
+                try:
+                    from cryptography.fernet import Fernet
+                    f = Fernet(encryption_key.encode() if isinstance(encryption_key, str) else encryption_key)
+                    return f.decrypt(encrypted_key.encode()).decode()
+                except Exception as e:
+                    logger.error(f"Failed to decrypt {key_name}: {e}")
+                    return None
+
+            return encrypted_key
+
+        except Exception as e:
+            logger.debug(f"Error getting {key_name}: {e}")
+            return None
+
     async def initialize(self):
         """Initialize the executor"""
         # HTTP session for API calls
         timeout = aiohttp.ClientTimeout(total=30)
         self.session = aiohttp.ClientSession(timeout=timeout)
 
-        # Load credentials from environment
-        self.evm_private_key = os.getenv('PRIVATE_KEY') or os.getenv('EVM_PRIVATE_KEY')
+        # Load credentials from secrets manager (Docker secrets, database, or env)
+        self.evm_private_key = await self._get_decrypted_key('PRIVATE_KEY') or await self._get_decrypted_key('EVM_PRIVATE_KEY')
         self.evm_wallet = os.getenv('WALLET_ADDRESS') or os.getenv('EVM_WALLET_ADDRESS')
-        self.solana_private_key = os.getenv('SOLANA_MODULE_PRIVATE_KEY')
+        self.solana_private_key = await self._get_decrypted_key('SOLANA_MODULE_PRIVATE_KEY')
         self.solana_wallet = os.getenv('SOLANA_MODULE_WALLET')
 
         # DRY_RUN check

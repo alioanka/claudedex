@@ -76,22 +76,28 @@ async def main():
     logger.info(f"   Working dir: {Path.cwd()}")
     logger.info(f"   Log dir: {log_dir.absolute()}")
 
-    # Check API Keys
-    openai_key = os.getenv('OPENAI_API_KEY')
-    anthropic_key = os.getenv('ANTHROPIC_API_KEY')
+    # Check API Keys from secrets manager (Docker secrets, database, or env)
+    openai_key = None
+    anthropic_key = None
+
+    try:
+        from security.secrets_manager import secrets
+        openai_key = secrets.get('OPENAI_API_KEY')
+        anthropic_key = secrets.get('ANTHROPIC_API_KEY')
+    except Exception:
+        # Fall back to environment
+        openai_key = os.getenv('OPENAI_API_KEY')
+        anthropic_key = os.getenv('ANTHROPIC_API_KEY')
 
     if openai_key:
         logger.info(f"   OpenAI API Key: {openai_key[:20]}...")
     else:
-        logger.warning("⚠️ No OPENAI_API_KEY found")
+        logger.warning("⚠️ No OPENAI_API_KEY found - will check database after connection")
 
     if anthropic_key:
         logger.info(f"   Anthropic API Key: {anthropic_key[:20]}...")
     else:
-        logger.warning("⚠️ No ANTHROPIC_API_KEY found")
-
-    if not openai_key and not anthropic_key:
-        logger.error("❌ No AI API keys found - AI analysis will be disabled")
+        logger.warning("⚠️ No ANTHROPIC_API_KEY found - will check database after connection")
 
     # Init DB - Use Docker secrets or environment
     try:
