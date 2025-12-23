@@ -53,6 +53,74 @@ Each module runs as a **separate subprocess** managed by the orchestrator (`main
 
 ---
 
+## Dashboard (Web UI)
+
+**Location:** `dashboard/` (FastAPI + Jinja2 templates)
+
+### Main Pages
+
+| Route | Template | Purpose |
+|-------|----------|---------|
+| `/` | `index.html` | Main dashboard overview |
+| `/modules` | `modules.html` | Module control panel (start/stop/restart) |
+| `/settings` | `settings.html` | Global settings |
+
+### Module-Specific Dashboards
+
+Each module has its own dedicated dashboard with tabs for monitoring and configuration:
+
+| Module | Dashboard | Settings | Trades | Positions | Performance |
+|--------|-----------|----------|--------|-----------|-------------|
+| DEX | `/dex` | `/dex/settings` | `/trades` | `/positions` | `/performance` |
+| Futures | `/futures` | `/futures/settings` | `/futures/trades` | `/futures/positions` | `/futures/performance` |
+| Solana | `/solana` | `/solana/settings` | `/solana/trades` | `/solana/positions` | `/solana/performance` |
+| AI Analysis | `/ai` | `/ai/settings` | - | - | `/ai/performance` |
+| Arbitrage | `/arbitrage` | `/arbitrage/settings` | `/arbitrage/trades` | `/arbitrage/positions` | `/arbitrage/performance` |
+| Copy Trading | `/copytrading` | `/copytrading/settings` | `/copytrading/trades` | `/copytrading/positions` | `/copytrading/performance` |
+| Sniper | `/sniper` | `/sniper/settings` | `/sniper/trades` | `/sniper/positions` | `/sniper/performance` |
+
+### Special Pages
+
+| Route | Template | Purpose |
+|-------|----------|---------|
+| `/settings/rpc-api` | `settings_rpc_api.html` | RPC/API Pool configuration with health monitoring |
+| `/settings/credentials` | `settings_credentials.html` | Secure credential management (encrypted storage) |
+| `/settings/global` | `global_settings.html` | System-wide settings |
+| `/logs` | `logs.html` | Live log viewer |
+| `/analytics` | `analytics.html` | Advanced analytics |
+| `/reports` | `reports.html` | Performance reports |
+| `/backtest` | `backtest.html` | Strategy backtesting |
+| `/simulator` | `simulator.html` | Trade simulator |
+
+### RPC/API Configuration Page (`/settings/rpc-api`)
+
+Manages the RPC Pool Engine with features:
+- Add/edit/delete RPC endpoints per chain
+- Health status indicators (healthy/rate-limited/unhealthy)
+- Latency monitoring and auto-rotation
+- Priority ordering for endpoints
+- Rate limit detection and cooldown display
+
+### Secure Credentials Page (`/settings/credentials`)
+
+Manages encrypted credentials with features:
+- Category-based organization (Wallet, Exchange, API, Notification, etc.)
+- Visual status indicators (configured/not-configured/required)
+- Secure input fields (password-masked)
+- Auto-encryption on save
+- Credential validation
+
+### Dashboard Features
+
+- **Real-time updates** via WebSocket
+- **Dark/Light mode** toggle
+- **Responsive design** for mobile
+- **Module status indicators** (running/stopped/error)
+- **Quick actions** (emergency stop, force refresh)
+- **Pro Controls** for advanced operations
+
+---
+
 ## Credentials & Security
 
 ### Two-Tier Security Model
