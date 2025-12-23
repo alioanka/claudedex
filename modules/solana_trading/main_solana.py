@@ -397,9 +397,15 @@ class SolanaTradingApplication:
         """Initialize database connection pool"""
         try:
             import asyncpg
-            db_url = os.getenv('DATABASE_URL')
+            # Use Docker secrets or environment
+            try:
+                from security.docker_secrets import get_database_url
+                db_url = get_database_url()
+            except ImportError:
+                db_url = os.getenv('DATABASE_URL')
+
             if not db_url:
-                self.logger.warning("⚠️ DATABASE_URL not set - trades will NOT persist across restarts!")
+                self.logger.warning("⚠️ No database credentials found - trades will NOT persist across restarts!")
                 return False
 
             self.db_pool = await asyncpg.create_pool(db_url, min_size=2, max_size=10)

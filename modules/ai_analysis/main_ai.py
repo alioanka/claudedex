@@ -93,10 +93,15 @@ async def main():
     if not openai_key and not anthropic_key:
         logger.error("❌ No AI API keys found - AI analysis will be disabled")
 
-    # Init DB
-    db_url = os.getenv('DATABASE_URL')
+    # Init DB - Use Docker secrets or environment
+    try:
+        from security.docker_secrets import get_database_url
+        db_url = get_database_url()
+    except ImportError:
+        db_url = os.getenv('DATABASE_URL')
+
     if not db_url:
-        logger.error("No DATABASE_URL found")
+        logger.error("No database credentials found (Docker secrets or DATABASE_URL)")
         return
 
     try:

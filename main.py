@@ -36,6 +36,35 @@ logging.basicConfig(
 logger = logging.getLogger("Orchestrator")
 
 
+def _check_encryption_key() -> bool:
+    """Check if encryption key is available from file or environment."""
+    # Check .encryption_key file first
+    key_file = Path('.encryption_key')
+    if key_file.exists():
+        key = key_file.read_text().strip()
+        if key and len(key) >= 32:
+            return True
+    # Fallback to environment
+    return bool(os.getenv('ENCRYPTION_KEY'))
+
+
+def _check_database_credentials() -> bool:
+    """Check if database credentials are available from Docker secrets or environment."""
+    # Check Docker secrets
+    secrets_dir = Path('/run/secrets')
+    if secrets_dir.exists():
+        db_pass = secrets_dir / 'db_password'
+        if db_pass.exists():
+            return True
+    # Check environment
+    if os.getenv('DATABASE_URL') or os.getenv('DB_PASSWORD'):
+        return True
+    # Check if can build connection from parts
+    if os.getenv('DB_HOST') and os.getenv('DB_NAME'):
+        return True
+    return False
+
+
 class RotatingLogFile:
     """
     A file-like object that rotates logs based on size.
@@ -188,18 +217,22 @@ class ModuleProcess:
     """Represents a trading module process"""
 
     # Required secrets per module
+    # NOTE: PRIVATE_KEY and ENCRYPTION_KEY are now handled specially:
+    # - ENCRYPTION_KEY: Checked via _check_encryption_key() (file or env)
+    # - PRIVATE_KEY: Stored encrypted in database, decrypted at runtime
+    # - Database credentials: Checked via _check_database_credentials() (Docker secrets or env)
     REQUIRED_SECRETS = {
         'dex': [
-            ('PRIVATE_KEY', 'EVM private key for DEX trading'),
-            ('ENCRYPTION_KEY', 'Encryption key for decrypting secrets'),
+            # PRIVATE_KEY is now encrypted in database, not in .env
+            # ENCRYPTION_KEY is checked separately via _check_encryption_key()
         ],
         'futures': [
-            ('ENCRYPTION_KEY', 'Encryption key for decrypting secrets'),
+            # ENCRYPTION_KEY is checked separately via _check_encryption_key()
             # Binance OR Bybit keys required (checked dynamically)
         ],
         'solana': [
-            ('SOLANA_MODULE_PRIVATE_KEY', 'Solana module private key'),
-            ('ENCRYPTION_KEY', 'Encryption key for decrypting secrets'),
+            # SOLANA_MODULE_PRIVATE_KEY is now encrypted in database
+            # ENCRYPTION_KEY is checked separately via _check_encryption_key()
         ],
         'sniper': [],
         'ai_analysis': [('OPENAI_API_KEY', 'OpenAI API Key for Sentiment Analysis')]
@@ -229,11 +262,28 @@ class ModuleProcess:
         """
         Validate that all required secrets are present for this module.
         Returns (is_valid, list_of_missing_secrets)
+
+        Security Model:
+        - ENCRYPTION_KEY: Checked from .encryption_key file OR environment
+        - Database credentials: Checked from Docker secrets (/run/secrets/) OR environment
+        - Private keys (PRIVATE_KEY, SOLANA_*): Stored encrypted in database, not validated here
         """
         errors = []
         module_key = self.module_key
 
-        # Get base required secrets
+        # Check encryption key (required for modules that decrypt database secrets)
+        needs_encryption = module_key in ('dex', 'futures', 'solana', 'copy_trading', 'arbitrage')
+        if needs_encryption:
+            if not _check_encryption_key():
+                errors.append("Missing ENCRYPTION_KEY: No .encryption_key file or ENCRYPTION_KEY env var")
+
+        # Check database credentials (required for most modules)
+        needs_database = module_key in ('dex', 'futures', 'solana', 'sniper', 'copy_trading', 'arbitrage')
+        if needs_database:
+            if not _check_database_credentials():
+                errors.append("Missing Database Credentials: No Docker secrets or DATABASE_URL/DB_PASSWORD env var")
+
+        # Get additional module-specific required secrets (e.g., API keys)
         required = self.REQUIRED_SECRETS.get(module_key, [])
 
         for secret_name, description in required:
