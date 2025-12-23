@@ -81,10 +81,15 @@ async def main():
     if not etherscan_key and not solana_rpc:
         logger.warning("⚠️ No API keys configured - Copy Trading will not monitor any wallets")
 
-    # Init DB
-    db_url = os.getenv('DATABASE_URL')
+    # Init DB - Use Docker secrets or environment
+    try:
+        from security.docker_secrets import get_database_url
+        db_url = get_database_url()
+    except ImportError:
+        db_url = os.getenv('DATABASE_URL')
+
     if not db_url:
-        logger.error("No DATABASE_URL found")
+        logger.error("No database credentials found (Docker secrets or DATABASE_URL)")
         return
 
     try:

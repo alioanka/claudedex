@@ -525,7 +525,13 @@ class FuturesTradingApplication:
     async def _init_database(self):
         """Initialize database connection pool"""
         try:
-            db_url = os.getenv('DATABASE_URL', os.getenv('DB_URL'))
+            # Use Docker secrets or environment
+            try:
+                from security.docker_secrets import get_database_url
+                db_url = get_database_url()
+            except ImportError:
+                db_url = os.getenv('DATABASE_URL', os.getenv('DB_URL'))
+
             if db_url:
                 self.db_pool = await asyncpg.create_pool(
                     db_url,
@@ -535,7 +541,7 @@ class FuturesTradingApplication:
                 )
                 self.logger.info("✅ Database connection pool created")
             else:
-                self.logger.warning("⚠️ No DATABASE_URL, using default configuration")
+                self.logger.warning("⚠️ No database credentials found, using default configuration")
         except Exception as e:
             self.logger.error(f"Failed to connect to database: {e}")
             self.logger.warning("Using default configuration")
