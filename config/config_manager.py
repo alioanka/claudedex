@@ -1010,24 +1010,65 @@ class ConfigManager:
         return decrypt_recursive(config_data.copy())
 
     def validate_environment(self) -> List[str]:
-        """Validate required environment variables are set"""
-        required_vars = [
-            'PRIVATE_KEY',
-            'DATABASE_URL',
-            'REDIS_URL',
-            'WEB3_PROVIDER_URL',
-            'TELEGRAM_BOT_TOKEN',
-            'TELEGRAM_CHAT_ID'
-        ]
-        
+        """
+        Validate required credentials are available.
+
+        Uses the secure secrets manager which checks:
+        1. Docker secrets (/run/secrets/)
+        2. Database (encrypted credentials)
+        3. Environment variables (.env fallback)
+
+        For private keys (PRIVATE_KEY), they are stored encrypted in the
+        database and will be decrypted at runtime - we just check encryption
+        key is available.
+        """
+        from pathlib import Path
+
         missing = []
-        for var in required_vars:
-            if not os.getenv(var):
-                missing.append(var)
-        
+
+        # Check encryption key (required for decrypting database credentials)
+        encryption_key_available = False
+        key_file = Path('.encryption_key')
+        if key_file.exists():
+            key = key_file.read_text().strip()
+            if key and len(key) >= 32:
+                encryption_key_available = True
+        if not encryption_key_available:
+            encryption_key_available = bool(os.getenv('ENCRYPTION_KEY'))
+
+        if not encryption_key_available:
+            missing.append('ENCRYPTION_KEY')
+
+        # Check database credentials (Docker secrets or env)
+        db_available = False
+        secrets_dir = Path('/run/secrets')
+        if secrets_dir.exists() and (secrets_dir / 'db_password').exists():
+            db_available = True
+        elif os.getenv('DATABASE_URL') or os.getenv('DB_PASSWORD'):
+            db_available = True
+        elif os.getenv('DB_HOST') and os.getenv('DB_NAME'):
+            db_available = True
+
+        if not db_available:
+            missing.append('DATABASE_URL')
+
+        # Check Redis credentials (Docker secrets or env)
+        redis_available = False
+        if secrets_dir.exists() and (secrets_dir / 'redis_password').exists():
+            redis_available = True
+        elif os.getenv('REDIS_URL') or os.getenv('REDIS_HOST'):
+            redis_available = True
+
+        if not redis_available:
+            missing.append('REDIS_URL')
+
+        # WEB3_PROVIDER_URL is optional - RPC can come from database
+        # TELEGRAM credentials are optional - notifications are not critical
+        # PRIVATE_KEY is stored encrypted in database - don't check env
+
         if missing:
             logger.warning(f"Missing environment variables: {', '.join(missing)}")
-        
+
         return missing
 
     async def _load_default_config(self, config_type: ConfigType) -> None:
