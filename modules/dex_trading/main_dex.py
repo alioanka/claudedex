@@ -290,18 +290,18 @@ class TradingBotApplication:
             await self.db_manager.connect()
             # Note: DatabaseManager.connect() already runs migrations via MigrationManager
 
-            # Set database pool in config manager and reload configs from database
-            self.logger.info("Connecting config manager to database...")
-            await self.config_manager.set_db_pool(self.db_manager.pool)
-            self.logger.info("✅ Config manager now reading from database")
-
-            # Initialize secrets manager with database pool for credential access
+            # Initialize secrets manager with database pool FIRST (before any config managers)
             try:
                 from security.secrets_manager import secrets
                 secrets.initialize(self.db_manager.pool)
                 self.logger.info("✅ Secrets manager initialized with database")
             except Exception as e:
                 self.logger.warning(f"Could not initialize secrets manager with database: {e}")
+
+            # Set database pool in config manager and reload configs from database
+            self.logger.info("Connecting config manager to database...")
+            await self.config_manager.set_db_pool(self.db_manager.pool)
+            self.logger.info("✅ Config manager now reading from database")
 
             # ✅ CRITICAL FIX: Rebuild nested_config AFTER database reload
             # This ensures managers use database values, not YAML/defaults
@@ -379,21 +379,27 @@ class TradingBotApplication:
             if 'notifications' not in nested_config:
                 from monitoring.alerts import AlertPriority, NotificationChannel
 
+                # Get Telegram credentials from secrets manager (database) or env
+                from security.secrets_manager import secrets
+                telegram_token = secrets.get('TELEGRAM_BOT_TOKEN') or os.getenv('TELEGRAM_BOT_TOKEN', '')
+                telegram_chat = secrets.get('TELEGRAM_CHAT_ID') or os.getenv('TELEGRAM_CHAT_ID', '')
+                discord_webhook = secrets.get('DISCORD_WEBHOOK_URL') or os.getenv('DISCORD_WEBHOOK_URL', '')
+
                 nested_config['notifications'] = {
                     'telegram': {
-                        'bot_token': os.getenv('TELEGRAM_BOT_TOKEN', ''),
-                        'chat_id': os.getenv('TELEGRAM_CHAT_ID', ''),
-                        'enabled': bool(os.getenv('TELEGRAM_BOT_TOKEN'))
+                        'bot_token': telegram_token,
+                        'chat_id': telegram_chat,
+                        'enabled': bool(telegram_token)
                     },
                     'discord': {
-                        'webhook_url': os.getenv('DISCORD_WEBHOOK_URL', ''),
-                        'enabled': bool(os.getenv('DISCORD_WEBHOOK_URL'))
+                        'webhook_url': discord_webhook,
+                        'enabled': bool(discord_webhook)
                     },
                     'channel_priorities': {
-                        AlertPriority.LOW: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else [],
-                        AlertPriority.MEDIUM: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else [],
-                        AlertPriority.HIGH: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else [],
-                        AlertPriority.CRITICAL: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else []
+                        AlertPriority.LOW: [NotificationChannel.TELEGRAM] if telegram_token else [],
+                        AlertPriority.MEDIUM: [NotificationChannel.TELEGRAM] if telegram_token else [],
+                        AlertPriority.HIGH: [NotificationChannel.TELEGRAM] if telegram_token else [],
+                        AlertPriority.CRITICAL: [NotificationChannel.TELEGRAM] if telegram_token else []
                     },
                     'priority_cooldowns': {
                         AlertPriority.LOW: 300,

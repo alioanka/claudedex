@@ -57,8 +57,14 @@ class FuturesTelegramAlerts:
             chat_id: Telegram chat ID (from .env if not provided)
             enabled: Whether alerts are enabled
         """
-        self.bot_token = bot_token or os.getenv('TELEGRAM_BOT_TOKEN')
-        self.chat_id = chat_id or os.getenv('TELEGRAM_CHAT_ID')
+        # Try secrets manager first (reads from database), then fall back to env
+        try:
+            from security.secrets_manager import secrets
+            self.bot_token = bot_token or secrets.get('TELEGRAM_BOT_TOKEN') or os.getenv('TELEGRAM_BOT_TOKEN')
+            self.chat_id = chat_id or secrets.get('TELEGRAM_CHAT_ID') or os.getenv('TELEGRAM_CHAT_ID')
+        except Exception:
+            self.bot_token = bot_token or os.getenv('TELEGRAM_BOT_TOKEN')
+            self.chat_id = chat_id or os.getenv('TELEGRAM_CHAT_ID')
         self.enabled = enabled and bool(self.bot_token) and bool(self.chat_id)
 
         if not self.enabled:
