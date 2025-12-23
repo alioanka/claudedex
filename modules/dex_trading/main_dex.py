@@ -295,6 +295,14 @@ class TradingBotApplication:
             await self.config_manager.set_db_pool(self.db_manager.pool)
             self.logger.info("✅ Config manager now reading from database")
 
+            # Initialize secrets manager with database pool for credential access
+            try:
+                from security.secrets_manager import secrets
+                secrets.initialize(self.db_manager.pool)
+                self.logger.info("✅ Secrets manager initialized with database")
+            except Exception as e:
+                self.logger.warning(f"Could not initialize secrets manager with database: {e}")
+
             # ✅ CRITICAL FIX: Rebuild nested_config AFTER database reload
             # This ensures managers use database values, not YAML/defaults
             self.logger.info("Reloading configuration from database...")
