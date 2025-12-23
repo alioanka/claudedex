@@ -422,7 +422,7 @@ class JupiterClient:
     async def _get_price_jupiter(self, session: aiohttp.ClientSession, token_mint: str) -> Optional[float]:
         """Get price from Jupiter Price API (may require auth)"""
         try:
-            price_api_url = "https://api.jup.ag/price/v2"
+            price_api_url = "https://api.jup.ag/price/v3"
             params = {'ids': token_mint}
 
             async with session.get(price_api_url, params=params, timeout=10) as resp:
@@ -1082,18 +1082,39 @@ class SolanaTradingEngine:
             if not private_key:
                 raise ValueError("SOLANA_MODULE_PRIVATE_KEY required for Solana trading module")
 
-            # Decode private key (try base58 first, then hex)
-            try:
-                key_bytes = base58.b58decode(private_key)
-                self.wallet = Keypair.from_bytes(key_bytes)
-            except (ValueError, Exception) as b58_error:
+            # Decode private key (try multiple formats)
+            key_bytes = None
+
+            # Format 1: JSON array (e.g., [1,2,3,...])
+            if private_key.startswith('['):
+                try:
+                    import json
+                    key_array = json.loads(private_key)
+                    key_bytes = bytes(key_array)
+                    logger.debug("Parsed private key from JSON array format")
+                except Exception as json_error:
+                    logger.debug(f"Not JSON array format: {json_error}")
+
+            # Format 2: Base58 encoded
+            if key_bytes is None:
+                try:
+                    key_bytes = base58.b58decode(private_key)
+                    logger.debug("Parsed private key from base58 format")
+                except (ValueError, Exception) as b58_error:
+                    logger.debug(f"Not base58 format: {b58_error}")
+
+            # Format 3: Hex encoded
+            if key_bytes is None:
                 try:
                     key_bytes = bytes.fromhex(private_key)
-                    self.wallet = Keypair.from_bytes(key_bytes)
+                    logger.debug("Parsed private key from hex format")
                 except (ValueError, Exception) as hex_error:
-                    logger.error(f"Failed to decode private key as base58: {b58_error}")
-                    logger.error(f"Failed to decode private key as hex: {hex_error}")
-                    raise ValueError("Invalid private key format - must be base58 or hex encoded")
+                    logger.debug(f"Not hex format: {hex_error}")
+
+            if key_bytes is None:
+                raise ValueError("Invalid private key format - must be JSON array, base58, or hex encoded")
+
+            self.wallet = Keypair.from_bytes(key_bytes)
 
             self.wallet_pubkey = str(self.wallet.pubkey())
             logger.info(f"✅ Solana wallet loaded: {self.wallet_pubkey[:8]}...{self.wallet_pubkey[-8:]}")
@@ -1114,7 +1135,7 @@ class SolanaTradingEngine:
         try:
             logger.info("Initializing Jupiter V6 aggregator...")
 
-            jupiter_api_url = os.getenv('JUPITER_API_URL', 'https://quote-api.jup.ag/v6')
+            jupiter_api_url = os.getenv('JUPITER_API_URL', 'https://lite-api.jup.ag/swap/v1')
             jupiter_api_key = os.getenv('JUPITER_API_KEY', '')
 
             self.jupiter_client = JupiterClient(
