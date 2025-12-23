@@ -65,6 +65,44 @@ def _check_database_credentials() -> bool:
     return False
 
 
+def _check_secret(key_name: str) -> bool:
+    """
+    Check if a secret is available from any source.
+
+    Priority:
+    1. Docker secrets (/run/secrets/<key_name_lowercase>)
+    2. Environment variable
+    3. Secrets database (if available)
+
+    Note: For database check, we just verify existence, not decrypt.
+    The actual modules will decrypt at runtime.
+    """
+    # Check Docker secrets (lowercase names)
+    secrets_dir = Path('/run/secrets')
+    if secrets_dir.exists():
+        secret_file = secrets_dir / key_name.lower()
+        if secret_file.exists():
+            try:
+                value = secret_file.read_text().strip()
+                if value:
+                    return True
+            except Exception:
+                pass
+
+    # Check environment variable
+    value = os.getenv(key_name)
+    if value and value.strip():
+        return True
+
+    # For API keys that might be stored in the database, we need to do a database check.
+    # However, at orchestrator startup, DB might not be connected yet.
+    # The modules themselves will fetch from DB during their initialization.
+    # So we just return False here to allow the module to start and handle it.
+    # This is a pre-flight check - modules do their own validation at runtime.
+
+    return False
+
+
 class RotatingLogFile:
     """
     A file-like object that rotates logs based on size.
@@ -217,25 +255,20 @@ class ModuleProcess:
     """Represents a trading module process"""
 
     # Required secrets per module
-    # NOTE: PRIVATE_KEY and ENCRYPTION_KEY are now handled specially:
-    # - ENCRYPTION_KEY: Checked via _check_encryption_key() (file or env)
-    # - PRIVATE_KEY: Stored encrypted in database, decrypted at runtime
-    # - Database credentials: Checked via _check_database_credentials() (Docker secrets or env)
+    # NOTE: Most secrets are now stored encrypted in the database and retrieved at runtime.
+    # The orchestrator only verifies that:
+    # - ENCRYPTION_KEY: Available via .encryption_key file or environment
+    # - Database credentials: Available via Docker secrets or environment
+    # API keys (OpenAI, Binance, etc.) are checked by modules themselves during initialization,
+    # as they may be stored in the encrypted database.
     REQUIRED_SECRETS = {
-        'dex': [
-            # PRIVATE_KEY is now encrypted in database, not in .env
-            # ENCRYPTION_KEY is checked separately via _check_encryption_key()
-        ],
-        'futures': [
-            # ENCRYPTION_KEY is checked separately via _check_encryption_key()
-            # Binance OR Bybit keys required (checked dynamically)
-        ],
-        'solana': [
-            # SOLANA_MODULE_PRIVATE_KEY is now encrypted in database
-            # ENCRYPTION_KEY is checked separately via _check_encryption_key()
-        ],
-        'sniper': [],
-        'ai_analysis': [('OPENAI_API_KEY', 'OpenAI API Key for Sentiment Analysis')]
+        'dex': [],      # Private key is in encrypted database
+        'futures': [],  # Exchange API keys are in encrypted database
+        'solana': [],   # Private key is in encrypted database
+        'sniper': [],   # Private keys are in encrypted database
+        'ai_analysis': [],  # OpenAI API key is in encrypted database
+        'copy_trading': [],
+        'arbitrage': [],
     }
 
     def __init__(self, name: str, script_path: str, enabled_env_var: str, module_key: str = None):
@@ -291,33 +324,8 @@ class ModuleProcess:
             if not value or value.strip() == '':
                 errors.append(f"Missing {secret_name}: {description}")
 
-        # Special validation for futures module (needs Binance OR Bybit keys)
-        if module_key == 'futures':
-            exchange = os.getenv('FUTURES_EXCHANGE', 'binance').lower()
-            testnet = os.getenv('FUTURES_TESTNET', 'true').lower() in ('true', '1', 'yes')
-
-            if exchange == 'binance':
-                if testnet:
-                    if not os.getenv('BINANCE_TESTNET_API_KEY'):
-                        errors.append("Missing BINANCE_TESTNET_API_KEY: Required for Binance testnet")
-                    if not os.getenv('BINANCE_TESTNET_API_SECRET'):
-                        errors.append("Missing BINANCE_TESTNET_API_SECRET: Required for Binance testnet")
-                else:
-                    if not os.getenv('BINANCE_API_KEY'):
-                        errors.append("Missing BINANCE_API_KEY: Required for Binance mainnet")
-                    if not os.getenv('BINANCE_API_SECRET'):
-                        errors.append("Missing BINANCE_API_SECRET: Required for Binance mainnet")
-            elif exchange == 'bybit':
-                if testnet:
-                    if not os.getenv('BYBIT_TESTNET_API_KEY'):
-                        errors.append("Missing BYBIT_TESTNET_API_KEY: Required for Bybit testnet")
-                    if not os.getenv('BYBIT_TESTNET_API_SECRET'):
-                        errors.append("Missing BYBIT_TESTNET_API_SECRET: Required for Bybit testnet")
-                else:
-                    if not os.getenv('BYBIT_API_KEY'):
-                        errors.append("Missing BYBIT_API_KEY: Required for Bybit mainnet")
-                    if not os.getenv('BYBIT_API_SECRET'):
-                        errors.append("Missing BYBIT_API_SECRET: Required for Bybit mainnet")
+        # Note: Futures module validates its own API keys (Binance/Bybit) during initialization
+        # as they may be stored in the encrypted database instead of environment variables.
 
         # Special validation for Solana module
         if module_key == 'solana':
