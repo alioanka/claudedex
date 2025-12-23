@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 from typing import Dict, List, Optional, Any, Union
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -14,36 +15,51 @@ import orjson
 logger = logging.getLogger(__name__)
 
 
+def _get_db_password() -> str:
+    """Get database password from Docker secrets or environment."""
+    # Try Docker secrets first
+    try:
+        from security.docker_secrets import get_secret
+        password = get_secret('db_password', env_var='DB_PASSWORD')
+        if password:
+            return password
+    except ImportError:
+        pass
+
+    # Fall back to environment
+    return os.getenv('DB_PASSWORD', '')
+
+
 class DatabaseManager:
     """
     PostgreSQL database manager with TimescaleDB extensions for time-series data.
     Handles all database operations for the trading bot.
     """
-    
+
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.pool: Optional[Pool] = None
         self.is_connected = False
-        
+
     async def connect(self) -> None:
         """Establish connection pool to PostgreSQL database."""
         try:
             # Check if DATABASE_URL exists (single connection string)
-            database_url = self.config.get('DATABASE_URL')
-            
+            database_url = self.config.get('DATABASE_URL') or os.getenv('DATABASE_URL')
+
             if database_url:
                 # Parse DATABASE_URL: postgresql://user:pass@host:port/dbname
                 import urllib.parse
                 parsed = urllib.parse.urlparse(database_url)
-                
+
                 host = parsed.hostname or 'postgres'
                 port = parsed.port or 5432
                 user = parsed.username or 'bot_user'
-                password = parsed.password or ''
+                password = parsed.password or _get_db_password()
                 database = parsed.path.lstrip('/') or 'tradingbot'
-                
+
                 logger.info(f"Connecting to database at {host}:{port}/{database}")
-                
+
                 self.pool = await asyncpg.create_pool(
                     host=host,
                     port=port,
@@ -57,24 +73,28 @@ class DatabaseManager:
                     command_timeout=self.config.get('DB_COMMAND_TIMEOUT', 60),
                 )
             else:
-                # Fall back to individual config keys with Docker-friendly defaults
-                host = self.config.get('DB_HOST', 'postgres')  # ✅ Changed default
-                
-                logger.info(f"Connecting to database at {host}:{self.config.get('DB_PORT', 5432)}")
-                
+                # Fall back to individual config keys with Docker secrets support
+                host = self.config.get('DB_HOST') or os.getenv('DB_HOST', 'postgres')
+                port = self.config.get('DB_PORT') or int(os.getenv('DB_PORT', 5432))
+                user = self.config.get('DB_USER') or os.getenv('DB_USER', 'bot_user')
+                password = self.config.get('DB_PASSWORD') or _get_db_password()
+                database = self.config.get('DB_NAME') or os.getenv('DB_NAME', 'tradingbot')
+
+                logger.info(f"Connecting to database at {host}:{port}")
+
                 self.pool = await asyncpg.create_pool(
                     host=host,
-                    port=self.config.get('DB_PORT', 5432),
-                    user=self.config.get('DB_USER', 'bot_user'),
-                    password=self.config.get('DB_PASSWORD', 'bot_password'),
-                    database=self.config.get('DB_NAME', 'tradingbot'),
+                    port=port,
+                    user=user,
+                    password=password,
+                    database=database,
                     min_size=self.config.get('DB_POOL_MIN', 10),
                     max_size=self.config.get('DB_POOL_MAX', 20),
                     max_queries=self.config.get('DB_MAX_QUERIES', 50000),
                     max_inactive_connection_lifetime=self.config.get('DB_CONN_LIFETIME', 300),
                     command_timeout=self.config.get('DB_COMMAND_TIMEOUT', 60),
                 )
-            
+
             # Rest of the method stays the same...
             await self._initialize_timescaledb()
 
