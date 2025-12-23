@@ -391,7 +391,7 @@ class SolanaArbitrageEngine:
         if not self.rpc_url:
             self.rpc_url = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
 
-        self.private_key = os.getenv('SOLANA_PRIVATE_KEY')
+        self.private_key = None  # Loaded in initialize() from secrets manager
         self.wallet_address = os.getenv('SOLANA_WALLET_ADDRESS')
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
@@ -427,8 +427,54 @@ class SolanaArbitrageEngine:
             'last_stats_log': datetime.now()
         }
 
+    async def _get_decrypted_key(self, key_name: str) -> Optional[str]:
+        """Get decrypted private key from secrets manager or environment."""
+        try:
+            # Try secrets manager first
+            try:
+                from security.secrets_manager import secrets
+                if self.db_pool and not secrets._initialized:
+                    secrets.initialize(self.db_pool)
+                value = await secrets.get_async(key_name)
+                if value:
+                    return value
+            except Exception:
+                pass
+
+            # Fallback to environment with decryption
+            encrypted_key = os.getenv(key_name)
+            if not encrypted_key:
+                return None
+
+            # Get encryption key
+            encryption_key = None
+            from pathlib import Path
+            key_file = Path('.encryption_key')
+            if key_file.exists():
+                encryption_key = key_file.read_text().strip()
+            if not encryption_key:
+                encryption_key = os.getenv('ENCRYPTION_KEY')
+
+            # Decrypt if Fernet encrypted
+            if encrypted_key.startswith('gAAAAAB') and encryption_key:
+                try:
+                    from cryptography.fernet import Fernet
+                    f = Fernet(encryption_key.encode() if isinstance(encryption_key, str) else encryption_key)
+                    return f.decrypt(encrypted_key.encode()).decode()
+                except Exception as e:
+                    logger.error(f"Failed to decrypt {key_name}: {e}")
+                    return None
+
+            return encrypted_key
+        except Exception as e:
+            logger.debug(f"Error getting {key_name}: {e}")
+            return None
+
     async def initialize(self):
         logger.info("🌊 Initializing Solana Arbitrage Engine...")
+
+        # Load private key from secrets manager
+        self.private_key = await self._get_decrypted_key('SOLANA_PRIVATE_KEY')
 
         await self.jupiter.initialize()
         await self.raydium.initialize()

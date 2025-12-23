@@ -163,13 +163,11 @@ class FuturesConfigManager:
 
     def _load_environment_config(self) -> Dict[str, Any]:
         """
-        Load ONLY sensitive configuration from .env
+        Load ONLY sensitive configuration from secrets manager or .env
 
-        These are the only values that should remain in .env:
-        - API keys
-        - API secrets
-        - Private keys
-        - RPC URLs (shared with other modules)
+        Priority:
+        1. Secrets manager (Docker secrets, encrypted database)
+        2. Environment variables (.env fallback)
 
         Returns:
             Dict: Environment configuration (sensitive data only)
@@ -190,10 +188,21 @@ class FuturesConfigManager:
             'BYBIT_TESTNET_API_SECRET',
         ]
 
-        for var in sensitive_keys:
-            value = os.getenv(var)
-            if value and value not in ('null', 'None', '', 'your_testnet_api_key', 'your_mainnet_api_key'):
-                env_config[var] = value
+        # Try secrets manager first
+        try:
+            from security.secrets_manager import secrets
+            for var in sensitive_keys:
+                value = secrets.get(var, log_access=False)
+                if value and value not in ('null', 'None', '', 'your_testnet_api_key', 'your_mainnet_api_key', 'PLACEHOLDER'):
+                    env_config[var] = value
+                    logger.debug(f"Loaded {var} from secrets manager")
+        except Exception as e:
+            logger.debug(f"Secrets manager not available, using environment: {e}")
+            # Fallback to environment
+            for var in sensitive_keys:
+                value = os.getenv(var)
+                if value and value not in ('null', 'None', '', 'your_testnet_api_key', 'your_mainnet_api_key'):
+                    env_config[var] = value
 
         return env_config
 

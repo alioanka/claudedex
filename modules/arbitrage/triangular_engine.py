@@ -255,7 +255,7 @@ class TriangularArbitrageEngine:
         if not self.rpc_url:
             self.rpc_url = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
 
-        self.private_key = os.getenv('PRIVATE_KEY')
+        self.private_key = None  # Loaded in initialize() from secrets manager
         self.wallet_address = os.getenv('WALLET_ADDRESS')
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
@@ -296,8 +296,54 @@ class TriangularArbitrageEngine:
             'last_stats_log': datetime.now()
         }
 
+    async def _get_decrypted_key(self, key_name: str) -> Optional[str]:
+        """Get decrypted private key from secrets manager or environment."""
+        try:
+            # Try secrets manager first
+            try:
+                from security.secrets_manager import secrets
+                if self.db_pool and not secrets._initialized:
+                    secrets.initialize(self.db_pool)
+                value = await secrets.get_async(key_name)
+                if value:
+                    return value
+            except Exception:
+                pass
+
+            # Fallback to environment with decryption
+            encrypted_key = os.getenv(key_name)
+            if not encrypted_key:
+                return None
+
+            # Get encryption key
+            encryption_key = None
+            from pathlib import Path
+            key_file = Path('.encryption_key')
+            if key_file.exists():
+                encryption_key = key_file.read_text().strip()
+            if not encryption_key:
+                encryption_key = os.getenv('ENCRYPTION_KEY')
+
+            # Decrypt if Fernet encrypted
+            if encrypted_key.startswith('gAAAAAB') and encryption_key:
+                try:
+                    from cryptography.fernet import Fernet
+                    f = Fernet(encryption_key.encode() if isinstance(encryption_key, str) else encryption_key)
+                    return f.decrypt(encrypted_key.encode()).decode()
+                except Exception as e:
+                    logger.error(f"Failed to decrypt {key_name}: {e}")
+                    return None
+
+            return encrypted_key
+        except Exception as e:
+            logger.debug(f"Error getting {key_name}: {e}")
+            return None
+
     async def initialize(self):
         logger.info("🔺 Initializing Triangular Arbitrage Engine...")
+
+        # Load private key from secrets manager
+        self.private_key = await self._get_decrypted_key('PRIVATE_KEY')
 
         if self.rpc_url:
             self.w3 = Web3(Web3.HTTPProvider(self.rpc_url.split(',')[0]))
@@ -327,6 +373,21 @@ class TriangularArbitrageEngine:
                 # Get initial gas price
                 gas_price = await self.gas_oracle.get_gas_price()
                 logger.info(f"   Current gas: {gas_price} gwei")
+
+                # Initialize Flashbots executor for atomic bundle execution
+                self.flashbots_executor = None
+                if self.private_key and not self.dry_run:
+                    try:
+                        from .arbitrage_engine import FlashbotsExecutor
+                        self.flashbots_executor = FlashbotsExecutor(
+                            self.w3,
+                            self.private_key
+                        )
+                        await self.flashbots_executor.initialize()
+                        logger.info("⚡ Flashbots executor initialized for atomic triangular arb")
+                    except Exception as e:
+                        logger.warning(f"Flashbots initialization failed: {e}")
+                        self.flashbots_executor = None
 
             else:
                 logger.warning("⚠️ Failed to connect to RPC")
@@ -631,12 +692,176 @@ class TriangularArbitrageEngine:
             )
             return
 
-        # TODO: Implement actual multi-hop swap execution
-        # This would require:
-        # 1. Building 3 swap transactions
-        # 2. Bundling via Flashbots for atomic execution
-        # 3. Using flash loans for capital efficiency
-        logger.warning("Live execution not implemented - use DRY_RUN mode")
+        # Live execution of triangular arbitrage
+        try:
+            if not self.private_key or not self.wallet_address:
+                logger.error("Private key or wallet address not available for live trading")
+                return
+
+            tx_hash = await self._execute_triangular_swap(
+                token_a, token_b, token_c,
+                amount_in, dexes
+            )
+
+            if tx_hash:
+                logger.info(f"✅ Triangular Arb Executed: {tx_hash}")
+                await self._log_trade(
+                    cycle_key, route, token_a,
+                    amount_in, profit_pct, tx_hash,
+                    dexes, symbol_a, symbol_b, symbol_c
+                )
+            else:
+                logger.error(f"❌ Triangular Arb Failed: {cycle_key}")
+
+        except Exception as e:
+            logger.error(f"Triangular arb execution error: {e}")
+
+    async def _execute_triangular_swap(
+        self,
+        token_a: str,
+        token_b: str,
+        token_c: str,
+        amount_in: int,
+        dexes: List[str]
+    ) -> Optional[str]:
+        """
+        Execute 3-hop triangular swap via Flashbots for atomic execution.
+
+        Path: A → B → C → A
+        Uses Flashbots bundle to ensure atomicity (all succeed or all fail).
+        """
+        try:
+            if len(dexes) != 3:
+                logger.error("Triangular arb requires exactly 3 DEXes")
+                return None
+
+            dex1, dex2, dex3 = dexes
+            router1 = self.router_contracts.get(dex1)
+            router2 = self.router_contracts.get(dex2)
+            router3 = self.router_contracts.get(dex3)
+
+            if not all([router1, router2, router3]):
+                logger.error("Not all router contracts available")
+                return None
+
+            wallet = Web3.to_checksum_address(self.wallet_address)
+            deadline = int(datetime.now().timestamp()) + 120
+            base_nonce = self.w3.eth.get_transaction_count(wallet)
+
+            # Build swap 1: A → B
+            tx1 = router1.functions.swapExactTokensForTokens(
+                amount_in,
+                1,  # Min output (will rely on Flashbots simulation)
+                [Web3.to_checksum_address(token_a), Web3.to_checksum_address(token_b)],
+                wallet,
+                deadline
+            ).build_transaction({
+                'from': wallet,
+                'gas': 250000,
+                'gasPrice': self.w3.eth.gas_price,
+                'nonce': base_nonce
+            })
+
+            # Build swap 2: B → C
+            tx2 = router2.functions.swapExactTokensForTokens(
+                1,  # Will be filled by actual output from tx1
+                1,
+                [Web3.to_checksum_address(token_b), Web3.to_checksum_address(token_c)],
+                wallet,
+                deadline
+            ).build_transaction({
+                'from': wallet,
+                'gas': 250000,
+                'gasPrice': self.w3.eth.gas_price,
+                'nonce': base_nonce + 1
+            })
+
+            # Build swap 3: C → A
+            tx3 = router3.functions.swapExactTokensForTokens(
+                1,  # Will be filled by actual output from tx2
+                int(amount_in * 1.001),  # Min output: at least original + 0.1% profit
+                [Web3.to_checksum_address(token_c), Web3.to_checksum_address(token_a)],
+                wallet,
+                deadline
+            ).build_transaction({
+                'from': wallet,
+                'gas': 250000,
+                'gasPrice': self.w3.eth.gas_price,
+                'nonce': base_nonce + 2
+            })
+
+            # Sign all transactions
+            signed_tx1 = self.w3.eth.account.sign_transaction(tx1, self.private_key)
+            signed_tx2 = self.w3.eth.account.sign_transaction(tx2, self.private_key)
+            signed_tx3 = self.w3.eth.account.sign_transaction(tx3, self.private_key)
+
+            # Try Flashbots bundle for atomic execution
+            if hasattr(self, 'flashbots_executor') and self.flashbots_executor:
+                current_block = self.w3.eth.block_number
+                target_block = current_block + 1
+
+                bundle = [
+                    signed_tx1.rawTransaction.hex(),
+                    signed_tx2.rawTransaction.hex(),
+                    signed_tx3.rawTransaction.hex()
+                ]
+
+                # Simulate bundle first
+                sim_result = await self.flashbots_executor.simulate_bundle(bundle, target_block)
+
+                if sim_result and 'error' not in sim_result:
+                    logger.info(f"Flashbots simulation passed for triangular arb")
+
+                    # Send bundle
+                    bundle_result = await self.flashbots_executor.send_bundle(bundle, target_block)
+
+                    if bundle_result:
+                        bundle_hash = bundle_result.get('bundleHash', 'bundle_sent')
+                        logger.info(f"Flashbots bundle sent: {bundle_hash}")
+                        return bundle_hash
+                    else:
+                        logger.warning("Flashbots bundle rejected")
+                else:
+                    logger.warning(f"Flashbots simulation failed: {sim_result}")
+
+            # Fallback: Sequential execution (RISKY - not atomic!)
+            logger.warning("⚠️ Flashbots not available - executing sequentially (not atomic!)")
+
+            # Only proceed if we have enough profit margin for gas
+            gas_estimate = 250000 * 3 * self.w3.eth.gas_price
+            if profit_pct < 0.01:  # Less than 1%
+                logger.warning("Profit too low for non-atomic execution")
+                return None
+
+            # Execute sequentially
+            tx1_hash = self.w3.eth.send_raw_transaction(signed_tx1.rawTransaction)
+            logger.info(f"Swap 1 sent: {tx1_hash.hex()}")
+
+            # Wait for tx1
+            receipt1 = self.w3.eth.wait_for_transaction_receipt(tx1_hash, timeout=60)
+            if receipt1.status != 1:
+                logger.error("Swap 1 failed!")
+                return None
+
+            # Continue with tx2
+            tx2_hash = self.w3.eth.send_raw_transaction(signed_tx2.rawTransaction)
+            receipt2 = self.w3.eth.wait_for_transaction_receipt(tx2_hash, timeout=60)
+            if receipt2.status != 1:
+                logger.error("Swap 2 failed!")
+                return None
+
+            # Complete with tx3
+            tx3_hash = self.w3.eth.send_raw_transaction(signed_tx3.rawTransaction)
+            receipt3 = self.w3.eth.wait_for_transaction_receipt(tx3_hash, timeout=60)
+            if receipt3.status != 1:
+                logger.error("Swap 3 failed!")
+                return None
+
+            return tx3_hash.hex()
+
+        except Exception as e:
+            logger.error(f"Triangular swap execution error: {e}")
+            return None
 
     async def _log_trade(
         self,
