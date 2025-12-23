@@ -452,7 +452,12 @@ class TokenSafetyChecker:
 
     async def _call_helius_token_info(self, token_address: str) -> Optional[Dict]:
         """Call Helius API for Solana token info (fallback)"""
-        api_key = os.getenv('HELIUS_API_KEY')
+        # Get API key from secrets manager (database/Docker secrets)
+        try:
+            from security.secrets_manager import secrets
+            api_key = secrets.get('HELIUS_API_KEY', log_access=False) or os.getenv('HELIUS_API_KEY')
+        except Exception:
+            api_key = os.getenv('HELIUS_API_KEY')
         if not api_key:
             return None
 

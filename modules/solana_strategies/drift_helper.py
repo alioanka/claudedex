@@ -77,9 +77,15 @@ class DriftHelper:
             rpc_url: Solana RPC URL
             private_key: Base58-encoded Solana private key
         """
-        self.rpc_url = rpc_url or os.getenv('SOLANA_RPC_URL')
-        # Solana Module uses dedicated wallet (SOLANA_MODULE_PRIVATE_KEY)
-        self.private_key = private_key or os.getenv('SOLANA_MODULE_PRIVATE_KEY')
+        # Get credentials from secrets manager (database/Docker secrets)
+        try:
+            from security.secrets_manager import secrets
+            self.rpc_url = rpc_url or secrets.get('SOLANA_RPC_URL', log_access=False) or os.getenv('SOLANA_RPC_URL')
+            # Solana Module uses dedicated wallet (SOLANA_MODULE_PRIVATE_KEY)
+            self.private_key = private_key or secrets.get('SOLANA_MODULE_PRIVATE_KEY', log_access=False)
+        except Exception:
+            self.rpc_url = rpc_url or os.getenv('SOLANA_RPC_URL')
+            self.private_key = private_key or os.getenv('SOLANA_MODULE_PRIVATE_KEY')
 
         # Drift client (will be initialized when needed)
         self.drift_client = None

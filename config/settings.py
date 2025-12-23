@@ -77,20 +77,46 @@ class Settings:
     DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://bot_user:bot_password@postgres:5432/tradingbot')
     REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
     
-    # API Keys
-    DEXSCREENER_API_KEY = os.getenv('DEXSCREENER_API_KEY', '')
-    MORALIS_API_KEY = os.getenv('MORALIS_API_KEY', '')
-    ALCHEMY_API_KEY = os.getenv('ALCHEMY_API_KEY', '')
-    INFURA_API_KEY = os.getenv('INFURA_API_KEY', '')
-    QUICKNODE_API_KEY = os.getenv('QUICKNODE_API_KEY', '')
-    
-    # Social APIs
-    TWITTER_API_KEY = os.getenv('TWITTER_API_KEY', '')
-    DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN', '')
-    TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
-    
-    # Wallet Configuration
-    DEFAULT_WALLET_PASSWORD = os.getenv('WALLET_PASSWORD', '')
+    # API Keys - loaded via secrets manager (database/Docker secrets)
+    # These are populated at runtime via _load_secrets() method
+    DEXSCREENER_API_KEY = ''
+    MORALIS_API_KEY = ''
+    ALCHEMY_API_KEY = ''
+    INFURA_API_KEY = ''
+    QUICKNODE_API_KEY = ''
+
+    # Social APIs - loaded via secrets manager
+    TWITTER_API_KEY = ''
+    DISCORD_BOT_TOKEN = ''
+    TELEGRAM_BOT_TOKEN = ''
+
+    # Wallet Configuration - loaded via secrets manager
+    DEFAULT_WALLET_PASSWORD = ''
+
+    @classmethod
+    def _load_secrets(cls):
+        """Load API keys and credentials from secrets manager"""
+        try:
+            from security.secrets_manager import secrets
+            cls.DEXSCREENER_API_KEY = secrets.get('DEXSCREENER_API_KEY', '', log_access=False) or ''
+            cls.MORALIS_API_KEY = secrets.get('MORALIS_API_KEY', '', log_access=False) or ''
+            cls.ALCHEMY_API_KEY = secrets.get('ALCHEMY_API_KEY', '', log_access=False) or ''
+            cls.INFURA_API_KEY = secrets.get('INFURA_API_KEY', '', log_access=False) or ''
+            cls.QUICKNODE_API_KEY = secrets.get('QUICKNODE_API_KEY', '', log_access=False) or ''
+            cls.TWITTER_API_KEY = secrets.get('TWITTER_API_KEY', '', log_access=False) or ''
+            cls.DISCORD_BOT_TOKEN = secrets.get('DISCORD_BOT_TOKEN', '', log_access=False) or ''
+            cls.TELEGRAM_BOT_TOKEN = secrets.get('TELEGRAM_BOT_TOKEN', '', log_access=False) or ''
+            cls.DEFAULT_WALLET_PASSWORD = secrets.get('WALLET_PASSWORD', '', log_access=False) or ''
+        except Exception:
+            # Fallback to environment variables if secrets manager unavailable
+            cls.DEXSCREENER_API_KEY = os.getenv('DEXSCREENER_API_KEY', '')
+            cls.MORALIS_API_KEY = os.getenv('MORALIS_API_KEY', '')
+            cls.ALCHEMY_API_KEY = os.getenv('ALCHEMY_API_KEY', '')
+            cls.INFURA_API_KEY = os.getenv('INFURA_API_KEY', '')
+            cls.QUICKNODE_API_KEY = os.getenv('QUICKNODE_API_KEY', '')
+            cls.TWITTER_API_KEY = os.getenv('TWITTER_API_KEY', '')
+            cls.DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN', '')
+            cls.TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
     HARDWARE_WALLET_ENABLED = os.getenv('HARDWARE_WALLET_ENABLED', 'false').lower() == 'true'
     
     # Trading Limits (Safety Defaults)
@@ -544,3 +570,9 @@ except ValueError as e:
         raise e
     else:
         print(f"Warning: {e}")
+
+# Load API keys and credentials from secrets manager
+try:
+    Settings._load_secrets()
+except Exception as e:
+    print(f"Warning: Could not load secrets: {e}")

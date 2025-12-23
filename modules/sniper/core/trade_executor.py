@@ -159,9 +159,16 @@ class TradeExecutor:
 
         # Load credentials from secrets manager (Docker secrets, database, or env)
         self.evm_private_key = await self._get_decrypted_key('PRIVATE_KEY') or await self._get_decrypted_key('EVM_PRIVATE_KEY')
-        self.evm_wallet = os.getenv('WALLET_ADDRESS') or os.getenv('EVM_WALLET_ADDRESS')
         self.solana_private_key = await self._get_decrypted_key('SOLANA_MODULE_PRIVATE_KEY')
-        self.solana_wallet = os.getenv('SOLANA_MODULE_WALLET')
+
+        # Get wallet addresses from secrets manager
+        try:
+            from security.secrets_manager import secrets
+            self.evm_wallet = secrets.get('WALLET_ADDRESS', log_access=False) or secrets.get('EVM_WALLET_ADDRESS', log_access=False) or os.getenv('WALLET_ADDRESS') or os.getenv('EVM_WALLET_ADDRESS')
+            self.solana_wallet = secrets.get('SOLANA_MODULE_WALLET', log_access=False) or os.getenv('SOLANA_MODULE_WALLET')
+        except Exception:
+            self.evm_wallet = os.getenv('WALLET_ADDRESS') or os.getenv('EVM_WALLET_ADDRESS')
+            self.solana_wallet = os.getenv('SOLANA_MODULE_WALLET')
 
         # DRY_RUN check
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')

@@ -158,13 +158,16 @@ class CopyTradeExecutor:
         if not self.solana_rpc_url:
             self.solana_rpc_url = os.getenv('SOLANA_RPC_URL')
 
+        # Load all credentials from secrets manager (database/Docker secrets)
+        from security.secrets_manager import secrets
+
         # Load Solana credentials from secrets manager
         self.solana_private_key = await self._get_decrypted_key('SOLANA_MODULE_PRIVATE_KEY')
-        self.solana_wallet = os.getenv('SOLANA_MODULE_WALLET')
+        self.solana_wallet = secrets.get('SOLANA_MODULE_WALLET') or os.getenv('SOLANA_MODULE_WALLET')
 
         # Load EVM credentials from secrets manager
         self.evm_private_key = await self._get_decrypted_key('PRIVATE_KEY')
-        self.evm_wallet = os.getenv('WALLET_ADDRESS')
+        self.evm_wallet = secrets.get('WALLET_ADDRESS') or os.getenv('WALLET_ADDRESS')
 
         # Load Web3 provider
         try:
@@ -173,7 +176,7 @@ class CopyTradeExecutor:
         except Exception:
             pass
         if not self.web3_provider:
-            self.web3_provider = os.getenv('WEB3_PROVIDER_URL')
+            self.web3_provider = secrets.get('WEB3_PROVIDER_URL') or os.getenv('WEB3_PROVIDER_URL')
 
         mode = "DRY RUN" if self.dry_run else "LIVE"
         logger.info(f"💱 Copy Trade Executor initialized ({mode})")
@@ -413,16 +416,17 @@ class CopyTradingEngine:
         self.is_running = False
         self.targets = []  # Initialize empty, load from DB
 
-        # Use Pool Engine with .env fallback
+        # Use Pool Engine with secrets manager fallback (NOT os.getenv directly)
+        from security.secrets_manager import secrets
         try:
             from config.rpc_provider import RPCProvider
-            self.etherscan_api_key = RPCProvider.get_api_sync('ETHERSCAN_API') or os.getenv('ETHERSCAN_API_KEY')
-            self.solana_rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC') or os.getenv('SOLANA_RPC_URL')
-            self.helius_api_key = RPCProvider.get_api_sync('HELIUS_API') or os.getenv('HELIUS_API_KEY')
+            self.etherscan_api_key = RPCProvider.get_api_sync('ETHERSCAN_API') or secrets.get('ETHERSCAN_API_KEY')
+            self.solana_rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC') or secrets.get('SOLANA_RPC_URL')
+            self.helius_api_key = RPCProvider.get_api_sync('HELIUS_API') or secrets.get('HELIUS_API_KEY')
         except ImportError:
-            self.etherscan_api_key = os.getenv('ETHERSCAN_API_KEY')
-            self.solana_rpc_url = os.getenv('SOLANA_RPC_URL')
-            self.helius_api_key = os.getenv('HELIUS_API_KEY')
+            self.etherscan_api_key = secrets.get('ETHERSCAN_API_KEY')
+            self.solana_rpc_url = secrets.get('SOLANA_RPC_URL')
+            self.helius_api_key = secrets.get('HELIUS_API_KEY')
 
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 

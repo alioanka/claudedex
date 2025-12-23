@@ -371,21 +371,32 @@ class TradingBotApplication:
             if 'notifications' not in nested_config:
                 from monitoring.alerts import AlertPriority, NotificationChannel
 
+                # Get notification credentials from secrets manager
+                try:
+                    from security.secrets_manager import secrets
+                    telegram_token = secrets.get('TELEGRAM_BOT_TOKEN', log_access=False) or os.getenv('TELEGRAM_BOT_TOKEN', '')
+                    telegram_chat = secrets.get('TELEGRAM_CHAT_ID', log_access=False) or os.getenv('TELEGRAM_CHAT_ID', '')
+                    discord_webhook = secrets.get('DISCORD_WEBHOOK_URL', log_access=False) or os.getenv('DISCORD_WEBHOOK_URL', '')
+                except Exception:
+                    telegram_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
+                    telegram_chat = os.getenv('TELEGRAM_CHAT_ID', '')
+                    discord_webhook = os.getenv('DISCORD_WEBHOOK_URL', '')
+
                 nested_config['notifications'] = {
                     'telegram': {
-                        'bot_token': os.getenv('TELEGRAM_BOT_TOKEN', ''),
-                        'chat_id': os.getenv('TELEGRAM_CHAT_ID', ''),
-                        'enabled': bool(os.getenv('TELEGRAM_BOT_TOKEN'))
+                        'bot_token': telegram_token,
+                        'chat_id': telegram_chat,
+                        'enabled': bool(telegram_token)
                     },
                     'discord': {
-                        'webhook_url': os.getenv('DISCORD_WEBHOOK_URL', ''),
-                        'enabled': bool(os.getenv('DISCORD_WEBHOOK_URL'))
+                        'webhook_url': discord_webhook,
+                        'enabled': bool(discord_webhook)
                     },
                     'channel_priorities': {
-                        AlertPriority.LOW: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else [],
-                        AlertPriority.MEDIUM: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else [],
-                        AlertPriority.HIGH: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else [],
-                        AlertPriority.CRITICAL: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else []
+                        AlertPriority.LOW: [NotificationChannel.TELEGRAM] if telegram_token else [],
+                        AlertPriority.MEDIUM: [NotificationChannel.TELEGRAM] if telegram_token else [],
+                        AlertPriority.HIGH: [NotificationChannel.TELEGRAM] if telegram_token else [],
+                        AlertPriority.CRITICAL: [NotificationChannel.TELEGRAM] if telegram_token else []
                     },
                     'priority_cooldowns': {
                         AlertPriority.LOW: 300,

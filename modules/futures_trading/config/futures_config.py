@@ -30,16 +30,29 @@ class FuturesConfig:
         symbols_str = os.getenv('FUTURES_SYMBOLS', default_symbols)
         self.symbols: List[str] = [s.strip() for s in symbols_str.split(',')]
 
-        # API credentials
-        if self.exchange == 'binance':
-            self.api_key = os.getenv('BINANCE_API_KEY', '')
-            self.api_secret = os.getenv('BINANCE_API_SECRET', '')
-        elif self.exchange == 'bybit':
-            self.api_key = os.getenv('BYBIT_API_KEY', '')
-            self.api_secret = os.getenv('BYBIT_API_SECRET', '')
-        else:
-            self.api_key = ''
-            self.api_secret = ''
+        # API credentials - use secrets manager (database/Docker secrets)
+        try:
+            from security.secrets_manager import secrets
+            if self.exchange == 'binance':
+                self.api_key = secrets.get('BINANCE_API_KEY', '') or ''
+                self.api_secret = secrets.get('BINANCE_API_SECRET', '') or ''
+            elif self.exchange == 'bybit':
+                self.api_key = secrets.get('BYBIT_API_KEY', '') or ''
+                self.api_secret = secrets.get('BYBIT_API_SECRET', '') or ''
+            else:
+                self.api_key = ''
+                self.api_secret = ''
+        except Exception:
+            # Fallback to env if secrets manager unavailable
+            if self.exchange == 'binance':
+                self.api_key = os.getenv('BINANCE_API_KEY', '')
+                self.api_secret = os.getenv('BINANCE_API_SECRET', '')
+            elif self.exchange == 'bybit':
+                self.api_key = os.getenv('BYBIT_API_KEY', '')
+                self.api_secret = os.getenv('BYBIT_API_SECRET', '')
+            else:
+                self.api_key = ''
+                self.api_secret = ''
 
     def to_dict(self) -> Dict:
         """Convert config to dictionary"""

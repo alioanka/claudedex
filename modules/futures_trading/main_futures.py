@@ -558,18 +558,18 @@ class FuturesTradingApplication:
             # Initialize database connection
             await self._init_database()
 
-            # Initialize config manager (loads settings from database)
-            from modules.futures_trading.config.futures_config_manager import FuturesConfigManager
-            self.config_manager = FuturesConfigManager(db_pool=self.db_pool)
-            await self.config_manager.initialize()
-
-            # Initialize secrets manager with database pool for credential access
+            # Initialize secrets manager with database pool FIRST (before any config managers)
             try:
                 from security.secrets_manager import secrets
                 secrets.initialize(self.db_pool)
                 self.logger.info("✅ Secrets manager initialized with database")
             except Exception as e:
                 self.logger.warning(f"Could not initialize secrets manager with database: {e}")
+
+            # Initialize config manager (loads settings from database)
+            from modules.futures_trading.config.futures_config_manager import FuturesConfigManager
+            self.config_manager = FuturesConfigManager(db_pool=self.db_pool)
+            await self.config_manager.initialize()
 
             # Get configuration from database
             general_config = self.config_manager.get_general()
