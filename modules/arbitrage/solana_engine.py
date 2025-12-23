@@ -79,7 +79,8 @@ SOLANA_ARB_PAIRS = [
 ]
 
 # DEX API endpoints
-JUPITER_API = "https://quote-api.jup.ag/v6"
+# Updated to use lite-api.jup.ag/swap/v1 (same as DEX module jupiter_executor.py)
+JUPITER_API = "https://lite-api.jup.ag/swap/v1"
 RAYDIUM_API = "https://api.raydium.io/v2"
 
 
@@ -311,7 +312,8 @@ class SolanaPriceFetcher:
     """Fetch real-time prices from multiple sources"""
 
     COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price"
-    JUPITER_PRICE_API = "https://price.jup.ag/v4/price"
+    # Updated to use api.jup.ag/price/v2 (same as Solana module)
+    JUPITER_PRICE_API = "https://api.jup.ag/price/v2"
 
     def __init__(self):
         self._cache: Dict[str, tuple] = {}

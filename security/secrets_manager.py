@@ -176,7 +176,18 @@ class SecureSecretsManager:
             except Exception as e:
                 logger.warning(f"Failed to read external key file: {e}")
 
-        # Priority 3: Environment variable (fallback for migration)
+        # Priority 3: Project root .encryption_key file
+        if key is None:
+            project_key_path = Path('.encryption_key')
+            if project_key_path.exists():
+                try:
+                    key = project_key_path.read_bytes().strip()
+                    key_source = 'project_root'
+                    logger.info("Loaded encryption key from .encryption_key")
+                except Exception as e:
+                    logger.warning(f"Failed to read .encryption_key: {e}")
+
+        # Priority 4: Environment variable (fallback for migration)
         if key is None:
             env_key = os.getenv('ENCRYPTION_KEY')
             if env_key:
