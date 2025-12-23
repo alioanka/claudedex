@@ -3162,7 +3162,12 @@ class DashboardEndpoints:
                             balances['SOLANA_MODULE'] = {'balance': 0.0, 'native_balance': 0.0, 'native_symbol': 'SOL', 'pnl': 0.0, 'positions': 0}
 
                         # ===== EVM WALLETS =====
-                        wallet_address = os.getenv('WALLET_ADDRESS')
+                        # Get wallet address from secrets manager
+                        try:
+                            from security.secrets_manager import secrets
+                            wallet_address = secrets.get('WALLET_ADDRESS', log_access=False) or os.getenv('WALLET_ADDRESS')
+                        except Exception:
+                            wallet_address = os.getenv('WALLET_ADDRESS')
                         if wallet_address:
                             evm_rpcs = {
                                 'ETHEREUM': os.getenv('ETH_RPC_URL', 'https://eth.llamarpc.com'),
@@ -3212,8 +3217,14 @@ class DashboardEndpoints:
                         spot_assets = []
                         exchange_fetched = False
 
-                        binance_key = os.getenv('BINANCE_API_KEY')
-                        binance_secret = os.getenv('BINANCE_API_SECRET')
+                        # Get Binance credentials from secrets manager
+                        try:
+                            from security.secrets_manager import secrets
+                            binance_key = secrets.get('BINANCE_API_KEY', log_access=False) or os.getenv('BINANCE_API_KEY')
+                            binance_secret = secrets.get('BINANCE_API_SECRET', log_access=False) or os.getenv('BINANCE_API_SECRET')
+                        except Exception:
+                            binance_key = os.getenv('BINANCE_API_KEY')
+                            binance_secret = os.getenv('BINANCE_API_SECRET')
 
                         if binance_key and binance_secret:
                             headers = {'X-MBX-APIKEY': binance_key}
@@ -4188,9 +4199,15 @@ class DashboardEndpoints:
                         settings[f"futures_{key}"] = value
 
             # Add API key availability flags (don't expose actual keys)
-            import os
-            settings['_has_binance_api'] = bool(os.getenv('BINANCE_TESTNET_API_KEY') or os.getenv('BINANCE_API_KEY'))
-            settings['_has_bybit_api'] = bool(os.getenv('BYBIT_TESTNET_API_KEY') or os.getenv('BYBIT_API_KEY'))
+            # Check secrets manager first, then env fallback
+            try:
+                from security.secrets_manager import secrets
+                settings['_has_binance_api'] = bool(secrets.get('BINANCE_TESTNET_API_KEY', log_access=False) or secrets.get('BINANCE_API_KEY', log_access=False) or os.getenv('BINANCE_TESTNET_API_KEY') or os.getenv('BINANCE_API_KEY'))
+                settings['_has_bybit_api'] = bool(secrets.get('BYBIT_TESTNET_API_KEY', log_access=False) or secrets.get('BYBIT_API_KEY', log_access=False) or os.getenv('BYBIT_TESTNET_API_KEY') or os.getenv('BYBIT_API_KEY'))
+            except Exception:
+                import os
+                settings['_has_binance_api'] = bool(os.getenv('BINANCE_TESTNET_API_KEY') or os.getenv('BINANCE_API_KEY'))
+                settings['_has_bybit_api'] = bool(os.getenv('BYBIT_TESTNET_API_KEY') or os.getenv('BYBIT_API_KEY'))
 
             return web.json_response({
                 'success': True,
@@ -4340,11 +4357,17 @@ class DashboardEndpoints:
                     else:
                         settings[f"solana_{key}"] = value
 
-            # Add API key availability flags
-            import os
-            settings['_has_solana_wallet'] = bool(os.getenv('SOLANA_WALLET') or os.getenv('SOLANA_MODULE_WALLET'))
-            settings['_has_jupiter_api'] = bool(os.getenv('JUPITER_API_KEY'))
-            settings['_has_helius_api'] = bool(os.getenv('HELIUS_API_KEY'))
+            # Add API key availability flags (check secrets manager first)
+            try:
+                from security.secrets_manager import secrets
+                settings['_has_solana_wallet'] = bool(secrets.get('SOLANA_WALLET', log_access=False) or secrets.get('SOLANA_MODULE_WALLET', log_access=False) or os.getenv('SOLANA_WALLET') or os.getenv('SOLANA_MODULE_WALLET'))
+                settings['_has_jupiter_api'] = bool(secrets.get('JUPITER_API_KEY', log_access=False) or os.getenv('JUPITER_API_KEY'))
+                settings['_has_helius_api'] = bool(secrets.get('HELIUS_API_KEY', log_access=False) or os.getenv('HELIUS_API_KEY'))
+            except Exception:
+                import os
+                settings['_has_solana_wallet'] = bool(os.getenv('SOLANA_WALLET') or os.getenv('SOLANA_MODULE_WALLET'))
+                settings['_has_jupiter_api'] = bool(os.getenv('JUPITER_API_KEY'))
+                settings['_has_helius_api'] = bool(os.getenv('HELIUS_API_KEY'))
 
             return web.json_response({
                 'success': True,
@@ -7310,8 +7333,14 @@ class DashboardEndpoints:
             token_address = request.query.get('token_address', '')
             wallet_address = request.query.get('wallet_address', '')
 
-            helius_api_key = os.getenv('HELIUS_API_KEY')
-            solana_rpc_url = os.getenv('SOLANA_RPC_URL')
+            # Get credentials from secrets manager
+            try:
+                from security.secrets_manager import secrets
+                helius_api_key = secrets.get('HELIUS_API_KEY', log_access=False) or os.getenv('HELIUS_API_KEY')
+                solana_rpc_url = secrets.get('SOLANA_RPC_URL', log_access=False) or os.getenv('SOLANA_RPC_URL')
+            except Exception:
+                helius_api_key = os.getenv('HELIUS_API_KEY')
+                solana_rpc_url = os.getenv('SOLANA_RPC_URL')
 
             wallets = []
 
@@ -7817,8 +7846,12 @@ class DashboardEndpoints:
                     logger.debug(f"Failed to fetch {chain_name} balance: {e}")
                 return 0.0
 
-            # 1. EVM Chains
-            evm_wallet = os.getenv('WALLET_ADDRESS')
+            # 1. EVM Chains - get wallet from secrets manager
+            try:
+                from security.secrets_manager import secrets
+                evm_wallet = secrets.get('WALLET_ADDRESS', log_access=False) or os.getenv('WALLET_ADDRESS')
+            except Exception:
+                evm_wallet = os.getenv('WALLET_ADDRESS')
             if evm_wallet:
                 evm_chains = [
                     ('ethereum', 'ETHEREUM_RPC_URLS', 'ETH'),

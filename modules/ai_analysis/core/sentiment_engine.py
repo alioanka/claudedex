@@ -32,9 +32,14 @@ class AITradeExecutor:
         self.dry_run = dry_run
         self.session: Optional[aiohttp.ClientSession] = None
 
-        # Binance API for futures trading
-        self.binance_api_key = os.getenv('BINANCE_API_KEY')
-        self.binance_secret = os.getenv('BINANCE_API_SECRET')
+        # Binance API for futures trading - use secrets manager
+        try:
+            from security.secrets_manager import secrets
+            self.binance_api_key = secrets.get('BINANCE_API_KEY')
+            self.binance_secret = secrets.get('BINANCE_API_SECRET')
+        except Exception:
+            self.binance_api_key = os.getenv('BINANCE_API_KEY')
+            self.binance_secret = os.getenv('BINANCE_API_SECRET')
 
     async def initialize(self):
         """Initialize executor"""

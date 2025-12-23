@@ -46,29 +46,40 @@ class JupiterHelper:
 
         logger.info(f"🔗 Jupiter API endpoint: {self.api_url}")
 
-        # Load keypair for signing
+        # Load keypair for signing - use secrets manager (database/Docker secrets)
         if private_key:
             self.keypair = Keypair.from_base58_string(private_key)
-        elif os.getenv('SOLANA_PRIVATE_KEY'):
-            # Load from environment (may be encrypted)
-            self.keypair = self._load_keypair_from_env()
         else:
-            self.keypair = None
-            logger.warning("No Solana private key provided, signing will fail")
+            # Get private key from secrets manager
+            try:
+                from security.secrets_manager import secrets
+                pk_value = secrets.get('SOLANA_PRIVATE_KEY', log_access=False)
+                if pk_value:
+                    self.keypair = self._load_keypair_from_value(pk_value)
+                else:
+                    self.keypair = None
+                    logger.warning("No Solana private key provided, signing will fail")
+            except Exception:
+                # Fallback to environment
+                if os.getenv('SOLANA_PRIVATE_KEY'):
+                    self.keypair = self._load_keypair_from_env()
+                else:
+                    self.keypair = None
+                    logger.warning("No Solana private key provided, signing will fail")
 
         self.session: Optional[aiohttp.ClientSession] = None
 
-    def _load_keypair_from_env(self) -> Optional[Keypair]:
+    def _load_keypair_from_value(self, pk_str: str) -> Optional[Keypair]:
         """
-        Load keypair from environment variable
+        Load keypair from a string value (from secrets manager or env)
+
+        Args:
+            pk_str: Private key string (base58 encoded or encrypted)
 
         Returns:
             Optional[Keypair]: Loaded keypair or None
         """
         try:
-            # This assumes the private key in .env is the base58-encoded secret key
-            # If it's encrypted, you'd need to decrypt it first
-            pk_str = os.getenv('SOLANA_PRIVATE_KEY')
             if not pk_str:
                 return None
 
@@ -83,6 +94,16 @@ class JupiterHelper:
         except Exception as e:
             logger.error(f"Error loading keypair: {e}")
             return None
+
+    def _load_keypair_from_env(self) -> Optional[Keypair]:
+        """
+        Load keypair from environment variable (fallback)
+
+        Returns:
+            Optional[Keypair]: Loaded keypair or None
+        """
+        pk_str = os.getenv('SOLANA_PRIVATE_KEY')
+        return self._load_keypair_from_value(pk_str)
 
     async def initialize(self):
         """Initialize HTTP session"""

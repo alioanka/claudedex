@@ -419,7 +419,12 @@ class ArbitrageEngine:
             self.rpc_url = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
 
         self.private_key = None  # Loaded in initialize() from secrets manager
-        self.wallet_address = os.getenv('WALLET_ADDRESS')
+        # Get wallet address from secrets manager (database/Docker secrets)
+        try:
+            from security.secrets_manager import secrets
+            self.wallet_address = secrets.get('WALLET_ADDRESS', log_access=False)
+        except Exception:
+            self.wallet_address = os.getenv('WALLET_ADDRESS')
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
         self.router_contracts = {}

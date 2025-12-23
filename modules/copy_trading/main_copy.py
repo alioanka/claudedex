@@ -69,10 +69,17 @@ async def main():
     logger.info(f"   Working dir: {Path.cwd()}")
     logger.info(f"   Log dir: {log_dir.absolute()}")
 
-    # Check for API keys and RPC URLs
-    etherscan_key = os.getenv('ETHERSCAN_API_KEY')
-    solana_rpc = os.getenv('SOLANA_RPC_URL')
-    helius_key = os.getenv('HELIUS_API_KEY')
+    # Check for API keys and RPC URLs - use secrets manager (database/Docker secrets)
+    try:
+        from security.secrets_manager import secrets
+        etherscan_key = secrets.get('ETHERSCAN_API_KEY', log_access=False)
+        solana_rpc = secrets.get('SOLANA_RPC_URL', log_access=False)
+        helius_key = secrets.get('HELIUS_API_KEY', log_access=False)
+    except Exception:
+        # Fallback to env if secrets manager unavailable
+        etherscan_key = os.getenv('ETHERSCAN_API_KEY')
+        solana_rpc = os.getenv('SOLANA_RPC_URL')
+        helius_key = os.getenv('HELIUS_API_KEY')
 
     logger.info(f"   ETHERSCAN_API_KEY: {'Configured' if etherscan_key else 'NOT SET - EVM monitoring disabled'}")
     logger.info(f"   SOLANA_RPC_URL: {'Configured' if solana_rpc else 'NOT SET - Solana monitoring disabled'}")

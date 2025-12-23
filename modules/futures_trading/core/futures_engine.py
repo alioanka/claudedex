@@ -524,13 +524,22 @@ class FuturesTradingEngine:
                 api_key = credentials.get('api_key')
                 api_secret = credentials.get('api_secret')
             else:
-                # Fallback to direct env read
-                if self.testnet:
-                    api_key = os.getenv('BINANCE_TESTNET_API_KEY')
-                    api_secret = os.getenv('BINANCE_TESTNET_API_SECRET')
-                else:
-                    api_key = os.getenv('BINANCE_API_KEY')
-                    api_secret = os.getenv('BINANCE_API_SECRET')
+                # Fallback to secrets manager then direct env read
+                try:
+                    from security.secrets_manager import secrets
+                    if self.testnet:
+                        api_key = secrets.get('BINANCE_TESTNET_API_KEY', log_access=False) or os.getenv('BINANCE_TESTNET_API_KEY')
+                        api_secret = secrets.get('BINANCE_TESTNET_API_SECRET', log_access=False) or os.getenv('BINANCE_TESTNET_API_SECRET')
+                    else:
+                        api_key = secrets.get('BINANCE_API_KEY', log_access=False) or os.getenv('BINANCE_API_KEY')
+                        api_secret = secrets.get('BINANCE_API_SECRET', log_access=False) or os.getenv('BINANCE_API_SECRET')
+                except Exception:
+                    if self.testnet:
+                        api_key = os.getenv('BINANCE_TESTNET_API_KEY')
+                        api_secret = os.getenv('BINANCE_TESTNET_API_SECRET')
+                    else:
+                        api_key = os.getenv('BINANCE_API_KEY')
+                        api_secret = os.getenv('BINANCE_API_SECRET')
 
             sandbox_mode = self.testnet
             if self.testnet:
@@ -563,9 +572,14 @@ class FuturesTradingEngine:
             # This ensures we always get live prices from mainnet, regardless of testnet setting
             if self.dry_run or self.testnet:
                 try:
-                    # Use mainnet credentials if available, otherwise create public client
-                    mainnet_key = os.getenv('BINANCE_API_KEY')
-                    mainnet_secret = os.getenv('BINANCE_API_SECRET')
+                    # Use mainnet credentials if available (via secrets manager), otherwise create public client
+                    try:
+                        from security.secrets_manager import secrets
+                        mainnet_key = secrets.get('BINANCE_API_KEY', log_access=False) or os.getenv('BINANCE_API_KEY')
+                        mainnet_secret = secrets.get('BINANCE_API_SECRET', log_access=False) or os.getenv('BINANCE_API_SECRET')
+                    except Exception:
+                        mainnet_key = os.getenv('BINANCE_API_KEY')
+                        mainnet_secret = os.getenv('BINANCE_API_SECRET')
 
                     if mainnet_key and mainnet_secret:
                         self.price_client = ccxt.binance({
@@ -610,13 +624,22 @@ class FuturesTradingEngine:
                 api_key = credentials.get('api_key')
                 api_secret = credentials.get('api_secret')
             else:
-                # Fallback to direct env read
-                if self.testnet:
-                    api_key = os.getenv('BYBIT_TESTNET_API_KEY')
-                    api_secret = os.getenv('BYBIT_TESTNET_API_SECRET')
-                else:
-                    api_key = os.getenv('BYBIT_API_KEY')
-                    api_secret = os.getenv('BYBIT_API_SECRET')
+                # Fallback to secrets manager then direct env read
+                try:
+                    from security.secrets_manager import secrets
+                    if self.testnet:
+                        api_key = secrets.get('BYBIT_TESTNET_API_KEY', log_access=False) or os.getenv('BYBIT_TESTNET_API_KEY')
+                        api_secret = secrets.get('BYBIT_TESTNET_API_SECRET', log_access=False) or os.getenv('BYBIT_TESTNET_API_SECRET')
+                    else:
+                        api_key = secrets.get('BYBIT_API_KEY', log_access=False) or os.getenv('BYBIT_API_KEY')
+                        api_secret = secrets.get('BYBIT_API_SECRET', log_access=False) or os.getenv('BYBIT_API_SECRET')
+                except Exception:
+                    if self.testnet:
+                        api_key = os.getenv('BYBIT_TESTNET_API_KEY')
+                        api_secret = os.getenv('BYBIT_TESTNET_API_SECRET')
+                    else:
+                        api_key = os.getenv('BYBIT_API_KEY')
+                        api_secret = os.getenv('BYBIT_API_SECRET')
 
             sandbox_mode = self.testnet
             if self.testnet:
