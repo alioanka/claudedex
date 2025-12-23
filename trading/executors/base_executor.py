@@ -20,9 +20,68 @@ from decimal import Decimal
 import logging
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 # ✅ FIXED: Setup proper logging instead of print statements
 logger = logging.getLogger(__name__)
+
+
+def _get_private_key_from_secrets(config: dict) -> str:
+    """
+    Get private key from secrets manager, database, or config.
+
+    Priority:
+    1. Config dict (already decrypted and passed in)
+    2. Secrets manager (handles Docker secrets, DB, env)
+    3. Environment variable with Fernet decryption
+
+    Returns:
+        Decrypted private key string
+    """
+    # Check if already in config
+    private_key = config.get('private_key') or config.get('security', {}).get('private_key')
+    if private_key:
+        return private_key
+
+    # Try secrets manager
+    try:
+        from security.secrets_manager import secrets
+        private_key = secrets.get('PRIVATE_KEY', log_access=False)
+        if private_key:
+            logger.info("✅ Loaded PRIVATE_KEY from secrets manager")
+            return private_key
+    except Exception as e:
+        logger.debug(f"Secrets manager not available: {e}")
+
+    # Fallback: Environment variable with potential decryption
+    encrypted_key = os.getenv('PRIVATE_KEY')
+    if not encrypted_key:
+        return None
+
+    # Check if encrypted (Fernet tokens start with gAAAAAB)
+    if encrypted_key.startswith('gAAAAAB'):
+        try:
+            from cryptography.fernet import Fernet
+
+            # Get encryption key
+            encryption_key = None
+            key_file = Path('.encryption_key')
+            if key_file.exists():
+                encryption_key = key_file.read_text().strip()
+            if not encryption_key:
+                encryption_key = os.getenv('ENCRYPTION_KEY')
+
+            if encryption_key:
+                f = Fernet(encryption_key.encode() if isinstance(encryption_key, str) else encryption_key)
+                private_key = f.decrypt(encrypted_key.encode()).decode()
+                logger.info("✅ Decrypted PRIVATE_KEY from environment")
+                return private_key
+        except Exception as e:
+            logger.error(f"Failed to decrypt PRIVATE_KEY: {e}")
+            return None
+
+    # Not encrypted, return as-is
+    return encrypted_key
 
 class BaseExecutor(ABC):
     """Abstract base for all executors"""
@@ -154,9 +213,9 @@ class TradeExecutor(BaseExecutor):
             logger.error(f"Failed to configure Web3 provider: {e}")
             raise ValueError(f"Invalid or unsupported chain ID: {self.chain_id}") from e
         
-        private_key = config.get('private_key') or config.get('security', {}).get('private_key')
+        private_key = _get_private_key_from_secrets(config)
         if not private_key:
-            raise ValueError("PRIVATE_KEY not found in configuration")
+            raise ValueError("PRIVATE_KEY not found in configuration or secrets manager")
         self.account = Account.from_key(private_key)
         self.wallet_address = self.account.address
 

@@ -102,42 +102,50 @@ class TradeExecutor:
         Priority:
         1. Secrets manager (Docker secrets, database)
         2. Environment variable with decryption
+
+        Always checks if value is still encrypted and decrypts if needed.
         """
         try:
+            value = None
+
             # Try secrets manager first
             try:
                 from security.secrets_manager import secrets
                 value = await secrets.get_async(key_name)
-                if value:
-                    return value
             except Exception:
                 pass
 
-            # Fallback to environment with decryption
-            encrypted_key = os.getenv(key_name)
-            if not encrypted_key:
+            # Fallback to environment
+            if not value:
+                value = os.getenv(key_name)
+
+            if not value:
                 return None
 
-            # Get encryption key from file or environment
-            encryption_key = None
-            from pathlib import Path
-            key_file = Path('.encryption_key')
-            if key_file.exists():
-                encryption_key = key_file.read_text().strip()
-            if not encryption_key:
-                encryption_key = os.getenv('ENCRYPTION_KEY')
+            # Check if still encrypted (Fernet tokens start with gAAAAAB)
+            # This handles cases where DB returned encrypted value without decrypting
+            if value.startswith('gAAAAAB'):
+                from pathlib import Path
+                encryption_key = None
+                key_file = Path('.encryption_key')
+                if key_file.exists():
+                    encryption_key = key_file.read_text().strip()
+                if not encryption_key:
+                    encryption_key = os.getenv('ENCRYPTION_KEY')
 
-            # Decrypt if Fernet encrypted
-            if encrypted_key.startswith('gAAAAAB') and encryption_key:
-                try:
-                    from cryptography.fernet import Fernet
-                    f = Fernet(encryption_key.encode() if isinstance(encryption_key, str) else encryption_key)
-                    return f.decrypt(encrypted_key.encode()).decode()
-                except Exception as e:
-                    logger.error(f"Failed to decrypt {key_name}: {e}")
+                if encryption_key:
+                    try:
+                        from cryptography.fernet import Fernet
+                        f = Fernet(encryption_key.encode() if isinstance(encryption_key, str) else encryption_key)
+                        return f.decrypt(value.encode()).decode()
+                    except Exception as e:
+                        logger.error(f"Failed to decrypt {key_name}: {e}")
+                        return None
+                else:
+                    logger.error(f"Cannot decrypt {key_name}: no encryption key found")
                     return None
 
-            return encrypted_key
+            return value
 
         except Exception as e:
             logger.debug(f"Error getting {key_name}: {e}")

@@ -134,8 +134,11 @@ class JupiterClient:
         # Check if we're in backoff period
         if self._backoff_until:
             if datetime.now() < self._backoff_until:
+                remaining = (self._backoff_until - datetime.now()).seconds
+                logger.debug(f"Jupiter in backoff period, {remaining}s remaining")
                 return None
             self._backoff_until = None
+            logger.info("✅ Jupiter backoff period ended")
 
         try:
             # Apply rate limiting
@@ -154,23 +157,36 @@ class JupiterClient:
                 if resp.status == 200:
                     self._consecutive_errors = 0
                     data = await resp.json()
+                    # Check for error in response
+                    if 'error' in data:
+                        logger.warning(f"Jupiter API error: {data.get('error')}")
+                        return None
                     return data
                 elif resp.status == 429:
                     # Rate limited - exponential backoff
                     self._consecutive_errors += 1
                     backoff_seconds = min(60, 2 ** self._consecutive_errors)
                     self._backoff_until = datetime.now() + timedelta(seconds=backoff_seconds)
-                    logger.warning(f"⚠️ Jupiter rate limited - backing off {backoff_seconds}s")
+                    logger.warning(f"⚠️ Jupiter rate limited (429) - backing off {backoff_seconds}s")
+                    return None
+                elif resp.status == 400:
+                    # Bad request - likely invalid token pair or amount
+                    error_text = await resp.text()
+                    logger.warning(f"Jupiter bad request (400): {error_text[:200]}")
                     return None
                 else:
-                    logger.debug(f"Jupiter quote error: HTTP {resp.status}")
+                    error_text = await resp.text()
+                    logger.warning(f"Jupiter quote error: HTTP {resp.status} - {error_text[:100]}")
                     return None
 
         except asyncio.TimeoutError:
-            logger.debug("Jupiter quote timeout")
+            logger.warning("Jupiter quote timeout (10s) - API may be slow or unreachable")
+            return None
+        except aiohttp.ClientError as e:
+            logger.warning(f"Jupiter connection error: {e}")
             return None
         except Exception as e:
-            logger.debug(f"Jupiter quote error: {e}")
+            logger.error(f"Jupiter quote unexpected error: {e}")
             return None
 
     async def get_swap_transaction(self, quote: Dict, user_public_key: str) -> Optional[Dict]:
@@ -428,44 +444,53 @@ class SolanaArbitrageEngine:
         }
 
     async def _get_decrypted_key(self, key_name: str) -> Optional[str]:
-        """Get decrypted private key from secrets manager or environment."""
+        """
+        Get decrypted private key from secrets manager or environment.
+
+        Always checks if value is still encrypted and decrypts if needed.
+        """
         try:
+            value = None
+
             # Try secrets manager first
             try:
                 from security.secrets_manager import secrets
                 if self.db_pool and not secrets._initialized:
                     secrets.initialize(self.db_pool)
                 value = await secrets.get_async(key_name)
-                if value:
-                    return value
             except Exception:
                 pass
 
-            # Fallback to environment with decryption
-            encrypted_key = os.getenv(key_name)
-            if not encrypted_key:
+            # Fallback to environment
+            if not value:
+                value = os.getenv(key_name)
+
+            if not value:
                 return None
 
-            # Get encryption key
-            encryption_key = None
-            from pathlib import Path
-            key_file = Path('.encryption_key')
-            if key_file.exists():
-                encryption_key = key_file.read_text().strip()
-            if not encryption_key:
-                encryption_key = os.getenv('ENCRYPTION_KEY')
+            # Check if still encrypted (Fernet tokens start with gAAAAAB)
+            if value.startswith('gAAAAAB'):
+                from pathlib import Path
+                encryption_key = None
+                key_file = Path('.encryption_key')
+                if key_file.exists():
+                    encryption_key = key_file.read_text().strip()
+                if not encryption_key:
+                    encryption_key = os.getenv('ENCRYPTION_KEY')
 
-            # Decrypt if Fernet encrypted
-            if encrypted_key.startswith('gAAAAAB') and encryption_key:
-                try:
-                    from cryptography.fernet import Fernet
-                    f = Fernet(encryption_key.encode() if isinstance(encryption_key, str) else encryption_key)
-                    return f.decrypt(encrypted_key.encode()).decode()
-                except Exception as e:
-                    logger.error(f"Failed to decrypt {key_name}: {e}")
+                if encryption_key:
+                    try:
+                        from cryptography.fernet import Fernet
+                        f = Fernet(encryption_key.encode() if isinstance(encryption_key, str) else encryption_key)
+                        return f.decrypt(value.encode()).decode()
+                    except Exception as e:
+                        logger.error(f"Failed to decrypt {key_name}: {e}")
+                        return None
+                else:
+                    logger.error(f"Cannot decrypt {key_name}: no encryption key found")
                     return None
 
-            return encrypted_key
+            return value
         except Exception as e:
             logger.debug(f"Error getting {key_name}: {e}")
             return None

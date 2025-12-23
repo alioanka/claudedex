@@ -82,13 +82,74 @@ class PriceFetcher:
 class CopyTradeExecutor:
     """Trade executor for Copy Trading module"""
 
-    def __init__(self, dry_run: bool = True):
+    def __init__(self, dry_run: bool = True, db_pool=None):
         self.dry_run = dry_run
+        self.db_pool = db_pool
         self.session: Optional[aiohttp.ClientSession] = None
         self.price_fetcher = PriceFetcher()
 
-        # Solana credentials - use Pool Engine with fallback
+        # Credentials will be loaded asynchronously in initialize()
         self.solana_rpc_url = None
+        self.solana_private_key = None
+        self.solana_wallet = None
+        self.evm_private_key = None
+        self.evm_wallet = None
+        self.web3_provider = None
+
+    async def _get_decrypted_key(self, key_name: str) -> Optional[str]:
+        """Get decrypted private key from secrets manager or environment."""
+        try:
+            value = None
+
+            # Try secrets manager first
+            try:
+                from security.secrets_manager import secrets
+                if self.db_pool and not secrets._initialized:
+                    secrets.initialize(self.db_pool)
+                value = await secrets.get_async(key_name)
+            except Exception:
+                pass
+
+            # Fallback to environment
+            if not value:
+                value = os.getenv(key_name)
+
+            if not value:
+                return None
+
+            # Check if still encrypted (Fernet tokens start with gAAAAAB)
+            if value.startswith('gAAAAAB'):
+                from pathlib import Path
+                encryption_key = None
+                key_file = Path('.encryption_key')
+                if key_file.exists():
+                    encryption_key = key_file.read_text().strip()
+                if not encryption_key:
+                    encryption_key = os.getenv('ENCRYPTION_KEY')
+
+                if encryption_key:
+                    try:
+                        from cryptography.fernet import Fernet
+                        f = Fernet(encryption_key.encode() if isinstance(encryption_key, str) else encryption_key)
+                        return f.decrypt(value.encode()).decode()
+                    except Exception as e:
+                        logger.error(f"Failed to decrypt {key_name}: {e}")
+                        return None
+                else:
+                    logger.error(f"Cannot decrypt {key_name}: no encryption key found")
+                    return None
+
+            return value
+        except Exception as e:
+            logger.debug(f"Error getting {key_name}: {e}")
+            return None
+
+    async def initialize(self):
+        """Initialize executor and load credentials"""
+        timeout = aiohttp.ClientTimeout(total=30)
+        self.session = aiohttp.ClientSession(timeout=timeout)
+
+        # Load Solana RPC URL
         try:
             from config.rpc_provider import RPCProvider
             self.solana_rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC')
@@ -97,13 +158,15 @@ class CopyTradeExecutor:
         if not self.solana_rpc_url:
             self.solana_rpc_url = os.getenv('SOLANA_RPC_URL')
 
-        self.solana_private_key = os.getenv('SOLANA_MODULE_PRIVATE_KEY')
+        # Load Solana credentials from secrets manager
+        self.solana_private_key = await self._get_decrypted_key('SOLANA_MODULE_PRIVATE_KEY')
         self.solana_wallet = os.getenv('SOLANA_MODULE_WALLET')
 
-        # EVM credentials - use Pool Engine with fallback
-        self.evm_private_key = os.getenv('PRIVATE_KEY')
+        # Load EVM credentials from secrets manager
+        self.evm_private_key = await self._get_decrypted_key('PRIVATE_KEY')
         self.evm_wallet = os.getenv('WALLET_ADDRESS')
-        self.web3_provider = None
+
+        # Load Web3 provider
         try:
             from config.rpc_provider import RPCProvider
             self.web3_provider = RPCProvider.get_rpc_sync('ETHEREUM_RPC')
@@ -112,12 +175,19 @@ class CopyTradeExecutor:
         if not self.web3_provider:
             self.web3_provider = os.getenv('WEB3_PROVIDER_URL')
 
-    async def initialize(self):
-        """Initialize executor"""
-        timeout = aiohttp.ClientTimeout(total=30)
-        self.session = aiohttp.ClientSession(timeout=timeout)
         mode = "DRY RUN" if self.dry_run else "LIVE"
         logger.info(f"💱 Copy Trade Executor initialized ({mode})")
+
+        # Log credential status
+        if self.solana_private_key:
+            logger.info("✅ Solana credentials loaded")
+        else:
+            logger.warning("⚠️ Solana credentials not found (Solana copy trading disabled)")
+
+        if self.evm_private_key:
+            logger.info("✅ EVM credentials loaded")
+        else:
+            logger.warning("⚠️ EVM credentials not found (EVM copy trading disabled)")
 
     async def close(self):
         """Close executor"""
@@ -386,8 +456,8 @@ class CopyTradingEngine:
         logger.info(f"   EVM monitoring: {'Enabled' if self.etherscan_api_key else 'Disabled (no ETHERSCAN_API_KEY)'}")
         logger.info(f"   Solana monitoring: {'Enabled' if self.solana_rpc_url else 'Disabled (no SOLANA_RPC_URL)'}")
 
-        # Initialize executor
-        self.executor = CopyTradeExecutor(self.dry_run)
+        # Initialize executor with db_pool for secrets manager access
+        self.executor = CopyTradeExecutor(self.dry_run, db_pool=self.db_pool)
         await self.executor.initialize()
 
         # Initial load of settings
