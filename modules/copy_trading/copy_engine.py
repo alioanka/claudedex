@@ -18,9 +18,9 @@ from datetime import datetime
 
 logger = logging.getLogger("CopyTradingEngine")
 
-# Jupiter API
-JUPITER_QUOTE_API = "https://quote-api.jup.ag/v6/quote"
-JUPITER_SWAP_API = "https://quote-api.jup.ag/v6/swap"
+# Jupiter API (using lite-api.jup.ag/swap/v1)
+JUPITER_QUOTE_API = "https://lite-api.jup.ag/swap/v1/quote"
+JUPITER_SWAP_API = "https://lite-api.jup.ag/swap/v1/swap"
 
 # Common tokens
 WSOL_MINT = "So11111111111111111111111111111111111111112"

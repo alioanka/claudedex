@@ -312,8 +312,8 @@ class SolanaPriceFetcher:
     """Fetch real-time prices from multiple sources"""
 
     COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price"
-    # Updated to use api.jup.ag/price/v2 (same as Solana module)
-    JUPITER_PRICE_API = "https://api.jup.ag/price/v2"
+    # Updated to use api.jup.ag/price/v3 (latest Jupiter API)
+    JUPITER_PRICE_API = "https://api.jup.ag/price/v3"
 
     def __init__(self):
         self._cache: Dict[str, tuple] = {}

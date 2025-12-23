@@ -122,7 +122,13 @@ class SecureSecretsManager:
             bool: True if initialization successful
         """
         with self._initialization_lock:
-            if self._initialized:
+            # Clear cache on re-initialization to remove stale encrypted values
+            if db_pool and self._initialized:
+                logger.info("Re-initializing secrets manager with database - clearing cache")
+                self._cache.clear()
+                self._source_map.clear()
+
+            if self._initialized and not db_pool:
                 return True
 
             try:
@@ -217,9 +223,12 @@ class SecureSecretsManager:
         Returns:
             str: The credential value or default
         """
-        # Check cache first
+        # Check cache first (but not if value is encrypted)
         if key in self._cache:
-            return self._cache[key]
+            cached = self._cache[key]
+            # Don't return encrypted values from cache
+            if not (cached and cached.startswith('gAAAAAB')):
+                return cached
 
         value = None
         source = None
@@ -240,14 +249,27 @@ class SecureSecretsManager:
             value = os.getenv(key)
             if value:
                 source = 'env'
+                # Decrypt if value is Fernet encrypted
+                if value.startswith('gAAAAAB') and self._fernet:
+                    try:
+                        value = self._fernet.decrypt(value.encode()).decode()
+                        logger.debug(f"Decrypted {key} from environment variable")
+                    except Exception as e:
+                        logger.warning(f"Failed to decrypt {key} from env: {e}")
+                        # Don't cache failed decryption - might succeed later
+                        value = None
+                elif value.startswith('gAAAAAB'):
+                    # Encrypted but no fernet available - don't use
+                    logger.warning(f"Cannot decrypt {key} - encryption key not loaded")
+                    value = None
 
         # Use default if not found
         if value is None:
             value = default
             source = 'default'
 
-        # Cache the result
-        if value is not None:
+        # Cache the result (only if not encrypted)
+        if value is not None and not (value and value.startswith('gAAAAAB')):
             self._cache[key] = value
             self._source_map[key] = source
 
@@ -331,9 +353,11 @@ class SecureSecretsManager:
 
     async def get_async(self, key: str, default: str = None) -> Optional[str]:
         """Async version of get()"""
-        # Check cache
+        # Check cache (but not if value is encrypted)
         if key in self._cache:
-            return self._cache[key]
+            cached = self._cache[key]
+            if not (cached and cached.startswith('gAAAAAB')):
+                return cached
 
         value = None
 
@@ -344,12 +368,29 @@ class SecureSecretsManager:
         if value is None and self._db_pool:
             value = await self._get_from_database(key)
 
-        # Environment
+        # Environment (with decryption)
         if value is None:
-            value = os.getenv(key, default)
+            env_value = os.getenv(key)
+            if env_value:
+                # Decrypt if value is Fernet encrypted
+                if env_value.startswith('gAAAAAB') and self._fernet:
+                    try:
+                        value = self._fernet.decrypt(env_value.encode()).decode()
+                        logger.debug(f"Decrypted {key} from environment variable (async)")
+                    except Exception as e:
+                        logger.warning(f"Failed to decrypt {key} from env: {e}")
+                        value = default
+                elif env_value.startswith('gAAAAAB'):
+                    # Encrypted but no fernet available
+                    logger.warning(f"Cannot decrypt {key} - encryption key not loaded (async)")
+                    value = default
+                else:
+                    value = env_value
+            else:
+                value = default
 
-        # Cache
-        if value is not None:
+        # Cache (only if not encrypted)
+        if value is not None and not (value and value.startswith('gAAAAAB')):
             self._cache[key] = value
 
         return value
