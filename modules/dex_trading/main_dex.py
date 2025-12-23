@@ -416,6 +416,31 @@ class TradingBotApplication:
 
             self.logger.info("Initializing trading engine...")
 
+            # Pre-load credentials asynchronously (before engine creation)
+            # This is needed because TradeExecutor.__init__ is synchronous but we're in async context
+            try:
+                from security.secrets_manager import secrets
+
+                # Pre-load PRIVATE_KEY
+                private_key = await secrets.get_async('PRIVATE_KEY', log_access=False)
+                if private_key:
+                    # Inject into config so TradeExecutor can find it
+                    if 'security' not in nested_config:
+                        nested_config['security'] = {}
+                    nested_config['security']['private_key'] = private_key
+                    self.logger.info("✅ Pre-loaded PRIVATE_KEY from secrets manager")
+                else:
+                    self.logger.warning("PRIVATE_KEY not found in secrets manager, will try env fallback")
+
+                # Pre-load WALLET_ADDRESS
+                wallet_address = await secrets.get_async('WALLET_ADDRESS', log_access=False)
+                if wallet_address:
+                    nested_config['wallet_address'] = wallet_address
+                    self.logger.info("✅ Pre-loaded WALLET_ADDRESS from secrets manager")
+
+            except Exception as e:
+                self.logger.warning(f"Could not pre-load credentials: {e}")
+
             # --- FIX STARTS HERE: Pass ConfigManager and RPC URLs to the engine ---
             # Extract all chain-specific RPC URLs from environment variables
             chain_rpc_urls = {}
