@@ -1001,8 +1001,12 @@ class SolanaTradingEngine:
         Priority:
         1. Secrets manager (Docker secrets, database, env)
         2. Direct environment variable with decryption
+
+        Always checks if the returned value is still encrypted and decrypts if needed.
         """
         try:
+            private_key = None
+
             # Try secrets manager first
             try:
                 from security.secrets_manager import secrets
@@ -1012,38 +1016,46 @@ class SolanaTradingEngine:
 
                 private_key = await secrets.get_async('SOLANA_MODULE_PRIVATE_KEY')
                 if private_key:
-                    logger.info("✅ Loaded Solana private key from secrets manager")
-                    return private_key
+                    logger.debug("Got Solana private key from secrets manager")
             except Exception as e:
                 logger.debug(f"Secrets manager not available: {e}")
 
-            # Fallback: Get from environment and decrypt if needed
-            encrypted_key = os.getenv('SOLANA_MODULE_PRIVATE_KEY')
-            if not encrypted_key:
+            # Fallback: Get from environment
+            if not private_key:
+                private_key = os.getenv('SOLANA_MODULE_PRIVATE_KEY')
+
+            if not private_key:
                 return None
 
-            # Get encryption key from file or environment
-            encryption_key = None
-            key_file = Path('.encryption_key')
-            if key_file.exists():
-                encryption_key = key_file.read_text().strip()
-            if not encryption_key:
-                encryption_key = os.getenv('ENCRYPTION_KEY')
+            # Check if still encrypted (Fernet tokens start with gAAAAAB)
+            # This can happen if DB returned encrypted value without decrypting
+            if private_key.startswith('gAAAAAB'):
+                logger.debug("Private key appears to be Fernet encrypted, decrypting...")
+                # Get encryption key from file or environment
+                encryption_key = None
+                key_file = Path('.encryption_key')
+                if key_file.exists():
+                    encryption_key = key_file.read_text().strip()
+                if not encryption_key:
+                    encryption_key = os.getenv('ENCRYPTION_KEY')
 
-            # Decrypt if encrypted (Fernet tokens start with gAAAAAB)
-            if encrypted_key.startswith('gAAAAAB') and encryption_key:
+                if not encryption_key:
+                    logger.error("Cannot decrypt private key: no encryption key found")
+                    return None
+
                 try:
                     from cryptography.fernet import Fernet
                     f = Fernet(encryption_key.encode() if isinstance(encryption_key, str) else encryption_key)
-                    private_key = f.decrypt(encrypted_key.encode()).decode()
+                    decrypted_key = f.decrypt(private_key.encode()).decode()
                     logger.info("✅ Successfully decrypted Solana module private key")
-                    return private_key
+                    return decrypted_key
                 except Exception as e:
                     logger.error(f"Failed to decrypt Solana module private key: {e}")
                     return None
             else:
                 # Not encrypted, return as-is
-                return encrypted_key
+                logger.info("✅ Loaded Solana private key (already decrypted)")
+                return private_key
 
         except Exception as e:
             logger.error(f"Error getting private key: {e}")

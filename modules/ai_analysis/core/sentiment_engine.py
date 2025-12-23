@@ -211,8 +211,9 @@ class SentimentEngine:
         self.config = config
         self.db_pool = db_pool
         self.is_running = False
-        self.openai_api_key = config.get('openai_api_key') or os.getenv('OPENAI_API_KEY')
-        self.anthropic_api_key = config.get('anthropic_api_key') or os.getenv('ANTHROPIC_API_KEY')
+        # API keys will be loaded in initialize() from secrets manager
+        self.openai_api_key = None
+        self.anthropic_api_key = None
 
         # AI Provider setting: 'openai', 'claude', or 'both'
         self.ai_provider = 'openai'  # Default, will be loaded from DB
@@ -246,6 +247,9 @@ class SentimentEngine:
         # Load settings from DB if available
         await self._load_settings()
 
+        # Load API keys from secrets manager (database, Docker secrets, or env)
+        await self._load_api_keys()
+
         # Initialize trade executor
         self.executor = AITradeExecutor(self.config, self.dry_run)
         await self.executor.initialize()
@@ -272,6 +276,31 @@ class SentimentEngine:
         logger.info(f"   Direct Trading: {'Enabled' if self.direct_trading else 'Disabled'}")
         logger.info(f"   Exit Strategy: TP={self.take_profit_pct}%, SL={self.stop_loss_pct}%")
         logger.info(f"   Active Positions: {len(self.active_positions)}")
+
+    async def _load_api_keys(self):
+        """Load AI API keys from secrets manager (database/Docker secrets/env)"""
+        try:
+            from security.secrets_manager import secrets
+
+            # Initialize secrets manager with db_pool if available
+            if self.db_pool and not secrets._initialized:
+                secrets.initialize(self.db_pool)
+
+            # Load OpenAI API key
+            self.openai_api_key = await secrets.get_async('OPENAI_API_KEY')
+            if self.openai_api_key:
+                logger.debug("Loaded OpenAI API key from secrets manager")
+
+            # Load Anthropic API key
+            self.anthropic_api_key = await secrets.get_async('ANTHROPIC_API_KEY')
+            if self.anthropic_api_key:
+                logger.debug("Loaded Anthropic API key from secrets manager")
+
+        except Exception as e:
+            logger.warning(f"Could not load API keys from secrets manager: {e}")
+            # Fallback to config and environment
+            self.openai_api_key = self.config.get('openai_api_key') or os.getenv('OPENAI_API_KEY')
+            self.anthropic_api_key = self.config.get('anthropic_api_key') or os.getenv('ANTHROPIC_API_KEY')
 
     async def _load_settings(self):
         """Load AI settings from database"""

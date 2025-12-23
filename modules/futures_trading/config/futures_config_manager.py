@@ -225,7 +225,63 @@ class FuturesConfigManager:
         self.db_pool = db_pool
         if db_pool:
             logger.info("Database pool set, reloading Futures configs...")
+            # Reload environment config with secrets manager now that DB is available
+            await self._reload_sensitive_credentials()
             await self._load_all_configs()
+
+    async def _reload_sensitive_credentials(self) -> None:
+        """Reload API credentials from secrets manager after DB pool is available"""
+        try:
+            from security.secrets_manager import secrets
+
+            # Initialize secrets manager with db_pool
+            if self.db_pool and not secrets._initialized:
+                secrets.initialize(self.db_pool)
+
+            sensitive_keys = [
+                'BINANCE_API_KEY', 'BINANCE_API_SECRET',
+                'BINANCE_TESTNET_API_KEY', 'BINANCE_TESTNET_API_SECRET',
+                'BYBIT_API_KEY', 'BYBIT_API_SECRET',
+                'BYBIT_TESTNET_API_KEY', 'BYBIT_TESTNET_API_SECRET',
+            ]
+
+            for var in sensitive_keys:
+                value = await secrets.get_async(var)
+                if value and value not in ('null', 'None', '', 'PLACEHOLDER', 'your_testnet_api_key', 'your_mainnet_api_key'):
+                    # Check if value is encrypted and needs decryption
+                    if value.startswith('gAAAAAB'):
+                        decrypted = await self._decrypt_value(value)
+                        if decrypted:
+                            self._env_config[var] = decrypted
+                            logger.debug(f"Loaded and decrypted {var} from secrets manager")
+                    else:
+                        self._env_config[var] = value
+                        logger.debug(f"Loaded {var} from secrets manager")
+
+            logger.info(f"✅ Reloaded {len(self._env_config)} API credentials from secrets manager")
+
+        except Exception as e:
+            logger.warning(f"Failed to reload credentials from secrets manager: {e}")
+
+    async def _decrypt_value(self, encrypted_value: str) -> Optional[str]:
+        """Decrypt a Fernet-encrypted value"""
+        try:
+            from pathlib import Path
+            from cryptography.fernet import Fernet
+
+            encryption_key = None
+            key_file = Path('.encryption_key')
+            if key_file.exists():
+                encryption_key = key_file.read_text().strip()
+            if not encryption_key:
+                encryption_key = os.getenv('ENCRYPTION_KEY')
+
+            if encryption_key:
+                f = Fernet(encryption_key.encode() if isinstance(encryption_key, str) else encryption_key)
+                return f.decrypt(encrypted_value.encode()).decode()
+        except Exception as e:
+            logger.error(f"Decryption failed: {e}")
+        return None
 
     async def _load_all_configs(self) -> None:
         """Load all configuration types from database"""
