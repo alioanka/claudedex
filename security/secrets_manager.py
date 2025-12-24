@@ -302,27 +302,27 @@ class SecureSecretsManager:
 
     def _get_from_database_sync(self, key: str) -> Optional[str]:
         """Get credential from database (synchronous wrapper)"""
-        import concurrent.futures
-
-        def run_in_thread():
-            """Run async database query in a new thread with its own event loop"""
-            return asyncio.run(self._get_from_database(key))
-
+        # The db_pool is bound to the event loop that created it.
+        # We can only safely use it from that same loop.
         try:
             # Check if there's a running event loop in the current thread
             try:
                 asyncio.get_running_loop()
-                # There IS a running loop in this thread - we need to use a separate thread
-                # to avoid deadlock. Using ThreadPoolExecutor to run async code.
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(run_in_thread)
-                    return future.result(timeout=10)
+                # There IS a running loop - the pool is attached to it.
+                # We CANNOT use asyncio.run() or ThreadPoolExecutor because:
+                # 1. asyncio.run() would try to create a new loop (fails)
+                # 2. ThreadPoolExecutor creates a new loop in another thread,
+                #    but the pool connections are bound to THIS loop
+                #
+                # The caller should use get_async() instead.
+                # Skip database and rely on Docker/env fallback.
+                logger.debug(f"Skipping database lookup for {key} - use get_async() in async context")
+                return None
             except RuntimeError:
                 # No event loop running, safe to use asyncio.run directly
-                return asyncio.run(self._get_from_database(key))
-        except concurrent.futures.TimeoutError:
-            logger.warning(f"Timeout getting credential {key} from database")
-            return None
+                if self._db_pool:
+                    return asyncio.run(self._get_from_database(key))
+                return None
         except Exception as e:
             logger.warning(f"Failed to get credential from database: {e}")
             return None
