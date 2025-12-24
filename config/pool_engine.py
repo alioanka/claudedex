@@ -31,7 +31,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 import time
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
@@ -88,6 +88,20 @@ health_logger.addHandler(health_handler)
 console = logging.StreamHandler()
 console.setFormatter(log_formatter)
 logger.addHandler(console)
+
+
+def _normalize_datetime(dt: Optional[datetime]) -> Optional[datetime]:
+    """
+    Normalize datetime to naive UTC for consistent comparisons.
+    PostgreSQL with asyncpg can return timezone-aware datetimes,
+    but we use datetime.utcnow() which is timezone-naive.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        # Convert to UTC and remove timezone info
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 class EndpointStatus(Enum):
@@ -316,9 +330,10 @@ class PoolEngine:
                         is_enabled=row['is_enabled'],
                         priority=row['priority'],
                         weight=row['weight'],
-                        rate_limit_until=row['rate_limit_until'],
-                        last_success_at=row['last_success_at'],
-                        last_failure_at=row['last_failure_at'],
+                        # Normalize datetimes to naive UTC for consistent comparisons
+                        rate_limit_until=_normalize_datetime(row['rate_limit_until']),
+                        last_success_at=_normalize_datetime(row['last_success_at']),
+                        last_failure_at=_normalize_datetime(row['last_failure_at']),
                         success_count=row['success_count'],
                         failure_count=row['failure_count'],
                         avg_latency_ms=row['avg_latency_ms'] or 0,
