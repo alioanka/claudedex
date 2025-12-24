@@ -54,11 +54,21 @@ async def test_redis_connection():
     """Test Redis connection"""
     from data.storage.cache import CacheManager
     import os
+
+    # Load Redis password from secrets manager
+    redis_password = None
+    try:
+        from security.secrets_manager import secrets
+        redis_password = await secrets.get_async('REDIS_PASSWORD', log_access=False)
+    except Exception:
+        redis_password = os.getenv('REDIS_PASSWORD')
+
     redis_config = {
         'REDIS_URL': os.getenv('REDIS_URL', 'redis://redis:6379/0'),
-        'REDIS_HOST': 'redis',
-        'REDIS_PORT': 6379,
-        'REDIS_DB': 0
+        'REDIS_HOST': os.getenv('REDIS_HOST', 'redis'),
+        'REDIS_PORT': int(os.getenv('REDIS_PORT', 6379)),
+        'REDIS_DB': int(os.getenv('REDIS_DB', 0)),
+        'REDIS_PASSWORD': redis_password
     }
     cache = CacheManager(redis_config)
     await cache.connect()
@@ -421,16 +431,26 @@ class TradingBotApplication:
             try:
                 from security.secrets_manager import secrets
 
-                # Pre-load PRIVATE_KEY
+                if 'security' not in nested_config:
+                    nested_config['security'] = {}
+
+                # Pre-load PRIVATE_KEY (EVM wallets)
                 private_key = await secrets.get_async('PRIVATE_KEY', log_access=False)
                 if private_key:
-                    # Inject into config so TradeExecutor can find it
-                    if 'security' not in nested_config:
-                        nested_config['security'] = {}
                     nested_config['security']['private_key'] = private_key
                     self.logger.info("✅ Pre-loaded PRIVATE_KEY from secrets manager")
                 else:
                     self.logger.warning("PRIVATE_KEY not found in secrets manager, will try env fallback")
+
+                # Pre-load SOLANA_PRIVATE_KEY (for Jupiter executor)
+                # Try SOLANA_PRIVATE_KEY first, then fall back to PRIVATE_KEY for Solana
+                solana_private_key = await secrets.get_async('SOLANA_PRIVATE_KEY', log_access=False)
+                if not solana_private_key:
+                    # Fall back to general PRIVATE_KEY if no separate Solana key
+                    solana_private_key = private_key
+                if solana_private_key:
+                    nested_config['security']['solana_private_key'] = solana_private_key
+                    self.logger.info("✅ Pre-loaded SOLANA_PRIVATE_KEY from secrets manager")
 
                 # Pre-load WALLET_ADDRESS
                 wallet_address = await secrets.get_async('WALLET_ADDRESS', log_access=False)
