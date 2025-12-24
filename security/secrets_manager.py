@@ -272,6 +272,20 @@ class SecureSecretsManager:
             value = default
             source = 'default'
 
+        # Final safety check - never return encrypted values
+        # If value looks encrypted (starts with 'gAAAAAB'), try to decrypt it
+        if value and value.startswith('gAAAAAB'):
+            if self._fernet:
+                try:
+                    value = self._fernet.decrypt(value.encode()).decode()
+                    logger.debug(f"Decrypted {key} in final safety check (sync)")
+                except Exception as e:
+                    logger.error(f"Failed to decrypt {key} in final check: {e}")
+                    return default
+            else:
+                logger.warning(f"Cannot decrypt {key} - encryption key not loaded (final check)")
+                return default
+
         # Cache the result (only if not encrypted)
         if value is not None and not (value and value.startswith('gAAAAAB')):
             self._cache[key] = value
@@ -349,14 +363,26 @@ class SecureSecretsManager:
                 if encrypted_value == 'PLACEHOLDER':
                     return None
 
-                # Decrypt if needed
-                if row['is_encrypted'] and self._fernet:
+                # Decrypt if needed - check BOTH the flag AND the value pattern
+                # Values starting with 'gAAAAAB' are Fernet-encrypted
+                needs_decryption = (
+                    row['is_encrypted'] or
+                    (encrypted_value and encrypted_value.startswith('gAAAAAB'))
+                )
+
+                if needs_decryption and self._fernet:
                     try:
                         decrypted = self._fernet.decrypt(encrypted_value.encode())
                         return decrypted.decode()
                     except InvalidToken:
                         logger.error(f"Failed to decrypt credential {key} - key mismatch?")
                         return None
+                    except Exception as e:
+                        logger.error(f"Decryption error for {key}: {e}")
+                        return None
+                elif needs_decryption and not self._fernet:
+                    logger.warning(f"Cannot decrypt {key} - encryption key not loaded")
+                    return None
                 else:
                     return encrypted_value
 
@@ -411,6 +437,20 @@ class SecureSecretsManager:
                     value = env_value
             else:
                 value = default
+
+        # Final safety check - never return encrypted values
+        # If value looks encrypted (starts with 'gAAAAAB'), try to decrypt it
+        if value and value.startswith('gAAAAAB'):
+            if self._fernet:
+                try:
+                    value = self._fernet.decrypt(value.encode()).decode()
+                    logger.debug(f"Decrypted {key} in final safety check (async)")
+                except Exception as e:
+                    logger.error(f"Failed to decrypt {key} in final check: {e}")
+                    return default
+            else:
+                logger.warning(f"Cannot decrypt {key} - encryption key not loaded (final check)")
+                return default
 
         # Cache (only if not encrypted)
         if value is not None and not (value and value.startswith('gAAAAAB')):
