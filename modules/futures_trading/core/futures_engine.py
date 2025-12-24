@@ -525,14 +525,15 @@ class FuturesTradingEngine:
                 api_secret = credentials.get('api_secret')
             else:
                 # Fallback to secrets manager then direct env read
+                # Use get_async() since we're in async context
                 try:
                     from security.secrets_manager import secrets
                     if self.testnet:
-                        api_key = secrets.get('BINANCE_TESTNET_API_KEY', log_access=False) or os.getenv('BINANCE_TESTNET_API_KEY')
-                        api_secret = secrets.get('BINANCE_TESTNET_API_SECRET', log_access=False) or os.getenv('BINANCE_TESTNET_API_SECRET')
+                        api_key = await secrets.get_async('BINANCE_TESTNET_API_KEY', log_access=False) or os.getenv('BINANCE_TESTNET_API_KEY')
+                        api_secret = await secrets.get_async('BINANCE_TESTNET_API_SECRET', log_access=False) or os.getenv('BINANCE_TESTNET_API_SECRET')
                     else:
-                        api_key = secrets.get('BINANCE_API_KEY', log_access=False) or os.getenv('BINANCE_API_KEY')
-                        api_secret = secrets.get('BINANCE_API_SECRET', log_access=False) or os.getenv('BINANCE_API_SECRET')
+                        api_key = await secrets.get_async('BINANCE_API_KEY', log_access=False) or os.getenv('BINANCE_API_KEY')
+                        api_secret = await secrets.get_async('BINANCE_API_SECRET', log_access=False) or os.getenv('BINANCE_API_SECRET')
                 except Exception:
                     if self.testnet:
                         api_key = os.getenv('BINANCE_TESTNET_API_KEY')
@@ -573,10 +574,11 @@ class FuturesTradingEngine:
             if self.dry_run or self.testnet:
                 try:
                     # Use mainnet credentials if available (via secrets manager), otherwise create public client
+                    # Use get_async() since we're in async context
                     try:
                         from security.secrets_manager import secrets
-                        mainnet_key = secrets.get('BINANCE_API_KEY', log_access=False) or os.getenv('BINANCE_API_KEY')
-                        mainnet_secret = secrets.get('BINANCE_API_SECRET', log_access=False) or os.getenv('BINANCE_API_SECRET')
+                        mainnet_key = await secrets.get_async('BINANCE_API_KEY', log_access=False) or os.getenv('BINANCE_API_KEY')
+                        mainnet_secret = await secrets.get_async('BINANCE_API_SECRET', log_access=False) or os.getenv('BINANCE_API_SECRET')
                     except Exception:
                         mainnet_key = os.getenv('BINANCE_API_KEY')
                         mainnet_secret = os.getenv('BINANCE_API_SECRET')
@@ -625,14 +627,15 @@ class FuturesTradingEngine:
                 api_secret = credentials.get('api_secret')
             else:
                 # Fallback to secrets manager then direct env read
+                # Use get_async() since we're in async context
                 try:
                     from security.secrets_manager import secrets
                     if self.testnet:
-                        api_key = secrets.get('BYBIT_TESTNET_API_KEY', log_access=False) or os.getenv('BYBIT_TESTNET_API_KEY')
-                        api_secret = secrets.get('BYBIT_TESTNET_API_SECRET', log_access=False) or os.getenv('BYBIT_TESTNET_API_SECRET')
+                        api_key = await secrets.get_async('BYBIT_TESTNET_API_KEY', log_access=False) or os.getenv('BYBIT_TESTNET_API_KEY')
+                        api_secret = await secrets.get_async('BYBIT_TESTNET_API_SECRET', log_access=False) or os.getenv('BYBIT_TESTNET_API_SECRET')
                     else:
-                        api_key = secrets.get('BYBIT_API_KEY', log_access=False) or os.getenv('BYBIT_API_KEY')
-                        api_secret = secrets.get('BYBIT_API_SECRET', log_access=False) or os.getenv('BYBIT_API_SECRET')
+                        api_key = await secrets.get_async('BYBIT_API_KEY', log_access=False) or os.getenv('BYBIT_API_KEY')
+                        api_secret = await secrets.get_async('BYBIT_API_SECRET', log_access=False) or os.getenv('BYBIT_API_SECRET')
                 except Exception:
                     if self.testnet:
                         api_key = os.getenv('BYBIT_TESTNET_API_KEY')
