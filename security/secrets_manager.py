@@ -364,8 +364,14 @@ class SecureSecretsManager:
             logger.error(f"Database error getting credential {key}: {e}")
             return None
 
-    async def get_async(self, key: str, default: str = None) -> Optional[str]:
-        """Async version of get()"""
+    async def get_async(self, key: str, default: str = None, log_access: bool = True) -> Optional[str]:
+        """Async version of get()
+
+        Args:
+            key: The credential key to retrieve
+            default: Default value if not found
+            log_access: Whether to log access (for audit purposes)
+        """
         # Lazy initialization of encryption (in case get_async() is called before initialize())
         if self._fernet is None and CRYPTO_AVAILABLE:
             self._init_encryption()
