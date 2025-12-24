@@ -59,8 +59,25 @@ class SolanaTelegramAlerts:
             chat_id: Telegram chat ID (from .env if not provided)
             enabled: Whether alerts are enabled
         """
-        self.bot_token = bot_token or os.getenv('TELEGRAM_BOT_TOKEN')
-        self.chat_id = chat_id or os.getenv('TELEGRAM_CHAT_ID')
+        # Get Telegram credentials from secrets manager (database/Docker secrets)
+        if bot_token:
+            self.bot_token = bot_token
+        else:
+            try:
+                from security.secrets_manager import secrets
+                self.bot_token = secrets.get('TELEGRAM_BOT_TOKEN', log_access=False) or os.getenv('TELEGRAM_BOT_TOKEN')
+            except Exception:
+                self.bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+
+        if chat_id:
+            self.chat_id = chat_id
+        else:
+            try:
+                from security.secrets_manager import secrets
+                self.chat_id = secrets.get('TELEGRAM_CHAT_ID', log_access=False) or os.getenv('TELEGRAM_CHAT_ID')
+            except Exception:
+                self.chat_id = os.getenv('TELEGRAM_CHAT_ID')
+
         self.enabled = enabled and bool(self.bot_token) and bool(self.chat_id)
 
         if not self.enabled:

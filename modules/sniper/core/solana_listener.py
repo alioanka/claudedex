@@ -59,7 +59,12 @@ class SolanaListener:
         except Exception:
             pass
         if not self.helius_api_key:
-            self.helius_api_key = os.getenv('HELIUS_API_KEY')
+            # Try secrets manager first, then env fallback
+            try:
+                from security.secrets_manager import secrets
+                self.helius_api_key = secrets.get('HELIUS_API_KEY', log_access=False) or os.getenv('HELIUS_API_KEY')
+            except Exception:
+                self.helius_api_key = os.getenv('HELIUS_API_KEY')
 
         # Polling configuration (credit-efficient)
         self.poll_interval = int(os.getenv('SNIPER_POLL_INTERVAL', '30'))  # seconds

@@ -507,11 +507,11 @@ class ConfigManager:
 
     def _load_environment_config(self) -> Dict[str, Any]:
         """
-        Load configuration from environment variables
-        This provides fallback values for .get() method
+        Load configuration from secrets manager (database/Docker secrets) with env fallback.
+        All sensitive credentials should come from secrets manager, NOT directly from .env
         """
         env_config = {}
-        
+
         sensitive_keys = [
             'ENCRYPTION_KEY', 'PRIVATE_KEY', 'SOLANA_PRIVATE_KEY', 'WALLET_ADDRESS', 'SOLANA_WALLET',
             'DEXSCREENER_API_KEY', 'GOPLUS_API_KEY', 'TOKENSNIFFER_API_KEY', '1INCH_API_KEY',
@@ -525,12 +525,21 @@ class ConfigManager:
             'WEB3_PROVIDER_URL', 'WEB3_BACKUP_PROVIDER_1', 'WEB3_BACKUP_PROVIDER_2',
             'FLASHBOTS_RPC', 'DB_URL', 'DATABASE_URL', 'DB_PASSWORD', 'REDIS_URL'
         ]
-        
-        for var in sensitive_keys:
-            value = os.getenv(var)
-            if value and value not in ('null', 'None', ''):
-                env_config[var] = value
-        
+
+        # Use secrets manager for all sensitive keys (handles DB, Docker secrets, env with decryption)
+        try:
+            from security.secrets_manager import secrets
+            for var in sensitive_keys:
+                value = secrets.get(var, log_access=False)
+                if value and value not in ('null', 'None', '', 'PLACEHOLDER'):
+                    env_config[var] = value
+        except Exception as e:
+            logger.warning(f"Secrets manager not available, falling back to os.getenv: {e}")
+            for var in sensitive_keys:
+                value = os.getenv(var)
+                if value and value not in ('null', 'None', ''):
+                    env_config[var] = value
+
         return env_config
 
 

@@ -367,15 +367,9 @@ class FuturesTradingEngine:
             currency="USD"
         )
 
-        # Telegram alerts
+        # Telegram alerts - will be initialized in async initialize() method
+        # where we can properly load credentials from secrets manager
         self.telegram_alerts = None
-        try:
-            from futures_trading.core.futures_alerts import FuturesTelegramAlerts
-            self.telegram_alerts = FuturesTelegramAlerts()
-            if self.telegram_alerts.enabled:
-                logger.info("✅ Telegram alerts enabled for Futures module")
-        except ImportError as e:
-            logger.warning(f"Telegram alerts not available: {e}")
 
         # Logging mode info
         mode_str = "DRY_RUN (SIMULATED)" if self.dry_run else "LIVE TRADING"
@@ -417,6 +411,24 @@ class FuturesTradingEngine:
             await self._sync_positions()
 
             logger.info("✅ Exchange connection initialized")
+
+            # Initialize Telegram alerts with async credential loading
+            try:
+                from futures_trading.core.futures_alerts import FuturesTelegramAlerts
+                from security.secrets_manager import secrets
+
+                # Pre-load Telegram credentials asynchronously
+                bot_token = await secrets.get_async('TELEGRAM_BOT_TOKEN', log_access=False)
+                chat_id = await secrets.get_async('TELEGRAM_CHAT_ID', log_access=False)
+
+                self.telegram_alerts = FuturesTelegramAlerts(
+                    bot_token=bot_token,
+                    chat_id=chat_id
+                )
+                if self.telegram_alerts.enabled:
+                    logger.info("✅ Telegram alerts enabled for Futures module")
+            except Exception as e:
+                logger.warning(f"Telegram alerts not available: {e}")
 
             # Load historical trade stats from database
             await self._load_stats_from_db()
@@ -524,13 +536,23 @@ class FuturesTradingEngine:
                 api_key = credentials.get('api_key')
                 api_secret = credentials.get('api_secret')
             else:
-                # Fallback to direct env read
-                if self.testnet:
-                    api_key = os.getenv('BINANCE_TESTNET_API_KEY')
-                    api_secret = os.getenv('BINANCE_TESTNET_API_SECRET')
-                else:
-                    api_key = os.getenv('BINANCE_API_KEY')
-                    api_secret = os.getenv('BINANCE_API_SECRET')
+                # Fallback to secrets manager then direct env read
+                # Use get_async() since we're in async context
+                try:
+                    from security.secrets_manager import secrets
+                    if self.testnet:
+                        api_key = await secrets.get_async('BINANCE_TESTNET_API_KEY', log_access=False) or os.getenv('BINANCE_TESTNET_API_KEY')
+                        api_secret = await secrets.get_async('BINANCE_TESTNET_API_SECRET', log_access=False) or os.getenv('BINANCE_TESTNET_API_SECRET')
+                    else:
+                        api_key = await secrets.get_async('BINANCE_API_KEY', log_access=False) or os.getenv('BINANCE_API_KEY')
+                        api_secret = await secrets.get_async('BINANCE_API_SECRET', log_access=False) or os.getenv('BINANCE_API_SECRET')
+                except Exception:
+                    if self.testnet:
+                        api_key = os.getenv('BINANCE_TESTNET_API_KEY')
+                        api_secret = os.getenv('BINANCE_TESTNET_API_SECRET')
+                    else:
+                        api_key = os.getenv('BINANCE_API_KEY')
+                        api_secret = os.getenv('BINANCE_API_SECRET')
 
             sandbox_mode = self.testnet
             if self.testnet:
@@ -563,9 +585,15 @@ class FuturesTradingEngine:
             # This ensures we always get live prices from mainnet, regardless of testnet setting
             if self.dry_run or self.testnet:
                 try:
-                    # Use mainnet credentials if available, otherwise create public client
-                    mainnet_key = os.getenv('BINANCE_API_KEY')
-                    mainnet_secret = os.getenv('BINANCE_API_SECRET')
+                    # Use mainnet credentials if available (via secrets manager), otherwise create public client
+                    # Use get_async() since we're in async context
+                    try:
+                        from security.secrets_manager import secrets
+                        mainnet_key = await secrets.get_async('BINANCE_API_KEY', log_access=False) or os.getenv('BINANCE_API_KEY')
+                        mainnet_secret = await secrets.get_async('BINANCE_API_SECRET', log_access=False) or os.getenv('BINANCE_API_SECRET')
+                    except Exception:
+                        mainnet_key = os.getenv('BINANCE_API_KEY')
+                        mainnet_secret = os.getenv('BINANCE_API_SECRET')
 
                     if mainnet_key and mainnet_secret:
                         self.price_client = ccxt.binance({
@@ -610,13 +638,23 @@ class FuturesTradingEngine:
                 api_key = credentials.get('api_key')
                 api_secret = credentials.get('api_secret')
             else:
-                # Fallback to direct env read
-                if self.testnet:
-                    api_key = os.getenv('BYBIT_TESTNET_API_KEY')
-                    api_secret = os.getenv('BYBIT_TESTNET_API_SECRET')
-                else:
-                    api_key = os.getenv('BYBIT_API_KEY')
-                    api_secret = os.getenv('BYBIT_API_SECRET')
+                # Fallback to secrets manager then direct env read
+                # Use get_async() since we're in async context
+                try:
+                    from security.secrets_manager import secrets
+                    if self.testnet:
+                        api_key = await secrets.get_async('BYBIT_TESTNET_API_KEY', log_access=False) or os.getenv('BYBIT_TESTNET_API_KEY')
+                        api_secret = await secrets.get_async('BYBIT_TESTNET_API_SECRET', log_access=False) or os.getenv('BYBIT_TESTNET_API_SECRET')
+                    else:
+                        api_key = await secrets.get_async('BYBIT_API_KEY', log_access=False) or os.getenv('BYBIT_API_KEY')
+                        api_secret = await secrets.get_async('BYBIT_API_SECRET', log_access=False) or os.getenv('BYBIT_API_SECRET')
+                except Exception:
+                    if self.testnet:
+                        api_key = os.getenv('BYBIT_TESTNET_API_KEY')
+                        api_secret = os.getenv('BYBIT_TESTNET_API_SECRET')
+                    else:
+                        api_key = os.getenv('BYBIT_API_KEY')
+                        api_secret = os.getenv('BYBIT_API_SECRET')
 
             sandbox_mode = self.testnet
             if self.testnet:

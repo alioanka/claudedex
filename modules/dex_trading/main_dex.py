@@ -54,11 +54,21 @@ async def test_redis_connection():
     """Test Redis connection"""
     from data.storage.cache import CacheManager
     import os
+
+    # Load Redis password from secrets manager
+    redis_password = None
+    try:
+        from security.secrets_manager import secrets
+        redis_password = await secrets.get_async('REDIS_PASSWORD', log_access=False)
+    except Exception:
+        redis_password = os.getenv('REDIS_PASSWORD')
+
     redis_config = {
         'REDIS_URL': os.getenv('REDIS_URL', 'redis://redis:6379/0'),
-        'REDIS_HOST': 'redis',
-        'REDIS_PORT': 6379,
-        'REDIS_DB': 0
+        'REDIS_HOST': os.getenv('REDIS_HOST', 'redis'),
+        'REDIS_PORT': int(os.getenv('REDIS_PORT', 6379)),
+        'REDIS_DB': int(os.getenv('REDIS_DB', 0)),
+        'REDIS_PASSWORD': redis_password
     }
     cache = CacheManager(redis_config)
     await cache.connect()
@@ -290,18 +300,18 @@ class TradingBotApplication:
             await self.db_manager.connect()
             # Note: DatabaseManager.connect() already runs migrations via MigrationManager
 
-            # Set database pool in config manager and reload configs from database
-            self.logger.info("Connecting config manager to database...")
-            await self.config_manager.set_db_pool(self.db_manager.pool)
-            self.logger.info("✅ Config manager now reading from database")
-
-            # Initialize secrets manager with database pool for credential access
+            # Initialize secrets manager with database pool FIRST (before any config managers)
             try:
                 from security.secrets_manager import secrets
                 secrets.initialize(self.db_manager.pool)
                 self.logger.info("✅ Secrets manager initialized with database")
             except Exception as e:
                 self.logger.warning(f"Could not initialize secrets manager with database: {e}")
+
+            # Set database pool in config manager and reload configs from database
+            self.logger.info("Connecting config manager to database...")
+            await self.config_manager.set_db_pool(self.db_manager.pool)
+            self.logger.info("✅ Config manager now reading from database")
 
             # ✅ CRITICAL FIX: Rebuild nested_config AFTER database reload
             # This ensures managers use database values, not YAML/defaults
@@ -379,21 +389,28 @@ class TradingBotApplication:
             if 'notifications' not in nested_config:
                 from monitoring.alerts import AlertPriority, NotificationChannel
 
+                # Get Telegram credentials from secrets manager (database) or env
+                # Use get_async() since we're in async context
+                from security.secrets_manager import secrets
+                telegram_token = await secrets.get_async('TELEGRAM_BOT_TOKEN', log_access=False) or os.getenv('TELEGRAM_BOT_TOKEN', '')
+                telegram_chat = await secrets.get_async('TELEGRAM_CHAT_ID', log_access=False) or os.getenv('TELEGRAM_CHAT_ID', '')
+                discord_webhook = await secrets.get_async('DISCORD_WEBHOOK_URL', log_access=False) or os.getenv('DISCORD_WEBHOOK_URL', '')
+
                 nested_config['notifications'] = {
                     'telegram': {
-                        'bot_token': os.getenv('TELEGRAM_BOT_TOKEN', ''),
-                        'chat_id': os.getenv('TELEGRAM_CHAT_ID', ''),
-                        'enabled': bool(os.getenv('TELEGRAM_BOT_TOKEN'))
+                        'bot_token': telegram_token,
+                        'chat_id': telegram_chat,
+                        'enabled': bool(telegram_token)
                     },
                     'discord': {
-                        'webhook_url': os.getenv('DISCORD_WEBHOOK_URL', ''),
-                        'enabled': bool(os.getenv('DISCORD_WEBHOOK_URL'))
+                        'webhook_url': discord_webhook,
+                        'enabled': bool(discord_webhook)
                     },
                     'channel_priorities': {
-                        AlertPriority.LOW: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else [],
-                        AlertPriority.MEDIUM: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else [],
-                        AlertPriority.HIGH: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else [],
-                        AlertPriority.CRITICAL: [NotificationChannel.TELEGRAM] if os.getenv('TELEGRAM_BOT_TOKEN') else []
+                        AlertPriority.LOW: [NotificationChannel.TELEGRAM] if telegram_token else [],
+                        AlertPriority.MEDIUM: [NotificationChannel.TELEGRAM] if telegram_token else [],
+                        AlertPriority.HIGH: [NotificationChannel.TELEGRAM] if telegram_token else [],
+                        AlertPriority.CRITICAL: [NotificationChannel.TELEGRAM] if telegram_token else []
                     },
                     'priority_cooldowns': {
                         AlertPriority.LOW: 300,
@@ -409,6 +426,41 @@ class TradingBotApplication:
                 }
 
             self.logger.info("Initializing trading engine...")
+
+            # Pre-load credentials asynchronously (before engine creation)
+            # This is needed because TradeExecutor.__init__ is synchronous but we're in async context
+            try:
+                from security.secrets_manager import secrets
+
+                if 'security' not in nested_config:
+                    nested_config['security'] = {}
+
+                # Pre-load PRIVATE_KEY (EVM wallets)
+                private_key = await secrets.get_async('PRIVATE_KEY', log_access=False)
+                if private_key:
+                    nested_config['security']['private_key'] = private_key
+                    self.logger.info("✅ Pre-loaded PRIVATE_KEY from secrets manager")
+                else:
+                    self.logger.warning("PRIVATE_KEY not found in secrets manager, will try env fallback")
+
+                # Pre-load SOLANA_PRIVATE_KEY (for Jupiter executor)
+                # Try SOLANA_PRIVATE_KEY first, then fall back to PRIVATE_KEY for Solana
+                solana_private_key = await secrets.get_async('SOLANA_PRIVATE_KEY', log_access=False)
+                if not solana_private_key:
+                    # Fall back to general PRIVATE_KEY if no separate Solana key
+                    solana_private_key = private_key
+                if solana_private_key:
+                    nested_config['security']['solana_private_key'] = solana_private_key
+                    self.logger.info("✅ Pre-loaded SOLANA_PRIVATE_KEY from secrets manager")
+
+                # Pre-load WALLET_ADDRESS
+                wallet_address = await secrets.get_async('WALLET_ADDRESS', log_access=False)
+                if wallet_address:
+                    nested_config['wallet_address'] = wallet_address
+                    self.logger.info("✅ Pre-loaded WALLET_ADDRESS from secrets manager")
+
+            except Exception as e:
+                self.logger.warning(f"Could not pre-load credentials: {e}")
 
             # --- FIX STARTS HERE: Pass ConfigManager and RPC URLs to the engine ---
             # Extract all chain-specific RPC URLs from environment variables

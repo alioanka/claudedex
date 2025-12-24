@@ -272,6 +272,20 @@ class SecureSecretsManager:
             value = default
             source = 'default'
 
+        # Final safety check - never return encrypted values
+        # If value looks encrypted (starts with 'gAAAAAB'), try to decrypt it
+        if value and value.startswith('gAAAAAB'):
+            if self._fernet:
+                try:
+                    value = self._fernet.decrypt(value.encode()).decode()
+                    logger.debug(f"Decrypted {key} in final safety check (sync)")
+                except Exception as e:
+                    logger.error(f"Failed to decrypt {key} in final check: {e}")
+                    return default
+            else:
+                logger.warning(f"Cannot decrypt {key} - encryption key not loaded (final check)")
+                return default
+
         # Cache the result (only if not encrypted)
         if value is not None and not (value and value.startswith('gAAAAAB')):
             self._cache[key] = value
@@ -302,18 +316,27 @@ class SecureSecretsManager:
 
     def _get_from_database_sync(self, key: str) -> Optional[str]:
         """Get credential from database (synchronous wrapper)"""
+        # The db_pool is bound to the event loop that created it.
+        # We can only safely use it from that same loop.
         try:
-            # Try to get the current event loop
+            # Check if there's a running event loop in the current thread
             try:
-                loop = asyncio.get_running_loop()
-                # If we're in an async context, create a task
-                future = asyncio.run_coroutine_threadsafe(
-                    self._get_from_database(key), loop
-                )
-                return future.result(timeout=5)
+                asyncio.get_running_loop()
+                # There IS a running loop - the pool is attached to it.
+                # We CANNOT use asyncio.run() or ThreadPoolExecutor because:
+                # 1. asyncio.run() would try to create a new loop (fails)
+                # 2. ThreadPoolExecutor creates a new loop in another thread,
+                #    but the pool connections are bound to THIS loop
+                #
+                # The caller should use get_async() instead.
+                # Skip database and rely on Docker/env fallback.
+                logger.debug(f"Skipping database lookup for {key} - use get_async() in async context")
+                return None
             except RuntimeError:
-                # No event loop running, create one temporarily
-                return asyncio.run(self._get_from_database(key))
+                # No event loop running, safe to use asyncio.run directly
+                if self._db_pool:
+                    return asyncio.run(self._get_from_database(key))
+                return None
         except Exception as e:
             logger.warning(f"Failed to get credential from database: {e}")
             return None
@@ -340,14 +363,26 @@ class SecureSecretsManager:
                 if encrypted_value == 'PLACEHOLDER':
                     return None
 
-                # Decrypt if needed
-                if row['is_encrypted'] and self._fernet:
+                # Decrypt if needed - check BOTH the flag AND the value pattern
+                # Values starting with 'gAAAAAB' are Fernet-encrypted
+                needs_decryption = (
+                    row['is_encrypted'] or
+                    (encrypted_value and encrypted_value.startswith('gAAAAAB'))
+                )
+
+                if needs_decryption and self._fernet:
                     try:
                         decrypted = self._fernet.decrypt(encrypted_value.encode())
                         return decrypted.decode()
                     except InvalidToken:
                         logger.error(f"Failed to decrypt credential {key} - key mismatch?")
                         return None
+                    except Exception as e:
+                        logger.error(f"Decryption error for {key}: {e}")
+                        return None
+                elif needs_decryption and not self._fernet:
+                    logger.warning(f"Cannot decrypt {key} - encryption key not loaded")
+                    return None
                 else:
                     return encrypted_value
 
@@ -355,8 +390,14 @@ class SecureSecretsManager:
             logger.error(f"Database error getting credential {key}: {e}")
             return None
 
-    async def get_async(self, key: str, default: str = None) -> Optional[str]:
-        """Async version of get()"""
+    async def get_async(self, key: str, default: str = None, log_access: bool = True) -> Optional[str]:
+        """Async version of get()
+
+        Args:
+            key: The credential key to retrieve
+            default: Default value if not found
+            log_access: Whether to log access (for audit purposes)
+        """
         # Lazy initialization of encryption (in case get_async() is called before initialize())
         if self._fernet is None and CRYPTO_AVAILABLE:
             self._init_encryption()
@@ -396,6 +437,20 @@ class SecureSecretsManager:
                     value = env_value
             else:
                 value = default
+
+        # Final safety check - never return encrypted values
+        # If value looks encrypted (starts with 'gAAAAAB'), try to decrypt it
+        if value and value.startswith('gAAAAAB'):
+            if self._fernet:
+                try:
+                    value = self._fernet.decrypt(value.encode()).decode()
+                    logger.debug(f"Decrypted {key} in final safety check (async)")
+                except Exception as e:
+                    logger.error(f"Failed to decrypt {key} in final check: {e}")
+                    return default
+            else:
+                logger.warning(f"Cannot decrypt {key} - encryption key not loaded (final check)")
+                return default
 
         # Cache (only if not encrypted)
         if value is not None and not (value and value.startswith('gAAAAAB')):
