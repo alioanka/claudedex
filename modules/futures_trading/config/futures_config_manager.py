@@ -209,6 +209,9 @@ class FuturesConfigManager:
     async def initialize(self) -> None:
         """Initialize and load all configurations from database"""
         try:
+            # Reload sensitive credentials from secrets manager (async)
+            # This is needed because __init__ uses sync secrets.get() which skips DB in async context
+            await self._reload_sensitive_credentials()
             await self._load_all_configs()
             logger.info("✅ Futures configuration loaded from database")
         except Exception as e:
