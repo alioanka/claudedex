@@ -945,15 +945,9 @@ class SolanaTradingEngine:
             currency="SOL"
         )
 
-        # Telegram alerts
+        # Telegram alerts - will be initialized in async initialize() method
+        # where we can properly load credentials from secrets manager
         self.telegram_alerts = None
-        try:
-            from solana_trading.core.solana_alerts import SolanaTelegramAlerts
-            self.telegram_alerts = SolanaTelegramAlerts()
-            if self.telegram_alerts.enabled:
-                logger.info("✅ Telegram alerts enabled for Solana module")
-        except ImportError as e:
-            logger.warning(f"Solana Telegram alerts not available: {e}")
 
         # Log configuration
         mode_str = "DRY_RUN (SIMULATED)" if self.dry_run else "LIVE TRADING"
@@ -987,6 +981,24 @@ class SolanaTradingEngine:
 
             # Load historical stats from database for accurate PnL tracking
             await self._load_historical_stats()
+
+            # Initialize Telegram alerts with async credential loading
+            try:
+                from solana_trading.core.solana_alerts import SolanaTelegramAlerts
+                from security.secrets_manager import secrets
+
+                # Pre-load Telegram credentials asynchronously
+                bot_token = await secrets.get_async('TELEGRAM_BOT_TOKEN', log_access=False)
+                chat_id = await secrets.get_async('TELEGRAM_CHAT_ID', log_access=False)
+
+                self.telegram_alerts = SolanaTelegramAlerts(
+                    bot_token=bot_token,
+                    chat_id=chat_id
+                )
+                if self.telegram_alerts.enabled:
+                    logger.info("✅ Telegram alerts enabled for Solana module")
+            except Exception as e:
+                logger.warning(f"Solana Telegram alerts not available: {e}")
 
             logger.info("✅ Solana connection and strategies initialized")
 

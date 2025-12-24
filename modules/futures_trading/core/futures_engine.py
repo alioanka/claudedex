@@ -367,15 +367,9 @@ class FuturesTradingEngine:
             currency="USD"
         )
 
-        # Telegram alerts
+        # Telegram alerts - will be initialized in async initialize() method
+        # where we can properly load credentials from secrets manager
         self.telegram_alerts = None
-        try:
-            from futures_trading.core.futures_alerts import FuturesTelegramAlerts
-            self.telegram_alerts = FuturesTelegramAlerts()
-            if self.telegram_alerts.enabled:
-                logger.info("✅ Telegram alerts enabled for Futures module")
-        except ImportError as e:
-            logger.warning(f"Telegram alerts not available: {e}")
 
         # Logging mode info
         mode_str = "DRY_RUN (SIMULATED)" if self.dry_run else "LIVE TRADING"
@@ -417,6 +411,24 @@ class FuturesTradingEngine:
             await self._sync_positions()
 
             logger.info("✅ Exchange connection initialized")
+
+            # Initialize Telegram alerts with async credential loading
+            try:
+                from futures_trading.core.futures_alerts import FuturesTelegramAlerts
+                from security.secrets_manager import secrets
+
+                # Pre-load Telegram credentials asynchronously
+                bot_token = await secrets.get_async('TELEGRAM_BOT_TOKEN', log_access=False)
+                chat_id = await secrets.get_async('TELEGRAM_CHAT_ID', log_access=False)
+
+                self.telegram_alerts = FuturesTelegramAlerts(
+                    bot_token=bot_token,
+                    chat_id=chat_id
+                )
+                if self.telegram_alerts.enabled:
+                    logger.info("✅ Telegram alerts enabled for Futures module")
+            except Exception as e:
+                logger.warning(f"Telegram alerts not available: {e}")
 
             # Load historical trade stats from database
             await self._load_stats_from_db()

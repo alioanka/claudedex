@@ -390,10 +390,11 @@ class TradingBotApplication:
                 from monitoring.alerts import AlertPriority, NotificationChannel
 
                 # Get Telegram credentials from secrets manager (database) or env
+                # Use get_async() since we're in async context
                 from security.secrets_manager import secrets
-                telegram_token = secrets.get('TELEGRAM_BOT_TOKEN') or os.getenv('TELEGRAM_BOT_TOKEN', '')
-                telegram_chat = secrets.get('TELEGRAM_CHAT_ID') or os.getenv('TELEGRAM_CHAT_ID', '')
-                discord_webhook = secrets.get('DISCORD_WEBHOOK_URL') or os.getenv('DISCORD_WEBHOOK_URL', '')
+                telegram_token = await secrets.get_async('TELEGRAM_BOT_TOKEN', log_access=False) or os.getenv('TELEGRAM_BOT_TOKEN', '')
+                telegram_chat = await secrets.get_async('TELEGRAM_CHAT_ID', log_access=False) or os.getenv('TELEGRAM_CHAT_ID', '')
+                discord_webhook = await secrets.get_async('DISCORD_WEBHOOK_URL', log_access=False) or os.getenv('DISCORD_WEBHOOK_URL', '')
 
                 nested_config['notifications'] = {
                     'telegram': {
