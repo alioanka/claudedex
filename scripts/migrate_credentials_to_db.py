@@ -13,7 +13,7 @@ SECURITY ARCHITECTURE:
 
 Usage:
     # Inside Docker container:
-    docker exec -it claudedex_dex python scripts/migrate_credentials_to_db.py
+    docker exec -it trading-bot python scripts/migrate_credentials_to_db.py
 
     # Or directly:
     python scripts/migrate_credentials_to_db.py --dry-run  # Preview changes

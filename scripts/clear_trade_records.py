@@ -13,7 +13,7 @@ WHAT THIS SCRIPT DOES:
 
 USAGE:
     # Inside Docker container:
-    docker exec -it claudedex_dex python scripts/clear_trade_records.py
+    docker exec -it trading-bot python scripts/clear_trade_records.py
 
     # Options:
     python scripts/clear_trade_records.py --list              # List all tables and counts
@@ -110,16 +110,35 @@ class TradeCleaner:
         """Connect to PostgreSQL database"""
         db_host = os.getenv('DB_HOST', 'postgres')
         db_port = int(os.getenv('DB_PORT', 5432))
-        db_name = os.getenv('DB_NAME', 'claudedex')
-        db_user = os.getenv('DB_USER', 'claudedex')
+        db_name = os.getenv('DB_NAME', 'tradingbot')  # Match docker-compose POSTGRES_DB
 
-        # Try Docker secret first, then environment
-        db_password = None
-        secret_file = Path('/run/secrets/db_password')
-        if secret_file.exists():
-            db_password = secret_file.read_text().strip()
+        # Try Docker secret first for db_user, then environment
+        db_user = None
+        user_secret_file = Path('/run/secrets/db_user')
+        if user_secret_file.exists():
+            db_user = user_secret_file.read_text().strip()
         else:
-            db_password = os.getenv('DB_PASSWORD', 'claudedex')
+            db_user = os.getenv('DB_USER')
+            if not db_user:
+                raise ValueError(
+                    "DB_USER not set. Either:\n"
+                    "  1. Run inside trading-bot container (has Docker secrets), or\n"
+                    "  2. Set DB_USER environment variable explicitly"
+                )
+
+        # Try Docker secret first for db_password, then environment
+        db_password = None
+        password_secret_file = Path('/run/secrets/db_password')
+        if password_secret_file.exists():
+            db_password = password_secret_file.read_text().strip()
+        else:
+            db_password = os.getenv('DB_PASSWORD')
+            if not db_password:
+                raise ValueError(
+                    "DB_PASSWORD not set. Either:\n"
+                    "  1. Run inside trading-bot container (has Docker secrets), or\n"
+                    "  2. Set DB_PASSWORD environment variable explicitly"
+                )
 
         self.db_pool = await asyncpg.create_pool(
             host=db_host,

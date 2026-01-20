@@ -69,7 +69,7 @@ This guide covers three critical operations for managing secure credentials:
 #### Step 1: Connect to Docker Container
 
 ```bash
-docker exec -it claudedex_dex bash
+docker exec -it trading-bot bash
 ```
 
 #### Step 2: Verify Current Encryption (Optional)
@@ -169,7 +169,7 @@ Then re-encrypt credentials via the Settings UI or database directly.
 #### Step 1: Connect to Docker Container
 
 ```bash
-docker exec -it claudedex_dex bash
+docker exec -it trading-bot bash
 ```
 
 #### Step 2: List Current Records
@@ -291,7 +291,7 @@ The system will automatically:
 ### Method 2: Via Script
 
 ```bash
-docker exec -it claudedex_dex bash
+docker exec -it trading-bot bash
 
 # Use the credentials migration script with a single key
 python -c "
@@ -315,8 +315,8 @@ print(f'Encrypted value: {encrypted}')
 Then update the database:
 
 ```sql
--- Connect to database
-docker exec -it claudedex_postgres psql -U claudedex -d claudedex
+-- Connect to database (use your actual db_user from secrets/db_user)
+docker exec -it trading-postgres psql -U <your_db_user> -d tradingbot
 
 -- Update the credential
 UPDATE secure_credentials
@@ -350,13 +350,13 @@ async def update_wallet(key_name: str, new_value: str):
     # Encrypt new value
     encrypted = fernet.encrypt(new_value.encode()).decode()
 
-    # Update database
+    # Update database - requires DB_USER and DB_PASSWORD env vars
     import asyncpg
     pool = await asyncpg.create_pool(
         host=os.getenv('DB_HOST', 'postgres'),
-        database=os.getenv('DB_NAME', 'claudedex'),
-        user=os.getenv('DB_USER', 'claudedex'),
-        password=os.getenv('DB_PASSWORD', 'claudedex')
+        database=os.getenv('DB_NAME', 'tradingbot'),
+        user=os.getenv('DB_USER'),  # Required - set explicitly
+        password=os.getenv('DB_PASSWORD')  # Required - set explicitly
     )
 
     async with pool.acquire() as conn:
@@ -466,8 +466,8 @@ python scripts/clear_trade_records.py --all
 # Backup encryption key
 cp .encryption_key backups/encryption_key_$(date +%Y%m%d).bak
 
-# Check credential in database
-docker exec -it claudedex_postgres psql -U claudedex -d claudedex -c \
+# Check credential in database (use your actual db_user)
+docker exec -it trading-postgres psql -U <your_db_user> -d tradingbot -c \
   "SELECT key_name, category, is_encrypted, updated_at FROM secure_credentials WHERE key_name = 'PRIVATE_KEY';"
 ```
 
