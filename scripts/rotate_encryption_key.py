@@ -18,8 +18,16 @@ WHAT THIS SCRIPT DOES:
 7. Saves the new key to .encryption_key file
 
 USAGE:
-    # Inside Docker container:
-    docker exec -it claudedex_dex python scripts/rotate_encryption_key.py
+    # Method 1: Inside Docker container (if trading-bot is running):
+    docker exec -it trading-bot python scripts/rotate_encryption_key.py
+
+    # Method 2: From host with only postgres running (RECOMMENDED):
+    # First stop the trading bot:
+    docker-compose stop trading-bot
+
+    # Then run from host with explicit credentials:
+    DB_HOST=localhost DB_USER=<your_db_user> DB_PASSWORD=<your_db_password> \
+        python scripts/rotate_encryption_key.py --dry-run
 
     # Options:
     python scripts/rotate_encryption_key.py --dry-run     # Preview changes only
@@ -27,9 +35,10 @@ USAGE:
     python scripts/rotate_encryption_key.py --verify      # Verify current encryption
 
 REQUIREMENTS:
-    - Database must be accessible
+    - Database must be accessible (postgres container running)
     - .encryption_key file must exist with current key
-    - All modules should be STOPPED during rotation
+    - trading-bot container should be STOPPED during rotation
+    - Set DB_USER and DB_PASSWORD env vars (or use Docker secrets)
 
 Author: ClaudeDex Security
 Date: December 2024
@@ -84,16 +93,35 @@ class EncryptionKeyRotator:
         # Get database connection info from Docker secrets or environment
         db_host = os.getenv('DB_HOST', 'postgres')
         db_port = int(os.getenv('DB_PORT', 5432))
-        db_name = os.getenv('DB_NAME', 'claudedex')
-        db_user = os.getenv('DB_USER', 'claudedex')
+        db_name = os.getenv('DB_NAME', 'tradingbot')  # Match docker-compose POSTGRES_DB
 
-        # Try Docker secret first, then environment
-        db_password = None
-        secret_file = Path('/run/secrets/db_password')
-        if secret_file.exists():
-            db_password = secret_file.read_text().strip()
+        # Try Docker secret first for db_user, then environment
+        db_user = None
+        user_secret_file = Path('/run/secrets/db_user')
+        if user_secret_file.exists():
+            db_user = user_secret_file.read_text().strip()
         else:
-            db_password = os.getenv('DB_PASSWORD', 'claudedex')
+            db_user = os.getenv('DB_USER')
+            if not db_user:
+                raise ValueError(
+                    "DB_USER not set. Either:\n"
+                    "  1. Run inside trading-bot container (has Docker secrets), or\n"
+                    "  2. Set DB_USER environment variable explicitly"
+                )
+
+        # Try Docker secret first for db_password, then environment
+        db_password = None
+        password_secret_file = Path('/run/secrets/db_password')
+        if password_secret_file.exists():
+            db_password = password_secret_file.read_text().strip()
+        else:
+            db_password = os.getenv('DB_PASSWORD')
+            if not db_password:
+                raise ValueError(
+                    "DB_PASSWORD not set. Either:\n"
+                    "  1. Run inside trading-bot container (has Docker secrets), or\n"
+                    "  2. Set DB_PASSWORD environment variable explicitly"
+                )
 
         self.db_pool = await asyncpg.create_pool(
             host=db_host,
