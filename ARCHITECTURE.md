@@ -6,6 +6,45 @@ Multi-module crypto trading bot supporting DEX trading (EVM + Solana), Futures (
 
 ---
 
+## Configuration Architecture
+
+```
+┌─────────────────┐                    ┌───────────────────────┐
+│   .env file     │                    │   secure_credentials  │
+│ (module flags,  │                    │      (PostgreSQL)     │
+│  non-sensitive) │                    │   Fernet Encrypted    │
+└────────┬────────┘                    └───────────┬───────────┘
+         │                                         │
+         │  Module Startup                         │  API Keys, Private Keys,
+         │  Flags Only                             │  Telegram Tokens, etc.
+         │                                         │
+         ▼                                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     Secrets Manager                              │
+│              security/secrets_manager.py                         │
+│                                                                  │
+│  Priority: Docker Secrets → Database → Environment → Default    │
+│  Auto-decrypts values starting with 'gAAAAAB'                   │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+         ┌───────────────────┼───────────────────┐
+         ▼                   ▼                   ▼
+┌─────────────────┐  ┌───────────────┐  ┌───────────────────┐
+│  Config Manager │  │ Trading Engine │  │  Alert Systems    │
+│  (loads from DB)│  │ (uses secrets) │  │  (Telegram, etc.) │
+└─────────────────┘  └───────────────┘  └───────────────────┘
+         ▲
+         │
+┌─────────────────┐
+│   Settings UI   │
+│  (saves to DB)  │
+└─────────────────┘
+```
+
+**Key Principle:** `.env` contains ONLY module enable flags and non-sensitive configuration. ALL credentials (API keys, private keys, tokens) are stored encrypted in PostgreSQL.
+
+---
+
 ## Module Architecture
 
 ```
@@ -23,11 +62,140 @@ Each module runs as a **separate subprocess** managed by the orchestrator (`main
 
 ---
 
+## Current .env Structure
+
+The `.env` file now contains **ONLY**:
+
+```bash
+# ============================================================================
+# MODULE ENABLE/DISABLE FLAGS
+# ============================================================================
+# These control which module processes are started
+DEX_MODULE_ENABLED=true
+FUTURES_MODULE_ENABLED=true
+SOLANA_MODULE_ENABLED=true
+SNIPER_MODULE_ENABLED=true
+AI_MODULE_ENABLED=true
+ARBITRAGE_MODULE_ENABLED=true
+COPY_TRADING_MODULE_ENABLED=true
+
+# Operating mode (affects all modules)
+MODE=production
+DRY_RUN=true  # CRITICAL: Set to false ONLY when ready for live trading!
+
+# External Service URLs (non-sensitive)
+FLASHBOTS_RPC=https://relay.flashbots.net
+JUPITER_API_URL=https://lite-api.jup.ag
+JITO_TIP_ACCOUNT=96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5
+JITO_BLOCK_ENGINE_URL=https://mainnet.block-engine.jito.wtf
+JUPYTER_TOKEN=...
+```
+
+**What is NOT in .env (stored in database instead):**
+- Private keys (PRIVATE_KEY, SOLANA_PRIVATE_KEY)
+- API keys (BINANCE_API_KEY, OPENAI_API_KEY, etc.)
+- API secrets (BINANCE_API_SECRET, etc.)
+- Notification tokens (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DISCORD_WEBHOOK_URL)
+- All exchange credentials
+
+---
+
+## Credentials & Security
+
+### Two-Tier Security Model
+
+**Tier 1: Docker Secrets** (`/run/secrets/`)
+- Database password (`db_password`)
+- Redis password (`redis_password`)
+- Infrastructure-level credentials
+
+**Tier 2: Encrypted Database** (`secure_credentials` table)
+- Private keys (Fernet encrypted)
+- API keys (Fernet encrypted)
+- Exchange secrets
+- Notification tokens
+
+### Secrets Manager
+
+**File:** `security/secrets_manager.py`
+
+**Class:** `SecureSecretsManager`
+
+**Priority Order:**
+1. Docker secrets (`/run/secrets/<key>`)
+2. Memory cache (if not encrypted)
+3. Database (`secure_credentials` table with Fernet decryption)
+4. Environment variables (with Fernet decryption if needed)
+5. Default value
+
+**Key Methods:**
+
+| Method | Use Case |
+|--------|----------|
+| `secrets.get(key)` | Sync access (skips DB in async context) |
+| `await secrets.get_async(key)` | **Preferred** - async DB access with decryption |
+| `secrets.has(key)` | Check if credential exists |
+| `await secrets.set(key, value)` | Store encrypted credential |
+
+**Usage Patterns:**
+
+```python
+from security.secrets_manager import secrets
+
+# In async context (preferred)
+api_key = await secrets.get_async('BINANCE_API_KEY', log_access=False)
+
+# In sync context (will skip DB lookup in async event loop)
+api_key = secrets.get('BINANCE_API_KEY')
+```
+
+**Pre-loading Pattern for Sync Constructors:**
+
+When a class has a sync `__init__` but needs credentials from the database:
+
+```python
+async def initialize(self):
+    # Pre-load credentials asynchronously
+    from security.secrets_manager import secrets
+
+    bot_token = await secrets.get_async('TELEGRAM_BOT_TOKEN', log_access=False)
+    chat_id = await secrets.get_async('TELEGRAM_CHAT_ID', log_access=False)
+
+    # Pass to sync constructor
+    self.alerts = TelegramAlerts(bot_token=bot_token, chat_id=chat_id)
+```
+
+**Final Safety Checks:**
+
+The secrets manager includes automatic decryption safety:
+- If a returned value starts with `gAAAAAB` (Fernet prefix), it will attempt decryption
+- Prevents accidentally returning encrypted values to callers
+- Logs warnings if decryption fails
+
+### Encryption
+
+**File:** `.encryption_key` (project root)
+- 32-byte Fernet key (base64 encoded)
+- Used to encrypt/decrypt all credentials in database
+- **NEVER commit to git** (in `.gitignore`)
+
+**Credential Categories in Database:**
+
+| Category | Examples |
+|----------|----------|
+| `wallet` | PRIVATE_KEY, SOLANA_PRIVATE_KEY, WALLET_ADDRESS |
+| `exchange` | BINANCE_API_KEY, BYBIT_API_SECRET |
+| `api` | OPENAI_API_KEY, ANTHROPIC_API_KEY |
+| `notification` | TELEGRAM_BOT_TOKEN, DISCORD_WEBHOOK_URL |
+| `rpc` | ALCHEMY_API_KEY, HELIUS_API_KEY |
+
+---
+
 ## Settings Architecture
 
 ```
 ┌─────────────────┐      ┌─────────────────┐      ┌────────────────────┐
-│  Dashboard UI   │ ──►  │   PostgreSQL    │ ──►  │  Config Manager    │
+│  Dashboard UI   │ ───► │   PostgreSQL    │ ───► │  Config Manager    │
 │  /settings/*    │      │ config_settings │      │  *_config_manager  │
 └─────────────────┘      └─────────────────┘      └────────────────────┘
                                                            │
@@ -39,23 +207,34 @@ Each module runs as a **separate subprocess** managed by the orchestrator (`main
 
 **Settings Pages:**
 - `/settings` - Global module control, DRY_RUN mode
+- `/settings/credentials` - Secure credential management
+- `/settings/rpc-api` - RPC/API Pool configuration
 - `/futures/settings` - Futures trading parameters
 - `/solana/settings` - Solana module settings
 - `/dex/settings` - DEX trading settings
 
 **Config Managers (per module):**
-| Module | Config Manager File |
-|--------|---------------------|
-| DEX | `config/config_manager.py` |
-| Futures | `modules/futures_trading/config/futures_config_manager.py` |
-| Solana | `modules/solana_trading/config/solana_config_manager.py` |
-| AI Analysis | Settings loaded in `sentiment_engine.py` |
+
+| Module | Config Manager File | Key Methods |
+|--------|---------------------|-------------|
+| DEX | `config/config_manager.py` | `get_config()`, `update_config()` |
+| Futures | `modules/futures_trading/config/futures_config_manager.py` | `get_api_credentials()`, `initialize()` |
+| Solana | `modules/solana_trading/config/solana_config_manager.py` | `get_trading_config()` |
+| AI Analysis | Settings in `sentiment_engine.py` | Direct config loading |
+
+**Database Tables for Settings:**
+
+| Table | Purpose |
+|-------|---------|
+| `config_settings` | All module trading parameters |
+| `secure_credentials` | Encrypted API keys and secrets |
+| `rpc_api_pool` | RPC endpoint configuration and health |
 
 ---
 
 ## Dashboard (Web UI)
 
-**Location:** `dashboard/` (FastAPI + Jinja2 templates)
+**Location:** `monitoring/` (FastAPI + Jinja2 templates)
 
 ### Main Pages
 
@@ -66,8 +245,6 @@ Each module runs as a **separate subprocess** managed by the orchestrator (`main
 | `/settings` | `settings.html` | Global settings |
 
 ### Module-Specific Dashboards
-
-Each module has its own dedicated dashboard with tabs for monitoring and configuration:
 
 | Module | Dashboard | Settings | Trades | Positions | Performance |
 |--------|-----------|----------|--------|-----------|-------------|
@@ -94,111 +271,45 @@ Each module has its own dedicated dashboard with tabs for monitoring and configu
 
 ### RPC/API Configuration Page (`/settings/rpc-api`)
 
-Manages the RPC Pool Engine with features:
+**Backend:** `config/pool_engine.py`, `monitoring/rpc_pool_routes.py`
+
+Features:
 - Add/edit/delete RPC endpoints per chain
 - Health status indicators (healthy/rate-limited/unhealthy)
 - Latency monitoring and auto-rotation
 - Priority ordering for endpoints
 - Rate limit detection and cooldown display
+- Test endpoints individually
 
 ### Secure Credentials Page (`/settings/credentials`)
 
-Manages encrypted credentials with features:
-- Category-based organization (Wallet, Exchange, API, Notification, etc.)
+**Backend:** `monitoring/credentials_routes.py`
+
+Features:
+- Category-based organization (Wallet, Exchange, API, Notification)
 - Visual status indicators (configured/not-configured/required)
 - Secure input fields (password-masked)
-- Auto-encryption on save
+- Auto-encryption on save using Fernet
 - Credential validation
-
-### Dashboard Features
-
-- **Real-time updates** via WebSocket
-- **Dark/Light mode** toggle
-- **Responsive design** for mobile
-- **Module status indicators** (running/stopped/error)
-- **Quick actions** (emergency stop, force refresh)
-- **Pro Controls** for advanced operations
-
----
-
-## Credentials & Security
-
-### Two-Tier Security Model
-
-**Tier 1: Docker Secrets** (`/run/secrets/`)
-- Database password (`db_password`)
-- Redis password (`redis_password`)
-- Infrastructure credentials
-
-**Tier 2: Encrypted Database** (`secure_credentials` table)
-- Private keys (encrypted with Fernet)
-- API keys (encrypted)
-- Exchange secrets
-
-### Secrets Manager
-
-**File:** `security/secrets_manager.py`
-
-**Priority Order:**
-1. Docker secrets (`/run/secrets/<key>`)
-2. Memory cache
-3. Database (Fernet encrypted)
-4. Environment variables (fallback)
-
-**Usage:**
-```python
-from security.secrets_manager import secrets
-
-# Sync
-api_key = secrets.get('BINANCE_API_KEY')
-
-# Async (with DB access)
-api_key = await secrets.get_async('BINANCE_API_KEY')
-```
-
-### Encryption
-
-**File:** `.encryption_key` (root directory)
-- 32-byte Fernet key
-- Used to encrypt/decrypt all credentials in database
-- **NEVER commit to git**
-
-**Decryption Pattern (in modules):**
-```python
-async def _get_decrypted_key(self, key_name: str) -> Optional[str]:
-    # 1. Try secrets manager
-    value = await secrets.get_async(key_name)
-
-    # 2. Check if still encrypted (starts with gAAAAAB)
-    if value and value.startswith('gAAAAAB'):
-        # Decrypt with .encryption_key file
-        f = Fernet(encryption_key)
-        return f.decrypt(value.encode()).decode()
-
-    return value
-```
+- Audit logging of access
 
 ---
 
 ## RPC Pool Engine
 
-**File:** `config/rpc_provider.py`
+**File:** `config/pool_engine.py`
 
 Provides RPC rotation, health checking, and fallback for all chains.
 
-**Usage:**
-```python
-from config.rpc_provider import RPCProvider
+**Key Methods:**
 
-# Async (preferred)
-rpc_url = await RPCProvider.get_rpc('ETHEREUM_RPC')
-
-# Sync (for initialization)
-rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC')
-
-# Report rate limits for rotation
-await RPCProvider.report_rate_limit('ETHEREUM_RPC', rpc_url)
-```
+| Method | Purpose |
+|--------|---------|
+| `get_endpoint()` | Get best available endpoint for provider type |
+| `report_success()` | Report successful request (improves health score) |
+| `report_failure()` | Report failed request (decreases health score) |
+| `report_rate_limit()` | Mark endpoint as rate-limited with cooldown |
+| `run_health_checks()` | Periodic health check of all endpoints |
 
 **Supported Chains:** Ethereum, BSC, Polygon, Arbitrum, Base, Solana, Monad, PulseChain, Fantom, Cronos, Avalanche
 
@@ -219,6 +330,7 @@ await RPCProvider.report_rate_limit('ETHEREUM_RPC', rpc_url)
 | `performance_metrics` | P&L tracking |
 | `config_settings` | All module settings |
 | `secure_credentials` | Encrypted API keys/secrets |
+| `rpc_api_pool` | RPC endpoint configuration |
 
 ### Module-Specific Tables
 
@@ -231,7 +343,6 @@ await RPCProvider.report_rate_limit('ETHEREUM_RPC', rpc_url)
 | Sniper | `sniper_targets`, `sniper_executions` |
 | AI Analysis | `ai_signals`, `ai_positions` |
 | Auth | `users`, `sessions`, `audit_log` |
-| RPC Pool | `rpc_api_pool`, `rpc_health_metrics` |
 
 ---
 
@@ -241,46 +352,91 @@ await RPCProvider.report_rate_limit('ETHEREUM_RPC', rpc_url)
 - `main.py` - Module process manager, pre-flight validation
 
 ### DEX Trading
-- `main_dex.py` - Entry point
-- `trading/executors/base_executor.py` - Base trade executor
-- `trading/chains/solana/jupiter_executor.py` - Jupiter swaps
-- `config/config_manager.py` - DEX config
+| File | Purpose |
+|------|---------|
+| `main_dex.py` | Entry point, pre-loads credentials async |
+| `core/engine.py` | Main trading engine |
+| `trading/executors/base_executor.py` | EVM trade execution |
+| `trading/chains/solana/jupiter_executor.py` | Solana Jupiter swaps |
+| `config/config_manager.py` | DEX configuration |
 
 ### Futures Trading
-- `modules/futures_trading/main_futures.py` - Entry point
-- `modules/futures_trading/core/futures_engine.py` - Trading engine
-- `modules/futures_trading/exchanges/binance_futures.py` - Binance API
-- `modules/futures_trading/config/futures_config_manager.py` - Config
+| File | Purpose |
+|------|---------|
+| `modules/futures_trading/main_futures.py` | Entry point |
+| `modules/futures_trading/core/futures_engine.py` | Trading engine, uses `get_async()` for credentials |
+| `modules/futures_trading/core/futures_alerts.py` | Telegram alerts |
+| `modules/futures_trading/config/futures_config_manager.py` | Config, calls `_reload_sensitive_credentials()` |
 
 ### Solana Trading
-- `modules/solana_trading/main_solana.py` - Entry point
-- `modules/solana_trading/core/solana_engine.py` - Jupiter + trading logic
-- `modules/solana_trading/config/solana_config_manager.py` - Config
+| File | Purpose |
+|------|---------|
+| `modules/solana_trading/main_solana.py` | Entry point |
+| `modules/solana_trading/core/solana_engine.py` | Jupiter + trading logic |
+| `modules/solana_trading/core/solana_alerts.py` | Telegram alerts |
+| `modules/solana_trading/config/solana_config_manager.py` | Config |
 
 ### AI Analysis
-- `modules/ai_analysis/main_ai.py` - Entry point
-- `modules/ai_analysis/core/sentiment_engine.py` - AI trading logic
+| File | Purpose |
+|------|---------|
+| `modules/ai_analysis/main_ai.py` | Entry point |
+| `modules/ai_analysis/core/sentiment_engine.py` | AI trading logic |
 
 ### Arbitrage
-- `modules/arbitrage/main_arbitrage.py` - Entry point
-- `modules/arbitrage/arbitrage_engine.py` - Cross-DEX arb
-- `modules/arbitrage/solana_engine.py` - Solana arb (Jupiter)
-- `modules/arbitrage/triangular_engine.py` - Triangular arb
+| File | Purpose |
+|------|---------|
+| `modules/arbitrage/main_arbitrage.py` | Entry point |
+| `modules/arbitrage/arbitrage_engine.py` | Cross-DEX arb |
+| `modules/arbitrage/triangular_engine.py` | Triangular arb |
 
 ### Copy Trading
-- `modules/copy_trading/main_copy.py` - Entry point
-- `modules/copy_trading/copy_engine.py` - Wallet tracking + execution
+| File | Purpose |
+|------|---------|
+| `modules/copy_trading/main_copy.py` | Entry point |
+| `modules/copy_trading/copy_engine.py` | Wallet tracking + execution |
 
 ### Sniper
-- `modules/sniper/main_sniper.py` - Entry point
-- `modules/sniper/core/sniper_engine.py` - Token launch detection
-- `modules/sniper/core/trade_executor.py` - Fast execution
+| File | Purpose |
+|------|---------|
+| `modules/sniper/main_sniper.py` | Entry point |
+| `modules/sniper/core/sniper_engine.py` | Token launch detection |
+| `modules/sniper/core/trade_executor.py` | Fast execution |
 
 ### Security
-- `security/secrets_manager.py` - Credential management
-- `security/docker_secrets.py` - Docker secrets access
-- `security/encryption.py` - Fernet utilities
-- `security/audit_logger.py` - Access logging
+| File | Purpose |
+|------|---------|
+| `security/secrets_manager.py` | **Central credential management** |
+| `security/encryption.py` | Fernet utilities, key loading |
+| `security/wallet_security.py` | Wallet encryption/decryption |
+| `security/audit_logger.py` | Access logging |
+
+---
+
+## Alerting System
+
+**File:** `monitoring/alerts.py`
+
+**Credential Loading:**
+All alert modules load Telegram credentials using `secrets.get_async()` in their async `initialize()` method.
+
+**Channels:**
+- Telegram (credentials from `secure_credentials` table)
+- Discord (webhook from `secure_credentials` table)
+- Email (SMTP)
+
+**Module-Specific Alerts:**
+
+| Module | Alert File | Key Class |
+|--------|------------|-----------|
+| Futures | `modules/futures_trading/core/futures_alerts.py` | `FuturesTelegramAlerts` |
+| Solana | `modules/solana_trading/core/solana_alerts.py` | `SolanaTelegramAlerts` |
+| DEX | `monitoring/alerts.py` | `AlertManager` |
+
+**Alert Types:**
+- Trading: Position opened/closed, SL/TP hit
+- Risk: Drawdown, margin call, correlation warning
+- System: Errors, API limits, low balance
+- Security: Honeypot detected, rug pull warning
 
 ---
 
@@ -290,6 +446,10 @@ await RPCProvider.report_rate_limit('ETHEREUM_RPC', rpc_url)
 ```
 logs/
 ├── orchestrator.log     # Main orchestrator
+├── pool_engine/         # RPC Pool health logs
+│   ├── pool_engine.log
+│   ├── health_checks.log
+│   └── rate_limits.log
 ├── dex/
 │   └── dex.log
 ├── futures/
@@ -308,100 +468,73 @@ logs/
 
 ---
 
-## Alerting System
-
-**File:** `monitoring/alerts.py`
-
-**Channels:**
-- Telegram (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`)
-- Discord (`DISCORD_WEBHOOK_URL`)
-- Email (SMTP)
-
-**Alert Types:**
-- Trading: Position opened/closed, SL/TP hit
-- Risk: Drawdown, margin call, correlation warning
-- System: Errors, API limits, low balance
-- Security: Honeypot detected, rug pull warning
-
----
-
-## Current .env Structure
-
-**Only sensitive data in .env:**
-```bash
-# Security
-ENCRYPTION_KEY=<fernet-key>  # Or use .encryption_key file
-JWT_SECRET=<random>
-SESSION_SECRET=<random>
-
-# Database (Docker secrets preferred)
-DATABASE_URL=postgresql://...
-# Or use Docker secrets: /run/secrets/db_password
-
-# Module Flags (process startup only)
-DEX_MODULE_ENABLED=true
-FUTURES_MODULE_ENABLED=false
-SOLANA_MODULE_ENABLED=true
-
-# Mode
-DRY_RUN=true  # CRITICAL: false = live trading
-
-# RPC URLs
-ETHEREUM_RPC_URLS=https://...
-SOLANA_RPC_URL=https://...
-
-# Private Keys (encrypted, store in DB preferred)
-PRIVATE_KEY=gAAAAAB...  # Fernet encrypted
-SOLANA_MODULE_PRIVATE_KEY=gAAAAAB...
-
-# API Keys (store in DB preferred)
-BINANCE_API_KEY=...
-OPENAI_API_KEY=...
-```
-
-**All trading parameters** (position size, leverage, pairs, strategies, risk settings) are stored in database via Settings UI.
-
----
-
 ## Quick Troubleshooting
+
+### "BINANCE API keys required" or similar
+1. Ensure credentials are stored in `secure_credentials` table
+2. Check that `FuturesConfigManager.initialize()` is called (loads credentials async)
+3. Verify `.encryption_key` exists and matches DB encryption
+
+### "Telegram alerts disabled - missing bot token"
+1. Store `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `secure_credentials` table
+2. Alert initialization should happen in async `initialize()` method, not `__init__`
+
+### "Non-hexadecimal digit found" (private key error)
+1. Private key is returning encrypted - decryption failed
+2. Check `.encryption_key` file exists and is readable
+3. Verify `is_encrypted` flag in database matches actual state
+
+### "can't compare offset-naive and offset-aware datetimes"
+1. Database returning timezone-aware datetimes
+2. Fixed with `_normalize_datetime()` in pool_engine.py
+
+### Redis "Authentication required"
+1. `REDIS_PASSWORD` needs to be loaded from secrets manager
+2. Use `await secrets.get_async('REDIS_PASSWORD')` in async context
 
 ### Module Won't Start
 1. Check `logs/<module>/<module>.log`
 2. Verify credentials in `secure_credentials` table
 3. Ensure `.encryption_key` file exists and matches DB encryption
 
-### "Invalid character" in Key
-- Key returned from DB is still encrypted
-- Check if Fernet decryption is working
-- Verify `.encryption_key` matches what was used to encrypt
-
-### "API key not found"
-- Check secrets manager can access DB
-- Verify key exists in `secure_credentials` table
-- Ensure `is_encrypted` flag matches actual encryption state
-
-### Jupiter "No forward quote"
-- Rate limiting (check for 429 in logs)
-- Invalid token pair / no liquidity
-- API timeout (network issues)
-
 ---
 
 ## Adding New Credentials
 
-1. **Store in DB (recommended):**
+1. **Via Dashboard (recommended):**
+   - Go to `/settings/credentials`
+   - Click "Add Credential"
+   - Enter key name, value, category
+   - Value is auto-encrypted on save
+
+2. **Via SQL:**
 ```sql
-INSERT INTO secure_credentials (key, encrypted_value, is_encrypted, category)
-VALUES ('NEW_API_KEY', '<fernet-encrypted-value>', true, 'api');
+-- First encrypt the value using Python Fernet
+INSERT INTO secure_credentials (key, encrypted_value, is_encrypted, category, subcategory)
+VALUES ('NEW_API_KEY', '<fernet-encrypted-value>', true, 'api', 'custom');
 ```
 
-2. **Access in code:**
+3. **Access in code:**
 ```python
 from security.secrets_manager import secrets
+
+# In async context (preferred)
 api_key = await secrets.get_async('NEW_API_KEY')
+
+# In sync context (limited - skips DB in async event loop)
+api_key = secrets.get('NEW_API_KEY')
 ```
 
-3. **For module-specific loading, add to the module's `_get_decrypted_key()` method**
+---
+
+## Security Best Practices
+
+1. **Never store credentials in .env** - Use `secure_credentials` table
+2. **Always use `get_async()` in async context** - Sync `get()` skips database
+3. **Pre-load credentials before sync constructors** - Load async, pass to `__init__`
+4. **Keep `.encryption_key` secure** - Never commit to git, backup separately
+5. **Rotate credentials periodically** - Update via Settings UI or SQL
+6. **Monitor audit logs** - Access to sensitive credentials is logged
 
 ---
 
