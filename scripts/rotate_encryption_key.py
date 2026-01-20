@@ -179,8 +179,13 @@ class EncryptionKeyRotator:
             """)
             return [dict(row) for row in rows]
 
-    def decrypt_value(self, encrypted_value: str) -> str:
-        """Decrypt a value with the old key"""
+    def decrypt_value(self, encrypted_value: str, key_name: str = "unknown") -> str:
+        """
+        Decrypt a value with the old key.
+
+        IMPORTANT: This method handles double-encryption by recursively decrypting
+        until the value is no longer encrypted (doesn't start with 'gAAAAAB').
+        """
         if not encrypted_value or encrypted_value == 'PLACEHOLDER':
             return encrypted_value
 
@@ -190,18 +195,52 @@ class EncryptionKeyRotator:
 
         try:
             decrypted = self.old_fernet.decrypt(encrypted_value.encode())
-            return decrypted.decode()
+            result = decrypted.decode()
+
+            # CRITICAL FIX: Check for double-encryption
+            # If the decrypted value is STILL encrypted, decrypt again
+            depth = 1
+            while result.startswith('gAAAAAB') and depth < 5:
+                try:
+                    logger.warning(f"  ⚠️  {key_name}: Double-encryption detected (layer {depth}), decrypting inner value...")
+                    decrypted = self.old_fernet.decrypt(result.encode())
+                    result = decrypted.decode()
+                    depth += 1
+                except InvalidToken:
+                    # Inner encryption uses different key - can't decrypt further
+                    logger.error(f"  ❌ {key_name}: Inner encryption uses different key! Cannot fully decrypt.")
+                    logger.error(f"     You may need to re-enter this credential manually.")
+                    raise ValueError(f"{key_name} has inner encryption with different key")
+                except Exception as e:
+                    logger.error(f"  ❌ {key_name}: Error decrypting inner value: {e}")
+                    raise
+
+            if depth > 1:
+                logger.info(f"  ✅ {key_name}: Successfully decrypted {depth} layers")
+
+            return result
         except InvalidToken:
-            logger.error(f"Failed to decrypt value - key mismatch or corrupted data")
+            logger.error(f"Failed to decrypt {key_name} - key mismatch or corrupted data")
             raise
         except Exception as e:
-            logger.error(f"Decryption error: {e}")
+            logger.error(f"Decryption error for {key_name}: {e}")
             raise
 
-    def encrypt_value(self, plaintext: str) -> str:
-        """Encrypt a value with the new key"""
+    def encrypt_value(self, plaintext: str, key_name: str = "unknown") -> str:
+        """
+        Encrypt a value with the new key.
+
+        IMPORTANT: This method checks for already-encrypted values to prevent
+        double-encryption issues.
+        """
         if not plaintext or plaintext == 'PLACEHOLDER':
             return plaintext
+
+        # CRITICAL FIX: Prevent double-encryption
+        if plaintext.startswith('gAAAAAB'):
+            logger.error(f"  ❌ {key_name}: Refusing to encrypt already-encrypted value!")
+            logger.error(f"     This would cause double-encryption. Value starts with: {plaintext[:20]}...")
+            raise ValueError(f"Cannot encrypt {key_name}: value is already Fernet-encrypted")
 
         encrypted = self.new_fernet.encrypt(plaintext.encode())
         return encrypted.decode()
@@ -274,11 +313,11 @@ class EncryptionKeyRotator:
                         logger.info(f"  Skipping {key_name} (not encrypted)")
                         continue
 
-                    # Decrypt with old key
-                    plaintext = self.decrypt_value(encrypted_value)
+                    # Decrypt with old key (handles double-encryption)
+                    plaintext = self.decrypt_value(encrypted_value, key_name)
 
-                    # Encrypt with new key
-                    new_encrypted = self.encrypt_value(plaintext)
+                    # Encrypt with new key (prevents double-encryption)
+                    new_encrypted = self.encrypt_value(plaintext, key_name)
 
                     if self.dry_run:
                         logger.info(f"  [DRY RUN] Would rotate: {key_name}")
@@ -324,11 +363,12 @@ class EncryptionKeyRotator:
         return results
 
     async def verify_encryption(self) -> dict:
-        """Verify all credentials can be decrypted"""
+        """Verify all credentials can be decrypted and detect double-encryption"""
         results = {
             'total': 0,
             'valid': 0,
             'invalid': 0,
+            'double_encrypted': 0,
             'errors': []
         }
 
@@ -359,16 +399,37 @@ class EncryptionKeyRotator:
                         continue
 
                     # Try to decrypt
-                    self.decrypt_value(encrypted_value)
-                    logger.info(f"  ✅ {key_name}: Valid")
-                    results['valid'] += 1
+                    decrypted = self.old_fernet.decrypt(encrypted_value.encode()).decode()
+
+                    # Check for double-encryption
+                    if decrypted.startswith('gAAAAAB'):
+                        logger.warning(f"  🔴 {key_name}: DOUBLE-ENCRYPTED! Decrypted value is still encrypted.")
+                        results['double_encrypted'] += 1
+                        results['errors'].append(f"{key_name}: Double-encrypted (needs fix)")
+
+                        # Try to decrypt the inner value
+                        try:
+                            inner_decrypted = self.old_fernet.decrypt(decrypted.encode()).decode()
+                            if inner_decrypted.startswith('gAAAAAB'):
+                                logger.warning(f"     Inner value also encrypted - may use different key")
+                            else:
+                                logger.info(f"     ✅ Can fix with same key (inner decrypts OK)")
+                        except Exception:
+                            logger.warning(f"     ⚠️  Inner encryption uses DIFFERENT key - needs manual fix")
+                    else:
+                        logger.info(f"  ✅ {key_name}: Valid")
+                        results['valid'] += 1
 
                 except Exception as e:
                     logger.error(f"  ❌ {key_name}: Invalid - {e}")
                     results['invalid'] += 1
                     results['errors'].append(f"{key_name}: {str(e)}")
 
-            logger.info(f"\nVerification complete: {results['valid']} valid, {results['invalid']} invalid")
+            logger.info(f"\nVerification complete:")
+            logger.info(f"  Valid: {results['valid']}")
+            logger.info(f"  Invalid: {results['invalid']}")
+            if results['double_encrypted'] > 0:
+                logger.warning(f"  Double-encrypted: {results['double_encrypted']} (run fix_double_encrypted.py)")
 
         except Exception as e:
             results['errors'].append(str(e))
