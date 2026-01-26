@@ -58,53 +58,70 @@ CHAIN_SYMBOLS = {
 }
 
 # Static fallback RPC URLs (used when Pool Engine is not available)
+# Using free public RPCs that don't require API keys
 _STATIC_CHAIN_RPC_URLS = {
     Chain.ETHEREUM: [
-        "https://eth-mainnet.g.alchemy.com/v2/bAwxYCUc1oIDIIYAL3w98NKh00DQK45B",
-        "https://mainnet.infura.io/v3/c5cbdbc6ba4f42d293de03e5cd191089",
-        "https://rpc.ankr.com/eth/4daecdbd46f7cc39b14e343e5ee0cc0be57e5f52faa2aff6baefe3826227064d"
+        "https://eth.llamarpc.com",
+        "https://ethereum.publicnode.com",
+        "https://1rpc.io/eth",
+        "https://rpc.mevblocker.io",
+        "https://eth.drpc.org"
     ],
     Chain.BSC: [
-        "https://bnb-mainnet.g.alchemy.com/v2/bAwxYCUc1oIDIIYAL3w98NKh00DQK45B",
+        "https://bsc-dataseed1.binance.org",
         "https://bsc-dataseed2.binance.org",
-        "https://rpc.ankr.com/bsc/85e891889f34c452ace96e25a7422fd8996bd74a0f34bb96a0cd4bb79af6080a"
+        "https://bsc-dataseed3.binance.org",
+        "https://bsc.publicnode.com",
+        "https://bsc.drpc.org"
     ],
     Chain.POLYGON: [
-        "https://polygon-mainnet.g.alchemy.com/v2/bAwxYCUc1oIDIIYAL3w98NKh00DQK45B",
-        "https://rpc.ankr.com/polygon/85e891889f34c452ace96e25a7422fd8996bd74a0f34bb96a0cd4bb79af6080a"
+        "https://polygon-rpc.com",
+        "https://polygon.llamarpc.com",
+        "https://polygon.publicnode.com",
+        "https://1rpc.io/matic",
+        "https://polygon.drpc.org"
     ],
     Chain.ARBITRUM: [
         "https://arb1.arbitrum.io/rpc",
         "https://arbitrum-one.publicnode.com",
-        "https://arb-mainnet.g.alchemy.com/v2/bAwxYCUc1oIDIIYAL3w98NKh00DQK45B",
-        "https://rpc.ankr.com/arbitrum/85e891889f34c452ace96e25a7422fd8996bd74a0f34bb96a0cd4bb79af6080a"
+        "https://arbitrum.llamarpc.com",
+        "https://1rpc.io/arb",
+        "https://arbitrum.drpc.org"
     ],
     Chain.BASE: [
-        "https://base-mainnet.g.alchemy.com/v2/bAwxYCUc1oIDIIYAL3w98NKh00DQK45B",
-        "https://rpc.ankr.com/base/85e891889f34c452ace96e25a7422fd8996bd74a0f34bb96a0cd4bb79af6080a"
+        "https://mainnet.base.org",
+        "https://base.publicnode.com",
+        "https://base.llamarpc.com",
+        "https://1rpc.io/base",
+        "https://base.drpc.org"
     ],
     # New chains (added 2025)
     Chain.AVALANCHE: [
-        "https://rpc.ankr.com/avalanche/4daecdbd46f7cc39b14e343e5ee0cc0be57e5f52faa2aff6baefe3826227064d",
-        "https://api.avax.network/ext/bc/C/rpc"
+        "https://api.avax.network/ext/bc/C/rpc",
+        "https://avalanche.publicnode.com",
+        "https://avalanche.drpc.org",
+        "https://1rpc.io/avax/c"
     ],
     Chain.FANTOM: [
-        "https://fantom-mainnet.public.blastapi.io",
         "https://rpc.fantom.network",
         "https://fantom.publicnode.com",
         "https://rpc.ftm.tools",
-        "https://rpc.ankr.com/fantom"
+        "https://fantom-mainnet.public.blastapi.io",
+        "https://fantom.drpc.org"
     ],
     Chain.CRONOS: [
         "https://evm.cronos.org",
-        "https://cronos-evm.publicnode.com"
+        "https://cronos-evm.publicnode.com",
+        "https://cronos.drpc.org"
     ],
     Chain.PULSECHAIN: [
         "https://rpc.pulsechain.com",
-        "https://pulsechain.publicnode.com"
+        "https://pulsechain.publicnode.com",
+        "https://rpc-pulsechain.g4mm4.io"
     ],
     Chain.MONAD: [
-        "https://rpc.ankr.com/monad_mainnet/4daecdbd46f7cc39b14e343e5ee0cc0be57e5f52faa2aff6baefe3826227064d"
+        "https://monad.publicnode.com",
+        "https://rpc.monad.xyz"
     ]
 }
 
