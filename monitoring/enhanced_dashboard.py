@@ -8897,11 +8897,32 @@ class DashboardEndpoints:
 
     async def start(self):
         """Start the dashboard server"""
-        runner = web.AppRunner(self.app)
-        await runner.setup()
-        site = web.TCPSite(runner, self.host, self.port)
-        await site.start()
+        self._runner = web.AppRunner(self.app)
+        await self._runner.setup()
+        self._site = web.TCPSite(self._runner, self.host, self.port)
+        await self._site.start()
         logger.info(f"Enhanced dashboard running on http://{self.host}:{self.port}")
-        
-        # Keep running
-        await asyncio.Event().wait()
+
+        # Store shutdown event for graceful stop
+        self._shutdown_event = asyncio.Event()
+
+        # Keep running until shutdown
+        await self._shutdown_event.wait()
+
+    async def stop(self):
+        """Stop the dashboard server gracefully"""
+        logger.info("Stopping dashboard server...")
+        try:
+            # Signal the start() method to exit
+            if hasattr(self, '_shutdown_event'):
+                self._shutdown_event.set()
+
+            # Cleanup the site and runner
+            if hasattr(self, '_site') and self._site:
+                await self._site.stop()
+            if hasattr(self, '_runner') and self._runner:
+                await self._runner.cleanup()
+
+            logger.info("Dashboard server stopped")
+        except Exception as e:
+            logger.warning(f"Error stopping dashboard: {e}")
