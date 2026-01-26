@@ -15,6 +15,7 @@ import logging
 from datetime import datetime
 import argparse
 from typing import Dict
+from aiohttp import web
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -135,6 +136,192 @@ class HealthChecker:
             except Exception as e:
                 print(f"Health check error: {e}")
 
+
+class DEXHealthServer:
+    """HTTP server for DEX health, status, and control endpoints.
+
+    Runs even when standalone dashboard is enabled, allowing the dashboard
+    to proxy requests for live engine data and control operations.
+    """
+
+    def __init__(self, app: 'TradingBotApplication', host: str = "0.0.0.0", port: int = 8085):
+        self.app = app
+        self.host = host
+        self.port = port
+        self.web_app = web.Application()
+        self._setup_routes()
+        self.runner = None
+        self.logger = logging.getLogger(__name__)
+
+    def _setup_routes(self):
+        """Setup HTTP routes"""
+        self.web_app.router.add_get('/health', self.health_handler)
+        self.web_app.router.add_get('/healthz', self.health_handler)
+        self.web_app.router.add_get('/ready', self.ready_handler)
+        self.web_app.router.add_get('/stats', self.stats_handler)
+        self.web_app.router.add_get('/positions', self.positions_handler)
+        self.web_app.router.add_get('/block-status', self.block_status_handler)
+        self.web_app.router.add_post('/trading/unblock', self.unblock_trading_handler)
+        self.web_app.router.add_get('/trading/status', self.trading_status_handler)
+
+    async def start(self):
+        """Start the health server"""
+        self.runner = web.AppRunner(self.web_app)
+        await self.runner.setup()
+        site = web.TCPSite(self.runner, self.host, self.port)
+        await site.start()
+        self.logger.info(f"🏥 DEX Health server started on {self.host}:{self.port}")
+
+    async def stop(self):
+        """Stop the health server"""
+        if self.runner:
+            await self.runner.cleanup()
+
+    async def health_handler(self, request):
+        """Liveness probe endpoint"""
+        health = {
+            'status': 'healthy' if self.app.engine else 'degraded',
+            'module': 'dex',
+            'timestamp': datetime.now().isoformat(),
+            'engine_running': self.app.engine is not None
+        }
+        return web.json_response(health)
+
+    async def ready_handler(self, request):
+        """Readiness probe endpoint"""
+        ready = self.app.engine is not None
+        return web.json_response({
+            'ready': ready,
+            'module': 'dex'
+        }, status=200 if ready else 503)
+
+    async def stats_handler(self, request):
+        """Get DEX module statistics"""
+        stats = {
+            'module': 'dex',
+            'status': 'Running' if self.app.engine else 'Stopped',
+            'active_positions': 0,
+            'total_pnl': 0.0,
+            'win_rate': 0.0
+        }
+
+        if self.app.engine and hasattr(self.app.engine, 'active_positions'):
+            stats['active_positions'] = len(self.app.engine.active_positions)
+
+        if self.app.portfolio_manager:
+            try:
+                pm = self.app.portfolio_manager
+                stats['total_pnl'] = float(getattr(pm, 'total_profit_loss', 0) or 0)
+                stats['balance'] = float(getattr(pm, 'balance', 0) or 0)
+                stats['available_balance'] = float(getattr(pm, 'available_balance', 0) or 0)
+            except Exception as e:
+                self.logger.debug(f"Error getting portfolio stats: {e}")
+
+        return web.json_response({'success': True, 'data': stats})
+
+    async def positions_handler(self, request):
+        """Get active positions"""
+        positions = []
+
+        if self.app.engine and hasattr(self.app.engine, 'active_positions'):
+            for token_addr, pos in self.app.engine.active_positions.items():
+                try:
+                    if hasattr(pos, '__dict__'):
+                        pos_data = {
+                            'token_address': getattr(pos, 'token_address', token_addr),
+                            'token_symbol': getattr(pos, 'token_symbol', 'UNKNOWN'),
+                            'entry_price': float(getattr(pos, 'entry_price', 0) or 0),
+                            'current_price': float(getattr(pos, 'current_price', 0) or 0),
+                            'amount': float(getattr(pos, 'amount', 0) or 0),
+                            'unrealized_pnl': float(getattr(pos, 'unrealized_pnl', 0) or 0),
+                            'roi': float(getattr(pos, 'roi_percentage', 0) or 0),
+                        }
+                    elif isinstance(pos, dict):
+                        pos_data = {
+                            'token_address': pos.get('token_address', token_addr),
+                            'token_symbol': pos.get('token_symbol', 'UNKNOWN'),
+                            'entry_price': float(pos.get('entry_price', 0) or 0),
+                            'current_price': float(pos.get('current_price', 0) or 0),
+                            'amount': float(pos.get('amount', 0) or 0),
+                            'unrealized_pnl': float(pos.get('unrealized_pnl', 0) or 0),
+                            'roi': float(pos.get('roi_percentage', pos.get('roi', 0)) or 0),
+                        }
+                    else:
+                        continue
+                    positions.append(pos_data)
+                except Exception as e:
+                    self.logger.debug(f"Error processing position: {e}")
+
+        return web.json_response({'success': True, 'data': positions, 'count': len(positions)})
+
+    async def block_status_handler(self, request):
+        """Get trading block status"""
+        block_info = {
+            'can_trade': False,
+            'reasons': [],
+            'positions_count': 0,
+            'max_positions': 10,
+            'balance': 0,
+            'available_balance': 0,
+            'module_status': 'running'
+        }
+
+        if self.app.portfolio_manager:
+            try:
+                pm = self.app.portfolio_manager
+                if hasattr(pm, 'get_block_reason'):
+                    block_info = pm.get_block_reason()
+                    block_info['module_status'] = 'running'
+                else:
+                    block_info['can_trade'] = not getattr(pm, 'trading_blocked', True)
+                    block_info['balance'] = float(getattr(pm, 'balance', 0) or 0)
+                    block_info['available_balance'] = float(getattr(pm, 'available_balance', 0) or 0)
+            except Exception as e:
+                self.logger.debug(f"Error getting block status: {e}")
+                block_info['reasons'] = [str(e)]
+
+        if self.app.engine and hasattr(self.app.engine, 'active_positions'):
+            block_info['positions_count'] = len(self.app.engine.active_positions)
+
+        return web.json_response({'success': True, 'data': block_info})
+
+    async def trading_status_handler(self, request):
+        """Get trading status"""
+        status = {
+            'running': self.app.engine is not None,
+            'module': 'dex',
+            'can_trade': False,
+            'active_positions': 0
+        }
+
+        if self.app.portfolio_manager:
+            status['can_trade'] = not getattr(self.app.portfolio_manager, 'trading_blocked', True)
+
+        if self.app.engine and hasattr(self.app.engine, 'active_positions'):
+            status['active_positions'] = len(self.app.engine.active_positions)
+
+        return web.json_response({'success': True, 'data': status})
+
+    async def unblock_trading_handler(self, request):
+        """Reset trading block"""
+        try:
+            if self.app.portfolio_manager and hasattr(self.app.portfolio_manager, 'reset_block'):
+                self.app.portfolio_manager.reset_block()
+                self.logger.info("✅ Trading block reset via health API")
+                return web.json_response({
+                    'success': True,
+                    'message': 'Trading block reset successfully'
+                })
+            else:
+                return web.json_response({
+                    'success': False,
+                    'error': 'Portfolio manager not available or does not support reset_block'
+                }, status=503)
+        except Exception as e:
+            self.logger.error(f"Error resetting block: {e}")
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+
 class TradingBotApplication:
     """Main application class for the trading bot"""
 
@@ -164,6 +351,10 @@ class TradingBotApplication:
         self.alerts_system = None
         self.analytics_engine = None
         self.dashboard = None
+        self.health_server = None
+
+        # DEX Health server port (for standalone dashboard communication)
+        self.health_port = int(os.getenv('DEX_HEALTH_PORT', '8085'))
 
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -492,6 +683,10 @@ class TradingBotApplication:
             if self.standalone_dashboard_enabled:
                 self.logger.info("ℹ️  Standalone dashboard is enabled - skipping DEX dashboard")
                 self.dashboard = None
+                # Start health server for standalone dashboard communication
+                self.health_server = DEXHealthServer(self, port=self.health_port)
+                await self.health_server.start()
+                self.logger.info(f"✅ DEX Health API started on port {self.health_port}")
             else:
                 self.dashboard = DashboardEndpoints(
                     host="0.0.0.0",
@@ -669,6 +864,11 @@ class TradingBotApplication:
         """Graceful shutdown procedure"""
         try:
             self.logger.info("Initiating graceful shutdown...")
+
+            # Stop health server if running
+            if self.health_server:
+                self.logger.info("Stopping DEX health server...")
+                await self.health_server.stop()
 
             if self.engine:
                 # Check if we should close positions on shutdown
