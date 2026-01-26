@@ -15,6 +15,11 @@ Routes:
     GET  /api/credentials/categories - Get credential categories
     POST /api/credentials/import-env - Import from .env
     POST /api/credentials/validate   - Validate all credentials
+
+Trade Records Management:
+    GET  /api/trades/stats         - Get trade record counts by module
+    POST /api/trades/clear/{module} - Clear trade records for a module
+    POST /api/trades/clear-all     - Clear ALL trade records
 """
 
 import os
@@ -26,6 +31,42 @@ from datetime import datetime
 from aiohttp import web
 
 logger = logging.getLogger(__name__)
+
+# Trade tables configuration per module (matches clear_trade_records.py)
+TRADE_TABLES = {
+    'dex': {
+        'trades': 'trades',
+        'positions': 'positions',
+        'performance': 'performance_metrics',
+        'market_data': 'market_data',
+    },
+    'futures': {
+        'trades': 'futures_trades',
+        'positions': 'futures_positions',
+    },
+    'solana': {
+        'trades': 'solana_trades',
+        'positions': 'solana_positions',
+    },
+    'arbitrage': {
+        'trades': 'arbitrage_trades',
+        'positions': 'arbitrage_positions',
+        'opportunities': 'arbitrage_opportunities',
+    },
+    'copytrading': {
+        'trades': 'copytrading_trades',
+        'positions': 'copytrading_positions',
+    },
+    'sniper': {
+        'trades': 'sniper_trades',
+        'positions': 'sniper_positions',
+    },
+    'ai': {
+        'trades': 'ai_trades',
+        'positions': 'ai_positions',
+        'signals': 'ai_signals',
+    },
+}
 
 
 def get_encryption_key() -> Optional[str]:
@@ -148,6 +189,11 @@ class CredentialsRoutes:
         self.app.router.add_get('/api/credentials/{key}', self.api_get_credential)
         self.app.router.add_put('/api/credentials/{key}', self.api_update_credential)
         self.app.router.add_delete('/api/credentials/{key}', self.api_delete_credential)
+
+        # Trade Records Management routes
+        self.app.router.add_get('/api/trades/stats', self.api_get_trade_stats)
+        self.app.router.add_post('/api/trades/clear/{module}', self.api_clear_trades_module)
+        self.app.router.add_post('/api/trades/clear-all', self.api_clear_all_trades)
 
         logger.info("Credentials Management routes configured")
 
@@ -608,6 +654,193 @@ class CredentialsRoutes:
 
         except Exception as e:
             logger.error(f"Validation failed: {e}")
+            return web.json_response({'error': str(e)}, status=500)
+
+    # ==================== Trade Records Management ====================
+
+    async def _get_table_count(self, conn, table_name: str) -> int:
+        """Get record count for a table, returns -1 if table doesn't exist"""
+        try:
+            exists = await conn.fetchval("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = $1
+                )
+            """, table_name)
+
+            if not exists:
+                return -1
+
+            count = await conn.fetchval(f"SELECT COUNT(*) FROM {table_name}")
+            return count
+        except Exception as e:
+            logger.debug(f"Error getting count for {table_name}: {e}")
+            return -1
+
+    async def api_get_trade_stats(self, request: web.Request) -> web.Response:
+        """Get trade record counts for all modules"""
+        if not self.db_pool:
+            return web.json_response({'error': 'Database not available'}, status=503)
+
+        try:
+            results = {
+                'modules': {},
+                'total_records': 0
+            }
+
+            async with self.db_pool.acquire() as conn:
+                for module, tables in TRADE_TABLES.items():
+                    module_data = {
+                        'tables': {},
+                        'total': 0
+                    }
+
+                    for table_type, table_name in tables.items():
+                        count = await self._get_table_count(conn, table_name)
+                        module_data['tables'][table_name] = {
+                            'type': table_type,
+                            'count': count,
+                            'exists': count >= 0
+                        }
+                        if count > 0:
+                            module_data['total'] += count
+                            results['total_records'] += count
+
+                    results['modules'][module] = module_data
+
+            return web.json_response(results)
+
+        except Exception as e:
+            logger.error(f"Error getting trade stats: {e}")
+            return web.json_response({'error': str(e)}, status=500)
+
+    async def api_clear_trades_module(self, request: web.Request) -> web.Response:
+        """Clear trade records for a specific module"""
+        module = request.match_info['module']
+
+        if module not in TRADE_TABLES:
+            return web.json_response({
+                'error': f"Unknown module: {module}",
+                'available_modules': list(TRADE_TABLES.keys())
+            }, status=400)
+
+        if not self.db_pool:
+            return web.json_response({'error': 'Database not available'}, status=503)
+
+        try:
+            data = await request.json() if request.body_exists else {}
+            dry_run = data.get('dry_run', False)
+
+            results = {
+                'module': module,
+                'tables_cleared': [],
+                'tables_failed': [],
+                'total_records': 0,
+                'dry_run': dry_run
+            }
+
+            async with self.db_pool.acquire() as conn:
+                tables = TRADE_TABLES[module]
+
+                for table_type, table_name in tables.items():
+                    count = await self._get_table_count(conn, table_name)
+
+                    if count < 0:
+                        logger.warning(f"Table {table_name} does not exist")
+                        continue
+
+                    results['total_records'] += count
+
+                    if dry_run:
+                        results['tables_cleared'].append({
+                            'table': table_name,
+                            'type': table_type,
+                            'records': count
+                        })
+                    else:
+                        try:
+                            await conn.execute(f"TRUNCATE TABLE {table_name} CASCADE")
+                            results['tables_cleared'].append({
+                                'table': table_name,
+                                'type': table_type,
+                                'records': count
+                            })
+                            logger.info(f"Cleared {table_name}: {count} records")
+                        except Exception as e:
+                            logger.error(f"Failed to clear {table_name}: {e}")
+                            results['tables_failed'].append({
+                                'table': table_name,
+                                'error': str(e)
+                            })
+
+            return web.json_response(results)
+
+        except Exception as e:
+            logger.error(f"Error clearing trades for {module}: {e}")
+            return web.json_response({'error': str(e)}, status=500)
+
+    async def api_clear_all_trades(self, request: web.Request) -> web.Response:
+        """Clear ALL trade records from all modules"""
+        if not self.db_pool:
+            return web.json_response({'error': 'Database not available'}, status=503)
+
+        try:
+            data = await request.json() if request.body_exists else {}
+            dry_run = data.get('dry_run', False)
+            confirmation = data.get('confirmation', '')
+
+            # Require confirmation for non-dry-run
+            if not dry_run and confirmation != 'DELETE ALL TRADES':
+                return web.json_response({
+                    'error': 'Confirmation required',
+                    'message': 'Send {"confirmation": "DELETE ALL TRADES"} to confirm'
+                }, status=400)
+
+            results = {
+                'modules_cleared': [],
+                'total_records': 0,
+                'dry_run': dry_run
+            }
+
+            async with self.db_pool.acquire() as conn:
+                for module, tables in TRADE_TABLES.items():
+                    module_result = {
+                        'module': module,
+                        'tables_cleared': [],
+                        'records': 0
+                    }
+
+                    for table_type, table_name in tables.items():
+                        count = await self._get_table_count(conn, table_name)
+
+                        if count < 0:
+                            continue
+
+                        module_result['records'] += count
+                        results['total_records'] += count
+
+                        if dry_run:
+                            module_result['tables_cleared'].append({
+                                'table': table_name,
+                                'records': count
+                            })
+                        else:
+                            try:
+                                await conn.execute(f"TRUNCATE TABLE {table_name} CASCADE")
+                                module_result['tables_cleared'].append({
+                                    'table': table_name,
+                                    'records': count
+                                })
+                                logger.info(f"Cleared {table_name}: {count} records")
+                            except Exception as e:
+                                logger.error(f"Failed to clear {table_name}: {e}")
+
+                    results['modules_cleared'].append(module_result)
+
+            return web.json_response(results)
+
+        except Exception as e:
+            logger.error(f"Error clearing all trades: {e}")
             return web.json_response({'error': str(e)}, status=500)
 
 
