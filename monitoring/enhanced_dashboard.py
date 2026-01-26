@@ -7321,7 +7321,7 @@ class DashboardEndpoints:
     async def api_arbitrage_trading_status(self, request):
         """Get Arbitrage trading status - daily P&L, limits, blocks"""
         try:
-            today = datetime.now().strftime('%Y-%m-%d')
+            today = datetime.now().date()  # Use date object for asyncpg
 
             status = {
                 'trading_blocked': False,
@@ -7345,13 +7345,13 @@ class DashboardEndpoints:
             if pool:
                 try:
                     async with pool.acquire() as conn:
-                        # Get today's trades and P&L
+                        # Get today's trades and P&L - cast timestamp to date for comparison
                         row = await conn.fetchrow("""
                             SELECT
                                 COUNT(*) as trades_today,
                                 COALESCE(SUM(profit_loss), 0) as daily_pnl
                             FROM arbitrage_trades
-                            WHERE DATE(entry_timestamp) = $1
+                            WHERE entry_timestamp::date = $1
                         """, today)
 
                         if row:
