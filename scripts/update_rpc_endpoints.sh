@@ -18,7 +18,7 @@ if [ ! -f "$SQL_FILE" ]; then
 fi
 
 # Detect Docker container name for Postgres
-POSTGRES_CONTAINER=$(docker ps --format '{{.Names}}' | grep -E 'postgres|claudedex.*postgres' | head -1)
+POSTGRES_CONTAINER=$(docker ps --format '{{.Names}}' | grep -E 'postgres|trading.*postgres' | head -1)
 
 if [ -z "$POSTGRES_CONTAINER" ]; then
     echo "Error: No running Postgres container found"
@@ -29,10 +29,24 @@ fi
 echo "Found Postgres container: $POSTGRES_CONTAINER"
 echo ""
 
-# Get database credentials from environment or use defaults
-DB_USER="${POSTGRES_USER:-claudedex}"
-DB_NAME="${POSTGRES_DB:-claudedex}"
+# Get database credentials from Docker secrets or environment
+# Try to read from container's secrets first
+DB_USER=$(docker exec "$POSTGRES_CONTAINER" cat /run/secrets/db_user 2>/dev/null || echo "")
+if [ -z "$DB_USER" ]; then
+    # Try environment variable from container
+    DB_USER=$(docker exec "$POSTGRES_CONTAINER" printenv POSTGRES_USER 2>/dev/null || echo "")
+fi
+if [ -z "$DB_USER" ]; then
+    # Default fallback
+    DB_USER="${POSTGRES_USER:-bot_user}"
+fi
 
+# Get database name from environment or default
+DB_NAME=$(docker exec "$POSTGRES_CONTAINER" printenv POSTGRES_DB 2>/dev/null || echo "tradingbot")
+
+echo "Using database: $DB_NAME"
+echo "Using user: $DB_USER"
+echo ""
 echo "Executing SQL script to update RPC endpoints..."
 echo ""
 
