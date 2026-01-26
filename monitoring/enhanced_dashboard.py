@@ -3343,21 +3343,8 @@ class DashboardEndpoints:
                 'positions': sum(balances[c].get('positions', 0) for c in chains)
             }
 
-            # ========== WALLET ADDRESSES ==========
-            try:
-                from security.secrets_manager import secrets
-                evm_wallet = secrets.get('WALLET_ADDRESS', log_access=False) or os.getenv('WALLET_ADDRESS')
-            except Exception:
-                evm_wallet = os.getenv('WALLET_ADDRESS')
-
-            solana_wallet = os.getenv('SOLANA_WALLET')
-            solana_module_wallet = os.getenv('SOLANA_MODULE_WALLET')
-
-            wallet_addresses = {
-                'EVM': evm_wallet or '',
-                'SOLANA': solana_wallet or '',
-                'SOLANA_MODULE': solana_module_wallet or ''
-            }
+            # ========== WALLET ADDRESSES (derived from encrypted private keys in DB) ==========
+            wallet_addresses = await self._get_wallet_addresses_from_encrypted_keys()
 
             return web.json_response({
                 'status': 'success',
@@ -3373,6 +3360,134 @@ class DashboardEndpoints:
                 'error': str(e)
             }, status=500)
 
+    async def _get_wallet_addresses_from_encrypted_keys(self) -> Dict[str, str]:
+        """
+        Get wallet public addresses by decrypting private keys from database
+        and deriving the public addresses.
+
+        This is the proper way to get wallet addresses in the ClaudeDex system.
+        """
+        wallet_addresses = {
+            'EVM': '',
+            'SOLANA': '',
+            'SOLANA_MODULE': ''
+        }
+
+        try:
+            from security.secrets_manager import secrets
+
+            # Initialize secrets manager with db_pool if not already done
+            if self.db_pool and not secrets._initialized:
+                secrets.initialize(self.db_pool)
+
+            # ===== EVM WALLET =====
+            # Get private key and derive public address
+            try:
+                evm_private_key = await secrets.get_async('PRIVATE_KEY', log_access=False)
+                if evm_private_key:
+                    from eth_account import Account
+                    # Handle different private key formats
+                    if not evm_private_key.startswith('0x'):
+                        evm_private_key = '0x' + evm_private_key
+                    account = Account.from_key(evm_private_key)
+                    wallet_addresses['EVM'] = account.address
+                    logger.debug(f"Derived EVM wallet address: {account.address[:10]}...")
+            except Exception as e:
+                logger.warning(f"Failed to derive EVM wallet address: {e}")
+                # Fallback to stored address if available
+                try:
+                    wallet_addresses['EVM'] = await secrets.get_async('WALLET_ADDRESS', log_access=False) or ''
+                except:
+                    wallet_addresses['EVM'] = os.getenv('WALLET_ADDRESS', '')
+
+            # ===== SOLANA MAIN WALLET =====
+            try:
+                solana_private_key = await secrets.get_async('SOLANA_PRIVATE_KEY', log_access=False)
+                if solana_private_key:
+                    wallet_addresses['SOLANA'] = self._derive_solana_address(solana_private_key)
+                    if wallet_addresses['SOLANA']:
+                        logger.debug(f"Derived Solana wallet address: {wallet_addresses['SOLANA'][:10]}...")
+            except Exception as e:
+                logger.warning(f"Failed to derive Solana wallet address: {e}")
+                # Fallback to stored address
+                try:
+                    wallet_addresses['SOLANA'] = await secrets.get_async('SOLANA_WALLET', log_access=False) or ''
+                except:
+                    wallet_addresses['SOLANA'] = os.getenv('SOLANA_WALLET', '')
+
+            # ===== SOLANA MODULE WALLET =====
+            try:
+                solana_module_pk = await secrets.get_async('SOLANA_MODULE_PRIVATE_KEY', log_access=False)
+                if solana_module_pk:
+                    wallet_addresses['SOLANA_MODULE'] = self._derive_solana_address(solana_module_pk)
+                    if wallet_addresses['SOLANA_MODULE']:
+                        logger.debug(f"Derived Solana Module wallet address: {wallet_addresses['SOLANA_MODULE'][:10]}...")
+            except Exception as e:
+                logger.warning(f"Failed to derive Solana Module wallet address: {e}")
+                # Fallback to stored address
+                try:
+                    wallet_addresses['SOLANA_MODULE'] = await secrets.get_async('SOLANA_MODULE_WALLET', log_access=False) or ''
+                except:
+                    wallet_addresses['SOLANA_MODULE'] = os.getenv('SOLANA_MODULE_WALLET', '')
+
+        except Exception as e:
+            logger.error(f"Error getting wallet addresses from encrypted keys: {e}")
+            # Final fallback to environment variables
+            wallet_addresses['EVM'] = os.getenv('WALLET_ADDRESS', '')
+            wallet_addresses['SOLANA'] = os.getenv('SOLANA_WALLET', '')
+            wallet_addresses['SOLANA_MODULE'] = os.getenv('SOLANA_MODULE_WALLET', '')
+
+        return wallet_addresses
+
+    def _derive_solana_address(self, private_key: str) -> str:
+        """
+        Derive Solana public address from private key.
+        Handles multiple private key formats (base58, JSON array, hex).
+        """
+        try:
+            import base58
+            from solders.keypair import Keypair
+
+            key_bytes = None
+
+            # Try different formats
+            # Format 1: Base58 encoded
+            if private_key and not private_key.startswith('[') and not private_key.startswith('0x'):
+                try:
+                    key_bytes = base58.b58decode(private_key)
+                    if len(key_bytes) == 64:
+                        # Full keypair (64 bytes) - use as is
+                        pass
+                    elif len(key_bytes) == 32:
+                        # Just the seed (32 bytes)
+                        pass
+                except Exception:
+                    pass
+
+            # Format 2: JSON array of bytes
+            if key_bytes is None and private_key and private_key.startswith('['):
+                try:
+                    import json as json_module
+                    key_bytes = bytes(json_module.loads(private_key))
+                except Exception:
+                    pass
+
+            # Format 3: Hex string
+            if key_bytes is None and private_key:
+                try:
+                    hex_key = private_key.replace('0x', '')
+                    key_bytes = bytes.fromhex(hex_key)
+                except Exception:
+                    pass
+
+            if key_bytes:
+                keypair = Keypair.from_bytes(key_bytes)
+                return str(keypair.pubkey())
+
+        except Exception as e:
+            logger.warning(f"Failed to derive Solana address: {e}")
+
+        return ''
 
     def _calculate_duration(self, start, end):
         """Calculate duration between two timestamps"""
