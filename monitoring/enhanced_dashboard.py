@@ -4062,6 +4062,23 @@ class DashboardEndpoints:
                 dex_module_status = 'online'
             elif self.engine:
                 dex_module_status = 'starting'
+            else:
+                # No local engine - check DEX health server (standalone dashboard mode)
+                try:
+                    dex_port = int(os.getenv('DEX_HEALTH_PORT', '8085'))
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(f'http://localhost:{dex_port}/health', timeout=2) as resp:
+                            if resp.status == 200:
+                                health_data = await resp.json()
+                                if health_data.get('status') == 'healthy' or health_data.get('engine_running'):
+                                    is_running = True
+                                    dex_module_status = 'online'
+                                else:
+                                    dex_module_status = 'degraded'
+                except aiohttp.ClientConnectorError:
+                    logger.debug("DEX health server not available for status check")
+                except Exception as e:
+                    logger.debug(f"Error checking DEX health server: {e}")
 
             # Get mode from config or default
             mode = 'DRY_RUN'
