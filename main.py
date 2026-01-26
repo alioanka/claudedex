@@ -551,10 +551,15 @@ class TradingBotOrchestrator:
             if await dashboard.start():
                 started_count += 1
                 dashboard_started = True
+                # CRITICAL: Set environment variable so other modules know dashboard is running
+                # This prevents DEX module from starting its own dashboard on port 8080
+                os.environ['DASHBOARD_MODULE_ENABLED'] = 'true'
                 logger.info("✅ Dashboard is accessible at http://0.0.0.0:8080")
                 # Give dashboard a moment to start before other modules
                 await asyncio.sleep(2)
             else:
+                # Dashboard failed - allow DEX module to start its own dashboard
+                os.environ['DASHBOARD_MODULE_ENABLED'] = 'false'
                 logger.warning("⚠️  Dashboard failed to start, continuing with trading modules...")
 
         # Start trading modules
