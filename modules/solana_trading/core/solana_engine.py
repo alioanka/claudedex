@@ -1627,7 +1627,7 @@ class SolanaTradingEngine:
                 logger.error(f"Error monitoring position {token_mint[:8]}...: {e}")
 
     async def _check_exit_conditions(self, position: Position) -> Optional[str]:
-        """Check if position should be closed using strategy-specific TP/SL"""
+        """Check if position should be closed using strategy-specific TP/SL with trailing support"""
         pnl_pct = position.unrealized_pnl_pct
 
         # Get strategy-specific TP/SL from config or use global defaults
@@ -1639,8 +1639,13 @@ class SolanaTradingEngine:
                 stop_loss_pct = -abs(self.config_manager.jupiter_stop_loss_pct)
                 take_profit_pct = self.config_manager.jupiter_take_profit_pct
             elif position.strategy == Strategy.PUMPFUN:
-                stop_loss_pct = -abs(self.config_manager.pumpfun_stop_loss_pct)
-                take_profit_pct = self.config_manager.pumpfun_take_profit_pct
+                # Check if trailing strategy is enabled (default: True for moonbag strategy)
+                use_trailing = self.config_manager.get('pumpfun_trailing_enabled', True)
+                if use_trailing:
+                    return await self._check_pumpfun_trailing_exit(position)
+                else:
+                    stop_loss_pct = -abs(self.config_manager.pumpfun_stop_loss_pct)
+                    take_profit_pct = self.config_manager.pumpfun_take_profit_pct
 
         # Stop loss
         if pnl_pct <= stop_loss_pct:
@@ -1662,7 +1667,7 @@ class SolanaTradingEngine:
             if jupiter_auto_exit > 0 and time_held >= jupiter_auto_exit:
                 return "jupiter_time_exit"
 
-        # Pump.fun auto-sell delay
+        # Pump.fun auto-sell delay (only if trailing not enabled)
         if position.strategy == Strategy.PUMPFUN:
             auto_sell_delay = 0
             if self.config_manager:
@@ -1670,6 +1675,121 @@ class SolanaTradingEngine:
 
             if auto_sell_delay > 0 and time_held >= auto_sell_delay:
                 return "auto_sell_timeout"
+
+        return None
+
+    async def _check_pumpfun_trailing_exit(self, position: Position) -> Optional[str]:
+        """
+        Enhanced Pump.fun trailing stop strategy for capturing 10x-100x gains.
+
+        Trailing Tiers:
+        - Tier 0 (0-15% gain): SL at -20% (capital protection)
+        - Tier 1 (15-50% gain): SL at breakeven
+        - Tier 2 (50-100% gain): SL at +25%, partial exit 25%
+        - Tier 3 (100-300% gain): SL at 50% of peak, partial exit 25%
+        - Tier 4 (300%+ gain): SL at 70% of peak (30% trail), partial exit 25%
+        """
+        entry_price = position.entry_price
+        current_price = position.current_price
+
+        if not entry_price or entry_price <= 0:
+            return None
+
+        # Initialize or get metadata
+        if not position.metadata:
+            position.metadata = {}
+
+        meta = position.metadata
+        if 'trailing' not in meta:
+            meta['trailing'] = {
+                'peak_price': current_price,
+                'peak_gain_pct': 0,
+                'tier_reached': 0,
+                'original_amount': position.amount,
+                'remaining_pct': 100.0,
+                'partial_exits': [],
+                'total_realized_pnl': 0.0
+            }
+
+        trailing = meta['trailing']
+
+        # Update peak price
+        if current_price > trailing['peak_price']:
+            trailing['peak_price'] = current_price
+            trailing['peak_gain_pct'] = ((current_price - entry_price) / entry_price) * 100
+
+        peak_price = trailing['peak_price']
+        current_gain_pct = ((current_price - entry_price) / entry_price) * 100
+        peak_gain_pct = trailing['peak_gain_pct']
+
+        # Calculate dynamic trailing stop level
+        if peak_gain_pct < 15:
+            # Tier 0: Initial protection
+            sl_price = entry_price * 0.80  # -20%
+            sl_gain_pct = -20.0
+        elif peak_gain_pct < 50:
+            # Tier 1: Breakeven lock
+            sl_price = entry_price * 1.0  # Breakeven
+            sl_gain_pct = 0.0
+        elif peak_gain_pct < 100:
+            # Tier 2: Lock +25%
+            sl_price = entry_price * 1.25
+            sl_gain_pct = 25.0
+        elif peak_gain_pct < 300:
+            # Tier 3: Trail 50% of peak
+            sl_price = peak_price * 0.50
+            sl_gain_pct = ((sl_price - entry_price) / entry_price) * 100
+        else:
+            # Tier 4: Moon mode - trail 30% below peak
+            sl_price = peak_price * 0.70
+            sl_gain_pct = ((sl_price - entry_price) / entry_price) * 100
+
+        # Store current SL level
+        trailing['current_sl_price'] = sl_price
+        trailing['current_sl_pct'] = sl_gain_pct
+
+        # Check for trailing stop hit
+        if current_price <= sl_price:
+            tier = trailing['tier_reached']
+            if tier == 0:
+                return "trailing_stop_tier0"
+            elif tier == 1:
+                return "trailing_stop_breakeven"
+            elif tier == 2:
+                return "trailing_stop_tier2"
+            elif tier == 3:
+                return "trailing_stop_tier3"
+            else:
+                return "trailing_stop_moon"
+
+        # Check for partial exit triggers (only trigger once per tier)
+        tier_reached = trailing['tier_reached']
+
+        # Tier 2: First partial at 50%
+        if peak_gain_pct >= 50 and tier_reached < 1:
+            trailing['tier_reached'] = 1
+            logger.info(f"🎯 {position.token_symbol}: Tier 1 reached (+50%), partial exit triggered")
+            return "partial_exit_tier1"
+
+        # Tier 3: Second partial at 100% (2x)
+        if peak_gain_pct >= 100 and tier_reached < 2:
+            trailing['tier_reached'] = 2
+            logger.info(f"🚀 {position.token_symbol}: Tier 2 reached (+100%), partial exit triggered")
+            return "partial_exit_tier2"
+
+        # Tier 4: Third partial at 300% (4x)
+        if peak_gain_pct >= 300 and tier_reached < 3:
+            trailing['tier_reached'] = 3
+            logger.info(f"🌙 {position.token_symbol}: Tier 3 reached (+300%), MOON MODE activated!")
+            return "partial_exit_tier3"
+
+        # Log trailing status periodically (every 30 seconds)
+        time_held = (datetime.utcnow() - position.opened_at).total_seconds()
+        if int(time_held) % 30 == 0 and current_gain_pct > 10:
+            logger.info(
+                f"📊 {position.token_symbol}: Gain={current_gain_pct:.1f}% Peak={peak_gain_pct:.1f}% "
+                f"SL={sl_gain_pct:.1f}% Tier={tier_reached}"
+            )
 
         return None
 

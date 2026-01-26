@@ -364,6 +364,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/analysis', self.analysis_page)
         self.app.router.add_get('/analytics', self.analytics_page)
         self.app.router.add_get('/simulator', self.simulator_page)
+        self.app.router.add_get('/wallet-balances', self.wallet_balances_page)
 
         # API - Data endpoints
         self.app.router.add_get('/api/dashboard/summary', self.api_dashboard_summary)
@@ -1375,6 +1376,14 @@ class DashboardEndpoints:
         template = self.jinja_env.get_template('simulator.html')
         return web.Response(
             text=template.render(page='simulator'),
+            content_type='text/html'
+        )
+
+    async def wallet_balances_page(self, request):
+        """Wallet balances page - shows all wallet balances across chains"""
+        template = self.jinja_env.get_template('wallet_balances.html')
+        return web.Response(
+            text=template.render(page='wallet_balances'),
             content_type='text/html'
         )
 
@@ -4472,21 +4481,68 @@ class DashboardEndpoints:
                             'error': f'Solana module returned status {resp.status}'
                         }, status=resp.status)
         except aiohttp.ClientConnectorError:
+            # Module offline - try to get positions from database
+            db_positions = []
+            total_trades = 0
+            winning_trades = 0
+            total_pnl_sol = 0.0
+
+            if self.db_pool:
+                try:
+                    async with self.db_pool.acquire() as conn:
+                        # Get open positions
+                        pos_rows = await conn.fetch("""
+                            SELECT
+                                position_id, token_symbol, token_address, strategy,
+                                entry_price, current_price, amount, unrealized_pnl,
+                                unrealized_pnl_percentage, opened_at
+                            FROM positions
+                            WHERE chain = 'SOLANA' AND status = 'open'
+                            ORDER BY opened_at DESC
+                        """)
+                        for row in pos_rows:
+                            db_positions.append({
+                                'position_id': row['position_id'],
+                                'token': row['token_symbol'],
+                                'token_symbol': row['token_symbol'],
+                                'strategy': row['strategy'] or 'pumpfun',
+                                'entry_price': float(row['entry_price'] or 0),
+                                'current_price': float(row['current_price'] or row['entry_price'] or 0),
+                                'amount_sol': float(row['amount'] or 0),
+                                'pnl_pct': float(row['unrealized_pnl_percentage'] or 0),
+                                'source': 'database'
+                            })
+
+                        # Get trade stats from database
+                        stats_row = await conn.fetchrow("""
+                            SELECT
+                                COUNT(*) as total_trades,
+                                COUNT(*) FILTER (WHERE pnl_sol > 0) as winning_trades,
+                                COALESCE(SUM(pnl_sol), 0) as total_pnl
+                            FROM solana_trades
+                        """)
+                        if stats_row:
+                            total_trades = stats_row['total_trades'] or 0
+                            winning_trades = stats_row['winning_trades'] or 0
+                            total_pnl_sol = float(stats_row['total_pnl'] or 0)
+                except Exception as e:
+                    logger.debug(f"Could not fetch Solana data from DB: {e}")
+
             return web.json_response({
                 'success': False,
                 'error': 'Solana module not running',
                 'data': {
                     'stats': {
-                        'total_trades': 0,
-                        'winning_trades': 0,
-                        'losing_trades': 0,
-                        'active_positions': 0,
-                        'positions': [],  # Empty positions array for offline state
-                        'total_pnl': '0.0000 SOL',
+                        'total_trades': total_trades,
+                        'winning_trades': winning_trades,
+                        'losing_trades': total_trades - winning_trades,
+                        'active_positions': len(db_positions),
+                        'positions': db_positions,
+                        'total_pnl': f'{total_pnl_sol:.4f} SOL',
                         'daily_pnl': '0.0000 SOL',
-                        'sol_price_usd': 0,
+                        'sol_price_usd': 200,
                         'mode': 'OFFLINE',
-                        'win_rate': '0%'
+                        'win_rate': f'{(winning_trades/total_trades*100) if total_trades > 0 else 0:.0f}%'
                     },
                     'health': {'status': 'offline', 'engine_running': False, 'wallet_balance_sol': 0}
                 }
@@ -4499,7 +4555,10 @@ class DashboardEndpoints:
             }, status=500)
 
     async def api_get_solana_positions(self, request):
-        """Fetch positions from Solana module"""
+        """Fetch positions from Solana module with database fallback"""
+        positions = []
+
+        # Try to get positions from running module first
         try:
             solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
             async with aiohttp.ClientSession() as session:
@@ -4507,12 +4566,46 @@ class DashboardEndpoints:
                     if resp.status == 200:
                         data = await resp.json()
                         positions = data.get('stats', {}).get('positions', [])
-                        return web.json_response({'success': True, 'positions': positions})
-                    else:
-                        return web.json_response({'success': False, 'positions': []})
         except Exception as e:
-            logger.debug(f"Error fetching solana positions: {e}")
-            return web.json_response({'success': False, 'positions': [], 'error': str(e)})
+            logger.debug(f"Solana module not reachable: {e}")
+
+        # If no positions from module, try database
+        if not positions and self.db_pool:
+            try:
+                async with self.db_pool.acquire() as conn:
+                    rows = await conn.fetch("""
+                        SELECT
+                            position_id, token_symbol, token_address, strategy,
+                            entry_price, current_price, amount, usd_value,
+                            unrealized_pnl, unrealized_pnl_percentage,
+                            opened_at, status
+                        FROM positions
+                        WHERE chain = 'SOLANA' AND status = 'open'
+                        ORDER BY opened_at DESC
+                    """)
+                    for row in rows:
+                        positions.append({
+                            'position_id': row['position_id'],
+                            'token': row['token_symbol'],
+                            'token_symbol': row['token_symbol'],
+                            'token_address': row['token_address'],
+                            'strategy': row['strategy'] or 'pumpfun',
+                            'entry_price': float(row['entry_price'] or 0),
+                            'current_price': float(row['current_price'] or row['entry_price'] or 0),
+                            'amount_sol': float(row['amount'] or 0),
+                            'usd_value': float(row['usd_value'] or 0),
+                            'unrealized_pnl': float(row['unrealized_pnl'] or 0),
+                            'pnl_pct': float(row['unrealized_pnl_percentage'] or 0),
+                            'opened_at': row['opened_at'].isoformat() if row['opened_at'] else '',
+                            'status': row['status'],
+                            'source': 'database'
+                        })
+                    if positions:
+                        logger.info(f"Loaded {len(positions)} Solana positions from database")
+            except Exception as db_error:
+                logger.debug(f"Could not fetch Solana positions from DB: {db_error}")
+
+        return web.json_response({'success': True, 'positions': positions})
 
     async def api_get_solana_trades(self, request):
         """Fetch trades from database first, with fallback to log file"""
@@ -6963,7 +7056,7 @@ class DashboardEndpoints:
                             COUNT(*) as trades_today,
                             COALESCE(SUM(profit_loss), 0) as daily_pnl
                         FROM arbitrage_trades
-                        WHERE DATE(timestamp) = $1
+                        WHERE DATE(entry_timestamp) = $1
                     """, today)
 
                     if row:

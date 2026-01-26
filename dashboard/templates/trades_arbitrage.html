@@ -84,9 +84,10 @@
 
     .filter-btn:hover { background: #4b5563; }
 
+    /* Stats Grid - Multi-Chain Support */
     .stats-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
         gap: 16px;
         margin-bottom: 24px;
     }
@@ -98,19 +99,122 @@
         padding: 16px;
     }
 
+    .stat-card.chain-eth {
+        border-left: 3px solid #627eea;
+    }
+
+    .stat-card.chain-sol {
+        border-left: 3px solid #9945ff;
+    }
+
     .stat-label {
         color: var(--text-secondary);
-        font-size: 0.875rem;
+        font-size: 0.8rem;
         margin-bottom: 4px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
     }
 
     .stat-value {
-        font-size: 1.5rem;
+        font-size: 1.4rem;
         font-weight: bold;
+    }
+
+    .stat-sub {
+        font-size: 0.75rem;
+        color: var(--text-tertiary);
+        margin-top: 4px;
     }
 
     .positive { color: #10b981; }
     .negative { color: #ef4444; }
+
+    /* Chain Breakdown */
+    .chain-breakdown {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+
+    .chain-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 20px;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .chain-card.ethereum::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: #627eea;
+    }
+
+    .chain-card.solana::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: #9945ff;
+    }
+
+    .chain-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 16px;
+    }
+
+    .chain-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+    }
+
+    .chain-icon.ethereum { background: rgba(98, 126, 234, 0.2); color: #627eea; }
+    .chain-icon.solana { background: rgba(153, 69, 255, 0.2); color: #9945ff; }
+
+    .chain-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .chain-stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+    }
+
+    .chain-stat-item {
+        text-align: center;
+    }
+
+    .chain-stat-label {
+        font-size: 0.7rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        margin-bottom: 4px;
+    }
+
+    .chain-stat-value {
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
 
     .section-card {
         background: var(--card-bg);
@@ -136,15 +240,18 @@
         color: var(--text-secondary);
     }
 
-    .table-responsive {
-        width: 100%;
-        overflow-x: auto;
+    /* Fixed Height Table Container */
+    .table-wrapper {
+        max-height: 400px;
+        overflow-y: auto;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
     }
 
     .trades-table {
         width: 100%;
         border-collapse: collapse;
-        min-width: 900px;
+        min-width: 1000px;
     }
 
     .trades-table th {
@@ -157,6 +264,9 @@
         text-transform: uppercase;
         white-space: nowrap;
         cursor: pointer;
+        position: sticky;
+        top: 0;
+        z-index: 10;
     }
 
     .trades-table th:hover { background: var(--border-color); }
@@ -168,6 +278,25 @@
     }
 
     .trades-table tr:hover { background: var(--metric-bg); }
+
+    .chain-badge {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-size: 0.7rem;
+        font-weight: 600;
+        margin-right: 4px;
+    }
+
+    .chain-badge.eth {
+        background: rgba(98, 126, 234, 0.2);
+        color: #627eea;
+    }
+
+    .chain-badge.sol {
+        background: rgba(153, 69, 255, 0.2);
+        color: #9945ff;
+    }
 
     .dex-badge {
         display: inline-block;
@@ -197,6 +326,16 @@
         font-weight: 600;
         background: rgba(245, 158, 11, 0.2);
         color: #f59e0b;
+    }
+
+    .live-badge {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 0.65rem;
+        font-weight: 600;
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
     }
 
     .btn {
@@ -249,7 +388,17 @@
         --border-color: #374151;
         --text-primary: #f9fafb;
         --text-secondary: #d1d5db;
+        --text-tertiary: #9ca3af;
         --metric-bg: #111827;
+    }
+
+    [data-theme="light"] {
+        --card-bg: #ffffff;
+        --border-color: #e5e7eb;
+        --text-primary: #111827;
+        --text-secondary: #6b7280;
+        --text-tertiary: #9ca3af;
+        --metric-bg: #f9fafb;
     }
 </style>
 {% endblock %}
@@ -262,7 +411,7 @@
                 <i class="fas fa-exchange-alt"></i>
                 Arbitrage Trades
             </h1>
-            <p class="page-subtitle">Complete arbitrage trade history</p>
+            <p class="page-subtitle">Complete multi-chain arbitrage trade history</p>
         </div>
         <div class="header-actions">
             <button class="btn btn-secondary" onclick="loadTrades()">
@@ -288,6 +437,15 @@
             </div>
 
             <div class="filter-group">
+                <label class="filter-label">Chain</label>
+                <select id="filter-chain" class="filter-select" onchange="applyFilters()">
+                    <option value="all">All Chains</option>
+                    <option value="ethereum">Ethereum</option>
+                    <option value="solana">Solana</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
                 <label class="filter-label">Route</label>
                 <select id="filter-route" class="filter-select" onchange="applyFilters()">
                     <option value="all">All Routes</option>
@@ -309,7 +467,56 @@
         </div>
     </div>
 
-    <!-- Stats -->
+    <!-- Chain Breakdown Cards -->
+    <div class="chain-breakdown">
+        <div class="chain-card ethereum">
+            <div class="chain-header">
+                <div class="chain-icon ethereum">
+                    <i class="fab fa-ethereum"></i>
+                </div>
+                <div class="chain-title">Ethereum Arbitrage</div>
+            </div>
+            <div class="chain-stats">
+                <div class="chain-stat-item">
+                    <div class="chain-stat-label">Trades</div>
+                    <div class="chain-stat-value" id="eth-trades">0</div>
+                </div>
+                <div class="chain-stat-item">
+                    <div class="chain-stat-label">Volume</div>
+                    <div class="chain-stat-value" id="eth-volume">0 ETH</div>
+                </div>
+                <div class="chain-stat-item">
+                    <div class="chain-stat-label">P&L</div>
+                    <div class="chain-stat-value" id="eth-pnl">$0.00</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="chain-card solana">
+            <div class="chain-header">
+                <div class="chain-icon solana">
+                    <i class="fas fa-sun"></i>
+                </div>
+                <div class="chain-title">Solana Arbitrage</div>
+            </div>
+            <div class="chain-stats">
+                <div class="chain-stat-item">
+                    <div class="chain-stat-label">Trades</div>
+                    <div class="chain-stat-value" id="sol-trades">0</div>
+                </div>
+                <div class="chain-stat-item">
+                    <div class="chain-stat-label">Volume</div>
+                    <div class="chain-stat-value" id="sol-volume">0 SOL</div>
+                </div>
+                <div class="chain-stat-item">
+                    <div class="chain-stat-label">P&L</div>
+                    <div class="chain-stat-value" id="sol-pnl">$0.00</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Overall Stats -->
     <div class="stats-grid">
         <div class="stat-card">
             <div class="stat-label">Total Trades</div>
@@ -332,8 +539,8 @@
             <div class="stat-value" id="stat-spread">0.00%</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Total Volume</div>
-            <div class="stat-value" id="stat-volume">0.00 ETH</div>
+            <div class="stat-label">Total Volume (USD)</div>
+            <div class="stat-value" id="stat-volume-usd">$0.00</div>
         </div>
     </div>
 
@@ -347,17 +554,18 @@
             <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 16px; display: block;"></i>
             <p>No arbitrage trades found.</p>
         </div>
-        <div class="table-responsive">
-            <table class="trades-table" id="trades-table" style="display: none;">
+        <div class="table-wrapper" id="table-wrapper" style="display: none;">
+            <table class="trades-table" id="trades-table">
                 <thead>
                     <tr>
-                        <th onclick="sortTable('time')">Time ↕</th>
-                        <th onclick="sortTable('token')">Token ↕</th>
-                        <th onclick="sortTable('route')">Route ↕</th>
-                        <th onclick="sortTable('amount')">Amount ↕</th>
-                        <th onclick="sortTable('spread')">Spread ↕</th>
-                        <th onclick="sortTable('pnl')">Profit ↕</th>
-                        <th onclick="sortTable('eth_price')">ETH Price ↕</th>
+                        <th onclick="sortTable('time')">Time <i class="fas fa-sort"></i></th>
+                        <th onclick="sortTable('chain')">Chain <i class="fas fa-sort"></i></th>
+                        <th onclick="sortTable('token')">Token <i class="fas fa-sort"></i></th>
+                        <th onclick="sortTable('route')">Route <i class="fas fa-sort"></i></th>
+                        <th onclick="sortTable('amount')">Amount <i class="fas fa-sort"></i></th>
+                        <th onclick="sortTable('spread')">Spread <i class="fas fa-sort"></i></th>
+                        <th onclick="sortTable('pnl')">Profit <i class="fas fa-sort"></i></th>
+                        <th onclick="sortTable('price')">Native Price <i class="fas fa-sort"></i></th>
                         <th>Type</th>
                     </tr>
                 </thead>
@@ -427,7 +635,7 @@ function extractRoutes() {
     const routes = new Set();
     allTrades.forEach(t => {
         if (t.buy_dex && t.sell_dex) {
-            routes.add(`${t.buy_dex} → ${t.sell_dex}`);
+            routes.add(`${t.buy_dex} -> ${t.sell_dex}`);
         }
     });
 
@@ -443,6 +651,7 @@ function extractRoutes() {
 
 function applyFilters() {
     const timeframe = document.getElementById('filter-timeframe').value;
+    const chain = document.getElementById('filter-chain').value;
     const route = document.getElementById('filter-route').value;
     const result = document.getElementById('filter-result').value;
 
@@ -463,8 +672,13 @@ function applyFilters() {
             if (tradeDate < startDate) return false;
         }
 
+        if (chain !== 'all') {
+            const tradeChain = (trade.chain || 'ethereum').toLowerCase();
+            if (tradeChain !== chain) return false;
+        }
+
         if (route !== 'all') {
-            const tradeRoute = `${trade.buy_dex} → ${trade.sell_dex}`;
+            const tradeRoute = `${trade.buy_dex} -> ${trade.sell_dex}`;
             if (tradeRoute !== route) return false;
         }
 
@@ -478,11 +692,13 @@ function applyFilters() {
     currentPage = 1;
     sortTrades();
     updateStats();
+    updateChainBreakdown();
     updateDisplay();
 }
 
 function resetFilters() {
     document.getElementById('filter-timeframe').value = 'all';
+    document.getElementById('filter-chain').value = 'all';
     document.getElementById('filter-route').value = 'all';
     document.getElementById('filter-result').value = 'all';
     applyFilters();
@@ -511,6 +727,10 @@ function sortTrades() {
                 aVal = new Date(a.timestamp || a.entry_timestamp).getTime();
                 bVal = new Date(b.timestamp || b.entry_timestamp).getTime();
                 break;
+            case 'chain':
+                aVal = a.chain || 'ethereum';
+                bVal = b.chain || 'ethereum';
+                return dir * aVal.localeCompare(bVal);
             case 'token':
                 aVal = a.token_address || '';
                 bVal = b.token_address || '';
@@ -520,8 +740,8 @@ function sortTrades() {
                 bVal = `${b.buy_dex}-${b.sell_dex}`;
                 return dir * aVal.localeCompare(bVal);
             case 'amount':
-                aVal = parseFloat(a.amount_eth || 0);
-                bVal = parseFloat(b.amount_eth || 0);
+                aVal = parseFloat(a.amount_eth || a.amount || 0);
+                bVal = parseFloat(b.amount_eth || b.amount || 0);
                 break;
             case 'spread':
                 aVal = parseFloat(a.spread_pct || 0);
@@ -531,9 +751,9 @@ function sortTrades() {
                 aVal = parseFloat(a.profit_loss || 0);
                 bVal = parseFloat(b.profit_loss || 0);
                 break;
-            case 'eth_price':
-                aVal = parseFloat(a.eth_price || 0);
-                bVal = parseFloat(b.eth_price || 0);
+            case 'price':
+                aVal = parseFloat(a.eth_price || a.sol_price || 0);
+                bVal = parseFloat(b.eth_price || b.sol_price || 0);
                 break;
             default:
                 return 0;
@@ -548,7 +768,7 @@ function updateStats() {
     const wins = filteredTrades.filter(t => parseFloat(t.profit_loss || 0) > 0).length;
     const totalPnl = filteredTrades.reduce((sum, t) => sum + parseFloat(t.profit_loss || 0), 0);
     const avgSpread = total > 0 ? filteredTrades.reduce((sum, t) => sum + parseFloat(t.spread_pct || 0), 0) / total : 0;
-    const totalVolume = filteredTrades.reduce((sum, t) => sum + parseFloat(t.amount_eth || 0), 0);
+    const totalVolumeUsd = filteredTrades.reduce((sum, t) => sum + parseFloat(t.entry_usd || 0), 0);
     const winRate = total > 0 ? (wins / total * 100) : 0;
 
     document.getElementById('stat-total').textContent = total;
@@ -560,26 +780,50 @@ function updateStats() {
     pnlEl.className = 'stat-value ' + (totalPnl >= 0 ? 'positive' : 'negative');
 
     document.getElementById('stat-spread').textContent = avgSpread.toFixed(2) + '%';
-    document.getElementById('stat-volume').textContent = totalVolume.toFixed(4) + ' ETH';
+    document.getElementById('stat-volume-usd').textContent = `$${totalVolumeUsd.toFixed(2)}`;
+}
+
+function updateChainBreakdown() {
+    // Ethereum stats
+    const ethTrades = filteredTrades.filter(t => (t.chain || 'ethereum').toLowerCase() !== 'solana');
+    const ethVolume = ethTrades.reduce((sum, t) => sum + parseFloat(t.amount_eth || t.amount || 0), 0);
+    const ethPnl = ethTrades.reduce((sum, t) => sum + parseFloat(t.profit_loss || 0), 0);
+
+    document.getElementById('eth-trades').textContent = ethTrades.length;
+    document.getElementById('eth-volume').textContent = `${ethVolume.toFixed(4)} ETH`;
+    const ethPnlEl = document.getElementById('eth-pnl');
+    ethPnlEl.textContent = `$${ethPnl.toFixed(2)}`;
+    ethPnlEl.className = 'chain-stat-value ' + (ethPnl >= 0 ? 'positive' : 'negative');
+
+    // Solana stats
+    const solTrades = filteredTrades.filter(t => (t.chain || '').toLowerCase() === 'solana');
+    const solVolume = solTrades.reduce((sum, t) => sum + parseFloat(t.amount_eth || t.amount || 0), 0);
+    const solPnl = solTrades.reduce((sum, t) => sum + parseFloat(t.profit_loss || 0), 0);
+
+    document.getElementById('sol-trades').textContent = solTrades.length;
+    document.getElementById('sol-volume').textContent = `${solVolume.toFixed(4)} SOL`;
+    const solPnlEl = document.getElementById('sol-pnl');
+    solPnlEl.textContent = `$${solPnl.toFixed(2)}`;
+    solPnlEl.className = 'chain-stat-value ' + (solPnl >= 0 ? 'positive' : 'negative');
 }
 
 function updateDisplay() {
     const tbody = document.getElementById('tradesTableBody');
     const emptyState = document.getElementById('trades-empty');
-    const table = document.getElementById('trades-table');
+    const tableWrapper = document.getElementById('table-wrapper');
     const countEl = document.getElementById('trade-count');
 
     countEl.textContent = filteredTrades.length;
 
     if (filteredTrades.length === 0) {
         emptyState.style.display = 'block';
-        table.style.display = 'none';
+        tableWrapper.style.display = 'none';
         document.getElementById('pagination').innerHTML = '';
         return;
     }
 
     emptyState.style.display = 'none';
-    table.style.display = 'table';
+    tableWrapper.style.display = 'block';
 
     const totalPages = Math.ceil(filteredTrades.length / pageSize);
     const start = (currentPage - 1) * pageSize;
@@ -591,8 +835,16 @@ function updateDisplay() {
         const pnl = parseFloat(trade.profit_loss || 0);
         const spread = parseFloat(trade.spread_pct || 0);
         const amount = parseFloat(trade.amount_eth || trade.amount || 0);
-        const ethPrice = parseFloat(trade.eth_price || 0);
+        const nativePrice = parseFloat(trade.eth_price || trade.sol_price || 0);
         const isDryRun = trade.dry_run || trade.is_simulated;
+
+        // Determine chain and native symbol
+        const chain = (trade.chain || 'ethereum').toLowerCase();
+        const isSolana = chain === 'solana';
+        const nativeSymbol = isSolana ? 'SOL' : 'ETH';
+        const chainBadge = isSolana
+            ? '<span class="chain-badge sol">SOL</span>'
+            : '<span class="chain-badge eth">ETH</span>';
 
         const token = trade.token_address || '';
         const tokenSymbol = getTokenSymbol(token);
@@ -601,20 +853,21 @@ function updateDisplay() {
         return `
             <tr>
                 <td>${timeStr}</td>
+                <td>${chainBadge}</td>
                 <td title="${token}">
                     <div style="font-weight: 600;">${tokenSymbol}</div>
                     <div style="font-size: 0.7rem; color: var(--text-tertiary); font-family: monospace;">${shortToken}</div>
                 </td>
                 <td>
                     <span class="dex-badge">${trade.buy_dex || 'DEX'}</span>
-                    →
+                    <i class="fas fa-arrow-right" style="margin: 0 4px; color: var(--text-tertiary);"></i>
                     <span class="dex-badge">${trade.sell_dex || 'DEX'}</span>
                 </td>
-                <td>${amount.toFixed(4)} ETH</td>
+                <td>${amount.toFixed(4)} ${nativeSymbol}</td>
                 <td><span class="spread-badge">${spread.toFixed(2)}%</span></td>
                 <td class="${pnl >= 0 ? 'positive' : 'negative'}"><strong>$${pnl.toFixed(2)}</strong></td>
-                <td>$${ethPrice.toFixed(2)}</td>
-                <td>${isDryRun ? '<span class="simulated-badge">SIMULATED</span>' : '<span class="dex-badge" style="background: rgba(16, 185, 129, 0.2); color: #10b981;">LIVE</span>'}</td>
+                <td>$${nativePrice.toFixed(2)}</td>
+                <td>${isDryRun ? '<span class="simulated-badge">SIMULATED</span>' : '<span class="live-badge">LIVE</span>'}</td>
             </tr>
         `;
     }).join('');
@@ -629,13 +882,13 @@ function updatePagination(totalPages) {
         return;
     }
 
-    let html = `<button class="pagination-btn" onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>←</button>`;
+    let html = `<button class="pagination-btn" onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}><i class="fas fa-chevron-left"></i></button>`;
 
     for (let i = Math.max(1, currentPage - 2); i <= Math.min(totalPages, currentPage + 2); i++) {
         html += `<button class="pagination-btn ${i === currentPage ? 'active' : ''}" onclick="goToPage(${i})">${i}</button>`;
     }
 
-    html += `<button class="pagination-btn" onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>→</button>`;
+    html += `<button class="pagination-btn" onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}><i class="fas fa-chevron-right"></i></button>`;
     html += `<span class="pagination-info">Page ${currentPage} of ${totalPages}</span>`;
 
     container.innerHTML = html;
@@ -654,18 +907,24 @@ function exportCSV() {
         return;
     }
 
-    const headers = ['Time', 'Token', 'Buy DEX', 'Sell DEX', 'Amount (ETH)', 'Spread %', 'Profit', 'ETH Price', 'Simulated'];
-    const rows = filteredTrades.map(t => [
-        t.timestamp || t.entry_timestamp || '',
-        t.token_address,
-        t.buy_dex,
-        t.sell_dex,
-        parseFloat(t.amount_eth || 0).toFixed(4),
-        parseFloat(t.spread_pct || 0).toFixed(2),
-        parseFloat(t.profit_loss || 0).toFixed(2),
-        parseFloat(t.eth_price || 0).toFixed(2),
-        t.is_simulated ? 'Yes' : 'No'
-    ]);
+    const headers = ['Time', 'Chain', 'Token', 'Buy DEX', 'Sell DEX', 'Amount', 'Native Symbol', 'Spread %', 'Profit', 'Native Price', 'Simulated'];
+    const rows = filteredTrades.map(t => {
+        const chain = (t.chain || 'ethereum').toLowerCase();
+        const nativeSymbol = chain === 'solana' ? 'SOL' : 'ETH';
+        return [
+            t.timestamp || t.entry_timestamp || '',
+            chain,
+            t.token_address,
+            t.buy_dex,
+            t.sell_dex,
+            parseFloat(t.amount_eth || t.amount || 0).toFixed(4),
+            nativeSymbol,
+            parseFloat(t.spread_pct || 0).toFixed(2),
+            parseFloat(t.profit_loss || 0).toFixed(2),
+            parseFloat(t.eth_price || t.sol_price || 0).toFixed(2),
+            t.is_simulated ? 'Yes' : 'No'
+        ];
+    });
 
     let csv = headers.join(',') + '\n';
     rows.forEach(row => csv += row.map(c => `"${c}"`).join(',') + '\n');
