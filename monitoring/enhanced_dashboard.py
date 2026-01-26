@@ -3343,9 +3343,26 @@ class DashboardEndpoints:
                 'positions': sum(balances[c].get('positions', 0) for c in chains)
             }
 
+            # ========== WALLET ADDRESSES ==========
+            try:
+                from security.secrets_manager import secrets
+                evm_wallet = secrets.get('WALLET_ADDRESS', log_access=False) or os.getenv('WALLET_ADDRESS')
+            except Exception:
+                evm_wallet = os.getenv('WALLET_ADDRESS')
+
+            solana_wallet = os.getenv('SOLANA_WALLET')
+            solana_module_wallet = os.getenv('SOLANA_MODULE_WALLET')
+
+            wallet_addresses = {
+                'EVM': evm_wallet or '',
+                'SOLANA': solana_wallet or '',
+                'SOLANA_MODULE': solana_module_wallet or ''
+            }
+
             return web.json_response({
                 'status': 'success',
                 'balances': balances,
+                'wallets': wallet_addresses,
                 'timestamp': datetime.now().isoformat()
             })
 
