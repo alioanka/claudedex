@@ -443,16 +443,73 @@ asyncio.run(update_wallet('PRIVATE_KEY', 'your_new_private_key'))
 2. Check environment: `echo $DB_PASSWORD`
 3. Test connection: `pg_isready -h postgres -p 5432`
 
+### "Failed to decrypt in final check" (Double-Encryption)
+
+**Cause**: A credential was encrypted twice (double-encryption). This can happen when:
+- A migration script encrypts an already-encrypted value
+- Manual import with wrong procedure
+
+**Symptoms**:
+- Log shows: `Failed to decrypt PRIVATE_KEY in final check: ` (empty error)
+- Verification passes but bot still can't use the credential
+- Debug script shows decrypted value still starts with `gAAAAAB`
+
+**Diagnosis**:
+```bash
+# Run the debug script to see exact state
+docker exec -it trading-bot python scripts/debug_credentials.py
+
+# Or verify with rotation script
+docker exec -it trading-bot python scripts/rotate_encryption_key.py --verify
+```
+
+**Solution**:
+1. **If same key was used twice** (can be auto-fixed):
+   ```bash
+   # Preview what will be fixed
+   docker exec -it trading-bot python scripts/fix_double_encrypted.py --dry-run
+
+   # Apply the fix
+   docker exec -it trading-bot python scripts/fix_double_encrypted.py
+   ```
+
+2. **If different keys were used** (manual fix required):
+   The inner encryption used a different/old key. You need to re-enter the credential:
+   ```bash
+   # Update the credential with your actual private key
+   docker exec -it trading-bot python scripts/update_credential.py PRIVATE_KEY
+
+   # For Solana:
+   docker exec -it trading-bot python scripts/update_credential.py SOLANA_MODULE_PRIVATE_KEY
+   ```
+
+**Prevention**:
+- The `update_credential.py` script now checks for already-encrypted values
+- The rotation script now detects and handles double-encryption
+- Always verify after migration: `python scripts/rotate_encryption_key.py --verify`
+
 ---
 
 ## Quick Reference Commands
 
 ```bash
-# Verify encryption
+# Verify encryption (also detects double-encryption)
 python scripts/rotate_encryption_key.py --verify
 
 # Rotate encryption key
 python scripts/rotate_encryption_key.py
+
+# Debug credential decryption issues
+python scripts/debug_credentials.py
+
+# Fix double-encrypted credentials
+python scripts/fix_double_encrypted.py --dry-run  # Preview
+python scripts/fix_double_encrypted.py            # Apply fix
+
+# Update a single credential (interactive, secure)
+python scripts/update_credential.py PRIVATE_KEY
+python scripts/update_credential.py SOLANA_MODULE_PRIVATE_KEY
+python scripts/update_credential.py --list  # List all credentials
 
 # List trade records
 python scripts/clear_trade_records.py --list
