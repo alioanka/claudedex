@@ -1,0 +1,900 @@
+{% extends "base.html" %}
+
+{% block title %}Wallet Balances{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    .page-container {
+        padding: 20px;
+        max-width: 1400px;
+        margin: 0 auto;
+    }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 24px;
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+
+    .page-title {
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .page-title i { color: #3b82f6; }
+
+    .page-subtitle {
+        color: var(--text-secondary);
+        font-size: 0.9rem;
+        margin-top: 4px;
+    }
+
+    .last-updated {
+        font-size: 0.75rem;
+        color: #6b7280;
+        margin-top: 4px;
+    }
+
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 18px;
+        border-radius: 8px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s;
+        text-decoration: none;
+    }
+
+    .btn-primary { background: linear-gradient(135deg, #3b82f6, #2563eb); color: white; }
+    .btn-secondary { background: var(--metric-bg); color: var(--text-primary); border: 1px solid var(--border-color); }
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+
+    /* Total Portfolio Card */
+    .total-portfolio-card {
+        background: linear-gradient(135deg, #1e3a5f 0%, #0d1b2a 100%);
+        border: 2px solid #3b82f6;
+        border-radius: 16px;
+        padding: 28px;
+        margin-bottom: 24px;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .total-portfolio-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: linear-gradient(90deg, #3b82f6, #8b5cf6, #10b981);
+    }
+
+    .total-label {
+        font-size: 0.8rem;
+        color: #94a3b8;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 6px;
+    }
+
+    .total-value {
+        font-size: 2.5rem;
+        font-weight: 800;
+        color: #f8fafc;
+        margin-bottom: 12px;
+    }
+
+    .portfolio-breakdown {
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+    }
+
+    .breakdown-item {
+        background: rgba(255, 255, 255, 0.05);
+        padding: 10px 16px;
+        border-radius: 8px;
+    }
+
+    .breakdown-label {
+        font-size: 0.7rem;
+        color: #94a3b8;
+        margin-bottom: 2px;
+    }
+
+    .breakdown-value {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: #f8fafc;
+    }
+
+    /* Wallet Cards Section */
+    .section-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 16px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .section-title i { color: #3b82f6; font-size: 0.95rem; }
+
+    .wallets-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+
+    .wallet-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 20px;
+        transition: all 0.2s;
+    }
+
+    .wallet-card:hover {
+        border-color: #3b82f6;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+
+    .wallet-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 14px;
+    }
+
+    .wallet-chain-info {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .chain-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.2rem;
+    }
+
+    .chain-icon.ethereum { background: rgba(98, 126, 234, 0.2); color: #627eea; }
+    .chain-icon.bsc { background: rgba(240, 185, 11, 0.2); color: #f0b90b; }
+    .chain-icon.polygon { background: rgba(130, 71, 229, 0.2); color: #8247e5; }
+    .chain-icon.arbitrum { background: rgba(40, 160, 240, 0.2); color: #28a0f0; }
+    .chain-icon.base { background: rgba(0, 82, 255, 0.2); color: #0052ff; }
+    .chain-icon.solana { background: rgba(153, 69, 255, 0.2); color: #9945ff; }
+
+    .chain-name {
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .chain-network {
+        font-size: 0.7rem;
+        color: var(--text-secondary);
+    }
+
+    .wallet-balance {
+        text-align: right;
+    }
+
+    .balance-usd {
+        font-size: 1.3rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+
+    .balance-native {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+    }
+
+    /* Address Section */
+    .wallet-address-section {
+        background: var(--metric-bg);
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 12px;
+    }
+
+    .address-label {
+        font-size: 0.65rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        margin-bottom: 6px;
+    }
+
+    .address-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .wallet-address {
+        font-family: 'JetBrains Mono', 'Fira Code', monospace;
+        font-size: 0.8rem;
+        color: #3b82f6;
+        background: rgba(59, 130, 246, 0.1);
+        padding: 8px 10px;
+        border-radius: 6px;
+        flex: 1;
+        word-break: break-all;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .wallet-address:hover {
+        background: rgba(59, 130, 246, 0.2);
+    }
+
+    .address-actions {
+        display: flex;
+        gap: 6px;
+    }
+
+    .icon-btn {
+        width: 32px;
+        height: 32px;
+        border-radius: 6px;
+        border: 1px solid var(--border-color);
+        background: var(--card-bg);
+        color: var(--text-secondary);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s;
+        text-decoration: none;
+    }
+
+    .icon-btn:hover {
+        background: #3b82f6;
+        color: white;
+        border-color: #3b82f6;
+    }
+
+    .icon-btn.copied {
+        background: #10b981;
+        color: white;
+        border-color: #10b981;
+    }
+
+    /* Explorer Links */
+    .explorer-links {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .explorer-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 6px 10px;
+        border-radius: 6px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        color: var(--text-secondary);
+        background: var(--metric-bg);
+        border: 1px solid var(--border-color);
+        text-decoration: none;
+        transition: all 0.2s;
+    }
+
+    .explorer-link:hover {
+        color: #3b82f6;
+        border-color: #3b82f6;
+        background: rgba(59, 130, 246, 0.1);
+    }
+
+    .explorer-link i {
+        font-size: 0.7rem;
+    }
+
+    /* Charts */
+    .charts-row {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 20px;
+        margin-bottom: 24px;
+    }
+
+    @media (max-width: 900px) {
+        .charts-row { grid-template-columns: 1fr; }
+    }
+
+    .chart-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 20px;
+    }
+
+    .chart-container {
+        position: relative;
+        height: 260px;
+    }
+
+    /* Loading State */
+    .loading-state {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--text-secondary);
+    }
+
+    .loading-spinner {
+        border: 3px solid var(--border-color);
+        border-top: 3px solid #3b82f6;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 16px;
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+
+    /* Toast notification */
+    .toast {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: #10b981;
+        color: white;
+        padding: 12px 20px;
+        border-radius: 8px;
+        font-size: 0.85rem;
+        font-weight: 500;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        z-index: 1000;
+        opacity: 0;
+        transform: translateY(20px);
+        transition: all 0.3s;
+    }
+
+    .toast.show {
+        opacity: 1;
+        transform: translateY(0);
+    }
+
+    [data-theme="dark"] {
+        --card-bg: #1f2937;
+        --border-color: #374151;
+        --text-primary: #f9fafb;
+        --text-secondary: #9ca3af;
+        --metric-bg: #111827;
+    }
+
+    [data-theme="light"] {
+        --card-bg: #ffffff;
+        --border-color: #e5e7eb;
+        --text-primary: #111827;
+        --text-secondary: #6b7280;
+        --metric-bg: #f3f4f6;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-container">
+    <!-- Header -->
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">
+                <i class="fas fa-wallet"></i>
+                Wallet Balances
+            </h1>
+            <p class="page-subtitle">On-chain wallet balances across all networks</p>
+            <p class="last-updated" id="lastUpdated">Last updated: Loading...</p>
+        </div>
+        <div>
+            <button class="btn btn-secondary" onclick="loadBalances()">
+                <i class="fas fa-sync"></i> Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- Loading State -->
+    <div id="loadingState" class="loading-state">
+        <div class="loading-spinner"></div>
+        <p>Loading wallet balances...</p>
+    </div>
+
+    <!-- Content -->
+    <div id="contentContainer" style="display: none;">
+        <!-- Total Portfolio -->
+        <div class="total-portfolio-card">
+            <div class="total-label">Total On-Chain Balance</div>
+            <div class="total-value" id="totalValue">$0.00</div>
+            <div class="portfolio-breakdown" id="portfolioBreakdown"></div>
+        </div>
+
+        <!-- Wallet Cards -->
+        <div class="section-title">
+            <i class="fas fa-link"></i>
+            Wallet Addresses & Balances
+        </div>
+        <div class="wallets-grid" id="walletsGrid"></div>
+
+        <!-- Charts -->
+        <div class="charts-row">
+            <div class="chart-card">
+                <div class="section-title">
+                    <i class="fas fa-chart-pie"></i>
+                    Distribution by Chain
+                </div>
+                <div class="chart-container">
+                    <canvas id="distributionChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <div class="section-title">
+                    <i class="fas fa-chart-bar"></i>
+                    Balance by Chain
+                </div>
+                <div class="chart-container">
+                    <canvas id="barChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+let distributionChart = null;
+let barChart = null;
+
+const CHAIN_CONFIG = {
+    'ETHEREUM': { name: 'Ethereum', icon: 'fab fa-ethereum', class: 'ethereum', network: 'Mainnet', symbol: 'ETH', explorer: 'https://etherscan.io/address/' },
+    'BSC': { name: 'BNB Chain', icon: 'fas fa-coins', class: 'bsc', network: 'BSC Mainnet', symbol: 'BNB', explorer: 'https://bscscan.com/address/' },
+    'POLYGON': { name: 'Polygon', icon: 'fas fa-hexagon', class: 'polygon', network: 'Polygon PoS', symbol: 'MATIC', explorer: 'https://polygonscan.com/address/' },
+    'ARBITRUM': { name: 'Arbitrum', icon: 'fas fa-bolt', class: 'arbitrum', network: 'Arbitrum One', symbol: 'ETH', explorer: 'https://arbiscan.io/address/' },
+    'BASE': { name: 'Base', icon: 'fas fa-circle', class: 'base', network: 'Base Mainnet', symbol: 'ETH', explorer: 'https://basescan.org/address/' },
+    'SOLANA': { name: 'Solana', icon: 'fas fa-sun', class: 'solana', network: 'Mainnet', symbol: 'SOL', explorer: 'https://solscan.io/account/' },
+    'SOLANA_MODULE': { name: 'Solana (Trading)', icon: 'fas fa-robot', class: 'solana', network: 'Trading Wallet', symbol: 'SOL', explorer: 'https://solscan.io/account/' }
+};
+
+const CHAIN_COLORS = {
+    'ETHEREUM': '#627eea',
+    'BSC': '#f0b90b',
+    'POLYGON': '#8247e5',
+    'ARBITRUM': '#28a0f0',
+    'BASE': '#0052ff',
+    'SOLANA': '#9945ff',
+    'SOLANA_MODULE': '#14f195'
+};
+
+async function loadBalances() {
+    try {
+        document.getElementById('loadingState').style.display = 'block';
+        document.getElementById('contentContainer').style.display = 'none';
+
+        const response = await fetch('/api/wallets/balances');
+        const data = await response.json();
+
+        if (data.status === 'success') {
+            renderBalances(data.balances, data.wallets || {});
+            document.getElementById('lastUpdated').textContent = 'Last updated: ' + new Date().toLocaleString();
+        } else {
+            showError(data.error || 'Failed to load balances');
+        }
+
+        document.getElementById('loadingState').style.display = 'none';
+        document.getElementById('contentContainer').style.display = 'block';
+    } catch (error) {
+        console.error('Error loading balances:', error);
+        showError('Failed to connect to server');
+    }
+}
+
+function renderBalances(balances, wallets) {
+    // Calculate totals
+    const onChainChains = ['ETHEREUM', 'BSC', 'POLYGON', 'ARBITRUM', 'BASE', 'SOLANA', 'SOLANA_MODULE'];
+    let totalOnChain = 0;
+    let activeChains = 0;
+
+    onChainChains.forEach(chain => {
+        const bal = balances[chain]?.balance || 0;
+        const native = balances[chain]?.native_balance || 0;
+        if (bal > 0.01 || native > 0) {
+            totalOnChain += bal;
+            activeChains++;
+        }
+    });
+
+    // Total Portfolio
+    document.getElementById('totalValue').textContent = '$' + formatNumber(totalOnChain);
+    document.getElementById('portfolioBreakdown').innerHTML = `
+        <div class="breakdown-item">
+            <div class="breakdown-label">Active Chains</div>
+            <div class="breakdown-value">${activeChains}</div>
+        </div>
+        <div class="breakdown-item">
+            <div class="breakdown-label">EVM Chains</div>
+            <div class="breakdown-value">${['ETHEREUM', 'BSC', 'POLYGON', 'ARBITRUM', 'BASE'].filter(c => (balances[c]?.native_balance || 0) > 0).length}</div>
+        </div>
+        <div class="breakdown-item">
+            <div class="breakdown-label">Solana Wallets</div>
+            <div class="breakdown-value">${['SOLANA', 'SOLANA_MODULE'].filter(c => (balances[c]?.native_balance || 0) > 0).length}</div>
+        </div>
+    `;
+
+    // Wallet Cards
+    renderWalletCards(balances, wallets);
+
+    // Charts
+    renderCharts(balances);
+}
+
+function renderWalletCards(balances, wallets) {
+    const grid = document.getElementById('walletsGrid');
+    grid.innerHTML = '';
+
+    const evmAddress = wallets.EVM || '';
+    const solanaAddress = wallets.SOLANA || '';
+    const solanaModuleAddress = wallets.SOLANA_MODULE || '';
+
+    // EVM Chains (share same wallet)
+    const evmChains = ['ETHEREUM', 'BSC', 'POLYGON', 'ARBITRUM', 'BASE'];
+
+    evmChains.forEach(chain => {
+        const data = balances[chain] || {};
+        const config = CHAIN_CONFIG[chain];
+        const nativeBalance = data.native_balance || 0;
+        const usdBalance = data.balance || 0;
+
+        const card = document.createElement('div');
+        card.className = 'wallet-card';
+        card.innerHTML = `
+            <div class="wallet-header">
+                <div class="wallet-chain-info">
+                    <div class="chain-icon ${config.class}">
+                        <i class="${config.icon}"></i>
+                    </div>
+                    <div>
+                        <div class="chain-name">${config.name}</div>
+                        <div class="chain-network">${config.network}</div>
+                    </div>
+                </div>
+                <div class="wallet-balance">
+                    <div class="balance-usd">$${formatNumber(usdBalance)}</div>
+                    <div class="balance-native">${formatNumber(nativeBalance, 6)} ${config.symbol}</div>
+                </div>
+            </div>
+            ${evmAddress ? `
+                <div class="wallet-address-section">
+                    <div class="address-label">Wallet Address</div>
+                    <div class="address-row">
+                        <div class="wallet-address" onclick="copyAddress('${evmAddress}', this)" title="Click to copy">${evmAddress}</div>
+                        <div class="address-actions">
+                            <button class="icon-btn" onclick="copyAddress('${evmAddress}', this)" title="Copy address">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                            <a href="${config.explorer}${evmAddress}" target="_blank" class="icon-btn" title="View on Explorer">
+                                <i class="fas fa-external-link-alt"></i>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                <div class="explorer-links">
+                    <a href="${config.explorer}${evmAddress}" target="_blank" class="explorer-link">
+                        <i class="fas fa-search"></i> View on ${config.name.includes('BSC') ? 'BscScan' : config.name.includes('Polygon') ? 'PolygonScan' : config.name.includes('Arbitrum') ? 'Arbiscan' : config.name.includes('Base') ? 'BaseScan' : 'Etherscan'}
+                    </a>
+                    <a href="${config.explorer}${evmAddress}#tokentxns" target="_blank" class="explorer-link">
+                        <i class="fas fa-coins"></i> Token Transfers
+                    </a>
+                </div>
+            ` : `
+                <div class="wallet-address-section">
+                    <div class="address-label">Wallet Address</div>
+                    <div class="wallet-address" style="color: var(--text-secondary);">Not configured</div>
+                </div>
+            `}
+        `;
+        grid.appendChild(card);
+    });
+
+    // Solana Main Wallet
+    const solanaData = balances['SOLANA'] || {};
+    const solanaConfig = CHAIN_CONFIG['SOLANA'];
+    const solCard = document.createElement('div');
+    solCard.className = 'wallet-card';
+    solCard.innerHTML = `
+        <div class="wallet-header">
+            <div class="wallet-chain-info">
+                <div class="chain-icon ${solanaConfig.class}">
+                    <i class="${solanaConfig.icon}"></i>
+                </div>
+                <div>
+                    <div class="chain-name">${solanaConfig.name}</div>
+                    <div class="chain-network">${solanaConfig.network}</div>
+                </div>
+            </div>
+            <div class="wallet-balance">
+                <div class="balance-usd">$${formatNumber(solanaData.balance || 0)}</div>
+                <div class="balance-native">${formatNumber(solanaData.native_balance || 0, 6)} SOL</div>
+            </div>
+        </div>
+        ${solanaAddress ? `
+            <div class="wallet-address-section">
+                <div class="address-label">Wallet Address</div>
+                <div class="address-row">
+                    <div class="wallet-address" onclick="copyAddress('${solanaAddress}', this)" title="Click to copy">${solanaAddress}</div>
+                    <div class="address-actions">
+                        <button class="icon-btn" onclick="copyAddress('${solanaAddress}', this)" title="Copy address">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                        <a href="${solanaConfig.explorer}${solanaAddress}" target="_blank" class="icon-btn" title="View on Solscan">
+                            <i class="fas fa-external-link-alt"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <div class="explorer-links">
+                <a href="${solanaConfig.explorer}${solanaAddress}" target="_blank" class="explorer-link">
+                    <i class="fas fa-search"></i> View on Solscan
+                </a>
+                <a href="${solanaConfig.explorer}${solanaAddress}#transfers" target="_blank" class="explorer-link">
+                    <i class="fas fa-exchange-alt"></i> Transactions
+                </a>
+                <a href="${solanaConfig.explorer}${solanaAddress}#tokenAccounts" target="_blank" class="explorer-link">
+                    <i class="fas fa-coins"></i> Token Holdings
+                </a>
+            </div>
+        ` : `
+            <div class="wallet-address-section">
+                <div class="address-label">Wallet Address</div>
+                <div class="wallet-address" style="color: var(--text-secondary);">Not configured</div>
+            </div>
+        `}
+    `;
+    grid.appendChild(solCard);
+
+    // Solana Module Wallet
+    const solModData = balances['SOLANA_MODULE'] || {};
+    const solModConfig = CHAIN_CONFIG['SOLANA_MODULE'];
+    const solModCard = document.createElement('div');
+    solModCard.className = 'wallet-card';
+    solModCard.innerHTML = `
+        <div class="wallet-header">
+            <div class="wallet-chain-info">
+                <div class="chain-icon ${solModConfig.class}">
+                    <i class="${solModConfig.icon}"></i>
+                </div>
+                <div>
+                    <div class="chain-name">${solModConfig.name}</div>
+                    <div class="chain-network">${solModConfig.network}</div>
+                </div>
+            </div>
+            <div class="wallet-balance">
+                <div class="balance-usd">$${formatNumber(solModData.balance || 0)}</div>
+                <div class="balance-native">${formatNumber(solModData.native_balance || 0, 6)} SOL</div>
+            </div>
+        </div>
+        ${solanaModuleAddress ? `
+            <div class="wallet-address-section">
+                <div class="address-label">Wallet Address</div>
+                <div class="address-row">
+                    <div class="wallet-address" onclick="copyAddress('${solanaModuleAddress}', this)" title="Click to copy">${solanaModuleAddress}</div>
+                    <div class="address-actions">
+                        <button class="icon-btn" onclick="copyAddress('${solanaModuleAddress}', this)" title="Copy address">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                        <a href="${solModConfig.explorer}${solanaModuleAddress}" target="_blank" class="icon-btn" title="View on Solscan">
+                            <i class="fas fa-external-link-alt"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <div class="explorer-links">
+                <a href="${solModConfig.explorer}${solanaModuleAddress}" target="_blank" class="explorer-link">
+                    <i class="fas fa-search"></i> View on Solscan
+                </a>
+                <a href="${solModConfig.explorer}${solanaModuleAddress}#transfers" target="_blank" class="explorer-link">
+                    <i class="fas fa-exchange-alt"></i> Transactions
+                </a>
+                <a href="${solModConfig.explorer}${solanaModuleAddress}#tokenAccounts" target="_blank" class="explorer-link">
+                    <i class="fas fa-coins"></i> Token Holdings
+                </a>
+            </div>
+        ` : `
+            <div class="wallet-address-section">
+                <div class="address-label">Wallet Address</div>
+                <div class="wallet-address" style="color: var(--text-secondary);">Not configured</div>
+            </div>
+        `}
+    `;
+    grid.appendChild(solModCard);
+}
+
+function renderCharts(balances) {
+    const chains = ['ETHEREUM', 'BSC', 'POLYGON', 'ARBITRUM', 'BASE', 'SOLANA', 'SOLANA_MODULE'];
+    const data = [];
+    const labels = [];
+    const colors = [];
+
+    chains.forEach(chain => {
+        const bal = balances[chain]?.balance || 0;
+        if (bal > 0.01) {
+            labels.push(CHAIN_CONFIG[chain]?.name || chain);
+            data.push(bal);
+            colors.push(CHAIN_COLORS[chain] || '#6b7280');
+        }
+    });
+
+    // Distribution Chart
+    const distCtx = document.getElementById('distributionChart').getContext('2d');
+    if (distributionChart) distributionChart.destroy();
+
+    if (data.length > 0) {
+        distributionChart = new Chart(distCtx, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: data,
+                    backgroundColor: colors,
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '65%',
+                plugins: {
+                    legend: {
+                        position: 'right',
+                        labels: { color: '#94a3b8', padding: 12 }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => {
+                                const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                                const pct = ((ctx.raw / total) * 100).toFixed(1);
+                                return `$${formatNumber(ctx.raw)} (${pct}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    } else {
+        distCtx.font = '14px sans-serif';
+        distCtx.fillStyle = '#94a3b8';
+        distCtx.textAlign = 'center';
+        distCtx.fillText('No balance data', distCtx.canvas.width / 2, distCtx.canvas.height / 2);
+    }
+
+    // Bar Chart
+    const barCtx = document.getElementById('barChart').getContext('2d');
+    if (barChart) barChart.destroy();
+
+    const allLabels = chains.map(c => CHAIN_CONFIG[c]?.name.replace(' (Trading)', '').substring(0, 8) || c);
+    const allData = chains.map(c => balances[c]?.balance || 0);
+    const allColors = chains.map(c => CHAIN_COLORS[c] || '#6b7280');
+
+    barChart = new Chart(barCtx, {
+        type: 'bar',
+        data: {
+            labels: allLabels,
+            datasets: [{
+                data: allData,
+                backgroundColor: allColors,
+                borderRadius: 6
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    grid: { color: 'rgba(148, 163, 184, 0.1)' },
+                    ticks: {
+                        color: '#94a3b8',
+                        callback: v => '$' + formatNumber(v)
+                    }
+                },
+                x: {
+                    grid: { display: false },
+                    ticks: { color: '#94a3b8', maxRotation: 45 }
+                }
+            }
+        }
+    });
+}
+
+async function copyAddress(address, element) {
+    try {
+        await navigator.clipboard.writeText(address);
+        showToast('Address copied to clipboard!');
+
+        // Visual feedback
+        if (element) {
+            const btn = element.closest('.icon-btn') || element.querySelector('.icon-btn') || element;
+            if (btn) {
+                btn.classList.add('copied');
+                setTimeout(() => btn.classList.remove('copied'), 1500);
+            }
+        }
+    } catch (err) {
+        // Fallback for older browsers
+        const textArea = document.createElement('textarea');
+        textArea.value = address;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-9999px';
+        document.body.appendChild(textArea);
+        textArea.select();
+        try {
+            document.execCommand('copy');
+            showToast('Address copied to clipboard!');
+        } catch (e) {
+            showToast('Failed to copy address', true);
+        }
+        document.body.removeChild(textArea);
+    }
+}
+
+function showToast(message, isError = false) {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.style.background = isError ? '#ef4444' : '#10b981';
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 3000);
+}
+
+function showError(message) {
+    document.getElementById('loadingState').innerHTML = `
+        <i class="fas fa-exclamation-triangle" style="font-size: 2rem; color: #ef4444; margin-bottom: 16px;"></i>
+        <p>${message}</p>
+        <button class="btn btn-primary" onclick="loadBalances()" style="margin-top: 16px;">
+            <i class="fas fa-sync"></i> Retry
+        </button>
+    `;
+}
+
+function formatNumber(num, decimals = 2) {
+    if (num === undefined || num === null) return '0';
+    const n = parseFloat(num);
+    if (isNaN(n)) return '0';
+    if (Math.abs(n) >= 1000000) return (n / 1000000).toFixed(2) + 'M';
+    if (Math.abs(n) >= 1000) return (n / 1000).toFixed(2) + 'K';
+    return n.toFixed(decimals);
+}
+
+// Load on page load
+loadBalances();
+
+// Auto-refresh every 60 seconds
+setInterval(loadBalances, 60000);
+</script>
+{% endblock %}

@@ -1,53 +1,118 @@
 {% extends "base.html" %}
 
-{% block title %}Copy Trading - Active Copies{% endblock %}
+{% block title %}Copy Trading - Active Positions{% endblock %}
 
 {% block extra_head %}
 <style>
     .page-container {
         padding: 20px;
+        max-width: 1600px;
+        margin: 0 auto;
     }
 
     .page-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 30px;
+        margin-bottom: 24px;
         flex-wrap: wrap;
         gap: 16px;
     }
 
     .page-title {
-        font-size: 2rem;
+        font-size: 1.75rem;
         font-weight: 700;
         color: var(--text-primary);
-        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
     }
+
+    .page-title i { color: #8b5cf6; }
 
     .page-subtitle {
         color: var(--text-secondary);
-        font-size: 1rem;
+        font-size: 0.9rem;
+        margin-top: 4px;
     }
 
+    .header-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 18px;
+        border-radius: 8px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s;
+        text-decoration: none;
+    }
+
+    .btn-primary {
+        background: linear-gradient(135deg, #8b5cf6, #6366f1);
+        color: white;
+    }
+
+    .btn-secondary {
+        background: var(--metric-bg);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+    }
+
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+
+    /* Summary Stats */
     .stats-row {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        grid-template-columns: repeat(5, 1fr);
         gap: 16px;
         margin-bottom: 24px;
+    }
+
+    @media (max-width: 1200px) {
+        .stats-row { grid-template-columns: repeat(3, 1fr); }
+    }
+    @media (max-width: 768px) {
+        .stats-row { grid-template-columns: repeat(2, 1fr); }
     }
 
     .stat-card {
         background: var(--card-bg);
         border: 1px solid var(--border-color);
         border-radius: 12px;
-        padding: 16px;
-        text-align: center;
+        padding: 18px;
+        position: relative;
+        overflow: hidden;
     }
 
+    .stat-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+    }
+
+    .stat-card.purple::before { background: linear-gradient(90deg, #8b5cf6, #a78bfa); }
+    .stat-card.blue::before { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
+    .stat-card.green::before { background: linear-gradient(90deg, #10b981, #34d399); }
+    .stat-card.orange::before { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+    .stat-card.cyan::before { background: linear-gradient(90deg, #06b6d4, #22d3ee); }
+
     .stat-label {
-        font-size: 0.75rem;
+        font-size: 0.7rem;
         color: var(--text-secondary);
         text-transform: uppercase;
+        letter-spacing: 0.5px;
         margin-bottom: 6px;
     }
 
@@ -60,107 +125,189 @@
     .stat-value.positive { color: #10b981; }
     .stat-value.negative { color: #ef4444; }
 
+    /* Positions Section */
     .section-card {
         background: var(--card-bg);
         border: 1px solid var(--border-color);
         border-radius: 12px;
-        padding: 24px;
-        margin-bottom: 24px;
+        padding: 20px;
+    }
+
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
     }
 
     .section-title {
-        font-size: 1.25rem;
+        font-size: 1rem;
         font-weight: 600;
         color: var(--text-primary);
-        margin-bottom: 20px;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-
-    .table-responsive {
-        width: 100%;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-    }
-
-    .position-table {
-        width: 100%;
-        border-collapse: collapse;
-        min-width: 800px;
-    }
-
-    .position-table th {
-        background: var(--metric-bg);
-        padding: 12px 10px;
-        text-align: left;
-        font-weight: 600;
-        color: var(--text-secondary);
-        font-size: 0.75rem;
-        text-transform: uppercase;
-        white-space: nowrap;
-    }
-
-    .position-table td {
-        padding: 12px 10px;
-        border-bottom: 1px solid var(--border-color);
-        white-space: nowrap;
-    }
-
-    .position-table tr:hover {
-        background: var(--metric-bg);
-    }
-
-    .token-cell {
         display: flex;
         align-items: center;
         gap: 8px;
     }
 
-    .token-symbol {
+    .section-title i { color: #8b5cf6; }
+
+    .position-count {
+        background: rgba(139, 92, 246, 0.15);
+        color: #8b5cf6;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    /* Positions Grid */
+    .positions-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 16px;
+    }
+
+    .position-card {
+        background: var(--metric-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 16px;
+        transition: all 0.2s;
+    }
+
+    .position-card:hover {
+        border-color: #8b5cf6;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+
+    .position-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 14px;
+    }
+
+    .position-token {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .token-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        background: linear-gradient(135deg, #8b5cf6, #6366f1);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 700;
+        font-size: 0.9rem;
+    }
+
+    .token-info h4 {
+        font-size: 0.95rem;
         font-weight: 600;
         color: var(--text-primary);
+        margin: 0;
     }
 
     .token-address {
         font-family: monospace;
-        font-size: 0.75rem;
+        font-size: 0.7rem;
         color: var(--text-secondary);
     }
 
-    .chain-badge {
-        display: inline-block;
-        padding: 3px 8px;
-        border-radius: 4px;
-        font-size: 0.7rem;
+    .position-badges {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+
+    .badge {
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-size: 0.65rem;
         font-weight: 600;
         text-transform: uppercase;
     }
 
-    .chain-solana {
-        background: rgba(139, 92, 246, 0.2);
+    .badge-chain {
+        background: rgba(139, 92, 246, 0.15);
         color: #8b5cf6;
     }
 
-    .chain-ethereum {
-        background: rgba(59, 130, 246, 0.2);
-        color: #3b82f6;
+    .badge-side-buy {
+        background: rgba(16, 185, 129, 0.15);
+        color: #10b981;
     }
 
-    .chain-bsc {
-        background: rgba(245, 158, 11, 0.2);
-        color: #f59e0b;
+    .badge-side-sell {
+        background: rgba(239, 68, 68, 0.15);
+        color: #ef4444;
     }
 
-    .wallet-address {
+    .position-stats {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+        margin-bottom: 14px;
+    }
+
+    .pos-stat {
+        background: var(--card-bg);
+        border-radius: 8px;
+        padding: 10px;
+        text-align: center;
+    }
+
+    .pos-stat-label {
+        font-size: 0.65rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        margin-bottom: 4px;
+    }
+
+    .pos-stat-value {
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .pos-stat-value.positive { color: #10b981; }
+    .pos-stat-value.negative { color: #ef4444; }
+
+    .position-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-top: 12px;
+        border-top: 1px solid var(--border-color);
+    }
+
+    .source-wallet {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+    }
+
+    .source-wallet i { color: #8b5cf6; }
+
+    .source-wallet span {
         font-family: monospace;
-        font-size: 0.8rem;
         color: #8b5cf6;
     }
 
-    .positive { color: #10b981; }
-    .negative { color: #ef4444; }
+    .position-time {
+        font-size: 0.7rem;
+        color: var(--text-secondary);
+    }
 
+    /* Empty State */
     .empty-state {
         text-align: center;
         padding: 60px 20px;
@@ -170,30 +317,16 @@
     .empty-state i {
         font-size: 3rem;
         margin-bottom: 16px;
-        opacity: 0.5;
+        opacity: 0.4;
     }
 
-    .btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 8px 16px;
-        border-radius: 6px;
-        font-size: 0.875rem;
-        font-weight: 500;
-        cursor: pointer;
-        border: none;
-        transition: all 0.2s;
+    .empty-state h3 {
+        color: var(--text-primary);
+        margin-bottom: 8px;
     }
 
-    .btn-secondary {
-        background: #374151;
-        color: #e5e7eb;
-    }
-
-    .btn:hover {
-        transform: translateY(-1px);
-    }
+    .positive { color: #10b981; }
+    .negative { color: #ef4444; }
 
     [data-theme="dark"] {
         --card-bg: #1f2937;
@@ -215,50 +348,63 @@
 
 {% block content %}
 <div class="page-container">
+    <!-- Header -->
     <div class="page-header">
         <div>
             <h1 class="page-title">
                 <i class="fas fa-layer-group"></i>
-                Active Copies
+                Active Positions
             </h1>
-            <p class="page-subtitle">Copied positions that are currently open</p>
+            <p class="page-subtitle">Open positions copied from tracked wallets</p>
         </div>
-        <button class="btn btn-secondary" onclick="loadPositions()">
-            <i class="fas fa-sync"></i> Refresh
-        </button>
+        <div class="header-actions">
+            <button class="btn btn-secondary" onclick="loadPositions()">
+                <i class="fas fa-sync"></i> Refresh
+            </button>
+            <a href="/copytrading/trades" class="btn btn-secondary">
+                <i class="fas fa-history"></i> Trade History
+            </a>
+        </div>
     </div>
 
-    <!-- Stats Row -->
+    <!-- Summary Stats -->
     <div class="stats-row">
-        <div class="stat-card">
+        <div class="stat-card purple">
             <div class="stat-label">Open Positions</div>
             <div class="stat-value" id="stat-open">0</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card blue">
             <div class="stat-label">Total Value</div>
             <div class="stat-value" id="stat-value">$0.00</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card green">
             <div class="stat-label">Unrealized P&L</div>
             <div class="stat-value" id="stat-pnl">$0.00</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card orange">
             <div class="stat-label">Avg P&L %</div>
             <div class="stat-value" id="stat-pnl-pct">0%</div>
         </div>
+        <div class="stat-card cyan">
+            <div class="stat-label">Source Wallets</div>
+            <div class="stat-value" id="stat-wallets">0</div>
+        </div>
     </div>
 
-    <!-- Positions Table -->
+    <!-- Positions Grid -->
     <div class="section-card">
-        <div class="section-title">
-            <i class="fas fa-copy"></i>
-            Open Copied Positions (<span id="position-count">0</span>)
+        <div class="section-header">
+            <div class="section-title">
+                <i class="fas fa-copy"></i>
+                Copied Positions
+                <span class="position-count" id="position-count">0</span>
+            </div>
         </div>
         <div id="positionsContainer">
             <div class="empty-state">
                 <i class="fas fa-inbox"></i>
-                <h3>No Active Copies</h3>
-                <p>Copied positions will appear here when wallets make trades.</p>
+                <h3>No Active Positions</h3>
+                <p>Copied positions will appear here when tracked wallets make trades</p>
             </div>
         </div>
     </div>
@@ -268,7 +414,6 @@
 async function loadPositions() {
     try {
         const response = await fetch('/api/copytrading/positions');
-        if (!response.ok) throw new Error('Failed to fetch positions');
         const data = await response.json();
 
         if (data.success && data.positions) {
@@ -294,85 +439,93 @@ function updatePositions(positions) {
         document.getElementById('stat-value').textContent = '$0.00';
         document.getElementById('stat-pnl').textContent = '$0.00';
         document.getElementById('stat-pnl-pct').textContent = '0%';
+        document.getElementById('stat-wallets').textContent = '0';
         return;
     }
 
-    // Calculate totals
+    // Calculate stats
     const totalValue = positions.reduce((a, p) => a + (p.entry_usd || 0), 0);
-    const totalPnl = positions.reduce((a, p) => a + (p.unrealized_pnl || 0), 0);
+    const totalPnl = positions.reduce((a, p) => a + (p.unrealized_pnl || p.profit_loss || 0), 0);
     const avgPnlPct = positions.reduce((a, p) => a + (p.unrealized_pnl_pct || 0), 0) / positions.length;
+    const uniqueWallets = [...new Set(positions.map(p => p.source_wallet).filter(Boolean))].length;
 
     document.getElementById('stat-value').textContent = '$' + totalValue.toFixed(2);
 
     const pnlEl = document.getElementById('stat-pnl');
-    pnlEl.textContent = (totalPnl >= 0 ? '+' : '') + '$' + totalPnl.toFixed(2);
+    pnlEl.textContent = (totalPnl >= 0 ? '+' : '') + '$' + Math.abs(totalPnl).toFixed(2);
     pnlEl.className = 'stat-value ' + (totalPnl >= 0 ? 'positive' : 'negative');
 
     const pnlPctEl = document.getElementById('stat-pnl-pct');
-    pnlPctEl.textContent = (avgPnlPct >= 0 ? '+' : '') + avgPnlPct.toFixed(2) + '%';
+    pnlPctEl.textContent = (avgPnlPct >= 0 ? '+' : '') + avgPnlPct.toFixed(1) + '%';
     pnlPctEl.className = 'stat-value ' + (avgPnlPct >= 0 ? 'positive' : 'negative');
 
-    // Build table
-    let html = `
-        <div class="table-responsive">
-            <table class="position-table">
-                <thead>
-                    <tr>
-                        <th>Token</th>
-                        <th>Chain</th>
-                        <th>Source Wallet</th>
-                        <th>Side</th>
-                        <th>Entry Price</th>
-                        <th>Current Price</th>
-                        <th>Amount</th>
-                        <th>Value (USD)</th>
-                        <th>Unrealized P&L</th>
-                        <th>Opened</th>
-                    </tr>
-                </thead>
-                <tbody>
-    `;
+    document.getElementById('stat-wallets').textContent = uniqueWallets;
+
+    // Build position cards
+    let html = '<div class="positions-grid">';
 
     positions.forEach(pos => {
-        const pnlClass = (pos.unrealized_pnl || 0) >= 0 ? 'positive' : 'negative';
-        const chainClass = pos.chain ? 'chain-' + pos.chain.toLowerCase() : 'chain-solana';
+        const pnl = pos.unrealized_pnl || pos.profit_loss || 0;
+        const pnlPct = pos.unrealized_pnl_pct || 0;
+        const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+        const chain = pos.chain || 'Solana';
+        const side = (pos.side || 'buy').toUpperCase();
+        const sideClass = side === 'SELL' ? 'badge-side-sell' : 'badge-side-buy';
+        const tokenSymbol = pos.symbol || (pos.token_address ? pos.token_address.substring(0, 6) : 'TOKEN');
+        const tokenInitial = tokenSymbol.substring(0, 2).toUpperCase();
 
         html += `
-            <tr>
-                <td>
-                    <div class="token-cell">
-                        <div>
-                            <div class="token-symbol">${pos.symbol || 'Token'}</div>
-                            <div class="token-address">${pos.token_address?.substring(0, 8) || ''}...</div>
+            <div class="position-card">
+                <div class="position-header">
+                    <div class="position-token">
+                        <div class="token-icon">${tokenInitial}</div>
+                        <div class="token-info">
+                            <h4>${tokenSymbol}</h4>
+                            <div class="token-address">${pos.token_address ? pos.token_address.substring(0, 12) + '...' : 'Unknown'}</div>
                         </div>
                     </div>
-                </td>
-                <td><span class="chain-badge ${chainClass}">${pos.chain || 'Solana'}</span></td>
-                <td>
-                    <span class="wallet-address">
-                        ${pos.source_wallet ? pos.source_wallet.substring(0, 8) + '...' : 'Unknown'}
-                    </span>
-                </td>
-                <td>${pos.side?.toUpperCase() || 'BUY'}</td>
-                <td>$${(pos.entry_price || 0).toFixed(6)}</td>
-                <td>$${(pos.current_price || pos.entry_price || 0).toFixed(6)}</td>
-                <td>${(pos.quantity || 0).toFixed(4)}</td>
-                <td>$${(pos.entry_usd || 0).toFixed(2)}</td>
-                <td class="${pnlClass}">
-                    ${(pos.unrealized_pnl || 0) >= 0 ? '+' : ''}$${(pos.unrealized_pnl || 0).toFixed(2)}
-                    (${(pos.unrealized_pnl_pct || 0) >= 0 ? '+' : ''}${(pos.unrealized_pnl_pct || 0).toFixed(2)}%)
-                </td>
-                <td>${pos.timestamp ? formatDate(pos.timestamp) : '-'}</td>
-            </tr>
+                    <div class="position-badges">
+                        <span class="badge badge-chain">${chain}</span>
+                        <span class="badge ${sideClass}">${side}</span>
+                    </div>
+                </div>
+
+                <div class="position-stats">
+                    <div class="pos-stat">
+                        <div class="pos-stat-label">Entry Price</div>
+                        <div class="pos-stat-value">$${(pos.entry_price || pos.price || 0).toFixed(6)}</div>
+                    </div>
+                    <div class="pos-stat">
+                        <div class="pos-stat-label">Current Price</div>
+                        <div class="pos-stat-value">$${(pos.current_price || pos.entry_price || 0).toFixed(6)}</div>
+                    </div>
+                    <div class="pos-stat">
+                        <div class="pos-stat-label">Position Size</div>
+                        <div class="pos-stat-value">$${(pos.entry_usd || 0).toFixed(2)}</div>
+                    </div>
+                    <div class="pos-stat">
+                        <div class="pos-stat-label">Unrealized P&L</div>
+                        <div class="pos-stat-value ${pnlClass}">
+                            ${pnl >= 0 ? '+' : ''}$${Math.abs(pnl).toFixed(2)}
+                            <small>(${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)</small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="position-footer">
+                    <div class="source-wallet">
+                        <i class="fas fa-user"></i>
+                        <span>${pos.source_wallet ? pos.source_wallet.substring(0, 8) + '...' : 'Unknown'}</span>
+                    </div>
+                    <div class="position-time">
+                        ${pos.timestamp ? formatTimeAgo(new Date(pos.timestamp)) : 'Recently'}
+                    </div>
+                </div>
+            </div>
         `;
     });
 
-    html += `
-                </tbody>
-            </table>
-        </div>
-    `;
-
+    html += '</div>';
     container.innerHTML = html;
 }
 
@@ -380,20 +533,23 @@ function showEmpty() {
     document.getElementById('positionsContainer').innerHTML = `
         <div class="empty-state">
             <i class="fas fa-inbox"></i>
-            <h3>No Active Copies</h3>
-            <p>Copied positions will appear here when wallets make trades.</p>
+            <h3>No Active Positions</h3>
+            <p>Copied positions will appear here when tracked wallets make trades</p>
+            <a href="/copytrading/wallets" class="btn btn-primary" style="margin-top: 16px;">
+                <i class="fas fa-wallet"></i> Manage Wallets
+            </a>
         </div>
     `;
 }
 
-function formatDate(isoString) {
-    const date = new Date(isoString);
-    return date.toLocaleDateString(undefined, {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-    });
+function formatTimeAgo(date) {
+    const now = new Date();
+    const diff = now - date;
+
+    if (diff < 60000) return 'Just now';
+    if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+    if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+    return Math.floor(diff / 86400000) + 'd ago';
 }
 
 // Load on page load
