@@ -365,7 +365,7 @@
         <div class="stat-card">
             <div class="stat-label">Trade Volume</div>
             <div class="stat-value" id="stat-volume">$0.00</div>
-            <div class="stat-change" id="stat-volume-eth">0.00 ETH</div>
+            <div class="stat-change" id="stat-volume-native">ETH: 0.00 | SOL: 0.00</div>
         </div>
 
         <div class="stat-card">
@@ -636,6 +636,7 @@ function updateStatsFromTrades(trades) {
     let totalPnl = 0;
     let totalVolume = 0;
     let totalEth = 0;
+    let totalSol = 0;
     let wins = 0;
     let losses = 0;
     let spreads = [];
@@ -645,7 +646,15 @@ function updateStatsFromTrades(trades) {
         const pnl = parseFloat(trade.profit_loss || 0);
         totalPnl += pnl;
         totalVolume += parseFloat(trade.entry_usd || 0);
-        totalEth += parseFloat(trade.amount_eth || 0);
+
+        // Track volume by chain
+        const chain = (trade.chain || 'ethereum').toLowerCase();
+        const amount = parseFloat(trade.amount_eth || trade.amount || 0);
+        if (chain === 'solana') {
+            totalSol += amount;
+        } else {
+            totalEth += amount;
+        }
 
         const spread = parseFloat(trade.spread_pct || 0);
         spreads.push(spread);
@@ -674,7 +683,7 @@ function updateStatsFromTrades(trades) {
     document.getElementById('stat-best-spread').textContent = `Best: ${bestSpread.toFixed(2)}%`;
 
     document.getElementById('stat-volume').textContent = `$${totalVolume.toFixed(2)}`;
-    document.getElementById('stat-volume-eth').textContent = `${totalEth.toFixed(4)} ETH`;
+    document.getElementById('stat-volume-native').textContent = `ETH: ${totalEth.toFixed(4)} | SOL: ${totalSol.toFixed(4)}`;
 }
 
 function updateTrades(trades) {
@@ -739,16 +748,23 @@ function renderTrades() {
         const pnl = parseFloat(trade.profit_loss || 0);
         const spread = parseFloat(trade.spread_pct || 0);
         const amount = parseFloat(trade.amount_eth || trade.amount || 0);
-        const ethPrice = parseFloat(trade.eth_price || 0);
+        const nativePrice = parseFloat(trade.eth_price || trade.sol_price || 0);
         const isDryRun = trade.dry_run || trade.is_simulated;
+
+        // Get chain and native symbol
+        const chain = (trade.chain || 'ethereum').toLowerCase();
+        const nativeSymbol = chain === 'solana' ? 'SOL' : 'ETH';
+        const chainBadge = chain === 'solana' ?
+            '<span class="chain-badge" style="background: rgba(153, 69, 255, 0.2); color: #9945ff;">SOL</span>' :
+            '<span class="chain-badge" style="background: rgba(98, 126, 234, 0.2); color: #627eea;">ETH</span>';
 
         // Get token symbol
         const token = trade.token_address || '';
         const tokenSymbol = getTokenSymbol(token);
         const shortToken = token.length > 10 ? `${token.slice(0, 6)}...${token.slice(-4)}` : token;
 
-        // Calculate approximate token size bought (ETH value / token price)
-        const tokenSize = ethPrice > 0 && spread > 0 ? (amount * ethPrice / (spread + 1)).toFixed(2) : '-';
+        // Calculate approximate token size bought
+        const tokenSize = nativePrice > 0 && spread > 0 ? (amount * nativePrice / (spread + 1)).toFixed(2) : '-';
 
         return `
             <tr>
@@ -758,15 +774,16 @@ function renderTrades() {
                     <div class="token-address">${shortToken}</div>
                 </td>
                 <td>
+                    ${chainBadge}
                     <span class="dex-badge">${trade.buy_dex || 'DEX'}</span>
                     <i class="fas fa-arrow-right" style="margin: 0 4px; color: var(--text-tertiary);"></i>
                     <span class="dex-badge">${trade.sell_dex || 'DEX'}</span>
                 </td>
-                <td>${amount.toFixed(4)} ETH</td>
+                <td>${amount.toFixed(4)} ${nativeSymbol}</td>
                 <td>${tokenSize !== '-' ? tokenSize : '-'}</td>
                 <td><span class="spread-badge">${spread.toFixed(2)}%</span></td>
                 <td class="${pnl >= 0 ? 'positive' : 'negative'}"><strong>$${pnl.toFixed(2)}</strong></td>
-                <td>$${ethPrice.toFixed(2)}</td>
+                <td>$${nativePrice.toFixed(2)}</td>
                 <td>${isDryRun ? '<span class="simulated-badge">SIMULATED</span>' : '<span class="dex-badge" style="background: rgba(16, 185, 129, 0.2); color: #10b981;">LIVE</span>'}</td>
             </tr>
         `;

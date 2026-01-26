@@ -3,30 +3,38 @@
 {% block title %}Copy Trading - Trade History{% endblock %}
 
 {% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
     .page-container {
         padding: 20px;
+        max-width: 1600px;
+        margin: 0 auto;
     }
 
     .page-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 20px;
+        margin-bottom: 24px;
         flex-wrap: wrap;
         gap: 16px;
     }
 
     .page-title {
-        font-size: 2rem;
+        font-size: 1.75rem;
         font-weight: 700;
         color: var(--text-primary);
-        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
     }
+
+    .page-title i { color: #8b5cf6; }
 
     .page-subtitle {
         color: var(--text-secondary);
-        font-size: 1rem;
+        font-size: 0.9rem;
+        margin-top: 4px;
     }
 
     .header-actions {
@@ -35,54 +43,34 @@
         flex-wrap: wrap;
     }
 
-    /* Filter Section */
-    .filters-section {
-        background: var(--card-bg);
-        border: 1px solid var(--border-color);
-        border-radius: 12px;
-        padding: 16px 20px;
-        margin-bottom: 20px;
-    }
-
-    .filters-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 16px;
-        align-items: flex-end;
-    }
-
-    .filter-group {
-        flex: 1;
-        min-width: 140px;
-    }
-
-    .filter-group label {
-        display: block;
-        font-size: 0.75rem;
-        color: var(--text-secondary);
-        text-transform: uppercase;
-        margin-bottom: 6px;
-        font-weight: 500;
-    }
-
-    .filter-group select,
-    .filter-group input {
-        width: 100%;
-        padding: 8px 12px;
-        border-radius: 6px;
-        border: 1px solid var(--border-color);
-        background: var(--input-bg);
-        color: var(--text-primary);
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 18px;
+        border-radius: 8px;
         font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s;
+        text-decoration: none;
     }
 
-    /* Stats Cards */
+    .btn-primary { background: linear-gradient(135deg, #8b5cf6, #6366f1); color: white; }
+    .btn-secondary { background: var(--metric-bg); color: var(--text-primary); border: 1px solid var(--border-color); }
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+
+    /* Stats Row */
     .stats-row {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-        gap: 12px;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 14px;
         margin-bottom: 20px;
     }
+
+    @media (max-width: 1200px) { .stats-row { grid-template-columns: repeat(3, 1fr); } }
+    @media (max-width: 768px) { .stats-row { grid-template-columns: repeat(2, 1fr); } }
 
     .stat-card {
         background: var(--card-bg);
@@ -93,7 +81,7 @@
     }
 
     .stat-label {
-        font-size: 0.7rem;
+        font-size: 0.65rem;
         color: var(--text-secondary);
         text-transform: uppercase;
         margin-bottom: 4px;
@@ -108,7 +96,81 @@
     .stat-value.positive { color: #10b981; }
     .stat-value.negative { color: #ef4444; }
 
-    /* Section Card */
+    /* Filters */
+    .filters-section {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 20px;
+    }
+
+    .filters-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: flex-end;
+    }
+
+    .filter-group {
+        flex: 1;
+        min-width: 120px;
+    }
+
+    .filter-group label {
+        display: block;
+        font-size: 0.7rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        margin-bottom: 4px;
+    }
+
+    .filter-group select,
+    .filter-group input {
+        width: 100%;
+        padding: 8px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border-color);
+        background: var(--metric-bg);
+        color: var(--text-primary);
+        font-size: 0.85rem;
+    }
+
+    /* Mini Charts */
+    .chart-row {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 16px;
+        margin-bottom: 20px;
+    }
+
+    @media (max-width: 900px) { .chart-row { grid-template-columns: 1fr; } }
+
+    .mini-chart-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 16px;
+    }
+
+    .mini-chart-title {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .mini-chart-title i { color: #8b5cf6; font-size: 0.8rem; }
+
+    .mini-chart-container {
+        height: 150px;
+        position: relative;
+    }
+
+    /* Table Section */
     .section-card {
         background: var(--card-bg);
         border: 1px solid var(--border-color);
@@ -116,140 +178,137 @@
         padding: 20px;
     }
 
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+    }
+
     .section-title {
-        font-size: 1.1rem;
+        font-size: 1rem;
         font-weight: 600;
         color: var(--text-primary);
-        margin-bottom: 16px;
         display: flex;
         align-items: center;
         gap: 8px;
     }
 
-    /* Table */
-    .table-responsive {
+    .section-title i { color: #8b5cf6; }
+
+    .trade-count {
+        background: rgba(139, 92, 246, 0.15);
+        color: #8b5cf6;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .table-wrapper {
         overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
+        max-height: 500px;
+        overflow-y: auto;
     }
 
     .trades-table {
         width: 100%;
         border-collapse: collapse;
-        min-width: 900px;
+        min-width: 1000px;
     }
 
     .trades-table th {
         background: var(--metric-bg);
         padding: 10px 8px;
         text-align: left;
+        font-size: 0.7rem;
         font-weight: 600;
         color: var(--text-secondary);
-        font-size: 0.7rem;
         text-transform: uppercase;
         white-space: nowrap;
+        position: sticky;
+        top: 0;
         cursor: pointer;
     }
 
-    .trades-table th:hover {
-        background: var(--border-color);
-    }
+    .trades-table th:hover { background: var(--border-color); }
 
     .trades-table td {
-        padding: 10px 8px;
+        padding: 12px 8px;
         border-bottom: 1px solid var(--border-color);
         font-size: 0.85rem;
         white-space: nowrap;
     }
 
-    .trades-table tr:hover {
-        background: var(--metric-bg);
-    }
+    .trades-table tr:hover { background: var(--metric-bg); }
 
     .token-cell {
         display: flex;
-        flex-direction: column;
+        align-items: center;
+        gap: 8px;
     }
 
-    .token-symbol {
+    .token-icon-small {
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
+        background: linear-gradient(135deg, #8b5cf6, #6366f1);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 0.7rem;
+        font-weight: 700;
+    }
+
+    .token-info-cell h5 {
+        margin: 0;
+        font-size: 0.85rem;
         font-weight: 600;
         color: var(--text-primary);
     }
 
-    .token-address {
+    .token-address-small {
         font-family: monospace;
-        font-size: 0.7rem;
+        font-size: 0.65rem;
         color: var(--text-secondary);
     }
 
-    .wallet-address {
-        font-family: monospace;
-        font-size: 0.8rem;
-        color: #8b5cf6;
-    }
-
-    .chain-badge {
+    .badge {
         display: inline-block;
-        padding: 2px 6px;
+        padding: 3px 8px;
         border-radius: 4px;
         font-size: 0.65rem;
         font-weight: 600;
         text-transform: uppercase;
     }
 
-    .chain-solana { background: rgba(139, 92, 246, 0.2); color: #8b5cf6; }
-    .chain-ethereum { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
-    .chain-bsc { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .badge-chain { background: rgba(139, 92, 246, 0.15); color: #8b5cf6; }
+    .badge-solana { background: rgba(139, 92, 246, 0.15); color: #8b5cf6; }
+    .badge-ethereum { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+    .badge-bsc { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+    .badge-buy { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+    .badge-sell { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+    .badge-open { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+    .badge-closed { background: rgba(107, 114, 128, 0.15); color: #9ca3af; }
+    .badge-dry { background: rgba(139, 92, 246, 0.15); color: #8b5cf6; }
+    .badge-live { background: rgba(16, 185, 129, 0.15); color: #10b981; }
 
-    .side-badge {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-size: 0.7rem;
-        font-weight: 600;
-    }
-
-    .side-buy { background: rgba(16, 185, 129, 0.2); color: #10b981; }
-    .side-sell { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
-
-    .status-badge {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-size: 0.7rem;
-        font-weight: 600;
-    }
-
-    .status-open { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
-    .status-closed { background: rgba(107, 114, 128, 0.2); color: #9ca3af; }
-
-    .dry-run-badge {
-        background: rgba(139, 92, 246, 0.2);
+    .wallet-link {
+        font-family: monospace;
+        font-size: 0.8rem;
         color: #8b5cf6;
-        padding: 2px 6px;
-        border-radius: 4px;
-        font-size: 0.65rem;
+        text-decoration: none;
+    }
+
+    .wallet-link:hover { text-decoration: underline; }
+
+    .pnl-cell {
         font-weight: 600;
     }
 
-    .positive { color: #10b981; }
-    .negative { color: #ef4444; }
-
-    .btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 8px 16px;
-        border-radius: 6px;
-        font-size: 0.875rem;
-        font-weight: 500;
-        cursor: pointer;
-        border: none;
-        transition: all 0.2s;
-    }
-
-    .btn-secondary { background: #374151; color: #e5e7eb; }
-    .btn-primary { background: linear-gradient(135deg, #8b5cf6, #6366f1); color: white; }
-    .btn:hover { transform: translateY(-1px); }
+    .pnl-cell.positive { color: #10b981; }
+    .pnl-cell.negative { color: #ef4444; }
 
     .empty-state {
         text-align: center;
@@ -260,39 +319,37 @@
     .empty-state i {
         font-size: 3rem;
         margin-bottom: 16px;
-        opacity: 0.5;
+        opacity: 0.4;
+    }
+
+    .empty-state h3 {
+        color: var(--text-primary);
+        margin-bottom: 8px;
     }
 
     .pagination {
         display: flex;
         justify-content: center;
-        gap: 8px;
-        margin-top: 20px;
+        gap: 6px;
+        margin-top: 16px;
     }
 
     .pagination button {
-        padding: 8px 12px;
+        padding: 6px 12px;
         border: 1px solid var(--border-color);
         background: var(--card-bg);
         color: var(--text-primary);
         border-radius: 6px;
         cursor: pointer;
+        font-size: 0.8rem;
     }
 
-    .pagination button:hover {
-        background: var(--metric-bg);
-    }
+    .pagination button:hover { background: var(--metric-bg); }
+    .pagination button.active { background: #8b5cf6; color: white; border-color: #8b5cf6; }
+    .pagination button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    .pagination button.active {
-        background: #8b5cf6;
-        color: white;
-        border-color: #8b5cf6;
-    }
-
-    .pagination button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
+    .positive { color: #10b981; }
+    .negative { color: #ef4444; }
 
     [data-theme="dark"] {
         --card-bg: #1f2937;
@@ -300,7 +357,6 @@
         --text-primary: #f9fafb;
         --text-secondary: #9ca3af;
         --metric-bg: #111827;
-        --input-bg: #374151;
     }
 
     [data-theme="light"] {
@@ -309,75 +365,27 @@
         --text-primary: #111827;
         --text-secondary: #6b7280;
         --metric-bg: #f3f4f6;
-        --input-bg: #ffffff;
     }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="page-container">
+    <!-- Header -->
     <div class="page-header">
         <div>
             <h1 class="page-title">
                 <i class="fas fa-history"></i>
-                Copy Trading History
+                Trade History
             </h1>
-            <p class="page-subtitle">Complete history of copied trades</p>
+            <p class="page-subtitle">Complete history of copied trades from tracked wallets</p>
         </div>
         <div class="header-actions">
             <button class="btn btn-secondary" onclick="loadTrades()">
                 <i class="fas fa-sync"></i> Refresh
             </button>
             <button class="btn btn-secondary" onclick="exportCSV()">
-                <i class="fas fa-file-csv"></i> Export CSV
-            </button>
-        </div>
-    </div>
-
-    <!-- Filters -->
-    <div class="filters-section">
-        <div class="filters-row">
-            <div class="filter-group">
-                <label>Chain</label>
-                <select id="filterChain" onchange="applyFilters()">
-                    <option value="">All Chains</option>
-                    <option value="solana">Solana</option>
-                    <option value="ethereum">Ethereum</option>
-                    <option value="bsc">BSC</option>
-                </select>
-            </div>
-            <div class="filter-group">
-                <label>Side</label>
-                <select id="filterSide" onchange="applyFilters()">
-                    <option value="">All</option>
-                    <option value="buy">Buy</option>
-                    <option value="sell">Sell</option>
-                </select>
-            </div>
-            <div class="filter-group">
-                <label>Status</label>
-                <select id="filterStatus" onchange="applyFilters()">
-                    <option value="">All</option>
-                    <option value="open">Open</option>
-                    <option value="closed">Closed</option>
-                </select>
-            </div>
-            <div class="filter-group">
-                <label>Source Wallet</label>
-                <select id="filterWallet" onchange="applyFilters()">
-                    <option value="">All Wallets</option>
-                </select>
-            </div>
-            <div class="filter-group">
-                <label>Result</label>
-                <select id="filterResult" onchange="applyFilters()">
-                    <option value="">All</option>
-                    <option value="profit">Profit</option>
-                    <option value="loss">Loss</option>
-                </select>
-            </div>
-            <button class="btn btn-secondary" onclick="resetFilters()">
-                <i class="fas fa-undo"></i> Reset
+                <i class="fas fa-download"></i> Export CSV
             </button>
         </div>
     </div>
@@ -410,17 +418,80 @@
         </div>
     </div>
 
+    <!-- Filters -->
+    <div class="filters-section">
+        <div class="filters-row">
+            <div class="filter-group">
+                <label>Chain</label>
+                <select id="filterChain" onchange="applyFilters()">
+                    <option value="">All Chains</option>
+                    <option value="solana">Solana</option>
+                    <option value="ethereum">Ethereum</option>
+                    <option value="bsc">BSC</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Side</label>
+                <select id="filterSide" onchange="applyFilters()">
+                    <option value="">All</option>
+                    <option value="buy">Buy</option>
+                    <option value="sell">Sell</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Status</label>
+                <select id="filterStatus" onchange="applyFilters()">
+                    <option value="">All</option>
+                    <option value="open">Open</option>
+                    <option value="closed">Closed</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Result</label>
+                <select id="filterResult" onchange="applyFilters()">
+                    <option value="">All</option>
+                    <option value="profit">Profit</option>
+                    <option value="loss">Loss</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Source Wallet</label>
+                <select id="filterWallet" onchange="applyFilters()">
+                    <option value="">All Wallets</option>
+                </select>
+            </div>
+            <button class="btn btn-secondary" onclick="resetFilters()" style="height: 38px;">
+                <i class="fas fa-undo"></i> Reset
+            </button>
+        </div>
+    </div>
+
+    <!-- Mini Charts -->
+    <div class="chart-row">
+        <div class="mini-chart-card">
+            <div class="mini-chart-title"><i class="fas fa-chart-line"></i> Cumulative P&L</div>
+            <div class="mini-chart-container"><canvas id="pnlChart"></canvas></div>
+        </div>
+        <div class="mini-chart-card">
+            <div class="mini-chart-title"><i class="fas fa-chart-bar"></i> Daily Trade Count</div>
+            <div class="mini-chart-container"><canvas id="countChart"></canvas></div>
+        </div>
+    </div>
+
     <!-- Trades Table -->
     <div class="section-card">
-        <div class="section-title">
-            <i class="fas fa-list"></i>
-            Trade History (<span id="trade-count">0</span> trades)
+        <div class="section-header">
+            <div class="section-title">
+                <i class="fas fa-list"></i>
+                Trade Log
+                <span class="trade-count" id="trade-count">0</span>
+            </div>
         </div>
         <div id="tradesContainer">
             <div class="empty-state">
                 <i class="fas fa-inbox"></i>
                 <h3>No Trades Yet</h3>
-                <p>Copied trades will appear here.</p>
+                <p>Copied trades will appear here when wallets make trades</p>
             </div>
         </div>
         <div class="pagination" id="pagination" style="display: none;"></div>
@@ -434,6 +505,8 @@ let currentPage = 1;
 const tradesPerPage = 50;
 let sortColumn = 'timestamp';
 let sortDirection = 'desc';
+let pnlChart = null;
+let countChart = null;
 
 async function loadTrades() {
     try {
@@ -454,14 +527,13 @@ async function loadTrades() {
 }
 
 function populateWalletFilter(trades) {
-    const walletSelect = document.getElementById('filterWallet');
+    const select = document.getElementById('filterWallet');
     const wallets = [...new Set(trades.map(t => t.source_wallet).filter(Boolean))];
 
-    // Clear and repopulate
-    walletSelect.innerHTML = '<option value="">All Wallets</option>';
-    wallets.forEach(wallet => {
-        const shortWallet = wallet.length > 14 ? wallet.substring(0, 8) + '...' + wallet.slice(-6) : wallet;
-        walletSelect.innerHTML += `<option value="${wallet}">${shortWallet}</option>`;
+    select.innerHTML = '<option value="">All Wallets</option>';
+    wallets.forEach(w => {
+        const short = w.length > 14 ? w.substring(0, 8) + '...' + w.slice(-6) : w;
+        select.innerHTML += `<option value="${w}">${short}</option>`;
     });
 }
 
@@ -469,41 +541,34 @@ function applyFilters() {
     const chain = document.getElementById('filterChain').value.toLowerCase();
     const side = document.getElementById('filterSide').value.toLowerCase();
     const status = document.getElementById('filterStatus').value.toLowerCase();
-    const wallet = document.getElementById('filterWallet').value;
     const result = document.getElementById('filterResult').value.toLowerCase();
+    const wallet = document.getElementById('filterWallet').value;
 
-    filteredTrades = allTrades.filter(trade => {
-        if (chain && (trade.chain || '').toLowerCase() !== chain) return false;
-        if (side && (trade.side || '').toLowerCase() !== side) return false;
-        if (status && (trade.status || '').toLowerCase() !== status) return false;
-        if (wallet && trade.source_wallet !== wallet) return false;
-        if (result === 'profit' && (trade.profit_loss || 0) <= 0) return false;
-        if (result === 'loss' && (trade.profit_loss || 0) >= 0) return false;
+    filteredTrades = allTrades.filter(t => {
+        if (chain && (t.chain || '').toLowerCase() !== chain) return false;
+        if (side && (t.side || '').toLowerCase() !== side) return false;
+        if (status && (t.status || '').toLowerCase() !== status) return false;
+        if (wallet && t.source_wallet !== wallet) return false;
+        if (result === 'profit' && (t.profit_loss || 0) <= 0) return false;
+        if (result === 'loss' && (t.profit_loss || 0) >= 0) return false;
         return true;
     });
 
     // Sort
     filteredTrades.sort((a, b) => {
-        let aVal = a[sortColumn];
-        let bVal = b[sortColumn];
-
+        let aVal = a[sortColumn], bVal = b[sortColumn];
         if (sortColumn === 'timestamp') {
             aVal = new Date(aVal || 0).getTime();
             bVal = new Date(bVal || 0).getTime();
         }
-
         if (typeof aVal === 'string') aVal = aVal.toLowerCase();
         if (typeof bVal === 'string') bVal = bVal.toLowerCase();
-
-        if (sortDirection === 'asc') {
-            return aVal > bVal ? 1 : -1;
-        } else {
-            return aVal < bVal ? 1 : -1;
-        }
+        return sortDirection === 'asc' ? (aVal > bVal ? 1 : -1) : (aVal < bVal ? 1 : -1);
     });
 
     currentPage = 1;
     updateStats(filteredTrades);
+    updateCharts(filteredTrades);
     renderTrades();
 }
 
@@ -511,8 +576,8 @@ function resetFilters() {
     document.getElementById('filterChain').value = '';
     document.getElementById('filterSide').value = '';
     document.getElementById('filterStatus').value = '';
-    document.getElementById('filterWallet').value = '';
     document.getElementById('filterResult').value = '';
+    document.getElementById('filterWallet').value = '';
     applyFilters();
 }
 
@@ -529,19 +594,87 @@ function updateStats(trades) {
     document.getElementById('stat-winrate').textContent = winRate.toFixed(1) + '%';
 
     const pnlEl = document.getElementById('stat-pnl');
-    pnlEl.textContent = (totalPnl >= 0 ? '+' : '') + '$' + totalPnl.toFixed(2);
+    pnlEl.textContent = (totalPnl >= 0 ? '+' : '') + '$' + Math.abs(totalPnl).toFixed(2);
     pnlEl.className = 'stat-value ' + (totalPnl >= 0 ? 'positive' : 'negative');
 
     const avgEl = document.getElementById('stat-avg');
-    avgEl.textContent = (avgTrade >= 0 ? '+' : '') + '$' + avgTrade.toFixed(2);
+    avgEl.textContent = (avgTrade >= 0 ? '+' : '') + '$' + Math.abs(avgTrade).toFixed(2);
     avgEl.className = 'stat-value ' + (avgTrade >= 0 ? 'positive' : 'negative');
+}
+
+function updateCharts(trades) {
+    // Group by date
+    const dailyData = {};
+    trades.forEach(t => {
+        if (t.timestamp) {
+            const date = new Date(t.timestamp).toLocaleDateString('en-CA');
+            if (!dailyData[date]) dailyData[date] = { count: 0, pnl: 0 };
+            dailyData[date].count++;
+            dailyData[date].pnl += (t.profit_loss || 0);
+        }
+    });
+
+    const dates = Object.keys(dailyData).sort();
+    const counts = dates.map(d => dailyData[d].count);
+
+    let cumPnl = 0;
+    const cumPnls = dates.map(d => { cumPnl += dailyData[d].pnl; return cumPnl; });
+
+    // P&L Chart
+    const pnlCtx = document.getElementById('pnlChart').getContext('2d');
+    if (pnlChart) pnlChart.destroy();
+    pnlChart = new Chart(pnlCtx, {
+        type: 'line',
+        data: {
+            labels: dates,
+            datasets: [{
+                data: cumPnls,
+                borderColor: cumPnl >= 0 ? '#10b981' : '#ef4444',
+                backgroundColor: cumPnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+                fill: true,
+                tension: 0.4,
+                pointRadius: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { display: false },
+                y: { grid: { color: 'rgba(148,163,184,0.1)' }, ticks: { color: '#94a3b8', callback: v => '$' + v } }
+            }
+        }
+    });
+
+    // Count Chart
+    const countCtx = document.getElementById('countChart').getContext('2d');
+    if (countChart) countChart.destroy();
+    countChart = new Chart(countCtx, {
+        type: 'bar',
+        data: {
+            labels: dates,
+            datasets: [{
+                data: counts,
+                backgroundColor: '#8b5cf6',
+                borderRadius: 3
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { display: false },
+                y: { beginAtZero: true, grid: { color: 'rgba(148,163,184,0.1)' }, ticks: { color: '#94a3b8' } }
+            }
+        }
+    });
 }
 
 function renderTrades() {
     const container = document.getElementById('tradesContainer');
-    const countEl = document.getElementById('trade-count');
-
-    countEl.textContent = filteredTrades.length;
+    document.getElementById('trade-count').textContent = filteredTrades.length;
 
     if (filteredTrades.length === 0) {
         showEmpty();
@@ -550,11 +683,10 @@ function renderTrades() {
     }
 
     const startIdx = (currentPage - 1) * tradesPerPage;
-    const endIdx = startIdx + tradesPerPage;
-    const pageTrades = filteredTrades.slice(startIdx, endIdx);
+    const pageTrades = filteredTrades.slice(startIdx, startIdx + tradesPerPage);
 
     let html = `
-        <div class="table-responsive">
+        <div class="table-wrapper">
             <table class="trades-table">
                 <thead>
                     <tr>
@@ -563,8 +695,7 @@ function renderTrades() {
                         <th onclick="sortBy('chain')">Chain</th>
                         <th onclick="sortBy('source_wallet')">Source Wallet</th>
                         <th onclick="sortBy('side')">Side</th>
-                        <th onclick="sortBy('entry_price')">Entry Price</th>
-                        <th onclick="sortBy('entry_usd')">Value (USD)</th>
+                        <th onclick="sortBy('entry_usd')">Value</th>
                         <th onclick="sortBy('profit_loss')">P&L</th>
                         <th onclick="sortBy('status')">Status</th>
                         <th>Mode</th>
@@ -573,81 +704,67 @@ function renderTrades() {
                 <tbody>
     `;
 
-    pageTrades.forEach(trade => {
-        const pnlClass = (trade.profit_loss || 0) >= 0 ? 'positive' : 'negative';
-        const chainClass = 'chain-' + (trade.chain || 'solana').toLowerCase();
-        const sideClass = 'side-' + (trade.side || 'buy').toLowerCase();
-        const statusClass = 'status-' + (trade.status || 'closed').toLowerCase();
+    pageTrades.forEach(t => {
+        const pnl = t.profit_loss || 0;
+        const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+        const chain = (t.chain || 'solana').toLowerCase();
+        const side = (t.side || 'buy').toLowerCase();
+        const status = (t.status || 'closed').toLowerCase();
+        const symbol = t.symbol || (t.token_address ? t.token_address.substring(0, 8) : 'Token');
+        const initials = symbol.substring(0, 2).toUpperCase();
 
         html += `
             <tr>
-                <td>${trade.timestamp ? formatDate(trade.timestamp) : '-'}</td>
+                <td>${t.timestamp ? formatDate(t.timestamp) : '-'}</td>
                 <td>
                     <div class="token-cell">
-                        <span class="token-symbol">${trade.symbol || 'Token'}</span>
-                        <span class="token-address">${trade.token_address?.substring(0, 12) || ''}...</span>
+                        <div class="token-icon-small">${initials}</div>
+                        <div class="token-info-cell">
+                            <h5>${symbol}</h5>
+                            <div class="token-address-small">${t.token_address ? t.token_address.substring(0, 12) + '...' : '-'}</div>
+                        </div>
                     </div>
                 </td>
-                <td><span class="chain-badge ${chainClass}">${trade.chain || 'Solana'}</span></td>
+                <td><span class="badge badge-${chain}">${chain.toUpperCase()}</span></td>
                 <td>
-                    <span class="wallet-address">
-                        ${trade.source_wallet ? trade.source_wallet.substring(0, 8) + '...' : '-'}
-                    </span>
+                    <a href="https://solscan.io/account/${t.source_wallet}" target="_blank" class="wallet-link">
+                        ${t.source_wallet ? t.source_wallet.substring(0, 8) + '...' : '-'}
+                    </a>
                 </td>
-                <td><span class="side-badge ${sideClass}">${(trade.side || 'BUY').toUpperCase()}</span></td>
-                <td>$${(trade.native_price || trade.entry_price || 0).toFixed(2)}</td>
-                <td>$${(trade.entry_usd || trade.usd_value || 0).toFixed(2)}</td>
-                <td class="${pnlClass}">
-                    ${(trade.profit_loss || 0) >= 0 ? '+' : ''}$${(trade.profit_loss || 0).toFixed(2)}
-                    ${trade.profit_pct ? '(' + (trade.profit_pct >= 0 ? '+' : '') + trade.profit_pct.toFixed(1) + '%)' : ''}
+                <td><span class="badge badge-${side}">${side.toUpperCase()}</span></td>
+                <td>$${(t.entry_usd || t.usd_value || 0).toFixed(2)}</td>
+                <td class="pnl-cell ${pnlClass}">
+                    ${pnl >= 0 ? '+' : ''}$${Math.abs(pnl).toFixed(2)}
+                    ${t.profit_pct ? '<small>(' + (t.profit_pct >= 0 ? '+' : '') + t.profit_pct.toFixed(1) + '%)</small>' : ''}
                 </td>
-                <td><span class="status-badge ${statusClass}">${(trade.status || 'Closed').toUpperCase()}</span></td>
-                <td>${trade.dry_run ? '<span class="dry-run-badge">DRY RUN</span>' : 'LIVE'}</td>
+                <td><span class="badge badge-${status}">${status.toUpperCase()}</span></td>
+                <td><span class="badge ${t.dry_run ? 'badge-dry' : 'badge-live'}">${t.dry_run ? 'DRY RUN' : 'LIVE'}</span></td>
             </tr>
         `;
     });
 
-    html += `
-                </tbody>
-            </table>
-        </div>
-    `;
-
+    html += '</tbody></table></div>';
     container.innerHTML = html;
     renderPagination();
 }
 
 function renderPagination() {
     const totalPages = Math.ceil(filteredTrades.length / tradesPerPage);
-    const paginationEl = document.getElementById('pagination');
+    const pag = document.getElementById('pagination');
 
-    if (totalPages <= 1) {
-        paginationEl.style.display = 'none';
-        return;
-    }
+    if (totalPages <= 1) { pag.style.display = 'none'; return; }
 
-    paginationEl.style.display = 'flex';
+    pag.style.display = 'flex';
+    let html = `<button onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}><i class="fas fa-chevron-left"></i></button>`;
 
-    let html = `
-        <button onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>
-            <i class="fas fa-chevron-left"></i>
-        </button>
-    `;
-
-    const startPage = Math.max(1, currentPage - 2);
-    const endPage = Math.min(totalPages, currentPage + 2);
-
-    for (let i = startPage; i <= endPage; i++) {
+    const start = Math.max(1, currentPage - 2);
+    const end = Math.min(totalPages, currentPage + 2);
+    for (let i = start; i <= end; i++) {
         html += `<button onclick="goToPage(${i})" class="${i === currentPage ? 'active' : ''}">${i}</button>`;
     }
 
-    html += `
-        <button onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>
-            <i class="fas fa-chevron-right"></i>
-        </button>
-    `;
-
-    paginationEl.innerHTML = html;
+    html += `<button onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}><i class="fas fa-chevron-right"></i></button>`;
+    pag.innerHTML = html;
 }
 
 function goToPage(page) {
@@ -657,13 +774,9 @@ function goToPage(page) {
     renderTrades();
 }
 
-function sortBy(column) {
-    if (sortColumn === column) {
-        sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
-    } else {
-        sortColumn = column;
-        sortDirection = 'desc';
-    }
+function sortBy(col) {
+    if (sortColumn === col) sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+    else { sortColumn = col; sortDirection = 'desc'; }
     applyFilters();
 }
 
@@ -672,35 +785,26 @@ function showEmpty() {
         <div class="empty-state">
             <i class="fas fa-inbox"></i>
             <h3>No Trades Found</h3>
-            <p>Copied trades will appear here.</p>
+            <p>Copied trades will appear here when wallets make trades</p>
         </div>
     `;
 }
 
-function formatDate(isoString) {
-    const date = new Date(isoString);
-    return date.toLocaleDateString(undefined, {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-    });
+function formatDate(iso) {
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 function exportCSV() {
-    if (filteredTrades.length === 0) {
-        alert('No trades to export');
-        return;
-    }
+    if (filteredTrades.length === 0) { alert('No trades to export'); return; }
 
-    const headers = ['Timestamp', 'Token', 'Chain', 'Source Wallet', 'Side', 'Entry Price', 'Value USD', 'P&L', 'P&L %', 'Status', 'Mode'];
+    const headers = ['Timestamp', 'Token', 'Chain', 'Source Wallet', 'Side', 'Value USD', 'P&L', 'P&L %', 'Status', 'Mode'];
     const rows = filteredTrades.map(t => [
         t.timestamp || '',
         t.token_address || '',
         t.chain || 'Solana',
         t.source_wallet || '',
         t.side || 'buy',
-        t.entry_price || 0,
         t.entry_usd || 0,
         t.profit_loss || 0,
         t.profit_pct || 0,
@@ -709,9 +813,7 @@ function exportCSV() {
     ]);
 
     let csv = headers.join(',') + '\n';
-    rows.forEach(row => {
-        csv += row.map(val => `"${val}"`).join(',') + '\n';
-    });
+    rows.forEach(r => { csv += r.map(v => `"${v}"`).join(',') + '\n'; });
 
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
