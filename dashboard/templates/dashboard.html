@@ -62,6 +62,9 @@
             Trading Status
         </h3>
         <div class="card-actions">
+            <button class="btn btn-sm btn-warning" onclick="reconcileDexPositions()" title="Close stale positions older than 7 days">
+                <i class="fas fa-broom"></i> Reconcile P&L
+            </button>
             <button class="btn btn-sm btn-secondary" onclick="refreshBlockStatus()">
                 <i class="fas fa-sync"></i> Refresh
             </button>
@@ -632,6 +635,19 @@
     border-left: 4px solid #ef4444;
 }
 
+.block-status-header.standalone {
+    border-left: 4px solid #f59e0b;
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.1), var(--bg-tertiary));
+}
+
+.status-icon.warning {
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+}
+
+.status-value.warning {
+    color: #f59e0b;
+}
+
 .status-indicator {
     display: flex;
     align-items: center;
@@ -1034,24 +1050,42 @@ function renderBlockStatus(data) {
     const container = document.getElementById('blockStatusContent');
     const canTrade = data.can_trade;
     const reasons = data.reasons || [];
+    const moduleStatus = data.module_status || 'unknown';
+    const isStandalone = moduleStatus === 'standalone' || moduleStatus === 'offline';
 
     let html = '<div class="block-status-container">';
 
+    // Determine status style and text
+    let statusClass, iconClass, statusText;
+    if (canTrade) {
+        statusClass = 'can-trade';
+        iconClass = 'success';
+        statusText = 'Active - Can Trade';
+    } else if (isStandalone) {
+        statusClass = 'standalone';
+        iconClass = 'warning';
+        statusText = 'Standalone Dashboard - Historical Data Only';
+    } else {
+        statusClass = 'blocked';
+        iconClass = 'danger';
+        statusText = 'Blocked - Cannot Trade';
+    }
+
     // Status Header
     html += `
-        <div class="block-status-header ${canTrade ? 'can-trade' : 'blocked'}">
+        <div class="block-status-header ${statusClass}">
             <div class="status-indicator">
-                <div class="status-icon ${canTrade ? 'success' : 'danger'}">
-                    <i class="fas fa-${canTrade ? 'check' : 'ban'}"></i>
+                <div class="status-icon ${iconClass}">
+                    <i class="fas fa-${canTrade ? 'check' : (isStandalone ? 'database' : 'ban')}"></i>
                 </div>
                 <div class="status-text">
                     <span class="status-label">Trading Status</span>
-                    <span class="status-value ${canTrade ? 'success' : 'danger'}">
-                        ${canTrade ? 'Active - Can Trade' : 'Blocked - Cannot Trade'}
+                    <span class="status-value ${iconClass}">
+                        ${statusText}
                     </span>
                 </div>
             </div>
-            ${!canTrade ? `
+            ${!canTrade && !isStandalone ? `
                 <button class="reset-block-btn" onclick="resetTradingBlock()">
                     <i class="fas fa-unlock"></i>
                     Reset Block
@@ -1182,6 +1216,31 @@ function refreshBlockStatus() {
     const content = document.getElementById('blockStatusContent');
     content.innerHTML = '<div class="text-center text-muted"><i class="fas fa-spinner fa-spin"></i> Refreshing...</div>';
     loadBlockStatus();
+}
+
+// Reconcile stale DEX positions
+async function reconcileDexPositions() {
+    if (!confirm('This will close stale positions older than 7 days with estimated P&L.\n\nActive positions will be preserved.\n\nContinue?')) {
+        return;
+    }
+
+    try {
+        showToast('info', 'Reconciling stale positions...');
+        const response = await apiPost('/api/dex/reconcile', {});
+
+        if (response.success) {
+            const stats = response.stats || {};
+            showToast('success', `Reconciled ${stats.positions_closed || 0} positions. P&L: $${(stats.total_estimated_pnl || 0).toFixed(2)}`);
+            // Refresh the block status and positions
+            refreshBlockStatus();
+            loadOpenPositions();
+        } else {
+            showToast('error', response.error || 'Failed to reconcile');
+        }
+    } catch (error) {
+        console.error('Error reconciling:', error);
+        showToast('error', 'Failed to reconcile: ' + error.message);
+    }
 }
 
 // Dashboard-specific JavaScript

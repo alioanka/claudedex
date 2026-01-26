@@ -394,18 +394,35 @@ async function updateBotStatus() {
 
         if (data.success && data.data) {
             const status = data.data;
-            // ✅ FIX: Check if bot is running (handle both boolean and string)
-            const isRunning = status.running === true || status.running === 'running' || status.running === 'active';
-            state.botStatus = isRunning ? 'online' : 'offline';
-            
+            // ✅ FIX: Check if DEX module is running (handle both boolean and string)
+            const isDexRunning = status.running === true || status.running === 'running' || status.running === 'active';
+            // ✅ NEW: Check if dashboard is at least running (standalone mode)
+            const isDashboardRunning = status.dashboard_running === true;
+            const dexModuleStatus = status.dex_module_status || 'offline';
+
+            // Show online if DEX is running, show "Dashboard Only" if only dashboard is running
+            if (isDexRunning) {
+                state.botStatus = 'online';
+            } else if (isDashboardRunning) {
+                state.botStatus = 'partial';  // Dashboard running but DEX offline
+            } else {
+                state.botStatus = 'offline';
+            }
+
             const statusIndicator = document.getElementById('botStatus');
             if (statusIndicator) {
-                statusIndicator.classList.remove('online', 'offline');
+                statusIndicator.classList.remove('online', 'offline', 'partial');
                 statusIndicator.classList.add(state.botStatus);
-                
+
                 const statusText = statusIndicator.querySelector('.status-text');
                 if (statusText) {
-                    statusText.textContent = isRunning ? 'Bot Running' : 'Bot Stopped';
+                    if (isDexRunning) {
+                        statusText.textContent = 'Bot Running';
+                    } else if (isDashboardRunning) {
+                        statusText.textContent = 'Dashboard Only';
+                    } else {
+                        statusText.textContent = 'Bot Stopped';
+                    }
                 }
             }
         } else {
@@ -413,7 +430,7 @@ async function updateBotStatus() {
             state.botStatus = 'offline';
             const statusIndicator = document.getElementById('botStatus');
             if (statusIndicator) {
-                statusIndicator.classList.remove('online');
+                statusIndicator.classList.remove('online', 'partial');
                 statusIndicator.classList.add('offline');
                 const statusText = statusIndicator.querySelector('.status-text');
                 if (statusText) {
@@ -427,7 +444,7 @@ async function updateBotStatus() {
         state.botStatus = 'offline';
         const statusIndicator = document.getElementById('botStatus');
         if (statusIndicator) {
-            statusIndicator.classList.remove('online');
+            statusIndicator.classList.remove('online', 'partial');
             statusIndicator.classList.add('offline');
             const statusText = statusIndicator.querySelector('.status-text');
             if (statusText) {
