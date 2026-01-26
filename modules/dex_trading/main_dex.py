@@ -485,20 +485,28 @@ class TradingBotApplication:
             await self.analytics_engine.initialize()
             self.logger.info("✅ Analytics engine initialized")
 
-            self.dashboard = DashboardEndpoints(
-                host="0.0.0.0",
-                port=8080,
-                config=nested_config,
-                trading_engine=self.engine,
-                portfolio_manager=self.portfolio_manager,
-                order_manager=self.order_manager,
-                risk_manager=self.risk_manager,
-                alerts_system=self.alerts_system,
-                config_manager=self.config_manager,
-                db_manager=self.db_manager,
-                analytics_engine=self.analytics_engine
-            )
-            self.logger.info("Enhanced dashboard initialized")
+            # Check if standalone dashboard is running (started by orchestrator)
+            # If so, skip dashboard in DEX module to avoid port conflict
+            self.standalone_dashboard_enabled = os.getenv('DASHBOARD_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes')
+
+            if self.standalone_dashboard_enabled:
+                self.logger.info("ℹ️  Standalone dashboard is enabled - skipping DEX dashboard")
+                self.dashboard = None
+            else:
+                self.dashboard = DashboardEndpoints(
+                    host="0.0.0.0",
+                    port=8080,
+                    config=nested_config,
+                    trading_engine=self.engine,
+                    portfolio_manager=self.portfolio_manager,
+                    order_manager=self.order_manager,
+                    risk_manager=self.risk_manager,
+                    alerts_system=self.alerts_system,
+                    config_manager=self.config_manager,
+                    db_manager=self.db_manager,
+                    analytics_engine=self.analytics_engine
+                )
+                self.logger.info("Enhanced dashboard initialized")
 
             self.logger.info("Starting health monitoring...")
             self.health_checker = HealthChecker(self.engine)
@@ -605,10 +613,13 @@ class TradingBotApplication:
                 asyncio.create_task(self.engine.run()),
                 asyncio.create_task(self.health_checker.monitor()),
                 asyncio.create_task(self._status_reporter()),
-                asyncio.create_task(self.dashboard.start()),
                 asyncio.create_task(self._shutdown_monitor()),
                 asyncio.create_task(self._position_monitor())
             ]
+
+            # Only start dashboard if standalone dashboard is NOT enabled
+            if self.dashboard and not getattr(self, 'standalone_dashboard_enabled', False):
+                tasks.append(asyncio.create_task(self.dashboard.start()))
 
             done, pending = await asyncio.wait(
                 tasks,

@@ -262,6 +262,7 @@ class ModuleProcess:
     # API keys (OpenAI, Binance, etc.) are checked by modules themselves during initialization,
     # as they may be stored in the encrypted database.
     REQUIRED_SECRETS = {
+        'dashboard': [],  # Dashboard only needs database
         'dex': [],      # Private key is in encrypted database
         'futures': [],  # Exchange API keys are in encrypted database
         'solana': [],   # Private key is in encrypted database
@@ -288,7 +289,11 @@ class ModuleProcess:
 
     def is_enabled(self) -> bool:
         """Check if module is enabled via environment variable"""
-        enabled = os.getenv(self.enabled_env_var, 'false').lower()
+        # Dashboard is enabled by default unless explicitly disabled
+        if self.module_key == 'dashboard':
+            enabled = os.getenv(self.enabled_env_var, 'true').lower()
+        else:
+            enabled = os.getenv(self.enabled_env_var, 'false').lower()
         return enabled in ('true', '1', 'yes')
 
     def validate_secrets(self) -> Tuple[bool, List[str]]:
@@ -310,8 +315,8 @@ class ModuleProcess:
             if not _check_encryption_key():
                 errors.append("Missing ENCRYPTION_KEY: No .encryption_key file or ENCRYPTION_KEY env var")
 
-        # Check database credentials (required for most modules)
-        needs_database = module_key in ('dex', 'futures', 'solana', 'sniper', 'copy_trading', 'arbitrage')
+        # Check database credentials (required for most modules, including dashboard)
+        needs_database = module_key in ('dashboard', 'dex', 'futures', 'solana', 'sniper', 'copy_trading', 'arbitrage')
         if needs_database:
             if not _check_database_credentials():
                 errors.append("Missing Database Credentials: No Docker secrets or DATABASE_URL/DB_PASSWORD env var")
@@ -460,7 +465,16 @@ class TradingBotOrchestrator:
         self.shutdown_event = asyncio.Event()
         self.health_check_interval = 60  # seconds
 
-        # Define modules
+        # Dashboard module - ALWAYS starts first, independent of trading modules
+        # This ensures the dashboard is accessible even if trading modules fail
+        self.modules['dashboard'] = ModuleProcess(
+            name="Dashboard",
+            script_path="modules/dashboard/main_dashboard.py",
+            enabled_env_var="DASHBOARD_MODULE_ENABLED",
+            module_key="dashboard"
+        )
+
+        # Define trading modules
         self.modules['dex'] = ModuleProcess(
             name="DEX Trading",
             script_path="modules/dex_trading/main_dex.py",
@@ -528,13 +542,43 @@ class TradingBotOrchestrator:
         logger.info("")
 
         started_count = 0
+        dashboard_started = False
+
+        # Start dashboard FIRST so it's always accessible
+        if 'dashboard' in self.modules:
+            dashboard = self.modules['dashboard']
+            logger.info("📊 Starting Dashboard (independent of trading modules)...")
+            if await dashboard.start():
+                started_count += 1
+                dashboard_started = True
+                # CRITICAL: Set environment variable so other modules know dashboard is running
+                # This prevents DEX module from starting its own dashboard on port 8080
+                os.environ['DASHBOARD_MODULE_ENABLED'] = 'true'
+                logger.info("✅ Dashboard is accessible at http://0.0.0.0:8080")
+                # Give dashboard a moment to start before other modules
+                await asyncio.sleep(2)
+            else:
+                # Dashboard failed - allow DEX module to start its own dashboard
+                os.environ['DASHBOARD_MODULE_ENABLED'] = 'false'
+                logger.warning("⚠️  Dashboard failed to start, continuing with trading modules...")
+
+        # Start trading modules
         for name, module in self.modules.items():
+            if name == 'dashboard':
+                continue  # Already started
             if await module.start():
                 started_count += 1
 
+        # If only dashboard started, that's still a success (users can access settings)
         if started_count == 0:
             logger.error("❌ No modules started!")
             return False
+        elif started_count == 1 and dashboard_started:
+            logger.info("")
+            logger.info("⚠️  Only Dashboard started - trading modules are disabled or failed")
+            logger.info("💡 Dashboard is accessible for configuration and monitoring")
+            logger.info("=" * 80)
+            return True
 
         logger.info("")
         logger.info(f"✅ Started {started_count}/{len(self.modules)} module(s)")

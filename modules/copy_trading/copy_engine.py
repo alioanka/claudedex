@@ -720,7 +720,7 @@ class CopyTradingEngine:
             return False
 
     async def _execute_evm_copy_trade(self, source_tx, method_name: str):
-        """Execute the same trade on EVM"""
+        """Execute the same trade on EVM - handles both BUY and SELL"""
         tx_hash = source_tx.get('hash', 'unknown')
         logger.info(f"🚀 Copying EVM trade {tx_hash} ({method_name})")
 
@@ -729,6 +729,12 @@ class CopyTradingEngine:
             # For swapExactETHForTokens, the token is in the path (input data)
             input_data = source_tx.get('input', '')
             original_value = int(source_tx.get('value', 0))
+
+            # Detect trade direction based on method name
+            # BUY: swapExactETHForTokens, swapETHForExactTokens
+            # SELL: swapExactTokensForETH, swapTokensForExactETH
+            is_buy = 'ForTokens' in method_name
+            side = 'buy' if is_buy else 'sell'
 
             # Calculate copy amount (ratio of original)
             copy_amount = min(
@@ -755,19 +761,21 @@ class CopyTradingEngine:
                 logger.warning("Could not extract token address from tx")
                 return
 
+            logger.info(f"👯 Detected {side.upper()} trade for token {token_address[:20]}...")
+
             # Execute copy trade
             result = await self.executor.copy_evm_swap(
                 token_address=token_address,
                 amount_wei=copy_amount,
-                is_buy='ForTokens' in method_name
+                is_buy=is_buy
             )
 
             if result.get('success'):
                 logger.info(f"✅ EVM Copy Trade {'Executed' if not self.dry_run else 'Simulated'}: {result.get('tx_hash')}")
 
-                # Log to database with source wallet
+                # Log to database with source wallet and proper side
                 source_wallet = source_tx.get('from', '')
-                await self._log_copy_trade('ethereum', tx_hash, result, source_wallet)
+                await self._log_copy_trade('ethereum', tx_hash, result, source_wallet, side=side, token_address=token_address)
             else:
                 logger.error(f"❌ EVM Copy Trade Failed: {result.get('error')}")
 
@@ -850,8 +858,8 @@ class CopyTradingEngine:
             return False
 
     async def _execute_solana_copy_trade(self, wallet: str, signature: str, tx_data: dict):
-        """Execute the same trade on Solana"""
-        logger.info(f"🚀 Copying Solana trade {signature[:20]}...")
+        """Execute the same trade on Solana - handles both BUY and SELL"""
+        logger.info(f"🚀 Analyzing Solana trade {signature[:20]}...")
 
         try:
             # Extract token mints from transaction
@@ -859,55 +867,94 @@ class CopyTradingEngine:
             post_balances = meta.get('postTokenBalances', [])
             pre_balances = meta.get('preTokenBalances', [])
 
-            # Find the tokens involved
-            input_mint = WSOL_MINT  # Default to SOL
-            output_mint = None
+            # Analyze balance changes to determine trade direction
+            # BUY: SOL decreases, Token increases
+            # SELL: SOL increases, Token decreases
 
-            pre_mints = {b.get('mint') for b in pre_balances}
+            pre_mints = {b.get('mint'): b for b in pre_balances}
+            post_mints = {b.get('mint'): b for b in post_balances}
 
-            for balance in post_balances:
-                mint = balance.get('mint')
-                if mint and mint != WSOL_MINT and mint not in pre_mints:
-                    output_mint = mint
-                    break
+            # Find the token involved (not SOL)
+            token_mint = None
+            is_buy = True  # Default to BUY
 
-            if not output_mint:
-                # Try to find any non-SOL token
-                for balance in post_balances:
-                    mint = balance.get('mint')
-                    if mint and mint != WSOL_MINT:
-                        output_mint = mint
+            # Check for new tokens in post (BUY - receiving new token)
+            for mint, balance in post_mints.items():
+                if mint and mint != WSOL_MINT:
+                    if mint not in pre_mints:
+                        # New token acquired = BUY
+                        token_mint = mint
+                        is_buy = True
                         break
+                    else:
+                        # Token existed before, check if balance increased or decreased
+                        pre_amount = float(pre_mints[mint].get('uiTokenAmount', {}).get('uiAmount', 0) or 0)
+                        post_amount = float(balance.get('uiTokenAmount', {}).get('uiAmount', 0) or 0)
+                        if post_amount > pre_amount:
+                            token_mint = mint
+                            is_buy = True
+                            break
+                        elif post_amount < pre_amount:
+                            token_mint = mint
+                            is_buy = False
+                            break
 
-            if not output_mint:
-                logger.warning("Could not extract output token from tx")
+            # Check for tokens that disappeared (SELL - token balance went to 0)
+            if not token_mint:
+                for mint, balance in pre_mints.items():
+                    if mint and mint != WSOL_MINT:
+                        pre_amount = float(balance.get('uiTokenAmount', {}).get('uiAmount', 0) or 0)
+                        post_amount = 0
+                        if mint in post_mints:
+                            post_amount = float(post_mints[mint].get('uiTokenAmount', {}).get('uiAmount', 0) or 0)
+                        if pre_amount > 0 and post_amount < pre_amount:
+                            token_mint = mint
+                            is_buy = False
+                            break
+
+            if not token_mint:
+                logger.warning("Could not extract token from tx - skipping")
                 return
 
+            side = 'buy' if is_buy else 'sell'
+            logger.info(f"👯 Detected {side.upper()} trade for token {token_mint[:16]}...")
+
             # Calculate copy amount
-            # Get SOL price and calculate based on max_copy_amount
-            sol_price = 200  # Placeholder, in production fetch real price
+            sol_price = await self.executor.price_fetcher.get_price('sol') if self.executor else 200
             copy_lamports = int(min(self.max_copy_amount / sol_price, 0.1) * 1e9)
 
-            # Execute copy trade
-            result = await self.executor.copy_solana_swap(
-                input_mint=input_mint,
-                output_mint=output_mint,
-                amount_lamports=copy_lamports
-            )
+            if is_buy:
+                # Execute BUY copy trade
+                result = await self.executor.copy_solana_swap(
+                    input_mint=WSOL_MINT,
+                    output_mint=token_mint,
+                    amount_lamports=copy_lamports
+                )
+            else:
+                # For SELL, we don't actually execute a sell (we might not have the position)
+                # But we DO record the source wallet's sell to close their position
+                result = {
+                    'success': True,
+                    'tx_hash': f"SELL_TRACKED_{signature[:16]}",
+                    'output_mint': token_mint,
+                    'amount': copy_lamports,
+                    'is_sell_tracking': True
+                }
 
             if result.get('success'):
-                logger.info(f"✅ Solana Copy Trade {'Executed' if not self.dry_run else 'Simulated'}: {result.get('tx_hash')}")
+                action = 'Tracked' if result.get('is_sell_tracking') else ('Executed' if not self.dry_run else 'Simulated')
+                logger.info(f"✅ Solana Copy Trade {action}: {result.get('tx_hash')}")
 
-                # Log to database with source wallet
-                await self._log_copy_trade('solana', signature, result, wallet)
+                # Log to database with proper side (BUY or SELL)
+                await self._log_copy_trade('solana', signature, result, wallet, side=side, token_address=token_mint)
             else:
                 logger.error(f"❌ Solana Copy Trade Failed: {result.get('error')}")
 
         except Exception as e:
             logger.error(f"Error executing Solana copy trade: {e}")
 
-    async def _log_copy_trade(self, chain: str, source_tx: str, result: Dict, source_wallet: str = None):
-        """Log copy trade to database"""
+    async def _log_copy_trade(self, chain: str, source_tx: str, result: Dict, source_wallet: str = None, side: str = 'buy', token_address: str = None):
+        """Log copy trade to database with P&L calculation for sells"""
         if not self.db_pool:
             return
 
@@ -920,54 +967,93 @@ class CopyTradingEngine:
             if chain == 'solana':
                 # Convert lamports to SOL, get real price
                 amount_native = amount / 1e9
-                native_price = await self.executor.price_fetcher.get_price('sol')
+                native_price = await self.executor.price_fetcher.get_price('sol') if self.executor else 200
                 usd_value = amount_native * native_price
-                entry_price = native_price
             else:
                 # Convert wei to ETH, get real price
                 amount_native = amount / 1e18
-                native_price = await self.executor.price_fetcher.get_price('eth')
+                native_price = await self.executor.price_fetcher.get_price('eth') if self.executor else 3000
                 usd_value = amount_native * native_price
-                entry_price = native_price
 
-            token_address = result.get('output_mint') or result.get('token', 'UNKNOWN')
+            token_addr = token_address or result.get('output_mint') or result.get('token', 'UNKNOWN')
             trade_id = f"copy_{uuid.uuid4().hex[:12]}"
-            logger.info(f"💰 Trade value: {amount_native:.4f} {'SOL' if chain == 'solana' else 'ETH'} @ ${entry_price:.2f} = ${usd_value:.2f}")
+
+            logger.info(f"💰 {side.upper()} Trade: {amount_native:.4f} {'SOL' if chain == 'solana' else 'ETH'} @ ${native_price:.2f} = ${usd_value:.2f}")
 
             async with self.db_pool.acquire() as conn:
-                # Insert into dedicated copytrading_trades table
-                await conn.execute("""
-                    INSERT INTO copytrading_trades (
-                        trade_id, token_address, chain, source_wallet, source_tx,
-                        side, entry_price, exit_price, amount,
-                        entry_usd, exit_usd, profit_loss, profit_loss_pct,
-                        status, is_simulated, entry_timestamp,
-                        tx_hash, native_price_at_trade, metadata
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
-                """,
-                    trade_id,
-                    token_address,
-                    chain,
-                    source_wallet or 'unknown',
-                    source_tx,
-                    'buy',
-                    entry_price,
-                    entry_price,  # Same as entry for now (position still open)
-                    amount_native,
-                    usd_value,
-                    0.0,  # Exit USD - will be set on exit
-                    0.0,  # No profit yet - will be calculated on exit
-                    0.0,
-                    'open' if result.get('success') else 'failed',
-                    self.dry_run,
-                    now,
-                    result.get('tx_hash'),
-                    native_price,
-                    json.dumps({
-                        'dry_run': self.dry_run
-                    })
-                )
-                logger.debug(f"💾 Logged to copytrading_trades: {trade_id}")
+                if side == 'sell':
+                    # SELL: Find matching open BUY position and close it with P&L
+                    open_trade = await conn.fetchrow("""
+                        SELECT trade_id, entry_usd, entry_price, amount, entry_timestamp
+                        FROM copytrading_trades
+                        WHERE source_wallet = $1
+                          AND token_address = $2
+                          AND status = 'open'
+                          AND side = 'buy'
+                        ORDER BY entry_timestamp ASC
+                        LIMIT 1
+                    """, source_wallet or 'unknown', token_addr)
+
+                    if open_trade:
+                        # Found matching open position - close it with P&L
+                        entry_usd = float(open_trade['entry_usd'])
+                        exit_usd = usd_value
+                        profit_loss = exit_usd - entry_usd
+                        profit_loss_pct = ((exit_usd / entry_usd) - 1) * 100 if entry_usd > 0 else 0
+
+                        # Update the existing trade to closed status with P&L
+                        await conn.execute("""
+                            UPDATE copytrading_trades
+                            SET status = 'closed',
+                                exit_price = $1,
+                                exit_usd = $2,
+                                profit_loss = $3,
+                                profit_loss_pct = $4,
+                                exit_timestamp = $5
+                            WHERE trade_id = $6
+                        """, native_price, exit_usd, profit_loss, profit_loss_pct, now, open_trade['trade_id'])
+
+                        pnl_emoji = "📈" if profit_loss >= 0 else "📉"
+                        logger.info(f"{pnl_emoji} Position CLOSED: P&L ${profit_loss:.2f} ({profit_loss_pct:.1f}%) for {token_addr[:16]}...")
+                        logger.debug(f"💾 Updated trade {open_trade['trade_id']} to closed status")
+                    else:
+                        # No matching open position - log as a standalone sell
+                        logger.info(f"⚠️ No matching open position found for {token_addr[:16]}... - logging as standalone sell")
+                        await conn.execute("""
+                            INSERT INTO copytrading_trades (
+                                trade_id, token_address, chain, source_wallet, source_tx,
+                                side, entry_price, exit_price, amount,
+                                entry_usd, exit_usd, profit_loss, profit_loss_pct,
+                                status, is_simulated, entry_timestamp, exit_timestamp,
+                                tx_hash, native_price_at_trade, metadata
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                        """,
+                            trade_id, token_addr, chain, source_wallet or 'unknown', source_tx,
+                            'sell', native_price, native_price, amount_native,
+                            0.0, usd_value, 0.0, 0.0,
+                            'closed', self.dry_run, now, now,
+                            result.get('tx_hash'), native_price,
+                            json.dumps({'dry_run': self.dry_run, 'no_matching_buy': True})
+                        )
+                else:
+                    # BUY: Record new open position
+                    await conn.execute("""
+                        INSERT INTO copytrading_trades (
+                            trade_id, token_address, chain, source_wallet, source_tx,
+                            side, entry_price, exit_price, amount,
+                            entry_usd, exit_usd, profit_loss, profit_loss_pct,
+                            status, is_simulated, entry_timestamp,
+                            tx_hash, native_price_at_trade, metadata
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                    """,
+                        trade_id, token_addr, chain, source_wallet or 'unknown', source_tx,
+                        'buy', native_price, 0.0, amount_native,
+                        usd_value, 0.0, 0.0, 0.0,
+                        'open' if result.get('success') else 'failed', self.dry_run, now,
+                        result.get('tx_hash'), native_price,
+                        json.dumps({'dry_run': self.dry_run})
+                    )
+                    logger.debug(f"💾 Logged BUY to copytrading_trades: {trade_id}")
 
                 # Update wallet stats if source_wallet provided
                 if source_wallet and result.get('success'):
