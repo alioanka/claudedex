@@ -434,6 +434,9 @@
             <button class="btn btn-secondary" onclick="loadDashboard()">
                 <i class="fas fa-sync"></i> Refresh
             </button>
+            <button class="btn btn-warning" onclick="reconcileTrades()" id="reconcileBtn">
+                <i class="fas fa-calculator"></i> Reconcile P&L
+            </button>
             <a href="/copytrading/discovery" class="btn btn-primary">
                 <i class="fas fa-search-plus"></i> Find Wallets
             </a>
@@ -573,6 +576,39 @@ let pnlChart = null;
 let copiesChart = null;
 let winLossChart = null;
 let chainChart = null;
+
+// Reconcile P&L for all Copy Trading trades
+async function reconcileTrades() {
+    const btn = document.getElementById('reconcileBtn');
+    const originalText = btn.innerHTML;
+
+    try {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Reconciling...';
+
+        const response = await fetch('/api/copytrading/reconcile', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            const msg = `Reconciled ${data.reconciled || 0} trades. Total P&L: $${(data.total_pnl || 0).toFixed(2)}`;
+            alert('✅ ' + msg);
+            // Reload dashboard to show updated data
+            loadDashboard();
+        } else {
+            alert('❌ Reconciliation failed: ' + (data.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Reconcile error:', error);
+        alert('❌ Error: ' + error.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+}
 
 async function loadDashboard() {
     try {
