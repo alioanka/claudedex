@@ -81,10 +81,21 @@ class StandaloneDashboard:
         logger.info("=" * 80)
 
         try:
+            # Build database config from environment
+            db_config = {
+                'DB_HOST': os.getenv('DB_HOST', 'postgres'),
+                'DB_PORT': int(os.getenv('DB_PORT', 5432)),
+                'DB_NAME': os.getenv('DB_NAME', 'tradingbot'),
+                'DB_USER': os.getenv('DB_USER', 'bot_user'),
+                'DB_PASSWORD': os.getenv('DB_PASSWORD', ''),
+                'DB_POOL_MIN': 5,
+                'DB_POOL_MAX': 10,
+            }
+
             # Initialize database connection
             logger.info("Connecting to database...")
             from data.storage.database import DatabaseManager
-            self.db_manager = DatabaseManager()
+            self.db_manager = DatabaseManager(db_config)
             await self.db_manager.connect()
             logger.info("✅ Database connected")
 
