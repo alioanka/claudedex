@@ -329,9 +329,12 @@
             </h1>
             <p class="dashboard-subtitle">Cross-DEX arbitrage trading - instant buy/sell opportunities</p>
         </div>
-        <div>
+        <div style="display: flex; gap: 10px;">
             <button class="btn btn-secondary" onclick="location.reload()">
                 <i class="fas fa-sync"></i> Refresh
+            </button>
+            <button class="btn btn-warning" onclick="reconcileArbitrageTrades()" id="reconcileBtn">
+                <i class="fas fa-calculator"></i> Reconcile P&L
             </button>
         </div>
     </div>
@@ -467,6 +470,39 @@
 </div>
 
 <script>
+// Reconcile P&L for all Arbitrage trades
+async function reconcileArbitrageTrades() {
+    const btn = document.getElementById('reconcileBtn');
+    const originalText = btn.innerHTML;
+
+    try {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Reconciling...';
+
+        const response = await fetch('/api/arbitrage/reconcile', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            const msg = `Reconciled ${data.reconciled || 0} trades. Total P&L: $${(data.total_pnl || 0).toFixed(2)}`;
+            alert('✅ ' + msg);
+            // Reload page to show updated data
+            location.reload();
+        } else {
+            alert('❌ Reconciliation failed: ' + (data.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Reconcile error:', error);
+        alert('❌ Error: ' + error.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+}
+
 // Token address to symbol mapping
 const TOKEN_SYMBOLS = {
     '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2': 'WETH',
