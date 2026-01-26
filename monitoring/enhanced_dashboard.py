@@ -507,6 +507,13 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/solana/trading/status', self.api_solana_trading_status)
         self.app.router.add_post('/api/solana/trading/unblock', self.api_solana_trading_unblock)
 
+        # API - DEX Module (proxy to DEX health server when standalone dashboard)
+        self.app.router.add_get('/api/dex/stats', self.api_dex_stats)
+        self.app.router.add_get('/api/dex/positions', self.api_dex_positions)
+        self.app.router.add_get('/api/dex/block-status', self.api_dex_block_status)
+        self.app.router.add_get('/api/dex/trading/status', self.api_dex_trading_status)
+        self.app.router.add_post('/api/dex/trading/unblock', self.api_dex_trading_unblock)
+
         # API - Sensitive Configuration (Admin only)
         self.app.router.add_get('/api/settings/sensitive/list', require_auth(require_admin(self.api_list_sensitive_configs)))
         self.app.router.add_get('/api/settings/sensitive/{key}', require_auth(require_admin(self.api_get_sensitive_config)))
@@ -4116,6 +4123,22 @@ class DashboardEndpoints:
     async def api_get_block_status(self, request):
         """Get detailed information about why trading is blocked"""
         try:
+            # FIRST: Try to get live data from DEX health server (when standalone dashboard)
+            # This provides real-time data from the running DEX module
+            if not self.engine:
+                try:
+                    dex_port = int(os.getenv('DEX_HEALTH_PORT', '8085'))
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(f'http://localhost:{dex_port}/block-status', timeout=3) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                logger.debug("Got block status from DEX health server")
+                                return web.json_response(data)
+                except aiohttp.ClientConnectorError:
+                    logger.debug("DEX health server not available, falling back to database")
+                except Exception as e:
+                    logger.debug(f"Error contacting DEX health server: {e}")
+
             # CRITICAL FIX: Use engine's portfolio manager (the one actually updated by trades)
             # The self.portfolio passed from main_dex is a DIFFERENT instance than engine.portfolio_manager
             portfolio_mgr = None
@@ -5213,6 +5236,130 @@ class DashboardEndpoints:
             return web.json_response({
                 'success': False,
                 'error': f'Solana module not available: {str(e)}'
+            }, status=503)
+
+    # ========== DEX Health Server Proxy Methods ==========
+
+    async def api_dex_stats(self, request):
+        """Fetch stats from DEX module health server"""
+        try:
+            dex_port = int(os.getenv('DEX_HEALTH_PORT', '8085'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{dex_port}/stats', timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return web.json_response(data)
+                    else:
+                        return web.json_response({
+                            'success': False,
+                            'error': f'DEX module returned status {resp.status}'
+                        }, status=resp.status)
+        except aiohttp.ClientConnectorError:
+            return web.json_response({
+                'success': False,
+                'error': 'DEX module health server not available',
+                'data': {'status': 'Offline', 'module': 'dex'}
+            }, status=503)
+        except Exception as e:
+            logger.error(f"Error getting DEX stats: {e}")
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def api_dex_positions(self, request):
+        """Fetch positions from DEX module health server"""
+        try:
+            dex_port = int(os.getenv('DEX_HEALTH_PORT', '8085'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{dex_port}/positions', timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return web.json_response(data)
+                    else:
+                        return web.json_response({
+                            'success': False,
+                            'error': f'DEX module returned status {resp.status}'
+                        }, status=resp.status)
+        except aiohttp.ClientConnectorError:
+            # Fallback to database
+            return await self.api_open_positions(request)
+        except Exception as e:
+            logger.error(f"Error getting DEX positions: {e}")
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def api_dex_block_status(self, request):
+        """Fetch block status from DEX module health server"""
+        try:
+            dex_port = int(os.getenv('DEX_HEALTH_PORT', '8085'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{dex_port}/block-status', timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return web.json_response(data)
+                    else:
+                        return web.json_response({
+                            'success': False,
+                            'error': f'DEX module returned status {resp.status}'
+                        }, status=resp.status)
+        except aiohttp.ClientConnectorError:
+            # Fallback to existing api_get_block_status (database mode)
+            return await self.api_get_block_status(request)
+        except Exception as e:
+            logger.error(f"Error getting DEX block status: {e}")
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def api_dex_trading_status(self, request):
+        """Fetch trading status from DEX module health server"""
+        try:
+            dex_port = int(os.getenv('DEX_HEALTH_PORT', '8085'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{dex_port}/trading/status', timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return web.json_response(data)
+                    else:
+                        return web.json_response({
+                            'success': False,
+                            'error': f'DEX module returned status {resp.status}'
+                        }, status=resp.status)
+        except aiohttp.ClientConnectorError:
+            return web.json_response({
+                'success': True,
+                'data': {
+                    'running': False,
+                    'module': 'dex',
+                    'can_trade': False,
+                    'active_positions': 0,
+                    'status': 'DEX health server not available'
+                }
+            })
+        except Exception as e:
+            logger.error(f"Error getting DEX trading status: {e}")
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def api_dex_trading_unblock(self, request):
+        """Unblock DEX trading by resetting daily loss/consecutive losses"""
+        try:
+            dex_port = int(os.getenv('DEX_HEALTH_PORT', '8085'))
+            data = await request.json() if request.content_length else {}
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f'http://localhost:{dex_port}/trading/unblock',
+                    json=data,
+                    timeout=5
+                ) as resp:
+                    result = await resp.json()
+                    return web.json_response(result, status=resp.status)
+
+        except aiohttp.ClientConnectorError:
+            return web.json_response({
+                'success': False,
+                'error': 'DEX module health server not available. Cannot unblock trading remotely.'
+            }, status=503)
+        except Exception as e:
+            logger.error(f"Error unblocking DEX trading: {e}")
+            return web.json_response({
+                'success': False,
+                'error': f'DEX module not available: {str(e)}'
             }, status=503)
 
     async def api_list_sensitive_configs(self, request):
