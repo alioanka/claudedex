@@ -8,181 +8,317 @@
 <style>
     .page-container {
         padding: 20px;
+        max-width: 1600px;
+        margin: 0 auto;
     }
 
     .page-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 30px;
+        margin-bottom: 24px;
         flex-wrap: wrap;
         gap: 16px;
     }
 
     .page-title {
-        font-size: 2rem;
+        font-size: 1.75rem;
         font-weight: 700;
         color: var(--text-primary);
-        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
     }
+
+    .page-title i { color: #8b5cf6; }
 
     .page-subtitle {
         color: var(--text-secondary);
-        font-size: 1rem;
+        font-size: 0.9rem;
+        margin-top: 4px;
     }
 
-    .stats-grid {
+    .header-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 18px;
+        border-radius: 8px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s;
+        text-decoration: none;
+    }
+
+    .btn-primary { background: linear-gradient(135deg, #8b5cf6, #6366f1); color: white; }
+    .btn-secondary { background: var(--metric-bg); color: var(--text-primary); border: 1px solid var(--border-color); }
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+
+    /* Hero Stats */
+    .hero-stats {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: 16px;
-        margin-bottom: 30px;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 14px;
+        margin-bottom: 24px;
     }
 
-    .stat-card {
+    @media (max-width: 1200px) { .hero-stats { grid-template-columns: repeat(3, 1fr); } }
+    @media (max-width: 768px) { .hero-stats { grid-template-columns: repeat(2, 1fr); } }
+
+    .hero-stat {
         background: var(--card-bg);
         border: 1px solid var(--border-color);
         border-radius: 12px;
-        padding: 16px;
+        padding: 18px;
+        position: relative;
+        overflow: hidden;
     }
 
-    .stat-label {
-        font-size: 0.75rem;
+    .hero-stat::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+    }
+
+    .hero-stat.purple::before { background: linear-gradient(90deg, #8b5cf6, #a78bfa); }
+    .hero-stat.blue::before { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
+    .hero-stat.green::before { background: linear-gradient(90deg, #10b981, #34d399); }
+    .hero-stat.red::before { background: linear-gradient(90deg, #ef4444, #f87171); }
+    .hero-stat.orange::before { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+    .hero-stat.cyan::before { background: linear-gradient(90deg, #06b6d4, #22d3ee); }
+
+    .hero-stat-icon {
+        width: 38px;
+        height: 38px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1rem;
+        margin-bottom: 10px;
+    }
+
+    .hero-stat.purple .hero-stat-icon { background: rgba(139, 92, 246, 0.15); color: #8b5cf6; }
+    .hero-stat.blue .hero-stat-icon { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+    .hero-stat.green .hero-stat-icon { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+    .hero-stat.red .hero-stat-icon { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+    .hero-stat.orange .hero-stat-icon { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+    .hero-stat.cyan .hero-stat-icon { background: rgba(6, 182, 212, 0.15); color: #06b6d4; }
+
+    .hero-stat-label {
+        font-size: 0.65rem;
         color: var(--text-secondary);
         text-transform: uppercase;
-        margin-bottom: 6px;
-        font-weight: 500;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
     }
 
-    .stat-value {
-        font-size: 1.5rem;
+    .hero-stat-value {
+        font-size: 1.4rem;
         font-weight: 700;
         color: var(--text-primary);
     }
 
-    .stat-value.positive { color: #10b981; }
-    .stat-value.negative { color: #ef4444; }
+    .hero-stat-value.positive { color: #10b981; }
+    .hero-stat-value.negative { color: #ef4444; }
 
-    .grid-2 {
+    /* Risk Metrics */
+    .risk-metrics {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-        gap: 24px;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
         margin-bottom: 24px;
     }
 
-    .section-card {
+    @media (max-width: 900px) { .risk-metrics { grid-template-columns: repeat(2, 1fr); } }
+
+    .risk-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        padding: 16px;
+        text-align: center;
+    }
+
+    .risk-label {
+        font-size: 0.7rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        margin-bottom: 6px;
+    }
+
+    .risk-value {
+        font-size: 1.25rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+
+    .risk-hint {
+        font-size: 0.65rem;
+        color: var(--text-secondary);
+        margin-top: 4px;
+    }
+
+    /* Charts */
+    .chart-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 20px;
+        margin-bottom: 24px;
+    }
+
+    @media (max-width: 1024px) { .chart-grid { grid-template-columns: 1fr; } }
+
+    .chart-card {
         background: var(--card-bg);
         border: 1px solid var(--border-color);
         border-radius: 12px;
-        padding: 24px;
+        padding: 20px;
     }
 
-    .section-title {
-        font-size: 1.25rem;
+    .chart-card.full-width {
+        grid-column: 1 / -1;
+    }
+
+    .chart-title {
+        font-size: 1rem;
         font-weight: 600;
         color: var(--text-primary);
-        margin-bottom: 20px;
+        margin-bottom: 16px;
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
     }
+
+    .chart-title i { color: #8b5cf6; font-size: 0.9rem; }
 
     .chart-container {
         position: relative;
         height: 280px;
     }
 
-    /* Wallet Performance Table */
-    .wallet-perf-table {
-        width: 100%;
-        border-collapse: collapse;
+    .chart-container.tall { height: 350px; }
+
+    /* Wallet Performance */
+    .wallet-performance {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 20px;
+        margin-bottom: 24px;
     }
 
-    .wallet-perf-table th {
-        background: var(--metric-bg);
-        padding: 10px 12px;
-        text-align: left;
+    @media (max-width: 1024px) { .wallet-performance { grid-template-columns: 1fr; } }
+
+    .wallet-list-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 20px;
+    }
+
+    .wallet-list-title {
+        font-size: 1rem;
         font-weight: 600;
-        color: var(--text-secondary);
-        font-size: 0.75rem;
-        text-transform: uppercase;
+        color: var(--text-primary);
+        margin-bottom: 16px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
     }
 
-    .wallet-perf-table td {
+    .wallet-list-title i { font-size: 0.9rem; }
+    .wallet-list-title.best i { color: #10b981; }
+    .wallet-list-title.worst i { color: #ef4444; }
+
+    .wallet-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
         padding: 12px;
-        border-bottom: 1px solid var(--border-color);
-    }
-
-    .wallet-perf-table tr:hover {
+        border-radius: 8px;
+        margin-bottom: 8px;
         background: var(--metric-bg);
     }
 
-    .wallet-address {
+    .wallet-item:hover { background: var(--border-color); }
+
+    .wallet-info {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .wallet-rank {
+        width: 24px;
+        height: 24px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+        font-weight: 700;
+    }
+
+    .wallet-rank.gold { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .wallet-rank.silver { background: rgba(148, 163, 184, 0.2); color: #94a3b8; }
+    .wallet-rank.bronze { background: rgba(180, 83, 9, 0.2); color: #b45309; }
+    .wallet-rank.default { background: var(--border-color); color: var(--text-secondary); }
+
+    .wallet-address-text {
         font-family: monospace;
         font-size: 0.85rem;
         color: #8b5cf6;
     }
 
-    .progress-bar {
-        height: 8px;
-        background: var(--border-color);
-        border-radius: 4px;
-        overflow: hidden;
-        min-width: 80px;
-    }
-
-    .progress-fill {
-        height: 100%;
-        border-radius: 4px;
-    }
-
-    .progress-positive { background: #10b981; }
-    .progress-negative { background: #ef4444; }
-
-    .positive { color: #10b981; }
-    .negative { color: #ef4444; }
-
-    .btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 8px 16px;
-        border-radius: 6px;
-        font-size: 0.875rem;
-        font-weight: 500;
-        cursor: pointer;
-        border: none;
-        transition: all 0.2s;
-    }
-
-    .btn-secondary { background: #374151; color: #e5e7eb; }
-    .btn:hover { transform: translateY(-1px); }
-
-    .empty-state {
-        text-align: center;
-        padding: 40px;
-        color: var(--text-secondary);
-    }
-
-    .time-filter {
+    .wallet-stats-mini {
         display: flex;
-        gap: 8px;
-    }
-
-    .time-btn {
-        padding: 6px 12px;
-        border: 1px solid var(--border-color);
-        background: var(--card-bg);
-        color: var(--text-secondary);
-        border-radius: 6px;
-        cursor: pointer;
+        gap: 16px;
         font-size: 0.8rem;
     }
 
-    .time-btn.active {
-        background: #8b5cf6;
-        color: white;
-        border-color: #8b5cf6;
+    .wallet-stats-mini span {
+        color: var(--text-secondary);
     }
+
+    .wallet-stats-mini .value {
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .wallet-stats-mini .value.positive { color: #10b981; }
+    .wallet-stats-mini .value.negative { color: #ef4444; }
+
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--text-secondary);
+    }
+
+    .empty-state i {
+        font-size: 3rem;
+        margin-bottom: 16px;
+        opacity: 0.4;
+    }
+
+    .empty-state h3 {
+        color: var(--text-primary);
+        margin-bottom: 8px;
+    }
+
+    .positive { color: #10b981; }
+    .negative { color: #ef4444; }
 
     [data-theme="dark"] {
         --card-bg: #1f2937;
@@ -204,260 +340,243 @@
 
 {% block content %}
 <div class="page-container">
+    <!-- Header -->
     <div class="page-header">
         <div>
             <h1 class="page-title">
                 <i class="fas fa-chart-line"></i>
-                Copy Trading Performance
+                Performance Analytics
             </h1>
-            <p class="page-subtitle">Analyze your copy trading results and wallet performance</p>
+            <p class="page-subtitle">Comprehensive copy trading performance metrics and analysis</p>
         </div>
-        <div class="time-filter">
-            <button class="time-btn active" onclick="setTimeframe('all')">All Time</button>
-            <button class="time-btn" onclick="setTimeframe('30d')">30 Days</button>
-            <button class="time-btn" onclick="setTimeframe('7d')">7 Days</button>
-            <button class="time-btn" onclick="setTimeframe('24h')">24 Hours</button>
-        </div>
-    </div>
-
-    <!-- Key Metrics -->
-    <div class="stats-grid">
-        <div class="stat-card">
-            <div class="stat-label">Total Copies</div>
-            <div class="stat-value" id="stat-copies">0</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-label">Win Rate</div>
-            <div class="stat-value" id="stat-winrate">0%</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-label">Total P&L</div>
-            <div class="stat-value" id="stat-pnl">$0.00</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-label">Avg Trade P&L</div>
-            <div class="stat-value" id="stat-avg-pnl">$0.00</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-label">Best Trade</div>
-            <div class="stat-value positive" id="stat-best">$0.00</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-label">Worst Trade</div>
-            <div class="stat-value negative" id="stat-worst">$0.00</div>
+        <div class="header-actions">
+            <button class="btn btn-secondary" onclick="loadPerformance()">
+                <i class="fas fa-sync"></i> Refresh
+            </button>
         </div>
     </div>
 
-    <!-- Charts -->
-    <div class="grid-2">
-        <div class="section-card">
-            <div class="section-title">
-                <i class="fas fa-chart-area"></i>
-                Cumulative P&L
-            </div>
-            <div class="chart-container">
-                <canvas id="cumulativePnlChart"></canvas>
-            </div>
+    <!-- Hero Stats -->
+    <div class="hero-stats">
+        <div class="hero-stat purple">
+            <div class="hero-stat-icon"><i class="fas fa-dollar-sign"></i></div>
+            <div class="hero-stat-label">Total P&L</div>
+            <div class="hero-stat-value" id="stat-pnl">$0.00</div>
         </div>
-
-        <div class="section-card">
-            <div class="section-title">
-                <i class="fas fa-chart-pie"></i>
-                Win/Loss Distribution
-            </div>
-            <div class="chart-container">
-                <canvas id="winLossChart"></canvas>
-            </div>
+        <div class="hero-stat blue">
+            <div class="hero-stat-icon"><i class="fas fa-exchange-alt"></i></div>
+            <div class="hero-stat-label">Total Trades</div>
+            <div class="hero-stat-value" id="stat-trades">0</div>
+        </div>
+        <div class="hero-stat green">
+            <div class="hero-stat-icon"><i class="fas fa-percentage"></i></div>
+            <div class="hero-stat-label">Win Rate</div>
+            <div class="hero-stat-value" id="stat-winrate">0%</div>
+        </div>
+        <div class="hero-stat orange">
+            <div class="hero-stat-icon"><i class="fas fa-trophy"></i></div>
+            <div class="hero-stat-label">Best Trade</div>
+            <div class="hero-stat-value positive" id="stat-best">$0.00</div>
+        </div>
+        <div class="hero-stat red">
+            <div class="hero-stat-icon"><i class="fas fa-skull"></i></div>
+            <div class="hero-stat-label">Worst Trade</div>
+            <div class="hero-stat-value negative" id="stat-worst">$0.00</div>
+        </div>
+        <div class="hero-stat cyan">
+            <div class="hero-stat-icon"><i class="fas fa-calculator"></i></div>
+            <div class="hero-stat-label">Avg Trade</div>
+            <div class="hero-stat-value" id="stat-avg">$0.00</div>
         </div>
     </div>
 
-    <div class="grid-2">
-        <div class="section-card">
-            <div class="section-title">
-                <i class="fas fa-chart-bar"></i>
-                Daily P&L
-            </div>
-            <div class="chart-container">
-                <canvas id="dailyPnlChart"></canvas>
-            </div>
+    <!-- Risk Metrics -->
+    <div class="risk-metrics">
+        <div class="risk-card">
+            <div class="risk-label">Profit Factor</div>
+            <div class="risk-value" id="metric-pf">0.00</div>
+            <div class="risk-hint">Gross Profit / Gross Loss</div>
         </div>
+        <div class="risk-card">
+            <div class="risk-label">Avg Win</div>
+            <div class="risk-value positive" id="metric-avgwin">$0.00</div>
+            <div class="risk-hint">Average winning trade</div>
+        </div>
+        <div class="risk-card">
+            <div class="risk-label">Avg Loss</div>
+            <div class="risk-value negative" id="metric-avgloss">$0.00</div>
+            <div class="risk-hint">Average losing trade</div>
+        </div>
+        <div class="risk-card">
+            <div class="risk-label">Risk/Reward</div>
+            <div class="risk-value" id="metric-rr">0.00</div>
+            <div class="risk-hint">Avg Win / Avg Loss</div>
+        </div>
+    </div>
 
-        <div class="section-card">
-            <div class="section-title">
-                <i class="fas fa-clock"></i>
-                Copies by Hour
-            </div>
-            <div class="chart-container">
-                <canvas id="hourlyChart"></canvas>
-            </div>
+    <!-- Main Charts -->
+    <div class="chart-grid">
+        <div class="chart-card full-width">
+            <div class="chart-title"><i class="fas fa-chart-area"></i> Equity Curve</div>
+            <div class="chart-container tall"><canvas id="equityChart"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-title"><i class="fas fa-chart-bar"></i> Daily P&L</div>
+            <div class="chart-container"><canvas id="dailyPnlChart"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-title"><i class="fas fa-chart-pie"></i> Win/Loss Distribution</div>
+            <div class="chart-container"><canvas id="winLossChart"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-title"><i class="fas fa-signal"></i> P&L Distribution</div>
+            <div class="chart-container"><canvas id="pnlDistChart"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-title"><i class="fas fa-clock"></i> Trade Time Distribution</div>
+            <div class="chart-container"><canvas id="timeDistChart"></canvas></div>
         </div>
     </div>
 
     <!-- Wallet Performance -->
-    <div class="section-card">
-        <div class="section-title">
-            <i class="fas fa-users"></i>
-            Wallet Performance Breakdown
+    <div class="wallet-performance">
+        <div class="wallet-list-card">
+            <div class="wallet-list-title best"><i class="fas fa-trophy"></i> Top Performing Wallets</div>
+            <div id="bestWallets">
+                <div class="empty-state" style="padding: 30px;">
+                    <p>No wallet data yet</p>
+                </div>
+            </div>
         </div>
-        <div id="walletPerfContainer">
-            <div class="empty-state">
-                <i class="fas fa-wallet"></i>
-                <p>No wallet data available</p>
+        <div class="wallet-list-card">
+            <div class="wallet-list-title worst"><i class="fas fa-arrow-down"></i> Worst Performing Wallets</div>
+            <div id="worstWallets">
+                <div class="empty-state" style="padding: 30px;">
+                    <p>No wallet data yet</p>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- Chain Distribution -->
-    <div class="grid-2">
-        <div class="section-card">
-            <div class="section-title">
-                <i class="fas fa-link"></i>
-                Copies by Chain
-            </div>
-            <div class="chart-container">
-                <canvas id="chainChart"></canvas>
-            </div>
+    <!-- Chain & Strategy Charts -->
+    <div class="chart-grid">
+        <div class="chart-card">
+            <div class="chart-title"><i class="fas fa-link"></i> P&L by Chain</div>
+            <div class="chart-container"><canvas id="chainPnlChart"></canvas></div>
         </div>
-
-        <div class="section-card">
-            <div class="section-title">
-                <i class="fas fa-chart-line"></i>
-                P&L by Chain
-            </div>
-            <div class="chart-container">
-                <canvas id="chainPnlChart"></canvas>
-            </div>
+        <div class="chart-card">
+            <div class="chart-title"><i class="fas fa-coins"></i> Volume by Chain</div>
+            <div class="chart-container"><canvas id="chainVolumeChart"></canvas></div>
         </div>
     </div>
 </div>
 
 <script>
-let allTrades = [];
-let filteredTrades = [];
-let currentTimeframe = 'all';
-
-let cumulativePnlChart = null;
-let winLossChart = null;
+let equityChart = null;
 let dailyPnlChart = null;
-let hourlyChart = null;
-let chainChart = null;
+let winLossChart = null;
+let pnlDistChart = null;
+let timeDistChart = null;
 let chainPnlChart = null;
+let chainVolumeChart = null;
 
 async function loadPerformance() {
     try {
-        const response = await fetch('/api/copytrading/trades?limit=2000');
-        const data = await response.json();
+        const [tradesRes, walletsRes] = await Promise.all([
+            fetch('/api/copytrading/trades?limit=5000'),
+            fetch('/api/copytrading/wallets')
+        ]);
 
-        if (data.success && data.trades) {
-            allTrades = data.trades;
-            applyTimeframe();
+        const [tradesData, walletsData] = await Promise.all([
+            tradesRes.json(),
+            walletsRes.json()
+        ]);
+
+        if (tradesData.success && tradesData.trades) {
+            processPerformance(tradesData.trades);
+        }
+
+        if (walletsData.success && walletsData.wallets) {
+            processWallets(walletsData.wallets);
         }
     } catch (error) {
-        console.error('Error loading performance data:', error);
+        console.error('Error loading performance:', error);
     }
 }
 
-function setTimeframe(tf) {
-    currentTimeframe = tf;
-
-    // Update button styles
-    document.querySelectorAll('.time-btn').forEach(btn => {
-        btn.classList.remove('active');
-    });
-    event.target.classList.add('active');
-
-    applyTimeframe();
-}
-
-function applyTimeframe() {
-    const now = new Date();
-    let cutoff = null;
-
-    if (currentTimeframe === '24h') {
-        cutoff = new Date(now - 24 * 60 * 60 * 1000);
-    } else if (currentTimeframe === '7d') {
-        cutoff = new Date(now - 7 * 24 * 60 * 60 * 1000);
-    } else if (currentTimeframe === '30d') {
-        cutoff = new Date(now - 30 * 24 * 60 * 60 * 1000);
+function processPerformance(trades) {
+    if (!trades || trades.length === 0) {
+        showEmptyState();
+        return;
     }
 
-    if (cutoff) {
-        filteredTrades = allTrades.filter(t => {
-            if (!t.timestamp) return false;
-            return new Date(t.timestamp) >= cutoff;
-        });
-    } else {
-        filteredTrades = [...allTrades];
-    }
+    // Calculate metrics
+    const wins = trades.filter(t => (t.profit_loss || 0) > 0);
+    const losses = trades.filter(t => (t.profit_loss || 0) < 0);
+    const totalPnl = trades.reduce((a, t) => a + (t.profit_loss || 0), 0);
+    const winRate = trades.length > 0 ? (wins.length / trades.length) * 100 : 0;
+    const bestTrade = Math.max(...trades.map(t => t.profit_loss || 0));
+    const worstTrade = Math.min(...trades.map(t => t.profit_loss || 0));
+    const avgTrade = trades.length > 0 ? totalPnl / trades.length : 0;
 
-    updateStats();
-    updateCharts();
-    updateWalletPerformance();
-}
+    const grossProfit = wins.reduce((a, t) => a + (t.profit_loss || 0), 0);
+    const grossLoss = Math.abs(losses.reduce((a, t) => a + (t.profit_loss || 0), 0));
+    const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 999 : 0;
+    const avgWin = wins.length > 0 ? grossProfit / wins.length : 0;
+    const avgLoss = losses.length > 0 ? grossLoss / losses.length : 0;
+    const riskReward = avgLoss > 0 ? avgWin / avgLoss : avgWin > 0 ? 999 : 0;
 
-function updateStats() {
-    const wins = filteredTrades.filter(t => (t.profit_loss || 0) > 0).length;
-    const losses = filteredTrades.filter(t => (t.profit_loss || 0) < 0).length;
-    const totalPnl = filteredTrades.reduce((a, t) => a + (t.profit_loss || 0), 0);
-    const avgPnl = filteredTrades.length > 0 ? totalPnl / filteredTrades.length : 0;
-    const winRate = filteredTrades.length > 0 ? (wins / filteredTrades.length) * 100 : 0;
-
-    const best = Math.max(...filteredTrades.map(t => t.profit_loss || 0), 0);
-    const worst = Math.min(...filteredTrades.map(t => t.profit_loss || 0), 0);
-
-    document.getElementById('stat-copies').textContent = filteredTrades.length;
-    document.getElementById('stat-winrate').textContent = winRate.toFixed(1) + '%';
-
+    // Update hero stats
     const pnlEl = document.getElementById('stat-pnl');
-    pnlEl.textContent = (totalPnl >= 0 ? '+' : '') + '$' + totalPnl.toFixed(2);
-    pnlEl.className = 'stat-value ' + (totalPnl >= 0 ? 'positive' : 'negative');
+    pnlEl.textContent = (totalPnl >= 0 ? '+' : '') + '$' + Math.abs(totalPnl).toFixed(2);
+    pnlEl.className = 'hero-stat-value ' + (totalPnl >= 0 ? 'positive' : 'negative');
 
-    const avgEl = document.getElementById('stat-avg-pnl');
-    avgEl.textContent = (avgPnl >= 0 ? '+' : '') + '$' + avgPnl.toFixed(2);
-    avgEl.className = 'stat-value ' + (avgPnl >= 0 ? 'positive' : 'negative');
+    document.getElementById('stat-trades').textContent = trades.length;
+    document.getElementById('stat-winrate').textContent = winRate.toFixed(1) + '%';
+    document.getElementById('stat-best').textContent = '+$' + bestTrade.toFixed(2);
+    document.getElementById('stat-worst').textContent = '-$' + Math.abs(worstTrade).toFixed(2);
 
-    document.getElementById('stat-best').textContent = '+$' + best.toFixed(2);
-    document.getElementById('stat-worst').textContent = '-$' + Math.abs(worst).toFixed(2);
+    const avgEl = document.getElementById('stat-avg');
+    avgEl.textContent = (avgTrade >= 0 ? '+' : '') + '$' + Math.abs(avgTrade).toFixed(2);
+    avgEl.className = 'hero-stat-value ' + (avgTrade >= 0 ? 'positive' : 'negative');
+
+    // Update risk metrics
+    document.getElementById('metric-pf').textContent = profitFactor > 100 ? '>100' : profitFactor.toFixed(2);
+    document.getElementById('metric-avgwin').textContent = '+$' + avgWin.toFixed(2);
+    document.getElementById('metric-avgloss').textContent = '-$' + avgLoss.toFixed(2);
+    document.getElementById('metric-rr').textContent = riskReward > 100 ? '>100' : riskReward.toFixed(2);
+
+    // Create charts
+    createEquityChart(trades);
+    createDailyPnlChart(trades);
+    createWinLossChart(wins.length, losses.length);
+    createPnlDistChart(trades);
+    createTimeDistChart(trades);
+    createChainCharts(trades);
 }
 
-function updateCharts() {
-    updateCumulativePnlChart();
-    updateWinLossChart();
-    updateDailyPnlChart();
-    updateHourlyChart();
-    updateChainCharts();
-}
-
-function updateCumulativePnlChart() {
-    const ctx = document.getElementById('cumulativePnlChart').getContext('2d');
-
-    // Sort by timestamp and calculate cumulative P&L
-    const sorted = [...filteredTrades]
-        .filter(t => t.timestamp)
-        .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-
-    let cumulative = 0;
+function createEquityChart(trades) {
+    const sorted = [...trades].sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
+    let cumPnl = 0;
     const data = sorted.map(t => {
-        cumulative += (t.profit_loss || 0);
-        return {
-            x: new Date(t.timestamp),
-            y: cumulative
-        };
+        cumPnl += (t.profit_loss || 0);
+        return { x: new Date(t.timestamp), y: cumPnl };
     });
 
-    if (cumulativePnlChart) cumulativePnlChart.destroy();
+    const ctx = document.getElementById('equityChart').getContext('2d');
+    if (equityChart) equityChart.destroy();
 
-    cumulativePnlChart = new Chart(ctx, {
+    equityChart = new Chart(ctx, {
         type: 'line',
         data: {
             datasets: [{
-                label: 'Cumulative P&L',
+                label: 'Equity',
                 data: data,
-                borderColor: data.length > 0 && data[data.length - 1].y >= 0 ? '#10b981' : '#ef4444',
-                backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                borderColor: cumPnl >= 0 ? '#10b981' : '#ef4444',
+                backgroundColor: cumPnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
                 fill: true,
-                tension: 0.4,
-                pointRadius: 0
+                tension: 0.2,
+                pointRadius: 1
             }]
         },
         options: {
@@ -465,68 +584,26 @@ function updateCumulativePnlChart() {
             maintainAspectRatio: false,
             plugins: { legend: { display: false } },
             scales: {
-                x: {
-                    type: 'time',
-                    time: { unit: 'day' },
-                    grid: { display: false },
-                    ticks: { color: '#94a3b8' }
-                },
-                y: {
-                    grid: { color: 'rgba(148, 163, 184, 0.1)' },
-                    ticks: { color: '#94a3b8', callback: v => '$' + v }
-                }
+                x: { type: 'time', time: { unit: 'day' }, grid: { display: false }, ticks: { color: '#94a3b8' } },
+                y: { grid: { color: 'rgba(148,163,184,0.1)' }, ticks: { color: '#94a3b8', callback: v => '$' + v } }
             }
         }
     });
 }
 
-function updateWinLossChart() {
-    const ctx = document.getElementById('winLossChart').getContext('2d');
-
-    const wins = filteredTrades.filter(t => (t.profit_loss || 0) > 0).length;
-    const losses = filteredTrades.filter(t => (t.profit_loss || 0) < 0).length;
-    const breakeven = filteredTrades.filter(t => (t.profit_loss || 0) === 0).length;
-
-    if (winLossChart) winLossChart.destroy();
-
-    winLossChart = new Chart(ctx, {
-        type: 'doughnut',
-        data: {
-            labels: ['Winning', 'Losing', 'Breakeven'],
-            datasets: [{
-                data: [wins, losses, breakeven],
-                backgroundColor: ['#10b981', '#ef4444', '#6b7280'],
-                borderWidth: 0
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    position: 'right',
-                    labels: { color: '#94a3b8', boxWidth: 12 }
-                }
-            }
-        }
-    });
-}
-
-function updateDailyPnlChart() {
-    const ctx = document.getElementById('dailyPnlChart').getContext('2d');
-
-    // Group by date
+function createDailyPnlChart(trades) {
     const dailyPnl = {};
-    filteredTrades.forEach(t => {
+    trades.forEach(t => {
         if (t.timestamp) {
-            const date = new Date(t.timestamp).toLocaleDateString();
+            const date = new Date(t.timestamp).toLocaleDateString('en-CA');
             dailyPnl[date] = (dailyPnl[date] || 0) + (t.profit_loss || 0);
         }
     });
 
-    const dates = Object.keys(dailyPnl).sort((a, b) => new Date(a) - new Date(b));
+    const dates = Object.keys(dailyPnl).sort();
     const pnls = dates.map(d => dailyPnl[d]);
 
+    const ctx = document.getElementById('dailyPnlChart').getContext('2d');
     if (dailyPnlChart) dailyPnlChart.destroy();
 
     dailyPnlChart = new Chart(ctx, {
@@ -534,10 +611,9 @@ function updateDailyPnlChart() {
         data: {
             labels: dates,
             datasets: [{
-                label: 'Daily P&L',
                 data: pnls,
-                backgroundColor: pnls.map(p => p >= 0 ? 'rgba(16, 185, 129, 0.7)' : 'rgba(239, 68, 68, 0.7)'),
-                borderWidth: 0
+                backgroundColor: pnls.map(p => p >= 0 ? 'rgba(16,185,129,0.7)' : 'rgba(239,68,68,0.7)'),
+                borderRadius: 4
             }]
         },
         options: {
@@ -545,197 +621,245 @@ function updateDailyPnlChart() {
             maintainAspectRatio: false,
             plugins: { legend: { display: false } },
             scales: {
-                x: { grid: { display: false }, ticks: { color: '#94a3b8' } },
-                y: { grid: { color: 'rgba(148, 163, 184, 0.1)' }, ticks: { color: '#94a3b8', callback: v => '$' + v } }
+                x: { grid: { display: false }, ticks: { color: '#94a3b8', maxTicksLimit: 10 } },
+                y: { grid: { color: 'rgba(148,163,184,0.1)' }, ticks: { color: '#94a3b8', callback: v => '$' + v } }
             }
         }
     });
 }
 
-function updateHourlyChart() {
-    const ctx = document.getElementById('hourlyChart').getContext('2d');
+function createWinLossChart(wins, losses) {
+    const ctx = document.getElementById('winLossChart').getContext('2d');
+    if (winLossChart) winLossChart.destroy();
 
-    // Group by hour
-    const hourly = new Array(24).fill(0);
-    filteredTrades.forEach(t => {
-        if (t.timestamp) {
-            const hour = new Date(t.timestamp).getHours();
-            hourly[hour]++;
-        }
-    });
-
-    if (hourlyChart) hourlyChart.destroy();
-
-    hourlyChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: Array.from({length: 24}, (_, i) => i + ':00'),
-            datasets: [{
-                label: 'Copies',
-                data: hourly,
-                backgroundColor: 'rgba(139, 92, 246, 0.7)',
-                borderWidth: 0
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: {
-                x: { grid: { display: false }, ticks: { color: '#94a3b8' } },
-                y: { beginAtZero: true, grid: { color: 'rgba(148, 163, 184, 0.1)' }, ticks: { color: '#94a3b8' } }
-            }
-        }
-    });
-}
-
-function updateChainCharts() {
-    // Chain distribution
-    const chainCounts = {};
-    const chainPnl = {};
-
-    filteredTrades.forEach(t => {
-        const chain = t.chain || 'Solana';
-        chainCounts[chain] = (chainCounts[chain] || 0) + 1;
-        chainPnl[chain] = (chainPnl[chain] || 0) + (t.profit_loss || 0);
-    });
-
-    const chains = Object.keys(chainCounts);
-    const counts = chains.map(c => chainCounts[c]);
-    const pnls = chains.map(c => chainPnl[c]);
-
-    const colors = ['#8b5cf6', '#10b981', '#f59e0b', '#3b82f6', '#ef4444'];
-
-    // Chain count chart
-    const ctx1 = document.getElementById('chainChart').getContext('2d');
-    if (chainChart) chainChart.destroy();
-
-    chainChart = new Chart(ctx1, {
+    winLossChart = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: chains,
+            labels: ['Wins', 'Losses'],
             datasets: [{
-                data: counts,
-                backgroundColor: colors.slice(0, chains.length),
+                data: [wins, losses],
+                backgroundColor: ['#10b981', '#ef4444'],
                 borderWidth: 0
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            cutout: '65%',
             plugins: {
-                legend: {
-                    position: 'right',
-                    labels: { color: '#94a3b8', boxWidth: 12 }
-                }
-            }
-        }
-    });
-
-    // Chain P&L chart
-    const ctx2 = document.getElementById('chainPnlChart').getContext('2d');
-    if (chainPnlChart) chainPnlChart.destroy();
-
-    chainPnlChart = new Chart(ctx2, {
-        type: 'bar',
-        data: {
-            labels: chains,
-            datasets: [{
-                label: 'P&L by Chain',
-                data: pnls,
-                backgroundColor: pnls.map(p => p >= 0 ? 'rgba(16, 185, 129, 0.7)' : 'rgba(239, 68, 68, 0.7)'),
-                borderWidth: 0
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            indexAxis: 'y',
-            plugins: { legend: { display: false } },
-            scales: {
-                x: { grid: { color: 'rgba(148, 163, 184, 0.1)' }, ticks: { color: '#94a3b8', callback: v => '$' + v } },
-                y: { grid: { display: false }, ticks: { color: '#94a3b8' } }
+                legend: { position: 'bottom', labels: { color: '#94a3b8', padding: 16 } }
             }
         }
     });
 }
 
-function updateWalletPerformance() {
-    const container = document.getElementById('walletPerfContainer');
+function createPnlDistChart(trades) {
+    const pnls = trades.map(t => t.profit_loss || 0).filter(p => p !== 0);
+    if (pnls.length === 0) return;
 
-    // Group by source wallet
-    const walletStats = {};
-    filteredTrades.forEach(t => {
-        const wallet = t.source_wallet;
-        if (!wallet) return;
+    const min = Math.min(...pnls);
+    const max = Math.max(...pnls);
+    const bucketCount = 15;
+    const bucketSize = (max - min) / bucketCount || 1;
 
-        if (!walletStats[wallet]) {
-            walletStats[wallet] = { total: 0, wins: 0, pnl: 0 };
-        }
-        walletStats[wallet].total++;
-        if ((t.profit_loss || 0) > 0) walletStats[wallet].wins++;
-        walletStats[wallet].pnl += (t.profit_loss || 0);
+    const buckets = Array(bucketCount).fill(0);
+    const labels = [];
+
+    for (let i = 0; i < bucketCount; i++) {
+        const start = min + i * bucketSize;
+        labels.push('$' + start.toFixed(0));
+    }
+
+    pnls.forEach(p => {
+        const idx = Math.min(Math.floor((p - min) / bucketSize), bucketCount - 1);
+        buckets[idx]++;
     });
 
-    const wallets = Object.entries(walletStats)
-        .map(([addr, stats]) => ({
-            address: addr,
-            short: addr.substring(0, 8) + '...' + addr.slice(-6),
-            ...stats,
-            winRate: stats.total > 0 ? (stats.wins / stats.total) * 100 : 0
-        }))
-        .sort((a, b) => b.pnl - a.pnl);
+    const ctx = document.getElementById('pnlDistChart').getContext('2d');
+    if (pnlDistChart) pnlDistChart.destroy();
 
+    pnlDistChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: buckets,
+                backgroundColor: labels.map((l, i) => {
+                    const val = min + i * bucketSize;
+                    return val >= 0 ? 'rgba(16,185,129,0.6)' : 'rgba(239,68,68,0.6)';
+                }),
+                borderRadius: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { display: false }, ticks: { color: '#94a3b8', maxTicksLimit: 8 } },
+                y: { grid: { color: 'rgba(148,163,184,0.1)' }, ticks: { color: '#94a3b8' } }
+            }
+        }
+    });
+}
+
+function createTimeDistChart(trades) {
+    const hourCounts = Array(24).fill(0);
+    trades.forEach(t => {
+        if (t.timestamp) {
+            const hour = new Date(t.timestamp).getHours();
+            hourCounts[hour]++;
+        }
+    });
+
+    const labels = Array.from({ length: 24 }, (_, i) => i + ':00');
+
+    const ctx = document.getElementById('timeDistChart').getContext('2d');
+    if (timeDistChart) timeDistChart.destroy();
+
+    timeDistChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: hourCounts,
+                backgroundColor: '#8b5cf6',
+                borderRadius: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { display: false }, ticks: { color: '#94a3b8', maxTicksLimit: 12 } },
+                y: { beginAtZero: true, grid: { color: 'rgba(148,163,184,0.1)' }, ticks: { color: '#94a3b8' } }
+            }
+        }
+    });
+}
+
+function createChainCharts(trades) {
+    const chainData = {};
+    trades.forEach(t => {
+        const chain = (t.chain || 'Solana').toLowerCase();
+        if (!chainData[chain]) chainData[chain] = { pnl: 0, volume: 0, count: 0 };
+        chainData[chain].pnl += (t.profit_loss || 0);
+        chainData[chain].volume += (t.entry_usd || 0);
+        chainData[chain].count++;
+    });
+
+    const chains = Object.keys(chainData);
+    const colors = { solana: '#8b5cf6', ethereum: '#3b82f6', bsc: '#f59e0b', polygon: '#a855f7' };
+
+    const pnlCtx = document.getElementById('chainPnlChart').getContext('2d');
+    if (chainPnlChart) chainPnlChart.destroy();
+
+    chainPnlChart = new Chart(pnlCtx, {
+        type: 'bar',
+        data: {
+            labels: chains.map(c => c.charAt(0).toUpperCase() + c.slice(1)),
+            datasets: [{
+                data: chains.map(c => chainData[c].pnl),
+                backgroundColor: chains.map(c => chainData[c].pnl >= 0 ? 'rgba(16,185,129,0.7)' : 'rgba(239,68,68,0.7)'),
+                borderRadius: 6
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { display: false }, ticks: { color: '#94a3b8' } },
+                y: { grid: { color: 'rgba(148,163,184,0.1)' }, ticks: { color: '#94a3b8', callback: v => '$' + v } }
+            }
+        }
+    });
+
+    const volCtx = document.getElementById('chainVolumeChart').getContext('2d');
+    if (chainVolumeChart) chainVolumeChart.destroy();
+
+    chainVolumeChart = new Chart(volCtx, {
+        type: 'doughnut',
+        data: {
+            labels: chains.map(c => c.charAt(0).toUpperCase() + c.slice(1)),
+            datasets: [{
+                data: chains.map(c => chainData[c].volume),
+                backgroundColor: chains.map(c => colors[c] || '#6b7280'),
+                borderWidth: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '60%',
+            plugins: {
+                legend: { position: 'bottom', labels: { color: '#94a3b8', padding: 12 } },
+                tooltip: { callbacks: { label: ctx => '$' + ctx.raw.toFixed(2) } }
+            }
+        }
+    });
+}
+
+function processWallets(wallets) {
+    if (!wallets || wallets.length === 0) return;
+
+    const sorted = [...wallets].sort((a, b) => (b.total_pnl || 0) - (a.total_pnl || 0));
+    const best = sorted.slice(0, 5);
+    const worst = sorted.slice(-5).reverse();
+
+    renderWalletList('bestWallets', best, true);
+    renderWalletList('worstWallets', worst, false);
+}
+
+function renderWalletList(containerId, wallets, isBest) {
+    const container = document.getElementById(containerId);
     if (wallets.length === 0) {
-        container.innerHTML = `
-            <div class="empty-state">
-                <i class="fas fa-wallet"></i>
-                <p>No wallet data available</p>
-            </div>
-        `;
+        container.innerHTML = '<div class="empty-state" style="padding: 30px;"><p>No wallet data yet</p></div>';
         return;
     }
 
-    const maxPnl = Math.max(...wallets.map(w => Math.abs(w.pnl)), 1);
-
-    let html = `
-        <table class="wallet-perf-table">
-            <thead>
-                <tr>
-                    <th>Wallet</th>
-                    <th>Copies</th>
-                    <th>Wins</th>
-                    <th>Win Rate</th>
-                    <th>P&L</th>
-                    <th style="min-width: 100px;"></th>
-                </tr>
-            </thead>
-            <tbody>
-    `;
-
-    wallets.forEach(w => {
-        const pnlClass = w.pnl >= 0 ? 'positive' : 'negative';
-        const progressClass = w.pnl >= 0 ? 'progress-positive' : 'progress-negative';
-        const barWidth = (Math.abs(w.pnl) / maxPnl) * 100;
+    let html = '';
+    wallets.forEach((w, i) => {
+        const pnl = w.total_pnl || 0;
+        const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+        const trades = w.total_trades || 0;
+        const winRate = trades > 0 ? ((w.winning_trades || 0) / trades * 100).toFixed(0) : 0;
+        const rankClass = i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : 'default';
 
         html += `
-            <tr>
-                <td><span class="wallet-address">${w.short}</span></td>
-                <td>${w.total}</td>
-                <td>${w.wins}</td>
-                <td>${w.winRate.toFixed(1)}%</td>
-                <td class="${pnlClass}">${w.pnl >= 0 ? '+' : ''}$${w.pnl.toFixed(2)}</td>
-                <td>
-                    <div class="progress-bar">
-                        <div class="progress-fill ${progressClass}" style="width: ${barWidth}%"></div>
-                    </div>
-                </td>
-            </tr>
+            <div class="wallet-item">
+                <div class="wallet-info">
+                    <div class="wallet-rank ${rankClass}">${i + 1}</div>
+                    <span class="wallet-address-text">${w.short_address || (w.address ? w.address.substring(0, 8) + '...' + w.address.slice(-6) : 'Unknown')}</span>
+                </div>
+                <div class="wallet-stats-mini">
+                    <span>Trades: <span class="value">${trades}</span></span>
+                    <span>Win: <span class="value">${winRate}%</span></span>
+                    <span>P&L: <span class="value ${pnlClass}">${pnl >= 0 ? '+' : ''}$${Math.abs(pnl).toFixed(2)}</span></span>
+                </div>
+            </div>
         `;
     });
 
-    html += '</tbody></table>';
     container.innerHTML = html;
+}
+
+function showEmptyState() {
+    const emptyChartOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false },
+            title: { display: true, text: 'No data available', color: '#94a3b8' }
+        }
+    };
+
+    const chartIds = ['equityChart', 'dailyPnlChart', 'winLossChart', 'pnlDistChart', 'timeDistChart', 'chainPnlChart', 'chainVolumeChart'];
+    chartIds.forEach(id => {
+        const ctx = document.getElementById(id).getContext('2d');
+        new Chart(ctx, { type: 'line', data: { labels: [], datasets: [] }, options: emptyChartOptions });
+    });
 }
 
 // Load on page load
