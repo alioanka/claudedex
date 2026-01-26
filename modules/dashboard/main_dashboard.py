@@ -102,7 +102,7 @@ class StandaloneDashboard:
             # Initialize secrets manager with database
             logger.info("Initializing secrets manager...")
             from security.secrets_manager import secrets
-            await secrets.initialize(self.db_manager.pool)
+            secrets.initialize(self.db_manager.pool)  # Not async - returns bool
             logger.info("✅ Secrets manager initialized")
 
             # Initialize config manager
