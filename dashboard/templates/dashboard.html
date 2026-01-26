@@ -1055,13 +1055,22 @@ function renderBlockStatus(data) {
 
     let html = '<div class="block-status-container">';
 
+    // Check if DEX module is actually running (health server responding)
+    const isDexRunning = moduleStatus === 'running';
+    const isOffline = moduleStatus === 'standalone' || moduleStatus === 'offline';
+
     // Determine status style and text
     let statusClass, iconClass, statusText;
     if (canTrade) {
         statusClass = 'can-trade';
         iconClass = 'success';
         statusText = 'Active - Can Trade';
-    } else if (isStandalone) {
+    } else if (isDexRunning) {
+        // DEX module is running but trading is blocked
+        statusClass = 'blocked';
+        iconClass = 'danger';
+        statusText = 'Blocked - Cannot Trade';
+    } else if (isOffline) {
         statusClass = 'standalone';
         iconClass = 'warning';
         statusText = 'Standalone Dashboard - Historical Data Only';
@@ -1071,12 +1080,17 @@ function renderBlockStatus(data) {
         statusText = 'Blocked - Cannot Trade';
     }
 
+    // Show Reset Block button if:
+    // 1. Trading is blocked AND
+    // 2. Either DEX module is running (can reset via health server) OR we have direct engine access
+    const showResetButton = !canTrade && (isDexRunning || !isOffline);
+
     // Status Header
     html += `
         <div class="block-status-header ${statusClass}">
             <div class="status-indicator">
                 <div class="status-icon ${iconClass}">
-                    <i class="fas fa-${canTrade ? 'check' : (isStandalone ? 'database' : 'ban')}"></i>
+                    <i class="fas fa-${canTrade ? 'check' : (isOffline ? 'database' : 'ban')}"></i>
                 </div>
                 <div class="status-text">
                     <span class="status-label">Trading Status</span>
@@ -1085,7 +1099,7 @@ function renderBlockStatus(data) {
                     </span>
                 </div>
             </div>
-            ${!canTrade && !isStandalone ? `
+            ${showResetButton ? `
                 <button class="reset-block-btn" onclick="resetTradingBlock()">
                     <i class="fas fa-unlock"></i>
                     Reset Block
@@ -1191,11 +1205,21 @@ async function resetTradingBlock() {
     try {
         showToast('info', 'Resetting trading block...');
 
-        const response = await fetch('/api/portfolio/reset-block', {
+        // First try DEX health server (for standalone dashboard mode)
+        let response = await fetch('/api/dex/trading/unblock', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ reason: reason || 'Manual reset via dashboard' })
         });
+
+        // If DEX health server is unavailable, try the direct portfolio endpoint
+        if (response.status === 503) {
+            response = await fetch('/api/portfolio/reset-block', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ reason: reason || 'Manual reset via dashboard' })
+            });
+        }
 
         const data = await response.json();
 
