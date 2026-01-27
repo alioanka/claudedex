@@ -212,6 +212,205 @@
                                 </div>
                             </div>
                         </div>
+
+                        <hr class="my-4">
+
+                        <!-- NEW: Multi-Chain AI Trading Engine -->
+                        <div class="alert alert-primary mb-4">
+                            <h5 class="mb-3"><i class="fas fa-rocket me-2"></i>NEW: AI Trading Engine - Multi-Chain Support</h5>
+                            <p class="mb-0">The AI module now includes a comprehensive trading engine that can trade across multiple chains (ETH, Base, Arbitrum, BSC, Solana) on both DEX and Futures platforms with AI-driven strategy generation.</p>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6 class="text-uppercase text-muted mb-3"><i class="fas fa-link me-2"></i>Multi-Chain Configuration</h6>
+
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="ai_engine_enabled">
+                                    <label class="form-check-label" for="ai_engine_enabled">Enable AI Trading Engine</label>
+                                    <div class="form-text">Master switch for the multi-chain AI trading engine.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Enabled Chains</label>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="chain_ethereum" checked>
+                                        <label class="form-check-label">Ethereum (ETH)</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="chain_base">
+                                        <label class="form-check-label">Base</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="chain_arbitrum">
+                                        <label class="form-check-label">Arbitrum (ARB)</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="chain_bsc">
+                                        <label class="form-check-label">BSC (BNB Chain)</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="chain_solana">
+                                        <label class="form-check-label">Solana (SOL)</label>
+                                    </div>
+                                    <div class="form-text">Select which blockchain networks the AI can trade on.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">AI Market Analysis Interval (Minutes)</label>
+                                    <input type="number" class="form-control" id="ai_analysis_interval" min="5" max="60" step="5" value="15">
+                                    <div class="form-text">How often to ask AI about market conditions. Lower = more API calls.</div>
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <h6 class="text-uppercase text-muted mb-3"><i class="fas fa-brain me-2"></i>AI Strategy Settings</h6>
+
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="auto_strategy_generation">
+                                    <label class="form-check-label" for="auto_strategy_generation">Auto-Generate Strategies</label>
+                                    <div class="form-text">Allow AI to create new trading strategies based on market conditions.</div>
+                                </div>
+
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="strategy_evolution">
+                                    <label class="form-check-label" for="strategy_evolution">Strategy Self-Improvement</label>
+                                    <div class="form-text">Allow AI to evolve strategies based on performance analysis.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Max Active AI Strategies</label>
+                                    <select class="form-select" id="max_ai_strategies">
+                                        <option value="3">3 strategies</option>
+                                        <option value="5" selected>5 strategies</option>
+                                        <option value="10">10 strategies</option>
+                                    </select>
+                                    <div class="form-text">Maximum number of AI-generated strategies to run simultaneously.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Strategy Confidence Threshold (%)</label>
+                                    <input type="number" class="form-control" id="strategy_confidence" min="50" max="95" step="5" value="70">
+                                    <div class="form-text">Minimum AI confidence to execute a strategy signal.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <hr class="my-4">
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6 class="text-uppercase text-muted mb-3"><i class="fas fa-exchange-alt me-2"></i>DEX Trading Integration</h6>
+
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="dex_trading_enabled">
+                                    <label class="form-check-label" for="dex_trading_enabled">Enable DEX Trading</label>
+                                    <div class="form-text">Allow AI to execute spot trades on decentralized exchanges.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">DEX Trade Size (% of Portfolio)</label>
+                                    <input type="number" class="form-control" id="dex_trade_size_pct" min="1" max="25" step="1" value="5">
+                                    <div class="form-text">Maximum position size per DEX trade as percentage of portfolio.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Max Slippage (%)</label>
+                                    <input type="number" class="form-control" id="dex_max_slippage" min="0.1" max="5" step="0.1" value="1">
+                                    <div class="form-text">Maximum allowed slippage for DEX swaps.</div>
+                                </div>
+
+                                <div class="alert alert-info">
+                                    <small><i class="fas fa-info-circle me-2"></i>Supported DEXs: Uniswap (V2/V3), SushiSwap, Curve, PancakeSwap, Jupiter, Raydium</small>
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <h6 class="text-uppercase text-muted mb-3"><i class="fas fa-chart-line me-2"></i>Futures Trading Integration</h6>
+
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="futures_trading_enabled" checked>
+                                    <label class="form-check-label" for="futures_trading_enabled">Enable Futures Trading</label>
+                                    <div class="form-text">Allow AI to open leveraged positions on futures exchanges.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Futures Exchange</label>
+                                    <select class="form-select" id="futures_exchange">
+                                        <option value="binance" selected>Binance Futures</option>
+                                        <option value="bybit">Bybit</option>
+                                        <option value="gmx">GMX (Arbitrum)</option>
+                                        <option value="drift">Drift (Solana)</option>
+                                    </select>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">AI Position Sizing Mode</label>
+                                    <select class="form-select" id="ai_position_sizing">
+                                        <option value="fixed">Fixed Amount (configured above)</option>
+                                        <option value="confidence" selected>Confidence-Based (higher confidence = larger size)</option>
+                                        <option value="kelly">Kelly Criterion (optimal sizing)</option>
+                                    </select>
+                                </div>
+
+                                <div class="alert alert-warning">
+                                    <small><i class="fas fa-exclamation-triangle me-2"></i>Futures trading involves significant risk. Use DRY_RUN mode first.</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <hr class="my-4">
+
+                        <div class="row">
+                            <div class="col-12">
+                                <h6 class="text-uppercase text-muted mb-3"><i class="fas fa-lightbulb me-2"></i>AI Self-Improvement System</h6>
+
+                                <div class="row">
+                                    <div class="col-md-4">
+                                        <div class="card h-100" style="background: linear-gradient(135deg, #1a1f35 0%, #0f172a 100%); border: 1px solid #3b82f6;">
+                                            <div class="card-body">
+                                                <h6 class="text-info"><i class="fas fa-search me-2"></i>Market Analysis</h6>
+                                                <p class="small text-muted mb-2">AI continuously monitors:</p>
+                                                <ul class="small mb-0">
+                                                    <li>Global crypto market conditions</li>
+                                                    <li>Individual token opportunities</li>
+                                                    <li>Volatility and sentiment</li>
+                                                    <li>Token recommendations</li>
+                                                </ul>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="card h-100" style="background: linear-gradient(135deg, #1a1f35 0%, #0f172a 100%); border: 1px solid #10b981;">
+                                            <div class="card-body">
+                                                <h6 class="text-success"><i class="fas fa-chart-bar me-2"></i>Performance Learning</h6>
+                                                <p class="small text-muted mb-2">AI learns from results:</p>
+                                                <ul class="small mb-0">
+                                                    <li>Analyzes win/loss patterns</li>
+                                                    <li>Identifies profitable strategies</li>
+                                                    <li>Adjusts parameters automatically</li>
+                                                    <li>Improves over time</li>
+                                                </ul>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="card h-100" style="background: linear-gradient(135deg, #1a1f35 0%, #0f172a 100%); border: 1px solid #f59e0b;">
+                                            <div class="card-body">
+                                                <h6 class="text-warning"><i class="fas fa-cogs me-2"></i>Strategy Evolution</h6>
+                                                <p class="small text-muted mb-2">AI creates strategies:</p>
+                                                <ul class="small mb-0">
+                                                    <li>Generates new strategies for market</li>
+                                                    <li>Evolves existing strategies</li>
+                                                    <li>Retires underperforming ones</li>
+                                                    <li>Adapts to changing conditions</li>
+                                                </ul>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </form>
                 </div>
             </div>
@@ -444,6 +643,84 @@
                             <li><strong>Review Performance:</strong> Check /ai/performance regularly to track AI accuracy.</li>
                         </ul>
                     </div>
+
+                    <!-- COMPREHENSIVE RECOMMENDED SETTINGS -->
+                    <div class="mb-4" style="border: 2px solid #10b981; border-radius: 12px; padding: 20px;">
+                        <h5 class="text-success"><i class="fas fa-check-circle me-2"></i>Recommended Settings for Profitable AI Trading</h5>
+                        <p class="text-muted">Apply these values to configure the AI module for optimal performance:</p>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6 class="mt-3"><i class="fas fa-sliders-h me-2 text-info"></i>Basic Settings</h6>
+                                <table class="table table-sm table-bordered">
+                                    <tbody>
+                                        <tr><td><strong>Direct Trading</strong></td><td class="text-success">Enabled</td></tr>
+                                        <tr><td><strong>DRY RUN Mode</strong></td><td class="text-warning">Enabled (first 2 weeks)</td></tr>
+                                        <tr><td><strong>Confidence Threshold</strong></td><td><code>70%</code></td></tr>
+                                        <tr><td><strong>Trade Amount (USD)</strong></td><td><code>$50</code></td></tr>
+                                        <tr><td><strong>Trading Pair</strong></td><td><code>BTCUSDT</code></td></tr>
+                                        <tr><td><strong>AI Provider</strong></td><td><code>Claude</code> (more accurate)</td></tr>
+                                        <tr><td><strong>Sentiment Source</strong></td><td><code>Combined</code></td></tr>
+                                        <tr><td><strong>Analysis Interval</strong></td><td><code>15 minutes</code></td></tr>
+                                    </tbody>
+                                </table>
+
+                                <h6 class="mt-3"><i class="fas fa-door-open me-2 text-warning"></i>Exit Strategy</h6>
+                                <table class="table table-sm table-bordered">
+                                    <tbody>
+                                        <tr><td><strong>Take Profit (%)</strong></td><td><code>6%</code></td></tr>
+                                        <tr><td><strong>Stop Loss (%)</strong></td><td><code>3%</code></td></tr>
+                                        <tr><td><strong>Max Hold Time</strong></td><td><code>24 hours</code></td></tr>
+                                        <tr><td><strong>Leverage</strong></td><td><code>3x</code> (conservative)</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div class="col-md-6">
+                                <h6 class="mt-3"><i class="fas fa-rocket me-2 text-primary"></i>AI Trading Engine</h6>
+                                <table class="table table-sm table-bordered">
+                                    <tbody>
+                                        <tr><td><strong>AI Engine Enabled</strong></td><td class="text-success">Yes</td></tr>
+                                        <tr><td><strong>Enabled Chains</strong></td><td><code>ETH, SOL, ARB</code></td></tr>
+                                        <tr><td><strong>AI Analysis Interval</strong></td><td><code>15 minutes</code></td></tr>
+                                        <tr><td><strong>Auto-Generate Strategies</strong></td><td class="text-success">Yes</td></tr>
+                                        <tr><td><strong>Strategy Self-Improvement</strong></td><td class="text-success">Yes</td></tr>
+                                        <tr><td><strong>Max Active Strategies</strong></td><td><code>5</code></td></tr>
+                                        <tr><td><strong>Strategy Confidence</strong></td><td><code>70%</code></td></tr>
+                                    </tbody>
+                                </table>
+
+                                <h6 class="mt-3"><i class="fas fa-exchange-alt me-2 text-success"></i>DEX & Futures</h6>
+                                <table class="table table-sm table-bordered">
+                                    <tbody>
+                                        <tr><td><strong>DEX Trading Enabled</strong></td><td class="text-success">Yes</td></tr>
+                                        <tr><td><strong>DEX Trade Size</strong></td><td><code>5%</code> of portfolio</td></tr>
+                                        <tr><td><strong>Max Slippage</strong></td><td><code>1%</code></td></tr>
+                                        <tr><td><strong>Futures Trading</strong></td><td class="text-success">Yes</td></tr>
+                                        <tr><td><strong>Futures Exchange</strong></td><td><code>Binance</code></td></tr>
+                                        <tr><td><strong>Position Sizing Mode</strong></td><td><code>Confidence-Based</code></td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <h6 class="mt-3"><i class="fas fa-shield-alt me-2 text-danger"></i>Risk Management</h6>
+                        <table class="table table-sm table-bordered">
+                            <tbody>
+                                <tr><td width="30%"><strong>Daily Loss Limit</strong></td><td><code>$100</code></td><td class="text-muted small">Stop all trading if daily losses exceed this</td></tr>
+                                <tr><td><strong>Max Daily Trades</strong></td><td><code>10</code></td><td class="text-muted small">Prevents overtrading</td></tr>
+                                <tr><td><strong>Trade Cooldown</strong></td><td><code>15 minutes</code></td><td class="text-muted small">Minimum time between trades</td></tr>
+                                <tr><td><strong>Max Positions</strong></td><td><code>3</code></td><td class="text-muted small">Maximum concurrent AI positions</td></tr>
+                                <tr><td><strong>On Reverse Signal</strong></td><td><code>Close</code></td><td class="text-muted small">Close position if opposite signal received</td></tr>
+                                <tr><td><strong>On Same Signal</strong></td><td><code>Ignore</code></td><td class="text-muted small">Don't add to existing position</td></tr>
+                            </tbody>
+                        </table>
+
+                        <div class="alert alert-success mt-3 mb-0">
+                            <i class="fas fa-check me-2"></i>
+                            <strong>How to Apply:</strong> Copy these values into the form fields above, click "Save Changes", then monitor performance for 1-2 weeks before switching to LIVE mode.
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -489,6 +766,33 @@
                 document.getElementById('daily_loss_limit').value = settings.daily_loss_limit || 100;
                 document.getElementById('max_daily_trades').value = settings.max_daily_trades || 10;
                 document.getElementById('trade_cooldown').value = settings.trade_cooldown || 15;
+
+                // Multi-Chain AI Trading Engine settings
+                document.getElementById('ai_engine_enabled').checked = settings.ai_engine_enabled === true;
+                document.getElementById('chain_ethereum').checked = settings.chain_ethereum !== false; // Default true
+                document.getElementById('chain_base').checked = settings.chain_base === true;
+                document.getElementById('chain_arbitrum').checked = settings.chain_arbitrum === true;
+                document.getElementById('chain_bsc').checked = settings.chain_bsc === true;
+                document.getElementById('chain_solana').checked = settings.chain_solana === true;
+                document.getElementById('ai_analysis_interval').value = settings.ai_analysis_interval || 15;
+
+                // AI Strategy settings
+                document.getElementById('auto_strategy_generation').checked = settings.auto_strategy_generation === true;
+                document.getElementById('strategy_evolution').checked = settings.strategy_evolution === true;
+                document.getElementById('max_ai_strategies').value = settings.max_ai_strategies || 5;
+                document.getElementById('strategy_confidence').value = settings.strategy_confidence || 70;
+
+                // DEX Trading Integration
+                document.getElementById('dex_trading_enabled').checked = settings.dex_trading_enabled === true;
+                document.getElementById('dex_trade_size_pct').value = settings.dex_trade_size_pct || 5;
+                document.getElementById('dex_max_slippage').value = settings.dex_max_slippage || 1;
+
+                // Futures Trading Integration
+                document.getElementById('futures_trading_enabled').checked = settings.futures_trading_enabled !== false; // Default true
+                document.getElementById('futures_exchange').value = settings.futures_exchange || 'binance';
+                if (document.getElementById('ai_position_sizing')) {
+                    document.getElementById('ai_position_sizing').value = settings.ai_position_sizing || 'fixed';
+                }
 
                 // Update API status
                 updateApiStatus(settings);
@@ -552,7 +856,32 @@
             // Risk management
             daily_loss_limit: parseFloat(document.getElementById('daily_loss_limit').value),
             max_daily_trades: parseInt(document.getElementById('max_daily_trades').value),
-            trade_cooldown: parseInt(document.getElementById('trade_cooldown').value)
+            trade_cooldown: parseInt(document.getElementById('trade_cooldown').value),
+
+            // Multi-Chain AI Trading Engine settings
+            ai_engine_enabled: document.getElementById('ai_engine_enabled').checked,
+            chain_ethereum: document.getElementById('chain_ethereum').checked,
+            chain_base: document.getElementById('chain_base').checked,
+            chain_arbitrum: document.getElementById('chain_arbitrum').checked,
+            chain_bsc: document.getElementById('chain_bsc').checked,
+            chain_solana: document.getElementById('chain_solana').checked,
+            ai_analysis_interval: parseInt(document.getElementById('ai_analysis_interval').value),
+
+            // AI Strategy settings
+            auto_strategy_generation: document.getElementById('auto_strategy_generation').checked,
+            strategy_evolution: document.getElementById('strategy_evolution').checked,
+            max_ai_strategies: parseInt(document.getElementById('max_ai_strategies').value),
+            strategy_confidence: parseInt(document.getElementById('strategy_confidence').value),
+
+            // DEX Trading Integration
+            dex_trading_enabled: document.getElementById('dex_trading_enabled').checked,
+            dex_trade_size_pct: parseFloat(document.getElementById('dex_trade_size_pct').value),
+            dex_max_slippage: parseFloat(document.getElementById('dex_max_slippage').value),
+
+            // Futures Trading Integration
+            futures_trading_enabled: document.getElementById('futures_trading_enabled').checked,
+            futures_exchange: document.getElementById('futures_exchange').value,
+            ai_position_sizing: document.getElementById('ai_position_sizing') ? document.getElementById('ai_position_sizing').value : 'fixed'
         };
 
         try {

@@ -757,6 +757,179 @@ modules/arbitrage/<br>
                     </tbody>
                 </table>
             </div>
+
+            <!-- NEW: Comprehensive Flash Loan / Borrowing Guide -->
+            <div class="settings-section" style="border: 2px solid #f59e0b; border-radius: 12px;">
+                <div class="settings-title">
+                    <i class="fas fa-bolt text-warning"></i>
+                    Flash Loan & Borrowing Configuration Guide
+                </div>
+
+                <div class="alert alert-info">
+                    <strong><i class="fas fa-info-circle me-2"></i>What are Flash Loans?</strong>
+                    <p class="mb-0 mt-2">Flash loans allow you to borrow funds without collateral, as long as you repay within the same transaction. This enables arbitrage with zero capital at risk - you borrow, execute the arbitrage, and repay, all atomically.</p>
+                </div>
+
+                <!-- ETH Flash Loans -->
+                <div class="card mb-4" style="background: linear-gradient(135deg, #1a1f35 0%, #0f172a 100%); border: 1px solid #3b82f6;">
+                    <div class="card-header" style="background: rgba(59, 130, 246, 0.2); border-bottom: 1px solid #3b82f6;">
+                        <h5 class="mb-0"><i class="fab fa-ethereum me-2"></i>Ethereum Flash Loans (Aave V3)</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6 class="text-primary"><i class="fas fa-check-circle me-2"></i>Status: Fully Implemented</h6>
+                                <ul class="small">
+                                    <li><strong>Provider:</strong> Aave V3 Pool</li>
+                                    <li><strong>Contract:</strong> <code style="font-size: 0.7rem;">0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2</code></li>
+                                    <li><strong>Fee:</strong> 0.09% of borrowed amount</li>
+                                    <li><strong>Max Borrow:</strong> Limited by pool liquidity (typically 100+ ETH)</li>
+                                </ul>
+                            </div>
+                            <div class="col-md-6">
+                                <h6 class="text-success"><i class="fas fa-cog me-2"></i>How to Enable</h6>
+                                <ol class="small">
+                                    <li>Go to <strong>Advanced</strong> tab above</li>
+                                    <li>Enable <strong>"Use Flash Loans (Aave V3)"</strong></li>
+                                    <li>Set <strong>Flash Loan Amount</strong> (default: 10 ETH)</li>
+                                    <li>Enable <strong>"Use Flashbots"</strong> for MEV protection</li>
+                                    <li>Set <strong>DRY_RUN=false</strong> for live trading</li>
+                                </ol>
+                            </div>
+                        </div>
+
+                        <div class="alert alert-secondary mt-3 mb-0">
+                            <strong>Execution Flow:</strong>
+                            <div class="code-block mt-2" style="font-size: 0.8rem; background: #0f172a;">
+1. Borrow X ETH from Aave V3 (0.09% fee)<br>
+2. Swap ETH → Token on DEX A (lower price)<br>
+3. Swap Token → ETH on DEX B (higher price)<br>
+4. Repay X ETH + 0.09% fee to Aave<br>
+5. Keep profit (spread - fees - gas)
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SOL Borrowing -->
+                <div class="card mb-4" style="background: linear-gradient(135deg, #1a1f35 0%, #0f172a 100%); border: 1px solid #9945ff;">
+                    <div class="card-header" style="background: rgba(153, 69, 255, 0.2); border-bottom: 1px solid #9945ff;">
+                        <h5 class="mb-0"><i class="fas fa-sun me-2"></i>Solana Borrowing Options</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-warning">
+                            <strong><i class="fas fa-exclamation-triangle me-2"></i>Important:</strong> Solana does NOT have native flash loans like Ethereum's Aave. The architecture is different.
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6 class="text-info"><i class="fas fa-exchange-alt me-2"></i>Current Approach: Jupiter Aggregator</h6>
+                                <p class="small text-muted">The Solana engine uses Jupiter's aggregated routing which finds the best swap path across all DEXs automatically.</p>
+                                <ul class="small">
+                                    <li><strong>No borrowing needed:</strong> Uses your SOL directly</li>
+                                    <li><strong>Lower fees:</strong> Solana txs cost ~$0.001</li>
+                                    <li><strong>MEV Protection:</strong> Jito bundles prevent front-running</li>
+                                </ul>
+                            </div>
+                            <div class="col-md-6">
+                                <h6 class="text-warning"><i class="fas fa-hand-holding-usd me-2"></i>Alternative: Solana Lending Protocols</h6>
+                                <p class="small text-muted">If you want to borrow SOL to increase position size:</p>
+                                <ul class="small">
+                                    <li><strong>Solend:</strong> Borrow SOL with collateral (USDC, mSOL)</li>
+                                    <li><strong>Marginfi:</strong> Leverage lending protocol</li>
+                                    <li><strong>Kamino:</strong> Concentrated liquidity + lending</li>
+                                </ul>
+                                <div class="alert alert-info mb-0 mt-2">
+                                    <small>⚠️ These require collateral (not flash loans). Integration is planned for future updates.</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <h6 class="text-success mt-4"><i class="fas fa-cog me-2"></i>How to Configure Solana Arbitrage</h6>
+                        <ol class="small">
+                            <li>Go to <strong>General</strong> tab, set <strong>Solana Trade Amount</strong> (e.g., 1-10 SOL)</li>
+                            <li>Go to <strong>Chains</strong> tab, enable <strong>Solana Arbitrage</strong></li>
+                            <li>Enable <strong>Jupiter</strong> and <strong>Raydium</strong> DEXs</li>
+                            <li>Enable <strong>Jito MEV Protection</strong> for live trading</li>
+                            <li>Set <strong>SOLANA_PRIVATE_KEY</strong> in .env for live execution</li>
+                        </ol>
+                    </div>
+                </div>
+
+                <!-- Recommended Settings -->
+                <div class="card" style="background: linear-gradient(135deg, #1a1f35 0%, #0f172a 100%); border: 1px solid #10b981;">
+                    <div class="card-header" style="background: rgba(16, 185, 129, 0.2); border-bottom: 1px solid #10b981;">
+                        <h5 class="mb-0"><i class="fas fa-sliders-h me-2"></i>Recommended Settings for Profitable Trading</h5>
+                    </div>
+                    <div class="card-body">
+                        <table class="table table-bordered table-sm" style="color: #e5e7eb;">
+                            <thead style="background: rgba(16, 185, 129, 0.1);">
+                                <tr><th>Setting</th><th>Conservative</th><th>Moderate</th><th>Aggressive</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><strong>Min Profit Spread</strong></td>
+                                    <td>0.8%</td>
+                                    <td>0.5%</td>
+                                    <td>0.3%</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>ETH Trade Amount</strong></td>
+                                    <td>0.5 ETH</td>
+                                    <td>1-2 ETH</td>
+                                    <td>5+ ETH</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Flash Loan Amount</strong></td>
+                                    <td>5 ETH</td>
+                                    <td>10 ETH</td>
+                                    <td>25+ ETH</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>SOL Trade Amount</strong></td>
+                                    <td>1 SOL</td>
+                                    <td>5 SOL</td>
+                                    <td>20+ SOL</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Triangular Threshold</strong></td>
+                                    <td>0.2%</td>
+                                    <td>0.1%</td>
+                                    <td>0.05%</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Gas Buffer</strong></td>
+                                    <td>2.0x</td>
+                                    <td>1.5x</td>
+                                    <td>1.2x</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Max Daily Trades</strong></td>
+                                    <td>3</td>
+                                    <td>5</td>
+                                    <td>10+</td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <div class="alert alert-success mb-0 mt-3">
+                            <strong><i class="fas fa-lightbulb me-2"></i>Recommended Starting Point:</strong> Use <strong>Moderate</strong> settings with DRY_RUN=true first. Monitor for 24-48 hours to see opportunity frequency. Then switch to LIVE with conservative settings and gradually increase.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Risk Warnings for Loans -->
+                <div class="alert alert-danger mt-4">
+                    <h6><i class="fas fa-skull-crossbones me-2"></i>Flash Loan Risks</h6>
+                    <ul class="mb-0 small">
+                        <li><strong>Atomic Failure:</strong> If any step fails, the entire transaction reverts. You lose gas fees but no borrowed funds.</li>
+                        <li><strong>MEV Competition:</strong> Other bots watch for profitable opportunities. Use Flashbots to avoid front-running.</li>
+                        <li><strong>Smart Contract Risk:</strong> Bugs in the arbitrage contract could lead to stuck funds.</li>
+                        <li><strong>Pool Liquidity:</strong> Large flash loans may exceed available liquidity.</li>
+                        <li><strong>Gas Spikes:</strong> During network congestion, gas costs may exceed profits.</li>
+                    </ul>
+                </div>
+            </div>
         </div>
 
         <!-- Setup Tab -->

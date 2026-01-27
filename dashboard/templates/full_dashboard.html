@@ -3,351 +3,684 @@
 {% block title %}Full Dashboard - All Modules{% endblock %}
 
 {% block content %}
+<style>
+    /* Full Dashboard Specific Styles */
+    .dashboard-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 24px;
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+    .header-title h1 { margin: 0; font-size: 1.8rem; }
+    .header-title .subtitle { color: #94a3b8; margin-top: 4px; }
+    .header-controls { display: flex; align-items: center; gap: 16px; }
+    .last-updated { color: #64748b; font-size: 0.85rem; }
+    .connection-status {
+        display: flex; align-items: center; gap: 6px;
+        padding: 4px 10px; border-radius: 20px; font-size: 0.75rem;
+    }
+    .connection-status.connected { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .connection-status.disconnected { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+    .connection-status .pulse {
+        width: 8px; height: 8px; border-radius: 50%;
+        animation: pulse 2s infinite;
+    }
+    .connected .pulse { background: #10b981; }
+    .disconnected .pulse { background: #ef4444; }
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+
+    /* Summary Cards */
+    .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+    .summary-card {
+        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+        border-radius: 12px;
+        padding: 20px;
+        border: 1px solid #334155;
+    }
+    .summary-card.primary { border-left: 4px solid #3b82f6; }
+    .summary-card.success { border-left: 4px solid #10b981; }
+    .summary-card.warning { border-left: 4px solid #f59e0b; }
+    .summary-card.info { border-left: 4px solid #8b5cf6; }
+    .summary-card .card-icon {
+        width: 40px; height: 40px; border-radius: 10px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.2rem; margin-bottom: 12px;
+    }
+    .summary-card.primary .card-icon { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+    .summary-card.success .card-icon { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .summary-card.warning .card-icon { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .summary-card.info .card-icon { background: rgba(139, 92, 246, 0.2); color: #8b5cf6; }
+    .summary-card .card-label { color: #94a3b8; font-size: 0.85rem; margin-bottom: 4px; }
+    .summary-card .card-value { font-size: 1.5rem; font-weight: 700; color: #f1f5f9; }
+    .summary-card .card-sub { color: #64748b; font-size: 0.75rem; margin-top: 4px; }
+    .summary-card .card-change { font-size: 0.85rem; margin-top: 8px; }
+    .summary-card .card-change.positive { color: #10b981; }
+    .summary-card .card-change.negative { color: #ef4444; }
+
+    /* Module Cards Grid */
+    .modules-section { margin-bottom: 32px; }
+    .section-header {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-bottom: 16px;
+    }
+    .section-header h2 { margin: 0; font-size: 1.3rem; color: #f1f5f9; }
+    .modules-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 16px;
+    }
+    .module-card {
+        background: #1e293b;
+        border-radius: 12px;
+        padding: 20px;
+        border: 1px solid #334155;
+        transition: all 0.2s;
+    }
+    .module-card:hover { border-color: #475569; transform: translateY(-2px); }
+    .module-card.active { border-color: #10b981; }
+    .module-card.inactive { opacity: 0.6; }
+    .module-header {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-bottom: 16px;
+    }
+    .module-name { display: flex; align-items: center; gap: 10px; }
+    .module-icon {
+        width: 36px; height: 36px; border-radius: 8px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1rem;
+    }
+    .module-icon.dex { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+    .module-icon.futures { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .module-icon.solana { background: rgba(139, 92, 246, 0.2); color: #8b5cf6; }
+    .module-icon.sniper { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+    .module-icon.arbitrage { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .module-icon.copytrading { background: rgba(236, 72, 153, 0.2); color: #ec4899; }
+    .module-icon.ai { background: rgba(34, 211, 238, 0.2); color: #22d3ee; }
+    .module-name h4 { margin: 0; font-size: 1rem; color: #f1f5f9; }
+    .module-status {
+        padding: 4px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 600;
+        text-transform: uppercase;
+    }
+    .module-status.running { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .module-status.stopped { background: rgba(100, 116, 139, 0.2); color: #64748b; }
+    .module-status.error { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+    .module-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .stat-item { }
+    .stat-label { color: #64748b; font-size: 0.75rem; margin-bottom: 2px; }
+    .stat-value { font-size: 1rem; font-weight: 600; color: #f1f5f9; }
+    .stat-value.positive { color: #10b981; }
+    .stat-value.negative { color: #ef4444; }
+    .module-actions { margin-top: 16px; padding-top: 16px; border-top: 1px solid #334155; }
+    .module-actions a {
+        display: block; text-align: center; padding: 8px;
+        background: rgba(59, 130, 246, 0.1); color: #3b82f6;
+        border-radius: 6px; text-decoration: none; font-size: 0.85rem;
+        transition: background 0.2s;
+    }
+    .module-actions a:hover { background: rgba(59, 130, 246, 0.2); }
+
+    /* Charts Grid */
+    .charts-section { margin-bottom: 32px; }
+    .charts-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+    }
+    .chart-card {
+        background: #1e293b;
+        border-radius: 12px;
+        padding: 16px;
+        border: 1px solid #334155;
+    }
+    .chart-card.span-2 { grid-column: span 2; }
+    .chart-card.span-3 { grid-column: span 3; }
+    .chart-header {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-bottom: 12px;
+    }
+    .chart-header h3 { margin: 0; font-size: 0.95rem; color: #f1f5f9; }
+    .chart-body { height: 200px; position: relative; }
+    .chart-body.tall { height: 280px; }
+    .chart-loading {
+        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        color: #64748b;
+    }
+
+    /* Responsive */
+    @media (max-width: 1200px) {
+        .charts-grid { grid-template-columns: repeat(2, 1fr); }
+        .chart-card.span-2, .chart-card.span-3 { grid-column: span 2; }
+    }
+    @media (max-width: 768px) {
+        .charts-grid { grid-template-columns: 1fr; }
+        .chart-card.span-2, .chart-card.span-3 { grid-column: span 1; }
+        .summary-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    /* Refresh interval selector */
+    .refresh-select {
+        background: #1e293b; border: 1px solid #334155; color: #f1f5f9;
+        padding: 6px 12px; border-radius: 6px; font-size: 0.85rem;
+    }
+</style>
+
 <div class="dashboard-header">
     <div class="header-title">
         <h1><i class="fas fa-tachometer-alt"></i> Full Trading Dashboard</h1>
-        <p class="subtitle">Unified view of all trading modules, balances, and performance metrics</p>
+        <p class="subtitle">Real-time unified view of all trading modules</p>
     </div>
     <div class="header-controls">
-        <div class="last-updated">
-            Updated: <span id="lastUpdated">Just now</span>
+        <div id="connectionStatus" class="connection-status disconnected">
+            <span class="pulse"></span>
+            <span class="status-text">Connecting...</span>
         </div>
-        <button class="btn btn-primary" onclick="refreshFullDashboard()">
-            <i class="fas fa-sync-alt"></i> Refresh All
+        <div class="last-updated">
+            <i class="fas fa-clock"></i>
+            <span id="lastUpdated">--</span>
+        </div>
+        <select id="refreshInterval" class="refresh-select" onchange="setRefreshInterval(this.value)">
+            <option value="5">5s refresh</option>
+            <option value="10" selected>10s refresh</option>
+            <option value="30">30s refresh</option>
+            <option value="60">60s refresh</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="refreshAllData()">
+            <i class="fas fa-sync-alt"></i> Refresh
         </button>
     </div>
 </div>
 
-<!-- TOTAL BALANCE & SUMMARY SECTION -->
-<div class="row mb-4">
-    <!-- Aggregated Balance Card -->
-    <div class="col-md-4">
-        <div class="card balance-card gradient-primary">
-            <div class="card-body">
-                <h5 class="card-title text-white-50">Total Portfolio Value</h5>
-                <h2 class="display-4 text-white mb-0" id="totalPortfolioValue">$0.00</h2>
-                <div class="d-flex justify-content-between mt-3">
-                    <div class="text-white">
-                        <small>Unrealized P&L</small>
-                        <div class="h5 mb-0" id="totalUnrealizedPnl">+$0.00</div>
-                    </div>
-                    <div class="text-white text-end">
-                        <small>24h Change</small>
-                        <div class="h5 mb-0" id="total24hChange">0.00%</div>
-                    </div>
-                </div>
-            </div>
-        </div>
+<!-- Summary Cards -->
+<div class="summary-grid">
+    <div class="summary-card primary">
+        <div class="card-icon"><i class="fas fa-wallet"></i></div>
+        <div class="card-label">Total Portfolio Value</div>
+        <div class="card-value" id="totalPortfolioValue">$0.00</div>
+        <div class="card-change" id="portfolioChange">--</div>
     </div>
+    <div class="summary-card success">
+        <div class="card-icon"><i class="fas fa-chart-line"></i></div>
+        <div class="card-label">Total P&L</div>
+        <div class="card-value" id="totalPnL">$0.00</div>
+        <div class="card-sub" id="pnlPercent">0.00%</div>
+    </div>
+    <div class="summary-card warning">
+        <div class="card-icon"><i class="fas fa-layer-group"></i></div>
+        <div class="card-label">Open Positions</div>
+        <div class="card-value" id="openPositions">0</div>
+        <div class="card-sub" id="positionsValue">$0.00 value</div>
+    </div>
+    <div class="summary-card info">
+        <div class="card-icon"><i class="fas fa-exchange-alt"></i></div>
+        <div class="card-label">Total Trades</div>
+        <div class="card-value" id="totalTrades">0</div>
+        <div class="card-sub" id="winRate">0.0% win rate</div>
+    </div>
+    <div class="summary-card success">
+        <div class="card-icon"><i class="fas fa-check-circle"></i></div>
+        <div class="card-label">Active Modules</div>
+        <div class="card-value" id="activeModules">0/7</div>
+        <div class="card-sub" id="moduleHealth">All systems nominal</div>
+    </div>
+    <div class="summary-card warning">
+        <div class="card-icon"><i class="fas fa-bolt"></i></div>
+        <div class="card-label">24h Volume</div>
+        <div class="card-value" id="dailyVolume">$0.00</div>
+        <div class="card-sub" id="volumeChange">--</div>
+    </div>
+</div>
 
-    <!-- Active Stats -->
-    <div class="col-md-8">
-        <div class="row h-100">
-            <div class="col-md-3">
-                <div class="metric-card h-100">
-                    <div class="metric-icon success"><i class="fas fa-check-circle"></i></div>
-                    <div class="metric-info">
-                        <h3>Active Modules</h3>
-                        <div class="metric-value" id="activeModulesCount">0/7</div>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="metric-card h-100">
-                    <div class="metric-icon primary"><i class="fas fa-layer-group"></i></div>
-                    <div class="metric-info">
-                        <h3>Open Positions</h3>
-                        <div class="metric-value" id="totalOpenPositions">0</div>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="metric-card h-100">
-                    <div class="metric-icon warning"><i class="fas fa-exchange-alt"></i></div>
-                    <div class="metric-info">
-                        <h3>Total Trades</h3>
-                        <div class="metric-value" id="totalTradesCount">0</div>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="metric-card h-100">
-                    <div class="metric-icon info"><i class="fas fa-percentage"></i></div>
-                    <div class="metric-info">
-                        <h3>Avg Win Rate</h3>
-                        <div class="metric-value" id="avgWinRate">0.0%</div>
-                    </div>
-                </div>
-            </div>
+<!-- Module Overview Section -->
+<div class="modules-section">
+    <div class="section-header">
+        <h2><i class="fas fa-cubes"></i> Module Overview</h2>
+    </div>
+    <div class="modules-grid" id="modulesGrid">
+        <!-- Module cards will be injected here -->
+        <div class="loading-placeholder" style="grid-column: 1 / -1; text-align: center; padding: 40px; color: #64748b;">
+            <i class="fas fa-spinner fa-spin fa-2x"></i>
+            <p>Loading modules...</p>
         </div>
     </div>
 </div>
 
-<!-- MODULE OVERVIEW CARDS -->
-<h3 class="section-title mb-3">Module Overview</h3>
-<div class="row row-cols-1 row-cols-md-2 row-cols-xl-4 g-4 mb-5" id="modulesGrid">
-    <!-- Module Cards will be injected here via JS -->
-    <div class="col text-center py-5">
-        <div class="spinner-border text-primary" role="status">
-            <span class="visually-hidden">Loading...</span>
+<!-- Charts Section -->
+<div class="charts-section">
+    <div class="section-header">
+        <h2><i class="fas fa-chart-area"></i> Performance Analytics</h2>
+    </div>
+    <div class="charts-grid">
+        <!-- Row 1: Equity & PnL -->
+        <div class="chart-card span-2">
+            <div class="chart-header"><h3>Equity Curve</h3></div>
+            <div class="chart-body tall"><canvas id="chartEquity"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-header"><h3>P&L Distribution</h3></div>
+            <div class="chart-body tall"><canvas id="chartPnlDist"></canvas></div>
+        </div>
+
+        <!-- Row 2: Module Comparison -->
+        <div class="chart-card">
+            <div class="chart-header"><h3>P&L by Module</h3></div>
+            <div class="chart-body"><canvas id="chartModulePnl"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-header"><h3>Win Rate by Module</h3></div>
+            <div class="chart-body"><canvas id="chartModuleWinRate"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-header"><h3>Trade Count by Module</h3></div>
+            <div class="chart-body"><canvas id="chartModuleTrades"></canvas></div>
+        </div>
+
+        <!-- Row 3: Asset & Chain -->
+        <div class="chart-card">
+            <div class="chart-header"><h3>Asset Allocation</h3></div>
+            <div class="chart-body"><canvas id="chartAssetAlloc"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-header"><h3>Chain ROI</h3></div>
+            <div class="chart-body"><canvas id="chartChainRoi"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-header"><h3>Chain Volume</h3></div>
+            <div class="chart-body"><canvas id="chartChainVol"></canvas></div>
+        </div>
+
+        <!-- Row 4: Time Analysis -->
+        <div class="chart-card span-3">
+            <div class="chart-header"><h3>Hourly Profitability</h3></div>
+            <div class="chart-body"><canvas id="chartHourlyHeatmap"></canvas></div>
+        </div>
+
+        <!-- Row 5: Risk Metrics -->
+        <div class="chart-card">
+            <div class="chart-header"><h3>Avg Trade Duration</h3></div>
+            <div class="chart-body"><canvas id="chartDuration"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-header"><h3>Fee Analysis</h3></div>
+            <div class="chart-body"><canvas id="chartFees"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-header"><h3>Drawdown</h3></div>
+            <div class="chart-body"><canvas id="chartDrawdown"></canvas></div>
+        </div>
+
+        <!-- Row 6: Strategy & Risk -->
+        <div class="chart-card">
+            <div class="chart-header"><h3>Risk/Reward Ratio</h3></div>
+            <div class="chart-body"><canvas id="chartRR"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-header"><h3>Slippage Impact</h3></div>
+            <div class="chart-body"><canvas id="chartSlippage"></canvas></div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-header"><h3>Win/Loss Streaks</h3></div>
+            <div class="chart-body"><canvas id="chartStreaks"></canvas></div>
         </div>
     </div>
-</div>
-
-<!-- CHARTS GRID - 20 Charts Grid System -->
-<h3 class="section-title mb-3">Performance Analytics</h3>
-<div class="dashboard-grid">
-
-    <!-- Row 1: PnL & Equity -->
-    <div class="card col-span-2">
-        <div class="card-header"><h3>Total Equity Curve</h3></div>
-        <div class="card-body"><canvas id="chartEquity" height="250"></canvas></div>
-    </div>
-    <div class="card col-span-1">
-        <div class="card-header"><h3>PnL Distribution</h3></div>
-        <div class="card-body"><canvas id="chartPnlDist" height="250"></canvas></div>
-    </div>
-
-    <!-- Row 2: Module Comparisons -->
-    <div class="card col-span-1">
-        <div class="card-header"><h3>PnL by Module</h3></div>
-        <div class="card-body"><canvas id="chartModulePnl" height="250"></canvas></div>
-    </div>
-    <div class="card col-span-1">
-        <div class="card-header"><h3>Win Rate by Module</h3></div>
-        <div class="card-body"><canvas id="chartModuleWinRate" height="250"></canvas></div>
-    </div>
-    <div class="card col-span-1">
-        <div class="card-header"><h3>Trade Count by Module</h3></div>
-        <div class="card-body"><canvas id="chartModuleTrades" height="250"></canvas></div>
-    </div>
-
-    <!-- Row 3: Asset & Chain Analysis -->
-    <div class="card col-span-1">
-        <div class="card-header"><h3>Asset Allocation</h3></div>
-        <div class="card-body"><canvas id="chartAssetAlloc" height="250"></canvas></div>
-    </div>
-    <div class="card col-span-1">
-        <div class="card-header"><h3>Chain Performance (ROI)</h3></div>
-        <div class="card-body"><canvas id="chartChainRoi" height="250"></canvas></div>
-    </div>
-    <div class="card col-span-1">
-        <div class="card-header"><h3>Chain Volume</h3></div>
-        <div class="card-body"><canvas id="chartChainVol" height="250"></canvas></div>
-    </div>
-
-    <!-- Row 4: Time Analysis -->
-    <div class="card col-span-3">
-        <div class="card-header"><h3>Hourly Profitability Heatmap</h3></div>
-        <div class="card-body"><canvas id="chartHourlyHeatmap" height="200"></canvas></div>
-    </div>
-
-    <!-- Row 5: More Metrics -->
-    <div class="card col-span-1">
-        <div class="card-header"><h3>Avg Trade Duration</h3></div>
-        <div class="card-body"><canvas id="chartDuration" height="250"></canvas></div>
-    </div>
-    <div class="card col-span-1">
-        <div class="card-header"><h3>Fee Analysis</h3></div>
-        <div class="card-body"><canvas id="chartFees" height="250"></canvas></div>
-    </div>
-    <div class="card col-span-1">
-        <div class="card-header"><h3>Drawdown Analysis</h3></div>
-        <div class="card-body"><canvas id="chartDrawdown" height="250"></canvas></div>
-    </div>
-
-    <!-- Placeholders for remaining charts to reach ~20 -->
-    <div class="card col-span-1"><div class="card-header"><h3>Strategy Comparison</h3></div><div class="card-body"><canvas id="chartStrategy" height="200"></canvas></div></div>
-    <div class="card col-span-1"><div class="card-header"><h3>Risk/Reward Ratio</h3></div><div class="card-body"><canvas id="chartRR" height="200"></canvas></div></div>
-    <div class="card col-span-1"><div class="card-header"><h3>Slippage Impact</h3></div><div class="card-body"><canvas id="chartSlippage" height="200"></canvas></div></div>
-    <div class="card col-span-1"><div class="card-header"><h3>Win Streak</h3></div><div class="card-body"><canvas id="chartWinStreak" height="200"></canvas></div></div>
-    <div class="card col-span-1"><div class="card-header"><h3>Loss Streak</h3></div><div class="card-body"><canvas id="chartLossStreak" height="200"></canvas></div></div>
-    <div class="card col-span-1"><div class="card-header"><h3>Market Correlation</h3></div><div class="card-body"><canvas id="chartCorrelation" height="200"></canvas></div></div>
 </div>
 
 {% endblock %}
 
 {% block extra_js %}
 <script>
-    // Module Definitions
+    // =============== CONFIGURATION ===============
     const ALL_MODULES = [
-        { id: 'dex_trading', name: 'DEX Trading', icon: 'fa-cube' },
-        { id: 'futures_trading', name: 'Futures', icon: 'fa-chart-line' },
-        { id: 'solana_strategies', name: 'Solana', icon: 'fa-coins' },
-        { id: 'sniper', name: 'Sniper', icon: 'fa-crosshairs' },
-        { id: 'ai_analysis', name: 'AI Analysis', icon: 'fa-brain' },
-        { id: 'arbitrage', name: 'Arbitrage', icon: 'fa-balance-scale' },
-        { id: 'copy_trading', name: 'Copy Trading', icon: 'fa-user-friends' }
+        { id: 'dex_trading', name: 'DEX Trading', icon: 'fa-cube', color: 'dex', dashboard: '/dashboard' },
+        { id: 'futures_trading', name: 'Futures', icon: 'fa-chart-line', color: 'futures', dashboard: '/futures/dashboard' },
+        { id: 'solana_strategies', name: 'Solana', icon: 'fa-coins', color: 'solana', dashboard: '/solana/dashboard' },
+        { id: 'sniper', name: 'Sniper', icon: 'fa-crosshairs', color: 'sniper', dashboard: '/sniper/dashboard' },
+        { id: 'arbitrage', name: 'Arbitrage', icon: 'fa-balance-scale', color: 'arbitrage', dashboard: '/arbitrage/dashboard' },
+        { id: 'copy_trading', name: 'Copy Trading', icon: 'fa-user-friends', color: 'copytrading', dashboard: '/copytrading/dashboard' },
+        { id: 'ai_analysis', name: 'AI Analysis', icon: 'fa-brain', color: 'ai', dashboard: '/ai/dashboard' }
     ];
 
+    // =============== STATE ===============
+    // Use existing global socket from websocket.js, don't redeclare
+    let fullDashRefreshInterval = 10000;
+    let fullDashRefreshTimer = null;
+    let fullDashCharts = {};
+    let fullDashModuleData = {};
+    let fullDashConnected = false;
+
+    // =============== INITIALIZATION ===============
     document.addEventListener('DOMContentLoaded', function() {
-        loadFullDashboardData();
-        initCharts();
+        setupFullDashboardSocket();
+        initializeCharts();
+        loadAllData();
+        startRefreshTimer();
     });
 
-    async function loadFullDashboardData() {
+    function setupFullDashboardSocket() {
+        // Use the global socket from websocket.js if available
+        if (typeof socket !== 'undefined' && socket) {
+            fullDashConnected = socket.connected;
+            updateConnectionStatus(fullDashConnected);
+
+            // Add our custom handlers
+            socket.on('connect', () => {
+                fullDashConnected = true;
+                updateConnectionStatus(true);
+            });
+
+            socket.on('disconnect', () => {
+                fullDashConnected = false;
+                updateConnectionStatus(false);
+            });
+
+            socket.on('dashboard_update', (data) => {
+                updateDashboardFromSocket(data);
+            });
+
+            socket.on('wallet_update', (data) => {
+                if (data.total_portfolio) {
+                    document.getElementById('totalPortfolioValue').textContent = formatCurrency(data.total_portfolio);
+                }
+            });
+
+            socket.on('performance_update', (data) => {
+                updatePerformanceFromSocket(data);
+            });
+        } else {
+            console.warn('Global socket not available, using polling only');
+            fullDashConnected = false;
+            updateConnectionStatus(false);
+        }
+    }
+
+    function updateConnectionStatus(connected) {
+        const el = document.getElementById('connectionStatus');
+        if (connected) {
+            el.className = 'connection-status connected';
+            el.querySelector('.status-text').textContent = 'Live';
+        } else {
+            el.className = 'connection-status disconnected';
+            el.querySelector('.status-text').textContent = 'Reconnecting...';
+        }
+    }
+
+    function updateDashboardFromSocket(data) {
+        if (data.portfolio_value !== undefined) {
+            document.getElementById('totalPortfolioValue').textContent = formatCurrency(data.portfolio_value);
+        }
+        if (data.daily_pnl !== undefined) {
+            const pnlEl = document.getElementById('totalPnL');
+            pnlEl.textContent = formatCurrency(data.daily_pnl);
+            pnlEl.className = data.daily_pnl >= 0 ? 'card-value positive' : 'card-value negative';
+        }
+        if (data.open_positions !== undefined) {
+            document.getElementById('openPositions').textContent = data.open_positions;
+        }
+        if (data.timestamp) {
+            document.getElementById('lastUpdated').textContent = new Date(data.timestamp).toLocaleTimeString();
+        }
+    }
+
+    function updatePerformanceFromSocket(data) {
+        if (data.total_trades !== undefined) {
+            document.getElementById('totalTrades').textContent = data.total_trades;
+        }
+        if (data.win_rate !== undefined) {
+            document.getElementById('winRate').textContent = data.win_rate.toFixed(1) + '% win rate';
+        }
+    }
+
+    // =============== DATA LOADING ===============
+    async function loadAllData() {
         try {
-            // 1. Fetch Aggregated Balances
-            const balanceRes = await fetch('/api/wallets/aggregated-balances');
-            const balanceData = await balanceRes.json();
-
-            if (balanceData.success) {
-                document.getElementById('totalPortfolioValue').textContent = formatCurrency(balanceData.data.total_usd || 0);
-            }
-
-            // 2. Fetch Module Data (Simulating a unified endpoint or multiple calls)
-            const modulesRes = await fetch('/api/modules');
-            const modulesData = await modulesRes.json();
-
-            if (modulesData.success) {
-                renderModuleCards(modulesData.data.modules);
-            }
-
-            // 3. Update Last Updated
+            await Promise.all([
+                loadPortfolioData(),
+                loadModulesData(),
+                loadChartsData()
+            ]);
             document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+        } catch (e) {
+            console.error('Error loading dashboard data:', e);
+        }
+    }
 
-        } catch (error) {
-            console.error('Error loading dashboard data:', error);
+    async function loadPortfolioData() {
+        try {
+            const res = await fetch('/api/wallets/aggregated-balances');
+            const data = await res.json();
+
+            if (data.success && data.data) {
+                document.getElementById('totalPortfolioValue').textContent = formatCurrency(data.data.total_usd || 0);
+            }
+
+            // Also get performance summary
+            const perfRes = await fetch('/api/dashboard/summary');
+            const perfData = await perfRes.json();
+
+            if (perfData.success && perfData.data) {
+                const d = perfData.data;
+
+                const pnlEl = document.getElementById('totalPnL');
+                const pnl = d.total_pnl || d.realized_pnl || 0;
+                pnlEl.textContent = formatCurrency(pnl);
+                pnlEl.className = pnl >= 0 ? 'card-value' : 'card-value negative';
+
+                const initial = 400;
+                const pnlPct = initial > 0 ? (pnl / initial * 100) : 0;
+                const pnlPctEl = document.getElementById('pnlPercent');
+                pnlPctEl.textContent = (pnl >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%';
+                pnlPctEl.className = pnl >= 0 ? 'card-sub positive' : 'card-sub negative';
+
+                document.getElementById('openPositions').textContent = d.open_positions || 0;
+                document.getElementById('totalTrades').textContent = d.total_trades || 0;
+                document.getElementById('winRate').textContent = (d.win_rate || 0).toFixed(1) + '% win rate';
+            }
+        } catch (e) {
+            console.error('Error loading portfolio data:', e);
+        }
+    }
+
+    async function loadModulesData() {
+        try {
+            const res = await fetch('/api/modules');
+            const data = await res.json();
+
+            if (data.success) {
+                fullDashModuleData = data.data?.modules || data.data || {};
+                renderModuleCards(fullDashModuleData);
+            }
+        } catch (e) {
+            console.error('Error loading modules data:', e);
+            renderModuleCards({});
         }
     }
 
     function renderModuleCards(modulesData) {
         const grid = document.getElementById('modulesGrid');
-        grid.innerHTML = ''; // Clear loading spinner
+        grid.innerHTML = '';
 
         let activeCount = 0;
         let totalTrades = 0;
+        let totalPnl = 0;
 
-        ALL_MODULES.forEach(modDef => {
-            const modData = modulesData[modDef.id] || {};
-            const isEnabled = modData.enabled || false;
-            const status = modData.status || (isEnabled ? 'RUNNING' : 'DISABLED');
+        ALL_MODULES.forEach(mod => {
+            const data = modulesData[mod.id] || {};
+            const metrics = data.metrics || { pnl: 0, total_trades: 0, win_rate: 0, positions: 0 };
+            const isRunning = data.status === 'RUNNING' || data.enabled;
+            const status = data.status || (isRunning ? 'RUNNING' : 'STOPPED');
 
             if (status === 'RUNNING') activeCount++;
-
-            // Mock metrics if not present
-            const metrics = modData.metrics || { pnl: 0, total_trades: 0, win_rate: 0 };
             totalTrades += metrics.total_trades || 0;
+            totalPnl += metrics.pnl || 0;
 
-            const cardHtml = `
-                <div class="col">
-                    <div class="card h-100 module-card ${status === 'RUNNING' ? 'border-primary' : ''}">
-                        <div class="card-body">
-                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                <h5 class="card-title mb-0"><i class="fas ${modDef.icon} me-2"></i>${modDef.name}</h5>
-                                <span class="badge ${status === 'RUNNING' ? 'bg-success' : 'bg-secondary'}">${status}</span>
-                            </div>
+            const pnlClass = metrics.pnl >= 0 ? 'positive' : 'negative';
 
-                            <div class="module-stats">
-                                <div class="d-flex justify-content-between mb-2">
-                                    <span class="text-muted">P&L</span>
-                                    <span class="${metrics.pnl >= 0 ? 'text-success' : 'text-danger'} fw-bold">
-                                        ${formatCurrency(metrics.pnl)}
-                                    </span>
-                                </div>
-                                <div class="d-flex justify-content-between mb-2">
-                                    <span class="text-muted">Win Rate</span>
-                                    <span>${(metrics.win_rate || 0).toFixed(1)}%</span>
-                                </div>
-                                <div class="d-flex justify-content-between">
-                                    <span class="text-muted">Trades</span>
-                                    <span>${metrics.total_trades || 0}</span>
-                                </div>
-                            </div>
-
-                            <div class="mt-3 pt-3 border-top text-center">
-                                <a href="/${modDef.id.split('_')[0]}/dashboard" class="btn btn-sm btn-outline-primary w-100">
-                                    View Details
-                                </a>
-                            </div>
-                        </div>
+            const card = document.createElement('div');
+            card.className = `module-card ${status === 'RUNNING' ? 'active' : 'inactive'}`;
+            card.innerHTML = `
+                <div class="module-header">
+                    <div class="module-name">
+                        <div class="module-icon ${mod.color}"><i class="fas ${mod.icon}"></i></div>
+                        <h4>${mod.name}</h4>
+                    </div>
+                    <span class="module-status ${status.toLowerCase()}">${status}</span>
+                </div>
+                <div class="module-stats">
+                    <div class="stat-item">
+                        <div class="stat-label">P&L</div>
+                        <div class="stat-value ${pnlClass}">${formatCurrency(metrics.pnl || 0)}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Win Rate</div>
+                        <div class="stat-value">${(metrics.win_rate || 0).toFixed(1)}%</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Trades</div>
+                        <div class="stat-value">${metrics.total_trades || 0}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Positions</div>
+                        <div class="stat-value">${metrics.positions || 0}</div>
                     </div>
                 </div>
+                <div class="module-actions">
+                    <a href="${mod.dashboard}"><i class="fas fa-external-link-alt"></i> View Dashboard</a>
+                </div>
             `;
-            grid.insertAdjacentHTML('beforeend', cardHtml);
+            grid.appendChild(card);
         });
 
-        // Update Summary Counts
-        document.getElementById('activeModulesCount').textContent = `${activeCount}/${ALL_MODULES.length}`;
-        document.getElementById('totalTradesCount').textContent = totalTrades;
+        document.getElementById('activeModules').textContent = `${activeCount}/${ALL_MODULES.length}`;
+        document.getElementById('moduleHealth').textContent = activeCount === ALL_MODULES.length ? 'All systems operational' : `${ALL_MODULES.length - activeCount} module(s) offline`;
     }
 
-    async function initCharts() {
+    // =============== CHARTS ===============
+    function initializeCharts() {
+        const commonOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: { enabled: true }
+            },
+            scales: {
+                x: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
+                y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' } }
+            }
+        };
+
+        const pieOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: 'right', labels: { color: '#94a3b8' } } }
+        };
+
+        // Initialize empty charts
+        const chartConfigs = {
+            chartEquity: { type: 'line', options: { ...commonOptions, plugins: { ...commonOptions.plugins, legend: { display: true, labels: { color: '#94a3b8' } } } } },
+            chartPnlDist: { type: 'doughnut', options: pieOptions },
+            chartModulePnl: { type: 'bar', options: commonOptions },
+            chartModuleWinRate: { type: 'bar', options: commonOptions },
+            chartModuleTrades: { type: 'bar', options: commonOptions },
+            chartAssetAlloc: { type: 'pie', options: pieOptions },
+            chartChainRoi: { type: 'bar', options: commonOptions },
+            chartChainVol: { type: 'bar', options: commonOptions },
+            chartHourlyHeatmap: { type: 'bar', options: commonOptions },
+            chartDuration: { type: 'bar', options: commonOptions },
+            chartFees: { type: 'bar', options: commonOptions },
+            chartDrawdown: { type: 'line', options: { ...commonOptions, elements: { line: { fill: true } } } },
+            chartRR: { type: 'bar', options: commonOptions },
+            chartSlippage: { type: 'bar', options: commonOptions },
+            chartStreaks: { type: 'bar', options: commonOptions }
+        };
+
+        for (const [id, config] of Object.entries(chartConfigs)) {
+            const el = document.getElementById(id);
+            if (el) {
+                fullDashCharts[id] = new Chart(el, {
+                    type: config.type,
+                    data: { labels: [], datasets: [] },
+                    options: config.options
+                });
+            }
+        }
+    }
+
+    async function loadChartsData() {
         try {
-            const response = await fetch('/api/performance/charts/full'); // Use new endpoint if created, or reuse logic
-            // Note: In enhanced_dashboard.py we created api_get_full_dashboard_charts but need to register it.
-            // Assuming we register it as /api/performance/charts/full or similar.
-            // Let's assume /api/dashboard/charts/full based on naming convention
-
-            const res = await fetch('/api/dashboard/summary'); // Or actually use the dedicated one
-
-            // Wait, I created api_get_full_dashboard_charts but I need to register the route!
-            // I haven't registered the route in enhanced_dashboard.py yet in the diffs above.
-            // I added the method `api_get_full_dashboard_charts` in the previous step's enhanced_dashboard.py modification.
-            // I must ensure I registered `self.app.router.add_get('/api/dashboard/charts/full', self.api_get_full_dashboard_charts)`
-
-            // Assuming route is /api/dashboard/charts/full
-            const chartsRes = await fetch('/api/dashboard/charts/full');
-            const result = await chartsRes.json();
+            const res = await fetch('/api/dashboard/charts/full');
+            const result = await res.json();
 
             if (result.success && result.data) {
                 const data = result.data;
-                const commonOptions = { responsive: true, maintainAspectRatio: false };
 
-                const createChart = (id, type, chartData) => {
-                    const el = document.getElementById(id);
-                    if (el && chartData && chartData.labels) {
-                        new Chart(el, {
-                            type: type,
-                            data: chartData,
-                            options: commonOptions
-                        });
+                // Update each chart with data
+                for (const [chartId, chartData] of Object.entries(data)) {
+                    if (fullDashCharts[chartId] && chartData && chartData.labels) {
+                        fullDashCharts[chartId].data = chartData;
+                        fullDashCharts[chartId].update('none');
                     }
-                };
-
-                // Map API data to Chart IDs
-                createChart('chartEquity', 'line', data.chartEquity);
-                createChart('chartPnlDist', 'doughnut', data.chartPnlDist);
-                createChart('chartModulePnl', 'bar', data.chartModulePnl);
-                createChart('chartModuleWinRate', 'bar', data.chartModuleWinRate);
-                createChart('chartModuleTrades', 'bar', data.chartModuleTrades);
-                createChart('chartAssetAlloc', 'pie', data.chartAssetAlloc);
-                createChart('chartChainRoi', 'bar', data.chartChainRoi);
-                createChart('chartHourlyHeatmap', 'bar', data.chartHourlyHeatmap);
-
-                // Initialize others with empty data if missing from API to avoid errors
-                const chartIds = [
-                    'chartChainVol', 'chartDuration', 'chartFees', 'chartDrawdown',
-                    'chartStrategy', 'chartRR', 'chartSlippage', 'chartWinStreak',
-                    'chartLossStreak', 'chartCorrelation'
-                ];
-
-                chartIds.forEach(id => {
-                    if (data[id]) {
-                        createChart(id, 'bar', data[id]);
-                    } else {
-                        const el = document.getElementById(id);
-                        if (el) {
-                            new Chart(el, {
-                                type: 'bar',
-                                data: { labels: [], datasets: [] },
-                                options: { ...commonOptions, plugins: { title: { display: true, text: 'No Data' } } }
-                            });
-                        }
-                    }
-                });
+                }
             }
         } catch (e) {
-            console.error("Error initializing charts:", e);
+            console.error('Error loading charts data:', e);
+        }
+    }
+
+    // =============== REFRESH & UTILITIES ===============
+    function setRefreshInterval(seconds) {
+        fullDashRefreshInterval = parseInt(seconds) * 1000;
+        startRefreshTimer();
+    }
+
+    function startRefreshTimer() {
+        if (fullDashRefreshTimer) clearInterval(fullDashRefreshTimer);
+        fullDashRefreshTimer = setInterval(() => {
+            if (!fullDashConnected) {
+                // If WebSocket disconnected, use polling
+                loadAllData();
+            } else {
+                // Just update charts periodically even with WebSocket
+                loadChartsData();
+            }
+        }, fullDashRefreshInterval);
+    }
+
+    function refreshAllData() {
+        loadAllData();
+    }
+
+    function updatePortfolioSummary(portfolio) {
+        if (portfolio.total_value !== undefined) {
+            document.getElementById('totalPortfolioValue').textContent = formatCurrency(portfolio.total_value);
+        }
+        if (portfolio.realized_pnl !== undefined) {
+            const pnlEl = document.getElementById('totalPnL');
+            pnlEl.textContent = formatCurrency(portfolio.realized_pnl);
+            pnlEl.className = portfolio.realized_pnl >= 0 ? 'card-value' : 'card-value negative';
+        }
+        if (portfolio.open_positions !== undefined) {
+            document.getElementById('openPositions').textContent = portfolio.open_positions;
         }
     }
 
     function formatCurrency(val) {
-        return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
-    }
-
-    function refreshFullDashboard() {
-        loadFullDashboardData();
+        if (val === null || val === undefined) return '$0.00';
+        return new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'USD',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }).format(val);
     }
 </script>
 {% endblock %}

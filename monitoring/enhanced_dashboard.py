@@ -469,6 +469,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/dashboard/charts/full', self.api_get_full_dashboard_charts)
 
         # API - Simulator
+        self.app.router.add_get('/api/simulator/data', self.api_simulator_data)
         self.app.router.add_get('/api/simulator/export', self.api_simulator_export)
 
         # API - Bot control
@@ -1115,7 +1116,134 @@ class DashboardEndpoints:
         else:
             solana_status = 'DISABLED'
 
+        # ==================== CHECK SNIPER, ARBITRAGE, COPY TRADING, AI MODULES ====================
+        sniper_enabled = is_enabled(os.getenv('SNIPER_MODULE_ENABLED', 'true'))
+        arbitrage_enabled = is_enabled(os.getenv('ARBITRAGE_MODULE_ENABLED', 'true'))
+        copytrading_enabled = is_enabled(os.getenv('COPYTRADING_MODULE_ENABLED', 'true'))
+        ai_enabled = is_enabled(os.getenv('AI_MODULE_ENABLED', 'true'))
+
+        sniper_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
+        arbitrage_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
+        copytrading_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
+        ai_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
+
+        sniper_running = False
+        arbitrage_running = False
+        copytrading_running = False
+        ai_running = False
+
+        # Check Sniper module health
+        try:
+            sniper_port = int(os.getenv('SNIPER_HEALTH_PORT', '8083'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{sniper_port}/health', timeout=3) as resp:
+                    if resp.status == 200:
+                        sniper_running = True
+        except Exception:
+            pass
+
+        # Check Arbitrage module health
+        try:
+            arb_port = int(os.getenv('ARBITRAGE_HEALTH_PORT', '8084'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{arb_port}/health', timeout=3) as resp:
+                    if resp.status == 200:
+                        arbitrage_running = True
+        except Exception:
+            pass
+
+        # Check Copy Trading module health
+        try:
+            copy_port = int(os.getenv('COPYTRADING_HEALTH_PORT', '8085'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{copy_port}/health', timeout=3) as resp:
+                    if resp.status == 200:
+                        copytrading_running = True
+        except Exception:
+            pass
+
+        # Check AI module health
+        try:
+            ai_port = int(os.getenv('AI_HEALTH_PORT', '8086'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{ai_port}/health', timeout=3) as resp:
+                    if resp.status == 200:
+                        ai_running = True
+        except Exception:
+            pass
+
+        # Query database for additional module metrics
+        if self.db and self.db_pool:
+            try:
+                async with self.db_pool.acquire() as conn:
+                    # Sniper trades
+                    try:
+                        sniper_trades = await conn.fetch("""
+                            SELECT profit_loss, status FROM sniper_trades ORDER BY entry_timestamp DESC LIMIT 10000
+                        """)
+                        if sniper_trades:
+                            closed = [t for t in sniper_trades if t['status'] == 'closed']
+                            sniper_metrics['total_trades'] = len(sniper_trades)
+                            sniper_metrics['pnl'] = sum(float(t['profit_loss'] or 0) for t in closed)
+                            wins = [t for t in closed if float(t['profit_loss'] or 0) > 0]
+                            sniper_metrics['win_rate'] = (len(wins) / len(closed) * 100) if closed else 0
+                            sniper_metrics['positions'] = len([t for t in sniper_trades if t['status'] == 'open'])
+                    except Exception:
+                        pass
+
+                    # Arbitrage trades
+                    try:
+                        arb_trades = await conn.fetch("""
+                            SELECT profit_loss, status FROM arbitrage_trades ORDER BY entry_timestamp DESC LIMIT 10000
+                        """)
+                        if arb_trades:
+                            closed = [t for t in arb_trades if t['status'] == 'closed']
+                            arbitrage_metrics['total_trades'] = len(arb_trades)
+                            arbitrage_metrics['pnl'] = sum(float(t['profit_loss'] or 0) for t in closed)
+                            wins = [t for t in closed if float(t['profit_loss'] or 0) > 0]
+                            arbitrage_metrics['win_rate'] = (len(wins) / len(closed) * 100) if closed else 0
+                    except Exception:
+                        pass
+
+                    # Copy Trading trades
+                    try:
+                        copy_trades = await conn.fetch("""
+                            SELECT profit_loss, status FROM copytrading_trades ORDER BY entry_timestamp DESC LIMIT 10000
+                        """)
+                        if copy_trades:
+                            closed = [t for t in copy_trades if t['status'] == 'closed']
+                            copytrading_metrics['total_trades'] = len(copy_trades)
+                            copytrading_metrics['pnl'] = sum(float(t['profit_loss'] or 0) for t in closed)
+                            wins = [t for t in closed if float(t['profit_loss'] or 0) > 0]
+                            copytrading_metrics['win_rate'] = (len(wins) / len(closed) * 100) if closed else 0
+                            copytrading_metrics['positions'] = len([t for t in copy_trades if t['status'] == 'open'])
+                    except Exception:
+                        pass
+
+                    # AI trades
+                    try:
+                        ai_trades = await conn.fetch("""
+                            SELECT profit_loss, status FROM ai_trades ORDER BY entry_timestamp DESC LIMIT 10000
+                        """)
+                        if ai_trades:
+                            closed = [t for t in ai_trades if t['status'] == 'closed']
+                            ai_metrics['total_trades'] = len(ai_trades)
+                            ai_metrics['pnl'] = sum(float(t['profit_loss'] or 0) for t in closed)
+                            wins = [t for t in closed if float(t['profit_loss'] or 0) > 0]
+                            ai_metrics['win_rate'] = (len(wins) / len(closed) * 100) if closed else 0
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.debug(f"Error fetching additional module metrics: {e}")
+
+        # Determine status for additional modules
+        sniper_status = 'RUNNING' if sniper_running or sniper_metrics['total_trades'] > 0 else ('STOPPED' if sniper_enabled else 'DISABLED')
+        arbitrage_status = 'RUNNING' if arbitrage_running or arbitrage_metrics['total_trades'] > 0 else ('STOPPED' if arbitrage_enabled else 'DISABLED')
+        copytrading_status = 'RUNNING' if copytrading_running or copytrading_metrics['total_trades'] > 0 else ('STOPPED' if copytrading_enabled else 'DISABLED')
+        ai_status = 'RUNNING' if ai_running or ai_metrics['total_trades'] > 0 else ('STOPPED' if ai_enabled else 'DISABLED')
+
         logger.info(f"Final module status: DEX={dex_status}, Futures={futures_status} (trades={futures_metrics.get('total_trades', 0)}), Solana={solana_status} (trades={solana_metrics.get('total_trades', 0)})")
+        logger.info(f"Additional modules: Sniper={sniper_status}, Arbitrage={arbitrage_status}, CopyTrading={copytrading_status}, AI={ai_status}")
 
         return web.json_response({
             'success': True,
@@ -1143,6 +1271,34 @@ class DashboardEndpoints:
                         'capital': solana_capital,
                         'metrics': solana_metrics,
                         'health': solana_health_data
+                    },
+                    'sniper': {
+                        'name': 'Sniper',
+                        'enabled': sniper_enabled,
+                        'status': sniper_status,
+                        'capital': 100.0,
+                        'metrics': sniper_metrics
+                    },
+                    'arbitrage': {
+                        'name': 'Arbitrage',
+                        'enabled': arbitrage_enabled,
+                        'status': arbitrage_status,
+                        'capital': 200.0,
+                        'metrics': arbitrage_metrics
+                    },
+                    'copy_trading': {
+                        'name': 'Copy Trading',
+                        'enabled': copytrading_enabled,
+                        'status': copytrading_status,
+                        'capital': 100.0,
+                        'metrics': copytrading_metrics
+                    },
+                    'ai_analysis': {
+                        'name': 'AI Analysis',
+                        'enabled': ai_enabled,
+                        'status': ai_status,
+                        'capital': 100.0,
+                        'metrics': ai_metrics
                     }
                 }
             }
@@ -1419,12 +1575,10 @@ class DashboardEndpoints:
         )
 
     async def analytics_page(self, request):
-        """Advanced analytics page"""
-        template = self.jinja_env.get_template('analytics.html')
-        return web.Response(
-            text=template.render(page='analytics'),
-            content_type='text/html'
-        )
+        """Analytics page - DEPRECATED, redirects to main dashboard"""
+        # Analytics page was not working properly - redirect to main dashboard
+        # TODO: Remove this route entirely in future cleanup
+        raise web.HTTPFound('/dashboard')
 
     async def simulator_page(self, request):
         """Trade simulator page for dry-run validation"""
@@ -1457,7 +1611,11 @@ class DashboardEndpoints:
             simulator_data = {
                 'futures': None,
                 'solana': None,
-                'dex': None
+                'dex': None,
+                'sniper': None,
+                'arbitrage': None,
+                'copytrading': None,
+                'ai': None
             }
 
             # Try to fetch from Futures module health endpoint
@@ -1768,6 +1926,223 @@ class DashboardEndpoints:
 
             simulator_data['dex'] = dex_data
 
+            # Sniper Module - Fetch from health endpoint or DB
+            sniper_data = {
+                'status': 'Offline',
+                'mode': 'DRY_RUN' if dry_run else 'LIVE',
+                'total_trades': 0,
+                'winning_trades': 0,
+                'total_pnl': '$0.00',
+                'win_rate': '0%',
+                'trades': []
+            }
+            try:
+                sniper_port = int(os.getenv('SNIPER_HEALTH_PORT', '8083'))
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'http://localhost:{sniper_port}/stats', timeout=3) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            stats = data.get('stats', data)
+                            sniper_data.update(stats)
+                            sniper_data['status'] = 'Active'
+                            sniper_data['mode'] = 'DRY_RUN' if dry_run else 'LIVE'
+            except Exception:
+                pass
+
+            # Fetch sniper trades from dedicated sniper_trades table
+            if self.db and self.db.pool:
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        sniper_trades = await conn.fetch("""
+                            SELECT trade_id, token_address, profit_loss, status, entry_timestamp, exit_timestamp
+                            FROM sniper_trades
+                            WHERE status = 'closed'
+                            ORDER BY exit_timestamp DESC NULLS LAST, entry_timestamp DESC
+                            LIMIT 50
+                        """)
+                        trades_list = []
+                        total_pnl = 0
+                        wins = 0
+                        for t in sniper_trades:
+                            pnl = float(t.get('profit_loss') or 0)
+                            total_pnl += pnl
+                            if pnl > 0:
+                                wins += 1
+                            trades_list.append({
+                                'trade_id': str(t.get('trade_id', '')),
+                                'symbol': t.get('token_address', '')[:16] + '...' if t.get('token_address') else 'UNKNOWN',
+                                'pnl': pnl,
+                                'time': t['exit_timestamp'].isoformat() if t.get('exit_timestamp') else (t['entry_timestamp'].isoformat() if t.get('entry_timestamp') else ''),
+                                'module': 'sniper'
+                            })
+                        sniper_data['trades'] = trades_list
+                        sniper_data['total_trades'] = len(sniper_trades)
+                        sniper_data['winning_trades'] = wins
+                        sniper_data['total_pnl'] = f'${total_pnl:.2f}'
+                        sniper_data['win_rate'] = f'{(wins/len(sniper_trades)*100):.1f}%' if sniper_trades else '0%'
+                except Exception as e:
+                    logger.debug(f"Error fetching sniper trades: {e}")
+            simulator_data['sniper'] = sniper_data
+
+            # Arbitrage Module
+            arbitrage_data = {
+                'status': 'Offline',
+                'mode': 'DRY_RUN' if dry_run else 'LIVE',
+                'total_trades': 0,
+                'winning_trades': 0,
+                'total_pnl': '$0.00',
+                'win_rate': '0%',
+                'trades': []
+            }
+            try:
+                arb_port = int(os.getenv('ARBITRAGE_HEALTH_PORT', '8084'))
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'http://localhost:{arb_port}/stats', timeout=3) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            stats = data.get('stats', data)
+                            arbitrage_data.update(stats)
+                            arbitrage_data['status'] = 'Active'
+                            arbitrage_data['mode'] = 'DRY_RUN' if dry_run else 'LIVE'
+            except Exception:
+                pass
+
+            # Fetch arbitrage trades from DB
+            if self.db and self.db.pool:
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        arb_trades = await conn.fetch("""
+                            SELECT trade_id, profit_loss, status, entry_timestamp, exit_timestamp, token_pair
+                            FROM arbitrage_trades
+                            WHERE status = 'closed'
+                            ORDER BY exit_timestamp DESC NULLS LAST, entry_timestamp DESC
+                            LIMIT 50
+                        """)
+                        trades_list = []
+                        total_pnl = 0
+                        wins = 0
+                        for t in arb_trades:
+                            pnl = float(t.get('profit_loss') or 0)
+                            total_pnl += pnl
+                            if pnl > 0:
+                                wins += 1
+                            trades_list.append({
+                                'trade_id': str(t.get('trade_id', '')),
+                                'symbol': t.get('token_pair', 'ARB'),
+                                'pnl': pnl,
+                                'time': t['exit_timestamp'].isoformat() if t.get('exit_timestamp') else (t['entry_timestamp'].isoformat() if t.get('entry_timestamp') else ''),
+                                'module': 'arbitrage'
+                            })
+                        arbitrage_data['trades'] = trades_list
+                        arbitrage_data['total_trades'] = len(arb_trades)
+                        arbitrage_data['winning_trades'] = wins
+                        arbitrage_data['total_pnl'] = f'${total_pnl:.2f}'
+                        arbitrage_data['win_rate'] = f'{(wins/len(arb_trades)*100):.1f}%' if arb_trades else '0%'
+                except Exception as e:
+                    logger.debug(f"Error fetching arbitrage trades: {e}")
+            simulator_data['arbitrage'] = arbitrage_data
+
+            # Copy Trading Module
+            copytrading_data = {
+                'status': 'Offline',
+                'mode': 'DRY_RUN' if dry_run else 'LIVE',
+                'total_trades': 0,
+                'winning_trades': 0,
+                'total_pnl': '$0.00',
+                'win_rate': '0%',
+                'trades': []
+            }
+            try:
+                copy_port = int(os.getenv('COPYTRADING_HEALTH_PORT', '8085'))
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'http://localhost:{copy_port}/stats', timeout=3) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            stats = data.get('stats', data)
+                            # Merge stats while preserving mode
+                            copytrading_data.update(stats)
+                            copytrading_data['status'] = 'Active'
+                            copytrading_data['mode'] = 'DRY_RUN' if dry_run else 'LIVE'
+            except Exception:
+                pass
+
+            # Fetch copytrading trades from DB
+            if self.db and self.db.pool:
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        copy_trades = await conn.fetch("""
+                            SELECT trade_id, token_address, side, profit_loss, status, entry_timestamp, exit_timestamp
+                            FROM copytrading_trades
+                            WHERE status = 'closed'
+                            ORDER BY exit_timestamp DESC NULLS LAST, entry_timestamp DESC
+                            LIMIT 50
+                        """)
+                        trades_list = []
+                        total_pnl = 0
+                        wins = 0
+                        for t in copy_trades:
+                            pnl = float(t.get('profit_loss') or 0)
+                            total_pnl += pnl
+                            if pnl > 0:
+                                wins += 1
+                            trades_list.append({
+                                'trade_id': str(t.get('trade_id', '')),
+                                'symbol': t.get('token_address', '')[:16] + '...' if t.get('token_address') else 'UNKNOWN',
+                                'side': t.get('side', 'buy'),
+                                'pnl': pnl,
+                                'time': t['exit_timestamp'].isoformat() if t.get('exit_timestamp') else (t['entry_timestamp'].isoformat() if t.get('entry_timestamp') else ''),
+                                'module': 'copytrading'
+                            })
+                        copytrading_data['trades'] = trades_list
+                        copytrading_data['total_trades'] = len(copy_trades)
+                        copytrading_data['winning_trades'] = wins
+                        copytrading_data['total_pnl'] = f'${total_pnl:.2f}'
+                        copytrading_data['win_rate'] = f'{(wins/len(copy_trades)*100):.1f}%' if copy_trades else '0%'
+                except Exception as e:
+                    logger.debug(f"Error fetching copytrading trades: {e}")
+            simulator_data['copytrading'] = copytrading_data
+
+            # AI Module
+            ai_data = {
+                'status': 'Offline',
+                'mode': 'DRY_RUN' if dry_run else 'LIVE',
+                'total_trades': 0,
+                'winning_trades': 0,
+                'total_pnl': '$0.00',
+                'win_rate': '0%',
+                'trades': []
+            }
+            try:
+                ai_port = int(os.getenv('AI_HEALTH_PORT', '8086'))
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'http://localhost:{ai_port}/stats', timeout=3) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            ai_data = data.get('stats', data)
+                            ai_data['status'] = 'Active'
+            except Exception:
+                pass
+
+            # Fetch AI trades from DB
+            if self.db and self.db.pool:
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        ai_trades = await conn.fetch("""
+                            SELECT * FROM trades
+                            WHERE strategy ILIKE '%ai%' OR strategy ILIKE '%sentiment%'
+                            AND status = 'closed'
+                            ORDER BY exit_timestamp DESC LIMIT 50
+                        """)
+                        ai_data['trades'] = [
+                            {'trade_id': str(t['trade_id']), 'pnl': float(t['profit_loss'] or 0),
+                             'time': t['exit_timestamp'].isoformat() if t['exit_timestamp'] else '', 'module': 'ai'}
+                            for t in ai_trades
+                        ]
+                        ai_data['total_trades'] = len(ai_trades)
+                except Exception:
+                    pass
+            simulator_data['ai'] = ai_data
+
             # Cache the result to prevent rapid polling
             from time import time
             self._simulator_cache = simulator_data
@@ -1780,7 +2155,7 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
 
     async def api_simulator_export(self, request):
-        """Export simulator data as JSON file"""
+        """Export simulator data as JSON file for all 7 modules"""
         try:
             import aiohttp
             from datetime import datetime
@@ -1789,28 +2164,34 @@ class DashboardEndpoints:
                 'exported_at': datetime.now().isoformat(),
                 'futures': {},
                 'solana': {},
-                'dex': {}
+                'dex': {},
+                'sniper': {},
+                'arbitrage': {},
+                'copytrading': {},
+                'ai': {}
             }
 
-            # Fetch data from modules
-            try:
-                futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(f'http://localhost:{futures_port}/stats', timeout=2) as resp:
-                        if resp.status == 200:
-                            export_data['futures'] = await resp.json()
-            except Exception:
-                pass
+            # Fetch data from all module health endpoints
+            module_ports = [
+                ('futures', 'FUTURES_HEALTH_PORT', '8081'),
+                ('solana', 'SOLANA_HEALTH_PORT', '8082'),
+                ('sniper', 'SNIPER_HEALTH_PORT', '8083'),
+                ('arbitrage', 'ARBITRAGE_HEALTH_PORT', '8084'),
+                ('copytrading', 'COPYTRADING_HEALTH_PORT', '8085'),
+                ('ai', 'AI_HEALTH_PORT', '8086')
+            ]
 
-            try:
-                solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(f'http://localhost:{solana_port}/stats', timeout=2) as resp:
-                        if resp.status == 200:
-                            export_data['solana'] = await resp.json()
-            except Exception:
-                pass
+            async with aiohttp.ClientSession() as session:
+                for module_name, port_env, default_port in module_ports:
+                    try:
+                        port = int(os.getenv(port_env, default_port))
+                        async with session.get(f'http://localhost:{port}/stats', timeout=2) as resp:
+                            if resp.status == 200:
+                                export_data[module_name] = await resp.json()
+                    except Exception:
+                        pass
 
+            # DEX from engine
             if hasattr(self, 'engine') and self.engine:
                 try:
                     export_data['dex'] = await self.engine.get_stats()
@@ -4767,8 +5148,27 @@ class DashboardEndpoints:
             'rsi_weak_oversold': 'futures_strategy', 'rsi_weak_overbought': 'futures_strategy',
             'min_signal_score': 'futures_strategy', 'verbose_signals': 'futures_strategy',
             'cooldown_minutes': 'futures_strategy',
+            # NEW: Advanced signal filters for profitability
+            'require_trend_confirmation': 'futures_strategy',
+            'require_trend_alignment': 'futures_strategy',
+            'require_volume_confirmation': 'futures_strategy',
+            'min_volume_multiplier': 'futures_risk',
+            'max_consecutive_losses': 'futures_risk',
             'funding_arbitrage_enabled': 'futures_funding', 'funding_arb': 'futures_funding',
             'max_funding_rate': 'futures_funding',
+            # Multiple TPs
+            'tp1_pct': 'futures_risk', 'tp1_size_pct': 'futures_risk',
+            'tp2_pct': 'futures_risk', 'tp2_size_pct': 'futures_risk',
+            'tp3_pct': 'futures_risk', 'tp3_size_pct': 'futures_risk',
+            'tp4_pct': 'futures_risk', 'tp4_size_pct': 'futures_risk',
+            # Dynamic position sizing
+            'dynamic_position_sizing': 'futures_position',
+            'static_position_pct': 'futures_position',
+            'min_position_pct': 'futures_position',
+            'max_position_usd': 'futures_position',
+            # Signal settings
+            'signal_timeframe': 'futures_strategy',
+            'scan_interval_seconds': 'futures_strategy',
         }
         return type_map.get(key)
 
@@ -7594,10 +7994,12 @@ class DashboardEndpoints:
                         stored_pnl_pct = float(row['profit_loss_pct'] or 0)
                         spread = float(row['spread_pct'] or 0)
 
-                        # Calculate P&L if not stored
-                        if stored_pnl == 0 and row['status'] == 'closed' and exit_usd > 0:
+                        # Calculate P&L if not stored and we have valid entry data
+                        # IMPORTANT: Only recalculate if entry_usd > 0 to avoid treating
+                        # standalone SELL trades (no matching BUY) as full profit
+                        if stored_pnl == 0 and row['status'] == 'closed' and exit_usd > 0 and entry_usd > 0:
                             calculated_pnl = exit_usd - entry_usd
-                            calculated_pnl_pct = ((exit_usd / entry_usd) - 1) * 100 if entry_usd > 0 else 0
+                            calculated_pnl_pct = ((exit_usd / entry_usd) - 1) * 100
                         else:
                             calculated_pnl = stored_pnl
                             calculated_pnl_pct = stored_pnl_pct
@@ -7766,17 +8168,33 @@ class DashboardEndpoints:
 
     async def api_reconcile_arbitrage_trades(self, request):
         """
-        Reconcile arbitrage trades by estimating P&L for trades without P&L data.
-        """
-        import random
+        Reconcile arbitrage trades - REALISTIC VERSION
 
+        IMPORTANT: Only reconcile trades that have actual spread data.
+        DO NOT generate random P&L - this was causing $20M+ fake profits.
+
+        For simulated trades (is_simulated=true), mark them as 'simulated_closed'
+        without adding to P&L totals. For real trades with spread_pct > 0,
+        calculate a conservative profit estimate accounting for:
+        - 0.05% flash loan fee (Aave)
+        - 0.3% estimated slippage per swap (2 swaps = 0.6%)
+        - Gas costs (~$5-20 per arbitrage)
+        """
         stats = {
             'trades_processed': 0,
-            'trades_updated': 0,
-            'total_estimated_pnl': 0.0,
+            'simulated_marked': 0,
+            'real_reconciled': 0,
+            'total_net_pnl': 0.0,
             'wins': 0,
-            'losses': 0
+            'losses': 0,
+            'skipped_no_spread': 0
         }
+
+        # Realistic cost estimates
+        FLASH_LOAN_FEE_PCT = 0.05  # 0.05% Aave fee
+        SLIPPAGE_PER_SWAP_PCT = 0.3  # 0.3% slippage estimate
+        NUM_SWAPS = 2  # Buy and sell
+        EST_GAS_COST_USD = 10.0  # Average gas cost
 
         try:
             pool = self.db_pool or (self.db.pool if self.db and hasattr(self.db, 'pool') else None)
@@ -7784,44 +8202,66 @@ class DashboardEndpoints:
                 return web.json_response({'success': False, 'error': 'Database not available'})
 
             async with pool.acquire() as conn:
-                # Get trades with 0 P&L
+                # Get trades with 0 P&L - include is_simulated flag
                 trades = await conn.fetch("""
-                    SELECT trade_id, entry_usd, entry_price, spread_pct, entry_timestamp
+                    SELECT trade_id, entry_usd, entry_price, spread_pct, entry_timestamp,
+                           COALESCE(is_simulated, false) as is_simulated
                     FROM arbitrage_trades
-                    WHERE profit_loss = 0 OR profit_loss IS NULL
+                    WHERE (profit_loss = 0 OR profit_loss IS NULL)
                     ORDER BY entry_timestamp ASC
                 """)
 
-                logger.info(f"🔄 Reconciling {len(trades)} arbitrage trades...")
+                logger.info(f"🔄 Reconciling {len(trades)} arbitrage trades (REALISTIC mode)...")
 
                 for trade in trades:
                     stats['trades_processed'] += 1
-
+                    trade_id = trade['trade_id']
                     entry_usd = float(trade['entry_usd'] or 0)
                     spread = float(trade['spread_pct'] or 0)
+                    is_simulated = trade['is_simulated']
 
                     if entry_usd <= 0:
                         continue
 
-                    # Estimate P&L based on spread and realistic arbitrage outcomes
-                    # Arbitrage typically has higher win rate but smaller profits
-                    is_winner = random.random() < 0.55  # 55% win rate for arbitrage
+                    # For simulated trades - mark as simulated_closed, P&L = 0
+                    if is_simulated:
+                        stats['simulated_marked'] += 1
+                        await conn.execute("""
+                            UPDATE arbitrage_trades
+                            SET status = 'simulated_closed',
+                                profit_loss = 0,
+                                profit_loss_pct = 0
+                            WHERE trade_id = $1
+                        """, trade_id)
+                        continue
 
-                    if is_winner:
-                        # Use spread as basis, profits are 20-80% of expected spread
-                        effective_spread = spread if spread > 0 else random.uniform(0.5, 2.0)
-                        pnl_pct = effective_spread * random.uniform(0.2, 0.8)
-                        stats['wins'] += 1
-                    else:
-                        # Losses from slippage, fees, or failed arb
-                        pnl_pct = random.uniform(-1.5, -0.3)
-                        stats['losses'] += 1
+                    # For real trades without spread data - skip, don't fabricate
+                    if spread <= 0:
+                        stats['skipped_no_spread'] += 1
+                        logger.debug(f"Skipping trade {trade_id}: no spread data")
+                        continue
 
-                    profit_loss = entry_usd * (pnl_pct / 100)
+                    # Calculate REALISTIC net profit after costs
+                    gross_profit_pct = spread
+                    total_costs_pct = (
+                        FLASH_LOAN_FEE_PCT +
+                        (SLIPPAGE_PER_SWAP_PCT * NUM_SWAPS)
+                    )
+                    gas_cost_pct = (EST_GAS_COST_USD / entry_usd) * 100 if entry_usd > 0 else 1.0
+
+                    net_profit_pct = gross_profit_pct - total_costs_pct - gas_cost_pct
+
+                    # Most arbitrage opportunities are NOT profitable after costs
+                    profit_loss = entry_usd * (net_profit_pct / 100)
                     exit_usd = entry_usd + profit_loss
 
-                    stats['total_estimated_pnl'] += profit_loss
-                    stats['trades_updated'] += 1
+                    if net_profit_pct > 0:
+                        stats['wins'] += 1
+                    else:
+                        stats['losses'] += 1
+
+                    stats['total_net_pnl'] += profit_loss
+                    stats['real_reconciled'] += 1
 
                     await conn.execute("""
                         UPDATE arbitrage_trades
@@ -7830,14 +8270,21 @@ class DashboardEndpoints:
                             profit_loss = $2,
                             profit_loss_pct = $3
                         WHERE trade_id = $4
-                    """, exit_usd, profit_loss, pnl_pct, trade['trade_id'])
+                    """, exit_usd, profit_loss, net_profit_pct, trade_id)
 
-                logger.info(f"✅ Arbitrage reconciliation complete: {stats['trades_updated']} trades updated")
+                logger.info(
+                    f"✅ Arbitrage reconciliation complete:\n"
+                    f"   Real trades reconciled: {stats['real_reconciled']}\n"
+                    f"   Simulated marked: {stats['simulated_marked']}\n"
+                    f"   Skipped (no spread): {stats['skipped_no_spread']}\n"
+                    f"   Net P&L: ${stats['total_net_pnl']:.2f}"
+                )
 
             return web.json_response({
                 'success': True,
-                'message': f"Reconciled {stats['trades_updated']} arbitrage trades",
-                'stats': stats
+                'message': f"Reconciled {stats['real_reconciled']} real trades, marked {stats['simulated_marked']} simulated",
+                'stats': stats,
+                'note': 'P&L now accounts for flash loan fees, slippage, and gas costs'
             })
 
         except Exception as e:
@@ -8464,10 +8911,12 @@ class DashboardEndpoints:
                         stored_pnl = float(row['profit_loss'] or 0)
                         stored_pnl_pct = float(row['profit_loss_pct'] or 0)
 
-                        # Calculate P&L if not stored
-                        if stored_pnl == 0 and row['status'] == 'closed' and exit_usd > 0:
+                        # Calculate P&L if not stored and we have valid entry data
+                        # IMPORTANT: Only recalculate if entry_usd > 0 to avoid treating
+                        # standalone SELL trades (no matching BUY) as full profit
+                        if stored_pnl == 0 and row['status'] == 'closed' and exit_usd > 0 and entry_usd > 0:
                             calculated_pnl = exit_usd - entry_usd
-                            calculated_pnl_pct = ((exit_usd / entry_usd) - 1) * 100 if entry_usd > 0 else 0
+                            calculated_pnl_pct = ((exit_usd / entry_usd) - 1) * 100
                         else:
                             calculated_pnl = stored_pnl
                             calculated_pnl_pct = stored_pnl_pct
@@ -9004,15 +9453,52 @@ class DashboardEndpoints:
             return web.json_response({'success': False, 'error': str(e), 'trades': []})
 
     async def api_get_ai_settings(self, request):
-        """Get AI settings"""
+        """Get AI settings including new multi-chain AI Trading Engine fields"""
         try:
             settings = {
+                # Basic settings
                 'direct_trading': False,
+                'dry_run': True,
                 'confidence_threshold': 85,
                 'trade_amount_usd': 50,
+                'trading_pair': 'BTCUSDT',
                 'sentiment_source': 'news',
                 'analysis_interval': 15,
-                'ai_provider': 'openai'
+                'ai_provider': 'openai',
+                # Exit strategy
+                'take_profit_pct': 5,
+                'stop_loss_pct': 3,
+                'max_hold_hours': 24,
+                'leverage': 5,
+                # Position management
+                'reverse_signal_action': 'ignore',
+                'same_signal_action': 'ignore',
+                'max_positions': 1,
+                # Risk management
+                'daily_loss_limit': 100,
+                'max_daily_trades': 10,
+                'trade_cooldown': 15,
+                # Multi-Chain AI Trading Engine
+                'ai_engine_enabled': False,
+                'chain_ethereum': True,
+                'chain_base': False,
+                'chain_arbitrum': False,
+                'chain_bsc': False,
+                'chain_solana': False,
+                'ai_analysis_interval': 15,
+                # AI Strategy settings
+                'auto_strategy_generation': False,
+                'strategy_evolution': False,
+                'max_ai_strategies': 5,
+                'strategy_confidence': 70,
+                # DEX Trading Integration
+                'dex_trading_enabled': False,
+                'dex_trade_size_pct': 5,
+                'dex_max_slippage': 1,
+                # Futures Trading Integration
+                'futures_trading_enabled': True,
+                'futures_exchange': 'binance',
+                'ai_position_sizing': 'fixed'
             }
             if self.db:
                 async with self.db.pool.acquire() as conn:
@@ -9254,37 +9740,104 @@ class DashboardEndpoints:
                 else:
                     charts['chartPnlDist'] = {'labels': [], 'datasets': []}
 
-                # 2. Module PnL & Win Rate & Trades (Group by strategy/chain implies module)
-                # Map chains/strategies to modules
-                # DEX: ETH, BSC, BASE, ARB, POLY
-                # SOLANA: SOLANA
-                # FUTURES: (Exchange names)
-                # AI: Strategy='ai_analysis'
+                # 2. Module PnL & Win Rate & Trades - Query each module's dedicated table
+                module_stats = {
+                    'DEX': {'pnl': 0, 'wins': 0, 'total': 0},
+                    'Futures': {'pnl': 0, 'wins': 0, 'total': 0},
+                    'Solana': {'pnl': 0, 'wins': 0, 'total': 0},
+                    'Sniper': {'pnl': 0, 'wins': 0, 'total': 0},
+                    'Arbitrage': {'pnl': 0, 'wins': 0, 'total': 0},
+                    'CopyTrade': {'pnl': 0, 'wins': 0, 'total': 0},
+                    'AI': {'pnl': 0, 'wins': 0, 'total': 0}
+                }
 
-                rows = await conn.fetch("""
-                    SELECT chain, strategy, profit_loss
-                    FROM trades
-                    WHERE status='closed'
-                """)
+                # DEX trades (from main trades table, non-Solana)
+                try:
+                    dex_rows = await conn.fetch("""
+                        SELECT profit_loss FROM trades
+                        WHERE status='closed' AND UPPER(chain) NOT IN ('SOLANA', 'SOL')
+                    """)
+                    for r in dex_rows:
+                        pnl = float(r['profit_loss'] or 0)
+                        module_stats['DEX']['pnl'] += pnl
+                        module_stats['DEX']['total'] += 1
+                        if pnl > 0:
+                            module_stats['DEX']['wins'] += 1
+                except Exception:
+                    pass
 
-                module_stats = {'DEX': {'pnl': 0, 'wins': 0, 'total': 0},
-                                'Futures': {'pnl': 0, 'wins': 0, 'total': 0},
-                                'Solana': {'pnl': 0, 'wins': 0, 'total': 0},
-                                'AI': {'pnl': 0, 'wins': 0, 'total': 0}}
+                # Futures trades (from futures_trades table)
+                try:
+                    futures_rows = await conn.fetch("SELECT net_pnl FROM futures_trades")
+                    for r in futures_rows:
+                        pnl = float(r['net_pnl'] or 0)
+                        module_stats['Futures']['pnl'] += pnl
+                        module_stats['Futures']['total'] += 1
+                        if pnl > 0:
+                            module_stats['Futures']['wins'] += 1
+                except Exception:
+                    pass
 
-                for r in rows:
-                    pnl = float(r['profit_loss'] or 0)
-                    chain = r['chain'] or ''
-                    strat = r['strategy'] or ''
+                # Solana trades (from solana_trades table)
+                try:
+                    solana_rows = await conn.fetch("SELECT pnl_sol FROM solana_trades")
+                    sol_price = 200.0  # Approximate SOL price
+                    for r in solana_rows:
+                        pnl = float(r['pnl_sol'] or 0) * sol_price
+                        module_stats['Solana']['pnl'] += pnl
+                        module_stats['Solana']['total'] += 1
+                        if pnl > 0:
+                            module_stats['Solana']['wins'] += 1
+                except Exception:
+                    pass
 
-                    mod = 'DEX' # Default
-                    if 'solana' in chain.lower(): mod = 'Solana'
-                    elif 'future' in strat.lower() or 'perp' in strat.lower(): mod = 'Futures'
-                    elif 'ai' in strat.lower(): mod = 'AI'
+                # Sniper trades (from sniper_trades table)
+                try:
+                    sniper_rows = await conn.fetch("SELECT profit_loss FROM sniper_trades WHERE status='closed'")
+                    for r in sniper_rows:
+                        pnl = float(r['profit_loss'] or 0)
+                        module_stats['Sniper']['pnl'] += pnl
+                        module_stats['Sniper']['total'] += 1
+                        if pnl > 0:
+                            module_stats['Sniper']['wins'] += 1
+                except Exception:
+                    pass
 
-                    module_stats[mod]['pnl'] += pnl
-                    module_stats[mod]['total'] += 1
-                    if pnl > 0: module_stats[mod]['wins'] += 1
+                # Arbitrage trades (from arbitrage_trades table)
+                try:
+                    arb_rows = await conn.fetch("SELECT profit_loss FROM arbitrage_trades WHERE status='closed'")
+                    for r in arb_rows:
+                        pnl = float(r['profit_loss'] or 0)
+                        module_stats['Arbitrage']['pnl'] += pnl
+                        module_stats['Arbitrage']['total'] += 1
+                        if pnl > 0:
+                            module_stats['Arbitrage']['wins'] += 1
+                except Exception:
+                    pass
+
+                # Copy Trading trades (from copytrading_trades table)
+                try:
+                    copy_rows = await conn.fetch("SELECT profit_loss FROM copytrading_trades WHERE status='closed'")
+                    for r in copy_rows:
+                        pnl = float(r['profit_loss'] or 0)
+                        module_stats['CopyTrade']['pnl'] += pnl
+                        module_stats['CopyTrade']['total'] += 1
+                        if pnl > 0:
+                            module_stats['CopyTrade']['wins'] += 1
+                except Exception:
+                    pass
+
+                # AI trades (from ai_trades table if exists)
+                try:
+                    ai_rows = await conn.fetch("SELECT profit_loss FROM ai_trades WHERE status='closed'")
+                    for r in ai_rows:
+                        pnl = float(r['profit_loss'] or 0)
+                        module_stats['AI']['pnl'] += pnl
+                        module_stats['AI']['total'] += 1
+                        if pnl > 0:
+                            module_stats['AI']['wins'] += 1
+                except Exception:
+                    pass
 
                 labels = list(module_stats.keys())
                 pnl_data = [module_stats[k]['pnl'] for k in labels]
@@ -9398,13 +9951,170 @@ class DashboardEndpoints:
                     'datasets': [{'label': 'Equity', 'data': equity_data, 'borderColor': '#3b82f6', 'fill': True}]
                 }
 
-                # Populate remaining charts with real or calculated data
-                # (Duration, Fees, Drawdown, etc. can be derived from the same datasets)
-                # For brevity, we map some to existing data or empty if no data
-                charts['chartDuration'] = {'labels': [], 'datasets': []} # TODO: Implement duration query
-                charts['chartFees'] = {'labels': [], 'datasets': []}
-                charts['chartDrawdown'] = {'labels': [], 'datasets': []}
-                # ... others initialized as empty or derived
+                # 7. Chain Volume
+                charts['chartChainVol'] = {
+                    'labels': chain_labels,
+                    'datasets': [{'label': 'Volume', 'data': [float(r['volume'] or 0) for r in chain_rows], 'backgroundColor': '#22d3ee'}]
+                }
+
+                # 8. Average Trade Duration by Module
+                duration_rows = await conn.fetch("""
+                    SELECT strategy,
+                           AVG(EXTRACT(EPOCH FROM (exit_timestamp - entry_timestamp))/3600) as avg_hours
+                    FROM trades
+                    WHERE status='closed' AND exit_timestamp IS NOT NULL AND entry_timestamp IS NOT NULL
+                    GROUP BY strategy
+                """)
+                duration_labels = []
+                duration_vals = []
+                for r in duration_rows:
+                    strat = (r['strategy'] or 'unknown').lower()
+                    # Map to readable name
+                    if 'future' in strat or 'perp' in strat:
+                        duration_labels.append('Futures')
+                    elif 'solana' in strat or 'pump' in strat:
+                        duration_labels.append('Solana')
+                    elif 'sniper' in strat:
+                        duration_labels.append('Sniper')
+                    elif 'arb' in strat:
+                        duration_labels.append('Arbitrage')
+                    elif 'copy' in strat:
+                        duration_labels.append('CopyTrade')
+                    elif 'ai' in strat:
+                        duration_labels.append('AI')
+                    else:
+                        duration_labels.append('DEX')
+                    duration_vals.append(round(float(r['avg_hours'] or 0), 2))
+
+                charts['chartDuration'] = {
+                    'labels': duration_labels if duration_labels else ['No Data'],
+                    'datasets': [{'label': 'Avg Hours', 'data': duration_vals if duration_vals else [0], 'backgroundColor': '#f59e0b'}]
+                }
+
+                # 9. Fee Analysis by Chain
+                fee_rows = await conn.fetch("""
+                    SELECT chain, SUM(COALESCE(
+                        (metadata->>'gas_cost')::numeric,
+                        (metadata->>'fee')::numeric,
+                        0
+                    )) as total_fees
+                    FROM trades
+                    WHERE status='closed'
+                    GROUP BY chain
+                """)
+                fee_labels = [r['chain'] or 'Unknown' for r in fee_rows]
+                fee_vals = [float(r['total_fees'] or 0) for r in fee_rows]
+
+                charts['chartFees'] = {
+                    'labels': fee_labels if fee_labels else ['No Data'],
+                    'datasets': [{'label': 'Fees ($)', 'data': fee_vals if fee_vals else [0], 'backgroundColor': '#ef4444'}]
+                }
+
+                # 10. Drawdown Analysis (calculate running max drawdown)
+                drawdown_data = []
+                drawdown_labels = []
+                peak = initial_balance
+                for i, r in enumerate(equity_rows):
+                    equity = initial_balance + sum(float(equity_rows[j]['profit_loss'] or 0) for j in range(i+1))
+                    peak = max(peak, equity)
+                    drawdown = ((peak - equity) / peak * 100) if peak > 0 else 0
+                    drawdown_data.append(round(drawdown, 2))
+                    drawdown_labels.append(r['exit_timestamp'].strftime('%Y-%m-%d') if r['exit_timestamp'] else '')
+
+                charts['chartDrawdown'] = {
+                    'labels': drawdown_labels if drawdown_labels else ['No Data'],
+                    'datasets': [{
+                        'label': 'Drawdown %',
+                        'data': drawdown_data if drawdown_data else [0],
+                        'borderColor': '#ef4444',
+                        'backgroundColor': 'rgba(239, 68, 68, 0.2)',
+                        'fill': True
+                    }]
+                }
+
+                # 11. Risk/Reward Ratio by Module
+                rr_rows = await conn.fetch("""
+                    SELECT strategy,
+                           AVG(CASE WHEN profit_loss > 0 THEN profit_loss ELSE 0 END) as avg_win,
+                           AVG(CASE WHEN profit_loss < 0 THEN ABS(profit_loss) ELSE 0 END) as avg_loss
+                    FROM trades
+                    WHERE status='closed'
+                    GROUP BY strategy
+                """)
+                rr_labels = []
+                rr_vals = []
+                for r in rr_rows:
+                    strat = (r['strategy'] or 'dex').lower()
+                    if 'future' in strat:
+                        rr_labels.append('Futures')
+                    elif 'solana' in strat:
+                        rr_labels.append('Solana')
+                    elif 'sniper' in strat:
+                        rr_labels.append('Sniper')
+                    elif 'arb' in strat:
+                        rr_labels.append('Arbitrage')
+                    elif 'copy' in strat:
+                        rr_labels.append('CopyTrade')
+                    elif 'ai' in strat:
+                        rr_labels.append('AI')
+                    else:
+                        rr_labels.append('DEX')
+                    avg_win = float(r['avg_win'] or 0)
+                    avg_loss = float(r['avg_loss'] or 1)
+                    rr_vals.append(round(avg_win / avg_loss, 2) if avg_loss > 0 else 0)
+
+                charts['chartRR'] = {
+                    'labels': rr_labels if rr_labels else ['No Data'],
+                    'datasets': [{'label': 'R:R Ratio', 'data': rr_vals if rr_vals else [0], 'backgroundColor': '#8b5cf6'}]
+                }
+
+                # 12. Slippage Impact
+                slippage_rows = await conn.fetch("""
+                    SELECT chain,
+                           AVG(COALESCE(
+                               (metadata->>'slippage')::numeric,
+                               (metadata->>'price_impact')::numeric,
+                               0
+                           )) as avg_slippage
+                    FROM trades
+                    WHERE status='closed'
+                    GROUP BY chain
+                """)
+                slippage_labels = [r['chain'] or 'Unknown' for r in slippage_rows]
+                slippage_vals = [round(float(r['avg_slippage'] or 0), 3) for r in slippage_rows]
+
+                charts['chartSlippage'] = {
+                    'labels': slippage_labels if slippage_labels else ['No Data'],
+                    'datasets': [{'label': 'Avg Slippage %', 'data': slippage_vals if slippage_vals else [0], 'backgroundColor': '#ec4899'}]
+                }
+
+                # 13. Win/Loss Streaks
+                streak_rows = await conn.fetch("""
+                    SELECT profit_loss FROM trades WHERE status='closed' ORDER BY exit_timestamp
+                """)
+                max_win_streak = 0
+                max_loss_streak = 0
+                current_win = 0
+                current_loss = 0
+                for r in streak_rows:
+                    pnl = float(r['profit_loss'] or 0)
+                    if pnl > 0:
+                        current_win += 1
+                        current_loss = 0
+                        max_win_streak = max(max_win_streak, current_win)
+                    elif pnl < 0:
+                        current_loss += 1
+                        current_win = 0
+                        max_loss_streak = max(max_loss_streak, current_loss)
+
+                charts['chartStreaks'] = {
+                    'labels': ['Win Streak', 'Loss Streak'],
+                    'datasets': [{
+                        'label': 'Max Consecutive',
+                        'data': [max_win_streak, max_loss_streak],
+                        'backgroundColor': ['#10b981', '#ef4444']
+                    }]
+                }
 
             return web.json_response({'success': True, 'data': charts})
         except Exception as e:
