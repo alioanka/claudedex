@@ -1455,7 +1455,11 @@ class DashboardEndpoints:
             simulator_data = {
                 'futures': None,
                 'solana': None,
-                'dex': None
+                'dex': None,
+                'sniper': None,
+                'arbitrage': None,
+                'copytrading': None,
+                'ai': None
             }
 
             # Try to fetch from Futures module health endpoint
@@ -1766,6 +1770,165 @@ class DashboardEndpoints:
 
             simulator_data['dex'] = dex_data
 
+            # Sniper Module - Fetch from health endpoint or DB
+            sniper_data = {
+                'status': 'Offline',
+                'mode': 'DRY_RUN' if dry_run else 'LIVE',
+                'total_trades': 0,
+                'winning_trades': 0,
+                'total_pnl': '$0.00',
+                'win_rate': '0%',
+                'trades': []
+            }
+            try:
+                sniper_port = int(os.getenv('SNIPER_HEALTH_PORT', '8083'))
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'http://localhost:{sniper_port}/stats', timeout=3) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            sniper_data = data.get('stats', data)
+                            sniper_data['status'] = 'Active'
+            except Exception:
+                pass
+
+            # Fetch sniper trades from DB
+            if self.db and self.db.pool:
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        sniper_trades = await conn.fetch("""
+                            SELECT * FROM trades
+                            WHERE strategy ILIKE '%sniper%' AND status = 'closed'
+                            ORDER BY exit_timestamp DESC LIMIT 50
+                        """)
+                        sniper_data['trades'] = [
+                            {'trade_id': str(t['trade_id']), 'pnl': float(t['profit_loss'] or 0),
+                             'time': t['exit_timestamp'].isoformat() if t['exit_timestamp'] else '', 'module': 'sniper'}
+                            for t in sniper_trades
+                        ]
+                        sniper_data['total_trades'] = len(sniper_trades)
+                except Exception:
+                    pass
+            simulator_data['sniper'] = sniper_data
+
+            # Arbitrage Module
+            arbitrage_data = {
+                'status': 'Offline',
+                'mode': 'DRY_RUN' if dry_run else 'LIVE',
+                'total_trades': 0,
+                'winning_trades': 0,
+                'total_pnl': '$0.00',
+                'win_rate': '0%',
+                'trades': []
+            }
+            try:
+                arb_port = int(os.getenv('ARBITRAGE_HEALTH_PORT', '8084'))
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'http://localhost:{arb_port}/stats', timeout=3) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            arbitrage_data = data.get('stats', data)
+                            arbitrage_data['status'] = 'Active'
+            except Exception:
+                pass
+
+            # Fetch arbitrage trades from DB
+            if self.db and self.db.pool:
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        arb_trades = await conn.fetch("""
+                            SELECT * FROM arbitrage_trades
+                            ORDER BY timestamp DESC LIMIT 50
+                        """)
+                        arbitrage_data['trades'] = [
+                            {'trade_id': str(t.get('id', '')), 'pnl': float(t.get('net_profit', 0)),
+                             'time': t['timestamp'].isoformat() if t.get('timestamp') else '', 'module': 'arbitrage'}
+                            for t in arb_trades
+                        ]
+                        arbitrage_data['total_trades'] = len(arb_trades)
+                except Exception:
+                    pass
+            simulator_data['arbitrage'] = arbitrage_data
+
+            # Copy Trading Module
+            copytrading_data = {
+                'status': 'Offline',
+                'mode': 'DRY_RUN' if dry_run else 'LIVE',
+                'total_trades': 0,
+                'winning_trades': 0,
+                'total_pnl': '$0.00',
+                'win_rate': '0%',
+                'trades': []
+            }
+            try:
+                copy_port = int(os.getenv('COPYTRADING_HEALTH_PORT', '8085'))
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'http://localhost:{copy_port}/stats', timeout=3) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            copytrading_data = data.get('stats', data)
+                            copytrading_data['status'] = 'Active'
+            except Exception:
+                pass
+
+            # Fetch copytrading trades from DB
+            if self.db and self.db.pool:
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        copy_trades = await conn.fetch("""
+                            SELECT * FROM copytrading_trades
+                            ORDER BY timestamp DESC LIMIT 50
+                        """)
+                        copytrading_data['trades'] = [
+                            {'trade_id': str(t.get('id', '')), 'pnl': float(t.get('pnl', 0)),
+                             'time': t['timestamp'].isoformat() if t.get('timestamp') else '', 'module': 'copytrading'}
+                            for t in copy_trades
+                        ]
+                        copytrading_data['total_trades'] = len(copy_trades)
+                except Exception:
+                    pass
+            simulator_data['copytrading'] = copytrading_data
+
+            # AI Module
+            ai_data = {
+                'status': 'Offline',
+                'mode': 'DRY_RUN' if dry_run else 'LIVE',
+                'total_trades': 0,
+                'winning_trades': 0,
+                'total_pnl': '$0.00',
+                'win_rate': '0%',
+                'trades': []
+            }
+            try:
+                ai_port = int(os.getenv('AI_HEALTH_PORT', '8086'))
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'http://localhost:{ai_port}/stats', timeout=3) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            ai_data = data.get('stats', data)
+                            ai_data['status'] = 'Active'
+            except Exception:
+                pass
+
+            # Fetch AI trades from DB
+            if self.db and self.db.pool:
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        ai_trades = await conn.fetch("""
+                            SELECT * FROM trades
+                            WHERE strategy ILIKE '%ai%' OR strategy ILIKE '%sentiment%'
+                            AND status = 'closed'
+                            ORDER BY exit_timestamp DESC LIMIT 50
+                        """)
+                        ai_data['trades'] = [
+                            {'trade_id': str(t['trade_id']), 'pnl': float(t['profit_loss'] or 0),
+                             'time': t['exit_timestamp'].isoformat() if t['exit_timestamp'] else '', 'module': 'ai'}
+                            for t in ai_trades
+                        ]
+                        ai_data['total_trades'] = len(ai_trades)
+                except Exception:
+                    pass
+            simulator_data['ai'] = ai_data
+
             # Cache the result to prevent rapid polling
             from time import time
             self._simulator_cache = simulator_data
@@ -1778,7 +1941,7 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
 
     async def api_simulator_export(self, request):
-        """Export simulator data as JSON file"""
+        """Export simulator data as JSON file for all 7 modules"""
         try:
             import aiohttp
             from datetime import datetime
@@ -1787,28 +1950,34 @@ class DashboardEndpoints:
                 'exported_at': datetime.now().isoformat(),
                 'futures': {},
                 'solana': {},
-                'dex': {}
+                'dex': {},
+                'sniper': {},
+                'arbitrage': {},
+                'copytrading': {},
+                'ai': {}
             }
 
-            # Fetch data from modules
-            try:
-                futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(f'http://localhost:{futures_port}/stats', timeout=2) as resp:
-                        if resp.status == 200:
-                            export_data['futures'] = await resp.json()
-            except Exception:
-                pass
+            # Fetch data from all module health endpoints
+            module_ports = [
+                ('futures', 'FUTURES_HEALTH_PORT', '8081'),
+                ('solana', 'SOLANA_HEALTH_PORT', '8082'),
+                ('sniper', 'SNIPER_HEALTH_PORT', '8083'),
+                ('arbitrage', 'ARBITRAGE_HEALTH_PORT', '8084'),
+                ('copytrading', 'COPYTRADING_HEALTH_PORT', '8085'),
+                ('ai', 'AI_HEALTH_PORT', '8086')
+            ]
 
-            try:
-                solana_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(f'http://localhost:{solana_port}/stats', timeout=2) as resp:
-                        if resp.status == 200:
-                            export_data['solana'] = await resp.json()
-            except Exception:
-                pass
+            async with aiohttp.ClientSession() as session:
+                for module_name, port_env, default_port in module_ports:
+                    try:
+                        port = int(os.getenv(port_env, default_port))
+                        async with session.get(f'http://localhost:{port}/stats', timeout=2) as resp:
+                            if resp.status == 200:
+                                export_data[module_name] = await resp.json()
+                    except Exception:
+                        pass
 
+            # DEX from engine
             if hasattr(self, 'engine') and self.engine:
                 try:
                     export_data['dex'] = await self.engine.get_stats()
