@@ -25,6 +25,24 @@ JUPITER_SWAP_API = "https://lite-api.jup.ag/swap/v1/swap"
 # Common tokens
 WSOL_MINT = "So11111111111111111111111111111111111111112"
 
+# Etherscan API V2 - Multi-chain support with single API key
+# See: https://docs.etherscan.io/etherscan-v2
+ETHERSCAN_V2_API = "https://api.etherscan.io/v2/api"
+
+# Supported EVM chains with their chain IDs
+EVM_CHAINS = {
+    'ethereum': {'chain_id': 1, 'name': 'Ethereum', 'symbol': 'ETH', 'aliases': ['eth', 'mainnet']},
+    'base': {'chain_id': 8453, 'name': 'Base', 'symbol': 'ETH', 'aliases': ['base']},
+    'arbitrum': {'chain_id': 42161, 'name': 'Arbitrum One', 'symbol': 'ETH', 'aliases': ['arb', 'arbitrum-one']},
+    'bsc': {'chain_id': 56, 'name': 'BNB Smart Chain', 'symbol': 'BNB', 'aliases': ['bnb', 'binance']},
+    'polygon': {'chain_id': 137, 'name': 'Polygon', 'symbol': 'MATIC', 'aliases': ['matic', 'poly']},
+    'optimism': {'chain_id': 10, 'name': 'Optimism', 'symbol': 'ETH', 'aliases': ['op']},
+    'avalanche': {'chain_id': 43114, 'name': 'Avalanche C-Chain', 'symbol': 'AVAX', 'aliases': ['avax']},
+}
+
+# Default chain for EVM wallets without chain suffix
+DEFAULT_EVM_CHAIN = 'ethereum'
+
 
 class PriceFetcher:
     """Fetch real-time prices from CoinGecko"""
@@ -481,7 +499,13 @@ class CopyTradingEngine:
         self.is_running = True
         logger.info("👯 Copy Trading Engine Started")
         logger.info(f"   Mode: {'DRY_RUN (Simulated)' if self.dry_run else 'LIVE TRADING'}")
-        logger.info(f"   EVM monitoring: {'Enabled' if self.etherscan_api_key else 'Disabled (no ETHERSCAN_API_KEY)'}")
+        if self.etherscan_api_key:
+            supported_chains = ', '.join([info['name'] for info in EVM_CHAINS.values()])
+            logger.info(f"   EVM monitoring: Enabled (Etherscan V2 API)")
+            logger.info(f"   Supported chains: {supported_chains}")
+            logger.info(f"   Wallet format: 0x...@chain (e.g., 0x1234...@base, 0x5678...@arb)")
+        else:
+            logger.info(f"   EVM monitoring: Disabled (no ETHERSCAN_API_KEY)")
         logger.info(f"   Solana monitoring: {'Enabled' if self.solana_rpc_url else 'Disabled (no SOLANA_RPC_URL)'}")
 
         # Initialize executor with db_pool for secrets manager access
@@ -580,34 +604,85 @@ class CopyTradingEngine:
 
     def _is_solana_address(self, address: str) -> bool:
         """Check if address is a Solana address (base58, typically 32-44 chars)"""
+        # Strip any chain suffix first
+        clean_addr = address.split('@')[0] if '@' in address else address
         # Solana addresses are base58 encoded, 32-44 chars, no 0x prefix
-        if address.startswith('0x'):
+        if clean_addr.startswith('0x'):
             return False
-        if len(address) < 32 or len(address) > 44:
+        if len(clean_addr) < 32 or len(clean_addr) > 44:
             return False
         # Basic base58 character check
         base58_chars = set('123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz')
-        return all(c in base58_chars for c in address)
+        return all(c in base58_chars for c in clean_addr)
+
+    def _parse_evm_wallet(self, wallet: str) -> tuple:
+        """
+        Parse EVM wallet with optional chain suffix.
+        Format: 0x...@chain (e.g., 0x1234...@base)
+        Returns: (address, chain_name, chain_id)
+        """
+        if '@' in wallet:
+            address, chain_hint = wallet.split('@', 1)
+            chain_hint = chain_hint.lower().strip()
+        else:
+            address = wallet
+            chain_hint = DEFAULT_EVM_CHAIN
+
+        # Find chain by name or alias
+        for chain_name, chain_info in EVM_CHAINS.items():
+            if chain_hint == chain_name or chain_hint in chain_info['aliases']:
+                return (address, chain_name, chain_info['chain_id'])
+
+        # Default to Ethereum if chain not found
+        logger.warning(f"Unknown chain '{chain_hint}' for {address[:10]}..., defaulting to Ethereum")
+        return (address, 'ethereum', 1)
 
     async def _monitor_evm_wallets(self) -> int:
-        """Check for new transactions from target EVM wallets via Etherscan"""
+        """Check for new transactions from target EVM wallets via Etherscan V2 API.
+
+        Supports multiple chains: Ethereum, Base, Arbitrum, BSC, Polygon, Optimism, Avalanche.
+        Wallet format: 0x...@chain (e.g., 0x1234...@base, 0x5678...@arb)
+        Default chain is Ethereum if no suffix specified.
+        """
         trades_copied = 0
 
         if not self.etherscan_api_key:
             return 0
 
-        evm_wallets = [w for w in self.targets if w.startswith('0x')]
+        # Filter EVM wallets (may include chain suffix like @base)
+        evm_wallets = [w for w in self.targets if w.startswith('0x') or (w.split('@')[0].startswith('0x') if '@' in w else False)]
         if not evm_wallets:
             return 0
 
+        # Group wallets by chain for logging
+        chain_counts = {}
+        for wallet in evm_wallets:
+            _, chain_name, _ = self._parse_evm_wallet(wallet)
+            chain_counts[chain_name] = chain_counts.get(chain_name, 0) + 1
+
+        import time
         async with aiohttp.ClientSession() as session:
-            for wallet in evm_wallets:
+            for wallet_with_chain in evm_wallets:
                 try:
-                    url = f"https://api.etherscan.io/api?module=account&action=txlist&address={wallet}&startblock=0&endblock=99999999&sort=desc&apikey={self.etherscan_api_key}"
+                    # Parse wallet address and chain
+                    address, chain_name, chain_id = self._parse_evm_wallet(wallet_with_chain)
+                    chain_info = EVM_CHAINS.get(chain_name, EVM_CHAINS['ethereum'])
+
+                    # Use Etherscan V2 API with chain ID
+                    url = (
+                        f"{ETHERSCAN_V2_API}?chainid={chain_id}"
+                        f"&module=account&action=txlist"
+                        f"&address={address}"
+                        f"&startblock=0&endblock=99999999"
+                        f"&page=1&offset=5"  # Only get last 5 txs
+                        f"&sort=desc"
+                        f"&apikey={self.etherscan_api_key}"
+                    )
+
                     async with session.get(url) as resp:
                         # Handle rate limiting
                         if resp.status == 429:
-                            logger.warning("⚠️ Etherscan rate limited - backing off")
+                            logger.warning(f"⚠️ Etherscan rate limited on {chain_name} - backing off")
                             try:
                                 from config.rpc_provider import RPCProvider
                                 await RPCProvider.report_rate_limit('ETHERSCAN_API', 'etherscan.io', 300)
@@ -617,22 +692,33 @@ class CopyTradingEngine:
                             continue
 
                         data = await resp.json()
-                        if data['status'] == '1' and data.get('result'):
-                            latest_tx = data['result'][0]
-                            tx_hash = latest_tx.get('hash')
 
-                            # Skip if already processed
-                            if tx_hash in self._known_tx_hashes:
-                                continue
+                        # V2 API returns different status format
+                        if data.get('status') == '1' and data.get('result'):
+                            for tx in data['result']:
+                                tx_hash = tx.get('hash')
 
-                            # Check if recent (last minute)
-                            import time
-                            if int(latest_tx['timeStamp']) > time.time() - 60:
-                                self._known_tx_hashes.add(tx_hash)
-                                if await self._analyze_and_copy_evm(latest_tx):
-                                    trades_copied += 1
+                                # Skip if already processed
+                                if tx_hash in self._known_tx_hashes:
+                                    continue
+
+                                # Check if recent (last minute)
+                                if int(tx['timeStamp']) > time.time() - 60:
+                                    self._known_tx_hashes.add(tx_hash)
+                                    # Add chain info to tx for analysis
+                                    tx['_chain'] = chain_name
+                                    tx['_chain_id'] = chain_id
+                                    tx['_chain_symbol'] = chain_info['symbol']
+                                    if await self._analyze_and_copy_evm(tx):
+                                        trades_copied += 1
+                                        logger.info(f"📋 Copied trade on {chain_info['name']}: {tx_hash[:16]}...")
+
+                        elif data.get('message') and 'rate limit' in data.get('message', '').lower():
+                            logger.warning(f"⚠️ Etherscan V2 rate limited on {chain_name}")
+                            await asyncio.sleep(5)
+
                 except Exception as e:
-                    logger.debug(f"Failed to check EVM wallet {wallet}: {e}")
+                    logger.debug(f"Failed to check EVM wallet {wallet_with_chain}: {e}")
 
         return trades_copied
 

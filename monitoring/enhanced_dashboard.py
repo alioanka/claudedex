@@ -9059,7 +9059,17 @@ class DashboardEndpoints:
                                 settings[key] = int(val)
                         else:
                             settings[key] = val
-            return web.json_response({'success': True, 'settings': settings})
+            # Add supported EVM chains info for the UI
+            supported_chains = [
+                {'name': chain_name, 'display': info['name'], 'suffix': f'@{chain_name}'}
+                for chain_name, info in self.EVM_CHAINS.items()
+            ]
+            return web.json_response({
+                'success': True,
+                'settings': settings,
+                'supported_evm_chains': supported_chains,
+                'chain_format_help': 'For EVM wallets, use format: 0x...@chain (e.g., 0x1234...@base). Default is Ethereum.'
+            })
         except Exception as e:
             logger.error(f"Error getting copytrading settings: {e}")
             return web.json_response({'success': False, 'error': str(e)})
@@ -9425,25 +9435,66 @@ class DashboardEndpoints:
             result['error'] = f'Validation error: {str(e)}'
             return result
 
+    # Supported EVM chains (must match copy_engine.py)
+    EVM_CHAINS = {
+        'ethereum': {'chain_id': 1, 'name': 'Ethereum', 'aliases': ['eth', 'mainnet']},
+        'base': {'chain_id': 8453, 'name': 'Base', 'aliases': ['base']},
+        'arbitrum': {'chain_id': 42161, 'name': 'Arbitrum One', 'aliases': ['arb', 'arbitrum-one']},
+        'bsc': {'chain_id': 56, 'name': 'BNB Smart Chain', 'aliases': ['bnb', 'binance']},
+        'polygon': {'chain_id': 137, 'name': 'Polygon', 'aliases': ['matic', 'poly']},
+        'optimism': {'chain_id': 10, 'name': 'Optimism', 'aliases': ['op']},
+        'avalanche': {'chain_id': 43114, 'name': 'Avalanche C-Chain', 'aliases': ['avax']},
+    }
+
     def _is_evm_address(self, address: str) -> bool:
-        """Check if address is an EVM address (0x prefix + 40 hex chars)"""
-        if not address or not address.startswith('0x'):
+        """Check if address is an EVM address (0x prefix + 40 hex chars).
+        Supports chain suffix format: 0x...@chain (e.g., 0x1234...@base)
+        """
+        if not address:
             return False
-        if len(address) != 42:
+
+        # Strip chain suffix if present
+        clean_addr = address.split('@')[0] if '@' in address else address
+
+        if not clean_addr.startswith('0x'):
+            return False
+        if len(clean_addr) != 42:
             return False
         # Check for valid hex characters
         try:
-            int(address[2:], 16)
+            int(clean_addr[2:], 16)
             return True
         except ValueError:
             return False
 
+    def _parse_evm_chain(self, address: str) -> tuple:
+        """Parse EVM address and optional chain suffix.
+        Returns: (clean_address, chain_name, chain_info)
+        """
+        if '@' in address:
+            clean_addr, chain_hint = address.split('@', 1)
+            chain_hint = chain_hint.lower().strip()
+        else:
+            clean_addr = address
+            chain_hint = 'ethereum'
+
+        # Find chain by name or alias
+        for chain_name, chain_info in self.EVM_CHAINS.items():
+            if chain_hint == chain_name or chain_hint in chain_info['aliases']:
+                return (clean_addr, chain_name, chain_info)
+
+        # Default to Ethereum if chain not found
+        return (clean_addr, 'ethereum', self.EVM_CHAINS['ethereum'])
+
     def _validate_evm_wallet(self, address: str) -> dict:
-        """Validate that an EVM address has correct format"""
+        """Validate that an EVM address has correct format.
+        Supports chain suffix: 0x...@chain (e.g., 0x1234...@base)
+        """
         result = {
             'valid': False,
             'address': address,
-            'chain': 'evm',  # Could be Ethereum, Base, Arbitrum, etc.
+            'chain': 'ethereum',
+            'chain_name': 'Ethereum',
             'is_wallet': False,
             'error': None,
             'note': None
@@ -9454,17 +9505,23 @@ class DashboardEndpoints:
             result['error'] = 'No address provided'
             return result
 
-        if not address.startswith('0x'):
+        # Parse chain suffix
+        clean_addr, chain_name, chain_info = self._parse_evm_chain(address)
+        result['chain'] = chain_name
+        result['chain_name'] = chain_info['name']
+        result['address'] = address  # Keep original with chain suffix
+
+        if not clean_addr.startswith('0x'):
             result['error'] = 'EVM address must start with 0x'
             return result
 
-        if len(address) != 42:
-            result['error'] = f'Invalid EVM address length ({len(address)} chars, expected 42)'
+        if len(clean_addr) != 42:
+            result['error'] = f'Invalid EVM address length ({len(clean_addr)} chars, expected 42)'
             return result
 
         # Validate hex characters
         try:
-            int(address[2:], 16)
+            int(clean_addr[2:], 16)
         except ValueError:
             result['error'] = 'Invalid hex characters in address'
             return result
@@ -9472,7 +9529,13 @@ class DashboardEndpoints:
         # Format is valid - accept the wallet
         result['valid'] = True
         result['is_wallet'] = True
-        result['note'] = 'EVM wallet format valid. Currently monitors Ethereum mainnet via Etherscan. For other chains (Base, Arbitrum), additional API keys are needed.'
+
+        # Build helpful note about chain
+        supported_chains = ', '.join([f"{info['name']} (@{name})" for name, info in self.EVM_CHAINS.items()])
+        if '@' in address:
+            result['note'] = f"Will monitor on {chain_info['name']} via Etherscan V2 API."
+        else:
+            result['note'] = f"Will monitor on Ethereum (default). To specify a chain, use format: {clean_addr}@base. Supported: {supported_chains}"
 
         return result
 
