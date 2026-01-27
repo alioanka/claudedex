@@ -1658,14 +1658,21 @@ class SolanaTradingEngine:
         # Time-based exits (use UTC for consistency with opened_at)
         time_held = (datetime.utcnow() - position.opened_at).total_seconds()
 
-        # Jupiter time-based auto exit
+        # Jupiter time-based auto exit - IMPROVED: only exit if profitable or past max time
         if position.strategy == Strategy.JUPITER:
             jupiter_auto_exit = 0
             if self.config_manager:
                 jupiter_auto_exit = self.config_manager.jupiter_auto_exit_seconds
 
             if jupiter_auto_exit > 0 and time_held >= jupiter_auto_exit:
-                return "jupiter_time_exit"
+                # Only time-exit if:
+                # 1. Position is profitable (any amount)
+                # 2. OR position has been held 3x the auto_exit time (force exit stale positions)
+                max_hold_time = jupiter_auto_exit * 3
+                if pnl_pct > 0 or time_held >= max_hold_time:
+                    return "jupiter_time_exit"
+                # If not profitable and not at max time, continue holding
+                # Let the regular SL/TP handle the exit
 
         # Pump.fun auto-sell delay (only if trailing not enabled)
         if position.strategy == Strategy.PUMPFUN:
@@ -1682,12 +1689,14 @@ class SolanaTradingEngine:
         """
         Enhanced Pump.fun trailing stop strategy for capturing 10x-100x gains.
 
-        Trailing Tiers:
-        - Tier 0 (0-15% gain): SL at -20% (capital protection)
-        - Tier 1 (15-50% gain): SL at breakeven
-        - Tier 2 (50-100% gain): SL at +25%, partial exit 25%
-        - Tier 3 (100-300% gain): SL at 50% of peak, partial exit 25%
-        - Tier 4 (300%+ gain): SL at 70% of peak (30% trail), partial exit 25%
+        IMPROVED Trailing Tiers (tighter stops, earlier profit-taking):
+        - Tier 0 (0-20% gain): SL at -12% (tighter capital protection)
+        - Tier 0.5 (20-40% gain): SL at +5% (lock small profit)
+        - Tier 1 (40-80% gain): SL at +20%, partial exit 20%
+        - Tier 2 (80-150% gain): SL at +40%, partial exit 20%
+        - Tier 3 (150-400% gain): SL at 65% of peak, partial exit 20%
+        - Tier 4 (400-1000% gain): SL at 75% of peak (25% trail), partial exit 20%
+        - Tier 5 (1000%+ gain): SL at 80% of peak (20% trail), partial exit remaining
         """
         entry_price = position.entry_price
         current_price = position.current_price
@@ -1722,26 +1731,39 @@ class SolanaTradingEngine:
         current_gain_pct = ((current_price - entry_price) / entry_price) * 100
         peak_gain_pct = trailing['peak_gain_pct']
 
-        # Calculate dynamic trailing stop level
-        if peak_gain_pct < 15:
-            # Tier 0: Initial protection
-            sl_price = entry_price * 0.80  # -20%
-            sl_gain_pct = -20.0
-        elif peak_gain_pct < 50:
-            # Tier 1: Breakeven lock
-            sl_price = entry_price * 1.0  # Breakeven
-            sl_gain_pct = 0.0
-        elif peak_gain_pct < 100:
-            # Tier 2: Lock +25%
-            sl_price = entry_price * 1.25
-            sl_gain_pct = 25.0
-        elif peak_gain_pct < 300:
-            # Tier 3: Trail 50% of peak
-            sl_price = peak_price * 0.50
+        # Get configurable tier 0 stop loss from config (default -12%)
+        tier0_sl_pct = 12.0
+        if self.config_manager:
+            tier0_sl_pct = self.config_manager.pumpfun_tier0_sl
+
+        # Calculate dynamic trailing stop level - TIGHTER for better risk management
+        if peak_gain_pct < 20:
+            # Tier 0: Configurable initial protection (default -12%)
+            sl_price = entry_price * (1 - tier0_sl_pct / 100)
+            sl_gain_pct = -tier0_sl_pct
+        elif peak_gain_pct < 40:
+            # Tier 0.5: Lock small profit early (+5%)
+            sl_price = entry_price * 1.05
+            sl_gain_pct = 5.0
+        elif peak_gain_pct < 80:
+            # Tier 1: Lock +20% (moved up from breakeven)
+            sl_price = entry_price * 1.20
+            sl_gain_pct = 20.0
+        elif peak_gain_pct < 150:
+            # Tier 2: Lock +40%
+            sl_price = entry_price * 1.40
+            sl_gain_pct = 40.0
+        elif peak_gain_pct < 400:
+            # Tier 3: Trail 35% below peak (tighter than 50%)
+            sl_price = peak_price * 0.65
+            sl_gain_pct = ((sl_price - entry_price) / entry_price) * 100
+        elif peak_gain_pct < 1000:
+            # Tier 4: Trail 25% below peak
+            sl_price = peak_price * 0.75
             sl_gain_pct = ((sl_price - entry_price) / entry_price) * 100
         else:
-            # Tier 4: Moon mode - trail 30% below peak
-            sl_price = peak_price * 0.70
+            # Tier 5: Moon mode - trail only 20% below peak (tightest)
+            sl_price = peak_price * 0.80
             sl_gain_pct = ((sl_price - entry_price) / entry_price) * 100
 
         # Store current SL level
@@ -1754,34 +1776,49 @@ class SolanaTradingEngine:
             if tier == 0:
                 return "trailing_stop_tier0"
             elif tier == 1:
-                return "trailing_stop_breakeven"
+                return "trailing_stop_tier1"
             elif tier == 2:
                 return "trailing_stop_tier2"
             elif tier == 3:
                 return "trailing_stop_tier3"
+            elif tier == 4:
+                return "trailing_stop_tier4"
             else:
                 return "trailing_stop_moon"
 
         # Check for partial exit triggers (only trigger once per tier)
+        # IMPROVED: Earlier and more granular partial exits to capture gains
         tier_reached = trailing['tier_reached']
 
-        # Tier 2: First partial at 50%
-        if peak_gain_pct >= 50 and tier_reached < 1:
+        # Tier 1: First partial at 40% (moved from 50%)
+        if peak_gain_pct >= 40 and tier_reached < 1:
             trailing['tier_reached'] = 1
-            logger.info(f"🎯 {position.token_symbol}: Tier 1 reached (+50%), partial exit triggered")
+            logger.info(f"🎯 {position.token_symbol}: Tier 1 reached (+40%), partial exit 20%")
             return "partial_exit_tier1"
 
-        # Tier 3: Second partial at 100% (2x)
-        if peak_gain_pct >= 100 and tier_reached < 2:
+        # Tier 2: Second partial at 80%
+        if peak_gain_pct >= 80 and tier_reached < 2:
             trailing['tier_reached'] = 2
-            logger.info(f"🚀 {position.token_symbol}: Tier 2 reached (+100%), partial exit triggered")
+            logger.info(f"🚀 {position.token_symbol}: Tier 2 reached (+80%), partial exit 20%")
             return "partial_exit_tier2"
 
-        # Tier 4: Third partial at 300% (4x)
-        if peak_gain_pct >= 300 and tier_reached < 3:
+        # Tier 3: Third partial at 150%
+        if peak_gain_pct >= 150 and tier_reached < 3:
             trailing['tier_reached'] = 3
-            logger.info(f"🌙 {position.token_symbol}: Tier 3 reached (+300%), MOON MODE activated!")
+            logger.info(f"💎 {position.token_symbol}: Tier 3 reached (+150%), partial exit 20%")
             return "partial_exit_tier3"
+
+        # Tier 4: Fourth partial at 400% (5x)
+        if peak_gain_pct >= 400 and tier_reached < 4:
+            trailing['tier_reached'] = 4
+            logger.info(f"🌙 {position.token_symbol}: Tier 4 reached (+400%), partial exit 20%")
+            return "partial_exit_tier4"
+
+        # Tier 5: Fifth partial at 1000% (10x) - MOON MODE
+        if peak_gain_pct >= 1000 and tier_reached < 5:
+            trailing['tier_reached'] = 5
+            logger.info(f"🔥 {position.token_symbol}: TIER 5 MOON MODE (+1000%), final partial exit!")
+            return "partial_exit_tier5"
 
         # Log trailing status periodically (every 30 seconds)
         time_held = (datetime.utcnow() - position.opened_at).total_seconds()
@@ -2135,22 +2172,48 @@ class SolanaTradingEngine:
             logger.error(f"Error opening position: {e}")
 
     async def _close_position(self, token_mint: str, reason: str):
-        """Close a position"""
+        """Close a position (full or partial)"""
         if token_mint not in self.active_positions:
             return
 
         position = self.active_positions[token_mint]
 
         try:
-            # Calculate PnL
+            # Determine if this is a partial exit
+            is_partial = reason.startswith("partial_exit_")
+            partial_pct = 0.20  # Default 20% partial exit per tier
+
+            # Adjust partial percentage based on tier
+            if reason == "partial_exit_tier5":
+                # Final tier - exit remaining position
+                partial_pct = 1.0  # Full remaining
+                is_partial = False  # Treat as full close
+            elif is_partial:
+                # Tiers 1-4: 20% each
+                partial_pct = 0.20
+
+            # Calculate amounts based on partial or full exit
+            if is_partial:
+                # Calculate partial amounts
+                close_pct = partial_pct
+                close_amount = position.amount * close_pct
+                close_value_sol = position.value_sol * close_pct
+            else:
+                # Full close
+                close_pct = 1.0
+                close_amount = position.amount
+                close_value_sol = position.value_sol
+
+            # Calculate PnL for the portion being closed
             pnl_pct = position.unrealized_pnl_pct
-            pnl_sol = position.unrealized_pnl
+            pnl_sol = position.unrealized_pnl * close_pct
             pnl_usd = pnl_sol * self.sol_price_usd
 
             # Execute close (or simulate)
             close_tx_signature = None
             if self.dry_run:
-                logger.info(f"🔵 [DRY_RUN] SIMULATED SELL {position.token_symbol} ({reason})")
+                partial_tag = f" ({close_pct*100:.0f}%)" if is_partial else ""
+                logger.info(f"🔵 [DRY_RUN] SIMULATED SELL{partial_tag} {position.token_symbol} ({reason})")
                 close_tx_signature = f"DRY_RUN_CLOSE_{uuid.uuid4().hex[:16]}"
             else:
                 # Execute real Jupiter swap back to SOL
@@ -2159,7 +2222,7 @@ class SolanaTradingEngine:
                         # Calculate token amount in smallest units (lamports equivalent)
                         # Most SPL tokens use 6 or 9 decimals
                         token_decimals = 6  # Default, would need to fetch actual decimals
-                        token_amount_raw = int(position.amount * (10 ** token_decimals))
+                        token_amount_raw = int(close_amount * (10 ** token_decimals))
 
                         logger.info(f"🔄 Executing LIVE close: {position.token_symbol} → SOL")
                         close_tx_signature = await self.jupiter_helper.execute_swap(
@@ -2190,11 +2253,11 @@ class SolanaTradingEngine:
                 side=TradeSide.SELL,
                 entry_price=position.entry_price,
                 exit_price=position.current_price,
-                amount=position.value_sol,  # Fixed: Use value_sol (SOL amount) not amount (token count)
+                amount=close_value_sol,  # Use partial or full value_sol
                 pnl_sol=pnl_sol,
                 pnl_usd=pnl_usd,
                 pnl_pct=pnl_pct,
-                fees=position.fees_paid,
+                fees=position.fees_paid * close_pct,  # Proportional fees
                 opened_at=position.opened_at,
                 closed_at=datetime.utcnow(),  # Fixed: Use UTC for consistency with opened_at
                 close_reason=reason,
@@ -2211,7 +2274,7 @@ class SolanaTradingEngine:
             self.risk_metrics.daily_pnl_sol += pnl_sol
             self.risk_metrics.daily_pnl_usd += pnl_usd
             self.risk_metrics.daily_trades += 1
-            self.risk_metrics.current_exposure_sol -= position.value_sol
+            self.risk_metrics.current_exposure_sol -= close_value_sol
 
             if pnl_sol > 0:
                 self.winning_trades += 1
@@ -2221,16 +2284,16 @@ class SolanaTradingEngine:
                 self.risk_metrics.consecutive_losses += 1
 
             # Record trade in PnL tracker for Sharpe/Sortino calculations
-            net_pnl = pnl_sol - position.fees_paid
+            net_pnl = pnl_sol - (position.fees_paid * close_pct)
             trade_record = TradeRecord(
                 trade_id=trade.trade_id,
                 symbol=position.token_symbol,
                 side=position.side.value,
                 entry_price=position.entry_price,
                 exit_price=position.current_price,
-                size=position.amount,
+                size=close_amount,
                 pnl=pnl_sol,
-                fees=position.fees_paid,
+                fees=position.fees_paid * close_pct,
                 net_pnl=net_pnl,
                 pnl_pct=pnl_pct,
                 entry_time=position.opened_at,
@@ -2240,17 +2303,42 @@ class SolanaTradingEngine:
             )
             self.pnl_tracker.record_trade(trade_record)
 
-            # Remove position
-            del self.active_positions[token_mint]
+            if is_partial:
+                # Partial exit: Update position instead of removing
+                position.amount -= close_amount
+                position.value_sol -= close_value_sol
+                position.fees_paid -= position.fees_paid * close_pct  # Reduce tracked fees
 
-            # Set cooldown
-            self.token_cooldowns[token_mint] = datetime.now() + self.cooldown_duration
+                # Track realized PnL in trailing metadata
+                if position.metadata and 'trailing' in position.metadata:
+                    trailing = position.metadata['trailing']
+                    trailing['partial_exits'].append({
+                        'tier': reason,
+                        'pnl_sol': pnl_sol,
+                        'pnl_pct': pnl_pct,
+                        'amount_sold': close_amount,
+                        'value_sol_sold': close_value_sol,
+                        'timestamp': datetime.utcnow().isoformat()
+                    })
+                    trailing['total_realized_pnl'] += pnl_sol
+                    trailing['remaining_pct'] = (position.amount / trailing['original_amount']) * 100
+
+                logger.info(f"📊 Partial exit recorded: {close_pct*100:.0f}% sold, {trailing.get('remaining_pct', 0):.0f}% remaining")
+            else:
+                # Full close: Remove position
+                del self.active_positions[token_mint]
+
+                # Set cooldown
+                self.token_cooldowns[token_mint] = datetime.now() + self.cooldown_duration
 
             # Log result
             pnl_emoji = "🟢" if pnl_sol > 0 else "🔴"
             sim_tag = "[DRY_RUN] " if position.is_simulated else ""
-            logger.info(f"{pnl_emoji} {sim_tag}Position closed: {position.token_symbol}")
+            close_type = "Partial exit" if is_partial else "Position closed"
+            logger.info(f"{pnl_emoji} {sim_tag}{close_type}: {position.token_symbol}")
             logger.info(f"   Reason: {reason}")
+            if is_partial:
+                logger.info(f"   Sold: {close_pct*100:.0f}% ({close_value_sol:.4f} SOL)")
             logger.info(f"   PnL: {pnl_sol:.4f} SOL (${pnl_usd:.2f}, {pnl_pct:.2f}%)")
             logger.info(f"   Daily PnL: {self.risk_metrics.daily_pnl_sol:.4f} SOL")
 

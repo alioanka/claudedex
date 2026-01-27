@@ -280,7 +280,11 @@ class FuturesTradingEngine:
 
             # Trailing stop
             self.trailing_stop_enabled = getattr(risk_config, 'trailing_stop_enabled', True)
-            self.trailing_stop_distance = getattr(risk_config, 'trailing_stop_distance', 1.5)
+            self.trailing_stop_distance = getattr(risk_config, 'trailing_stop_distance', 1.0)
+
+            # Market condition filters
+            self.require_trend_confirmation = getattr(risk_config, 'require_trend_confirmation', True)
+            self.min_volume_multiplier = getattr(risk_config, 'min_volume_multiplier', 1.2)
 
             # Calculate max_daily_loss_usd from percentage and capital
             # If max_daily_loss_pct is set (from UI), use that. Otherwise use max_daily_loss_usd directly.
@@ -924,13 +928,32 @@ class FuturesTradingEngine:
                 if position.current_price >= liq_threshold:
                     return "liquidation_protection"
 
-        # Check for signal reversal (if we have strong opposite signal)
-        signals = await self._get_technical_signals(position.symbol)
-        if signals:
-            if position.side == TradeSide.LONG and signals.overall_signal == SignalStrength.STRONG_SELL:
-                return "signal_reversal"
-            elif position.side == TradeSide.SHORT and signals.overall_signal == SignalStrength.STRONG_BUY:
-                return "signal_reversal"
+        # Check for signal reversal (only after minimum hold time and strong reversal)
+        # Minimum hold time prevents premature exits on noise
+        min_hold_seconds = 300  # 5 minutes minimum hold
+        position_age = (datetime.now() - position.opened_at).total_seconds()
+
+        if position_age >= min_hold_seconds:
+            signals = await self._get_technical_signals(position.symbol)
+            if signals:
+                # Calculate signal strength for reversal
+                reversal_score = (
+                    signals.rsi_signal.value +
+                    signals.macd_signal.value +
+                    signals.volume_signal.value +
+                    signals.bb_signal.value +
+                    signals.ema_signal.value
+                )
+
+                # Only exit on VERY strong reversal (score >= 6 or <= -6)
+                # This is more strict than entry signal to avoid whipsaws
+                if position.side == TradeSide.LONG and reversal_score <= -6:
+                    # Additional check: only if we're in profit or at breakeven
+                    if leveraged_pnl_pct >= -1.0:  # Allow small loss
+                        return "Signal"
+                elif position.side == TradeSide.SHORT and reversal_score >= 6:
+                    if leveraged_pnl_pct >= -1.0:  # Allow small loss
+                        return "Signal"
 
         return None
 
@@ -995,17 +1018,42 @@ class FuturesTradingEngine:
 
                 # Determine entry based on signals using configurable min_signal_score
                 entry_side = None
-                if signal_score >= self.min_signal_score:
+
+                # Additional quality filters
+                trend_ok = True
+                volume_ok = True
+
+                if self.require_trend_confirmation:
+                    # For LONG: require uptrend
+                    # For SHORT: require downtrend
+                    if signal_score > 0 and signals.trend != "uptrend":
+                        trend_ok = False
+                        if self.verbose_signals:
+                            logger.info(f"     ⚠️ Trend filter: Bullish signal but trend is {signals.trend}")
+                    elif signal_score < 0 and signals.trend != "downtrend":
+                        trend_ok = False
+                        if self.verbose_signals:
+                            logger.info(f"     ⚠️ Trend filter: Bearish signal but trend is {signals.trend}")
+
+                if hasattr(self, 'min_volume_multiplier') and self.min_volume_multiplier > 0:
+                    if signals.volume_ratio < self.min_volume_multiplier:
+                        volume_ok = False
+                        if self.verbose_signals:
+                            logger.info(f"     ⚠️ Volume filter: {signals.volume_ratio:.2f}x < required {self.min_volume_multiplier:.2f}x")
+
+                if signal_score >= self.min_signal_score and trend_ok and volume_ok:
                     entry_side = TradeSide.LONG
                     if self.verbose_signals:
                         logger.info(f"     ✅ LONG signal triggered (score {signal_score} >= {self.min_signal_score})")
-                elif signal_score <= -self.min_signal_score:
+                elif signal_score <= -self.min_signal_score and trend_ok and volume_ok:
                     entry_side = TradeSide.SHORT
                     if self.verbose_signals:
                         logger.info(f"     ✅ SHORT signal triggered (score {signal_score} <= -{self.min_signal_score})")
                 else:
                     if self.verbose_signals:
-                        if signal_score > 0:
+                        if not trend_ok or not volume_ok:
+                            logger.info(f"     ❌ REJECTED: Quality filters failed (trend={trend_ok}, volume={volume_ok})")
+                        elif signal_score > 0:
                             logger.info(f"     ❌ REJECTED: Bullish but weak (score {signal_score} < {self.min_signal_score})")
                         elif signal_score < 0:
                             logger.info(f"     ❌ REJECTED: Bearish but weak (score {signal_score} > -{self.min_signal_score})")
