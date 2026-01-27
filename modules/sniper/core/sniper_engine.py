@@ -225,7 +225,11 @@ class SniperEngine:
             logger.info(f"📋 Sniper settings loaded: trade_amount={self.trade_amount}, slippage={self.slippage}%")
             logger.info(f"   Mode: {' | '.join(mode_info)}")
             logger.info(f"   Target Chain: {target.upper()} {'(All Chains)' if target == 'all' else ''}")
-            logger.info(f"   Safety: max_tax={self.max_buy_tax}%, min_liq=${self.min_liquidity}")
+            if self.test_mode:
+                liq_msg = "DISABLED (set to $0)" if self.test_mode_min_liquidity <= 0 else f"${self.test_mode_min_liquidity}"
+                logger.info(f"   Safety (TEST MODE): max_tax=50%, min_liq={liq_msg}")
+            else:
+                logger.info(f"   Safety: max_tax={self.max_buy_tax}%, min_liq=${self.min_liquidity}")
             logger.info(f"   Exit: TP={getattr(self, 'take_profit_pct', 50)}%, SL={getattr(self, 'stop_loss_pct', 20)}%")
 
         except Exception as e:
@@ -386,10 +390,11 @@ class SniperEngine:
                     logger.debug(f"⚠️ High tax: {token_address[:16]}... (Buy: {report.buy_tax:.1f}%, Sell: {report.sell_tax:.1f}%)")
                     return False
 
-                if report.liquidity_usd < min_liquidity:
+                # Skip liquidity check if min_liquidity is 0 (useful for devnet testing)
+                if min_liquidity > 0 and report.liquidity_usd < min_liquidity:
                     self._stats['low_liquidity_rejected'] += 1
                     self._rejected_cache[token_address] = datetime.now()  # Add to cooldown
-                    logger.debug(f"⚠️ Low liquidity: {token_address[:16]}... (${report.liquidity_usd:,.0f})")
+                    logger.debug(f"⚠️ Low liquidity: {token_address[:16]}... (${report.liquidity_usd:,.0f} < ${min_liquidity:,.0f})")
                     return False
 
                 # Token passed all checks - log this at INFO level
