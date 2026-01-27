@@ -469,6 +469,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/dashboard/charts/full', self.api_get_full_dashboard_charts)
 
         # API - Simulator
+        self.app.router.add_get('/api/simulator/data', self.api_simulator_data)
         self.app.router.add_get('/api/simulator/export', self.api_simulator_export)
 
         # API - Bot control
@@ -7780,10 +7781,12 @@ class DashboardEndpoints:
                         stored_pnl_pct = float(row['profit_loss_pct'] or 0)
                         spread = float(row['spread_pct'] or 0)
 
-                        # Calculate P&L if not stored
-                        if stored_pnl == 0 and row['status'] == 'closed' and exit_usd > 0:
+                        # Calculate P&L if not stored and we have valid entry data
+                        # IMPORTANT: Only recalculate if entry_usd > 0 to avoid treating
+                        # standalone SELL trades (no matching BUY) as full profit
+                        if stored_pnl == 0 and row['status'] == 'closed' and exit_usd > 0 and entry_usd > 0:
                             calculated_pnl = exit_usd - entry_usd
-                            calculated_pnl_pct = ((exit_usd / entry_usd) - 1) * 100 if entry_usd > 0 else 0
+                            calculated_pnl_pct = ((exit_usd / entry_usd) - 1) * 100
                         else:
                             calculated_pnl = stored_pnl
                             calculated_pnl_pct = stored_pnl_pct
@@ -8695,10 +8698,12 @@ class DashboardEndpoints:
                         stored_pnl = float(row['profit_loss'] or 0)
                         stored_pnl_pct = float(row['profit_loss_pct'] or 0)
 
-                        # Calculate P&L if not stored
-                        if stored_pnl == 0 and row['status'] == 'closed' and exit_usd > 0:
+                        # Calculate P&L if not stored and we have valid entry data
+                        # IMPORTANT: Only recalculate if entry_usd > 0 to avoid treating
+                        # standalone SELL trades (no matching BUY) as full profit
+                        if stored_pnl == 0 and row['status'] == 'closed' and exit_usd > 0 and entry_usd > 0:
                             calculated_pnl = exit_usd - entry_usd
-                            calculated_pnl_pct = ((exit_usd / entry_usd) - 1) * 100 if entry_usd > 0 else 0
+                            calculated_pnl_pct = ((exit_usd / entry_usd) - 1) * 100
                         else:
                             calculated_pnl = stored_pnl
                             calculated_pnl_pct = stored_pnl_pct
@@ -9235,15 +9240,52 @@ class DashboardEndpoints:
             return web.json_response({'success': False, 'error': str(e), 'trades': []})
 
     async def api_get_ai_settings(self, request):
-        """Get AI settings"""
+        """Get AI settings including new multi-chain AI Trading Engine fields"""
         try:
             settings = {
+                # Basic settings
                 'direct_trading': False,
+                'dry_run': True,
                 'confidence_threshold': 85,
                 'trade_amount_usd': 50,
+                'trading_pair': 'BTCUSDT',
                 'sentiment_source': 'news',
                 'analysis_interval': 15,
-                'ai_provider': 'openai'
+                'ai_provider': 'openai',
+                # Exit strategy
+                'take_profit_pct': 5,
+                'stop_loss_pct': 3,
+                'max_hold_hours': 24,
+                'leverage': 5,
+                # Position management
+                'reverse_signal_action': 'ignore',
+                'same_signal_action': 'ignore',
+                'max_positions': 1,
+                # Risk management
+                'daily_loss_limit': 100,
+                'max_daily_trades': 10,
+                'trade_cooldown': 15,
+                # Multi-Chain AI Trading Engine
+                'ai_engine_enabled': False,
+                'chain_ethereum': True,
+                'chain_base': False,
+                'chain_arbitrum': False,
+                'chain_bsc': False,
+                'chain_solana': False,
+                'ai_analysis_interval': 15,
+                # AI Strategy settings
+                'auto_strategy_generation': False,
+                'strategy_evolution': False,
+                'max_ai_strategies': 5,
+                'strategy_confidence': 70,
+                # DEX Trading Integration
+                'dex_trading_enabled': False,
+                'dex_trade_size_pct': 5,
+                'dex_max_slippage': 1,
+                # Futures Trading Integration
+                'futures_trading_enabled': True,
+                'futures_exchange': 'binance',
+                'ai_position_sizing': 'fixed'
             }
             if self.db:
                 async with self.db.pool.acquire() as conn:

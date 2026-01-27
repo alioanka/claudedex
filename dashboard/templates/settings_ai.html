@@ -767,6 +767,33 @@
                 document.getElementById('max_daily_trades').value = settings.max_daily_trades || 10;
                 document.getElementById('trade_cooldown').value = settings.trade_cooldown || 15;
 
+                // Multi-Chain AI Trading Engine settings
+                document.getElementById('ai_engine_enabled').checked = settings.ai_engine_enabled === true;
+                document.getElementById('chain_ethereum').checked = settings.chain_ethereum !== false; // Default true
+                document.getElementById('chain_base').checked = settings.chain_base === true;
+                document.getElementById('chain_arbitrum').checked = settings.chain_arbitrum === true;
+                document.getElementById('chain_bsc').checked = settings.chain_bsc === true;
+                document.getElementById('chain_solana').checked = settings.chain_solana === true;
+                document.getElementById('ai_analysis_interval').value = settings.ai_analysis_interval || 15;
+
+                // AI Strategy settings
+                document.getElementById('auto_strategy_generation').checked = settings.auto_strategy_generation === true;
+                document.getElementById('strategy_evolution').checked = settings.strategy_evolution === true;
+                document.getElementById('max_ai_strategies').value = settings.max_ai_strategies || 5;
+                document.getElementById('strategy_confidence').value = settings.strategy_confidence || 70;
+
+                // DEX Trading Integration
+                document.getElementById('dex_trading_enabled').checked = settings.dex_trading_enabled === true;
+                document.getElementById('dex_trade_size_pct').value = settings.dex_trade_size_pct || 5;
+                document.getElementById('dex_max_slippage').value = settings.dex_max_slippage || 1;
+
+                // Futures Trading Integration
+                document.getElementById('futures_trading_enabled').checked = settings.futures_trading_enabled !== false; // Default true
+                document.getElementById('futures_exchange').value = settings.futures_exchange || 'binance';
+                if (document.getElementById('ai_position_sizing')) {
+                    document.getElementById('ai_position_sizing').value = settings.ai_position_sizing || 'fixed';
+                }
+
                 // Update API status
                 updateApiStatus(settings);
             }
@@ -829,7 +856,32 @@
             // Risk management
             daily_loss_limit: parseFloat(document.getElementById('daily_loss_limit').value),
             max_daily_trades: parseInt(document.getElementById('max_daily_trades').value),
-            trade_cooldown: parseInt(document.getElementById('trade_cooldown').value)
+            trade_cooldown: parseInt(document.getElementById('trade_cooldown').value),
+
+            // Multi-Chain AI Trading Engine settings
+            ai_engine_enabled: document.getElementById('ai_engine_enabled').checked,
+            chain_ethereum: document.getElementById('chain_ethereum').checked,
+            chain_base: document.getElementById('chain_base').checked,
+            chain_arbitrum: document.getElementById('chain_arbitrum').checked,
+            chain_bsc: document.getElementById('chain_bsc').checked,
+            chain_solana: document.getElementById('chain_solana').checked,
+            ai_analysis_interval: parseInt(document.getElementById('ai_analysis_interval').value),
+
+            // AI Strategy settings
+            auto_strategy_generation: document.getElementById('auto_strategy_generation').checked,
+            strategy_evolution: document.getElementById('strategy_evolution').checked,
+            max_ai_strategies: parseInt(document.getElementById('max_ai_strategies').value),
+            strategy_confidence: parseInt(document.getElementById('strategy_confidence').value),
+
+            // DEX Trading Integration
+            dex_trading_enabled: document.getElementById('dex_trading_enabled').checked,
+            dex_trade_size_pct: parseFloat(document.getElementById('dex_trade_size_pct').value),
+            dex_max_slippage: parseFloat(document.getElementById('dex_max_slippage').value),
+
+            // Futures Trading Integration
+            futures_trading_enabled: document.getElementById('futures_trading_enabled').checked,
+            futures_exchange: document.getElementById('futures_exchange').value,
+            ai_position_sizing: document.getElementById('ai_position_sizing') ? document.getElementById('ai_position_sizing').value : 'fixed'
         };
 
         try {

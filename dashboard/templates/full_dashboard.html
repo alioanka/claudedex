@@ -337,7 +337,6 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
 <script>
     // =============== CONFIGURATION ===============
     const ALL_MODULES = [
@@ -351,73 +350,55 @@
     ];
 
     // =============== STATE ===============
-    let socket = null;
-    let refreshInterval = 10000;
-    let refreshTimer = null;
-    let charts = {};
-    let moduleData = {};
-    let isConnected = false;
+    // Use existing global socket from websocket.js, don't redeclare
+    let fullDashRefreshInterval = 10000;
+    let fullDashRefreshTimer = null;
+    let fullDashCharts = {};
+    let fullDashModuleData = {};
+    let fullDashConnected = false;
 
     // =============== INITIALIZATION ===============
     document.addEventListener('DOMContentLoaded', function() {
-        initializeSocketIO();
+        setupFullDashboardSocket();
         initializeCharts();
         loadAllData();
         startRefreshTimer();
     });
 
-    function initializeSocketIO() {
-        try {
-            socket = io({
-                transports: ['websocket', 'polling'],
-                reconnection: true,
-                reconnectionAttempts: 10,
-                reconnectionDelay: 1000
-            });
+    function setupFullDashboardSocket() {
+        // Use the global socket from websocket.js if available
+        if (typeof socket !== 'undefined' && socket) {
+            fullDashConnected = socket.connected;
+            updateConnectionStatus(fullDashConnected);
 
+            // Add our custom handlers
             socket.on('connect', () => {
-                console.log('Socket.IO connected');
-                isConnected = true;
+                fullDashConnected = true;
                 updateConnectionStatus(true);
             });
 
             socket.on('disconnect', () => {
-                console.log('Socket.IO disconnected');
-                isConnected = false;
+                fullDashConnected = false;
                 updateConnectionStatus(false);
-            });
-
-            socket.on('connect_error', (err) => {
-                console.warn('Socket.IO connection error:', err.message);
-                isConnected = false;
-                updateConnectionStatus(false);
-            });
-
-            // Real-time data handlers
-            socket.on('initial_data', (data) => {
-                console.log('Received initial data:', data);
-                if (data.portfolio) updatePortfolioSummary(data.portfolio);
             });
 
             socket.on('dashboard_update', (data) => {
-                console.log('Dashboard update:', data);
                 updateDashboardFromSocket(data);
             });
 
             socket.on('wallet_update', (data) => {
-                console.log('Wallet update:', data);
                 if (data.total_portfolio) {
                     document.getElementById('totalPortfolioValue').textContent = formatCurrency(data.total_portfolio);
                 }
             });
 
             socket.on('performance_update', (data) => {
-                console.log('Performance update:', data);
                 updatePerformanceFromSocket(data);
             });
-
-        } catch (e) {
-            console.warn('Socket.IO init failed, using polling only:', e);
+        } else {
+            console.warn('Global socket not available, using polling only');
+            fullDashConnected = false;
+            updateConnectionStatus(false);
         }
     }
 
@@ -514,8 +495,8 @@
             const data = await res.json();
 
             if (data.success) {
-                moduleData = data.data?.modules || data.data || {};
-                renderModuleCards(moduleData);
+                fullDashModuleData = data.data?.modules || data.data || {};
+                renderModuleCards(fullDashModuleData);
             }
         } catch (e) {
             console.error('Error loading modules data:', e);
@@ -625,7 +606,7 @@
         for (const [id, config] of Object.entries(chartConfigs)) {
             const el = document.getElementById(id);
             if (el) {
-                charts[id] = new Chart(el, {
+                fullDashCharts[id] = new Chart(el, {
                     type: config.type,
                     data: { labels: [], datasets: [] },
                     options: config.options
@@ -644,9 +625,9 @@
 
                 // Update each chart with data
                 for (const [chartId, chartData] of Object.entries(data)) {
-                    if (charts[chartId] && chartData && chartData.labels) {
-                        charts[chartId].data = chartData;
-                        charts[chartId].update('none');
+                    if (fullDashCharts[chartId] && chartData && chartData.labels) {
+                        fullDashCharts[chartId].data = chartData;
+                        fullDashCharts[chartId].update('none');
                     }
                 }
             }
@@ -657,21 +638,21 @@
 
     // =============== REFRESH & UTILITIES ===============
     function setRefreshInterval(seconds) {
-        refreshInterval = parseInt(seconds) * 1000;
+        fullDashRefreshInterval = parseInt(seconds) * 1000;
         startRefreshTimer();
     }
 
     function startRefreshTimer() {
-        if (refreshTimer) clearInterval(refreshTimer);
-        refreshTimer = setInterval(() => {
-            if (!isConnected) {
+        if (fullDashRefreshTimer) clearInterval(fullDashRefreshTimer);
+        fullDashRefreshTimer = setInterval(() => {
+            if (!fullDashConnected) {
                 // If WebSocket disconnected, use polling
                 loadAllData();
             } else {
                 // Just update charts periodically even with WebSocket
                 loadChartsData();
             }
-        }, refreshInterval);
+        }, fullDashRefreshInterval);
     }
 
     function refreshAllData() {
