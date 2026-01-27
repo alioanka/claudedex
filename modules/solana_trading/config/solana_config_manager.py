@@ -63,6 +63,9 @@ CONFIG_KEY_MAPPING = {
     'pumpfun_stop_loss': ('solana_pumpfun', 'float'),
     'pumpfun_take_profit': ('solana_pumpfun', 'float'),
     'pumpfun_max_positions': ('solana_pumpfun', 'int'),  # Separate position limit for pump.fun
+    'pumpfun_trailing_enabled': ('solana_pumpfun', 'bool'),  # Enable/disable trailing stops
+    'pumpfun_tier0_sl': ('solana_pumpfun', 'float'),  # Tier 0 stop loss % (default -12)
+    'pumpfun_partial_exit_pct': ('solana_pumpfun', 'float'),  # % to exit per tier (default 20)
 
     # Jupiter strategy-specific settings
     'jupiter_stop_loss': ('solana_jupiter', 'float'),
@@ -111,7 +114,7 @@ class SolanaConfigManager:
         'drift_markets': 'SOL-PERP,BTC-PERP,ETH-PERP',
         'drift_margin': 'cross',
 
-        # Pump.fun
+        # Pump.fun - IMPROVED trailing stop system for capturing 10x-100x gains
         'pumpfun_enabled': False,
         'pumpfun_buy_amount': 0.1,
         'pumpfun_min_liquidity': 10.0,  # Min liquidity in SOL
@@ -121,9 +124,12 @@ class SolanaConfigManager:
         'pumpfun_auto_sell': 0,
         'pumpfun_jito': True,
         'pumpfun_jito_tip': 0.001,
-        'pumpfun_stop_loss': 20.0,  # Pump.fun: higher SL for volatile new tokens
+        'pumpfun_stop_loss': 12.0,  # Tighter initial SL for Pump.fun (was 20%)
         'pumpfun_take_profit': 100.0,  # Pump.fun: higher TP for meme tokens
         'pumpfun_max_positions': 3,  # Separate position limit for pump.fun snipes
+        'pumpfun_trailing_enabled': True,  # Enable trailing stops (recommended)
+        'pumpfun_tier0_sl': 12.0,  # Tier 0 stop loss % (tighter protection)
+        'pumpfun_partial_exit_pct': 20.0,  # Exit 20% per tier to let winners run
 
         # Jupiter strategy-specific (established tokens need tighter TP/SL)
         'jupiter_stop_loss': 5.0,  # Jupiter: tighter SL for established tokens
@@ -390,6 +396,21 @@ class SolanaConfigManager:
     def pumpfun_max_positions(self) -> int:
         """Get Pump.fun strategy-specific max positions limit"""
         return self.get('pumpfun_max_positions', 3)
+
+    @property
+    def pumpfun_trailing_enabled(self) -> bool:
+        """Check if Pump.fun trailing stops are enabled"""
+        return self.get('pumpfun_trailing_enabled', True)
+
+    @property
+    def pumpfun_tier0_sl(self) -> float:
+        """Get Pump.fun Tier 0 stop loss percentage (initial protection)"""
+        return self.get('pumpfun_tier0_sl', 12.0)
+
+    @property
+    def pumpfun_partial_exit_pct(self) -> float:
+        """Get Pump.fun partial exit percentage per tier"""
+        return self.get('pumpfun_partial_exit_pct', 20.0)
 
     @property
     def jupiter_stop_loss_pct(self) -> float:

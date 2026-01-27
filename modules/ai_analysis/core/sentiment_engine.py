@@ -202,11 +202,12 @@ class AITradeExecutor:
 
 class SentimentEngine:
     """
-    Analyzes market sentiment using LLMs (OpenAI) and public news feeds.
+    Analyzes market sentiment using LLMs (OpenAI/Claude) and public news feeds.
     Provides signals to other trading modules.
 
     Features:
-    - Real-time sentiment analysis
+    - Real-time sentiment analysis with multi-provider support
+    - Cost tracking and rate limiting
     - Automated trade execution
     - Take profit / Stop loss exit strategy
     - Position tracking
@@ -216,7 +217,11 @@ class SentimentEngine:
         self.config = config
         self.db_pool = db_pool
         self.is_running = False
-        # API keys will be loaded in initialize() from secrets manager
+
+        # NEW: AI Provider Manager for enterprise-grade LLM integration
+        self.ai_provider_manager = None
+
+        # Legacy API keys (kept for backward compatibility)
         self.openai_api_key = None
         self.anthropic_api_key = None
 
@@ -247,13 +252,30 @@ class SentimentEngine:
         self._cooldown_duration = timedelta(hours=1)  # 1-hour cooldown after closing a position
 
     async def initialize(self):
-        logger.info("🧠 Initializing Sentiment Engine...")
+        logger.info("🧠 Initializing Sentiment Engine (ENHANCED)...")
 
         # Load settings from DB if available
         await self._load_settings()
 
         # Load API keys from secrets manager (database, Docker secrets, or env)
         await self._load_api_keys()
+
+        # NEW: Initialize AI Provider Manager for enterprise-grade LLM integration
+        try:
+            from modules.ai_analysis.core.ai_provider import AIProviderManager
+            self.ai_provider_manager = AIProviderManager(self.db_pool)
+            if await self.ai_provider_manager.initialize():
+                logger.info("✅ AI Provider Manager initialized with cost tracking & caching")
+                # Get stats
+                stats = self.ai_provider_manager.get_stats()
+                logger.info(f"   Daily budget: ${stats['daily_budget_usd']}")
+                logger.info(f"   Providers: {list(stats['providers'].keys())}")
+            else:
+                logger.warning("⚠️ AI Provider Manager initialization failed, using legacy mode")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not initialize AI Provider Manager: {e}")
+            logger.warning("   Falling back to legacy API integration")
+            self.ai_provider_manager = None
 
         # Initialize trade executor
         self.executor = AITradeExecutor(self.config, self.dry_run)
@@ -262,18 +284,18 @@ class SentimentEngine:
         # Load active positions from DB
         await self._load_active_positions()
 
-        # Log API key status
+        # Log API key status (legacy)
         if self.openai_api_key:
-            logger.info("✅ OpenAI API Key loaded.")
+            logger.info("✅ OpenAI API Key loaded (legacy).")
         else:
-            logger.warning("⚠️ No OpenAI API Key found.")
+            logger.debug("⚠️ No OpenAI API Key found (legacy).")
 
         if self.anthropic_api_key:
-            logger.info("✅ Anthropic (Claude) API Key loaded.")
+            logger.info("✅ Anthropic (Claude) API Key loaded (legacy).")
         else:
-            logger.warning("⚠️ No Anthropic API Key found.")
+            logger.debug("⚠️ No Anthropic API Key found (legacy).")
 
-        if not self.openai_api_key and not self.anthropic_api_key:
+        if not self.openai_api_key and not self.anthropic_api_key and not self.ai_provider_manager:
             logger.error("❌ No AI API keys found! AI analysis will be disabled.")
 
         logger.info(f"   AI Provider: {self.ai_provider.upper()}")
@@ -371,20 +393,62 @@ class SentimentEngine:
 
                     # 2. Analyze Sentiment with selected AI provider
                     sentiment_score = 0.0
+                    analysis_cost = 0.0
 
-                    if self.ai_provider == 'both' and has_openai and has_claude:
-                        # Use both and average the results
-                        openai_score = await self._analyze_with_llm(news_data)
-                        claude_score = await self._analyze_with_claude(news_data)
-                        sentiment_score = (openai_score + claude_score) / 2
-                        logger.info(f"🧠 Combined Sentiment: OpenAI={openai_score:.2f}, Claude={claude_score:.2f}, Avg={sentiment_score:.2f}")
-                    elif self.ai_provider == 'claude' and has_claude:
-                        sentiment_score = await self._analyze_with_claude(news_data)
-                    elif has_openai:
-                        sentiment_score = await self._analyze_with_llm(news_data)
-                    elif has_claude:
-                        # Fallback to Claude if OpenAI not available
-                        sentiment_score = await self._analyze_with_claude(news_data)
+                    # NEW: Use AI Provider Manager if available (with cost tracking, caching, fallback)
+                    if self.ai_provider_manager:
+                        try:
+                            from modules.ai_analysis.core.ai_provider import AIProvider
+                            # Determine preferred provider
+                            preferred = None
+                            if self.ai_provider == 'claude':
+                                preferred = AIProvider.ANTHROPIC
+                            elif self.ai_provider == 'openai':
+                                preferred = AIProvider.OPENAI
+
+                            # Build context from headlines
+                            headlines_text = "\n".join(news_data)
+                            result = await self.ai_provider_manager.analyze_sentiment(
+                                text=headlines_text,
+                                context="Cryptocurrency market news headlines",
+                                preferred_provider=preferred
+                            )
+
+                            sentiment_score = result.get('sentiment', 0.0)
+                            analysis_cost = result.get('cost_usd', 0.0)
+
+                            if result.get('cached'):
+                                logger.info(f"🧠 Cached sentiment: {sentiment_score:.2f}")
+                            else:
+                                logger.info(
+                                    f"🧠 AI Analysis: score={sentiment_score:.2f}, "
+                                    f"confidence={result.get('confidence', 0):.2f}, "
+                                    f"provider={result.get('provider')}, "
+                                    f"cost=${analysis_cost:.4f}"
+                                )
+                                if result.get('reasoning'):
+                                    logger.debug(f"   Reasoning: {result.get('reasoning', '')[:200]}...")
+
+                        except Exception as e:
+                            logger.warning(f"AI Provider Manager failed: {e}, using legacy mode")
+                            # Fall through to legacy analysis
+                            sentiment_score = 0.0
+
+                    # Legacy fallback if AI Provider Manager not available or failed
+                    if sentiment_score == 0.0:
+                        if self.ai_provider == 'both' and has_openai and has_claude:
+                            # Use both and average the results
+                            openai_score = await self._analyze_with_llm(news_data)
+                            claude_score = await self._analyze_with_claude(news_data)
+                            sentiment_score = (openai_score + claude_score) / 2
+                            logger.info(f"🧠 Combined Sentiment: OpenAI={openai_score:.2f}, Claude={claude_score:.2f}, Avg={sentiment_score:.2f}")
+                        elif self.ai_provider == 'claude' and has_claude:
+                            sentiment_score = await self._analyze_with_claude(news_data)
+                        elif has_openai:
+                            sentiment_score = await self._analyze_with_llm(news_data)
+                        elif has_claude:
+                            # Fallback to Claude if OpenAI not available
+                            sentiment_score = await self._analyze_with_claude(news_data)
 
                     logger.info(f"🧠 Market Sentiment Score: {sentiment_score:.2f}")
 

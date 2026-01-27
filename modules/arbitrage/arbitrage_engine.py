@@ -61,11 +61,14 @@ class PriceFetcher:
         except Exception as e:
             logger.debug(f"Price fetch error for {symbol}: {e}")
 
-        # Fallback to cached or default
+        # Fallback to cached price if available
         if symbol in self._cache:
             return self._cache[symbol][0]
 
-        return 2000.0  # Default ETH price
+        # IMPORTANT: Do not use hardcoded fallback for P&L calculations
+        # Return None to signal price unavailable - caller should handle appropriately
+        logger.warning(f"⚠️ No price available for {symbol} - returning None")
+        return None
 
 # Uniswap V2 Router ABI (Minimal)
 ROUTER_ABI = [
@@ -860,7 +863,7 @@ class ArbitrageEngine:
         tx_hash: str,
         token_symbol: str = "UNKNOWN"
     ):
-        """Log arbitrage trade to database"""
+        """Log arbitrage trade to database with REALISTIC P&L calculation"""
         if not self.db_pool:
             return
 
@@ -868,19 +871,38 @@ class ArbitrageEngine:
             import uuid
             amount_eth = amount / 1e18
 
-            # Get real ETH price
+            # Get real ETH price - CRITICAL: don't use fake prices
             eth_price = await self.price_fetcher.get_price('eth')
+            if not eth_price:
+                logger.warning(f"Cannot log trade - ETH price unavailable")
+                return
 
-            # Calculate real USD values
+            # Realistic cost deductions
+            FLASH_LOAN_FEE_PCT = 0.0005  # 0.05% Aave fee
+            SLIPPAGE_ESTIMATE_PCT = 0.006  # 0.3% x 2 swaps = 0.6%
+            GAS_COST_USD = 15.0  # Estimated gas cost
+
+            # Calculate gross profit
             entry_usd = amount_eth * eth_price
-            profit_usd = entry_usd * profit_pct
-            exit_usd = entry_usd + profit_usd
+            gross_profit_pct = profit_pct
 
-            # Use ETH price as entry, calculate exit based on profit
+            # Deduct realistic costs for net profit
+            flash_loan_cost = entry_usd * FLASH_LOAN_FEE_PCT
+            slippage_cost = entry_usd * gross_profit_pct * 0.3  # Assume 30% of spread lost to slippage
+            total_costs = flash_loan_cost + slippage_cost + GAS_COST_USD
+
+            net_profit_usd = (entry_usd * gross_profit_pct) - total_costs
+            net_profit_pct = net_profit_usd / entry_usd if entry_usd > 0 else 0
+            exit_usd = entry_usd + net_profit_usd
+
+            # Use ETH price as entry, calculate exit based on net profit
             entry_price = eth_price
-            exit_price = eth_price * (1 + profit_pct)
+            exit_price = eth_price * (1 + net_profit_pct)
 
-            logger.info(f"💰 Arb value [{token_symbol}]: {amount_eth:.4f} ETH @ ${eth_price:.2f} = ${entry_usd:.2f} | Profit: ${profit_usd:.2f}")
+            logger.info(
+                f"💰 Arb value [{token_symbol}]: {amount_eth:.4f} ETH @ ${eth_price:.2f} = ${entry_usd:.2f} | "
+                f"Gross: +{gross_profit_pct:.2%} | Costs: ${total_costs:.2f} | Net: ${net_profit_usd:.2f}"
+            )
 
             trade_id = f"arb_{uuid.uuid4().hex[:12]}"
 
@@ -907,9 +929,9 @@ class ArbitrageEngine:
                     amount_eth,
                     entry_usd,
                     exit_usd,
-                    profit_usd,
-                    profit_pct * 100,
-                    profit_pct * 100,
+                    net_profit_usd,  # Use NET profit after costs
+                    net_profit_pct * 100,  # Use NET profit % after costs
+                    gross_profit_pct * 100,  # Keep gross spread for reference
                     'closed',
                     self.dry_run,
                     datetime.now(),
@@ -918,7 +940,12 @@ class ArbitrageEngine:
                     eth_price,
                     json.dumps({
                         'dry_run': self.dry_run,
-                        'token_symbol': token_symbol
+                        'token_symbol': token_symbol,
+                        'gross_profit_pct': gross_profit_pct * 100,
+                        'flash_loan_cost': flash_loan_cost,
+                        'slippage_cost': slippage_cost,
+                        'gas_cost': GAS_COST_USD,
+                        'total_costs': total_costs
                     })
                 )
             logger.debug(f"💾 Logged to arbitrage_trades: {trade_id} [{token_symbol}]")

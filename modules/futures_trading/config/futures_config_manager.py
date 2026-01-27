@@ -63,28 +63,56 @@ class FuturesLeverageConfig(BaseModel):
 
 
 class FuturesRiskConfig(BaseModel):
-    """Risk management configuration"""
-    stop_loss_pct: float = 2.0  # Price move % to trigger SL
-    # Multiple Take Profits
-    # TP prices as % above/below entry (for price targets)
-    tp1_pct: float = 2.0  # First TP at 2% profit
-    tp2_pct: float = 4.0  # Second TP at 4% profit
-    tp3_pct: float = 6.0  # Third TP at 6% profit
-    tp4_pct: float = 10.0  # Fourth TP at 10% profit
-    # TP sizes as % of position to close at each level (should sum to 100 for all used TPs)
-    tp1_size_pct: float = 25.0  # Close 25% at TP1
-    tp2_size_pct: float = 25.0  # Close 25% at TP2
-    tp3_size_pct: float = 25.0  # Close 25% at TP3
-    tp4_size_pct: float = 25.0  # Close remaining 25% at TP4
+    """Risk management configuration
+
+    IMPORTANT: For profitability, TP1 must be > SL and position sizing must be front-loaded.
+
+    Risk/Reward Math Example (with defaults below):
+    - SL at 1.2%: Max loss = 1.2% of position
+    - TP1 at 1.8% (40% closed): Lock in 0.72% profit
+    - TP2 at 3.5% (30% closed): Lock in 1.05% more
+    - After TP2: Stop moves to breakeven, risk-free ride to TP3/TP4
+
+    With 54% win rate and these settings:
+    - Expected TP1 profit: 0.54 × 1.8% × 40% = 0.39% per trade (partial)
+    - Expected SL loss: 0.46 × 1.2% × 100% = 0.55% per trade
+    - But TP2+ adds extra profit making overall EV positive
+    """
+    # CRITICAL: SL must be LESS than TP1 for positive expectancy
+    stop_loss_pct: float = 1.2  # Tighter stop - cut losses quickly (was 2.0)
+
+    # Multiple Take Profits - Front-loaded for early profit capture
+    # TP1 should be wider than SL to ensure R:R > 1
+    tp1_pct: float = 1.8  # First TP at 1.8% (wider than SL) - was 2.0
+    tp2_pct: float = 3.5  # Second TP at 3.5% - was 4.0
+    tp3_pct: float = 6.0  # Third TP at 6% (unchanged)
+    tp4_pct: float = 10.0  # Fourth TP at 10% (unchanged)
+
+    # Position size distribution - FRONT-LOADED for early profit locking
+    # Take more profit early to ensure wins outweigh losses
+    tp1_size_pct: float = 40.0  # Close 40% at TP1 (was 25%) - lock in profits early
+    tp2_size_pct: float = 30.0  # Close 30% at TP2 (was 25%) - capture momentum
+    tp3_size_pct: float = 20.0  # Close 20% at TP3 (was 25%)
+    tp4_size_pct: float = 10.0  # Close remaining 10% at TP4 (was 25%) - let runners run
+
     # Legacy single TP (deprecated, use tp1_pct instead)
     take_profit_pct: float = 4.0
+
     # Daily loss limits
     max_daily_loss_usd: float = 500.0
     max_daily_loss_pct: float = 5.0
     liquidation_buffer: float = 20.0
+
+    # Trailing stop - tighter for better profit protection
     trailing_stop_enabled: bool = True
-    trailing_stop_distance: float = 1.5
-    max_consecutive_losses: int = 5
+    trailing_stop_distance: float = 1.0  # Tighter trailing (was 1.5)
+
+    # Risk controls
+    max_consecutive_losses: int = 4  # Reduced from 5 to pause earlier
+
+    # Market condition filters (new)
+    require_trend_confirmation: bool = True  # Only trade with confirmed trends
+    min_volume_multiplier: float = 1.2  # Require 20% above average volume
 
 
 class FuturesPairsConfig(BaseModel):
@@ -100,16 +128,33 @@ class FuturesPairsConfig(BaseModel):
 
 
 class FuturesStrategyConfig(BaseModel):
-    """Strategy parameters configuration"""
+    """Strategy parameters configuration
+
+    Signal Quality:
+    - 5 indicators (RSI, MACD, Volume, Bollinger, EMA) each score -2 to +2
+    - Total score range: -10 to +10
+    - Higher min_signal_score = fewer but higher quality trades
+    - Recommended: 4-5 for balanced, 6+ for conservative
+    """
     signal_timeframe: str = "15m"  # Timeframe for signal analysis: 1m, 5m, 15m, 30m, 1h, 4h
     scan_interval_seconds: int = 30  # How often to scan for opportunities
+
+    # RSI thresholds
     rsi_oversold: float = 30.0
     rsi_overbought: float = 70.0
     rsi_weak_oversold: float = 40.0
     rsi_weak_overbought: float = 60.0
-    min_signal_score: int = 3  # Lowered default for more signals (was 4)
+
+    # Signal quality threshold - CRITICAL for profitability
+    # Higher = fewer trades but better win rate
+    min_signal_score: int = 4  # Increased from 3 for better entries
+
+    # Additional filters for trade quality
+    require_trend_alignment: bool = True  # Trade only in direction of trend
+    require_volume_confirmation: bool = True  # Require above-average volume
+
     verbose_signals: bool = True
-    cooldown_minutes: int = 5
+    cooldown_minutes: int = 10  # Increased from 5 to avoid overtrading after losses
 
 
 class FuturesFundingConfig(BaseModel):
@@ -588,6 +633,11 @@ class FuturesConfigManager:
             'min_signal_score': FuturesConfigType.STRATEGY,
             'verbose_signals': FuturesConfigType.STRATEGY,
             'cooldown_minutes': FuturesConfigType.STRATEGY,
+            'require_trend_alignment': FuturesConfigType.STRATEGY,
+            'require_volume_confirmation': FuturesConfigType.STRATEGY,
+            # Risk - new market filters
+            'require_trend_confirmation': FuturesConfigType.RISK,
+            'min_volume_multiplier': FuturesConfigType.RISK,
             # Funding settings
             'funding_arb': FuturesConfigType.FUNDING,  # alias
             'funding_arbitrage_enabled': FuturesConfigType.FUNDING,

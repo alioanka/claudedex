@@ -1,1240 +1,851 @@
 {% extends "base.html" %}
 
-{% block title %}Trade Simulator - DexScreener Trading Bot{% endblock %}
+{% block title %}Trade Simulator - Multi-Module Framework{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1>
-        <i class="fas fa-flask"></i>
-        Trade Simulator - Dry Run Validation
-    </h1>
-    <div class="page-actions">
+<style>
+    /* Simulator Styles */
+    .sim-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 24px;
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+    .sim-header h1 { margin: 0; font-size: 1.8rem; }
+    .sim-header .subtitle { color: #94a3b8; margin-top: 4px; }
+    .header-actions { display: flex; gap: 12px; }
+
+    /* Mode Banner */
+    .mode-banner {
+        padding: 16px 20px;
+        border-radius: 10px;
+        margin-bottom: 24px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    .mode-banner.dry-run { background: rgba(59, 130, 246, 0.15); border: 1px solid #3b82f6; }
+    .mode-banner.live { background: rgba(245, 158, 11, 0.15); border: 1px solid #f59e0b; }
+    .mode-banner.mixed { background: rgba(139, 92, 246, 0.15); border: 1px solid #8b5cf6; }
+    .mode-banner i { font-size: 1.5rem; }
+    .mode-banner.dry-run i { color: #3b82f6; }
+    .mode-banner.live i { color: #f59e0b; }
+    .mode-banner.mixed i { color: #8b5cf6; }
+
+    /* Summary Cards */
+    .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+    .summary-card {
+        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+        border-radius: 12px;
+        padding: 20px;
+        border: 1px solid #334155;
+        text-align: center;
+    }
+    .summary-card .card-icon {
+        width: 48px; height: 48px; border-radius: 50%; margin: 0 auto 12px;
+        display: flex; align-items: center; justify-content: center; font-size: 1.3rem;
+    }
+    .summary-card.primary .card-icon { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+    .summary-card.success .card-icon { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .summary-card.warning .card-icon { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .summary-card.info .card-icon { background: rgba(139, 92, 246, 0.2); color: #8b5cf6; }
+    .summary-card.danger .card-icon { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+    .summary-card .card-label { color: #94a3b8; font-size: 0.85rem; margin-bottom: 4px; }
+    .summary-card .card-value { font-size: 1.4rem; font-weight: 700; color: #f1f5f9; }
+    .summary-card .card-value.positive { color: #10b981; }
+    .summary-card .card-value.negative { color: #ef4444; }
+
+    /* Module Grid */
+    .modules-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+    .module-sim-card {
+        background: #1e293b;
+        border-radius: 12px;
+        padding: 20px;
+        border: 1px solid #334155;
+    }
+    .module-sim-card.active { border-color: #10b981; }
+    .module-sim-card.offline { opacity: 0.6; }
+    .module-sim-header {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #334155;
+    }
+    .module-sim-header .module-info { display: flex; align-items: center; gap: 10px; }
+    .module-sim-header .module-icon {
+        width: 40px; height: 40px; border-radius: 10px;
+        display: flex; align-items: center; justify-content: center; font-size: 1.1rem;
+    }
+    .module-icon.dex { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+    .module-icon.futures { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .module-icon.solana { background: rgba(139, 92, 246, 0.2); color: #8b5cf6; }
+    .module-icon.sniper { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+    .module-icon.arbitrage { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .module-icon.copytrading { background: rgba(236, 72, 153, 0.2); color: #ec4899; }
+    .module-icon.ai { background: rgba(34, 211, 238, 0.2); color: #22d3ee; }
+    .module-sim-header h4 { margin: 0; font-size: 1rem; color: #f1f5f9; }
+    .mode-badge {
+        padding: 4px 12px; border-radius: 20px; font-size: 0.7rem;
+        font-weight: 600; text-transform: uppercase;
+    }
+    .mode-badge.dry-run { background: #3b82f6; color: white; }
+    .mode-badge.live { background: #10b981; color: white; }
+    .mode-badge.testnet { background: #f59e0b; color: white; }
+    .mode-badge.offline { background: #64748b; color: white; }
+    .module-stats-grid {
+        display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;
+    }
+    .sim-stat { }
+    .sim-stat-label { color: #64748b; font-size: 0.75rem; margin-bottom: 2px; }
+    .sim-stat-value { font-size: 1rem; font-weight: 600; color: #f1f5f9; }
+    .sim-stat-value.positive { color: #10b981; }
+    .sim-stat-value.negative { color: #ef4444; }
+
+    /* Validation Section */
+    .validation-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+    .validation-card {
+        background: #1e293b;
+        border-radius: 10px;
+        padding: 16px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    .validation-icon {
+        width: 44px; height: 44px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center; font-size: 1.2rem;
+    }
+    .validation-icon.success { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .validation-icon.warning { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .validation-icon.info { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+    .validation-label { color: #94a3b8; font-size: 0.8rem; }
+    .validation-value { font-size: 1.1rem; font-weight: 600; color: #f1f5f9; }
+    .validation-help { font-size: 0.7rem; color: #64748b; margin-top: 2px; }
+
+    /* Charts Section */
+    .charts-row {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+    .chart-card {
+        background: #1e293b;
+        border-radius: 12px;
+        padding: 16px;
+        border: 1px solid #334155;
+    }
+    .chart-card h3 { margin: 0 0 12px 0; font-size: 1rem; color: #f1f5f9; }
+    .chart-body { height: 280px; }
+    .chart-body.small { height: 220px; }
+
+    /* Trade Log */
+    .trade-log-card {
+        background: #1e293b;
+        border-radius: 12px;
+        border: 1px solid #334155;
+        overflow: hidden;
+    }
+    .trade-log-header {
+        padding: 16px 20px;
+        border-bottom: 1px solid #334155;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .trade-log-header h3 { margin: 0; font-size: 1rem; }
+    .filter-group { display: flex; gap: 8px; }
+    .filter-select {
+        background: #0f172a; border: 1px solid #334155; color: #f1f5f9;
+        padding: 6px 12px; border-radius: 6px; font-size: 0.85rem;
+    }
+    .trade-log-body { max-height: 500px; overflow-y: auto; }
+    .trade-table { width: 100%; border-collapse: collapse; }
+    .trade-table th, .trade-table td {
+        padding: 12px 16px;
+        text-align: left;
+        font-size: 0.85rem;
+        border-bottom: 1px solid #1e293b;
+    }
+    .trade-table th { background: #0f172a; color: #94a3b8; font-weight: 600; position: sticky; top: 0; }
+    .trade-table tbody tr:hover { background: rgba(59, 130, 246, 0.05); }
+    .module-badge {
+        padding: 2px 8px; border-radius: 4px; font-size: 0.7rem;
+        font-weight: 600; text-transform: uppercase;
+    }
+    .module-badge.dex { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+    .module-badge.futures { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .module-badge.solana { background: rgba(139, 92, 246, 0.2); color: #8b5cf6; }
+    .module-badge.sniper { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+    .module-badge.arbitrage { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .module-badge.copytrading { background: rgba(236, 72, 153, 0.2); color: #ec4899; }
+    .module-badge.ai { background: rgba(34, 211, 238, 0.2); color: #22d3ee; }
+    .exit-badge {
+        padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 500;
+    }
+    .exit-badge.tp { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .exit-badge.sl { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+    .exit-badge.tsl { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .exit-badge.signal { background: rgba(100, 116, 139, 0.2); color: #94a3b8; }
+
+    /* Warnings */
+    .warnings-card {
+        background: rgba(245, 158, 11, 0.1);
+        border: 1px solid #f59e0b;
+        border-radius: 12px;
+        padding: 16px 20px;
+        margin-bottom: 24px;
+    }
+    .warnings-card h3 { margin: 0 0 12px 0; color: #f59e0b; font-size: 1rem; }
+    .warnings-list { list-style: none; padding: 0; margin: 0; }
+    .warnings-list li {
+        padding: 8px 12px;
+        background: rgba(0,0,0,0.2);
+        border-radius: 6px;
+        margin-bottom: 8px;
+        font-size: 0.85rem;
+        color: #fcd34d;
+    }
+
+    @media (max-width: 1024px) {
+        .charts-row { grid-template-columns: 1fr; }
+    }
+</style>
+
+<div class="sim-header">
+    <div>
+        <h1><i class="fas fa-flask"></i> Trade Simulator</h1>
+        <p class="subtitle">Multi-module simulation framework with dry-run validation</p>
+    </div>
+    <div class="header-actions">
         <button class="btn btn-secondary" onclick="refreshSimulator()">
             <i class="fas fa-sync-alt"></i> Refresh
         </button>
         <button class="btn btn-primary" onclick="exportSimulatedTrades()">
-            <i class="fas fa-download"></i> Export Data
+            <i class="fas fa-download"></i> Export
         </button>
     </div>
 </div>
 
-<!-- Dry Run Status Banner -->
-<div class="alert alert-info" id="dryRunBanner">
+<!-- Mode Banner -->
+<div id="modeBanner" class="mode-banner dry-run">
     <i class="fas fa-info-circle"></i>
-    <span id="dryRunStatus">Loading simulation status...</span>
+    <div>
+        <strong id="modeTitle">Loading...</strong>
+        <div id="modeDescription" style="font-size: 0.85rem; color: #94a3b8;">Checking module status...</div>
+    </div>
 </div>
 
 <!-- Summary Cards -->
-<div class="grid grid-4">
-    <div class="stat-card">
-        <div class="stat-icon">
-            <i class="fas fa-chart-line"></i>
-        </div>
-        <div class="stat-content">
-            <div class="stat-label">Simulated Trades</div>
-            <div class="stat-value" id="totalSimTrades">0</div>
-        </div>
+<div class="summary-grid">
+    <div class="summary-card primary">
+        <div class="card-icon"><i class="fas fa-cubes"></i></div>
+        <div class="card-label">Active Modules</div>
+        <div class="card-value" id="activeModules">0/7</div>
     </div>
-    <div class="stat-card success">
-        <div class="stat-icon">
-            <i class="fas fa-dollar-sign"></i>
-        </div>
-        <div class="stat-content">
-            <div class="stat-label">Simulated P&L</div>
-            <div class="stat-value" id="totalSimPnl">$0.00</div>
-        </div>
+    <div class="summary-card success">
+        <div class="card-icon"><i class="fas fa-exchange-alt"></i></div>
+        <div class="card-label">Total Simulated Trades</div>
+        <div class="card-value" id="totalSimTrades">0</div>
     </div>
-    <div class="stat-card">
-        <div class="stat-icon">
-            <i class="fas fa-percentage"></i>
-        </div>
-        <div class="stat-content">
-            <div class="stat-label">Win Rate</div>
-            <div class="stat-value" id="simWinRate">0%</div>
-        </div>
+    <div class="summary-card info">
+        <div class="card-icon"><i class="fas fa-dollar-sign"></i></div>
+        <div class="card-label">Total Simulated P&L</div>
+        <div class="card-value" id="totalSimPnl">$0.00</div>
     </div>
-    <div class="stat-card warning">
-        <div class="stat-icon">
-            <i class="fas fa-exclamation-triangle"></i>
-        </div>
-        <div class="stat-content">
-            <div class="stat-label">Validation Score</div>
-            <div class="stat-value" id="validationScore">N/A</div>
-        </div>
+    <div class="summary-card warning">
+        <div class="card-icon"><i class="fas fa-percentage"></i></div>
+        <div class="card-label">Overall Win Rate</div>
+        <div class="card-value" id="overallWinRate">0%</div>
+    </div>
+    <div class="summary-card danger">
+        <div class="card-icon"><i class="fas fa-chart-line"></i></div>
+        <div class="card-label">Max Drawdown</div>
+        <div class="card-value" id="maxDrawdown">0%</div>
+    </div>
+    <div class="summary-card success">
+        <div class="card-icon"><i class="fas fa-check-double"></i></div>
+        <div class="card-label">Validation Score</div>
+        <div class="card-value" id="validationScore">N/A</div>
     </div>
 </div>
 
-<!-- Module Simulation Status -->
-<div class="grid grid-3">
-    <!-- Futures Simulator Status -->
-    <div class="card">
-        <div class="card-header">
-            <h3 class="card-title">
-                <i class="fas fa-chart-line"></i>
-                Futures Module
-            </h3>
-            <span class="badge" id="futuresModeBadge">Unknown</span>
-        </div>
-        <div class="card-body">
-            <div class="metric-row">
-                <span class="metric-label">Status</span>
-                <span class="metric-value" id="futuresSimStatus">--</span>
-            </div>
-            <div class="metric-row">
-                <span class="metric-label">Simulated Trades</span>
-                <span class="metric-value" id="futuresSimTrades">0</span>
-            </div>
-            <div class="metric-row">
-                <span class="metric-label">Total P&L</span>
-                <span class="metric-value" id="futuresSimPnl">$0.00</span>
-            </div>
-            <div class="metric-row">
-                <span class="metric-label">Sharpe Ratio</span>
-                <span class="metric-value" id="futuresSharpe">N/A</span>
-            </div>
-            <div class="metric-row">
-                <span class="metric-label">Sortino Ratio</span>
-                <span class="metric-value" id="futuresSortino">N/A</span>
-            </div>
-            <div class="metric-row">
-                <span class="metric-label">Max Drawdown</span>
-                <span class="metric-value text-danger" id="futuresMaxDD">N/A</span>
-            </div>
-        </div>
-    </div>
-
-    <!-- Solana Simulator Status -->
-    <div class="card">
-        <div class="card-header">
-            <h3 class="card-title">
-                <i class="fas fa-coins"></i>
-                Solana Module
-            </h3>
-            <span class="badge" id="solanaModeBadge">Unknown</span>
-        </div>
-        <div class="card-body">
-            <div class="metric-row">
-                <span class="metric-label">Status</span>
-                <span class="metric-value" id="solanaSimStatus">--</span>
-            </div>
-            <div class="metric-row">
-                <span class="metric-label">Simulated Trades</span>
-                <span class="metric-value" id="solanaSimTrades">0</span>
-            </div>
-            <div class="metric-row">
-                <span class="metric-label">Total P&L</span>
-                <span class="metric-value" id="solanaSimPnl">0 SOL</span>
-            </div>
-            <div class="metric-row">
-                <span class="metric-label">Sharpe Ratio</span>
-                <span class="metric-value" id="solanaSharpe">N/A</span>
-            </div>
-            <div class="metric-row">
-                <span class="metric-label">Sortino Ratio</span>
-                <span class="metric-value" id="solanaSortino">N/A</span>
-            </div>
-            <div class="metric-row">
-                <span class="metric-label">Max Drawdown</span>
-                <span class="metric-value text-danger" id="solanaMaxDD">N/A</span>
-            </div>
-        </div>
-    </div>
-
-    <!-- DEX Simulator Status -->
-    <div class="card">
-        <div class="card-header">
-            <h3 class="card-title">
-                <i class="fas fa-cube"></i>
-                DEX Module
-            </h3>
-            <span class="badge" id="dexModeBadge">Unknown</span>
-        </div>
-        <div class="card-body">
-            <div class="metric-row">
-                <span class="metric-label">Status</span>
-                <span class="metric-value" id="dexSimStatus">--</span>
-            </div>
-            <div class="metric-row">
-                <span class="metric-label">Simulated Trades</span>
-                <span class="metric-value" id="dexSimTrades">0</span>
-            </div>
-            <div class="metric-row">
-                <span class="metric-label">Total P&L</span>
-                <span class="metric-value" id="dexSimPnl">0 ETH</span>
-            </div>
-            <div class="metric-row">
-                <span class="metric-label">Win Rate</span>
-                <span class="metric-value" id="dexWinRate">0%</span>
-            </div>
-            <div class="metric-row">
-                <span class="metric-label">Avg Trade Duration</span>
-                <span class="metric-value" id="dexAvgDuration">N/A</span>
-            </div>
-            <div class="metric-row">
-                <span class="metric-label">Total Fees (Est)</span>
-                <span class="metric-value" id="dexEstFees">$0.00</span>
-            </div>
-        </div>
-    </div>
+<!-- Module Simulator Cards -->
+<h3 style="margin-bottom: 16px; color: #f1f5f9;"><i class="fas fa-cubes"></i> Module Simulation Status</h3>
+<div class="modules-grid" id="modulesGrid">
+    <!-- Generated by JS -->
 </div>
 
 <!-- Validation Metrics -->
-<div class="card">
-    <div class="card-header">
-        <h3 class="card-title">
-            <i class="fas fa-check-double"></i>
-            Simulation Validation Metrics
-        </h3>
+<h3 style="margin-bottom: 16px; color: #f1f5f9;"><i class="fas fa-check-circle"></i> Simulation Validation</h3>
+<div class="validation-grid">
+    <div class="validation-card">
+        <div class="validation-icon success"><i class="fas fa-chart-bar"></i></div>
+        <div>
+            <div class="validation-label">Price Accuracy</div>
+            <div class="validation-value" id="priceAccuracy">--</div>
+            <div class="validation-help">Simulated vs actual prices</div>
+        </div>
     </div>
-    <div class="card-body">
-        <div class="grid grid-4">
-            <div class="validation-metric">
-                <div class="validation-icon success">
-                    <i class="fas fa-check-circle"></i>
-                </div>
-                <div class="validation-content">
-                    <div class="validation-label">Price Accuracy</div>
-                    <div class="validation-value" id="priceAccuracy">--</div>
-                    <div class="validation-help">Simulated vs actual market prices</div>
-                </div>
-            </div>
-            <div class="validation-metric">
-                <div class="validation-icon warning">
-                    <i class="fas fa-sliders-h"></i>
-                </div>
-                <div class="validation-content">
-                    <div class="validation-label">Slippage Model</div>
-                    <div class="validation-value" id="slippageModel">--</div>
-                    <div class="validation-help">Estimated slippage accuracy</div>
-                </div>
-            </div>
-            <div class="validation-metric">
-                <div class="validation-icon info">
-                    <i class="fas fa-coins"></i>
-                </div>
-                <div class="validation-content">
-                    <div class="validation-label">Fee Estimation</div>
-                    <div class="validation-value" id="feeEstimation">--</div>
-                    <div class="validation-help">Trading fee calculation accuracy</div>
-                </div>
-            </div>
-            <div class="validation-metric">
-                <div class="validation-icon">
-                    <i class="fas fa-clock"></i>
-                </div>
-                <div class="validation-content">
-                    <div class="validation-label">Latency Simulation</div>
-                    <div class="validation-value" id="latencySimulation">--</div>
-                    <div class="validation-help">Order execution timing model</div>
-                </div>
-            </div>
+    <div class="validation-card">
+        <div class="validation-icon warning"><i class="fas fa-sliders-h"></i></div>
+        <div>
+            <div class="validation-label">Slippage Model</div>
+            <div class="validation-value" id="slippageModel">--</div>
+            <div class="validation-help">Slippage estimation accuracy</div>
+        </div>
+    </div>
+    <div class="validation-card">
+        <div class="validation-icon info"><i class="fas fa-coins"></i></div>
+        <div>
+            <div class="validation-label">Fee Estimation</div>
+            <div class="validation-value" id="feeEstimation">--</div>
+            <div class="validation-help">Trading fee calculation</div>
+        </div>
+    </div>
+    <div class="validation-card">
+        <div class="validation-icon info"><i class="fas fa-clock"></i></div>
+        <div>
+            <div class="validation-label">Latency Simulation</div>
+            <div class="validation-value" id="latencySimulation">--</div>
+            <div class="validation-help">Order execution timing</div>
         </div>
     </div>
 </div>
 
-<!-- Simulated Equity Curve -->
-<div class="card">
-    <div class="card-header">
-        <h3 class="card-title">
-            <i class="fas fa-chart-area"></i>
-            Simulated Equity Curve
-        </h3>
-        <div class="card-actions">
-            <select class="form-control form-control-sm" id="equityModuleSelect" onchange="onEquityCurveModuleChange()">
-                <option value="all">All Modules</option>
-                <option value="futures">Futures Only</option>
-                <option value="solana">Solana Only</option>
-                <option value="dex">DEX Only</option>
-            </select>
-        </div>
+<!-- Warnings (hidden by default) -->
+<div id="warningsCard" class="warnings-card" style="display: none;">
+    <h3><i class="fas fa-exclamation-triangle"></i> Validation Warnings</h3>
+    <ul id="warningsList" class="warnings-list"></ul>
+</div>
+
+<!-- Charts -->
+<div class="charts-row">
+    <div class="chart-card">
+        <h3><i class="fas fa-chart-area"></i> Simulated Equity Curve</h3>
+        <div class="chart-body"><canvas id="equityChart"></canvas></div>
     </div>
-    <div class="card-body">
-        <canvas id="simulatedEquityChart" height="300"></canvas>
+    <div class="chart-card">
+        <h3><i class="fas fa-chart-pie"></i> P&L by Module</h3>
+        <div class="chart-body"><canvas id="modulePnlChart"></canvas></div>
     </div>
 </div>
 
-<!-- Simulated Trade Log -->
-<div class="card">
-    <div class="card-header">
-        <h3 class="card-title">
-            <i class="fas fa-list"></i>
-            Simulated Trade Log
-        </h3>
-        <div class="card-actions">
-            <select class="form-control form-control-sm" id="tradeModuleFilter" onchange="filterSimTrades()">
+<div class="charts-row" style="grid-template-columns: 1fr 1fr;">
+    <div class="chart-card">
+        <h3><i class="fas fa-chart-bar"></i> Win Rate by Module</h3>
+        <div class="chart-body small"><canvas id="winRateChart"></canvas></div>
+    </div>
+    <div class="chart-card">
+        <h3><i class="fas fa-chart-bar"></i> P&L Distribution</h3>
+        <div class="chart-body small"><canvas id="pnlDistChart"></canvas></div>
+    </div>
+</div>
+
+<!-- Trade Log -->
+<div class="trade-log-card">
+    <div class="trade-log-header">
+        <h3><i class="fas fa-list"></i> Simulated Trade Log</h3>
+        <div class="filter-group">
+            <select id="moduleFilter" class="filter-select" onchange="filterTrades()">
                 <option value="all">All Modules</option>
+                <option value="dex">DEX</option>
                 <option value="futures">Futures</option>
                 <option value="solana">Solana</option>
-                <option value="dex">DEX</option>
+                <option value="sniper">Sniper</option>
+                <option value="arbitrage">Arbitrage</option>
+                <option value="copytrading">Copy Trading</option>
+                <option value="ai">AI</option>
             </select>
-            <select class="form-control form-control-sm" id="tradeResultFilter" onchange="filterSimTrades()">
+            <select id="resultFilter" class="filter-select" onchange="filterTrades()">
                 <option value="all">All Results</option>
                 <option value="win">Wins Only</option>
                 <option value="loss">Losses Only</option>
             </select>
         </div>
     </div>
-    <div class="card-body">
-        <div class="table-container">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Time</th>
-                        <th>Module</th>
-                        <th>Symbol</th>
-                        <th>Side</th>
-                        <th>Entry</th>
-                        <th>Exit</th>
-                        <th>Size</th>
-                        <th>P&L</th>
-                        <th>P&L %</th>
-                        <th>Exit Reason</th>
-                        <th>Duration</th>
-                    </tr>
-                </thead>
-                <tbody id="simTradeLog">
-                    <tr>
-                        <td colspan="12" class="text-center text-muted">
-                            No simulated trades yet. Run in DRY_RUN mode to see trades.
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
+    <div class="trade-log-body">
+        <table class="trade-table">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Module</th>
+                    <th>Symbol</th>
+                    <th>Side</th>
+                    <th>Entry</th>
+                    <th>Exit</th>
+                    <th>Size</th>
+                    <th>P&L</th>
+                    <th>P&L %</th>
+                    <th>Exit Reason</th>
+                    <th>Duration</th>
+                </tr>
+            </thead>
+            <tbody id="tradeLogBody">
+                <tr><td colspan="11" style="text-align: center; padding: 40px; color: #64748b;">Loading trades...</td></tr>
+            </tbody>
+        </table>
     </div>
 </div>
 
-<!-- Performance Comparison -->
-<div class="card">
-    <div class="card-header">
-        <h3 class="card-title">
-            <i class="fas fa-balance-scale"></i>
-            Strategy Performance Analysis
-        </h3>
-    </div>
-    <div class="card-body">
-        <div class="grid grid-2">
-            <!-- Risk Metrics Radar Chart -->
-            <div>
-                <h4 class="text-center mb-3">Risk-Adjusted Performance</h4>
-                <div style="position: relative; height: 250px; width: 100%;">
-                    <canvas id="riskMetricsRadar"></canvas>
-                </div>
-            </div>
-            <!-- P&L Distribution -->
-            <div>
-                <h4 class="text-center mb-3">P&L Distribution</h4>
-                <div style="position: relative; height: 250px; width: 100%;">
-                    <canvas id="pnlDistribution"></canvas>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Validation Warnings -->
-<div class="card" id="validationWarnings" style="display: none;">
-    <div class="card-header">
-        <h3 class="card-title text-warning">
-            <i class="fas fa-exclamation-triangle"></i>
-            Validation Warnings
-        </h3>
-    </div>
-    <div class="card-body">
-        <ul id="warningsList" class="warning-list">
-        </ul>
-    </div>
-</div>
-
-<style>
-.validation-metric {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    padding: 16px;
-    background: rgba(255, 255, 255, 0.02);
-    border-radius: 8px;
-}
-
-.validation-icon {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(59, 130, 246, 0.1);
-    color: #3b82f6;
-    font-size: 20px;
-}
-
-.validation-icon.success {
-    background: rgba(16, 185, 129, 0.1);
-    color: #10b981;
-}
-
-.validation-icon.warning {
-    background: rgba(245, 158, 11, 0.1);
-    color: #f59e0b;
-}
-
-.validation-icon.info {
-    background: rgba(59, 130, 246, 0.1);
-    color: #3b82f6;
-}
-
-.validation-content {
-    flex: 1;
-}
-
-.validation-label {
-    font-weight: 600;
-    margin-bottom: 4px;
-}
-
-.validation-value {
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: #10b981;
-}
-
-.validation-help {
-    font-size: 0.85rem;
-    color: #64748b;
-    margin-top: 4px;
-}
-
-.warning-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-}
-
-.warning-list li {
-    padding: 12px 16px;
-    background: rgba(245, 158, 11, 0.1);
-    border-left: 4px solid #f59e0b;
-    margin-bottom: 8px;
-    border-radius: 0 8px 8px 0;
-}
-
-.badge {
-    padding: 4px 12px;
-    border-radius: 20px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-}
-
-.badge.dry-run {
-    background: #3b82f6;
-    color: white;
-}
-
-.badge.live {
-    background: #10b981;
-    color: white;
-}
-
-.badge.testnet {
-    background: #f59e0b;
-    color: white;
-}
-
-.badge.offline {
-    background: #64748b;
-    color: white;
-}
-</style>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-// Simulator state
-let simulatorData = {
-    futures: { trades: [], stats: null },
-    solana: { trades: [], stats: null },
-    dex: { trades: [], stats: null }
-};
+    // Module Definitions
+    const MODULES = [
+        { id: 'dex', name: 'DEX Trading', icon: 'fa-cube', color: 'dex' },
+        { id: 'futures', name: 'Futures', icon: 'fa-chart-line', color: 'futures' },
+        { id: 'solana', name: 'Solana', icon: 'fa-coins', color: 'solana' },
+        { id: 'sniper', name: 'Sniper', icon: 'fa-crosshairs', color: 'sniper' },
+        { id: 'arbitrage', name: 'Arbitrage', icon: 'fa-balance-scale', color: 'arbitrage' },
+        { id: 'copytrading', name: 'Copy Trading', icon: 'fa-user-friends', color: 'copytrading' },
+        { id: 'ai', name: 'AI Analysis', icon: 'fa-brain', color: 'ai' }
+    ];
 
-let equityChart = null;
-let radarChart = null;
-let distributionChart = null;
-let chartsInitialized = false;
-
-// Initialize on page load - NO auto-refresh to prevent chart shaking
-document.addEventListener('DOMContentLoaded', function() {
-    refreshSimulator();
-    // Auto-refresh completely disabled to prevent chart issues
-    // Users can click "Refresh" button to update
-});
-
-async function refreshSimulator() {
-    try {
-        const response = await fetch('/api/simulator/data');
-        if (!response.ok) throw new Error('Failed to fetch simulator data');
-
-        const data = await response.json();
-        updateSimulatorUI(data, true);
-    } catch (error) {
-        console.error('Error refreshing simulator:', error);
-        showToast('Failed to refresh simulator data', 'error');
-    }
-}
-
-// Helper to parse P&L values that might have $ prefix
-function parsePnL(value) {
-    if (value === null || value === undefined) return 0;
-    if (typeof value === 'number') return value;
-    // Remove $ and any other non-numeric characters except - and .
-    const cleaned = String(value).replace(/[^0-9.-]/g, '');
-    const parsed = parseFloat(cleaned);
-    return isNaN(parsed) ? 0 : parsed;
-}
-
-// Helper to extract stats from nested structure
-function getStats(moduleData) {
-    if (!moduleData) return null;
-    return moduleData.stats || moduleData;
-}
-
-function updateSimulatorUI(data, updateCharts = true) {
-    // Cache the data for equity curve module filtering
-    simulatorData = data;
-
-    // Extract stats from nested structures
-    const futuresStats = getStats(data.futures);
-    const solanaStats = getStats(data.solana);
-    const dexStats = getStats(data.dex);
-
-    // Update dry run banner
-    const dryRunStatus = document.getElementById('dryRunStatus');
-    const activeDryRun = [];
-    const activeLive = [];
-
-    if (futuresStats?.mode === 'DRY_RUN') activeDryRun.push('Futures');
-    else if (futuresStats?.mode === 'LIVE') activeLive.push('Futures');
-
-    if (solanaStats?.mode === 'DRY_RUN') activeDryRun.push('Solana');
-    else if (solanaStats?.mode === 'LIVE') activeLive.push('Solana');
-
-    if (dexStats?.mode === 'DRY_RUN') activeDryRun.push('DEX');
-    else if (dexStats?.mode === 'LIVE') activeLive.push('DEX');
-
-    if (activeDryRun.length > 0) {
-        dryRunStatus.innerHTML = `<strong>DRY_RUN Mode Active:</strong> ${activeDryRun.join(', ')} - All trades are simulated`;
-        document.getElementById('dryRunBanner').className = 'alert alert-info';
-    } else if (activeLive.length > 0) {
-        dryRunStatus.innerHTML = `<strong>LIVE Mode Active:</strong> ${activeLive.join(', ')} - Real trades being executed`;
-        document.getElementById('dryRunBanner').className = 'alert alert-warning';
-    } else {
-        dryRunStatus.innerHTML = 'No active trading modules detected';
-        document.getElementById('dryRunBanner').className = 'alert alert-secondary';
-    }
-
-    // Update summary cards
-    const totalTrades = (futuresStats?.total_trades || 0) + (solanaStats?.total_trades || 0) + (dexStats?.total_trades || 0);
-    document.getElementById('totalSimTrades').textContent = totalTrades;
-
-    // Calculate total P&L (normalize to USD) - use parsePnL helper
-    const futuresPnl = parsePnL(futuresStats?.total_pnl || futuresStats?.net_pnl);
-    const solanaPnlRaw = parsePnL(solanaStats?.total_pnl);
-    const solPrice = parseFloat(String(solanaStats?.sol_price).replace(/[^0-9.]/g, '')) || 200;
-    const solanaPnl = solanaPnlRaw * solPrice;
-    const dexPnl = parsePnL(dexStats?.total_pnl);
-    const totalPnl = futuresPnl + solanaPnl + dexPnl;
-
-    const pnlElement = document.getElementById('totalSimPnl');
-    pnlElement.textContent = `$${totalPnl.toFixed(2)}`;
-    pnlElement.className = totalPnl >= 0 ? 'stat-value text-success' : 'stat-value text-danger';
-
-    // Calculate overall win rate
-    const totalWins = (futuresStats?.winning_trades || 0) + (solanaStats?.winning_trades || 0) + (dexStats?.winning_trades || 0);
-    const winRate = totalTrades > 0 ? ((totalWins / totalTrades) * 100).toFixed(1) : 0;
-    document.getElementById('simWinRate').textContent = `${winRate}%`;
-
-    // Update module cards
-    updateModuleCard('futures', data.futures);
-    updateModuleCard('solana', data.solana);
-    updateModuleCard('dex', data.dex);
-
-    // Update validation metrics
-    updateValidationMetrics(data);
-
-    // Update charts only on manual refresh or first load
-    if (updateCharts) {
-        updateEquityCurve(data);
-        updateRiskRadar(data);
-        updatePnLDistribution(data);
-    }
-
-    // Update trade log
-    updateTradeLog(data);
-
-    // Check for warnings
-    checkValidationWarnings(data);
-}
-
-function updateModuleCard(module, data) {
-    if (!data) {
-        document.getElementById(`${module}SimStatus`).textContent = 'Offline';
-        document.getElementById(`${module}ModeBadge`).textContent = 'Offline';
-        document.getElementById(`${module}ModeBadge`).className = 'badge offline';
-        return;
-    }
-
-    // Handle nested structure from /stats endpoint (data.stats contains actual stats)
-    const stats = data.stats || data;
-
-    document.getElementById(`${module}SimStatus`).textContent = data.status || stats.status || 'Active';
-
-    const badge = document.getElementById(`${module}ModeBadge`);
-    const mode = (stats.mode || data.mode || '').toUpperCase();
-
-    if (mode === 'DRY_RUN') {
-        badge.textContent = 'DRY RUN';
-        badge.className = 'badge dry-run';
-    } else if (mode === 'TESTNET') {
-        badge.textContent = 'TESTNET';
-        badge.className = 'badge testnet';
-    } else if (mode === 'LIVE') {
-        badge.textContent = 'LIVE';
-        badge.className = 'badge live';
-    } else if (mode) {
-        // Show whatever mode is returned
-        badge.textContent = mode;
-        badge.className = 'badge';
-    } else {
-        badge.textContent = 'Unknown';
-        badge.className = 'badge offline';
-    }
-
-    document.getElementById(`${module}SimTrades`).textContent = stats.total_trades || 0;
-    document.getElementById(`${module}SimPnl`).textContent = stats.total_pnl || stats.net_pnl || '$0.00';
-
-    // Update advanced metrics if elements exist
-    const sharpeEl = document.getElementById(`${module}Sharpe`);
-    const sortinoEl = document.getElementById(`${module}Sortino`);
-    const maxDDEl = document.getElementById(`${module}MaxDD`);
-
-    if (sharpeEl) {
-        sharpeEl.textContent = stats.sharpe_ratio !== undefined ? stats.sharpe_ratio : 'N/A';
-    }
-    if (sortinoEl) {
-        sortinoEl.textContent = stats.sortino_ratio !== undefined ? stats.sortino_ratio : 'N/A';
-    }
-    if (maxDDEl) {
-        maxDDEl.textContent = stats.max_drawdown || stats.max_drawdown_pct || 'N/A';
-    }
-
-    // DEX-specific fields
-    if (module === 'dex') {
-        const winRateEl = document.getElementById('dexWinRate');
-        if (winRateEl) winRateEl.textContent = stats.win_rate || '0%';
-    }
-
-    // Futures-specific fields - add win rate if available
-    if (module === 'futures') {
-        const winRateEl = document.getElementById('futuresWinRate');
-        if (winRateEl) winRateEl.textContent = stats.win_rate || '0%';
-    }
-}
-
-function updateValidationMetrics(data) {
-    // Extract stats from nested structures
-    const futuresStats = getStats(data.futures);
-    const solanaStats = getStats(data.solana);
-    const dexStats = getStats(data.dex);
-
-    // Check if any module is active
-    const hasActiveModule = dexStats?.mode || futuresStats?.mode || solanaStats?.mode;
-
-    // Price accuracy based on having real price feeds
-    const priceAccuracy = hasActiveModule ? '98.5%' : '--';
-    document.getElementById('priceAccuracy').textContent = priceAccuracy;
-
-    // Slippage model (based on configured slippage)
-    const slippageModel = hasActiveModule ? 'Active' : '--';
-    document.getElementById('slippageModel').textContent = slippageModel;
-
-    // Fee estimation
-    const feeEstimation = hasActiveModule ? 'Active' : '--';
-    document.getElementById('feeEstimation').textContent = feeEstimation;
-
-    // Latency simulation
-    const latencySimulation = hasActiveModule ? 'Simulated' : '--';
-    document.getElementById('latencySimulation').textContent = latencySimulation;
-
-    // Calculate validation score
-    let score = 0;
-    let factors = 0;
-
-    if (dexStats?.mode === 'DRY_RUN') { score += 25; factors++; }
-    if (futuresStats?.mode === 'DRY_RUN') { score += 25; factors++; }
-    if (solanaStats?.mode === 'DRY_RUN') { score += 25; factors++; }
-    if (dexStats?.total_trades > 0) { score += 25; factors++; }
-
-    const validationScore = factors > 0 ? Math.round(score / factors * 4) : 0;
-    document.getElementById('validationScore').textContent = validationScore > 0 ? `${validationScore}%` : 'N/A';
-}
-
-async function updateEquityCurve(data) {
-    const ctx = document.getElementById('simulatedEquityChart').getContext('2d');
-    const moduleFilter = document.getElementById('equityModuleSelect')?.value || 'all';
-
-    // Extract stats from nested structures
-    const futuresStats = getStats(data.futures);
-    const solanaStats = getStats(data.solana);
-    const dexStats = getStats(data.dex);
-
-    // Collect trades based on selected module
+    let simulatorData = {};
     let allTrades = [];
+    let charts = {};
 
-    if (moduleFilter === 'all' || moduleFilter === 'futures') {
-        allTrades = allTrades.concat((futuresStats?.trades || []).map(t => ({...t, module: 'futures', moduleLabel: 'Futures'})));
-    }
-    if (moduleFilter === 'all' || moduleFilter === 'solana') {
-        allTrades = allTrades.concat((solanaStats?.trades || []).map(t => ({...t, module: 'solana', moduleLabel: 'Solana'})));
-    }
-    if (moduleFilter === 'all' || moduleFilter === 'dex') {
-        allTrades = allTrades.concat((dexStats?.trades || []).map(t => ({...t, module: 'dex', moduleLabel: 'DEX'})));
-    }
+    document.addEventListener('DOMContentLoaded', function() {
+        initCharts();
+        refreshSimulator();
+    });
 
-    // Also fetch Futures trades from dedicated endpoint for better data
-    if (moduleFilter === 'all' || moduleFilter === 'futures') {
-        try {
-            const futuresResponse = await fetch('/api/futures/trades?limit=50');
-            if (futuresResponse.ok) {
-                const futuresData = await futuresResponse.json();
-                if (futuresData.success && futuresData.trades) {
-                    const existingIds = new Set(allTrades.filter(t => t.module === 'futures').map(t => t.trade_id));
-                    const newTrades = futuresData.trades
-                        .filter(t => !existingIds.has(t.trade_id))
-                        .map(t => ({...t, module: 'futures', moduleLabel: 'Futures'}));
-                    allTrades = allTrades.concat(newTrades);
-                }
-            }
-        } catch (e) {
-            console.debug('Could not fetch futures trades for equity curve:', e);
-        }
-    }
-
-    // Sort by time (oldest first for cumulative calculation)
-    allTrades.sort((a, b) => new Date(a.time || a.closed_at || 0) - new Date(b.time || b.closed_at || 0));
-
-    // Generate equity curve data
-    const labels = [];
-    const equityData = [];
-    let equity = 10000; // Starting capital
-
-    if (allTrades.length === 0) {
-        // Show baseline when no trades
-        for (let i = 0; i < 10; i++) {
-            labels.push(`T${i}`);
-            equityData.push(10000);
-        }
-    } else {
-        // Get SOL price for normalizing Solana trades to USD
-        const solPrice = parseFloat(String(solanaStats?.sol_price || '200').replace(/[^0-9.]/g, '')) || 200;
-
-        // Calculate cumulative equity from trades
-        allTrades.forEach((trade, i) => {
-            let pnl = parseFloat(trade.pnl || trade.net_pnl || 0);
-
-            // Normalize Solana PnL from SOL to USD for consistent equity curve
-            if (trade.module === 'solana') {
-                pnl = pnl * solPrice;
-            }
-
-            equity += pnl;
-            const timestamp = trade.time || trade.closed_at;
-            const label = timestamp ? new Date(timestamp).toLocaleDateString() : `Trade ${i+1}`;
-            labels.push(label);
-            equityData.push(equity);
-        });
-    }
-
-    // Module-specific chart colors
-    const colorMap = {
-        'all': { border: '#3b82f6', bg: 'rgba(59, 130, 246, 0.1)' },
-        'futures': { border: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.1)' },
-        'solana': { border: '#10b981', bg: 'rgba(16, 185, 129, 0.1)' },
-        'dex': { border: '#f59e0b', bg: 'rgba(245, 158, 11, 0.1)' }
-    };
-    const colors = colorMap[moduleFilter] || colorMap['all'];
-
-    if (equityChart) {
-        equityChart.destroy();
-    }
-
-    const moduleLabel = moduleFilter === 'all' ? 'All Modules' :
-                       moduleFilter === 'futures' ? 'Futures' :
-                       moduleFilter === 'solana' ? 'Solana' : 'DEX';
-
-    equityChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: labels.slice(-50), // Last 50 data points
-            datasets: [{
-                label: `${moduleLabel} Equity`,
-                data: equityData.slice(-50),
-                borderColor: colors.border,
-                backgroundColor: colors.bg,
-                fill: true,
-                tension: 0.4
-            }]
-        },
-        options: {
+    function initCharts() {
+        const commonOptions = {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: true,
-                    labels: { color: '#94a3b8' }
-                }
-            },
+            plugins: { legend: { labels: { color: '#94a3b8' } } },
             scales: {
-                x: {
-                    display: false
-                },
-                y: {
-                    grid: { color: 'rgba(148, 163, 184, 0.1)' },
-                    ticks: { color: '#94a3b8' }
-                }
+                x: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
+                y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' } }
+            }
+        };
+
+        charts.equity = new Chart(document.getElementById('equityChart'), {
+            type: 'line',
+            data: { labels: [], datasets: [] },
+            options: { ...commonOptions, plugins: { legend: { display: true, labels: { color: '#94a3b8' } } } }
+        });
+
+        charts.modulePnl = new Chart(document.getElementById('modulePnlChart'), {
+            type: 'doughnut',
+            data: { labels: [], datasets: [] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#94a3b8' } } } }
+        });
+
+        charts.winRate = new Chart(document.getElementById('winRateChart'), {
+            type: 'bar',
+            data: { labels: [], datasets: [] },
+            options: commonOptions
+        });
+
+        charts.pnlDist = new Chart(document.getElementById('pnlDistChart'), {
+            type: 'bar',
+            data: { labels: [], datasets: [] },
+            options: commonOptions
+        });
+    }
+
+    async function refreshSimulator() {
+        try {
+            const response = await fetch('/api/simulator/data');
+            if (!response.ok) throw new Error('Failed to fetch');
+            simulatorData = await response.json();
+            updateUI(simulatorData);
+        } catch (e) {
+            console.error('Error refreshing simulator:', e);
+        }
+    }
+
+    function updateUI(data) {
+        updateModeBanner(data);
+        updateSummaryCards(data);
+        renderModuleCards(data);
+        updateValidationMetrics(data);
+        updateCharts(data);
+        updateTradeLog(data);
+        checkWarnings(data);
+    }
+
+    function updateModeBanner(data) {
+        const banner = document.getElementById('modeBanner');
+        const title = document.getElementById('modeTitle');
+        const desc = document.getElementById('modeDescription');
+
+        let dryRunModules = [];
+        let liveModules = [];
+
+        MODULES.forEach(m => {
+            const modData = data[m.id];
+            if (!modData) return;
+            const mode = (modData.mode || modData.status || '').toUpperCase();
+            if (mode === 'DRY_RUN') dryRunModules.push(m.name);
+            else if (mode === 'LIVE') liveModules.push(m.name);
+        });
+
+        if (dryRunModules.length > 0 && liveModules.length === 0) {
+            banner.className = 'mode-banner dry-run';
+            title.textContent = 'DRY_RUN Mode Active';
+            desc.textContent = `Simulating: ${dryRunModules.join(', ')}`;
+        } else if (liveModules.length > 0 && dryRunModules.length === 0) {
+            banner.className = 'mode-banner live';
+            title.textContent = 'LIVE Mode Active';
+            desc.textContent = `Live trading: ${liveModules.join(', ')}`;
+        } else if (liveModules.length > 0 && dryRunModules.length > 0) {
+            banner.className = 'mode-banner mixed';
+            title.textContent = 'Mixed Mode';
+            desc.textContent = `DRY_RUN: ${dryRunModules.join(', ')} | LIVE: ${liveModules.join(', ')}`;
+        } else {
+            banner.className = 'mode-banner dry-run';
+            title.textContent = 'No Active Modules';
+            desc.textContent = 'Enable modules in settings to start simulation';
+        }
+    }
+
+    function updateSummaryCards(data) {
+        let totalTrades = 0, totalPnl = 0, totalWins = 0, activeCount = 0;
+        let maxDD = 0;
+
+        MODULES.forEach(m => {
+            const modData = data[m.id];
+            if (!modData) return;
+            if (modData.mode || modData.status === 'Active') activeCount++;
+            totalTrades += modData.total_trades || 0;
+            totalWins += modData.winning_trades || 0;
+            totalPnl += parsePnl(modData.total_pnl || modData.net_pnl || 0);
+            const dd = parseFloat(String(modData.max_drawdown || '0').replace('%', ''));
+            if (dd > maxDD) maxDD = dd;
+        });
+
+        document.getElementById('activeModules').textContent = `${activeCount}/${MODULES.length}`;
+        document.getElementById('totalSimTrades').textContent = totalTrades;
+
+        const pnlEl = document.getElementById('totalSimPnl');
+        pnlEl.textContent = `$${totalPnl.toFixed(2)}`;
+        pnlEl.className = totalPnl >= 0 ? 'card-value positive' : 'card-value negative';
+
+        const winRate = totalTrades > 0 ? (totalWins / totalTrades * 100).toFixed(1) : 0;
+        document.getElementById('overallWinRate').textContent = `${winRate}%`;
+        document.getElementById('maxDrawdown').textContent = `${maxDD.toFixed(1)}%`;
+
+        // Validation score
+        let score = 0;
+        if (activeCount > 0) score += 25;
+        if (totalTrades > 10) score += 25;
+        if (parseFloat(winRate) > 40) score += 25;
+        if (maxDD < 20) score += 25;
+        document.getElementById('validationScore').textContent = score > 0 ? `${score}%` : 'N/A';
+    }
+
+    function renderModuleCards(data) {
+        const grid = document.getElementById('modulesGrid');
+        grid.innerHTML = '';
+
+        MODULES.forEach(m => {
+            const modData = data[m.id] || {};
+            const mode = (modData.mode || '').toUpperCase();
+            const status = modData.status || 'Offline';
+            const isActive = mode || status === 'Active';
+
+            const pnl = parsePnl(modData.total_pnl || modData.net_pnl || 0);
+            const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+
+            const card = document.createElement('div');
+            card.className = `module-sim-card ${isActive ? 'active' : 'offline'}`;
+            card.innerHTML = `
+                <div class="module-sim-header">
+                    <div class="module-info">
+                        <div class="module-icon ${m.color}"><i class="fas ${m.icon}"></i></div>
+                        <h4>${m.name}</h4>
+                    </div>
+                    <span class="mode-badge ${getModeClass(mode, status)}">${mode || status}</span>
+                </div>
+                <div class="module-stats-grid">
+                    <div class="sim-stat">
+                        <div class="sim-stat-label">Trades</div>
+                        <div class="sim-stat-value">${modData.total_trades || 0}</div>
+                    </div>
+                    <div class="sim-stat">
+                        <div class="sim-stat-label">Win Rate</div>
+                        <div class="sim-stat-value">${modData.win_rate || '0%'}</div>
+                    </div>
+                    <div class="sim-stat">
+                        <div class="sim-stat-label">P&L</div>
+                        <div class="sim-stat-value ${pnlClass}">$${pnl.toFixed(2)}</div>
+                    </div>
+                    <div class="sim-stat">
+                        <div class="sim-stat-label">Max DD</div>
+                        <div class="sim-stat-value">${modData.max_drawdown || modData.max_drawdown_pct || 'N/A'}</div>
+                    </div>
+                    <div class="sim-stat">
+                        <div class="sim-stat-label">Sharpe</div>
+                        <div class="sim-stat-value">${modData.sharpe_ratio !== undefined ? parseFloat(modData.sharpe_ratio).toFixed(2) : 'N/A'}</div>
+                    </div>
+                    <div class="sim-stat">
+                        <div class="sim-stat-label">Sortino</div>
+                        <div class="sim-stat-value">${modData.sortino_ratio !== undefined ? parseFloat(modData.sortino_ratio).toFixed(2) : 'N/A'}</div>
+                    </div>
+                </div>
+            `;
+            grid.appendChild(card);
+        });
+    }
+
+    function getModeClass(mode, status) {
+        if (mode === 'DRY_RUN') return 'dry-run';
+        if (mode === 'LIVE') return 'live';
+        if (mode === 'TESTNET') return 'testnet';
+        return 'offline';
+    }
+
+    function updateValidationMetrics(data) {
+        let hasActive = false;
+        MODULES.forEach(m => {
+            if (data[m.id]?.mode || data[m.id]?.status === 'Active') hasActive = true;
+        });
+
+        document.getElementById('priceAccuracy').textContent = hasActive ? '98.5%' : '--';
+        document.getElementById('slippageModel').textContent = hasActive ? 'Active' : '--';
+        document.getElementById('feeEstimation').textContent = hasActive ? 'Active' : '--';
+        document.getElementById('latencySimulation').textContent = hasActive ? 'Simulated' : '--';
+    }
+
+    function updateCharts(data) {
+        // Collect all trades
+        allTrades = [];
+        const moduleColors = {
+            dex: '#3b82f6', futures: '#10b981', solana: '#8b5cf6',
+            sniper: '#ef4444', arbitrage: '#f59e0b', copytrading: '#ec4899', ai: '#22d3ee'
+        };
+
+        MODULES.forEach(m => {
+            const modData = data[m.id];
+            if (modData?.trades) {
+                modData.trades.forEach(t => {
+                    allTrades.push({ ...t, module: m.id, moduleLabel: m.name });
+                });
+            }
+        });
+
+        // Sort by time
+        allTrades.sort((a, b) => new Date(a.time || a.closed_at || 0) - new Date(b.time || b.closed_at || 0));
+
+        // Equity Curve
+        let equity = 10000;
+        const equityLabels = [];
+        const equityData = [];
+
+        allTrades.forEach((t, i) => {
+            equity += parsePnl(t.pnl || t.net_pnl || 0);
+            equityLabels.push(t.time ? new Date(t.time).toLocaleDateString() : `T${i}`);
+            equityData.push(equity);
+        });
+
+        if (equityData.length === 0) {
+            for (let i = 0; i < 10; i++) {
+                equityLabels.push(`T${i}`);
+                equityData.push(10000);
             }
         }
-    });
-}
 
-function updateRiskRadar(data) {
-    const canvas = document.getElementById('riskMetricsRadar');
-    if (!canvas) return;
+        charts.equity.data = {
+            labels: equityLabels.slice(-50),
+            datasets: [{ label: 'Equity', data: equityData.slice(-50), borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', fill: true, tension: 0.4 }]
+        };
+        charts.equity.update('none');
 
-    const ctx = canvas.getContext('2d');
-
-    // Extract stats from nested structures
-    const futuresStats = getStats(data.futures);
-    const solanaStats = getStats(data.solana);
-    const dexStats = getStats(data.dex);
-
-    // Extract DEX metrics (primary since it's the enabled module)
-    const dexWinRate = parseFloat(dexStats?.win_rate) || 0;
-    const dexTrades = dexStats?.total_trades || 0;
-    const dexWins = dexStats?.winning_trades || 0;
-
-    // Extract other module metrics
-    const futureSharpe = parseFloat(futuresStats?.sharpe_ratio) || 0;
-    const futureSortino = parseFloat(futuresStats?.sortino_ratio) || 0;
-    const solanaSharpe = parseFloat(solanaStats?.sharpe_ratio) || 0;
-    const solanaSortino = parseFloat(solanaStats?.sortino_ratio) || 0;
-
-    if (radarChart) {
-        radarChart.destroy();
-        radarChart = null;
-    }
-
-    // Build datasets based on active modules
-    const datasets = [];
-
-    if (dexStats?.mode) {
-        datasets.push({
-            label: 'DEX',
-            data: [
-                50, // No Sharpe for DEX yet
-                50, // No Sortino for DEX yet
-                dexWinRate,
-                dexTrades > 0 ? Math.min((dexWins / dexTrades) * 100, 100) : 0,
-                dexTrades > 10 ? 70 : 30
-            ],
-            borderColor: '#f59e0b',
-            backgroundColor: 'rgba(245, 158, 11, 0.2)'
+        // Module PnL
+        const modulePnls = {};
+        MODULES.forEach(m => {
+            const pnl = parsePnl(data[m.id]?.total_pnl || data[m.id]?.net_pnl || 0);
+            if (Math.abs(pnl) > 0.01) modulePnls[m.name] = pnl;
         });
-    }
 
-    if (futuresStats?.mode) {
-        datasets.push({
-            label: 'Futures',
-            data: [
-                Math.min(futureSharpe * 50, 100),
-                Math.min(futureSortino * 50, 100),
-                parseFloat(futuresStats?.win_rate) || 0,
-                Math.min((parseFloat(futuresStats?.profit_factor) || 0) * 30, 100),
-                50
-            ],
-            borderColor: '#3b82f6',
-            backgroundColor: 'rgba(59, 130, 246, 0.2)'
-        });
-    }
+        charts.modulePnl.data = {
+            labels: Object.keys(modulePnls),
+            datasets: [{ data: Object.values(modulePnls).map(Math.abs), backgroundColor: Object.keys(modulePnls).map((_, i) => Object.values(moduleColors)[i]) }]
+        };
+        charts.modulePnl.update('none');
 
-    if (solanaStats?.mode) {
-        datasets.push({
-            label: 'Solana',
-            data: [
-                Math.min(solanaSharpe * 50, 100),
-                Math.min(solanaSortino * 50, 100),
-                parseFloat(solanaStats?.win_rate) || 0,
-                Math.min((parseFloat(solanaStats?.profit_factor) || 0) * 30, 100),
-                50
-            ],
-            borderColor: '#10b981',
-            backgroundColor: 'rgba(16, 185, 129, 0.2)'
-        });
-    }
-
-    // Default dataset if none active
-    if (datasets.length === 0) {
-        datasets.push({
-            label: 'No Data',
-            data: [0, 0, 0, 0, 0],
-            borderColor: '#64748b',
-            backgroundColor: 'rgba(100, 116, 139, 0.2)'
-        });
-    }
-
-    radarChart = new Chart(ctx, {
-        type: 'radar',
-        data: {
-            labels: ['Sharpe', 'Sortino', 'Win Rate', 'Profit Factor', 'Consistency'],
-            datasets: datasets
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: true,
-            plugins: {
-                legend: {
-                    labels: { color: '#94a3b8' }
-                }
-            },
-            scales: {
-                r: {
-                    grid: { color: 'rgba(148, 163, 184, 0.1)' },
-                    pointLabels: { color: '#94a3b8' },
-                    ticks: { display: false },
-                    suggestedMin: 0,
-                    suggestedMax: 100
-                }
+        // Win Rate by Module
+        const winRateLabels = [];
+        const winRateData = [];
+        MODULES.forEach(m => {
+            if (data[m.id]?.mode || data[m.id]?.status === 'Active') {
+                winRateLabels.push(m.name);
+                winRateData.push(parseFloat(String(data[m.id]?.win_rate || '0').replace('%', '')));
             }
-        }
-    });
-}
+        });
 
-function updatePnLDistribution(data) {
-    const canvas = document.getElementById('pnlDistribution');
-    if (!canvas) return;
+        charts.winRate.data = {
+            labels: winRateLabels.length ? winRateLabels : ['No Data'],
+            datasets: [{ label: 'Win Rate %', data: winRateData.length ? winRateData : [0], backgroundColor: '#10b981' }]
+        };
+        charts.winRate.update('none');
 
-    const ctx = canvas.getContext('2d');
-
-    // Extract stats from nested structures
-    const futuresStats = getStats(data.futures);
-    const solanaStats = getStats(data.solana);
-    const dexStats = getStats(data.dex);
-
-    // Generate distribution data - include DEX trades
-    const allPnls = [
-        ...(futuresStats?.trades || []).map(t => parseFloat(t.pnl || t.net_pnl || 0)),
-        ...(solanaStats?.trades || []).map(t => parseFloat(t.pnl || t.net_pnl || 0)),
-        ...(dexStats?.trades || []).map(t => parseFloat(t.pnl || t.net_pnl || 0))
-    ];
-
-    // Create histogram bins
-    const bins = [-100, -50, -25, -10, 0, 10, 25, 50, 100];
-    const counts = new Array(bins.length - 1).fill(0);
-
-    allPnls.forEach(pnl => {
-        for (let i = 0; i < bins.length - 1; i++) {
-            if (pnl >= bins[i] && pnl < bins[i + 1]) {
-                counts[i]++;
-                break;
+        // PnL Distribution
+        const bins = [-100, -50, -25, -10, 0, 10, 25, 50, 100];
+        const counts = new Array(bins.length - 1).fill(0);
+        allTrades.forEach(t => {
+            const pnl = parsePnl(t.pnl || t.net_pnl || 0);
+            for (let i = 0; i < bins.length - 1; i++) {
+                if (pnl >= bins[i] && pnl < bins[i + 1]) { counts[i]++; break; }
             }
-        }
-    });
+        });
 
-    if (distributionChart) {
-        distributionChart.destroy();
-        distributionChart = null;
-    }
-
-    distributionChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
+        charts.pnlDist.data = {
             labels: bins.slice(0, -1).map((b, i) => `${b} to ${bins[i+1]}`),
-            datasets: [{
-                label: 'Trade Count',
-                data: counts,
-                backgroundColor: counts.map((_, i) =>
-                    bins[i] < 0 ? 'rgba(239, 68, 68, 0.6)' : 'rgba(16, 185, 129, 0.6)'
-                ),
-                borderColor: counts.map((_, i) =>
-                    bins[i] < 0 ? '#ef4444' : '#10b981'
-                ),
-                borderWidth: 1
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: true,
-            plugins: {
-                legend: { display: false }
-            },
-            scales: {
-                x: {
-                    grid: { display: false },
-                    ticks: { color: '#94a3b8' }
-                },
-                y: {
-                    grid: { color: 'rgba(148, 163, 184, 0.1)' },
-                    ticks: { color: '#94a3b8' }
-                }
+            datasets: [{ label: 'Trade Count', data: counts, backgroundColor: counts.map((_, i) => bins[i] < 0 ? 'rgba(239, 68, 68, 0.6)' : 'rgba(16, 185, 129, 0.6)') }]
+        };
+        charts.pnlDist.update('none');
+    }
+
+    function updateTradeLog(data) {
+        // Already collected in updateCharts
+        filterTrades();
+    }
+
+    function filterTrades() {
+        const moduleFilter = document.getElementById('moduleFilter').value;
+        const resultFilter = document.getElementById('resultFilter').value;
+
+        let filtered = allTrades.filter(t => {
+            if (moduleFilter !== 'all' && t.module !== moduleFilter) return false;
+            if (resultFilter === 'win' && parsePnl(t.pnl || t.net_pnl) < 0) return false;
+            if (resultFilter === 'loss' && parsePnl(t.pnl || t.net_pnl) >= 0) return false;
+            return true;
+        });
+
+        const tbody = document.getElementById('tradeLogBody');
+        if (filtered.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="11" style="text-align: center; padding: 40px; color: #64748b;">No trades match filters</td></tr>';
+            return;
+        }
+
+        // Reverse for most recent first
+        filtered = filtered.reverse().slice(0, 100);
+
+        tbody.innerHTML = filtered.map(t => {
+            const pnl = parsePnl(t.pnl || t.net_pnl || 0);
+            const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+            const pnlPct = typeof t.pnl_pct === 'number' ? t.pnl_pct.toFixed(2) + '%' : (t.pnl_pct || '0%');
+            return `
+                <tr>
+                    <td>${formatTime(t.time || t.closed_at)}</td>
+                    <td><span class="module-badge ${t.module}">${t.moduleLabel}</span></td>
+                    <td>${t.symbol || t.token_symbol || 'N/A'}</td>
+                    <td>${t.side || 'N/A'}</td>
+                    <td>$${parseFloat(t.entry_price || 0).toFixed(6)}</td>
+                    <td>$${parseFloat(t.exit_price || 0).toFixed(6)}</td>
+                    <td>${parseFloat(t.size || t.amount || 0).toFixed(4)}</td>
+                    <td class="${pnlClass}">$${pnl.toFixed(2)}</td>
+                    <td class="${pnlClass}">${pnlPct}</td>
+                    <td>${formatExitReason(t.exit_reason || t.close_reason)}</td>
+                    <td>${formatDuration(t.duration_seconds)}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    function checkWarnings(data) {
+        const warnings = [];
+        MODULES.forEach(m => {
+            const modData = data[m.id];
+            if (!modData) return;
+
+            if (modData.mode === 'LIVE' && (modData.total_trades || 0) < 10) {
+                warnings.push(`${m.name} is in LIVE mode with less than 10 simulated trades.`);
             }
-        }
-    });
-}
 
-// Store all trades globally for filtering
-let allSimulatedTrades = [];
-
-async function updateTradeLog(data) {
-    const tbody = document.getElementById('simTradeLog');
-    if (!tbody) {
-        console.error('Trade log tbody not found');
-        return;
-    }
-
-    // Extract stats from nested structures
-    const futuresStats = getStats(data.futures);
-    const solanaStats = getStats(data.solana);
-    const dexStats = getStats(data.dex);
-
-    // Collect trades from all modules
-    let allTrades = [
-        ...(futuresStats?.trades || []).map(t => ({...t, module: 'futures', moduleLabel: 'Futures'})),
-        ...(solanaStats?.trades || []).map(t => ({...t, module: 'solana', moduleLabel: 'Solana'})),
-        ...(dexStats?.trades || []).map(t => ({...t, module: 'dex', moduleLabel: 'DEX'}))
-    ];
-
-    // Also fetch Futures trades from the dedicated endpoint for more complete data
-    try {
-        const futuresResponse = await fetch('/api/futures/trades?limit=50');
-        if (futuresResponse.ok) {
-            const futuresData = await futuresResponse.json();
-            if (futuresData.success && futuresData.trades) {
-                // Add futures trades if not already present
-                const existingIds = new Set(allTrades.filter(t => t.module === 'futures').map(t => t.trade_id));
-                const newFuturesTrades = futuresData.trades
-                    .filter(t => !existingIds.has(t.trade_id))
-                    .map(t => ({...t, module: 'futures', moduleLabel: 'Futures'}));
-                allTrades = [...allTrades, ...newFuturesTrades];
+            const sharpe = parseFloat(modData.sharpe_ratio);
+            if (!isNaN(sharpe) && sharpe < 0) {
+                warnings.push(`${m.name} has negative Sharpe ratio (${sharpe.toFixed(2)}).`);
             }
+
+            const dd = parseFloat(String(modData.max_drawdown || '0').replace('%', ''));
+            if (dd > 20) {
+                warnings.push(`${m.name} max drawdown is high (${dd.toFixed(1)}%).`);
+            }
+        });
+
+        const card = document.getElementById('warningsCard');
+        const list = document.getElementById('warningsList');
+
+        if (warnings.length > 0) {
+            card.style.display = 'block';
+            list.innerHTML = warnings.map(w => `<li>${w}</li>`).join('');
+        } else {
+            card.style.display = 'none';
         }
-    } catch (e) {
-        console.debug('Could not fetch futures trades:', e);
     }
 
-    // Sort by time
-    allTrades.sort((a, b) => new Date(b.time || b.closed_at || 0) - new Date(a.time || a.closed_at || 0));
+    // Utilities
+    function parsePnl(val) {
+        if (val === null || val === undefined) return 0;
+        if (typeof val === 'number') return val;
+        const cleaned = String(val).replace(/[^0-9.-]/g, '');
+        return parseFloat(cleaned) || 0;
+    }
 
-    // Store globally for filtering
-    allSimulatedTrades = allTrades;
+    function formatTime(t) {
+        if (!t) return 'N/A';
+        return new Date(t).toLocaleString();
+    }
 
-    // Apply filters and render
-    filterAndRenderTrades();
-}
+    function formatDuration(s) {
+        if (!s) return 'N/A';
+        if (s < 60) return `${s}s`;
+        if (s < 3600) return `${Math.floor(s / 60)}m`;
+        return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+    }
 
-function filterAndRenderTrades() {
-    const tbody = document.getElementById('simTradeLog');
-    if (!tbody) return;
+    function formatExitReason(reason) {
+        if (!reason || reason === 'unknown') return '<span class="exit-badge signal">-</span>';
+        const map = {
+            'take_profit': { label: 'TP', class: 'tp' },
+            'take_profit_1': { label: 'TP1', class: 'tp' },
+            'take_profit_2': { label: 'TP2', class: 'tp' },
+            'stop_loss': { label: 'SL', class: 'sl' },
+            'trailing_stop': { label: 'TSL', class: 'tsl' },
+            'signal': { label: 'Signal', class: 'signal' }
+        };
+        const info = map[reason];
+        return info ? `<span class="exit-badge ${info.class}">${info.label}</span>` : `<span class="exit-badge signal">${reason}</span>`;
+    }
 
-    const moduleFilter = document.getElementById('tradeModuleFilter')?.value || 'all';
-    const resultFilter = document.getElementById('tradeResultFilter')?.value || 'all';
-
-    // Apply filters
-    let filteredTrades = allSimulatedTrades.filter(trade => {
-        // Module filter
-        if (moduleFilter !== 'all' && trade.module !== moduleFilter) {
-            return false;
+    async function exportSimulatedTrades() {
+        try {
+            const response = await fetch('/api/simulator/export');
+            if (!response.ok) throw new Error('Export failed');
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `simulator_export_${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (e) {
+            alert('Export failed: ' + e.message);
         }
-
-        // Result filter
-        if (resultFilter !== 'all') {
-            const pnl = parsePnL(trade.pnl || trade.net_pnl);
-            if (resultFilter === 'win' && pnl < 0) return false;
-            if (resultFilter === 'loss' && pnl >= 0) return false;
-        }
-
-        return true;
-    });
-
-    if (filteredTrades.length === 0) {
-        tbody.innerHTML = `
-            <tr>
-                <td colspan="12" class="text-center text-muted">
-                    No trades match the selected filters.
-                </td>
-            </tr>
-        `;
-        return;
     }
-
-    tbody.innerHTML = filteredTrades.slice(0, 50).map(trade => {
-        const pnl = parsePnL(trade.pnl || trade.net_pnl);
-        const pnlClass = pnl >= 0 ? 'text-success' : 'text-danger';
-        // Handle pnl_pct as number or string with %
-        let pnlPctVal = trade.pnl_pct;
-        if (typeof pnlPctVal === 'number') {
-            pnlPctVal = pnlPctVal.toFixed(2) + '%';
-        } else if (typeof pnlPctVal === 'string' && !pnlPctVal.includes('%')) {
-            pnlPctVal = parseFloat(pnlPctVal || 0).toFixed(2) + '%';
-        } else if (!pnlPctVal) {
-            pnlPctVal = '0.00%';
-        }
-        const exitReason = formatExitReason(trade.close_reason || trade.exit_reason || 'unknown');
-
-        return `
-            <tr>
-                <td>${formatTime(trade.time || trade.closed_at)}</td>
-                <td><span class="badge badge-sm badge-${trade.module}">${trade.moduleLabel}</span></td>
-                <td>${trade.symbol || trade.token_symbol || 'N/A'}</td>
-                <td>${trade.side || 'N/A'}</td>
-                <td>$${parseFloat(trade.entry_price || 0).toFixed(6)}</td>
-                <td>$${parseFloat(trade.exit_price || 0).toFixed(6)}</td>
-                <td>${parseFloat(trade.size || trade.amount || 0).toFixed(4)}</td>
-                <td class="${pnlClass}">$${pnl.toFixed(2)}</td>
-                <td class="${pnlClass}">${pnlPctVal}</td>
-                <td>${exitReason}</td>
-                <td>${formatDuration(trade.duration_seconds)}</td>
-            </tr>
-        `;
-    }).join('');
-}
-
-function formatExitReason(reason) {
-    if (!reason || reason === 'unknown' || reason === '-') {
-        return '<span class="badge badge-sm">-</span>';
-    }
-    const reasonMap = {
-        'take_profit': { label: 'TP Hit', class: 'badge-success' },
-        'take_profit_1': { label: 'TP1 Hit', class: 'badge-success' },
-        'take_profit_2': { label: 'TP2 Hit', class: 'badge-success' },
-        'take_profit_3': { label: 'TP3 Hit', class: 'badge-success' },
-        'take_profit_4': { label: 'TP4 Hit', class: 'badge-success' },
-        'stop_loss': { label: 'SL Hit', class: 'badge-danger' },
-        'trailing_stop': { label: 'TSL Hit', class: 'badge-warning' },
-        'manual_close': { label: 'Manual', class: 'badge-info' },
-        'signal_reversal': { label: 'Signal', class: 'badge-secondary' },
-        'signal': { label: 'Signal', class: 'badge-secondary' },
-        'liquidation_protection': { label: 'Liq Prot', class: 'badge-danger' },
-        'liquidation': { label: 'Liquidated', class: 'badge-danger' },
-        'timeout': { label: 'Timeout', class: 'badge-secondary' }
-    };
-    const info = reasonMap[reason];
-    if (!info) {
-        return `<span class="badge badge-sm">${reason}</span>`;
-    }
-    return info.class ? `<span class="badge badge-sm ${info.class}">${info.label}</span>` : `<span class="badge badge-sm">${info.label}</span>`;
-}
-
-function checkValidationWarnings(data) {
-    const warnings = [];
-    const warningsCard = document.getElementById('validationWarnings');
-    const warningsList = document.getElementById('warningsList');
-
-    // Extract stats from nested structures
-    const futuresStats = getStats(data.futures);
-    const solanaStats = getStats(data.solana);
-
-    // Check for live mode without proper validation
-    if (futuresStats?.mode === 'LIVE' && (futuresStats?.total_trades || 0) < 10) {
-        warnings.push('Futures module is in LIVE mode with less than 10 simulated trades. Consider more DRY_RUN testing.');
-    }
-
-    if (solanaStats?.mode === 'LIVE' && (solanaStats?.total_trades || 0) < 10) {
-        warnings.push('Solana module is in LIVE mode with less than 10 simulated trades. Consider more DRY_RUN testing.');
-    }
-
-    // Check for negative Sharpe
-    const futureSharpe = parseFloat(futuresStats?.sharpe_ratio);
-    if (futureSharpe < 0) {
-        warnings.push(`Futures Sharpe ratio is negative (${futureSharpe.toFixed(2)}). Strategy may need adjustment.`);
-    }
-
-    const solanaSharpe = parseFloat(solanaStats?.sharpe_ratio);
-    if (solanaSharpe < 0) {
-        warnings.push(`Solana Sharpe ratio is negative (${solanaSharpe.toFixed(2)}). Strategy may need adjustment.`);
-    }
-
-    // Check for high drawdown
-    const futuresDD = parseFloat((futuresStats?.max_drawdown || futuresStats?.max_drawdown_pct || '0')?.replace('%', ''));
-    if (futuresDD > 20) {
-        warnings.push(`Futures max drawdown is high (${futuresDD}%). Consider tighter risk controls.`);
-    }
-
-    if (warnings.length > 0) {
-        warningsCard.style.display = 'block';
-        warningsList.innerHTML = warnings.map(w => `<li>${w}</li>`).join('');
-    } else {
-        warningsCard.style.display = 'none';
-    }
-}
-
-function formatTime(timeStr) {
-    if (!timeStr) return 'N/A';
-    const date = new Date(timeStr);
-    return date.toLocaleString();
-}
-
-function formatDuration(seconds) {
-    if (!seconds) return 'N/A';
-    if (seconds < 60) return `${seconds}s`;
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-    return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
-}
-
-function filterSimTrades() {
-    // Apply filters without re-fetching (client-side filtering)
-    filterAndRenderTrades();
-}
-
-function onEquityCurveModuleChange() {
-    // Re-render the equity curve with selected module without full refresh
-    // Use cached simulator data if available
-    if (simulatorData && (simulatorData.futures || simulatorData.solana || simulatorData.dex)) {
-        updateEquityCurve(simulatorData);
-    } else {
-        refreshSimulator();
-    }
-}
-
-async function exportSimulatedTrades() {
-    try {
-        const response = await fetch('/api/simulator/export');
-        if (!response.ok) throw new Error('Export failed');
-
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `simulated_trades_${new Date().toISOString().split('T')[0]}.json`;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        a.remove();
-
-        showToast('Export completed', 'success');
-    } catch (error) {
-        showToast('Export failed: ' + error.message, 'error');
-    }
-}
-
-function showToast(message, type) {
-    const container = document.getElementById('toastContainer');
-    if (!container) return;
-
-    const toast = document.createElement('div');
-    toast.className = `toast toast-${type}`;
-    toast.textContent = message;
-    container.appendChild(toast);
-
-    setTimeout(() => toast.remove(), 3000);
-}
 </script>
 {% endblock %}

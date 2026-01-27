@@ -287,8 +287,32 @@ class CopyTradeExecutor:
 
             deadline = int(datetime.now().timestamp()) + 120
 
+            # CRITICAL: Calculate minOut to prevent sandwich attacks
+            # Get quote first to determine expected output
+            try:
+                # Add getAmountsOut to ABI for quote
+                quote_abi = [{
+                    "inputs": [
+                        {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+                        {"internalType": "address[]", "name": "path", "type": "address[]"}
+                    ],
+                    "name": "getAmountsOut",
+                    "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
+                    "stateMutability": "view",
+                    "type": "function"
+                }]
+                quote_router = w3.eth.contract(address=Web3.to_checksum_address(ROUTER), abi=quote_abi)
+                amounts = quote_router.functions.getAmountsOut(amount_wei, path).call()
+                expected_out = amounts[-1]
+                # Apply slippage tolerance (e.g., 10% slippage = accept 90% of expected)
+                min_out = int(expected_out * (100 - slippage) / 100)
+                logger.info(f"EVM Swap: Expected {expected_out}, minOut {min_out} ({slippage}% slippage)")
+            except Exception as quote_error:
+                logger.warning(f"Could not get quote, using 0 minOut (RISKY): {quote_error}")
+                min_out = 0  # Fallback - still risky but at least we tried
+
             tx = router.functions.swapExactETHForTokens(
-                0,  # Min output
+                min_out,  # Apply slippage protection
                 path,
                 Web3.to_checksum_address(self.evm_wallet),
                 deadline

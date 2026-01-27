@@ -1,120 +1,239 @@
 """
-Solana Listener for Sniper Module - CREDIT-EFFICIENT VERSION
-Uses polling instead of WebSocket subscriptions to minimize Helius credit usage.
+Solana Listener for Sniper Module - ROBUST MULTI-AMM VERSION
 
-Supports:
-- Raydium V4 AMM new pool detection via polling
-- Pump.fun bonding curve graduation
-- Configurable poll intervals
+Supports detection from multiple sources:
+- Raydium V4 AMM pools
+- Raydium CPMM pools
+- Pump.fun token launches and graduations
+- Orca Whirlpools
+- Meteora dynamic pools
+
+Uses credit-efficient polling with smart filtering.
 """
 
 import logging
 import asyncio
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set, Tuple
 import aiohttp
 import json
 import os
 from datetime import datetime, timedelta
+from dataclasses import dataclass
+from enum import Enum
 
 logger = logging.getLogger("SolanaListener")
 
-# Program IDs
-RAYDIUM_V4_PROGRAM_ID = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
-RAYDIUM_CPMM_PROGRAM_ID = "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK"
-PUMP_FUN_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 
-# WSOL mint address
+class PoolSource(Enum):
+    """Source of pool detection"""
+    RAYDIUM_V4 = "raydium_v4"
+    RAYDIUM_CPMM = "raydium_cpmm"
+    PUMP_FUN = "pump_fun"
+    ORCA = "orca"
+    METEORA = "meteora"
+    UNKNOWN = "unknown"
+
+
+# Program IDs for different AMMs
+PROGRAM_IDS = {
+    PoolSource.RAYDIUM_V4: "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+    PoolSource.RAYDIUM_CPMM: "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+    PoolSource.PUMP_FUN: "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+    PoolSource.ORCA: "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+    PoolSource.METEORA: "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+}
+
+# Pool initialization keywords by AMM
+INIT_KEYWORDS = {
+    PoolSource.RAYDIUM_V4: ["initialize2", "initialize", "initializepool", "create_pool", "init"],
+    PoolSource.RAYDIUM_CPMM: ["initialize", "create_pool", "init_pool"],
+    PoolSource.PUMP_FUN: ["create", "buy", "sell", "init"],  # Pump.fun uses different keywords
+    PoolSource.ORCA: ["initializetick", "initializepool", "openposition"],
+    PoolSource.METEORA: ["initialize", "create_pool", "init"],
+}
+
+# Known mints to filter out (stablecoins, wrapped SOL)
 WSOL_MINT = "So11111111111111111111111111111111111111112"
+USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+
+FILTERED_MINTS = {WSOL_MINT, USDC_MINT, USDT_MINT}
+
+
+@dataclass
+class DetectedPool:
+    """Represents a newly detected pool"""
+    token_address: str
+    pair_address: str
+    chain: str
+    source: PoolSource
+    timestamp: datetime
+    signature: str
+    base_liquidity: Optional[float] = None
+    metadata: Optional[Dict] = None
 
 
 class SolanaListener:
     """
-    Credit-efficient Solana listener using polling instead of WebSocket.
-    Polls for new Raydium pools every 30 seconds (configurable).
+    Robust Solana listener using polling with multi-AMM support.
 
-    Credit Usage:
-    - Polling mode: ~2-4 API calls per minute (minimal credits)
-    - WebSocket mode: 1000s of messages per second (MASSIVE credits)
+    Features:
+    - Polls multiple AMM programs for new pools
+    - Smart filtering to avoid spam tokens
+    - Rate limit handling with RPC rotation
+    - Detailed logging for debugging
     """
 
     def __init__(self, config: Dict):
         self.config = config
-        self.rpc_url = config.get('solana', {}).get('rpc_url')
+        self.rpc_url = self._get_rpc_url(config)
+        self.helius_api_key = self._get_helius_key()
 
-        # Use Pool Engine with fallback
-        if not self.rpc_url:
-            try:
-                from config.rpc_provider import RPCProvider
-                self.rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC')
-            except Exception:
-                pass
-        if not self.rpc_url:
-            self.rpc_url = os.getenv('SOLANA_RPC_URL')
-
-        # Get Helius API from Pool Engine or env
-        self.helius_api_key = None
-        try:
-            from config.rpc_provider import RPCProvider
-            self.helius_api_key = RPCProvider.get_api_sync('HELIUS_API')
-        except Exception:
-            pass
-        if not self.helius_api_key:
-            # Try secrets manager first, then env fallback
-            try:
-                from security.secrets_manager import secrets
-                self.helius_api_key = secrets.get('HELIUS_API_KEY', log_access=False) or os.getenv('HELIUS_API_KEY')
-            except Exception:
-                self.helius_api_key = os.getenv('HELIUS_API_KEY')
-
-        # Polling configuration (credit-efficient)
-        self.poll_interval = int(os.getenv('SNIPER_POLL_INTERVAL', '30'))  # seconds
+        # Polling configuration
+        self.poll_interval = int(os.getenv('SNIPER_POLL_INTERVAL', '15'))  # Faster polling
         self.use_websocket = os.getenv('SNIPER_USE_WEBSOCKET', 'false').lower() == 'true'
 
+        # Which AMMs to monitor (configurable)
+        self.enabled_sources = self._get_enabled_sources()
+
         # State
-        self.known_signatures: Set[str] = set()
+        self.known_signatures: Dict[PoolSource, Set[str]] = {
+            source: set() for source in PoolSource
+        }
         self.new_pools_queue: asyncio.Queue = asyncio.Queue()
         self.is_running = False
         self.poll_task: Optional[asyncio.Task] = None
-        self.last_slot: Optional[int] = None
 
-        # Stats for logging
+        # Stats
         self._stats = {
             'polls': 0,
             'pools_detected': 0,
             'pools_queued': 0,
             'api_calls': 0,
-            'last_log_time': datetime.now()
+            'errors': 0,
+            'last_log_time': datetime.now(),
+            'by_source': {source.value: 0 for source in PoolSource}
         }
         self._log_interval = timedelta(minutes=5)
+        self._max_signatures = 500  # Per source
 
-        # Limit known signatures to prevent memory bloat
-        self._max_signatures = 1000
+        # Session reuse for better performance
+        self._session: Optional[aiohttp.ClientSession] = None
+
+    def _get_rpc_url(self, config: Dict) -> Optional[str]:
+        """Get RPC URL from config, Pool Engine, or env"""
+        rpc = config.get('solana', {}).get('rpc_url')
+        if rpc:
+            return rpc
+
+        try:
+            from config.rpc_provider import RPCProvider
+            rpc = RPCProvider.get_rpc_sync('SOLANA_RPC')
+            if rpc:
+                return rpc
+        except Exception:
+            pass
+
+        return os.getenv('SOLANA_RPC_URL')
+
+    def _get_helius_key(self) -> Optional[str]:
+        """Get Helius API key"""
+        try:
+            from config.rpc_provider import RPCProvider
+            key = RPCProvider.get_api_sync('HELIUS_API')
+            if key:
+                return key
+        except Exception:
+            pass
+
+        try:
+            from security.secrets_manager import secrets
+            key = secrets.get('HELIUS_API_KEY', log_access=False)
+            if key:
+                return key
+        except Exception:
+            pass
+
+        return os.getenv('HELIUS_API_KEY')
+
+    def _get_enabled_sources(self) -> List[PoolSource]:
+        """Get list of enabled AMM sources from config"""
+        sources_str = os.getenv('SNIPER_AMM_SOURCES', 'raydium_v4,pump_fun')
+        enabled = []
+
+        for source_name in sources_str.split(','):
+            source_name = source_name.strip().lower()
+            try:
+                enabled.append(PoolSource(source_name))
+            except ValueError:
+                logger.warning(f"Unknown AMM source: {source_name}")
+
+        # Always include Raydium V4 as fallback
+        if not enabled:
+            enabled = [PoolSource.RAYDIUM_V4]
+
+        return enabled
 
     async def initialize(self):
-        """Initialize the Solana listener with credit-efficient polling"""
-        logger.info(f"🔌 Initializing Solana Listener (POLLING MODE)...")
-        logger.info(f"   RPC: {self.rpc_url[:50] if self.rpc_url else 'Not configured'}...")
+        """Initialize the Solana listener"""
+        logger.info("🔌 Initializing Solana Listener (MULTI-AMM VERSION)...")
+        logger.info(f"   RPC: {self.rpc_url[:50] if self.rpc_url else 'NOT CONFIGURED'}...")
         logger.info(f"   Poll Interval: {self.poll_interval}s")
-        logger.info(f"   WebSocket Mode: {'ENABLED (high credits!)' if self.use_websocket else 'DISABLED (credit-safe)'}")
+        logger.info(f"   Enabled AMMs: {[s.value for s in self.enabled_sources]}")
 
         if not self.rpc_url:
-            logger.error("❌ No RPC URL provided for Solana Listener")
+            logger.error("❌ No RPC URL provided - Solana detection DISABLED")
+            logger.error("   Set SOLANA_RPC_URL in .env or configure Pool Engine")
+            return
+
+        # Verify RPC is working
+        if not await self._verify_rpc():
+            logger.error("❌ RPC verification failed - check your RPC URL")
             return
 
         self.is_running = True
 
-        if self.use_websocket:
-            logger.warning("⚠️ WebSocket mode enabled - this consumes MASSIVE credits!")
-            logger.warning("   Set SNIPER_USE_WEBSOCKET=false to use credit-efficient polling")
-            # Don't start WebSocket - too expensive
-            logger.info("   WebSocket disabled to protect credits. Using polling instead.")
+        # Create session
+        self._session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=30)
+        )
 
-        # Start credit-efficient polling
+        # Start polling
         self.poll_task = asyncio.create_task(self._run_polling_listener())
-        logger.info("✅ Solana Listener initialized with polling (credit-efficient)")
+        logger.info("✅ Solana Listener initialized successfully")
+
+    async def _verify_rpc(self) -> bool:
+        """Verify RPC connection is working"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                payload = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getHealth"
+                }
+                async with session.post(self.rpc_url, json=payload, timeout=10) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data.get('result') == 'ok':
+                            logger.info("   RPC health check: OK")
+                            return True
+                        # Some RPCs don't support getHealth, try getSlot
+
+                payload = {"jsonrpc": "2.0", "id": 1, "method": "getSlot"}
+                async with session.post(self.rpc_url, json=payload, timeout=10) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data.get('result'):
+                            logger.info(f"   RPC verified (slot: {data['result']})")
+                            return True
+
+        except Exception as e:
+            logger.error(f"   RPC verification failed: {e}")
+
+        return False
 
     async def get_new_pools(self) -> List[Dict]:
-        """Get newly detected pools from the queue."""
+        """Get newly detected pools from the queue"""
         new_pools = []
         while not self.new_pools_queue.empty():
             try:
@@ -125,61 +244,99 @@ class SolanaListener:
         return new_pools
 
     async def _run_polling_listener(self):
-        """Main polling loop - credit efficient"""
-        logger.info(f"📡 Starting pool detection polling (every {self.poll_interval}s)")
+        """Main polling loop"""
+        logger.info(f"📡 Starting multi-AMM pool detection (every {self.poll_interval}s)")
 
         while self.is_running:
             try:
-                await self._poll_for_new_pools()
-                self._stats['polls'] += 1
+                # Poll each enabled source
+                for source in self.enabled_sources:
+                    if not self.is_running:
+                        break
+                    await self._poll_source(source)
+                    # Small delay between sources to avoid rate limits
+                    await asyncio.sleep(0.5)
 
-                # Log stats periodically
+                self._stats['polls'] += 1
                 await self._log_stats_if_needed()
 
             except Exception as e:
                 logger.error(f"Polling error: {e}")
+                self._stats['errors'] += 1
 
-            # Wait before next poll
             await asyncio.sleep(self.poll_interval)
 
-    async def _poll_for_new_pools(self):
-        """Poll for new Raydium pool signatures"""
+    async def _poll_source(self, source: PoolSource):
+        """Poll a specific AMM source for new pools"""
+        program_id = PROGRAM_IDS.get(source)
+        if not program_id:
+            return
+
         try:
-            async with aiohttp.ClientSession() as session:
-                # Get recent signatures for Raydium V4
-                signatures = await self._get_recent_signatures(
-                    session,
-                    RAYDIUM_V4_PROGRAM_ID,
-                    limit=10  # Only check last 10 transactions
-                )
+            # Get recent signatures
+            signatures = await self._get_recent_signatures(program_id, limit=20)
 
-                for sig_info in signatures:
-                    signature = sig_info.get('signature')
+            if not signatures:
+                logger.debug(f"No signatures returned for {source.value}")
+                return
 
-                    if not signature or signature in self.known_signatures:
-                        continue
+            new_pools_found = 0
 
-                    self.known_signatures.add(signature)
+            for sig_info in signatures:
+                signature = sig_info.get('signature')
+                if not signature:
+                    continue
 
-                    # Check if this is a pool initialization
-                    pool_info = await self._check_and_fetch_pool(session, signature)
+                # Skip if already seen
+                if signature in self.known_signatures[source]:
+                    continue
 
-                    if pool_info:
-                        self._stats['pools_detected'] += 1
-                        self._stats['pools_queued'] += 1
-                        await self.new_pools_queue.put(pool_info)
-                        logger.info(f"🆕 New pool detected: {pool_info.get('token_address', 'unknown')[:16]}...")
+                self.known_signatures[source].add(signature)
 
-                # Cleanup old signatures to prevent memory bloat
-                if len(self.known_signatures) > self._max_signatures:
-                    # Keep only most recent half
-                    self.known_signatures = set(list(self.known_signatures)[-self._max_signatures//2:])
+                # Check if this is a pool creation
+                pool_info = await self._check_pool_transaction(signature, source)
+
+                if pool_info:
+                    new_pools_found += 1
+                    self._stats['pools_detected'] += 1
+                    self._stats['pools_queued'] += 1
+                    self._stats['by_source'][source.value] += 1
+
+                    # Convert to dict for queue
+                    pool_dict = {
+                        'token_address': pool_info.token_address,
+                        'pair_address': pool_info.pair_address,
+                        'chain': 'solana',
+                        'source': source.value,
+                        'timestamp': pool_info.timestamp.isoformat(),
+                        'signature': signature,
+                        'base_liquidity': pool_info.base_liquidity,
+                        'metadata': pool_info.metadata
+                    }
+
+                    await self.new_pools_queue.put(pool_dict)
+
+                    logger.info(
+                        f"🆕 [{source.value.upper()}] New pool: "
+                        f"{pool_info.token_address[:12]}... "
+                        f"(pair: {pool_info.pair_address[:12] if pool_info.pair_address else 'N/A'}...)"
+                    )
+
+            if new_pools_found > 0:
+                logger.info(f"   Found {new_pools_found} new pools from {source.value}")
+
+            # Cleanup old signatures
+            self._cleanup_signatures(source)
 
         except Exception as e:
-            logger.error(f"Error polling for pools: {e}")
+            logger.error(f"Error polling {source.value}: {e}")
+            self._stats['errors'] += 1
 
-    async def _get_recent_signatures(self, session: aiohttp.ClientSession,
-                                      program_id: str, limit: int = 10) -> List[Dict]:
+    async def _get_recent_signatures(
+        self,
+        program_id: str,
+        limit: int = 20
+    ) -> List[Dict]:
         """Get recent transaction signatures for a program"""
         self._stats['api_calls'] += 1
 
@@ -194,39 +351,44 @@ class SolanaListener:
         }
 
         try:
-            async with session.post(self.rpc_url, json=payload, timeout=15) as response:
+            if not self._session:
+                self._session = aiohttp.ClientSession()
+
+            async with self._session.post(
+                self.rpc_url,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as response:
+
                 if response.status == 429:
-                    logger.warning("⚠️ Rate limited - backing off and reporting to pool")
-                    # Report to Pool Engine for rotation
-                    try:
-                        from config.rpc_provider import RPCProvider
-                        await RPCProvider.report_rate_limit('SOLANA_RPC', self.rpc_url, 300)
-                        # Get new RPC URL for next request
-                        new_url = await RPCProvider.get_rpc('SOLANA_RPC')
-                        if new_url and new_url != self.rpc_url:
-                            self.rpc_url = new_url
-                            logger.info(f"🔄 Rotated to new RPC endpoint")
-                    except Exception:
-                        pass
-                    await asyncio.sleep(60)
+                    await self._handle_rate_limit()
                     return []
 
                 if response.status != 200:
+                    logger.warning(f"RPC returned status {response.status}")
                     return []
 
                 data = await response.json()
+
+                if 'error' in data:
+                    logger.warning(f"RPC error: {data['error']}")
+                    return []
+
                 return data.get('result', [])
 
         except asyncio.TimeoutError:
-            logger.debug("Timeout getting signatures")
+            logger.debug(f"Timeout getting signatures for {program_id[:12]}...")
             return []
         except Exception as e:
             logger.debug(f"Error getting signatures: {e}")
             return []
 
-    async def _check_and_fetch_pool(self, session: aiohttp.ClientSession,
-                                     signature: str) -> Optional[Dict]:
-        """Check if transaction is a pool init and fetch details"""
+    async def _check_pool_transaction(
+        self,
+        signature: str,
+        source: PoolSource
+    ) -> Optional[DetectedPool]:
+        """Check if a transaction is a pool creation"""
         self._stats['api_calls'] += 1
 
         payload = {
@@ -240,7 +402,12 @@ class SolanaListener:
         }
 
         try:
-            async with session.post(self.rpc_url, json=payload, timeout=15) as response:
+            async with self._session.post(
+                self.rpc_url,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as response:
+
                 if response.status != 200:
                     return None
 
@@ -250,81 +417,131 @@ class SolanaListener:
                 if not result:
                     return None
 
-                # Check if this is a pool initialization
+                # Skip failed transactions
                 meta = result.get('meta', {})
                 if meta.get('err') is not None:
-                    return None  # Failed transaction
+                    return None
 
-                # Check logs for init keywords
+                # Check logs for pool init
                 log_messages = meta.get('logMessages', [])
-                if not self._is_pool_init(log_messages):
+
+                if not self._is_pool_init(log_messages, source):
                     return None
 
                 # Extract token info
-                token_mint, pool_address = self._parse_pool_transaction(result)
+                token_mint, pool_address, liquidity = self._parse_pool_transaction(
+                    result, source
+                )
 
-                if token_mint and token_mint != WSOL_MINT:
-                    return {
-                        'token_address': token_mint,
-                        'pair_address': pool_address or signature,
-                        'chain': 'solana',
-                        'timestamp': datetime.utcnow().isoformat(),
-                        'signature': signature,
-                        'source': 'polling'
+                # Filter out known mints and invalid tokens
+                if not token_mint or token_mint in FILTERED_MINTS:
+                    return None
+
+                # Validate token address format (base58, 32-44 chars)
+                if len(token_mint) < 32 or len(token_mint) > 44:
+                    return None
+
+                return DetectedPool(
+                    token_address=token_mint,
+                    pair_address=pool_address or signature,
+                    chain='solana',
+                    source=source,
+                    timestamp=datetime.utcnow(),
+                    signature=signature,
+                    base_liquidity=liquidity,
+                    metadata={
+                        'program_id': PROGRAM_IDS.get(source),
+                        'block_time': result.get('blockTime')
                     }
+                )
 
         except asyncio.TimeoutError:
             logger.debug(f"Timeout fetching transaction: {signature[:16]}...")
         except Exception as e:
-            logger.debug(f"Error fetching pool: {e}")
+            logger.debug(f"Error checking pool: {e}")
 
         return None
 
-    def _is_pool_init(self, logs: List[str]) -> bool:
+    def _is_pool_init(self, logs: List[str], source: PoolSource) -> bool:
         """Check if logs indicate a pool initialization"""
-        init_keywords = [
-            'initialize2',
-            'Initialize',
-            'InitializePool',
-            'create_pool',
-            'init'
-        ]
+        keywords = INIT_KEYWORDS.get(source, ['init', 'create'])
 
         for log in logs:
             log_lower = log.lower()
-            for keyword in init_keywords:
+
+            # Check for program-specific keywords
+            for keyword in keywords:
                 if keyword.lower() in log_lower:
                     return True
+
+            # Generic pool creation indicators
+            if any(indicator in log_lower for indicator in [
+                'pool created',
+                'liquidity added',
+                'new pool',
+                'market created'
+            ]):
+                return True
+
         return False
 
-    def _parse_pool_transaction(self, tx_result: Dict) -> tuple:
-        """Parse transaction to extract token mint and pool address"""
+    def _parse_pool_transaction(
+        self,
+        tx_result: Dict,
+        source: PoolSource
+    ) -> Tuple[Optional[str], Optional[str], Optional[float]]:
+        """Parse transaction to extract token mint, pool address, and liquidity"""
         token_mint = None
         pool_address = None
+        liquidity = None
 
         try:
             meta = tx_result.get('meta', {})
 
-            # Look through post token balances for new token
+            # Find new token from post/pre balance difference
             post_balances = meta.get('postTokenBalances', [])
             pre_balances = meta.get('preTokenBalances', [])
-            pre_mints = {b.get('mint') for b in pre_balances}
+            pre_mints = {b.get('mint') for b in pre_balances if b.get('mint')}
 
+            # Look for new mints that appeared after tx
             for balance in post_balances:
                 mint = balance.get('mint')
-                if mint and mint != WSOL_MINT and mint not in pre_mints:
+                if mint and mint not in FILTERED_MINTS and mint not in pre_mints:
                     token_mint = mint
                     break
 
-            # Fallback: find any non-WSOL mint
+            # Fallback: find any non-filtered mint
             if not token_mint:
                 for balance in post_balances:
                     mint = balance.get('mint')
-                    if mint and mint != WSOL_MINT:
+                    if mint and mint not in FILTERED_MINTS:
                         token_mint = mint
                         break
 
-            # Try to find pool address from inner instructions
+            # Try to extract liquidity from balance changes
+            if token_mint:
+                for balance in post_balances:
+                    if balance.get('mint') == WSOL_MINT:
+                        amount = balance.get('uiTokenAmount', {}).get('uiAmount')
+                        if amount:
+                            liquidity = float(amount)
+                            break
+
+            # Try to find pool address from account keys or inner instructions
+            message = tx_result.get('transaction', {}).get('message', {})
+            account_keys = message.get('accountKeys', [])
+
+            # Pool address is often the 3rd-5th account in Raydium txs
+            if source == PoolSource.RAYDIUM_V4 and len(account_keys) > 4:
+                for i in range(2, min(6, len(account_keys))):
+                    key = account_keys[i]
+                    if isinstance(key, dict):
+                        key = key.get('pubkey')
+                    if key and key != token_mint and key != WSOL_MINT:
+                        pool_address = key
+                        break
+
+            # Try inner instructions for createAccount
             inner_instructions = meta.get('innerInstructions', [])
             for inner in inner_instructions:
                 for ix in inner.get('instructions', []):
@@ -332,13 +549,39 @@ class SolanaListener:
                         if ix.get('program') == 'system':
                             parsed = ix.get('parsed', {})
                             if parsed.get('type') == 'createAccount':
-                                pool_address = parsed.get('info', {}).get('newAccount')
-                                break
+                                new_account = parsed.get('info', {}).get('newAccount')
+                                if new_account:
+                                    pool_address = new_account
+                                    break
 
         except Exception as e:
             logger.debug(f"Error parsing transaction: {e}")
 
-        return token_mint, pool_address
+        return token_mint, pool_address, liquidity
+
+    def _cleanup_signatures(self, source: PoolSource):
+        """Clean up old signatures to prevent memory bloat"""
+        sigs = self.known_signatures[source]
+        if len(sigs) > self._max_signatures:
+            # Keep most recent half
+            self.known_signatures[source] = set(list(sigs)[-self._max_signatures//2:])
+
+    async def _handle_rate_limit(self):
+        """Handle rate limiting by backing off and trying to rotate RPC"""
+        logger.warning("⚠️ Rate limited - backing off...")
+
+        try:
+            from config.rpc_provider import RPCProvider
+            await RPCProvider.report_rate_limit('SOLANA_RPC', self.rpc_url, 300)
+
+            new_url = await RPCProvider.get_rpc('SOLANA_RPC')
+            if new_url and new_url != self.rpc_url:
+                self.rpc_url = new_url
+                logger.info(f"🔄 Rotated to new RPC endpoint")
+        except Exception:
+            pass
+
+        await asyncio.sleep(60)
 
     async def _log_stats_if_needed(self):
         """Log detection stats periodically"""
@@ -348,10 +591,22 @@ class SolanaListener:
             detected = self._stats['pools_detected']
             queued = self._stats['pools_queued']
             api_calls = self._stats['api_calls']
+            errors = self._stats['errors']
 
-            logger.info(f"📊 Solana Listener Stats (Last 5 min): "
-                       f"Polls: {polls} | API Calls: {api_calls} | "
-                       f"Pools Detected: {detected} | Queued: {queued}")
+            # Log by source
+            source_stats = ", ".join([
+                f"{s}: {c}" for s, c in self._stats['by_source'].items() if c > 0
+            ]) or "No pools detected"
+
+            logger.info(
+                f"📊 Solana Listener Stats (Last 5 min):\n"
+                f"   Polls: {polls} | API Calls: {api_calls} | Errors: {errors}\n"
+                f"   Pools Detected: {detected} | Queued: {queued}\n"
+                f"   By Source: {source_stats}"
+            )
+
+            if detected == 0:
+                logger.warning("   ⚠️ No pools detected - verify RPC is working and AMMs are active")
 
             # Reset stats
             self._stats = {
@@ -359,7 +614,9 @@ class SolanaListener:
                 'pools_detected': 0,
                 'pools_queued': 0,
                 'api_calls': 0,
-                'last_log_time': now
+                'errors': 0,
+                'last_log_time': now,
+                'by_source': {source.value: 0 for source in PoolSource}
             }
 
     async def close(self):
@@ -372,5 +629,8 @@ class SolanaListener:
                 await self.poll_task
             except asyncio.CancelledError:
                 pass
+
+        if self._session:
+            await self._session.close()
 
         logger.info("🛑 Solana Listener closed")
