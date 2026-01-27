@@ -9329,24 +9329,41 @@ class DashboardEndpoints:
                     WHERE status='closed'
                 """)
 
-                module_stats = {'DEX': {'pnl': 0, 'wins': 0, 'total': 0},
-                                'Futures': {'pnl': 0, 'wins': 0, 'total': 0},
-                                'Solana': {'pnl': 0, 'wins': 0, 'total': 0},
-                                'AI': {'pnl': 0, 'wins': 0, 'total': 0}}
+                # All 7 modules
+                module_stats = {
+                    'DEX': {'pnl': 0, 'wins': 0, 'total': 0},
+                    'Futures': {'pnl': 0, 'wins': 0, 'total': 0},
+                    'Solana': {'pnl': 0, 'wins': 0, 'total': 0},
+                    'Sniper': {'pnl': 0, 'wins': 0, 'total': 0},
+                    'Arbitrage': {'pnl': 0, 'wins': 0, 'total': 0},
+                    'CopyTrade': {'pnl': 0, 'wins': 0, 'total': 0},
+                    'AI': {'pnl': 0, 'wins': 0, 'total': 0}
+                }
 
                 for r in rows:
                     pnl = float(r['profit_loss'] or 0)
-                    chain = r['chain'] or ''
-                    strat = r['strategy'] or ''
+                    chain = (r['chain'] or '').lower()
+                    strat = (r['strategy'] or '').lower()
 
-                    mod = 'DEX' # Default
-                    if 'solana' in chain.lower(): mod = 'Solana'
-                    elif 'future' in strat.lower() or 'perp' in strat.lower(): mod = 'Futures'
-                    elif 'ai' in strat.lower(): mod = 'AI'
+                    # Map to module based on chain/strategy
+                    mod = 'DEX'  # Default
+                    if 'solana' in chain or 'pumpfun' in strat or 'jupiter' in strat:
+                        mod = 'Solana'
+                    elif 'future' in strat or 'perp' in strat or 'binance_futures' in chain:
+                        mod = 'Futures'
+                    elif 'sniper' in strat or 'snipe' in strat:
+                        mod = 'Sniper'
+                    elif 'arbitrage' in strat or 'arb' in strat:
+                        mod = 'Arbitrage'
+                    elif 'copy' in strat or 'mirror' in strat:
+                        mod = 'CopyTrade'
+                    elif 'ai' in strat or 'sentiment' in strat:
+                        mod = 'AI'
 
                     module_stats[mod]['pnl'] += pnl
                     module_stats[mod]['total'] += 1
-                    if pnl > 0: module_stats[mod]['wins'] += 1
+                    if pnl > 0:
+                        module_stats[mod]['wins'] += 1
 
                 labels = list(module_stats.keys())
                 pnl_data = [module_stats[k]['pnl'] for k in labels]
@@ -9460,13 +9477,170 @@ class DashboardEndpoints:
                     'datasets': [{'label': 'Equity', 'data': equity_data, 'borderColor': '#3b82f6', 'fill': True}]
                 }
 
-                # Populate remaining charts with real or calculated data
-                # (Duration, Fees, Drawdown, etc. can be derived from the same datasets)
-                # For brevity, we map some to existing data or empty if no data
-                charts['chartDuration'] = {'labels': [], 'datasets': []} # TODO: Implement duration query
-                charts['chartFees'] = {'labels': [], 'datasets': []}
-                charts['chartDrawdown'] = {'labels': [], 'datasets': []}
-                # ... others initialized as empty or derived
+                # 7. Chain Volume
+                charts['chartChainVol'] = {
+                    'labels': chain_labels,
+                    'datasets': [{'label': 'Volume', 'data': [float(r['volume'] or 0) for r in chain_rows], 'backgroundColor': '#22d3ee'}]
+                }
+
+                # 8. Average Trade Duration by Module
+                duration_rows = await conn.fetch("""
+                    SELECT strategy,
+                           AVG(EXTRACT(EPOCH FROM (exit_timestamp - entry_timestamp))/3600) as avg_hours
+                    FROM trades
+                    WHERE status='closed' AND exit_timestamp IS NOT NULL AND entry_timestamp IS NOT NULL
+                    GROUP BY strategy
+                """)
+                duration_labels = []
+                duration_vals = []
+                for r in duration_rows:
+                    strat = (r['strategy'] or 'unknown').lower()
+                    # Map to readable name
+                    if 'future' in strat or 'perp' in strat:
+                        duration_labels.append('Futures')
+                    elif 'solana' in strat or 'pump' in strat:
+                        duration_labels.append('Solana')
+                    elif 'sniper' in strat:
+                        duration_labels.append('Sniper')
+                    elif 'arb' in strat:
+                        duration_labels.append('Arbitrage')
+                    elif 'copy' in strat:
+                        duration_labels.append('CopyTrade')
+                    elif 'ai' in strat:
+                        duration_labels.append('AI')
+                    else:
+                        duration_labels.append('DEX')
+                    duration_vals.append(round(float(r['avg_hours'] or 0), 2))
+
+                charts['chartDuration'] = {
+                    'labels': duration_labels if duration_labels else ['No Data'],
+                    'datasets': [{'label': 'Avg Hours', 'data': duration_vals if duration_vals else [0], 'backgroundColor': '#f59e0b'}]
+                }
+
+                # 9. Fee Analysis by Chain
+                fee_rows = await conn.fetch("""
+                    SELECT chain, SUM(COALESCE(
+                        (metadata->>'gas_cost')::numeric,
+                        (metadata->>'fee')::numeric,
+                        0
+                    )) as total_fees
+                    FROM trades
+                    WHERE status='closed'
+                    GROUP BY chain
+                """)
+                fee_labels = [r['chain'] or 'Unknown' for r in fee_rows]
+                fee_vals = [float(r['total_fees'] or 0) for r in fee_rows]
+
+                charts['chartFees'] = {
+                    'labels': fee_labels if fee_labels else ['No Data'],
+                    'datasets': [{'label': 'Fees ($)', 'data': fee_vals if fee_vals else [0], 'backgroundColor': '#ef4444'}]
+                }
+
+                # 10. Drawdown Analysis (calculate running max drawdown)
+                drawdown_data = []
+                drawdown_labels = []
+                peak = initial_balance
+                for i, r in enumerate(equity_rows):
+                    equity = initial_balance + sum(float(equity_rows[j]['profit_loss'] or 0) for j in range(i+1))
+                    peak = max(peak, equity)
+                    drawdown = ((peak - equity) / peak * 100) if peak > 0 else 0
+                    drawdown_data.append(round(drawdown, 2))
+                    drawdown_labels.append(r['exit_timestamp'].strftime('%Y-%m-%d') if r['exit_timestamp'] else '')
+
+                charts['chartDrawdown'] = {
+                    'labels': drawdown_labels if drawdown_labels else ['No Data'],
+                    'datasets': [{
+                        'label': 'Drawdown %',
+                        'data': drawdown_data if drawdown_data else [0],
+                        'borderColor': '#ef4444',
+                        'backgroundColor': 'rgba(239, 68, 68, 0.2)',
+                        'fill': True
+                    }]
+                }
+
+                # 11. Risk/Reward Ratio by Module
+                rr_rows = await conn.fetch("""
+                    SELECT strategy,
+                           AVG(CASE WHEN profit_loss > 0 THEN profit_loss ELSE 0 END) as avg_win,
+                           AVG(CASE WHEN profit_loss < 0 THEN ABS(profit_loss) ELSE 0 END) as avg_loss
+                    FROM trades
+                    WHERE status='closed'
+                    GROUP BY strategy
+                """)
+                rr_labels = []
+                rr_vals = []
+                for r in rr_rows:
+                    strat = (r['strategy'] or 'dex').lower()
+                    if 'future' in strat:
+                        rr_labels.append('Futures')
+                    elif 'solana' in strat:
+                        rr_labels.append('Solana')
+                    elif 'sniper' in strat:
+                        rr_labels.append('Sniper')
+                    elif 'arb' in strat:
+                        rr_labels.append('Arbitrage')
+                    elif 'copy' in strat:
+                        rr_labels.append('CopyTrade')
+                    elif 'ai' in strat:
+                        rr_labels.append('AI')
+                    else:
+                        rr_labels.append('DEX')
+                    avg_win = float(r['avg_win'] or 0)
+                    avg_loss = float(r['avg_loss'] or 1)
+                    rr_vals.append(round(avg_win / avg_loss, 2) if avg_loss > 0 else 0)
+
+                charts['chartRR'] = {
+                    'labels': rr_labels if rr_labels else ['No Data'],
+                    'datasets': [{'label': 'R:R Ratio', 'data': rr_vals if rr_vals else [0], 'backgroundColor': '#8b5cf6'}]
+                }
+
+                # 12. Slippage Impact
+                slippage_rows = await conn.fetch("""
+                    SELECT chain,
+                           AVG(COALESCE(
+                               (metadata->>'slippage')::numeric,
+                               (metadata->>'price_impact')::numeric,
+                               0
+                           )) as avg_slippage
+                    FROM trades
+                    WHERE status='closed'
+                    GROUP BY chain
+                """)
+                slippage_labels = [r['chain'] or 'Unknown' for r in slippage_rows]
+                slippage_vals = [round(float(r['avg_slippage'] or 0), 3) for r in slippage_rows]
+
+                charts['chartSlippage'] = {
+                    'labels': slippage_labels if slippage_labels else ['No Data'],
+                    'datasets': [{'label': 'Avg Slippage %', 'data': slippage_vals if slippage_vals else [0], 'backgroundColor': '#ec4899'}]
+                }
+
+                # 13. Win/Loss Streaks
+                streak_rows = await conn.fetch("""
+                    SELECT profit_loss FROM trades WHERE status='closed' ORDER BY exit_timestamp
+                """)
+                max_win_streak = 0
+                max_loss_streak = 0
+                current_win = 0
+                current_loss = 0
+                for r in streak_rows:
+                    pnl = float(r['profit_loss'] or 0)
+                    if pnl > 0:
+                        current_win += 1
+                        current_loss = 0
+                        max_win_streak = max(max_win_streak, current_win)
+                    elif pnl < 0:
+                        current_loss += 1
+                        current_win = 0
+                        max_loss_streak = max(max_loss_streak, current_loss)
+
+                charts['chartStreaks'] = {
+                    'labels': ['Win Streak', 'Loss Streak'],
+                    'datasets': [{
+                        'label': 'Max Consecutive',
+                        'data': [max_win_streak, max_loss_streak],
+                        'backgroundColor': ['#10b981', '#ef4444']
+                    }]
+                }
 
             return web.json_response({'success': True, 'data': charts})
         except Exception as e:
