@@ -9233,26 +9233,29 @@ class DashboardEndpoints:
                     wallets = [wallet_data]
                     data_source = 'analyzed'
             else:
-                # Try to get real wallets from Birdeye API
-                if birdeye_api_key:
-                    wallets = await self._discover_wallets_birdeye(
-                        birdeye_api_key, search_type, min_win_rate, min_trades, min_pnl, max_results
-                    )
-                    if wallets:
-                        data_source = 'birdeye_api'
-
-                # If no Birdeye results, try Helius for recent active traders
-                if not wallets and helius_api_key:
+                # Try Helius FIRST - more commonly available (free tier works well)
+                if helius_api_key:
                     wallets = await self._discover_wallets_helius(
                         helius_api_key, search_type, min_win_rate, min_trades, max_results
                     )
                     if wallets:
                         data_source = 'helius_api'
+                        logger.info(f"Discovered {len(wallets)} wallets via Helius API")
+
+                # If no Helius results, try Birdeye (may require paid plan for top_traders)
+                if not wallets and birdeye_api_key:
+                    wallets = await self._discover_wallets_birdeye(
+                        birdeye_api_key, search_type, min_win_rate, min_trades, min_pnl, max_results
+                    )
+                    if wallets:
+                        data_source = 'birdeye_api'
+                        logger.info(f"Discovered {len(wallets)} wallets via Birdeye API")
 
                 # Fallback to curated list of REAL known profitable traders
                 if not wallets:
                     wallets = self._get_curated_trader_wallets(search_type, min_win_rate, min_trades, min_pnl, max_results)
                     data_source = 'curated_list'
+                    logger.info(f"Using curated wallet list ({len(wallets)} wallets)")
 
                 # Sort by score and limit
                 wallets.sort(key=lambda x: x.get('score', 0), reverse=True)
