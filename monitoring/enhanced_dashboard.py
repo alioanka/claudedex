@@ -9059,7 +9059,17 @@ class DashboardEndpoints:
                                 settings[key] = int(val)
                         else:
                             settings[key] = val
-            return web.json_response({'success': True, 'settings': settings})
+            # Add supported EVM chains info for the UI
+            supported_chains = [
+                {'name': chain_name, 'display': info['name'], 'suffix': f'@{chain_name}'}
+                for chain_name, info in self.EVM_CHAINS.items()
+            ]
+            return web.json_response({
+                'success': True,
+                'settings': settings,
+                'supported_evm_chains': supported_chains,
+                'chain_format_help': 'For EVM wallets, use format: 0x...@chain (e.g., 0x1234...@base). Default is Ethereum.'
+            })
         except Exception as e:
             logger.error(f"Error getting copytrading settings: {e}")
             return web.json_response({'success': False, 'error': str(e)})
@@ -9092,13 +9102,31 @@ class DashboardEndpoints:
                                 # Parse string to list
                                 wallets_to_validate = [w.strip() for w in str(v).replace(',', '\n').split('\n') if w.strip()]
 
-                            # Validate each wallet if RPC is available
+                            # Validate each wallet - handle both EVM (0x) and Solana addresses
                             for wallet in wallets_to_validate:
-                                if solana_rpc_url:
+                                # Check if it's an EVM address (starts with 0x)
+                                if self._is_evm_address(wallet):
+                                    # Validate EVM wallet format
+                                    validation = self._validate_evm_wallet(wallet)
+                                    validation_results.append({
+                                        'address': wallet,
+                                        'valid': validation.get('valid', False),
+                                        'chain': 'evm',
+                                        'error': validation.get('error'),
+                                        'note': validation.get('note')
+                                    })
+                                    if validation.get('valid'):
+                                        validated_wallets.append(wallet)
+                                        logger.info(f"EVM wallet accepted: {wallet}")
+                                    else:
+                                        logger.warning(f"Invalid EVM wallet skipped: {wallet} - {validation.get('error')}")
+                                elif solana_rpc_url:
+                                    # Solana wallet - validate with RPC
                                     validation = await self._validate_solana_wallet(wallet, solana_rpc_url)
                                     validation_results.append({
                                         'address': wallet,
                                         'valid': validation.get('valid', False),
+                                        'chain': 'solana',
                                         'error': validation.get('error'),
                                         'is_token_mint': validation.get('is_token_mint', False),
                                         'is_program': validation.get('is_program', False),
@@ -9107,13 +9135,14 @@ class DashboardEndpoints:
                                     if validation.get('valid'):
                                         validated_wallets.append(wallet)
                                     else:
-                                        logger.warning(f"Invalid wallet skipped: {wallet} - {validation.get('error')}")
+                                        logger.warning(f"Invalid Solana wallet skipped: {wallet} - {validation.get('error')}")
                                 else:
-                                    # No RPC, accept wallet without validation
+                                    # No RPC for Solana, accept wallet without validation
                                     validated_wallets.append(wallet)
                                     validation_results.append({
                                         'address': wallet,
                                         'valid': True,
+                                        'chain': 'solana',
                                         'note': 'Validation skipped - no RPC configured'
                                     })
 
@@ -9128,7 +9157,12 @@ class DashboardEndpoints:
                         """, k, val_str)
 
             skipped_count = len(validation_results) - len(validated_wallets)
+            evm_count = len([w for w in validated_wallets if w.startswith('0x')])
+            solana_count = len(validated_wallets) - evm_count
+
             message = f"Settings saved. {len(validated_wallets)} wallets validated"
+            if evm_count > 0 or solana_count > 0:
+                message += f" ({solana_count} Solana, {evm_count} EVM)"
             if skipped_count > 0:
                 message += f", {skipped_count} invalid wallets skipped"
 
@@ -9145,7 +9179,7 @@ class DashboardEndpoints:
             return web.json_response({'success': False, 'error': str(e)})
 
     async def api_validate_wallet(self, request):
-        """Validate a Solana wallet address before adding it to track list"""
+        """Validate a wallet address (Solana or EVM) before adding it to track list"""
         import os
 
         try:
@@ -9158,7 +9192,17 @@ class DashboardEndpoints:
                     'error': 'No wallet address provided'
                 })
 
-            # Get RPC URL
+            # Check if it's an EVM address
+            if self._is_evm_address(wallet_address):
+                # Validate EVM wallet format
+                validation = self._validate_evm_wallet(wallet_address)
+                return web.json_response({
+                    'success': True,
+                    'validation': validation,
+                    'chain': 'evm'
+                })
+
+            # Solana wallet - need RPC for validation
             try:
                 from security.secrets_manager import secrets
                 solana_rpc_url = secrets.get('SOLANA_RPC_URL', log_access=False) or os.getenv('SOLANA_RPC_URL')
@@ -9171,12 +9215,13 @@ class DashboardEndpoints:
                     'error': 'No Solana RPC URL configured for validation'
                 })
 
-            # Validate the wallet
+            # Validate the Solana wallet
             validation = await self._validate_solana_wallet(wallet_address, solana_rpc_url)
 
             return web.json_response({
                 'success': True,
-                'validation': validation
+                'validation': validation,
+                'chain': 'solana'
             })
 
         except Exception as e:
@@ -9251,11 +9296,10 @@ class DashboardEndpoints:
                         data_source = 'birdeye_api'
                         logger.info(f"Discovered {len(wallets)} wallets via Birdeye API")
 
-                # Fallback to curated list of REAL known profitable traders
+                # If still no wallets, return helpful message
                 if not wallets:
-                    wallets = self._get_curated_trader_wallets(search_type, min_win_rate, min_trades, min_pnl, max_results)
-                    data_source = 'curated_list'
-                    logger.info(f"Using curated wallet list ({len(wallets)} wallets)")
+                    data_source = 'none'
+                    logger.warning("No wallets found - API may need configuration or min_trades filter too high")
 
                 # Sort by score and limit
                 wallets.sort(key=lambda x: x.get('score', 0), reverse=True)
@@ -9266,13 +9310,24 @@ class DashboardEndpoints:
                 wallet['solscan_url'] = f"https://solscan.io/account/{wallet['address']}"
                 wallet['birdeye_url'] = f"https://birdeye.so/profile/{wallet['address']}?chain=solana"
 
+            # Build response with helpful note
+            if wallets:
+                note = f'Found {len(wallets)} real traders from {data_source}. Verify on Solscan before tracking.'
+            else:
+                note = 'No wallets found. Try: 1) Lower min_trades filter, 2) Check HELIUS_API_KEY is valid, 3) Use Birdeye leaderboard manually: https://birdeye.so/leaderboard'
+
             return web.json_response({
                 'success': True,
                 'wallets': wallets,
                 'count': len(wallets),
                 'search_type': search_type,
                 'data_source': data_source,
-                'note': f'Data from {data_source}. Always verify wallet activity on Solscan before tracking.'
+                'note': note,
+                'manual_discovery_tips': [
+                    'Birdeye Leaderboard: https://birdeye.so/leaderboard',
+                    'Solscan Top Holders: https://solscan.io/token/[token_address]#holders',
+                    'Copy wallets from successful meme coin early buyers'
+                ] if not wallets else None
             })
 
         except Exception as e:
@@ -9380,6 +9435,110 @@ class DashboardEndpoints:
             result['error'] = f'Validation error: {str(e)}'
             return result
 
+    # Supported EVM chains (must match copy_engine.py)
+    EVM_CHAINS = {
+        'ethereum': {'chain_id': 1, 'name': 'Ethereum', 'aliases': ['eth', 'mainnet']},
+        'base': {'chain_id': 8453, 'name': 'Base', 'aliases': ['base']},
+        'arbitrum': {'chain_id': 42161, 'name': 'Arbitrum One', 'aliases': ['arb', 'arbitrum-one']},
+        'bsc': {'chain_id': 56, 'name': 'BNB Smart Chain', 'aliases': ['bnb', 'binance']},
+        'polygon': {'chain_id': 137, 'name': 'Polygon', 'aliases': ['matic', 'poly']},
+        'optimism': {'chain_id': 10, 'name': 'Optimism', 'aliases': ['op']},
+        'avalanche': {'chain_id': 43114, 'name': 'Avalanche C-Chain', 'aliases': ['avax']},
+    }
+
+    def _is_evm_address(self, address: str) -> bool:
+        """Check if address is an EVM address (0x prefix + 40 hex chars).
+        Supports chain suffix format: 0x...@chain (e.g., 0x1234...@base)
+        """
+        if not address:
+            return False
+
+        # Strip chain suffix if present
+        clean_addr = address.split('@')[0] if '@' in address else address
+
+        if not clean_addr.startswith('0x'):
+            return False
+        if len(clean_addr) != 42:
+            return False
+        # Check for valid hex characters
+        try:
+            int(clean_addr[2:], 16)
+            return True
+        except ValueError:
+            return False
+
+    def _parse_evm_chain(self, address: str) -> tuple:
+        """Parse EVM address and optional chain suffix.
+        Returns: (clean_address, chain_name, chain_info)
+        """
+        if '@' in address:
+            clean_addr, chain_hint = address.split('@', 1)
+            chain_hint = chain_hint.lower().strip()
+        else:
+            clean_addr = address
+            chain_hint = 'ethereum'
+
+        # Find chain by name or alias
+        for chain_name, chain_info in self.EVM_CHAINS.items():
+            if chain_hint == chain_name or chain_hint in chain_info['aliases']:
+                return (clean_addr, chain_name, chain_info)
+
+        # Default to Ethereum if chain not found
+        return (clean_addr, 'ethereum', self.EVM_CHAINS['ethereum'])
+
+    def _validate_evm_wallet(self, address: str) -> dict:
+        """Validate that an EVM address has correct format.
+        Supports chain suffix: 0x...@chain (e.g., 0x1234...@base)
+        """
+        result = {
+            'valid': False,
+            'address': address,
+            'chain': 'ethereum',
+            'chain_name': 'Ethereum',
+            'is_wallet': False,
+            'error': None,
+            'note': None
+        }
+
+        # Basic format check
+        if not address:
+            result['error'] = 'No address provided'
+            return result
+
+        # Parse chain suffix
+        clean_addr, chain_name, chain_info = self._parse_evm_chain(address)
+        result['chain'] = chain_name
+        result['chain_name'] = chain_info['name']
+        result['address'] = address  # Keep original with chain suffix
+
+        if not clean_addr.startswith('0x'):
+            result['error'] = 'EVM address must start with 0x'
+            return result
+
+        if len(clean_addr) != 42:
+            result['error'] = f'Invalid EVM address length ({len(clean_addr)} chars, expected 42)'
+            return result
+
+        # Validate hex characters
+        try:
+            int(clean_addr[2:], 16)
+        except ValueError:
+            result['error'] = 'Invalid hex characters in address'
+            return result
+
+        # Format is valid - accept the wallet
+        result['valid'] = True
+        result['is_wallet'] = True
+
+        # Build helpful note about chain
+        supported_chains = ', '.join([f"{info['name']} (@{name})" for name, info in self.EVM_CHAINS.items()])
+        if '@' in address:
+            result['note'] = f"Will monitor on {chain_info['name']} via Etherscan V2 API."
+        else:
+            result['note'] = f"Will monitor on Ethereum (default). To specify a chain, use format: {clean_addr}@base. Supported: {supported_chains}"
+
+        return result
+
     async def _discover_wallets_birdeye(self, api_key: str, search_type: str, min_win_rate: float,
                                          min_trades: int, min_pnl: float, max_results: int) -> list:
         """Discover top traders using Birdeye API"""
@@ -9474,159 +9633,147 @@ class DashboardEndpoints:
 
     async def _discover_wallets_helius(self, api_key: str, search_type: str, min_win_rate: float,
                                         min_trades: int, max_results: int) -> list:
-        """Discover active traders using Helius API by analyzing recent DEX activity"""
+        """Discover active traders using Helius Enhanced Transactions API
+
+        Strategy: Get recent transactions from popular DEX programs and extract trader wallets
+        """
         import aiohttp
         from datetime import datetime
 
         wallets = []
+        trader_stats = {}
+
+        # List of DEX programs to analyze for trader activity
+        dex_programs = [
+            'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',   # Jupiter v6
+            '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',  # Raydium AMM V4
+        ]
+
+        # Known protocol/infrastructure wallets to EXCLUDE
+        excluded_wallets = {
+            'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',   # Jupiter Program
+            '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',  # Raydium Program
+            '5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1',  # Raydium AMM Authority
+            'GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ',  # Raydium Upgrade Authority
+            '3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT',  # Jito Tip 8
+            'BQ72nSv9f3PRyRKCBnHLVrerrv37CYTHm5h3s9VSGQDV',  # Jupiter Authority
+            'HWy1jotHpo6UqeQxx49dpYYdQB8wj9Qk9MdxwjLvDHB8',  # Protocol wallet
+            'DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL',  # Jito Tip Account
+            'BQcdHdAQW1hczDbBi9hiegXAR7A98Q9jx3X3iBBBDiq4',  # Token Mint (USDT Sollet)
+            '96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5',  # Jito Tip 1
+            'HFqU5x63VTqvQss8hp11i4bVmkdHsASBKoNnkE7xer9w',  # Jito Tip 2
+            'Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY',  # Jito Tip 3
+            'ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49',  # Jito Tip 4
+            'DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh',  # Jito Tip 5
+            'ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt',  # Jito Tip 6
+            'Czbmde5EaJVezMQGJxkfLqbGLQG7Z9CaVAi3u1xKMEJN',  # Jito Tip 7
+        }
 
         try:
-            # Use Helius enhanced transactions API to find active DEX traders
-            url = f'https://api.helius.xyz/v0/addresses/JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4/transactions?api-key={api_key}&limit=100'
-
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=30) as resp:
-                    if resp.status != 200:
-                        logger.warning(f"Helius API error: {resp.status}")
-                        return []
+                for dex_program in dex_programs:
+                    try:
+                        # Use Helius parsed transaction history API
+                        url = f'https://api.helius.xyz/v0/addresses/{dex_program}/transactions?api-key={api_key}&limit=100&type=SWAP'
 
-                    transactions = await resp.json()
+                        async with session.get(url, timeout=30) as resp:
+                            if resp.status != 200:
+                                logger.warning(f"Helius API error for {dex_program[:8]}: {resp.status}")
+                                continue
 
-                    # Extract unique traders from Jupiter transactions
-                    trader_stats = {}
+                            transactions = await resp.json()
+                            logger.info(f"Helius returned {len(transactions)} transactions from {dex_program[:8]}...")
 
-                    for tx in transactions:
-                        # Get the fee payer (trader)
-                        fee_payer = tx.get('feePayer', '')
-                        if not fee_payer:
-                            continue
+                            for tx in transactions:
+                                # Get the actual trader (fee payer)
+                                fee_payer = tx.get('feePayer', '')
 
-                        if fee_payer not in trader_stats:
-                            trader_stats[fee_payer] = {
-                                'trades': 0,
-                                'successful': 0,
-                                'last_active': None
-                            }
+                                # Skip if it's a protocol wallet
+                                if not fee_payer or fee_payer in excluded_wallets:
+                                    continue
 
-                        trader_stats[fee_payer]['trades'] += 1
-                        if tx.get('transactionError') is None:
-                            trader_stats[fee_payer]['successful'] += 1
+                                # Skip if address is too short (likely invalid)
+                                if len(fee_payer) < 32:
+                                    continue
 
-                        timestamp = tx.get('timestamp')
-                        if timestamp:
-                            try:
-                                dt = datetime.fromtimestamp(timestamp)
-                                if not trader_stats[fee_payer]['last_active'] or dt > trader_stats[fee_payer]['last_active']:
-                                    trader_stats[fee_payer]['last_active'] = dt
-                            except:
-                                pass
+                                if fee_payer not in trader_stats:
+                                    trader_stats[fee_payer] = {
+                                        'trades': 0,
+                                        'successful': 0,
+                                        'last_active': None,
+                                        'sources': set()
+                                    }
 
-                    # Convert to wallet list format
-                    for address, stats in trader_stats.items():
-                        if stats['trades'] < min_trades:
-                            continue
+                                trader_stats[fee_payer]['trades'] += 1
+                                trader_stats[fee_payer]['sources'].add(dex_program[:8])
 
-                        win_rate = (stats['successful'] / stats['trades'] * 100) if stats['trades'] > 0 else 0
-                        if win_rate < min_win_rate:
-                            continue
+                                if tx.get('transactionError') is None:
+                                    trader_stats[fee_payer]['successful'] += 1
 
-                        score = (win_rate * 0.3) + (min(stats['trades'], 50) * 0.4) + 20
+                                timestamp = tx.get('timestamp')
+                                if timestamp:
+                                    try:
+                                        dt = datetime.fromtimestamp(timestamp)
+                                        if not trader_stats[fee_payer]['last_active'] or dt > trader_stats[fee_payer]['last_active']:
+                                            trader_stats[fee_payer]['last_active'] = dt
+                                    except:
+                                        pass
 
-                        wallets.append({
-                            'address': address,
-                            'score': round(min(score, 100), 1),
-                            'win_rate': round(win_rate, 1),
-                            'total_trades': stats['trades'],
-                            'total_pnl': 0,  # Can't determine from basic tx data
-                            'avg_trade_size': 0,
-                            'last_active': stats['last_active'].strftime('%Y-%m-%d') if stats['last_active'] else 'Unknown',
-                            'category': search_type,
-                            'verified': True,
-                            'data_source': 'helius',
-                            'note': 'P&L requires detailed analysis'
-                        })
+                    except Exception as e:
+                        logger.error(f"Error fetching from {dex_program[:8]}: {e}")
+                        continue
+
+                # Convert to wallet list format
+                for address, stats in trader_stats.items():
+                    if stats['trades'] < min_trades:
+                        continue
+
+                    win_rate = (stats['successful'] / stats['trades'] * 100) if stats['trades'] > 0 else 0
+                    if win_rate < min_win_rate:
+                        continue
+
+                    # Calculate score based on activity
+                    score = (win_rate * 0.3) + (min(stats['trades'], 50) * 0.8) + 10
+                    score = min(max(score, 0), 100)
+
+                    wallets.append({
+                        'address': address,
+                        'score': round(score, 1),
+                        'win_rate': round(win_rate, 1),
+                        'total_trades': stats['trades'],
+                        'total_pnl': 0,  # Requires detailed analysis
+                        'avg_trade_size': 0,
+                        'last_active': stats['last_active'].strftime('%Y-%m-%d') if stats['last_active'] else 'Unknown',
+                        'category': search_type,
+                        'verified': True,
+                        'data_source': 'helius',
+                        'dex_sources': list(stats['sources']),
+                        'note': 'Real trader from on-chain data. P&L requires detailed analysis.'
+                    })
+
+                logger.info(f"Helius discovery found {len(wallets)} potential traders from {len(trader_stats)} unique addresses")
 
         except Exception as e:
             logger.error(f"Helius discovery error: {e}")
+            import traceback
+            traceback.print_exc()
 
         return wallets
 
     def _get_curated_trader_wallets(self, search_type: str, min_win_rate: float,
                                      min_trades: int, min_pnl: float, max_results: int) -> list:
-        """Return curated list of REAL known profitable Solana traders
+        """Return empty list with instructions - curated wallets need manual verification
 
-        These are actual wallet addresses verified to have trading activity.
-        Updated periodically based on on-chain analysis.
+        NOTE: Do not hardcode wallet addresses here. Instead:
+        1. Use Helius/Birdeye API for discovery
+        2. Or manually find wallets from:
+           - Birdeye leaderboard: https://birdeye.so/leaderboard
+           - Solscan top accounts
+           - Twitter/Discord communities
         """
-        from datetime import datetime, timedelta
-
-        # REAL verified trader wallets (these exist on Solana and have DEX activity)
-        # NOTE: These are examples - in production, maintain a database of verified traders
-        curated_wallets = [
-            # Known active Jupiter/Raydium traders (verified on Solscan)
-            {
-                'address': '5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1',
-                'name': 'Raydium AMM',
-                'type': 'dex_protocol',
-                'category': 'dex_whales'
-            },
-            {
-                'address': 'GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ',
-                'name': 'Active Trader 1',
-                'type': 'trader',
-                'category': 'top_traders'
-            },
-            {
-                'address': '3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT',
-                'name': 'Jupiter User',
-                'type': 'trader',
-                'category': 'top_traders'
-            },
-            {
-                'address': 'BQ72nSv9f3PRyRKCBnHLVrerrv37CYTHm5h3s9VSGQDV',
-                'name': 'Active DEX Trader',
-                'type': 'trader',
-                'category': 'meme_hunters'
-            },
-            {
-                'address': 'HWy1jotHpo6UqeQxx49dpYYdQB8wj9Qk9MdxwjLvDHB8',
-                'name': 'Volume Trader',
-                'type': 'trader',
-                'category': 'top_volume'
-            },
-        ]
-
-        # Filter by category
-        if search_type != 'all':
-            category_map = {
-                'top_traders': ['top_traders', 'trader'],
-                'top_traders_7d': ['top_traders', 'trader'],
-                'meme_hunters': ['meme_hunters'],
-                'dex_whales': ['dex_whales', 'top_volume'],
-                'top_volume': ['top_volume', 'dex_whales']
-            }
-            allowed_categories = category_map.get(search_type, ['top_traders'])
-            curated_wallets = [w for w in curated_wallets if w.get('category') in allowed_categories or w.get('type') == 'trader']
-
-        # Convert to standard format with placeholder metrics
-        # NOTE: In production, fetch real metrics from on-chain data
-        wallets = []
-        for i, w in enumerate(curated_wallets[:max_results]):
-            wallets.append({
-                'address': w['address'],
-                'score': 50 - i,  # Placeholder score
-                'win_rate': 0,  # Unknown - needs analysis
-                'total_trades': 0,  # Unknown - needs analysis
-                'total_pnl': 0,  # Unknown - needs analysis
-                'avg_trade_size': 0,
-                'last_active': 'Unknown',
-                'category': w.get('category', search_type),
-                'verified': False,
-                'data_source': 'curated_list',
-                'note': 'Curated wallet - verify activity on Solscan before tracking. Add BIRDEYE_API_KEY for real metrics.'
-            })
-
-        return wallets
+        # Return empty list - no fake/placeholder wallets
+        # User should configure HELIUS_API_KEY or BIRDEYE_API_KEY for real discovery
+        return []
 
     def _generate_demo_wallet(self, address: str, search_type: str):
         """Generate demo wallet analysis data - DEPRECATED, use real analysis"""
