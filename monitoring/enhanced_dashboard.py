@@ -9251,11 +9251,10 @@ class DashboardEndpoints:
                         data_source = 'birdeye_api'
                         logger.info(f"Discovered {len(wallets)} wallets via Birdeye API")
 
-                # Fallback to curated list of REAL known profitable traders
+                # If still no wallets, return helpful message
                 if not wallets:
-                    wallets = self._get_curated_trader_wallets(search_type, min_win_rate, min_trades, min_pnl, max_results)
-                    data_source = 'curated_list'
-                    logger.info(f"Using curated wallet list ({len(wallets)} wallets)")
+                    data_source = 'none'
+                    logger.warning("No wallets found - API may need configuration or min_trades filter too high")
 
                 # Sort by score and limit
                 wallets.sort(key=lambda x: x.get('score', 0), reverse=True)
@@ -9266,13 +9265,24 @@ class DashboardEndpoints:
                 wallet['solscan_url'] = f"https://solscan.io/account/{wallet['address']}"
                 wallet['birdeye_url'] = f"https://birdeye.so/profile/{wallet['address']}?chain=solana"
 
+            # Build response with helpful note
+            if wallets:
+                note = f'Found {len(wallets)} real traders from {data_source}. Verify on Solscan before tracking.'
+            else:
+                note = 'No wallets found. Try: 1) Lower min_trades filter, 2) Check HELIUS_API_KEY is valid, 3) Use Birdeye leaderboard manually: https://birdeye.so/leaderboard'
+
             return web.json_response({
                 'success': True,
                 'wallets': wallets,
                 'count': len(wallets),
                 'search_type': search_type,
                 'data_source': data_source,
-                'note': f'Data from {data_source}. Always verify wallet activity on Solscan before tracking.'
+                'note': note,
+                'manual_discovery_tips': [
+                    'Birdeye Leaderboard: https://birdeye.so/leaderboard',
+                    'Solscan Top Holders: https://solscan.io/token/[token_address]#holders',
+                    'Copy wallets from successful meme coin early buyers'
+                ] if not wallets else None
             })
 
         except Exception as e:
@@ -9474,159 +9484,147 @@ class DashboardEndpoints:
 
     async def _discover_wallets_helius(self, api_key: str, search_type: str, min_win_rate: float,
                                         min_trades: int, max_results: int) -> list:
-        """Discover active traders using Helius API by analyzing recent DEX activity"""
+        """Discover active traders using Helius Enhanced Transactions API
+
+        Strategy: Get recent transactions from popular DEX programs and extract trader wallets
+        """
         import aiohttp
         from datetime import datetime
 
         wallets = []
+        trader_stats = {}
+
+        # List of DEX programs to analyze for trader activity
+        dex_programs = [
+            'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',   # Jupiter v6
+            '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',  # Raydium AMM V4
+        ]
+
+        # Known protocol/infrastructure wallets to EXCLUDE
+        excluded_wallets = {
+            'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',   # Jupiter Program
+            '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',  # Raydium Program
+            '5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1',  # Raydium AMM Authority
+            'GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ',  # Raydium Upgrade Authority
+            '3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT',  # Jito Tip 8
+            'BQ72nSv9f3PRyRKCBnHLVrerrv37CYTHm5h3s9VSGQDV',  # Jupiter Authority
+            'HWy1jotHpo6UqeQxx49dpYYdQB8wj9Qk9MdxwjLvDHB8',  # Protocol wallet
+            'DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL',  # Jito Tip Account
+            'BQcdHdAQW1hczDbBi9hiegXAR7A98Q9jx3X3iBBBDiq4',  # Token Mint (USDT Sollet)
+            '96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5',  # Jito Tip 1
+            'HFqU5x63VTqvQss8hp11i4bVmkdHsASBKoNnkE7xer9w',  # Jito Tip 2
+            'Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY',  # Jito Tip 3
+            'ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49',  # Jito Tip 4
+            'DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh',  # Jito Tip 5
+            'ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt',  # Jito Tip 6
+            'Czbmde5EaJVezMQGJxkfLqbGLQG7Z9CaVAi3u1xKMEJN',  # Jito Tip 7
+        }
 
         try:
-            # Use Helius enhanced transactions API to find active DEX traders
-            url = f'https://api.helius.xyz/v0/addresses/JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4/transactions?api-key={api_key}&limit=100'
-
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=30) as resp:
-                    if resp.status != 200:
-                        logger.warning(f"Helius API error: {resp.status}")
-                        return []
+                for dex_program in dex_programs:
+                    try:
+                        # Use Helius parsed transaction history API
+                        url = f'https://api.helius.xyz/v0/addresses/{dex_program}/transactions?api-key={api_key}&limit=100&type=SWAP'
 
-                    transactions = await resp.json()
+                        async with session.get(url, timeout=30) as resp:
+                            if resp.status != 200:
+                                logger.warning(f"Helius API error for {dex_program[:8]}: {resp.status}")
+                                continue
 
-                    # Extract unique traders from Jupiter transactions
-                    trader_stats = {}
+                            transactions = await resp.json()
+                            logger.info(f"Helius returned {len(transactions)} transactions from {dex_program[:8]}...")
 
-                    for tx in transactions:
-                        # Get the fee payer (trader)
-                        fee_payer = tx.get('feePayer', '')
-                        if not fee_payer:
-                            continue
+                            for tx in transactions:
+                                # Get the actual trader (fee payer)
+                                fee_payer = tx.get('feePayer', '')
 
-                        if fee_payer not in trader_stats:
-                            trader_stats[fee_payer] = {
-                                'trades': 0,
-                                'successful': 0,
-                                'last_active': None
-                            }
+                                # Skip if it's a protocol wallet
+                                if not fee_payer or fee_payer in excluded_wallets:
+                                    continue
 
-                        trader_stats[fee_payer]['trades'] += 1
-                        if tx.get('transactionError') is None:
-                            trader_stats[fee_payer]['successful'] += 1
+                                # Skip if address is too short (likely invalid)
+                                if len(fee_payer) < 32:
+                                    continue
 
-                        timestamp = tx.get('timestamp')
-                        if timestamp:
-                            try:
-                                dt = datetime.fromtimestamp(timestamp)
-                                if not trader_stats[fee_payer]['last_active'] or dt > trader_stats[fee_payer]['last_active']:
-                                    trader_stats[fee_payer]['last_active'] = dt
-                            except:
-                                pass
+                                if fee_payer not in trader_stats:
+                                    trader_stats[fee_payer] = {
+                                        'trades': 0,
+                                        'successful': 0,
+                                        'last_active': None,
+                                        'sources': set()
+                                    }
 
-                    # Convert to wallet list format
-                    for address, stats in trader_stats.items():
-                        if stats['trades'] < min_trades:
-                            continue
+                                trader_stats[fee_payer]['trades'] += 1
+                                trader_stats[fee_payer]['sources'].add(dex_program[:8])
 
-                        win_rate = (stats['successful'] / stats['trades'] * 100) if stats['trades'] > 0 else 0
-                        if win_rate < min_win_rate:
-                            continue
+                                if tx.get('transactionError') is None:
+                                    trader_stats[fee_payer]['successful'] += 1
 
-                        score = (win_rate * 0.3) + (min(stats['trades'], 50) * 0.4) + 20
+                                timestamp = tx.get('timestamp')
+                                if timestamp:
+                                    try:
+                                        dt = datetime.fromtimestamp(timestamp)
+                                        if not trader_stats[fee_payer]['last_active'] or dt > trader_stats[fee_payer]['last_active']:
+                                            trader_stats[fee_payer]['last_active'] = dt
+                                    except:
+                                        pass
 
-                        wallets.append({
-                            'address': address,
-                            'score': round(min(score, 100), 1),
-                            'win_rate': round(win_rate, 1),
-                            'total_trades': stats['trades'],
-                            'total_pnl': 0,  # Can't determine from basic tx data
-                            'avg_trade_size': 0,
-                            'last_active': stats['last_active'].strftime('%Y-%m-%d') if stats['last_active'] else 'Unknown',
-                            'category': search_type,
-                            'verified': True,
-                            'data_source': 'helius',
-                            'note': 'P&L requires detailed analysis'
-                        })
+                    except Exception as e:
+                        logger.error(f"Error fetching from {dex_program[:8]}: {e}")
+                        continue
+
+                # Convert to wallet list format
+                for address, stats in trader_stats.items():
+                    if stats['trades'] < min_trades:
+                        continue
+
+                    win_rate = (stats['successful'] / stats['trades'] * 100) if stats['trades'] > 0 else 0
+                    if win_rate < min_win_rate:
+                        continue
+
+                    # Calculate score based on activity
+                    score = (win_rate * 0.3) + (min(stats['trades'], 50) * 0.8) + 10
+                    score = min(max(score, 0), 100)
+
+                    wallets.append({
+                        'address': address,
+                        'score': round(score, 1),
+                        'win_rate': round(win_rate, 1),
+                        'total_trades': stats['trades'],
+                        'total_pnl': 0,  # Requires detailed analysis
+                        'avg_trade_size': 0,
+                        'last_active': stats['last_active'].strftime('%Y-%m-%d') if stats['last_active'] else 'Unknown',
+                        'category': search_type,
+                        'verified': True,
+                        'data_source': 'helius',
+                        'dex_sources': list(stats['sources']),
+                        'note': 'Real trader from on-chain data. P&L requires detailed analysis.'
+                    })
+
+                logger.info(f"Helius discovery found {len(wallets)} potential traders from {len(trader_stats)} unique addresses")
 
         except Exception as e:
             logger.error(f"Helius discovery error: {e}")
+            import traceback
+            traceback.print_exc()
 
         return wallets
 
     def _get_curated_trader_wallets(self, search_type: str, min_win_rate: float,
                                      min_trades: int, min_pnl: float, max_results: int) -> list:
-        """Return curated list of REAL known profitable Solana traders
+        """Return empty list with instructions - curated wallets need manual verification
 
-        These are actual wallet addresses verified to have trading activity.
-        Updated periodically based on on-chain analysis.
+        NOTE: Do not hardcode wallet addresses here. Instead:
+        1. Use Helius/Birdeye API for discovery
+        2. Or manually find wallets from:
+           - Birdeye leaderboard: https://birdeye.so/leaderboard
+           - Solscan top accounts
+           - Twitter/Discord communities
         """
-        from datetime import datetime, timedelta
-
-        # REAL verified trader wallets (these exist on Solana and have DEX activity)
-        # NOTE: These are examples - in production, maintain a database of verified traders
-        curated_wallets = [
-            # Known active Jupiter/Raydium traders (verified on Solscan)
-            {
-                'address': '5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1',
-                'name': 'Raydium AMM',
-                'type': 'dex_protocol',
-                'category': 'dex_whales'
-            },
-            {
-                'address': 'GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ',
-                'name': 'Active Trader 1',
-                'type': 'trader',
-                'category': 'top_traders'
-            },
-            {
-                'address': '3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT',
-                'name': 'Jupiter User',
-                'type': 'trader',
-                'category': 'top_traders'
-            },
-            {
-                'address': 'BQ72nSv9f3PRyRKCBnHLVrerrv37CYTHm5h3s9VSGQDV',
-                'name': 'Active DEX Trader',
-                'type': 'trader',
-                'category': 'meme_hunters'
-            },
-            {
-                'address': 'HWy1jotHpo6UqeQxx49dpYYdQB8wj9Qk9MdxwjLvDHB8',
-                'name': 'Volume Trader',
-                'type': 'trader',
-                'category': 'top_volume'
-            },
-        ]
-
-        # Filter by category
-        if search_type != 'all':
-            category_map = {
-                'top_traders': ['top_traders', 'trader'],
-                'top_traders_7d': ['top_traders', 'trader'],
-                'meme_hunters': ['meme_hunters'],
-                'dex_whales': ['dex_whales', 'top_volume'],
-                'top_volume': ['top_volume', 'dex_whales']
-            }
-            allowed_categories = category_map.get(search_type, ['top_traders'])
-            curated_wallets = [w for w in curated_wallets if w.get('category') in allowed_categories or w.get('type') == 'trader']
-
-        # Convert to standard format with placeholder metrics
-        # NOTE: In production, fetch real metrics from on-chain data
-        wallets = []
-        for i, w in enumerate(curated_wallets[:max_results]):
-            wallets.append({
-                'address': w['address'],
-                'score': 50 - i,  # Placeholder score
-                'win_rate': 0,  # Unknown - needs analysis
-                'total_trades': 0,  # Unknown - needs analysis
-                'total_pnl': 0,  # Unknown - needs analysis
-                'avg_trade_size': 0,
-                'last_active': 'Unknown',
-                'category': w.get('category', search_type),
-                'verified': False,
-                'data_source': 'curated_list',
-                'note': 'Curated wallet - verify activity on Solscan before tracking. Add BIRDEYE_API_KEY for real metrics.'
-            })
-
-        return wallets
+        # Return empty list - no fake/placeholder wallets
+        # User should configure HELIUS_API_KEY or BIRDEYE_API_KEY for real discovery
+        return []
 
     def _generate_demo_wallet(self, address: str, search_type: str):
         """Generate demo wallet analysis data - DEPRECATED, use real analysis"""
