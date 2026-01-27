@@ -732,6 +732,68 @@
                     <input type="number" class="setting-input" id="solana_pumpfun_max_positions" name="solana_pumpfun_max_positions" value="3" min="1" max="10" step="1">
                 </div>
             </div>
+
+            <!-- NEW: Advanced Trailing Stop Settings -->
+            <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid #2d3548;">
+                <h4 style="color: #f59e0b; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+                    <i class="fas fa-rocket"></i>
+                    Advanced Trailing Stop (Capture 10x-100x Gains)
+                </h4>
+                <div class="info-box" style="background: rgba(245, 158, 11, 0.1); border-color: rgba(245, 158, 11, 0.3);">
+                    <i class="fas fa-lightbulb" style="color: #f59e0b;"></i>
+                    <div style="color: #fcd34d;">
+                        <strong>Profitability Tip:</strong> The trailing stop system uses multiple tiers to protect profits while letting winners run.
+                        Tier 0 protects against big losses, then each tier locks in more profit as price increases.
+                    </div>
+                </div>
+                <div class="setting-grid">
+                    <div class="setting-item">
+                        <label class="setting-label">
+                            <i class="fas fa-toggle-on"></i>
+                            Enable Trailing Stops
+                        </label>
+                        <div class="setting-description">Use tiered trailing stops instead of fixed TP/SL (recommended)</div>
+                        <div class="toggle-switch">
+                            <input type="checkbox" id="solana_pumpfun_trailing_enabled" name="solana_pumpfun_trailing_enabled" checked>
+                            <span>Enabled</span>
+                        </div>
+                    </div>
+
+                    <div class="setting-item">
+                        <label class="setting-label">
+                            <i class="fas fa-shield-alt"></i>
+                            Tier 0 Stop Loss (%)
+                        </label>
+                        <div class="setting-description">Initial protection level (default 12% = exit at -12%)</div>
+                        <input type="number" class="setting-input" id="solana_pumpfun_tier0_sl" name="solana_pumpfun_tier0_sl" value="12" min="5" max="30" step="1">
+                    </div>
+
+                    <div class="setting-item">
+                        <label class="setting-label">
+                            <i class="fas fa-percentage"></i>
+                            Partial Exit Size (%)
+                        </label>
+                        <div class="setting-description">% of position to sell at each profit tier (5 tiers = 20% each)</div>
+                        <input type="number" class="setting-input" id="solana_pumpfun_partial_exit_pct" name="solana_pumpfun_partial_exit_pct" value="20" min="10" max="50" step="5">
+                    </div>
+                </div>
+
+                <div class="info-box" style="margin-top: 16px; background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.3);">
+                    <i class="fas fa-list-ol" style="color: #10b981;"></i>
+                    <div style="color: #6ee7b7;">
+                        <strong>Trailing Tier Structure:</strong><br>
+                        <small>
+                        Tier 0 (0-20% gain): SL at -12% (capital protection)<br>
+                        Tier 0.5 (20-40% gain): SL at +5% (lock small profit)<br>
+                        Tier 1 (40-80% gain): SL at +20%, exit 20%<br>
+                        Tier 2 (80-150% gain): SL at +40%, exit 20%<br>
+                        Tier 3 (150-400% gain): SL trails 35% below peak, exit 20%<br>
+                        Tier 4 (400-1000% gain): SL trails 25% below peak, exit 20%<br>
+                        Tier 5 (1000%+ gain): SL trails 20% below peak, final exit
+                        </small>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -881,8 +943,12 @@ function resetSettings() {
         document.getElementById('solana_pumpfun_auto_sell').value = 0;
         document.getElementById('solana_pumpfun_jito').checked = true;
         document.getElementById('solana_pumpfun_jito_tip').value = 0.001;
-        document.getElementById('solana_pumpfun_stop_loss').value = 20;
+        document.getElementById('solana_pumpfun_stop_loss').value = 12;  // Updated default
         document.getElementById('solana_pumpfun_take_profit').value = 100;
+        // NEW: Advanced trailing stop settings
+        document.getElementById('solana_pumpfun_trailing_enabled').checked = true;
+        document.getElementById('solana_pumpfun_tier0_sl').value = 12;
+        document.getElementById('solana_pumpfun_partial_exit_pct').value = 20;
 
         updateModuleStatus();
         updateStrategyCards();

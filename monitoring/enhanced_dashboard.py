@@ -4765,8 +4765,27 @@ class DashboardEndpoints:
             'rsi_weak_oversold': 'futures_strategy', 'rsi_weak_overbought': 'futures_strategy',
             'min_signal_score': 'futures_strategy', 'verbose_signals': 'futures_strategy',
             'cooldown_minutes': 'futures_strategy',
+            # NEW: Advanced signal filters for profitability
+            'require_trend_confirmation': 'futures_strategy',
+            'require_trend_alignment': 'futures_strategy',
+            'require_volume_confirmation': 'futures_strategy',
+            'min_volume_multiplier': 'futures_risk',
+            'max_consecutive_losses': 'futures_risk',
             'funding_arbitrage_enabled': 'futures_funding', 'funding_arb': 'futures_funding',
             'max_funding_rate': 'futures_funding',
+            # Multiple TPs
+            'tp1_pct': 'futures_risk', 'tp1_size_pct': 'futures_risk',
+            'tp2_pct': 'futures_risk', 'tp2_size_pct': 'futures_risk',
+            'tp3_pct': 'futures_risk', 'tp3_size_pct': 'futures_risk',
+            'tp4_pct': 'futures_risk', 'tp4_size_pct': 'futures_risk',
+            # Dynamic position sizing
+            'dynamic_position_sizing': 'futures_position',
+            'static_position_pct': 'futures_position',
+            'min_position_pct': 'futures_position',
+            'max_position_usd': 'futures_position',
+            # Signal settings
+            'signal_timeframe': 'futures_strategy',
+            'scan_interval_seconds': 'futures_strategy',
         }
         return type_map.get(key)
 

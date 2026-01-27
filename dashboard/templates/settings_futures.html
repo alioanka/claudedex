@@ -785,6 +785,76 @@
                 </div>
             </div>
         </div>
+
+        <!-- NEW: Advanced Signal Filters -->
+        <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid #2d3548;">
+            <h4 style="color: #a78bfa; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+                <i class="fas fa-filter"></i>
+                Advanced Signal Filters (Profitability Improvements)
+            </h4>
+            <div class="info-box">
+                <i class="fas fa-lightbulb"></i>
+                <div>
+                    <strong>Profitability Tip:</strong> These filters reduce trade frequency but improve win rate.
+                    Enable both for higher quality signals. Disable for more trades during testing.
+                </div>
+            </div>
+            <div class="setting-grid">
+                <div class="setting-item">
+                    <label class="setting-label">
+                        <i class="fas fa-arrow-trend-up"></i>
+                        Require Trend Confirmation
+                    </label>
+                    <div class="setting-description">Only take LONG in uptrend, SHORT in downtrend (recommended)</div>
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="futures_require_trend_confirmation" name="futures_require_trend_confirmation" checked>
+                        <span>Enabled</span>
+                    </div>
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">
+                        <i class="fas fa-align-center"></i>
+                        Require Trend Alignment
+                    </label>
+                    <div class="setting-description">Signal direction must match overall trend direction</div>
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="futures_require_trend_alignment" name="futures_require_trend_alignment" checked>
+                        <span>Enabled</span>
+                    </div>
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">
+                        <i class="fas fa-chart-bar"></i>
+                        Require Volume Confirmation
+                    </label>
+                    <div class="setting-description">Only trade when volume is above average</div>
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="futures_require_volume_confirmation" name="futures_require_volume_confirmation" checked>
+                        <span>Enabled</span>
+                    </div>
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">
+                        <i class="fas fa-chart-area"></i>
+                        Min Volume Multiplier
+                    </label>
+                    <div class="setting-description">Required volume ratio vs average (e.g., 1.2 = 20% above avg)</div>
+                    <input type="number" class="setting-input" id="futures_min_volume_multiplier" name="futures_min_volume_multiplier" value="1.2" min="0.5" max="5" step="0.1">
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">
+                        <i class="fas fa-ban"></i>
+                        Max Consecutive Losses
+                    </label>
+                    <div class="setting-description">Pause trading after this many consecutive losses</div>
+                    <input type="number" class="setting-input" id="futures_max_consecutive_losses" name="futures_max_consecutive_losses" value="4" min="1" max="10" step="1">
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Funding Rate Settings -->
@@ -982,6 +1052,12 @@ function resetSettings() {
         // Funding
         document.getElementById('futures_funding_arb').checked = false;
         document.getElementById('futures_max_funding_rate').value = 0.1;
+        // NEW: Advanced signal filters
+        document.getElementById('futures_require_trend_confirmation').checked = true;
+        document.getElementById('futures_require_trend_alignment').checked = true;
+        document.getElementById('futures_require_volume_confirmation').checked = true;
+        document.getElementById('futures_min_volume_multiplier').value = 1.2;
+        document.getElementById('futures_max_consecutive_losses').value = 4;
 
         updateModuleStatus();
         updateTpSizeTotal();
