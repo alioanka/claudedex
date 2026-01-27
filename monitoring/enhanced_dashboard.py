@@ -1419,12 +1419,10 @@ class DashboardEndpoints:
         )
 
     async def analytics_page(self, request):
-        """Advanced analytics page"""
-        template = self.jinja_env.get_template('analytics.html')
-        return web.Response(
-            text=template.render(page='analytics'),
-            content_type='text/html'
-        )
+        """Analytics page - DEPRECATED, redirects to main dashboard"""
+        # Analytics page was not working properly - redirect to main dashboard
+        # TODO: Remove this route entirely in future cleanup
+        raise web.HTTPFound('/dashboard')
 
     async def simulator_page(self, request):
         """Trade simulator page for dry-run validation"""
