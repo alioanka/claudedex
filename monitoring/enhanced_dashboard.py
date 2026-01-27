@@ -7766,17 +7766,33 @@ class DashboardEndpoints:
 
     async def api_reconcile_arbitrage_trades(self, request):
         """
-        Reconcile arbitrage trades by estimating P&L for trades without P&L data.
-        """
-        import random
+        Reconcile arbitrage trades - REALISTIC VERSION
 
+        IMPORTANT: Only reconcile trades that have actual spread data.
+        DO NOT generate random P&L - this was causing $20M+ fake profits.
+
+        For simulated trades (is_simulated=true), mark them as 'simulated_closed'
+        without adding to P&L totals. For real trades with spread_pct > 0,
+        calculate a conservative profit estimate accounting for:
+        - 0.05% flash loan fee (Aave)
+        - 0.3% estimated slippage per swap (2 swaps = 0.6%)
+        - Gas costs (~$5-20 per arbitrage)
+        """
         stats = {
             'trades_processed': 0,
-            'trades_updated': 0,
-            'total_estimated_pnl': 0.0,
+            'simulated_marked': 0,
+            'real_reconciled': 0,
+            'total_net_pnl': 0.0,
             'wins': 0,
-            'losses': 0
+            'losses': 0,
+            'skipped_no_spread': 0
         }
+
+        # Realistic cost estimates
+        FLASH_LOAN_FEE_PCT = 0.05  # 0.05% Aave fee
+        SLIPPAGE_PER_SWAP_PCT = 0.3  # 0.3% slippage estimate
+        NUM_SWAPS = 2  # Buy and sell
+        EST_GAS_COST_USD = 10.0  # Average gas cost
 
         try:
             pool = self.db_pool or (self.db.pool if self.db and hasattr(self.db, 'pool') else None)
@@ -7784,44 +7800,66 @@ class DashboardEndpoints:
                 return web.json_response({'success': False, 'error': 'Database not available'})
 
             async with pool.acquire() as conn:
-                # Get trades with 0 P&L
+                # Get trades with 0 P&L - include is_simulated flag
                 trades = await conn.fetch("""
-                    SELECT trade_id, entry_usd, entry_price, spread_pct, entry_timestamp
+                    SELECT trade_id, entry_usd, entry_price, spread_pct, entry_timestamp,
+                           COALESCE(is_simulated, false) as is_simulated
                     FROM arbitrage_trades
-                    WHERE profit_loss = 0 OR profit_loss IS NULL
+                    WHERE (profit_loss = 0 OR profit_loss IS NULL)
                     ORDER BY entry_timestamp ASC
                 """)
 
-                logger.info(f"🔄 Reconciling {len(trades)} arbitrage trades...")
+                logger.info(f"🔄 Reconciling {len(trades)} arbitrage trades (REALISTIC mode)...")
 
                 for trade in trades:
                     stats['trades_processed'] += 1
-
+                    trade_id = trade['trade_id']
                     entry_usd = float(trade['entry_usd'] or 0)
                     spread = float(trade['spread_pct'] or 0)
+                    is_simulated = trade['is_simulated']
 
                     if entry_usd <= 0:
                         continue
 
-                    # Estimate P&L based on spread and realistic arbitrage outcomes
-                    # Arbitrage typically has higher win rate but smaller profits
-                    is_winner = random.random() < 0.55  # 55% win rate for arbitrage
+                    # For simulated trades - mark as simulated_closed, P&L = 0
+                    if is_simulated:
+                        stats['simulated_marked'] += 1
+                        await conn.execute("""
+                            UPDATE arbitrage_trades
+                            SET status = 'simulated_closed',
+                                profit_loss = 0,
+                                profit_loss_pct = 0
+                            WHERE trade_id = $1
+                        """, trade_id)
+                        continue
 
-                    if is_winner:
-                        # Use spread as basis, profits are 20-80% of expected spread
-                        effective_spread = spread if spread > 0 else random.uniform(0.5, 2.0)
-                        pnl_pct = effective_spread * random.uniform(0.2, 0.8)
-                        stats['wins'] += 1
-                    else:
-                        # Losses from slippage, fees, or failed arb
-                        pnl_pct = random.uniform(-1.5, -0.3)
-                        stats['losses'] += 1
+                    # For real trades without spread data - skip, don't fabricate
+                    if spread <= 0:
+                        stats['skipped_no_spread'] += 1
+                        logger.debug(f"Skipping trade {trade_id}: no spread data")
+                        continue
 
-                    profit_loss = entry_usd * (pnl_pct / 100)
+                    # Calculate REALISTIC net profit after costs
+                    gross_profit_pct = spread
+                    total_costs_pct = (
+                        FLASH_LOAN_FEE_PCT +
+                        (SLIPPAGE_PER_SWAP_PCT * NUM_SWAPS)
+                    )
+                    gas_cost_pct = (EST_GAS_COST_USD / entry_usd) * 100 if entry_usd > 0 else 1.0
+
+                    net_profit_pct = gross_profit_pct - total_costs_pct - gas_cost_pct
+
+                    # Most arbitrage opportunities are NOT profitable after costs
+                    profit_loss = entry_usd * (net_profit_pct / 100)
                     exit_usd = entry_usd + profit_loss
 
-                    stats['total_estimated_pnl'] += profit_loss
-                    stats['trades_updated'] += 1
+                    if net_profit_pct > 0:
+                        stats['wins'] += 1
+                    else:
+                        stats['losses'] += 1
+
+                    stats['total_net_pnl'] += profit_loss
+                    stats['real_reconciled'] += 1
 
                     await conn.execute("""
                         UPDATE arbitrage_trades
@@ -7830,14 +7868,21 @@ class DashboardEndpoints:
                             profit_loss = $2,
                             profit_loss_pct = $3
                         WHERE trade_id = $4
-                    """, exit_usd, profit_loss, pnl_pct, trade['trade_id'])
+                    """, exit_usd, profit_loss, net_profit_pct, trade_id)
 
-                logger.info(f"✅ Arbitrage reconciliation complete: {stats['trades_updated']} trades updated")
+                logger.info(
+                    f"✅ Arbitrage reconciliation complete:\n"
+                    f"   Real trades reconciled: {stats['real_reconciled']}\n"
+                    f"   Simulated marked: {stats['simulated_marked']}\n"
+                    f"   Skipped (no spread): {stats['skipped_no_spread']}\n"
+                    f"   Net P&L: ${stats['total_net_pnl']:.2f}"
+                )
 
             return web.json_response({
                 'success': True,
-                'message': f"Reconciled {stats['trades_updated']} arbitrage trades",
-                'stats': stats
+                'message': f"Reconciled {stats['real_reconciled']} real trades, marked {stats['simulated_marked']} simulated",
+                'stats': stats,
+                'note': 'P&L now accounts for flash loan fees, slippage, and gas costs'
             })
 
         except Exception as e:
