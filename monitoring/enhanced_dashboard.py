@@ -9092,13 +9092,31 @@ class DashboardEndpoints:
                                 # Parse string to list
                                 wallets_to_validate = [w.strip() for w in str(v).replace(',', '\n').split('\n') if w.strip()]
 
-                            # Validate each wallet if RPC is available
+                            # Validate each wallet - handle both EVM (0x) and Solana addresses
                             for wallet in wallets_to_validate:
-                                if solana_rpc_url:
+                                # Check if it's an EVM address (starts with 0x)
+                                if self._is_evm_address(wallet):
+                                    # Validate EVM wallet format
+                                    validation = self._validate_evm_wallet(wallet)
+                                    validation_results.append({
+                                        'address': wallet,
+                                        'valid': validation.get('valid', False),
+                                        'chain': 'evm',
+                                        'error': validation.get('error'),
+                                        'note': validation.get('note')
+                                    })
+                                    if validation.get('valid'):
+                                        validated_wallets.append(wallet)
+                                        logger.info(f"EVM wallet accepted: {wallet}")
+                                    else:
+                                        logger.warning(f"Invalid EVM wallet skipped: {wallet} - {validation.get('error')}")
+                                elif solana_rpc_url:
+                                    # Solana wallet - validate with RPC
                                     validation = await self._validate_solana_wallet(wallet, solana_rpc_url)
                                     validation_results.append({
                                         'address': wallet,
                                         'valid': validation.get('valid', False),
+                                        'chain': 'solana',
                                         'error': validation.get('error'),
                                         'is_token_mint': validation.get('is_token_mint', False),
                                         'is_program': validation.get('is_program', False),
@@ -9107,13 +9125,14 @@ class DashboardEndpoints:
                                     if validation.get('valid'):
                                         validated_wallets.append(wallet)
                                     else:
-                                        logger.warning(f"Invalid wallet skipped: {wallet} - {validation.get('error')}")
+                                        logger.warning(f"Invalid Solana wallet skipped: {wallet} - {validation.get('error')}")
                                 else:
-                                    # No RPC, accept wallet without validation
+                                    # No RPC for Solana, accept wallet without validation
                                     validated_wallets.append(wallet)
                                     validation_results.append({
                                         'address': wallet,
                                         'valid': True,
+                                        'chain': 'solana',
                                         'note': 'Validation skipped - no RPC configured'
                                     })
 
@@ -9128,7 +9147,12 @@ class DashboardEndpoints:
                         """, k, val_str)
 
             skipped_count = len(validation_results) - len(validated_wallets)
+            evm_count = len([w for w in validated_wallets if w.startswith('0x')])
+            solana_count = len(validated_wallets) - evm_count
+
             message = f"Settings saved. {len(validated_wallets)} wallets validated"
+            if evm_count > 0 or solana_count > 0:
+                message += f" ({solana_count} Solana, {evm_count} EVM)"
             if skipped_count > 0:
                 message += f", {skipped_count} invalid wallets skipped"
 
@@ -9145,7 +9169,7 @@ class DashboardEndpoints:
             return web.json_response({'success': False, 'error': str(e)})
 
     async def api_validate_wallet(self, request):
-        """Validate a Solana wallet address before adding it to track list"""
+        """Validate a wallet address (Solana or EVM) before adding it to track list"""
         import os
 
         try:
@@ -9158,7 +9182,17 @@ class DashboardEndpoints:
                     'error': 'No wallet address provided'
                 })
 
-            # Get RPC URL
+            # Check if it's an EVM address
+            if self._is_evm_address(wallet_address):
+                # Validate EVM wallet format
+                validation = self._validate_evm_wallet(wallet_address)
+                return web.json_response({
+                    'success': True,
+                    'validation': validation,
+                    'chain': 'evm'
+                })
+
+            # Solana wallet - need RPC for validation
             try:
                 from security.secrets_manager import secrets
                 solana_rpc_url = secrets.get('SOLANA_RPC_URL', log_access=False) or os.getenv('SOLANA_RPC_URL')
@@ -9171,12 +9205,13 @@ class DashboardEndpoints:
                     'error': 'No Solana RPC URL configured for validation'
                 })
 
-            # Validate the wallet
+            # Validate the Solana wallet
             validation = await self._validate_solana_wallet(wallet_address, solana_rpc_url)
 
             return web.json_response({
                 'success': True,
-                'validation': validation
+                'validation': validation,
+                'chain': 'solana'
             })
 
         except Exception as e:
@@ -9389,6 +9424,57 @@ class DashboardEndpoints:
         except Exception as e:
             result['error'] = f'Validation error: {str(e)}'
             return result
+
+    def _is_evm_address(self, address: str) -> bool:
+        """Check if address is an EVM address (0x prefix + 40 hex chars)"""
+        if not address or not address.startswith('0x'):
+            return False
+        if len(address) != 42:
+            return False
+        # Check for valid hex characters
+        try:
+            int(address[2:], 16)
+            return True
+        except ValueError:
+            return False
+
+    def _validate_evm_wallet(self, address: str) -> dict:
+        """Validate that an EVM address has correct format"""
+        result = {
+            'valid': False,
+            'address': address,
+            'chain': 'evm',  # Could be Ethereum, Base, Arbitrum, etc.
+            'is_wallet': False,
+            'error': None,
+            'note': None
+        }
+
+        # Basic format check
+        if not address:
+            result['error'] = 'No address provided'
+            return result
+
+        if not address.startswith('0x'):
+            result['error'] = 'EVM address must start with 0x'
+            return result
+
+        if len(address) != 42:
+            result['error'] = f'Invalid EVM address length ({len(address)} chars, expected 42)'
+            return result
+
+        # Validate hex characters
+        try:
+            int(address[2:], 16)
+        except ValueError:
+            result['error'] = 'Invalid hex characters in address'
+            return result
+
+        # Format is valid - accept the wallet
+        result['valid'] = True
+        result['is_wallet'] = True
+        result['note'] = 'EVM wallet format valid. Currently monitors Ethereum mainnet via Etherscan. For other chains (Base, Arbitrum), additional API keys are needed.'
+
+        return result
 
     async def _discover_wallets_birdeye(self, api_key: str, search_type: str, min_win_rate: float,
                                          min_trades: int, min_pnl: float, max_results: int) -> list:
