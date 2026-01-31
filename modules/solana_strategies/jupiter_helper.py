@@ -105,6 +105,55 @@ class JupiterHelper:
         pk_str = os.getenv('SOLANA_PRIVATE_KEY')
         return self._load_keypair_from_value(pk_str)
 
+    def _parse_quote_error(self, status_code: int, error_text: str, input_mint: str, output_mint: str) -> str:
+        """
+        Parse Jupiter quote error for better diagnostics
+
+        Args:
+            status_code: HTTP status code
+            error_text: Error response text
+            input_mint: Input token mint
+            output_mint: Output token mint
+
+        Returns:
+            Human-readable error reason
+        """
+        import json
+
+        # Known pump.fun token patterns (bonding curve program)
+        PUMPFUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+
+        error_lower = error_text.lower()
+
+        # Parse JSON error if available
+        try:
+            error_json = json.loads(error_text)
+            error_msg = error_json.get('error', error_json.get('message', ''))
+            if error_msg:
+                error_lower = error_msg.lower()
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Check for specific error patterns
+        if status_code == 400:
+            if 'no route' in error_lower or 'no routes found' in error_lower:
+                return f"No swap route available - token may be pump.fun-only or have no liquidity on Jupiter"
+            if 'invalid' in error_lower and 'mint' in error_lower:
+                return f"Invalid token mint address"
+            if 'amount' in error_lower:
+                return f"Invalid swap amount"
+            return f"Bad request: {error_text[:100]}"
+        elif status_code == 404:
+            return f"Token not found on Jupiter - may be pump.fun-only token"
+        elif status_code == 429:
+            return f"Rate limited - too many requests to Jupiter API"
+        elif status_code == 500:
+            return f"Jupiter API server error - try again later"
+        elif status_code == 503:
+            return f"Jupiter API unavailable - temporary outage"
+        else:
+            return f"HTTP {status_code}: {error_text[:100]}"
+
     async def initialize(self):
         """Initialize HTTP session"""
         self.session = aiohttp.ClientSession()
@@ -159,7 +208,9 @@ class JupiterHelper:
                     return quote
                 else:
                     error_text = await response.text()
-                    logger.error(f"Jupiter quote error: {response.status} - {error_text}")
+                    # Parse Jupiter error response for better diagnostics
+                    error_reason = self._parse_quote_error(response.status, error_text, input_mint, output_mint)
+                    logger.warning(f"⚠️ Jupiter quote failed: {error_reason}")
                     return None
 
         except Exception as e:
@@ -397,10 +448,10 @@ class JupiterHelper:
                 await self.initialize()
 
             # 1. Get quote
-            swap_logger.info(f"   📊 Jupiter: Getting quote...")
+            swap_logger.info(f"   📊 Jupiter: Getting quote for {input_mint[:8]}... → {output_mint[:8]}... amount={amount}")
             quote = await self.get_quote(input_mint, output_mint, amount, slippage_bps)
             if not quote:
-                swap_logger.error("❌ Jupiter: Failed to get quote")
+                swap_logger.error(f"❌ Jupiter: Failed to get quote - token may be pump.fun-only or have no Jupiter routes")
                 return None
 
             swap_logger.info(f"   ✅ Quote received: out={quote.get('outAmount', 'N/A')}")

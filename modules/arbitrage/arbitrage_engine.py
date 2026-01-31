@@ -522,19 +522,25 @@ class ArbitrageEngine:
         # Load credentials from secrets manager (database)
         logger.info("Loading credentials from database...")
         self.private_key = await self._get_decrypted_key('PRIVATE_KEY')
-        self.wallet_address = await self._get_decrypted_key('WALLET_ADDRESS')
 
-        # Log wallet loading status with clear indication
-        if self.wallet_address and self.private_key:
-            masked_addr = self.wallet_address[:8] + "..." + self.wallet_address[-6:] if len(self.wallet_address) > 20 else "***"
-            logger.info(f"✅ Loaded EVM credentials from database (wallet: {masked_addr})")
+        # IMPORTANT: Derive wallet address from private key to avoid mismatch issues
+        # The stored WALLET_ADDRESS may not match the private key, so always derive it
+        if self.private_key:
+            try:
+                from eth_account import Account
+                # Ensure private key has 0x prefix
+                pk = self.private_key if self.private_key.startswith('0x') else f'0x{self.private_key}'
+                account = Account.from_key(pk)
+                self.wallet_address = account.address
+                masked_addr = self.wallet_address[:8] + "..." + self.wallet_address[-6:]
+                logger.info(f"✅ Loaded EVM credentials from database (wallet: {masked_addr})")
+                logger.debug(f"   Wallet derived from private key (ignoring stored WALLET_ADDRESS)")
+            except Exception as e:
+                logger.error(f"❌ Failed to derive wallet from private key: {e}")
+                self.wallet_address = None
         else:
-            missing = []
-            if not self.private_key:
-                missing.append("PRIVATE_KEY")
-            if not self.wallet_address:
-                missing.append("WALLET_ADDRESS")
-            logger.warning(f"⚠️ Missing credentials in database: {', '.join(missing)} - store via settings page")
+            logger.warning(f"⚠️ Missing PRIVATE_KEY in database - store via settings page")
+            self.wallet_address = None
 
         if self.rpc_url:
             self.w3 = Web3(Web3.HTTPProvider(self.rpc_url.split(',')[0]))
