@@ -2115,8 +2115,27 @@ class SolanaTradingEngine:
                 except Exception as e:
                     logger.warning(f"⚠️ Could not check wallet balance: {e}")
 
-                # Execute real Jupiter swap
+                # Execute real swap based on strategy
                 try:
+                    # Check if this is a pump.fun token that hasn't graduated
+                    # Pump.fun tokens without Raydium routes can't be traded via Jupiter
+                    is_pumpfun_only = False
+                    if strategy == Strategy.PUMPFUN:
+                        # Check if token has graduated by attempting a quote
+                        if self.jupiter_client:
+                            test_quote = await self.jupiter_client.get_quote(
+                                input_mint=SOL_MINT,
+                                output_mint=token_mint,
+                                amount=int(0.001 * self.LAMPORTS_PER_SOL)  # Small test amount
+                            )
+                            if not test_quote:
+                                is_pumpfun_only = True
+                                logger.warning(f"⚠️ {token_symbol} is a pump.fun-only token (no Jupiter route)")
+                                logger.warning(f"   Token has not graduated to Raydium yet")
+                                logger.warning(f"   Pump.fun bonding curve trading not yet implemented")
+                                logger.info(f"   Skipping live trade - monitor for graduation to Raydium")
+                                return
+
                     if self.jupiter_helper:
                         # Use JupiterHelper for full swap execution
                         logger.info(f"🔄 Executing LIVE swap: {amount_sol} SOL → {token_symbol}")
@@ -2132,6 +2151,8 @@ class SolanaTradingEngine:
                             position.tx_signature = tx_signature
                         else:
                             logger.error("❌ Jupiter swap failed - no signature returned")
+                            if strategy == Strategy.PUMPFUN:
+                                logger.error("   Pump.fun token may not have graduated to Raydium")
                             return
                     else:
                         # Fallback: get quote but warn about no execution
@@ -2143,6 +2164,8 @@ class SolanaTradingEngine:
 
                         if not quote:
                             logger.error("Failed to get Jupiter quote")
+                            if strategy == Strategy.PUMPFUN:
+                                logger.error("   Token may be pump.fun-only (not yet graduated to Raydium)")
                             return
 
                         logger.warning(f"⚠️ JupiterHelper not available - swap NOT executed (quote only)")
@@ -2242,7 +2265,7 @@ class SolanaTradingEngine:
                 logger.info(f"🔵 [DRY_RUN] SIMULATED SELL{partial_tag} {position.token_symbol} ({reason})")
                 close_tx_signature = f"DRY_RUN_CLOSE_{uuid.uuid4().hex[:16]}"
             else:
-                # Execute real Jupiter swap back to SOL
+                # Execute real swap back to SOL
                 try:
                     if self.jupiter_helper:
                         # Calculate token amount in smallest units (lamports equivalent)
@@ -2262,6 +2285,11 @@ class SolanaTradingEngine:
                             logger.info(f"🟢 LIVE CLOSE executed: {close_tx_signature}")
                         else:
                             logger.error(f"❌ Close swap failed for {position.token_symbol}")
+                            # Check if this is a pump.fun token issue
+                            if position.strategy == Strategy.PUMPFUN:
+                                logger.error(f"   Pump.fun token may not have Jupiter routes yet")
+                                logger.error(f"   Token needs to graduate to Raydium for Jupiter trading")
+                                logger.warning(f"   ⚠️ MANUAL ACTION REQUIRED: Close position via pump.fun UI")
                             # Still record the position close attempt
                     else:
                         logger.warning(f"⚠️ JupiterHelper not available - close NOT executed")
@@ -2269,6 +2297,8 @@ class SolanaTradingEngine:
 
                 except Exception as e:
                     logger.error(f"❌ Close execution failed: {e}", exc_info=True)
+                    if position.strategy == Strategy.PUMPFUN:
+                        logger.error(f"   Pump.fun token may need manual close via bonding curve")
 
             # Record trade - store value_sol for position size tracking
             trade = Trade(
