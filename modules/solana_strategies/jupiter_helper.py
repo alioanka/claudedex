@@ -37,11 +37,12 @@ class JupiterHelper:
             private_key: Base58-encoded private key for transaction signing
         """
         # Jupiter API URL - supports different plans:
-        # - Lite (Free): https://lite-api.jup.ag (1 RPS)
-        # - Public: https://quote-api.jup.ag/v6 (standard rate limits)
+        # - Lite (Free): https://lite-api.jup.ag/swap/v1 (1 RPS) - DEFAULT
+        # - Public V6: https://quote-api.jup.ag/v6 (standard rate limits)
         # - Ultra (Premium): https://api.jup.ag/ultra (dynamic scaling)
         # Set JUPITER_API_URL in .env to your subscribed plan
-        self.api_url = os.getenv('JUPITER_API_URL', 'https://quote-api.jup.ag/v6')
+        # NOTE: lite-api.jup.ag/swap/v1 is proven to work in arbitrage module
+        self.api_url = os.getenv('JUPITER_API_URL', 'https://lite-api.jup.ag/swap/v1')
         self.solana_rpc = solana_rpc_url or os.getenv('SOLANA_RPC_URL')
 
         logger.info(f"🔗 Jupiter API endpoint: {self.api_url}")
