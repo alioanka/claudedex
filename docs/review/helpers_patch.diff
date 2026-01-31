@@ -1,7 +1,0 @@
-*** Begin Patch
-*** Update File: utils/helpers.py
-@@
--        return wrapper
-+        # BUGFIX: return the defined async wrapper, not an undefined name
-+        return async_wrapper
-*** End Patch
