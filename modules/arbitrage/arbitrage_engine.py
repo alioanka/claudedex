@@ -566,6 +566,20 @@ class ArbitrageEngine:
                     )
                     logger.info("⚡ Flash Loan executor initialized")
 
+                    # Check wallet ETH balance for gas
+                    try:
+                        balance_wei = self.w3.eth.get_balance(self.wallet_address)
+                        balance_eth = balance_wei / 1e18
+                        if balance_eth < 0.01:
+                            logger.error(f"❌ CRITICAL: Wallet has insufficient ETH for gas!")
+                            logger.error(f"   Balance: {balance_eth:.6f} ETH")
+                            logger.error(f"   Required: At least 0.01 ETH for flash loan gas")
+                            logger.error(f"   Fund wallet: {self.wallet_address}")
+                        else:
+                            logger.info(f"   Wallet balance: {balance_eth:.4f} ETH")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not check wallet balance: {e}")
+
                     # Initialize Flashbots executor
                     self.flashbots_executor = FlashbotsExecutor(
                         self.w3,
