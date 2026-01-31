@@ -379,55 +379,69 @@ class JupiterHelper:
         Returns:
             Optional[str]: Transaction signature or None
         """
+        # Use module-level logger that matches SolanaTradingEngine
+        import logging
+        swap_logger = logging.getLogger("SolanaTradingEngine")
+
         try:
             # Use keypair's public key if not provided
             if not user_public_key and self.keypair:
                 user_public_key = str(self.keypair.pubkey())
 
             if not user_public_key:
-                logger.error("No user public key available")
+                swap_logger.error("❌ Jupiter: No user public key available for signing")
                 return None
+
+            # Ensure session is initialized
+            if not self.session:
+                await self.initialize()
 
             # 1. Get quote
-            logger.info(f"🔄 Getting quote for swap...")
+            swap_logger.info(f"   📊 Jupiter: Getting quote...")
             quote = await self.get_quote(input_mint, output_mint, amount, slippage_bps)
             if not quote:
+                swap_logger.error("❌ Jupiter: Failed to get quote")
                 return None
 
+            swap_logger.info(f"   ✅ Quote received: out={quote.get('outAmount', 'N/A')}")
+
             # 2. Get swap transaction
-            logger.info(f"📝 Creating swap transaction...")
+            swap_logger.info(f"   📝 Jupiter: Creating swap transaction...")
             swap_data = await self.get_swap_transaction(quote, user_public_key)
             if not swap_data:
+                swap_logger.error("❌ Jupiter: Failed to get swap transaction")
                 return None
 
             transaction_data = swap_data.get('swapTransaction')
             if not transaction_data:
-                logger.error("No transaction data in response")
+                swap_logger.error("❌ Jupiter: No transaction data in response")
                 return None
 
             # 3. Sign transaction
-            logger.info(f"✍️ Signing transaction...")
+            swap_logger.info(f"   ✍️ Jupiter: Signing transaction...")
             signed_tx = self.sign_transaction(transaction_data)
             if not signed_tx:
+                swap_logger.error("❌ Jupiter: Failed to sign transaction")
                 return None
 
             # 4. Send transaction
-            logger.info(f"📤 Sending transaction...")
+            swap_logger.info(f"   📤 Jupiter: Sending transaction to network...")
             signature = await self.send_transaction(signed_tx)
             if not signature:
+                swap_logger.error("❌ Jupiter: Failed to send transaction")
                 return None
 
             # 5. Confirm transaction
-            logger.info(f"⏳ Waiting for confirmation...")
+            swap_logger.info(f"   ⏳ Jupiter: Waiting for confirmation...")
             confirmed = await self.confirm_transaction(signature)
 
             if confirmed:
-                logger.info(f"✅ Swap completed successfully: {signature}")
+                swap_logger.info(f"   ✅ Jupiter: Swap completed: {signature}")
                 return signature
             else:
-                logger.warning(f"⚠️ Swap transaction sent but confirmation uncertain: {signature}")
+                swap_logger.warning(f"   ⚠️ Jupiter: Sent but unconfirmed: {signature}")
                 return signature
 
         except Exception as e:
-            logger.error(f"❌ Error executing swap: {e}", exc_info=True)
+            swap_logger.error(f"❌ Jupiter swap error: {e}", exc_info=True)
             return None
