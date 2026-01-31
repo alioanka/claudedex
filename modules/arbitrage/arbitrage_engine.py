@@ -422,12 +422,7 @@ class ArbitrageEngine:
             self.rpc_url = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
 
         self.private_key = None  # Loaded in initialize() from secrets manager
-        # Get wallet address from secrets manager (database/Docker secrets)
-        try:
-            from security.secrets_manager import secrets
-            self.wallet_address = secrets.get('WALLET_ADDRESS', log_access=False)
-        except Exception:
-            self.wallet_address = os.getenv('WALLET_ADDRESS')
+        self.wallet_address = None  # Loaded in initialize() from secrets manager
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
         self.router_contracts = {}
@@ -518,8 +513,15 @@ class ArbitrageEngine:
     async def initialize(self):
         logger.info("⚖️ Initializing Arbitrage Engine...")
 
-        # Load private key from secrets manager
+        # Load credentials from secrets manager (database)
         self.private_key = await self._get_decrypted_key('PRIVATE_KEY')
+        self.wallet_address = await self._get_decrypted_key('WALLET_ADDRESS')
+
+        # Log wallet loading status
+        if self.wallet_address:
+            logger.debug(f"Loaded wallet address from secrets manager")
+        else:
+            logger.warning("⚠️ WALLET_ADDRESS not found in database - store it via settings page")
 
         if self.rpc_url:
             self.w3 = Web3(Web3.HTTPProvider(self.rpc_url.split(',')[0]))
@@ -719,6 +721,11 @@ class ArbitrageEngine:
             await self._log_arb_trade(buy_dex, sell_dex, token_in, amount, expected_profit, "DRY_RUN", token_symbol)
             return
 
+        # Validate credentials before live execution
+        if not self.private_key or not self.wallet_address:
+            logger.error(f"❌ Cannot execute - PRIVATE_KEY or WALLET_ADDRESS not configured in database")
+            return
+
         try:
             if self.use_flash_loans and self.flash_loan_executor:
                 # Use flash loan for capital efficiency
@@ -791,6 +798,13 @@ class ArbitrageEngine:
 
             deadline = int(datetime.now().timestamp()) + 120
 
+            # Get current gas price
+            gas_price = self.w3.eth.gas_price
+            # Add 10% buffer for faster inclusion
+            gas_price = int(gas_price * 1.1)
+
+            current_nonce = self.w3.eth.get_transaction_count(self.wallet_address)
+
             # Build buy transaction
             buy_tx = buy_router.functions.swapExactTokensForTokens(
                 amount,
@@ -801,7 +815,9 @@ class ArbitrageEngine:
             ).build_transaction({
                 'from': Web3.to_checksum_address(self.wallet_address),
                 'gas': 300000,
-                'nonce': self.w3.eth.get_transaction_count(self.wallet_address)
+                'gasPrice': gas_price,
+                'nonce': current_nonce,
+                'chainId': self.w3.eth.chain_id
             })
 
             # Sign buy transaction
@@ -817,7 +833,9 @@ class ArbitrageEngine:
             ).build_transaction({
                 'from': Web3.to_checksum_address(self.wallet_address),
                 'gas': 300000,
-                'nonce': self.w3.eth.get_transaction_count(self.wallet_address) + 1
+                'gasPrice': gas_price,
+                'nonce': current_nonce + 1,
+                'chainId': self.w3.eth.chain_id
             })
 
             # Sign sell transaction
