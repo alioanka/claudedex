@@ -1293,7 +1293,8 @@ class SolanaTradingEngine:
         self,
         signal_strength: float = 0.5,
         volatility: float = 1.0,
-        trend_strength: float = 0.5
+        trend_strength: float = 0.5,
+        base_size: float = None
     ) -> float:
         """
         Calculate dynamic position size based on signal strength and market conditions.
@@ -1302,11 +1303,13 @@ class SolanaTradingEngine:
             signal_strength: Signal confidence (0.0 to 1.0)
             volatility: Market volatility multiplier (1.0 = normal)
             trend_strength: Trend alignment strength (0.0 to 1.0)
+            base_size: Override base position size (None = use default)
 
         Returns:
             Adjusted position size in SOL
         """
-        base_size = self.position_size_sol
+        if base_size is None:
+            base_size = self.position_size_sol
 
         # Adjust based on signal strength (50% to 150% of base)
         signal_multiplier = 0.5 + (signal_strength * 1.0)
@@ -1929,6 +1932,8 @@ class SolanaTradingEngine:
 
                 if should_trade:
                     logger.info(f"📊 {token_name}: Trading signal - {trade_reason}")
+                    # Use Jupiter-specific position size from config
+                    jupiter_base_size = self.config_manager.jupiter_position_size_sol if self.config_manager else self.position_size_sol
                     await self._open_position(
                         token_mint=token_mint,
                         token_symbol=token_name,
@@ -1936,7 +1941,8 @@ class SolanaTradingEngine:
                         amount_sol=self.calculate_dynamic_position_size(
                             signal_strength=min(1.0, abs(momentum) / 2.0 + 0.3),
                             volatility=1.0,
-                            trend_strength=0.7
+                            trend_strength=0.7,
+                            base_size=jupiter_base_size
                         ),
                         metadata={'momentum': momentum, 'price': price, 'reason': trade_reason}
                     )

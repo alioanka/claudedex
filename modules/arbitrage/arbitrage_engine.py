@@ -17,6 +17,7 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 from eth_account import Account
 from eth_account.messages import encode_defunct
+from eth_abi import encode
 
 logger = logging.getLogger("ArbitrageEngine")
 
@@ -771,13 +772,14 @@ class ArbitrageEngine:
 
         # Encode arbitrage parameters for the flash loan callback
         # In production, you'd have a deployed contract that implements IFlashLoanReceiver
-        callback_data = self.w3.codec.encode_abi(
+        # Use eth_abi.encode (web3.py 7.x compatible)
+        callback_data = encode(
             ['address', 'address', 'address', 'address'],
             [
-                ROUTERS.get(buy_dex, ROUTERS['uniswap_v2']),
-                ROUTERS.get(sell_dex, ROUTERS['sushiswap']),
-                token_in,
-                token_out
+                Web3.to_checksum_address(ROUTERS.get(buy_dex, ROUTERS['uniswap_v2'])),
+                Web3.to_checksum_address(ROUTERS.get(sell_dex, ROUTERS['sushiswap'])),
+                Web3.to_checksum_address(token_in),
+                Web3.to_checksum_address(token_out)
             ]
         )
 

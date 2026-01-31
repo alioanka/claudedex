@@ -43,6 +43,7 @@ CONFIG_KEY_MAPPING = {
     'jupiter_auto_route': ('solana_jupiter', 'bool'),
     'jupiter_direct_only': ('solana_jupiter', 'bool'),
     'jupiter_tokens': ('solana_jupiter', 'string'),  # Comma-separated token list
+    'jupiter_position_size': ('solana_jupiter', 'float'),  # Position size for Jupiter trades (0 = use default)
 
     # Drift settings
     'drift_enabled': ('solana_drift', 'bool'),
@@ -107,6 +108,7 @@ class SolanaConfigManager:
         'jupiter_auto_route': True,
         'jupiter_direct_only': False,
         'jupiter_tokens': 'BONK:DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263,JTO:jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL,WIF:EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm,PYTH:HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3,RAY:4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R,ORCA:orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE',
+        'jupiter_position_size': 0.0,  # 0 = use default position_size
 
         # Drift
         'drift_enabled': False,
@@ -355,6 +357,15 @@ class SolanaConfigManager:
                 if symbol and mint:
                     tokens.append((symbol, mint))
         return tokens
+
+    @property
+    def jupiter_position_size_sol(self) -> float:
+        """Get Jupiter-specific position size in SOL (0 = use default position_size)"""
+        size = self.get('jupiter_position_size', 0.0)
+        # If 0, fall back to general position size
+        if size <= 0:
+            return self.position_size_sol
+        return size
 
     @property
     def drift_enabled(self) -> bool:
