@@ -556,57 +556,50 @@ class DirectDEXExecutor(BaseExecutor):
         try:
             w3 = self.w3_connections[order.chain]
             contract = self.dex_contracts[order.chain][quote.dex.value]
-            
+
             # Calculate minimum output with slippage
             min_amount_out = int(
                 quote.amount_out * (1 - float(order.slippage or self.max_slippage)) * 10**18
             )
-            
+
             # Deadline (20 minutes from now)
             deadline = int((datetime.now() + timedelta(minutes=20)).timestamp())
-            
-            # Build transaction based on DEX type
-            if 'v3' in quote.dex.value.lower():
-                # Uniswap V3 exact input
-                tx_data = contract.encodeABI(
-                    fn_name='exactInput',
-                    args=[{
-                        'path': self._encode_v3_path(quote.path),
-                        'recipient': order.recipient or order.wallet_address,
-                        'deadline': deadline,
-                        'amountIn': ether_to_wei(order.amount),
-                        'amountOutMinimum': min_amount_out
-                    }]
-                )
-            else:
-                # Uniswap V2 style swap
-                tx_data = contract.encodeABI(
-                    fn_name='swapExactTokensForTokens',
-                    args=[
-                        ether_to_wei(order.amount),
-                        min_amount_out,
-                        quote.path,
-                        order.recipient or order.wallet_address,
-                        deadline
-                    ]
-                )
-                
+
             # Get optimal gas price
             gas_price = await self._get_optimal_gas_price(order.chain)
-            
-            # Build transaction
-            tx = {
-                'from': order.wallet_address,
-                'to': contract.address,
-                'data': tx_data,
+
+            # Common transaction parameters
+            tx_params = {
+                'from': Web3.to_checksum_address(order.wallet_address),
                 'gas': int(quote.gas_estimate * self.gas_buffer),
                 'gasPrice': gas_price,
                 'nonce': await self._get_next_nonce(order.chain),
                 'chainId': w3.eth.chain_id
             }
-            
+
+            # Build transaction based on DEX type
+            if 'v3' in quote.dex.value.lower():
+                # Uniswap V3 exact input - params as tuple for struct
+                params = (
+                    self._encode_v3_path(quote.path),  # bytes path
+                    Web3.to_checksum_address(order.recipient or order.wallet_address),  # address recipient
+                    deadline,  # uint256 deadline
+                    ether_to_wei(order.amount),  # uint256 amountIn
+                    min_amount_out  # uint256 amountOutMinimum
+                )
+                tx = contract.functions.exactInput(params).build_transaction(tx_params)
+            else:
+                # Uniswap V2 style swap
+                tx = contract.functions.swapExactTokensForTokens(
+                    ether_to_wei(order.amount),
+                    min_amount_out,
+                    quote.path,
+                    Web3.to_checksum_address(order.recipient or order.wallet_address),
+                    deadline
+                ).build_transaction(tx_params)
+
             return tx
-            
+
         except Exception as e:
             logger.error(f"Error building transaction: {e}")
             raise

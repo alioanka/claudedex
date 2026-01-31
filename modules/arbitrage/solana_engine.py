@@ -410,7 +410,14 @@ class SolanaArbitrageEngine:
             self.rpc_url = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
 
         self.private_key = None  # Loaded in initialize() from secrets manager
-        self.wallet_address = os.getenv('SOLANA_WALLET_ADDRESS')
+        # Try multiple wallet address environment variables in priority order
+        self.wallet_address = (
+            config.get('wallet_address') or
+            os.getenv('ARBITRAGE_SOLANA_WALLET') or
+            os.getenv('SOLANA_WALLET_ADDRESS') or
+            os.getenv('SOLANA_WALLET') or
+            os.getenv('SOLANA_MODULE_WALLET')
+        )
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
         # Settings from config (loaded from DB via settings page)
@@ -500,8 +507,17 @@ class SolanaArbitrageEngine:
     async def initialize(self):
         logger.info("🌊 Initializing Solana Arbitrage Engine...")
 
-        # Load private key from secrets manager
-        self.private_key = await self._get_decrypted_key('SOLANA_PRIVATE_KEY')
+        # Load private key from secrets manager - try multiple env var names
+        private_key_names = [
+            'ARBITRAGE_SOLANA_KEY',
+            'SOLANA_PRIVATE_KEY',
+            'SOLANA_MODULE_PRIVATE_KEY'
+        ]
+        for key_name in private_key_names:
+            self.private_key = await self._get_decrypted_key(key_name)
+            if self.private_key:
+                logger.debug(f"Loaded private key from {key_name}")
+                break
 
         await self.jupiter.initialize()
         await self.raydium.initialize()
@@ -509,6 +525,10 @@ class SolanaArbitrageEngine:
         if self.private_key and not self.dry_run:
             await self.jito.initialize()
             logger.info("🛡️ Jito MEV protection enabled")
+
+        # Log wallet configuration status
+        if not self.wallet_address:
+            logger.warning("⚠️ No Solana wallet address configured - set ARBITRAGE_SOLANA_WALLET or SOLANA_WALLET env var")
 
         logger.info(f"   RPC: {self.rpc_url[:40]}...")
         logger.info(f"   Mode: {'DRY_RUN (Simulated)' if self.dry_run else 'LIVE TRADING'}")
