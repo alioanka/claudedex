@@ -1022,8 +1022,8 @@ class SolanaTradingEngine:
             # Try secrets manager first
             try:
                 from security.secrets_manager import secrets
-                # Initialize with db_pool if available
-                if self.db_pool and not secrets._initialized:
+                # Initialize with db_pool if available (re-init if in bootstrap mode)
+                if self.db_pool and (not secrets._initialized or secrets._db_pool is None or secrets._bootstrap_mode):
                     secrets.initialize(self.db_pool)
 
                 private_key = await secrets.get_async('SOLANA_MODULE_PRIVATE_KEY')
