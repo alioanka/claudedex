@@ -558,13 +558,36 @@ class ArbitrageEngine:
                         logger.debug(f"Could not init {name} router: {e}")
 
                 # Initialize Flash Loan executor
+                # IMPORTANT: Flash loans require a deployed smart contract with IFlashLoanReceiver
+                # The contract must implement executeOperation() callback
+                # EOA wallets CANNOT receive flash loan callbacks - they will always revert
+                flash_loan_contract = os.getenv('FLASH_LOAN_RECEIVER_CONTRACT')
+
                 if self.private_key and self.wallet_address and not self.dry_run:
-                    self.flash_loan_executor = FlashLoanExecutor(
-                        self.w3,
-                        self.private_key,
-                        self.wallet_address
-                    )
-                    logger.info("⚡ Flash Loan executor initialized")
+                    if flash_loan_contract:
+                        # Use the deployed flash loan receiver contract
+                        self.flash_loan_executor = FlashLoanExecutor(
+                            self.w3,
+                            self.private_key,
+                            flash_loan_contract  # Use contract, not EOA wallet
+                        )
+                        logger.info(f"⚡ Flash Loan executor initialized with contract: {flash_loan_contract[:10]}...")
+                    else:
+                        # No contract deployed - flash loans WILL NOT WORK with EOA
+                        logger.warning("=" * 70)
+                        logger.warning("⚠️ FLASH LOAN WARNING: No receiver contract deployed!")
+                        logger.warning("   Aave flash loans require a smart contract that implements")
+                        logger.warning("   IFlashLoanReceiver.executeOperation() callback.")
+                        logger.warning("   EOA wallets CANNOT receive flash loan callbacks.")
+                        logger.warning("")
+                        logger.warning("   To enable flash loans:")
+                        logger.warning("   1. Deploy a FlashLoanReceiver contract")
+                        logger.warning("   2. Set FLASH_LOAN_RECEIVER_CONTRACT=<contract_address> in .env")
+                        logger.warning("")
+                        logger.warning("   ⚡ Flash loans DISABLED - using direct swaps only")
+                        logger.warning("=" * 70)
+                        self.flash_loan_executor = None
+                        self.use_flash_loans = False
 
                     # Check wallet ETH balance for gas
                     try:
@@ -788,10 +811,20 @@ class ArbitrageEngine:
         token_out: str,
         amount: int
     ) -> Optional[str]:
-        """Execute arbitrage using Aave flash loan"""
+        """
+        Execute arbitrage using Aave flash loan.
+
+        IMPORTANT: This requires a deployed FlashLoanReceiver contract!
+        Flash loans callback to executeOperation() which an EOA cannot handle.
+        """
+        # Safety check: flash loan executor must be initialized with a contract address
+        if not self.flash_loan_executor:
+            logger.error("❌ Flash loan executor not initialized - no receiver contract deployed")
+            logger.error("   Set FLASH_LOAN_RECEIVER_CONTRACT in .env and restart")
+            return None
 
         # Encode arbitrage parameters for the flash loan callback
-        # In production, you'd have a deployed contract that implements IFlashLoanReceiver
+        # The deployed FlashLoanReceiver contract must decode these params in executeOperation()
         # Use eth_abi.encode (web3.py 7.x compatible)
         callback_data = encode(
             ['address', 'address', 'address', 'address'],
