@@ -469,11 +469,16 @@ class ArbitrageEngine:
             # Try secrets manager first
             try:
                 from security.secrets_manager import secrets
-                if self.db_pool and not secrets._initialized:
+                # Always re-initialize with db_pool if secrets was in bootstrap mode
+                # or doesn't have a db_pool yet
+                if self.db_pool and (not secrets._initialized or secrets._db_pool is None or secrets._bootstrap_mode):
                     secrets.initialize(self.db_pool)
+                    logger.debug(f"Re-initialized secrets manager with database pool for {key_name}")
                 value = await secrets.get_async(key_name)
-            except Exception:
-                pass
+                if value:
+                    logger.debug(f"Successfully loaded {key_name} from secrets manager")
+            except Exception as e:
+                logger.warning(f"Failed to get {key_name} from secrets manager: {e}")
 
             # Fallback to environment
             if not value:
@@ -514,14 +519,21 @@ class ArbitrageEngine:
         logger.info("⚖️ Initializing Arbitrage Engine...")
 
         # Load credentials from secrets manager (database)
+        logger.info("Loading credentials from database...")
         self.private_key = await self._get_decrypted_key('PRIVATE_KEY')
         self.wallet_address = await self._get_decrypted_key('WALLET_ADDRESS')
 
-        # Log wallet loading status
-        if self.wallet_address:
-            logger.debug(f"Loaded wallet address from secrets manager")
+        # Log wallet loading status with clear indication
+        if self.wallet_address and self.private_key:
+            masked_addr = self.wallet_address[:8] + "..." + self.wallet_address[-6:] if len(self.wallet_address) > 20 else "***"
+            logger.info(f"✅ Loaded EVM credentials from database (wallet: {masked_addr})")
         else:
-            logger.warning("⚠️ WALLET_ADDRESS not found in database - store it via settings page")
+            missing = []
+            if not self.private_key:
+                missing.append("PRIVATE_KEY")
+            if not self.wallet_address:
+                missing.append("WALLET_ADDRESS")
+            logger.warning(f"⚠️ Missing credentials in database: {', '.join(missing)} - store via settings page")
 
         if self.rpc_url:
             self.w3 = Web3(Web3.HTTPProvider(self.rpc_url.split(',')[0]))

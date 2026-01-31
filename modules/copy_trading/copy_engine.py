@@ -122,11 +122,12 @@ class CopyTradeExecutor:
             # Try secrets manager first
             try:
                 from security.secrets_manager import secrets
-                if self.db_pool and not secrets._initialized:
+                # Always re-initialize with db_pool if secrets was in bootstrap mode
+                if self.db_pool and (not secrets._initialized or secrets._db_pool is None or secrets._bootstrap_mode):
                     secrets.initialize(self.db_pool)
                 value = await secrets.get_async(key_name)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to get {key_name} from secrets manager: {e}")
 
             # Fallback to environment
             if not value:

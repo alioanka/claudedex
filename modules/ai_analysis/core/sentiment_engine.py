@@ -309,8 +309,8 @@ class SentimentEngine:
         try:
             from security.secrets_manager import secrets
 
-            # Initialize secrets manager with db_pool if available
-            if self.db_pool and not secrets._initialized:
+            # Initialize secrets manager with db_pool if available (re-init if in bootstrap mode)
+            if self.db_pool and (not secrets._initialized or secrets._db_pool is None or secrets._bootstrap_mode):
                 secrets.initialize(self.db_pool)
 
             # Load OpenAI API key
