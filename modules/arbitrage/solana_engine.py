@@ -410,7 +410,7 @@ class SolanaArbitrageEngine:
             self.rpc_url = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
 
         self.private_key = None  # Loaded in initialize() from secrets manager
-        self.wallet_address = os.getenv('SOLANA_WALLET_ADDRESS')
+        self.wallet_address = config.get('wallet_address')  # Will be loaded from DB in initialize()
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
         # Settings from config (loaded from DB via settings page)
@@ -500,8 +500,30 @@ class SolanaArbitrageEngine:
     async def initialize(self):
         logger.info("🌊 Initializing Solana Arbitrage Engine...")
 
-        # Load private key from secrets manager
-        self.private_key = await self._get_decrypted_key('SOLANA_PRIVATE_KEY')
+        # Load wallet address from secrets manager (database) - try multiple key names
+        # Priority order: SOLANA_WALLET (DEX wallet) > SOLANA_MODULE_WALLET (strategies)
+        if not self.wallet_address:
+            wallet_key_names = [
+                'SOLANA_WALLET',           # DEX trading wallet
+                'SOLANA_MODULE_WALLET',    # Solana strategies wallet
+            ]
+            for key_name in wallet_key_names:
+                self.wallet_address = await self._get_decrypted_key(key_name)
+                if self.wallet_address:
+                    logger.debug(f"Loaded wallet address from {key_name}")
+                    break
+
+        # Load private key from secrets manager - try multiple key names
+        # Priority order: SOLANA_PRIVATE_KEY (DEX) > SOLANA_MODULE_PRIVATE_KEY (strategies)
+        private_key_names = [
+            'SOLANA_PRIVATE_KEY',         # DEX trading private key
+            'SOLANA_MODULE_PRIVATE_KEY'   # Solana strategies private key
+        ]
+        for key_name in private_key_names:
+            self.private_key = await self._get_decrypted_key(key_name)
+            if self.private_key:
+                logger.debug(f"Loaded private key from {key_name}")
+                break
 
         await self.jupiter.initialize()
         await self.raydium.initialize()
@@ -509,6 +531,10 @@ class SolanaArbitrageEngine:
         if self.private_key and not self.dry_run:
             await self.jito.initialize()
             logger.info("🛡️ Jito MEV protection enabled")
+
+        # Log wallet configuration status
+        if not self.wallet_address:
+            logger.warning("⚠️ No Solana wallet address configured - store SOLANA_WALLET in database")
 
         logger.info(f"   RPC: {self.rpc_url[:40]}...")
         logger.info(f"   Mode: {'DRY_RUN (Simulated)' if self.dry_run else 'LIVE TRADING'}")

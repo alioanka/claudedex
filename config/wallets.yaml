@@ -15,7 +15,7 @@
 # DEX Trading Module Wallets
 dex_trading:
   solana:
-    address: "${SOLANA_WALLET_ADDRESS}"
+    address: "${SOLANA_WALLET}"
     private_key_env: "SOLANA_PRIVATE_KEY"
     initial_balance: 500.0  # USD equivalent
     current_balance: 500.0
@@ -69,10 +69,11 @@ futures_trading:
     description: "OKX Perpetuals account"
 
 # Solana Strategies Module Wallets (Phase 3)
+# Note: Solana Module uses SOLANA_MODULE_WALLET and SOLANA_MODULE_PRIVATE_KEY
 solana_strategies:
   solana:
-    address: "${SOLANA_STRATEGIES_WALLET_ADDRESS}"
-    private_key_env: "SOLANA_STRATEGIES_PRIVATE_KEY"
+    address: "${SOLANA_MODULE_WALLET}"
+    private_key_env: "SOLANA_MODULE_PRIVATE_KEY"
     initial_balance: 400.0
     current_balance: 400.0
     description: "Solana strategies wallet for Pump.fun, Jupiter, Drift"
@@ -127,7 +128,7 @@ settings:
 # Create a .env file with these variables (see .env.example)
 #
 # DEX Trading:
-#   SOLANA_WALLET_ADDRESS=your_public_address
+#   SOLANA_WALLET=your_public_address
 #   SOLANA_PRIVATE_KEY=your_private_key
 #   ETHEREUM_WALLET_ADDRESS=0x...
 #   ETHEREUM_PRIVATE_KEY=0x...
@@ -136,9 +137,9 @@ settings:
 #   BINANCE_FUTURES_API_KEY=your_api_key
 #   BINANCE_FUTURES_API_SECRET=your_api_secret
 #
-# Solana Strategies:
-#   SOLANA_STRATEGIES_WALLET_ADDRESS=your_public_address
-#   SOLANA_STRATEGIES_PRIVATE_KEY=your_private_key
+# Solana Module:
+#   SOLANA_MODULE_WALLET=your_public_address
+#   SOLANA_MODULE_PRIVATE_KEY=your_private_key
 #
 # Arbitrage:
 #   ARBITRAGE_SOLANA_WALLET=...

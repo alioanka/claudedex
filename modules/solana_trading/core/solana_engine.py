@@ -2089,6 +2089,18 @@ class SolanaTradingEngine:
                 logger.info(f"   Amount: {amount_sol} SOL (${value_usd:.2f})")
                 tx_signature = f"DRY_RUN_{uuid.uuid4().hex[:16]}"
             else:
+                # Check wallet balance before executing swap
+                try:
+                    wallet_balance = await self._get_wallet_balance()
+                    # Need enough SOL for swap amount plus gas (0.01 SOL buffer)
+                    min_required = amount_sol + 0.01
+                    if wallet_balance < min_required:
+                        logger.error(f"❌ Insufficient balance: {wallet_balance:.4f} SOL < {min_required:.4f} SOL required")
+                        logger.error(f"   Please fund your wallet before live trading")
+                        return
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not check wallet balance: {e}")
+
                 # Execute real Jupiter swap
                 try:
                     if self.jupiter_helper:
