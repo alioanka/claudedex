@@ -422,12 +422,7 @@ class ArbitrageEngine:
             self.rpc_url = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
 
         self.private_key = None  # Loaded in initialize() from secrets manager
-        # Get wallet address from secrets manager (database/Docker secrets)
-        try:
-            from security.secrets_manager import secrets
-            self.wallet_address = secrets.get('WALLET_ADDRESS', log_access=False)
-        except Exception:
-            self.wallet_address = os.getenv('WALLET_ADDRESS')
+        self.wallet_address = None  # Loaded in initialize() from secrets manager
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
         self.router_contracts = {}
@@ -474,11 +469,16 @@ class ArbitrageEngine:
             # Try secrets manager first
             try:
                 from security.secrets_manager import secrets
-                if self.db_pool and not secrets._initialized:
+                # Always re-initialize with db_pool if secrets was in bootstrap mode
+                # or doesn't have a db_pool yet
+                if self.db_pool and (not secrets._initialized or secrets._db_pool is None or secrets._bootstrap_mode):
                     secrets.initialize(self.db_pool)
+                    logger.debug(f"Re-initialized secrets manager with database pool for {key_name}")
                 value = await secrets.get_async(key_name)
-            except Exception:
-                pass
+                if value:
+                    logger.debug(f"Successfully loaded {key_name} from secrets manager")
+            except Exception as e:
+                logger.warning(f"Failed to get {key_name} from secrets manager: {e}")
 
             # Fallback to environment
             if not value:
@@ -518,8 +518,22 @@ class ArbitrageEngine:
     async def initialize(self):
         logger.info("⚖️ Initializing Arbitrage Engine...")
 
-        # Load private key from secrets manager
+        # Load credentials from secrets manager (database)
+        logger.info("Loading credentials from database...")
         self.private_key = await self._get_decrypted_key('PRIVATE_KEY')
+        self.wallet_address = await self._get_decrypted_key('WALLET_ADDRESS')
+
+        # Log wallet loading status with clear indication
+        if self.wallet_address and self.private_key:
+            masked_addr = self.wallet_address[:8] + "..." + self.wallet_address[-6:] if len(self.wallet_address) > 20 else "***"
+            logger.info(f"✅ Loaded EVM credentials from database (wallet: {masked_addr})")
+        else:
+            missing = []
+            if not self.private_key:
+                missing.append("PRIVATE_KEY")
+            if not self.wallet_address:
+                missing.append("WALLET_ADDRESS")
+            logger.warning(f"⚠️ Missing credentials in database: {', '.join(missing)} - store via settings page")
 
         if self.rpc_url:
             self.w3 = Web3(Web3.HTTPProvider(self.rpc_url.split(',')[0]))
@@ -719,6 +733,11 @@ class ArbitrageEngine:
             await self._log_arb_trade(buy_dex, sell_dex, token_in, amount, expected_profit, "DRY_RUN", token_symbol)
             return
 
+        # Validate credentials before live execution
+        if not self.private_key or not self.wallet_address:
+            logger.error(f"❌ Cannot execute - PRIVATE_KEY or WALLET_ADDRESS not configured in database")
+            return
+
         try:
             if self.use_flash_loans and self.flash_loan_executor:
                 # Use flash loan for capital efficiency
@@ -791,6 +810,13 @@ class ArbitrageEngine:
 
             deadline = int(datetime.now().timestamp()) + 120
 
+            # Get current gas price
+            gas_price = self.w3.eth.gas_price
+            # Add 10% buffer for faster inclusion
+            gas_price = int(gas_price * 1.1)
+
+            current_nonce = self.w3.eth.get_transaction_count(self.wallet_address)
+
             # Build buy transaction
             buy_tx = buy_router.functions.swapExactTokensForTokens(
                 amount,
@@ -801,7 +827,9 @@ class ArbitrageEngine:
             ).build_transaction({
                 'from': Web3.to_checksum_address(self.wallet_address),
                 'gas': 300000,
-                'nonce': self.w3.eth.get_transaction_count(self.wallet_address)
+                'gasPrice': gas_price,
+                'nonce': current_nonce,
+                'chainId': self.w3.eth.chain_id
             })
 
             # Sign buy transaction
@@ -817,7 +845,9 @@ class ArbitrageEngine:
             ).build_transaction({
                 'from': Web3.to_checksum_address(self.wallet_address),
                 'gas': 300000,
-                'nonce': self.w3.eth.get_transaction_count(self.wallet_address) + 1
+                'gasPrice': gas_price,
+                'nonce': current_nonce + 1,
+                'chainId': self.w3.eth.chain_id
             })
 
             # Sign sell transaction
