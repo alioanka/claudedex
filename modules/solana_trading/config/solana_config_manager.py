@@ -72,6 +72,7 @@ CONFIG_KEY_MAPPING = {
     'jupiter_stop_loss': ('solana_jupiter', 'float'),
     'jupiter_take_profit': ('solana_jupiter', 'float'),
     'jupiter_auto_exit': ('solana_jupiter', 'int'),  # Time-based exit in seconds
+    'jupiter_max_positions': ('solana_jupiter', 'int'),  # Separate max positions for Jupiter
 }
 
 
@@ -109,6 +110,7 @@ class SolanaConfigManager:
         'jupiter_direct_only': False,
         'jupiter_tokens': 'BONK:DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263,JTO:jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL,WIF:EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm,PYTH:HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3,RAY:4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R,ORCA:orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE',
         'jupiter_position_size': 0.0,  # 0 = use default position_size
+        'jupiter_max_positions': 0,  # 0 = use general max_positions
 
         # Drift
         'drift_enabled': False,
@@ -366,6 +368,15 @@ class SolanaConfigManager:
         if size <= 0:
             return self.position_size_sol
         return size
+
+    @property
+    def jupiter_max_positions(self) -> int:
+        """Get Jupiter-specific max positions (0 = use general max_positions)"""
+        max_pos = self.get('jupiter_max_positions', 0)
+        # If 0, fall back to general max_positions
+        if max_pos <= 0:
+            return self.max_positions
+        return max_pos
 
     @property
     def drift_enabled(self) -> bool:

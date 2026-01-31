@@ -1835,8 +1835,16 @@ class SolanaTradingEngine:
 
     async def _scan_jupiter_opportunities(self):
         """Scan for Jupiter swap opportunities"""
+        # Use Jupiter-specific max positions if configured, else general max
+        jupiter_max_pos = self.config_manager.jupiter_max_positions if self.config_manager else self.max_positions
+        jupiter_positions = sum(1 for p in self.active_positions.values() if p.strategy == Strategy.JUPITER)
+
+        if jupiter_positions >= jupiter_max_pos:
+            logger.debug(f"Jupiter max positions ({jupiter_max_pos}) reached, skipping scan")
+            return
+
         if len(self.active_positions) >= self.max_positions:
-            logger.debug(f"Max positions ({self.max_positions}) reached, skipping Jupiter scan")
+            logger.debug(f"Total max positions ({self.max_positions}) reached, skipping Jupiter scan")
             return
 
         try:
