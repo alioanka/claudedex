@@ -267,24 +267,47 @@ class JitoClient:
     """Jito MEV protection client (Solana's Flashbots)"""
 
     JITO_BLOCK_ENGINE = "https://mainnet.block-engine.jito.wtf"
+    # Jito tip accounts - send tip to one of these to incentivize block builders
+    JITO_TIP_ACCOUNTS = [
+        "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
+        "HFqU5x63VTqvQss8hp11i4bVV9bKMWU9g67mxnCvmU3",
+        "Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY",
+        "ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49",
+        "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh",
+        "ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt",
+        "DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL",
+        "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT",
+    ]
 
     def __init__(self):
         self.session: Optional[aiohttp.ClientSession] = None
+        self.keypair = None  # Set during initialization
 
-    async def initialize(self):
+    async def initialize(self, keypair=None):
         timeout = aiohttp.ClientTimeout(total=10)
         self.session = aiohttp.ClientSession(timeout=timeout)
+        self.keypair = keypair
 
     async def close(self):
         if self.session:
             await self.session.close()
 
-    async def send_bundle(self, transactions: List[str]) -> Optional[str]:
+    async def send_bundle(self, transactions: List[str], tip_lamports: int = 10000) -> Optional[str]:
         """
         Send transaction bundle to Jito block engine.
         Protects against sandwich attacks and ensures atomic execution.
+
+        Args:
+            transactions: List of base64-encoded transactions (must be signed!)
+            tip_lamports: Tip amount for Jito validators (default 10000 = 0.00001 SOL)
+
+        Returns:
+            Bundle ID if successful, None otherwise
         """
         try:
+            # Jito requires signed transactions
+            # The transactions should already be signed before calling this method
+
             payload = {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -296,16 +319,30 @@ class JitoClient:
                 f"{self.JITO_BLOCK_ENGINE}/api/v1/bundles",
                 json=payload
             ) as resp:
+                response_text = await resp.text()
                 if resp.status == 200:
                     result = await resp.json()
-                    bundle_id = result.get('result')
-                    logger.info(f"🛡️ Jito bundle submitted: {bundle_id}")
-                    return bundle_id
-                return None
+                    if 'result' in result:
+                        bundle_id = result.get('result')
+                        logger.info(f"🛡️ Jito bundle submitted: {bundle_id}")
+                        return bundle_id
+                    elif 'error' in result:
+                        error = result.get('error', {})
+                        logger.error(f"❌ Jito bundle error: {error.get('message', 'Unknown error')}")
+                        logger.error(f"   Error code: {error.get('code', 'N/A')}")
+                        return None
+                else:
+                    logger.error(f"❌ Jito HTTP error {resp.status}: {response_text[:200]}")
+                    return None
 
         except Exception as e:
             logger.error(f"Jito bundle error: {e}")
             return None
+
+    def get_random_tip_account(self) -> str:
+        """Get a random Jito tip account"""
+        import random
+        return random.choice(self.JITO_TIP_ACCOUNTS)
 
 
 class SolanaPriceFetcher:
@@ -729,6 +766,10 @@ class SolanaArbitrageEngine:
                 logger.error("No Solana wallet configured")
                 return
 
+            if not self.private_key:
+                logger.error("No Solana private key configured - cannot sign transactions")
+                return
+
             # Get swap transactions
             swap1 = await self.jupiter.get_swap_transaction(quote1, self.wallet_address)
             swap2 = await self.jupiter.get_swap_transaction(quote2, self.wallet_address)
@@ -739,10 +780,19 @@ class SolanaArbitrageEngine:
 
             # If Jito is enabled, bundle both transactions
             if self.use_jito and self.jito.session:
-                tx1 = swap1.get('swapTransaction')
-                tx2 = swap2.get('swapTransaction')
+                tx1_unsigned = swap1.get('swapTransaction')
+                tx2_unsigned = swap2.get('swapTransaction')
 
-                bundle_id = await self.jito.send_bundle([tx1, tx2])
+                # Sign transactions before sending to Jito
+                # Jito requires signed transactions in base64 format
+                tx1_signed = await self._sign_transaction(tx1_unsigned)
+                tx2_signed = await self._sign_transaction(tx2_unsigned)
+
+                if not tx1_signed or not tx2_signed:
+                    logger.error("Failed to sign transactions for Jito bundle")
+                    return
+
+                bundle_id = await self.jito.send_bundle([tx1_signed, tx2_signed])
                 if bundle_id:
                     logger.info(f"✅ Solana Arb executed via Jito: {bundle_id}")
                     await self._log_trade(
@@ -751,13 +801,63 @@ class SolanaArbitrageEngine:
                         quote1.get('routePlan', [])
                     )
                 else:
-                    logger.error("Jito bundle rejected")
+                    logger.error("Jito bundle rejected - check logs for details")
             else:
                 # Direct execution (not recommended for arb)
                 logger.warning("Direct execution not recommended - use Jito for MEV protection")
 
         except Exception as e:
             logger.error(f"Solana arb execution error: {e}")
+
+    async def _sign_transaction(self, transaction_b64: str) -> Optional[str]:
+        """
+        Sign a base64-encoded Solana transaction with the configured private key.
+
+        Args:
+            transaction_b64: Base64-encoded unsigned transaction from Jupiter
+
+        Returns:
+            Base64-encoded signed transaction, or None on failure
+        """
+        try:
+            import base64
+            import base58
+            from solders.keypair import Keypair
+            from solders.transaction import VersionedTransaction
+
+            if not self.private_key:
+                logger.error("No private key available for signing")
+                return None
+
+            # Decode transaction
+            tx_bytes = base64.b64decode(transaction_b64)
+            tx = VersionedTransaction.from_bytes(tx_bytes)
+
+            # Create keypair from private key (base58 encoded)
+            try:
+                keypair = Keypair.from_base58_string(self.private_key)
+            except Exception:
+                # Try decoding as raw bytes
+                try:
+                    pk_bytes = base58.b58decode(self.private_key)
+                    keypair = Keypair.from_bytes(pk_bytes)
+                except Exception as e:
+                    logger.error(f"Failed to create keypair from private key: {e}")
+                    return None
+
+            # Sign the transaction
+            tx.sign([keypair])
+
+            # Encode back to base64
+            signed_bytes = bytes(tx)
+            signed_b64 = base64.b64encode(signed_bytes).decode('utf-8')
+
+            logger.debug(f"Transaction signed successfully (pubkey: {str(keypair.pubkey())[:12]}...)")
+            return signed_b64
+
+        except Exception as e:
+            logger.error(f"Transaction signing failed: {e}")
+            return None
 
     async def _log_trade(
         self,
