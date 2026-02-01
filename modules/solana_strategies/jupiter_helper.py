@@ -42,7 +42,23 @@ class JupiterHelper:
         # - Ultra (Premium): https://api.jup.ag/ultra (dynamic scaling)
         # Set JUPITER_API_URL in .env to your subscribed plan
         # NOTE: lite-api.jup.ag/swap/v1 is proven to work in arbitrage module
-        self.api_url = os.getenv('JUPITER_API_URL', 'https://lite-api.jup.ag/swap/v1')
+        raw_url = os.getenv('JUPITER_API_URL', 'https://lite-api.jup.ag/swap/v1')
+
+        # Normalize URL - ensure it has the proper API path suffix
+        # If user sets just "https://lite-api.jup.ag", append "/swap/v1"
+        if 'lite-api.jup.ag' in raw_url and not raw_url.endswith('/swap/v1'):
+            if raw_url.endswith('/'):
+                self.api_url = raw_url + 'swap/v1'
+            else:
+                self.api_url = raw_url + '/swap/v1'
+        elif 'quote-api.jup.ag' in raw_url and not raw_url.endswith('/v6'):
+            if raw_url.endswith('/'):
+                self.api_url = raw_url + 'v6'
+            else:
+                self.api_url = raw_url + '/v6'
+        else:
+            self.api_url = raw_url
+
         self.solana_rpc = solana_rpc_url or os.getenv('SOLANA_RPC_URL')
 
         logger.info(f"🔗 Jupiter API endpoint: {self.api_url}")
