@@ -37,11 +37,12 @@ class JupiterHelper:
             private_key: Base58-encoded private key for transaction signing
         """
         # Jupiter API URL - supports different plans:
-        # - Lite (Free): https://lite-api.jup.ag (1 RPS)
-        # - Public: https://quote-api.jup.ag/v6 (standard rate limits)
+        # - Lite (Free): https://lite-api.jup.ag/swap/v1 (1 RPS) - DEFAULT
+        # - Public V6: https://quote-api.jup.ag/v6 (standard rate limits)
         # - Ultra (Premium): https://api.jup.ag/ultra (dynamic scaling)
         # Set JUPITER_API_URL in .env to your subscribed plan
-        self.api_url = os.getenv('JUPITER_API_URL', 'https://quote-api.jup.ag/v6')
+        # NOTE: lite-api.jup.ag/swap/v1 is proven to work in arbitrage module
+        self.api_url = os.getenv('JUPITER_API_URL', 'https://lite-api.jup.ag/swap/v1')
         self.solana_rpc = solana_rpc_url or os.getenv('SOLANA_RPC_URL')
 
         logger.info(f"🔗 Jupiter API endpoint: {self.api_url}")
@@ -105,6 +106,55 @@ class JupiterHelper:
         pk_str = os.getenv('SOLANA_PRIVATE_KEY')
         return self._load_keypair_from_value(pk_str)
 
+    def _parse_quote_error(self, status_code: int, error_text: str, input_mint: str, output_mint: str) -> str:
+        """
+        Parse Jupiter quote error for better diagnostics
+
+        Args:
+            status_code: HTTP status code
+            error_text: Error response text
+            input_mint: Input token mint
+            output_mint: Output token mint
+
+        Returns:
+            Human-readable error reason
+        """
+        import json
+
+        # Known pump.fun token patterns (bonding curve program)
+        PUMPFUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+
+        error_lower = error_text.lower()
+
+        # Parse JSON error if available
+        try:
+            error_json = json.loads(error_text)
+            error_msg = error_json.get('error', error_json.get('message', ''))
+            if error_msg:
+                error_lower = error_msg.lower()
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Check for specific error patterns
+        if status_code == 400:
+            if 'no route' in error_lower or 'no routes found' in error_lower:
+                return f"No swap route available - token may be pump.fun-only or have no liquidity on Jupiter"
+            if 'invalid' in error_lower and 'mint' in error_lower:
+                return f"Invalid token mint address"
+            if 'amount' in error_lower:
+                return f"Invalid swap amount"
+            return f"Bad request: {error_text[:100]}"
+        elif status_code == 404:
+            return f"Token not found on Jupiter - may be pump.fun-only token"
+        elif status_code == 429:
+            return f"Rate limited - too many requests to Jupiter API"
+        elif status_code == 500:
+            return f"Jupiter API server error - try again later"
+        elif status_code == 503:
+            return f"Jupiter API unavailable - temporary outage"
+        else:
+            return f"HTTP {status_code}: {error_text[:100]}"
+
     async def initialize(self):
         """Initialize HTTP session"""
         self.session = aiohttp.ClientSession()
@@ -159,7 +209,9 @@ class JupiterHelper:
                     return quote
                 else:
                     error_text = await response.text()
-                    logger.error(f"Jupiter quote error: {response.status} - {error_text}")
+                    # Parse Jupiter error response for better diagnostics
+                    error_reason = self._parse_quote_error(response.status, error_text, input_mint, output_mint)
+                    logger.warning(f"⚠️ Jupiter quote failed: {error_reason}")
                     return None
 
         except Exception as e:
@@ -379,55 +431,69 @@ class JupiterHelper:
         Returns:
             Optional[str]: Transaction signature or None
         """
+        # Use module-level logger that matches SolanaTradingEngine
+        import logging
+        swap_logger = logging.getLogger("SolanaTradingEngine")
+
         try:
             # Use keypair's public key if not provided
             if not user_public_key and self.keypair:
                 user_public_key = str(self.keypair.pubkey())
 
             if not user_public_key:
-                logger.error("No user public key available")
+                swap_logger.error("❌ Jupiter: No user public key available for signing")
                 return None
+
+            # Ensure session is initialized
+            if not self.session:
+                await self.initialize()
 
             # 1. Get quote
-            logger.info(f"🔄 Getting quote for swap...")
+            swap_logger.info(f"   📊 Jupiter: Getting quote for {input_mint[:8]}... → {output_mint[:8]}... amount={amount}")
             quote = await self.get_quote(input_mint, output_mint, amount, slippage_bps)
             if not quote:
+                swap_logger.error(f"❌ Jupiter: Failed to get quote - token may be pump.fun-only or have no Jupiter routes")
                 return None
 
+            swap_logger.info(f"   ✅ Quote received: out={quote.get('outAmount', 'N/A')}")
+
             # 2. Get swap transaction
-            logger.info(f"📝 Creating swap transaction...")
+            swap_logger.info(f"   📝 Jupiter: Creating swap transaction...")
             swap_data = await self.get_swap_transaction(quote, user_public_key)
             if not swap_data:
+                swap_logger.error("❌ Jupiter: Failed to get swap transaction")
                 return None
 
             transaction_data = swap_data.get('swapTransaction')
             if not transaction_data:
-                logger.error("No transaction data in response")
+                swap_logger.error("❌ Jupiter: No transaction data in response")
                 return None
 
             # 3. Sign transaction
-            logger.info(f"✍️ Signing transaction...")
+            swap_logger.info(f"   ✍️ Jupiter: Signing transaction...")
             signed_tx = self.sign_transaction(transaction_data)
             if not signed_tx:
+                swap_logger.error("❌ Jupiter: Failed to sign transaction")
                 return None
 
             # 4. Send transaction
-            logger.info(f"📤 Sending transaction...")
+            swap_logger.info(f"   📤 Jupiter: Sending transaction to network...")
             signature = await self.send_transaction(signed_tx)
             if not signature:
+                swap_logger.error("❌ Jupiter: Failed to send transaction")
                 return None
 
             # 5. Confirm transaction
-            logger.info(f"⏳ Waiting for confirmation...")
+            swap_logger.info(f"   ⏳ Jupiter: Waiting for confirmation...")
             confirmed = await self.confirm_transaction(signature)
 
             if confirmed:
-                logger.info(f"✅ Swap completed successfully: {signature}")
+                swap_logger.info(f"   ✅ Jupiter: Swap completed: {signature}")
                 return signature
             else:
-                logger.warning(f"⚠️ Swap transaction sent but confirmation uncertain: {signature}")
+                swap_logger.warning(f"   ⚠️ Jupiter: Sent but unconfirmed: {signature}")
                 return signature
 
         except Exception as e:
-            logger.error(f"❌ Error executing swap: {e}", exc_info=True)
+            swap_logger.error(f"❌ Jupiter swap error: {e}", exc_info=True)
             return None

@@ -17,6 +17,7 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 from eth_account import Account
 from eth_account.messages import encode_defunct
+from eth_abi import encode
 
 logger = logging.getLogger("ArbitrageEngine")
 
@@ -521,19 +522,25 @@ class ArbitrageEngine:
         # Load credentials from secrets manager (database)
         logger.info("Loading credentials from database...")
         self.private_key = await self._get_decrypted_key('PRIVATE_KEY')
-        self.wallet_address = await self._get_decrypted_key('WALLET_ADDRESS')
 
-        # Log wallet loading status with clear indication
-        if self.wallet_address and self.private_key:
-            masked_addr = self.wallet_address[:8] + "..." + self.wallet_address[-6:] if len(self.wallet_address) > 20 else "***"
-            logger.info(f"✅ Loaded EVM credentials from database (wallet: {masked_addr})")
+        # IMPORTANT: Derive wallet address from private key to avoid mismatch issues
+        # The stored WALLET_ADDRESS may not match the private key, so always derive it
+        if self.private_key:
+            try:
+                from eth_account import Account
+                # Ensure private key has 0x prefix
+                pk = self.private_key if self.private_key.startswith('0x') else f'0x{self.private_key}'
+                account = Account.from_key(pk)
+                self.wallet_address = account.address
+                masked_addr = self.wallet_address[:8] + "..." + self.wallet_address[-6:]
+                logger.info(f"✅ Loaded EVM credentials from database (wallet: {masked_addr})")
+                logger.debug(f"   Wallet derived from private key (ignoring stored WALLET_ADDRESS)")
+            except Exception as e:
+                logger.error(f"❌ Failed to derive wallet from private key: {e}")
+                self.wallet_address = None
         else:
-            missing = []
-            if not self.private_key:
-                missing.append("PRIVATE_KEY")
-            if not self.wallet_address:
-                missing.append("WALLET_ADDRESS")
-            logger.warning(f"⚠️ Missing credentials in database: {', '.join(missing)} - store via settings page")
+            logger.warning(f"⚠️ Missing PRIVATE_KEY in database - store via settings page")
+            self.wallet_address = None
 
         if self.rpc_url:
             self.w3 = Web3(Web3.HTTPProvider(self.rpc_url.split(',')[0]))
@@ -551,13 +558,50 @@ class ArbitrageEngine:
                         logger.debug(f"Could not init {name} router: {e}")
 
                 # Initialize Flash Loan executor
+                # IMPORTANT: Flash loans require a deployed smart contract with IFlashLoanReceiver
+                # The contract must implement executeOperation() callback
+                # EOA wallets CANNOT receive flash loan callbacks - they will always revert
+                flash_loan_contract = os.getenv('FLASH_LOAN_RECEIVER_CONTRACT')
+
                 if self.private_key and self.wallet_address and not self.dry_run:
-                    self.flash_loan_executor = FlashLoanExecutor(
-                        self.w3,
-                        self.private_key,
-                        self.wallet_address
-                    )
-                    logger.info("⚡ Flash Loan executor initialized")
+                    if flash_loan_contract:
+                        # Use the deployed flash loan receiver contract
+                        self.flash_loan_executor = FlashLoanExecutor(
+                            self.w3,
+                            self.private_key,
+                            flash_loan_contract  # Use contract, not EOA wallet
+                        )
+                        logger.info(f"⚡ Flash Loan executor initialized with contract: {flash_loan_contract[:10]}...")
+                    else:
+                        # No contract deployed - flash loans WILL NOT WORK with EOA
+                        logger.warning("=" * 70)
+                        logger.warning("⚠️ FLASH LOAN WARNING: No receiver contract deployed!")
+                        logger.warning("   Aave flash loans require a smart contract that implements")
+                        logger.warning("   IFlashLoanReceiver.executeOperation() callback.")
+                        logger.warning("   EOA wallets CANNOT receive flash loan callbacks.")
+                        logger.warning("")
+                        logger.warning("   To enable flash loans:")
+                        logger.warning("   1. Deploy a FlashLoanReceiver contract")
+                        logger.warning("   2. Set FLASH_LOAN_RECEIVER_CONTRACT=<contract_address> in .env")
+                        logger.warning("")
+                        logger.warning("   ⚡ Flash loans DISABLED - using direct swaps only")
+                        logger.warning("=" * 70)
+                        self.flash_loan_executor = None
+                        self.use_flash_loans = False
+
+                    # Check wallet ETH balance for gas
+                    try:
+                        balance_wei = self.w3.eth.get_balance(self.wallet_address)
+                        balance_eth = balance_wei / 1e18
+                        if balance_eth < 0.01:
+                            logger.error(f"❌ CRITICAL: Wallet has insufficient ETH for gas!")
+                            logger.error(f"   Balance: {balance_eth:.6f} ETH")
+                            logger.error(f"   Required: At least 0.01 ETH for flash loan gas")
+                            logger.error(f"   Fund wallet: {self.wallet_address}")
+                        else:
+                            logger.info(f"   Wallet balance: {balance_eth:.4f} ETH")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not check wallet balance: {e}")
 
                     # Initialize Flashbots executor
                     self.flashbots_executor = FlashbotsExecutor(
@@ -767,17 +811,28 @@ class ArbitrageEngine:
         token_out: str,
         amount: int
     ) -> Optional[str]:
-        """Execute arbitrage using Aave flash loan"""
+        """
+        Execute arbitrage using Aave flash loan.
+
+        IMPORTANT: This requires a deployed FlashLoanReceiver contract!
+        Flash loans callback to executeOperation() which an EOA cannot handle.
+        """
+        # Safety check: flash loan executor must be initialized with a contract address
+        if not self.flash_loan_executor:
+            logger.error("❌ Flash loan executor not initialized - no receiver contract deployed")
+            logger.error("   Set FLASH_LOAN_RECEIVER_CONTRACT in .env and restart")
+            return None
 
         # Encode arbitrage parameters for the flash loan callback
-        # In production, you'd have a deployed contract that implements IFlashLoanReceiver
-        callback_data = self.w3.codec.encode_abi(
+        # The deployed FlashLoanReceiver contract must decode these params in executeOperation()
+        # Use eth_abi.encode (web3.py 7.x compatible)
+        callback_data = encode(
             ['address', 'address', 'address', 'address'],
             [
-                ROUTERS.get(buy_dex, ROUTERS['uniswap_v2']),
-                ROUTERS.get(sell_dex, ROUTERS['sushiswap']),
-                token_in,
-                token_out
+                Web3.to_checksum_address(ROUTERS.get(buy_dex, ROUTERS['uniswap_v2'])),
+                Web3.to_checksum_address(ROUTERS.get(sell_dex, ROUTERS['sushiswap'])),
+                Web3.to_checksum_address(token_in),
+                Web3.to_checksum_address(token_out)
             ]
         )
 

@@ -5281,20 +5281,27 @@ class DashboardEndpoints:
 
     def _get_solana_config_type(self, key: str) -> str:
         """Map a solana setting key to its config_type"""
+        # Complete mapping that matches HTML form field names (after stripping 'solana_' prefix)
         type_map = {
-            'enabled': 'solana_general', 'strategies': 'solana_general',
-            'capital_allocation_sol': 'solana_position', 'position_size_sol': 'solana_position',
-            'max_positions': 'solana_position',
-            'stop_loss_pct': 'solana_risk', 'take_profit_pct': 'solana_risk',
-            'max_daily_loss_sol': 'solana_risk',
-            'priority_fee': 'solana_tx', 'compute_unit_price': 'solana_tx',
-            'compute_unit_limit': 'solana_tx',
-            'slippage_bps': 'solana_jupiter', 'api_tier': 'solana_jupiter',
-            'leverage': 'solana_drift', 'markets': 'solana_drift',
-            'min_liquidity': 'solana_pumpfun', 'max_age_seconds': 'solana_pumpfun',
-            'buy_amount_sol': 'solana_pumpfun',
+            # General settings
+            'enabled': 'solana_general',
+            'capital': 'solana_general',
+            'position_size': 'solana_general',
+            'max_positions': 'solana_general',
+            'min_position': 'solana_general',
+
+            # RPC settings
+            'rpc_timeout': 'solana_rpc',
+            'max_retries': 'solana_rpc',
+            'commitment': 'solana_rpc',
+
+            # Risk settings
+            'stop_loss': 'solana_risk',
+            'take_profit': 'solana_risk',
+            'daily_loss_limit': 'solana_risk',
+            'priority_fee': 'solana_priority',
         }
-        # Handle enabled flags for sub-strategies
+        # Handle enabled flags and settings for sub-strategies
         if key.startswith('jupiter_'):
             return 'solana_jupiter'
         if key.startswith('drift_'):

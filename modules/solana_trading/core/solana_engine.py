@@ -1293,7 +1293,8 @@ class SolanaTradingEngine:
         self,
         signal_strength: float = 0.5,
         volatility: float = 1.0,
-        trend_strength: float = 0.5
+        trend_strength: float = 0.5,
+        base_size: float = None
     ) -> float:
         """
         Calculate dynamic position size based on signal strength and market conditions.
@@ -1302,11 +1303,13 @@ class SolanaTradingEngine:
             signal_strength: Signal confidence (0.0 to 1.0)
             volatility: Market volatility multiplier (1.0 = normal)
             trend_strength: Trend alignment strength (0.0 to 1.0)
+            base_size: Override base position size (None = use default)
 
         Returns:
             Adjusted position size in SOL
         """
-        base_size = self.position_size_sol
+        if base_size is None:
+            base_size = self.position_size_sol
 
         # Adjust based on signal strength (50% to 150% of base)
         signal_multiplier = 0.5 + (signal_strength * 1.0)
@@ -1832,8 +1835,16 @@ class SolanaTradingEngine:
 
     async def _scan_jupiter_opportunities(self):
         """Scan for Jupiter swap opportunities"""
+        # Use Jupiter-specific max positions if configured, else general max
+        jupiter_max_pos = self.config_manager.jupiter_max_positions if self.config_manager else self.max_positions
+        jupiter_positions = sum(1 for p in self.active_positions.values() if p.strategy == Strategy.JUPITER)
+
+        if jupiter_positions >= jupiter_max_pos:
+            logger.debug(f"Jupiter max positions ({jupiter_max_pos}) reached, skipping scan")
+            return
+
         if len(self.active_positions) >= self.max_positions:
-            logger.debug(f"Max positions ({self.max_positions}) reached, skipping Jupiter scan")
+            logger.debug(f"Total max positions ({self.max_positions}) reached, skipping Jupiter scan")
             return
 
         try:
@@ -1929,6 +1940,8 @@ class SolanaTradingEngine:
 
                 if should_trade:
                     logger.info(f"📊 {token_name}: Trading signal - {trade_reason}")
+                    # Use Jupiter-specific position size from config
+                    jupiter_base_size = self.config_manager.jupiter_position_size_sol if self.config_manager else self.position_size_sol
                     await self._open_position(
                         token_mint=token_mint,
                         token_symbol=token_name,
@@ -1936,7 +1949,8 @@ class SolanaTradingEngine:
                         amount_sol=self.calculate_dynamic_position_size(
                             signal_strength=min(1.0, abs(momentum) / 2.0 + 0.3),
                             volatility=1.0,
-                            trend_strength=0.7
+                            trend_strength=0.7,
+                            base_size=jupiter_base_size
                         ),
                         metadata={'momentum': momentum, 'price': price, 'reason': trade_reason}
                     )
@@ -2101,8 +2115,27 @@ class SolanaTradingEngine:
                 except Exception as e:
                     logger.warning(f"⚠️ Could not check wallet balance: {e}")
 
-                # Execute real Jupiter swap
+                # Execute real swap based on strategy
                 try:
+                    # Check if this is a pump.fun token that hasn't graduated
+                    # Pump.fun tokens without Raydium routes can't be traded via Jupiter
+                    is_pumpfun_only = False
+                    if strategy == Strategy.PUMPFUN:
+                        # Check if token has graduated by attempting a quote
+                        if self.jupiter_client:
+                            test_quote = await self.jupiter_client.get_quote(
+                                input_mint=SOL_MINT,
+                                output_mint=token_mint,
+                                amount=int(0.001 * self.LAMPORTS_PER_SOL)  # Small test amount
+                            )
+                            if not test_quote:
+                                is_pumpfun_only = True
+                                logger.warning(f"⚠️ {token_symbol} is a pump.fun-only token (no Jupiter route)")
+                                logger.warning(f"   Token has not graduated to Raydium yet")
+                                logger.warning(f"   Pump.fun bonding curve trading not yet implemented")
+                                logger.info(f"   Skipping live trade - monitor for graduation to Raydium")
+                                return
+
                     if self.jupiter_helper:
                         # Use JupiterHelper for full swap execution
                         logger.info(f"🔄 Executing LIVE swap: {amount_sol} SOL → {token_symbol}")
@@ -2118,6 +2151,8 @@ class SolanaTradingEngine:
                             position.tx_signature = tx_signature
                         else:
                             logger.error("❌ Jupiter swap failed - no signature returned")
+                            if strategy == Strategy.PUMPFUN:
+                                logger.error("   Pump.fun token may not have graduated to Raydium")
                             return
                     else:
                         # Fallback: get quote but warn about no execution
@@ -2129,6 +2164,8 @@ class SolanaTradingEngine:
 
                         if not quote:
                             logger.error("Failed to get Jupiter quote")
+                            if strategy == Strategy.PUMPFUN:
+                                logger.error("   Token may be pump.fun-only (not yet graduated to Raydium)")
                             return
 
                         logger.warning(f"⚠️ JupiterHelper not available - swap NOT executed (quote only)")
@@ -2228,7 +2265,7 @@ class SolanaTradingEngine:
                 logger.info(f"🔵 [DRY_RUN] SIMULATED SELL{partial_tag} {position.token_symbol} ({reason})")
                 close_tx_signature = f"DRY_RUN_CLOSE_{uuid.uuid4().hex[:16]}"
             else:
-                # Execute real Jupiter swap back to SOL
+                # Execute real swap back to SOL
                 try:
                     if self.jupiter_helper:
                         # Calculate token amount in smallest units (lamports equivalent)
@@ -2248,6 +2285,11 @@ class SolanaTradingEngine:
                             logger.info(f"🟢 LIVE CLOSE executed: {close_tx_signature}")
                         else:
                             logger.error(f"❌ Close swap failed for {position.token_symbol}")
+                            # Check if this is a pump.fun token issue
+                            if position.strategy == Strategy.PUMPFUN:
+                                logger.error(f"   Pump.fun token may not have Jupiter routes yet")
+                                logger.error(f"   Token needs to graduate to Raydium for Jupiter trading")
+                                logger.warning(f"   ⚠️ MANUAL ACTION REQUIRED: Close position via pump.fun UI")
                             # Still record the position close attempt
                     else:
                         logger.warning(f"⚠️ JupiterHelper not available - close NOT executed")
@@ -2255,6 +2297,8 @@ class SolanaTradingEngine:
 
                 except Exception as e:
                     logger.error(f"❌ Close execution failed: {e}", exc_info=True)
+                    if position.strategy == Strategy.PUMPFUN:
+                        logger.error(f"   Pump.fun token may need manual close via bonding curve")
 
             # Record trade - store value_sol for position size tracking
             trade = Trade(
