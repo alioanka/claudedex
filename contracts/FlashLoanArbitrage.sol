@@ -73,11 +73,11 @@ contract FlashLoanArbitrage {
     address public constant UNISWAP_V2_ROUTER = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
     address public constant SUSHISWAP_ROUTER = 0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F;
 
-    // Common tokens (Mainnet)
-    address public constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
-    address public constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
-    address public constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
-    address public constant DAI = 0x6B175474E89094C44Da98b954EeAdDcB80656c63;
+    // Common tokens (Mainnet) - pass these as parameters to executeArbitrage()
+    // WETH: 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
+    // USDC: 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+    // USDT: 0xdAC17F958D2ee523a2206206994597C13D831ec7
+    // DAI:  0x6B175474e89094C44Da98b954EedeACB80656c63
 
     // Events
     event ArbitrageExecuted(
@@ -303,12 +303,13 @@ contract FlashLoanArbitrage {
     }
 
     /**
-     * @notice Withdraw ETH
+     * @notice Withdraw ETH using call (recommended over transfer)
      */
     function withdrawETH() external onlyOwner {
         uint256 balance = address(this).balance;
         require(balance > 0, "No ETH balance");
-        payable(owner).transfer(balance);
+        (bool success, ) = payable(owner).call{value: balance}("");
+        require(success, "ETH transfer failed");
     }
 
     /**
