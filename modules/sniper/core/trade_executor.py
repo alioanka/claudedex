@@ -20,9 +20,16 @@ from datetime import datetime
 
 logger = logging.getLogger("TradeExecutor")
 
-# Jupiter API endpoints
-JUPITER_QUOTE_API = "https://quote-api.jup.ag/v6/quote"
-JUPITER_SWAP_API = "https://quote-api.jup.ag/v6/swap"
+# Jupiter API endpoints - use lite-api.jup.ag/swap/v1 (proven to work)
+# Can be overridden via JUPITER_API_URL environment variable
+_jupiter_base = os.getenv('JUPITER_API_URL', 'https://lite-api.jup.ag/swap/v1')
+# Normalize URL
+if 'lite-api.jup.ag' in _jupiter_base and not _jupiter_base.endswith('/swap/v1'):
+    _jupiter_base = _jupiter_base.rstrip('/') + '/swap/v1'
+elif 'quote-api.jup.ag' in _jupiter_base and not _jupiter_base.endswith('/v6'):
+    _jupiter_base = _jupiter_base.rstrip('/') + '/v6'
+JUPITER_QUOTE_API = f"{_jupiter_base}/quote"
+JUPITER_SWAP_API = f"{_jupiter_base}/swap"
 
 # Common token addresses
 WSOL_ADDRESS = "So11111111111111111111111111111111111111112"

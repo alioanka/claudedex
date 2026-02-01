@@ -36,7 +36,10 @@ class FuturesGeneralConfig(BaseModel):
     """General futures trading configuration"""
     enabled: bool = False
     exchange: str = "binance"  # binance or bybit
-    testnet: bool = True
+    # CRITICAL: Default to mainnet (False) for live trading safety
+    # Set testnet=True in database settings if you want to use testnet
+    # Or set FUTURES_TESTNET=true in environment
+    testnet: bool = False
     contract_type: str = "perpetual"
 
 

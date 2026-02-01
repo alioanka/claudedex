@@ -245,7 +245,15 @@ class FuturesTradingEngine:
 
             # General settings
             self.exchange = general_config.exchange.lower()
-            self.testnet = general_config.testnet
+            # Check environment variable for testnet override (similar to DRY_RUN)
+            # FUTURES_TESTNET=true forces testnet, FUTURES_TESTNET=false forces mainnet
+            testnet_env = os.getenv('FUTURES_TESTNET', '').strip().lower()
+            if testnet_env in ('true', '1', 'yes'):
+                self.testnet = True
+            elif testnet_env in ('false', '0', 'no'):
+                self.testnet = False
+            else:
+                self.testnet = general_config.testnet
 
             # Position settings
             self.max_positions = position_config.max_positions

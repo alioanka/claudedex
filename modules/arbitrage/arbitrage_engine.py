@@ -565,6 +565,8 @@ class ArbitrageEngine:
 
                 if self.private_key and self.wallet_address and not self.dry_run:
                     if flash_loan_contract:
+                        # Convert to checksum address (web3.py requires this)
+                        flash_loan_contract = Web3.to_checksum_address(flash_loan_contract)
                         # Use the deployed flash loan receiver contract
                         self.flash_loan_executor = FlashLoanExecutor(
                             self.w3,
