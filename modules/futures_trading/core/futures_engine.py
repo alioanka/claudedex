@@ -245,7 +245,31 @@ class FuturesTradingEngine:
 
             # General settings
             self.exchange = general_config.exchange.lower()
-            self.testnet = general_config.testnet
+
+            # Testnet/Mainnet determination - IMPORTANT precedence:
+            # 1. FUTURES_TESTNET env var (explicit override)
+            # 2. If DRY_RUN=false (live trading), default to MAINNET for safety
+            # 3. Fall back to database config (only in dry run mode)
+            testnet_env = os.getenv('FUTURES_TESTNET', '').strip().lower()
+            testnet_source = None
+
+            if testnet_env in ('true', '1', 'yes'):
+                self.testnet = True
+                testnet_source = "FUTURES_TESTNET env var"
+            elif testnet_env in ('false', '0', 'no'):
+                self.testnet = False
+                testnet_source = "FUTURES_TESTNET env var"
+            elif not self.dry_run:
+                # SAFETY: Live trading (DRY_RUN=false) defaults to MAINNET
+                # This prevents accidental testnet trading when live trading is enabled
+                self.testnet = False
+                testnet_source = "DRY_RUN=false safety default (use FUTURES_TESTNET=true to override)"
+            else:
+                # In dry run mode, use database setting
+                self.testnet = general_config.testnet
+                testnet_source = f"database config (general_config.testnet={general_config.testnet})"
+
+            logger.info(f"   Testnet: {self.testnet} (source: {testnet_source})")
 
             # Position settings
             self.max_positions = position_config.max_positions

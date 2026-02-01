@@ -42,14 +42,35 @@ class JupiterHelper:
         # - Ultra (Premium): https://api.jup.ag/ultra (dynamic scaling)
         # Set JUPITER_API_URL in .env to your subscribed plan
         # NOTE: lite-api.jup.ag/swap/v1 is proven to work in arbitrage module
-        self.api_url = os.getenv('JUPITER_API_URL', 'https://lite-api.jup.ag/swap/v1')
+        raw_url = os.getenv('JUPITER_API_URL', 'https://lite-api.jup.ag/swap/v1')
+
+        # Normalize URL - ensure it has the proper API path suffix
+        # If user sets just "https://lite-api.jup.ag", append "/swap/v1"
+        if 'lite-api.jup.ag' in raw_url and not raw_url.endswith('/swap/v1'):
+            if raw_url.endswith('/'):
+                self.api_url = raw_url + 'swap/v1'
+            else:
+                self.api_url = raw_url + '/swap/v1'
+        elif 'quote-api.jup.ag' in raw_url and not raw_url.endswith('/v6'):
+            if raw_url.endswith('/'):
+                self.api_url = raw_url + 'v6'
+            else:
+                self.api_url = raw_url + '/v6'
+        else:
+            self.api_url = raw_url
+
         self.solana_rpc = solana_rpc_url or os.getenv('SOLANA_RPC_URL')
 
         logger.info(f"🔗 Jupiter API endpoint: {self.api_url}")
 
         # Load keypair for signing - use secrets manager (database/Docker secrets)
         if private_key:
-            self.keypair = Keypair.from_base58_string(private_key)
+            try:
+                self.keypair = Keypair.from_base58_string(private_key)
+                logger.info(f"✅ Jupiter keypair loaded (pubkey: {str(self.keypair.pubkey())[:12]}...)")
+            except Exception as e:
+                logger.error(f"❌ Failed to load keypair from provided private_key: {e}")
+                self.keypair = None
         else:
             # Get private key from secrets manager
             try:
@@ -84,16 +105,57 @@ class JupiterHelper:
             if not pk_str:
                 return None
 
+            # Check if value is encrypted (Fernet tokens start with gAAAAAB)
+            if pk_str.startswith('gAAAAAB'):
+                logger.debug("Private key appears to be Fernet encrypted, decrypting...")
+                pk_str = self._decrypt_value(pk_str)
+                if not pk_str:
+                    logger.error("Failed to decrypt Solana private key")
+                    return None
+                logger.info("✅ Successfully decrypted Solana private key")
+
             # Try to parse as base58
             try:
                 return Keypair.from_base58_string(pk_str)
             except (ValueError, Exception) as e:
-                # If that fails, it might be encrypted - would need decryption logic
-                logger.warning(f"Private key appears to be encrypted or invalid: {e}")
+                logger.warning(f"Private key parse failed: {e}")
                 return None
 
         except Exception as e:
             logger.error(f"Error loading keypair: {e}")
+            return None
+
+    def _decrypt_value(self, encrypted_value: str) -> Optional[str]:
+        """
+        Decrypt a Fernet-encrypted value
+
+        Args:
+            encrypted_value: Fernet encrypted string (starts with gAAAAAB)
+
+        Returns:
+            Optional[str]: Decrypted value or None
+        """
+        try:
+            from pathlib import Path
+
+            # Get encryption key from file or environment
+            encryption_key = None
+            key_file = Path('.encryption_key')
+            if key_file.exists():
+                encryption_key = key_file.read_text().strip()
+            if not encryption_key:
+                encryption_key = os.getenv('ENCRYPTION_KEY')
+
+            if not encryption_key:
+                logger.error("Cannot decrypt: no encryption key found (.encryption_key or ENCRYPTION_KEY env)")
+                return None
+
+            from cryptography.fernet import Fernet
+            f = Fernet(encryption_key.encode() if isinstance(encryption_key, str) else encryption_key)
+            return f.decrypt(encrypted_value.encode()).decode()
+
+        except Exception as e:
+            logger.error(f"Decryption failed: {e}")
             return None
 
     def _load_keypair_from_env(self) -> Optional[Keypair]:
@@ -277,16 +339,22 @@ class JupiterHelper:
         try:
             if not self.keypair:
                 logger.error("No keypair available for signing")
+                logger.error("   Ensure SOLANA_MODULE_PRIVATE_KEY is set in database secrets")
                 return None
 
             # Decode the transaction
             import base64
+            logger.debug(f"Decoding transaction ({len(transaction_data)} chars)...")
             tx_bytes = base64.b64decode(transaction_data)
+            logger.debug(f"Transaction decoded ({len(tx_bytes)} bytes)")
 
             # Parse as versioned transaction
+            logger.debug("Parsing versioned transaction...")
             tx = VersionedTransaction.from_bytes(tx_bytes)
+            logger.debug(f"Transaction parsed, message signatures required: {len(tx.message.account_keys) if hasattr(tx.message, 'account_keys') else 'N/A'}")
 
             # Sign the transaction
+            logger.debug(f"Signing with keypair (pubkey: {str(self.keypair.pubkey())[:12]}...)")
             tx.sign([self.keypair])
 
             # Encode back to base64
@@ -436,9 +504,16 @@ class JupiterHelper:
         swap_logger = logging.getLogger("SolanaTradingEngine")
 
         try:
+            # Pre-check: Verify keypair is loaded before attempting swap
+            if not self.keypair:
+                swap_logger.error("❌ Jupiter: No keypair loaded - cannot sign transactions")
+                swap_logger.error("   Check SOLANA_PRIVATE_KEY in database/secrets and .encryption_key file")
+                return None
+
             # Use keypair's public key if not provided
-            if not user_public_key and self.keypair:
+            if not user_public_key:
                 user_public_key = str(self.keypair.pubkey())
+                swap_logger.debug(f"Using wallet pubkey: {user_public_key[:12]}...")
 
             if not user_public_key:
                 swap_logger.error("❌ Jupiter: No user public key available for signing")

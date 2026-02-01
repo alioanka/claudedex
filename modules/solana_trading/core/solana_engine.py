@@ -1147,7 +1147,23 @@ class SolanaTradingEngine:
         try:
             logger.info("Initializing Jupiter V6 aggregator...")
 
-            jupiter_api_url = os.getenv('JUPITER_API_URL', 'https://lite-api.jup.ag/swap/v1')
+            raw_url = os.getenv('JUPITER_API_URL', 'https://lite-api.jup.ag/swap/v1')
+
+            # Normalize URL - ensure it has the proper API path suffix
+            # If user sets just "https://lite-api.jup.ag", append "/swap/v1"
+            if 'lite-api.jup.ag' in raw_url and not raw_url.endswith('/swap/v1'):
+                if raw_url.endswith('/'):
+                    jupiter_api_url = raw_url + 'swap/v1'
+                else:
+                    jupiter_api_url = raw_url + '/swap/v1'
+            elif 'quote-api.jup.ag' in raw_url and not raw_url.endswith('/v6'):
+                if raw_url.endswith('/'):
+                    jupiter_api_url = raw_url + 'v6'
+                else:
+                    jupiter_api_url = raw_url + '/v6'
+            else:
+                jupiter_api_url = raw_url
+
             jupiter_api_key = os.getenv('JUPITER_API_KEY', '')
 
             self.jupiter_client = JupiterClient(
