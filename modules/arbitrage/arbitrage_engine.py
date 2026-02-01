@@ -202,12 +202,17 @@ class FlashLoanExecutor:
     """
     Flash Loan executor using Aave V3.
     Enables borrowing large amounts without collateral for arbitrage.
+
+    IMPORTANT: Flash loans require two distinct addresses:
+    - wallet_address: The EOA that signs transactions and pays gas (derived from private_key)
+    - receiver_contract: The deployed contract that implements IFlashLoanReceiver.executeOperation()
     """
 
-    def __init__(self, w3: Web3, private_key: str, wallet_address: str):
+    def __init__(self, w3: Web3, private_key: str, wallet_address: str, receiver_contract: str):
         self.w3 = w3
         self.private_key = private_key
-        self.wallet_address = wallet_address
+        self.wallet_address = wallet_address  # EOA for signing/gas
+        self.receiver_contract = receiver_contract  # Contract for flash loan callback
         self.aave_pool = None
 
         if w3:
@@ -239,16 +244,17 @@ class FlashLoanExecutor:
 
         try:
             # Build flash loan transaction
+            # IMPORTANT: receiver = contract (handles callback), from = wallet (signs TX)
             tx = self.aave_pool.functions.flashLoan(
-                Web3.to_checksum_address(self.wallet_address),  # receiver
+                Web3.to_checksum_address(self.receiver_contract),  # receiver - the flash loan contract
                 [Web3.to_checksum_address(a) for a in assets],
                 amounts,
                 [0] * len(assets),  # interest rate modes (0 = no debt)
-                Web3.to_checksum_address(self.wallet_address),  # onBehalfOf
+                Web3.to_checksum_address(self.receiver_contract),  # onBehalfOf - same as receiver
                 callback_data,
                 0  # referral code
             ).build_transaction({
-                'from': Web3.to_checksum_address(self.wallet_address),
+                'from': Web3.to_checksum_address(self.wallet_address),  # EOA wallet signs
                 'gas': 500000,
                 'nonce': self.w3.eth.get_transaction_count(self.wallet_address)
             })
@@ -567,13 +573,16 @@ class ArbitrageEngine:
                     if flash_loan_contract:
                         # Convert to checksum address (web3.py requires this)
                         flash_loan_contract = Web3.to_checksum_address(flash_loan_contract)
-                        # Use the deployed flash loan receiver contract
+                        # Initialize flash loan executor with BOTH wallet (for signing) AND contract (for receiver)
                         self.flash_loan_executor = FlashLoanExecutor(
                             self.w3,
                             self.private_key,
-                            flash_loan_contract  # Use contract, not EOA wallet
+                            self.wallet_address,  # EOA wallet - signs TX and pays gas
+                            flash_loan_contract   # Contract - receives flash loan callback
                         )
-                        logger.info(f"⚡ Flash Loan executor initialized with contract: {flash_loan_contract[:10]}...")
+                        logger.info(f"⚡ Flash Loan executor initialized:")
+                        logger.info(f"   Wallet (signer): {self.wallet_address[:10]}...")
+                        logger.info(f"   Receiver contract: {flash_loan_contract[:10]}...")
                     else:
                         # No contract deployed - flash loans WILL NOT WORK with EOA
                         logger.warning("=" * 70)
