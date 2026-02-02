@@ -1160,17 +1160,58 @@ class SolanaArbitrageEngine:
             message = tx.message
             our_pubkey = keypair.pubkey()
 
+            # Get account keys
+            account_keys = None
+            if hasattr(message, 'account_keys') and message.account_keys:
+                account_keys = list(message.account_keys)
+            elif hasattr(message, 'static_account_keys'):
+                account_keys = list(message.static_account_keys())
+
             # Verify fee payer matches our keypair
-            if hasattr(message, 'account_keys') and len(message.account_keys) > 0:
-                fee_payer = message.account_keys[0]
+            if account_keys and len(account_keys) > 0:
+                fee_payer = account_keys[0]
                 if str(fee_payer) != str(our_pubkey):
                     logger.error(f"❌ PUBKEY MISMATCH! Transaction expects: {str(fee_payer)}")
                     logger.error(f"   But we have: {str(our_pubkey)}")
                     return None
 
-            # Sign the transaction message and create signed transaction
-            signature = keypair.sign_message(bytes(message))
-            signed_tx = VersionedTransaction.populate(message, [signature])
+            # Sign the transaction - handle multiple signature slots
+            # CRITICAL: Transaction may require multiple signatures
+            num_required_signatures = message.header.num_required_signatures
+            logger.debug(f"Transaction requires {num_required_signatures} signature(s)")
+
+            # Find our pubkey position in the required signers
+            our_position = None
+            our_pubkey_str = str(our_pubkey)
+            if account_keys:
+                for i in range(min(num_required_signatures, len(account_keys))):
+                    if str(account_keys[i]) == our_pubkey_str:
+                        our_position = i
+                        break
+
+            if our_position is None:
+                logger.error(f"❌ Our pubkey not found in required signers!")
+                return None
+
+            # Sign the message
+            our_signature = keypair.sign_message(bytes(message))
+
+            # Create signature array with our signature at the correct position
+            from solders.signature import Signature
+            null_sig = Signature.default()
+
+            signatures = []
+            for i in range(num_required_signatures):
+                if i == our_position:
+                    signatures.append(our_signature)
+                else:
+                    # Preserve existing signatures if present
+                    if i < len(tx.signatures) and tx.signatures[i] != null_sig:
+                        signatures.append(tx.signatures[i])
+                    else:
+                        signatures.append(null_sig)
+
+            signed_tx = VersionedTransaction.populate(message, signatures)
 
             # Encode back to base64
             signed_bytes = bytes(signed_tx)

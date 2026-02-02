@@ -460,11 +460,65 @@ class JupiterHelper:
                 sign_logger.warning(f"   ⚠️ Could not verify fee payer, signing with: {our_pubkey_str[:12]}...")
 
             # Sign the transaction message and create signed transaction
-            # Note: solders VersionedTransaction doesn't have a .sign() method
-            # We need to sign the message and use VersionedTransaction.populate()
+            # CRITICAL: VersionedTransaction may require multiple signatures
+            # We need to:
+            # 1. Check how many signatures the transaction requires
+            # 2. Find which slot corresponds to our pubkey
+            # 3. Create signature array with our signature in the correct position
+
+            # Get the number of required signatures from the message header
+            num_required_signatures = message.header.num_required_signatures
+            sign_logger.debug(f"Transaction requires {num_required_signatures} signature(s)")
+
+            # Get account keys to find our pubkey position
+            account_keys = None
+            try:
+                if hasattr(message, 'account_keys') and message.account_keys:
+                    account_keys = list(message.account_keys)
+                elif hasattr(message, 'static_account_keys'):
+                    account_keys = list(message.static_account_keys())
+            except Exception as e:
+                sign_logger.warning(f"Could not get account keys: {e}")
+
+            # Find our pubkey position in the signers (first num_required_signatures accounts)
+            our_position = None
+            if account_keys:
+                for i in range(min(num_required_signatures, len(account_keys))):
+                    if str(account_keys[i]) == our_pubkey_str:
+                        our_position = i
+                        break
+
+            if our_position is None:
+                sign_logger.error(f"❌ Our pubkey not found in required signers!")
+                sign_logger.error(f"   Required signers: {[str(k)[:12] for k in account_keys[:num_required_signatures]]}")
+                sign_logger.error(f"   Our pubkey: {our_pubkey_str[:12]}...")
+                return None
+
+            sign_logger.debug(f"Our pubkey is at signer position {our_position}")
+
+            # Sign the message
             sign_logger.debug(f"Signing with keypair (pubkey: {str(our_pubkey)[:12]}...)")
-            signature = self.keypair.sign_message(bytes(message))
-            signed_tx = VersionedTransaction.populate(message, [signature])
+            our_signature = self.keypair.sign_message(bytes(message))
+
+            # Create signature array with our signature at the correct position
+            # Other positions get a default "null" signature (64 zero bytes)
+            from solders.signature import Signature
+            null_sig = Signature.default()
+
+            signatures = []
+            for i in range(num_required_signatures):
+                if i == our_position:
+                    signatures.append(our_signature)
+                else:
+                    # Check if original transaction had a signature here
+                    if i < len(tx.signatures) and tx.signatures[i] != null_sig:
+                        signatures.append(tx.signatures[i])
+                        sign_logger.debug(f"   Preserving existing signature at position {i}")
+                    else:
+                        signatures.append(null_sig)
+
+            sign_logger.debug(f"Created signature array with {len(signatures)} signature(s)")
+            signed_tx = VersionedTransaction.populate(message, signatures)
 
             # Encode back to base64
             signed_tx_bytes = bytes(signed_tx)
