@@ -306,9 +306,9 @@ class FuturesTradingEngine:
             self.trailing_stop_enabled = getattr(risk_config, 'trailing_stop_enabled', True)
             self.trailing_stop_distance = getattr(risk_config, 'trailing_stop_distance', 1.0)
 
-            # Market condition filters
-            self.require_trend_confirmation = getattr(risk_config, 'require_trend_confirmation', True)
-            self.min_volume_multiplier = getattr(risk_config, 'min_volume_multiplier', 1.2)
+            # Market condition filters (relaxed defaults for live trading)
+            self.require_trend_confirmation = getattr(risk_config, 'require_trend_confirmation', False)
+            self.min_volume_multiplier = getattr(risk_config, 'min_volume_multiplier', 0.8)
 
             # Calculate max_daily_loss_usd from percentage and capital
             # If max_daily_loss_pct is set (from UI), use that. Otherwise use max_daily_loss_usd directly.

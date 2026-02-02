@@ -504,13 +504,16 @@ class TradeExecutor:
             tx_bytes = base64.b64decode(swap_tx_base64)
             tx = VersionedTransaction.from_bytes(tx_bytes)
 
-            # Sign transaction
-            tx.sign([keypair])
+            # Sign transaction using correct VersionedTransaction.populate() pattern
+            # The .sign([keypair]) method doesn't work with solders VersionedTransaction
+            message = tx.message
+            signature = keypair.sign_message(bytes(message))
+            signed_tx = VersionedTransaction.populate(message, [signature])
 
             # Send transaction
             rpc_url = os.getenv('SOLANA_RPC_URL')
             async with AsyncClient(rpc_url) as client:
-                result = await client.send_transaction(tx)
+                result = await client.send_transaction(signed_tx)
                 tx_hash = str(result.value)
                 logger.info(f"✅ Solana TX sent: {tx_hash}")
                 return tx_hash

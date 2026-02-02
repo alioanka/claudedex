@@ -559,7 +559,8 @@ class ArbitrageEngine:
         self.flashbots_executor: Optional[FlashbotsExecutor] = None
 
         # Settings
-        self.min_profit_threshold = 0.005  # 0.5% minimum profit
+        # Increased threshold to filter out false positives - costs are ~0.75% so need higher raw spread
+        self.min_profit_threshold = 0.015  # 1.5% minimum profit (after 0.75% costs = 0.75% net)
         self.use_flash_loans = True
         self.use_flashbots = True
         self.flash_loan_amount = 10 * 10**18  # 10 ETH default
@@ -831,9 +832,20 @@ class ArbitrageEngine:
             if buy_price == 0:
                 return False
 
-            spread = (sell_price - buy_price) / buy_price
+            # Calculate raw spread
+            raw_spread = (sell_price - buy_price) / buy_price
 
-            if spread > self.min_profit_threshold:
+            # Estimated costs that reduce actual profit:
+            # - Flash loan fee: 0.05% (Aave)
+            # - DEX swap slippage: ~0.3% per leg x 2 legs = 0.6%
+            # - Price impact: varies by amount, estimate ~0.1%
+            estimated_costs = 0.0075  # 0.75% total
+            net_spread = raw_spread - estimated_costs
+
+            # Use net spread for threshold check, but log both for transparency
+            spread = net_spread
+
+            if raw_spread > self.min_profit_threshold:
                 self._stats['opportunities_found'] += 1
 
                 # Create unique key for this opportunity
@@ -868,7 +880,7 @@ class ArbitrageEngine:
                 self._pair_execution_count[opp_key] = current_count + 1
                 remaining = self._max_executions_per_pair_per_day - (current_count + 1)
 
-                logger.info(f"🚨 ARBITRAGE OPPORTUNITY [{token_symbol}]: Buy on {best_buy_dex}, Sell on {best_sell_dex}. Spread: {spread:.2%} (#{current_count + 1} today, {remaining} remaining)")
+                logger.info(f"🚨 ARBITRAGE OPPORTUNITY [{token_symbol}]: Buy on {best_buy_dex}, Sell on {best_sell_dex}. Raw: {raw_spread:.2%}, Net: {net_spread:.2%} (#{current_count + 1} today, {remaining} remaining)")
                 self._stats['opportunities_executed'] += 1
 
                 # Execute arbitrage
