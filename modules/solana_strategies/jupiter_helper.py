@@ -13,6 +13,12 @@ from solders.transaction import VersionedTransaction
 from solders.message import MessageV0
 from solders.pubkey import Pubkey
 
+# Import RPCProvider for centralized RPC management
+try:
+    from config.rpc_provider import RPCProvider
+except ImportError:
+    RPCProvider = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,7 +65,13 @@ class JupiterHelper:
         else:
             self.api_url = raw_url
 
-        self.solana_rpc = solana_rpc_url or os.getenv('SOLANA_RPC_URL')
+        # Use Pool Engine via RPCProvider for centralized RPC management
+        if solana_rpc_url:
+            self.solana_rpc = solana_rpc_url
+        elif RPCProvider:
+            self.solana_rpc = RPCProvider.get_rpc_sync('SOLANA_RPC')
+        else:
+            self.solana_rpc = os.getenv('SOLANA_RPC_URL')
 
         logger.info(f"🔗 Jupiter API endpoint: {self.api_url}")
 

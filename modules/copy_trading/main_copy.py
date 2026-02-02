@@ -13,6 +13,12 @@ import os
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+# Import RPCProvider for centralized RPC management
+try:
+    from config.rpc_provider import RPCProvider
+except ImportError:
+    RPCProvider = None
+
 # Load env
 load_dotenv()
 
@@ -69,17 +75,22 @@ async def main():
     logger.info(f"   Working dir: {Path.cwd()}")
     logger.info(f"   Log dir: {log_dir.absolute()}")
 
-    # Check for API keys and RPC URLs - use secrets manager (database/Docker secrets)
+    # Check for API keys and RPC URLs - use Pool Engine for RPC management
     try:
         from security.secrets_manager import secrets
         etherscan_key = secrets.get('ETHERSCAN_API_KEY', log_access=False)
-        solana_rpc = secrets.get('SOLANA_RPC_URL', log_access=False)
         helius_key = secrets.get('HELIUS_API_KEY', log_access=False)
     except Exception:
         # Fallback to env if secrets manager unavailable
         etherscan_key = os.getenv('ETHERSCAN_API_KEY')
-        solana_rpc = os.getenv('SOLANA_RPC_URL')
         helius_key = os.getenv('HELIUS_API_KEY')
+
+    # Use Pool Engine for Solana RPC
+    solana_rpc = None
+    if RPCProvider:
+        solana_rpc = RPCProvider.get_rpc_sync('SOLANA_RPC')
+    if not solana_rpc:
+        solana_rpc = os.getenv('SOLANA_RPC_URL')
 
     logger.info(f"   ETHERSCAN_API_KEY: {'Configured' if etherscan_key else 'NOT SET - EVM monitoring disabled'}")
     logger.info(f"   SOLANA_RPC_URL: {'Configured' if solana_rpc else 'NOT SET - Solana monitoring disabled'}")

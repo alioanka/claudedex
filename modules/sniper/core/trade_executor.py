@@ -18,6 +18,12 @@ from dataclasses import dataclass
 from decimal import Decimal
 from datetime import datetime
 
+# Import RPCProvider for centralized RPC management
+try:
+    from config.rpc_provider import RPCProvider
+except ImportError:
+    RPCProvider = None
+
 logger = logging.getLogger("TradeExecutor")
 
 # Jupiter API endpoints - use lite-api.jup.ag/swap/v1 (proven to work)
@@ -510,8 +516,11 @@ class TradeExecutor:
             signature = keypair.sign_message(bytes(message))
             signed_tx = VersionedTransaction.populate(message, [signature])
 
-            # Send transaction
-            rpc_url = os.getenv('SOLANA_RPC_URL')
+            # Send transaction - use Pool Engine for RPC
+            if RPCProvider:
+                rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC')
+            else:
+                rpc_url = os.getenv('SOLANA_RPC_URL')
             async with AsyncClient(rpc_url) as client:
                 result = await client.send_transaction(signed_tx)
                 tx_hash = str(result.value)
