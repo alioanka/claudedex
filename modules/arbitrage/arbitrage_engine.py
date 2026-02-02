@@ -810,52 +810,59 @@ class ArbitrageEngine:
         try:
             amount_in = self.flash_loan_amount  # Use configured flash loan amount
 
-            prices = {}
+            # Query BOTH directions on all DEXs to find real arbitrage opportunities
+            # Forward direction: token_in → token_out (first leg of arbitrage)
+            forward_prices = {}
             for name, contract in self.router_contracts.items():
                 try:
                     amounts = contract.functions.getAmountsOut(amount_in, [token_in, token_out]).call()
-                    prices[name] = amounts[1]
+                    forward_prices[name] = amounts[1]
                 except Exception:
                     # Silently skip - many pairs won't have liquidity on all DEXs
                     pass
 
-            if len(prices) < 2:
+            if len(forward_prices) < 2:
                 return False
 
-            # Find best DEXs for each leg of the arbitrage:
-            # - First leg (token_in → token_out): Want DEX with HIGHEST output (best rate)
-            # - Second leg (token_out → token_in): Want DEX with LOWEST first-leg output,
-            #   because a lower token_in/token_out rate means higher token_out/token_in rate
-            #
-            # Example: WETH→USDC rates
-            # - DEX A: 10 WETH → 30,000 USDC (3000 USDC/WETH)
-            # - DEX B: 10 WETH → 31,000 USDC (3100 USDC/WETH)
-            # For first leg, DEX B is better (more USDC output)
-            # For second leg (USDC→WETH), DEX A is better (lower rate = more WETH per USDC)
-            best_buy_dex = max(prices, key=prices.get)   # Best rate for first leg
-            best_sell_dex = min(prices, key=prices.get)  # Best rate for second leg (inverse)
+            # Find best forward DEX (gives most token_out for our token_in)
+            best_buy_dex = max(forward_prices, key=forward_prices.get)
+            forward_output = forward_prices[best_buy_dex]
 
-            buy_price = prices[best_buy_dex]
-            sell_price = prices[best_sell_dex]
-
-            if buy_price == 0 or sell_price == 0:
+            if forward_output == 0:
                 return False
 
-            # Calculate raw spread based on price differential
-            # buy_price = max output (best DEX for first leg)
-            # sell_price = min output (DEX with inverse rate that's better for second leg)
-            # Spread = (max - min) / min = how much more we get on the optimal path
-            raw_spread = (buy_price - sell_price) / sell_price
+            # Now query reverse direction on OTHER DEXs: token_out → token_in
+            # This is the actual second leg of the arbitrage
+            reverse_outputs = {}
+            for name, contract in self.router_contracts.items():
+                if name == best_buy_dex:
+                    continue  # Skip same DEX - no arbitrage within same DEX
+                try:
+                    amounts = contract.functions.getAmountsOut(forward_output, [token_out, token_in]).call()
+                    reverse_outputs[name] = amounts[1]
+                except Exception:
+                    pass
 
-            # Estimated costs that reduce actual profit:
-            # - Flash loan fee: 0.05% (Aave)
-            # - DEX swap slippage: ~0.3% per leg x 2 legs = 0.6%
-            # - Price impact: varies by amount, estimate ~0.1%
-            estimated_costs = 0.0075  # 0.75% total
+            if not reverse_outputs:
+                return False
+
+            # Find best reverse DEX (gives most token_in back for our token_out)
+            best_sell_dex = max(reverse_outputs, key=reverse_outputs.get)
+            final_output = reverse_outputs[best_sell_dex]
+
+            # Calculate actual profit: final_output - (borrowed_amount + flash_loan_fee)
+            flash_loan_fee = amount_in * 5 // 10000  # 0.05% Aave fee
+            amount_owed = amount_in + flash_loan_fee
+
+            if final_output <= amount_owed:
+                return False  # No profit possible
+
+            profit = final_output - amount_owed
+            raw_spread = profit / amount_in
+
+            # Estimated additional costs (slippage, gas)
+            estimated_costs = 0.005  # 0.5% for slippage and gas
             net_spread = raw_spread - estimated_costs
-
-            # Use net spread for threshold check, but log both for transparency
-            spread = net_spread
 
             if net_spread > self.min_profit_threshold:
                 self._stats['opportunities_found'] += 1
@@ -893,6 +900,7 @@ class ArbitrageEngine:
                 remaining = self._max_executions_per_pair_per_day - (current_count + 1)
 
                 logger.info(f"🚨 ARBITRAGE OPPORTUNITY [{token_symbol}]: Buy on {best_buy_dex}, Sell on {best_sell_dex}. Raw: {raw_spread:.2%}, Net: {net_spread:.2%} (#{current_count + 1} today, {remaining} remaining)")
+                logger.info(f"   Path: {amount_in/1e18:.4f} {token_symbol} → {forward_output/1e18:.4f} intermediate → {final_output/1e18:.4f} {token_symbol} (profit: {profit/1e18:.4f})")
                 self._stats['opportunities_executed'] += 1
 
                 # Execute arbitrage
@@ -902,7 +910,7 @@ class ArbitrageEngine:
                     token_in=token_in,
                     token_out=token_out,
                     amount=amount_in,
-                    expected_profit=spread,
+                    expected_profit=net_spread,
                     token_symbol=token_symbol
                 )
                 return True
