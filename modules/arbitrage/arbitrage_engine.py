@@ -115,6 +115,37 @@ AAVE_POOL_ABI = [
     }
 ]
 
+# FlashLoanArbitrage contract ABI - this is what we actually call
+# The contract initiates the flash loan internally (so initiator check passes)
+FLASH_LOAN_CONTRACT_ABI = [
+    {
+        "inputs": [
+            {"internalType": "address", "name": "asset", "type": "address"},
+            {"internalType": "uint256", "name": "amount", "type": "uint256"},
+            {"internalType": "address", "name": "buyRouter", "type": "address"},
+            {"internalType": "address", "name": "sellRouter", "type": "address"},
+            {"internalType": "address", "name": "intermediateToken", "type": "address"}
+        ],
+        "name": "executeArbitrage",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"internalType": "address", "name": "asset", "type": "address"},
+            {"internalType": "uint256", "name": "amount", "type": "uint256"},
+            {"internalType": "address", "name": "buyRouter", "type": "address"},
+            {"internalType": "address", "name": "sellRouter", "type": "address"},
+            {"internalType": "address", "name": "intermediateToken", "type": "address"}
+        ],
+        "name": "checkArbitrage",
+        "outputs": [{"internalType": "int256", "name": "profit", "type": "int256"}],
+        "stateMutability": "view",
+        "type": "function"
+    }
+]
+
 # Common Token Addresses (Ethereum Mainnet)
 TOKENS = {
     # Major tokens
@@ -199,66 +230,144 @@ FLASHBOTS_GOERLI_URL = 'https://relay-goerli.flashbots.net'
 
 class FlashLoanExecutor:
     """
-    Flash Loan executor using Aave V3.
-    Enables borrowing large amounts without collateral for arbitrage.
+    Flash Loan executor using FlashLoanArbitrage contract.
 
-    IMPORTANT: Flash loans require two distinct addresses:
-    - wallet_address: The EOA that signs transactions and pays gas (derived from private_key)
-    - receiver_contract: The deployed contract that implements IFlashLoanReceiver.executeOperation()
+    IMPORTANT: We call the contract's executeArbitrage() function, NOT Aave directly!
+    This ensures the initiator check passes (initiator == contract address).
+
+    Flow:
+    1. User wallet calls executeArbitrage() on FlashLoanArbitrage contract
+    2. Contract calls flashLoanSimple() on Aave Pool
+    3. Aave calls executeOperation() on contract with initiator = contract (passes check!)
+    4. Contract executes swaps and repays loan
     """
 
     def __init__(self, w3: Web3, private_key: str, wallet_address: str, receiver_contract: str):
         self.w3 = w3
         self.private_key = private_key
-        self.wallet_address = wallet_address  # EOA for signing/gas
-        self.receiver_contract = receiver_contract  # Contract for flash loan callback
-        self.aave_pool = None
+        self.wallet_address = wallet_address  # EOA for signing/gas (must be contract owner)
+        self.receiver_contract = receiver_contract  # FlashLoanArbitrage contract address
+        self.flash_loan_contract = None
+        self._pending_nonce = None  # Track nonce to avoid collisions
+        self._last_tx_time = None
 
         if w3:
-            self.aave_pool = w3.eth.contract(
-                address=Web3.to_checksum_address(AAVE_V3_POOL),
-                abi=AAVE_POOL_ABI
+            self.flash_loan_contract = w3.eth.contract(
+                address=Web3.to_checksum_address(receiver_contract),
+                abi=FLASH_LOAN_CONTRACT_ABI
             )
 
-    async def execute_flash_loan(
+    def _get_next_nonce(self) -> int:
+        """Get the next nonce, accounting for pending transactions"""
+        # Get both confirmed and pending nonce
+        confirmed_nonce = self.w3.eth.get_transaction_count(self.wallet_address)
+        pending_nonce = self.w3.eth.get_transaction_count(self.wallet_address, 'pending')
+
+        # Use the higher of pending or our tracked nonce
+        if self._pending_nonce is not None:
+            next_nonce = max(confirmed_nonce, pending_nonce, self._pending_nonce)
+        else:
+            next_nonce = max(confirmed_nonce, pending_nonce)
+
+        # Update tracked nonce for next call
+        self._pending_nonce = next_nonce + 1
+        return next_nonce
+
+    async def check_arbitrage_profit(
         self,
         asset: str,
         amount: int,
-        callback_data: bytes
+        buy_router: str,
+        sell_router: str,
+        intermediate_token: str
+    ) -> Optional[int]:
+        """
+        Simulate arbitrage to check if profitable (view function - no gas).
+
+        Returns:
+            Expected profit in wei, or None if simulation fails
+        """
+        if not self.flash_loan_contract:
+            return None
+
+        try:
+            profit = self.flash_loan_contract.functions.checkArbitrage(
+                Web3.to_checksum_address(asset),
+                amount,
+                Web3.to_checksum_address(buy_router),
+                Web3.to_checksum_address(sell_router),
+                Web3.to_checksum_address(intermediate_token)
+            ).call()
+            return profit
+        except Exception as e:
+            logger.debug(f"Arbitrage simulation failed: {e}")
+            return None
+
+    async def execute_arbitrage(
+        self,
+        asset: str,
+        amount: int,
+        buy_router: str,
+        sell_router: str,
+        intermediate_token: str
     ) -> Optional[str]:
         """
-        Execute Aave flash loan using flashLoanSimple (single asset).
+        Execute arbitrage via FlashLoanArbitrage contract.
+
+        The contract will:
+        1. Initiate flash loan from Aave (with itself as initiator)
+        2. Execute swaps on buyRouter then sellRouter
+        3. Repay loan + fee
+        4. Keep profit in contract
 
         Args:
-            asset: Token address to borrow (single asset)
-            amount: Amount to borrow
-            callback_data: ABI-encoded arbitrage params (buyRouter, sellRouter, intermediateToken)
+            asset: Token address to borrow (e.g., WETH)
+            amount: Amount to borrow in wei
+            buy_router: DEX router with lower price
+            sell_router: DEX router with higher price
+            intermediate_token: Token to swap through
 
         Returns:
             Transaction hash if successful
         """
-        if not self.aave_pool:
-            logger.error("Aave pool not initialized")
+        if not self.flash_loan_contract:
+            logger.error("Flash loan contract not initialized")
             return None
 
         try:
-            # Get current gas price with buffer
-            gas_price = self.w3.eth.gas_price
-            gas_price = int(gas_price * 1.15)  # 15% buffer for faster inclusion
+            # First simulate to check profitability (saves gas on failures)
+            expected_profit = await self.check_arbitrage_profit(
+                asset, amount, buy_router, sell_router, intermediate_token
+            )
 
-            # Build flash loan transaction using flashLoanSimple
-            # This matches the FlashLoanArbitrage.sol contract
-            tx = self.aave_pool.functions.flashLoanSimple(
-                Web3.to_checksum_address(self.receiver_contract),  # receiverAddress - the flash loan contract
-                Web3.to_checksum_address(asset),  # asset to borrow
-                amount,  # amount to borrow
-                callback_data,  # params passed to executeOperation
-                0  # referralCode
+            if expected_profit is not None and expected_profit <= 0:
+                logger.warning(f"⚠️ Simulation shows no profit ({expected_profit}), skipping execution")
+                return None
+
+            # Get current gas price with buffer for faster inclusion
+            gas_price = self.w3.eth.gas_price
+            gas_price = int(gas_price * 1.2)  # 20% buffer
+
+            # Rate limit: wait at least 12 seconds between transactions (1 block)
+            if self._last_tx_time:
+                elapsed = (datetime.now() - self._last_tx_time).total_seconds()
+                if elapsed < 12:
+                    wait_time = 12 - elapsed
+                    logger.info(f"⏳ Waiting {wait_time:.1f}s for block confirmation...")
+                    await asyncio.sleep(wait_time)
+
+            # Build transaction to call contract's executeArbitrage function
+            tx = self.flash_loan_contract.functions.executeArbitrage(
+                Web3.to_checksum_address(asset),
+                amount,
+                Web3.to_checksum_address(buy_router),
+                Web3.to_checksum_address(sell_router),
+                Web3.to_checksum_address(intermediate_token)
             ).build_transaction({
-                'from': Web3.to_checksum_address(self.wallet_address),  # EOA wallet signs
-                'gas': 800000,  # Increased for complex arbitrage logic
+                'from': Web3.to_checksum_address(self.wallet_address),
+                'gas': 800000,
                 'gasPrice': gas_price,
-                'nonce': self.w3.eth.get_transaction_count(self.wallet_address),
+                'nonce': self._get_next_nonce(),
                 'chainId': self.w3.eth.chain_id
             })
 
@@ -266,10 +375,16 @@ class FlashLoanExecutor:
             signed_tx = self.w3.eth.account.sign_transaction(tx, self.private_key)
             tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
 
+            self._last_tx_time = datetime.now()
+
             logger.info(f"⚡ Flash loan TX sent: {tx_hash.hex()}")
             return tx_hash.hex()
 
         except Exception as e:
+            error_msg = str(e)
+            if 'replacement transaction underpriced' in error_msg:
+                logger.warning(f"⚠️ Nonce collision detected, resetting nonce tracker")
+                self._pending_nonce = None  # Reset to force fresh nonce fetch
             logger.error(f"Flash loan execution failed: {e}")
             import traceback
             logger.error(f"   Traceback: {traceback.format_exc()}")
@@ -828,16 +943,21 @@ class ArbitrageEngine:
         amount: int
     ) -> Optional[str]:
         """
-        Execute arbitrage using Aave flash loan (flashLoanSimple).
+        Execute arbitrage via FlashLoanArbitrage contract.
 
-        IMPORTANT: This requires a deployed FlashLoanReceiver contract!
-        Flash loans callback to executeOperation() which an EOA cannot handle.
+        The contract's executeArbitrage() function will:
+        1. Call Aave's flashLoanSimple (with contract as initiator - passes check!)
+        2. Swap borrowed asset -> intermediate token on buyRouter
+        3. Swap intermediate token -> borrowed asset on sellRouter
+        4. Repay loan + fee to Aave
+        5. Keep profit in contract (withdraw later)
 
-        The contract expects params as: (buyRouter, sellRouter, intermediateToken)
-        - We borrow token_in (e.g., WETH)
-        - Swap token_in -> token_out on buyRouter (cheaper DEX)
-        - Swap token_out -> token_in on sellRouter (more expensive DEX)
-        - Repay loan with profit
+        Args:
+            buy_dex: DEX with lower price
+            sell_dex: DEX with higher price
+            token_in: Asset to borrow (e.g., WETH)
+            token_out: Intermediate token to swap through (e.g., USDC)
+            amount: Amount to borrow in wei
         """
         # Safety check: flash loan executor must be initialized with a contract address
         if not self.flash_loan_executor:
@@ -846,31 +966,20 @@ class ArbitrageEngine:
             return None
 
         # Get router addresses
-        buy_router = Web3.to_checksum_address(ROUTERS.get(buy_dex, ROUTERS['uniswap_v2']))
-        sell_router = Web3.to_checksum_address(ROUTERS.get(sell_dex, ROUTERS['sushiswap']))
-
-        # Encode arbitrage parameters for the flash loan callback
-        # Must match FlashLoanArbitrage.sol executeOperation() decoding:
-        #   (address buyRouter, address sellRouter, address intermediateToken) = abi.decode(params, ...)
-        # - token_in: the asset we borrow (e.g., WETH) - NOT encoded, passed as flashLoan asset param
-        # - token_out: the intermediate token we swap through (e.g., USDC)
-        callback_data = encode(
-            ['address', 'address', 'address'],
-            [
-                buy_router,
-                sell_router,
-                Web3.to_checksum_address(token_out)  # intermediateToken
-            ]
-        )
+        buy_router = ROUTERS.get(buy_dex, ROUTERS['uniswap_v2'])
+        sell_router = ROUTERS.get(sell_dex, ROUTERS['sushiswap'])
 
         logger.info(f"   Flash loan params: borrow={token_in[:10]}..., intermediate={token_out[:10]}...")
         logger.info(f"   Route: {buy_dex} ({buy_router[:10]}...) -> {sell_dex} ({sell_router[:10]}...)")
 
-        # Execute flash loan (single asset)
-        tx_hash = await self.flash_loan_executor.execute_flash_loan(
+        # Execute via contract's executeArbitrage function
+        # This ensures initiator == contract address (passes the check!)
+        tx_hash = await self.flash_loan_executor.execute_arbitrage(
             asset=token_in,
             amount=amount,
-            callback_data=callback_data
+            buy_router=buy_router,
+            sell_router=sell_router,
+            intermediate_token=token_out
         )
 
         return tx_hash
