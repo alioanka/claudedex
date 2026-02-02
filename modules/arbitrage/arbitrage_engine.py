@@ -845,7 +845,7 @@ class ArbitrageEngine:
             # Use net spread for threshold check, but log both for transparency
             spread = net_spread
 
-            if raw_spread > self.min_profit_threshold:
+            if net_spread > self.min_profit_threshold:
                 self._stats['opportunities_found'] += 1
 
                 # Create unique key for this opportunity
