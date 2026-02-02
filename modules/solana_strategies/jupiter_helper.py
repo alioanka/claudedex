@@ -394,16 +394,19 @@ class JupiterHelper:
         Returns:
             Optional[str]: Transaction signature or None
         """
+        # Use SolanaTradingEngine logger for visibility in main logs
+        tx_logger = logging.getLogger("SolanaTradingEngine")
+
         try:
             if not self.solana_rpc:
-                logger.error("No Solana RPC URL configured")
+                tx_logger.error("   ❌ No Solana RPC URL configured")
                 return None
 
             if not self.session:
                 await self.initialize()
 
             # Log the RPC being used
-            logger.info(f"   📡 Using RPC: {self.solana_rpc[:50]}...")
+            tx_logger.info(f"   📡 Using RPC: {self.solana_rpc[:50]}...")
 
             # Send via RPC
             payload = {
@@ -426,25 +429,31 @@ class JupiterHelper:
                     result = await response.json()
                     if 'result' in result:
                         signature = result['result']
-                        logger.info(f"✅ Transaction sent: {signature}")
+                        tx_logger.info(f"   ✅ Transaction sent: {signature}")
                         return signature
                     elif 'error' in result:
                         error = result['error']
                         error_msg = error.get('message', str(error)) if isinstance(error, dict) else str(error)
                         error_code = error.get('code', 'N/A') if isinstance(error, dict) else 'N/A'
-                        # Log detailed error that will be visible
-                        logger.error(f"❌ RPC error [{error_code}]: {error_msg}")
-                        # Also log any additional error data
+                        # Log detailed error that will be visible in main logs
+                        tx_logger.error(f"   ❌ RPC error [{error_code}]: {error_msg}")
+                        # Also log any additional error data (like transaction simulation logs)
                         if isinstance(error, dict) and 'data' in error:
-                            logger.error(f"   Error data: {error['data']}")
+                            data = error['data']
+                            if isinstance(data, dict):
+                                logs = data.get('logs', [])
+                                if logs:
+                                    tx_logger.error(f"   📋 Simulation logs: {logs[-3:]}")
+                            else:
+                                tx_logger.error(f"   📋 Error data: {str(data)[:200]}")
                         return None
                 else:
                     error_text = await response.text()
-                    logger.error(f"❌ HTTP {response.status}: {error_text[:200]}")
+                    tx_logger.error(f"   ❌ HTTP {response.status}: {error_text[:200]}")
                     return None
 
         except Exception as e:
-            logger.error(f"❌ Exception sending transaction: {e}", exc_info=True)
+            tx_logger.error(f"   ❌ Exception sending transaction: {e}", exc_info=True)
             return None
 
     async def confirm_transaction(
