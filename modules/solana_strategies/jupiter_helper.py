@@ -77,12 +77,12 @@ class JupiterHelper:
 
         # Load keypair for signing - use secrets manager (database/Docker secrets)
         if private_key:
-            try:
-                self.keypair = Keypair.from_base58_string(private_key)
+            # Use the multi-format parser for provided private key
+            self.keypair = self._load_keypair_from_value(private_key)
+            if self.keypair:
                 logger.info(f"✅ Jupiter keypair loaded (pubkey: {str(self.keypair.pubkey())[:12]}...)")
-            except Exception as e:
-                logger.error(f"❌ Failed to load keypair from provided private_key: {e}")
-                self.keypair = None
+            else:
+                logger.error("❌ Failed to load keypair from provided private_key")
         else:
             # Get private key from secrets manager
             try:
@@ -414,21 +414,37 @@ class JupiterHelper:
             # Get the message for signing
             message = tx.message
             our_pubkey = self.keypair.pubkey()
+            our_pubkey_str = str(our_pubkey)
 
             # CRITICAL: Verify that the fee payer (first account) matches our keypair
             # This catches pubkey mismatches that would cause signature verification failure
-            if hasattr(message, 'account_keys') and len(message.account_keys) > 0:
-                fee_payer = message.account_keys[0]
-                logger.debug(f"Fee payer in transaction: {str(fee_payer)[:12]}...")
-                logger.debug(f"Our keypair pubkey: {str(our_pubkey)[:12]}...")
+            # Handle both legacy Message and MessageV0 formats
+            fee_payer = None
+            try:
+                # Try direct attribute access (works for most message types)
+                if hasattr(message, 'account_keys') and message.account_keys:
+                    fee_payer = message.account_keys[0]
+                # Alternative: some versions use static_account_keys()
+                elif hasattr(message, 'static_account_keys'):
+                    keys = message.static_account_keys()
+                    if keys:
+                        fee_payer = keys[0]
+            except Exception as e:
+                logger.warning(f"Could not extract fee payer from message: {e}")
 
-                if str(fee_payer) != str(our_pubkey):
-                    logger.error(f"❌ PUBKEY MISMATCH! Transaction expects fee payer: {str(fee_payer)}")
-                    logger.error(f"   But we are signing with pubkey: {str(our_pubkey)}")
+            if fee_payer:
+                fee_payer_str = str(fee_payer)
+                logger.info(f"   🔑 Fee payer: {fee_payer_str[:12]}... | Our key: {our_pubkey_str[:12]}...")
+
+                if fee_payer_str != our_pubkey_str:
+                    logger.error(f"❌ PUBKEY MISMATCH! Transaction expects fee payer: {fee_payer_str}")
+                    logger.error(f"   But we are signing with pubkey: {our_pubkey_str}")
                     logger.error("   This will cause 'Transaction signature verification failure'")
                     logger.error("   Check that SOLANA_MODULE_PRIVATE_KEY matches the wallet pubkey")
                     return None
-                logger.debug("✓ Fee payer matches our keypair")
+                logger.info("   ✓ Fee payer matches our keypair")
+            else:
+                logger.warning(f"   ⚠️ Could not verify fee payer, signing with: {our_pubkey_str[:12]}...")
 
             # Sign the transaction message and create signed transaction
             # Note: solders VersionedTransaction doesn't have a .sign() method
