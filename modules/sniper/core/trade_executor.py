@@ -493,7 +493,7 @@ class TradeExecutor:
             return None
 
     async def _sign_and_send_solana_tx(self, swap_tx_base64: str) -> Optional[str]:
-        """Sign and send Solana transaction"""
+        """Sign and send Solana transaction (supports JSON array, base58, hex key formats)"""
         try:
             # Import Solana libraries
             from solders.keypair import Keypair
@@ -501,18 +501,63 @@ class TradeExecutor:
             from solana.rpc.async_api import AsyncClient
             import base64
             import base58
+            import json as json_module
 
-            # Decode private key
-            private_key_bytes = base58.b58decode(self.solana_private_key)
-            keypair = Keypair.from_bytes(private_key_bytes)
+            # Parse private key (supports multiple formats)
+            pk = self.solana_private_key
+            key_bytes = None
+
+            # Format 1: JSON array
+            if pk.startswith('['):
+                try:
+                    key_array = json_module.loads(pk)
+                    key_bytes = bytes(key_array)
+                except Exception:
+                    pass
+
+            # Format 2: Base58
+            if key_bytes is None:
+                try:
+                    key_bytes = base58.b58decode(pk)
+                except Exception:
+                    pass
+
+            # Format 3: Hex
+            if key_bytes is None:
+                try:
+                    key_bytes = bytes.fromhex(pk)
+                except Exception:
+                    pass
+
+            if key_bytes is None:
+                logger.error("Failed to parse private key")
+                return None
+
+            # Create keypair based on key length
+            if len(key_bytes) == 64:
+                keypair = Keypair.from_bytes(key_bytes)
+            elif len(key_bytes) == 32:
+                keypair = Keypair.from_seed(key_bytes)
+            else:
+                logger.error(f"Invalid key length: {len(key_bytes)} bytes")
+                return None
 
             # Decode transaction
             tx_bytes = base64.b64decode(swap_tx_base64)
             tx = VersionedTransaction.from_bytes(tx_bytes)
 
-            # Sign transaction using correct VersionedTransaction.populate() pattern
-            # The .sign([keypair]) method doesn't work with solders VersionedTransaction
+            # Get message and verify pubkey match
             message = tx.message
+            our_pubkey = keypair.pubkey()
+
+            # Verify fee payer matches
+            if hasattr(message, 'account_keys') and len(message.account_keys) > 0:
+                fee_payer = message.account_keys[0]
+                if str(fee_payer) != str(our_pubkey):
+                    logger.error(f"❌ PUBKEY MISMATCH! TX expects: {fee_payer}, we have: {our_pubkey}")
+                    return None
+
+            # Sign transaction
             signature = keypair.sign_message(bytes(message))
             signed_tx = VersionedTransaction.populate(message, [signature])
 
