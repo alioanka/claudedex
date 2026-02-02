@@ -822,18 +822,30 @@ class ArbitrageEngine:
             if len(prices) < 2:
                 return False
 
-            # Find best buy and sell
-            best_buy_dex = min(prices, key=prices.get)
-            best_sell_dex = max(prices, key=prices.get)
+            # Find best DEXs for each leg of the arbitrage:
+            # - First leg (token_in → token_out): Want DEX with HIGHEST output (best rate)
+            # - Second leg (token_out → token_in): Want DEX with LOWEST first-leg output,
+            #   because a lower token_in/token_out rate means higher token_out/token_in rate
+            #
+            # Example: WETH→USDC rates
+            # - DEX A: 10 WETH → 30,000 USDC (3000 USDC/WETH)
+            # - DEX B: 10 WETH → 31,000 USDC (3100 USDC/WETH)
+            # For first leg, DEX B is better (more USDC output)
+            # For second leg (USDC→WETH), DEX A is better (lower rate = more WETH per USDC)
+            best_buy_dex = max(prices, key=prices.get)   # Best rate for first leg
+            best_sell_dex = min(prices, key=prices.get)  # Best rate for second leg (inverse)
 
             buy_price = prices[best_buy_dex]
             sell_price = prices[best_sell_dex]
 
-            if buy_price == 0:
+            if buy_price == 0 or sell_price == 0:
                 return False
 
-            # Calculate raw spread
-            raw_spread = (sell_price - buy_price) / buy_price
+            # Calculate raw spread based on price differential
+            # buy_price = max output (best DEX for first leg)
+            # sell_price = min output (DEX with inverse rate that's better for second leg)
+            # Spread = (max - min) / min = how much more we get on the optimal path
+            raw_spread = (buy_price - sell_price) / sell_price
 
             # Estimated costs that reduce actual profit:
             # - Flash loan fee: 0.05% (Aave)

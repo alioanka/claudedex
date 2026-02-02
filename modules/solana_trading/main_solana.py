@@ -28,6 +28,12 @@ from aiohttp import web
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+# Import RPCProvider for centralized RPC management
+try:
+    from config.rpc_provider import RPCProvider
+except ImportError:
+    RPCProvider = None
+
 # Load environment variables
 load_dotenv()
 
@@ -383,7 +389,11 @@ class SolanaTradingApplication:
         signal.signal(signal.SIGTERM, self._signal_handler)
 
         # Default config (will be overridden from DB if available)
-        self.rpc_url = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
+        # Use Pool Engine for RPC management
+        if RPCProvider:
+            self.rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC')
+        else:
+            self.rpc_url = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
         self.strategies = os.getenv('SOLANA_STRATEGIES', 'jupiter,drift').split(',')
         self.max_positions = int(os.getenv('SOLANA_MAX_POSITIONS', '3'))
         self.health_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
