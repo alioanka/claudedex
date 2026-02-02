@@ -402,6 +402,9 @@ class JupiterHelper:
             if not self.session:
                 await self.initialize()
 
+            # Log the RPC being used
+            logger.info(f"   📡 Using RPC: {self.solana_rpc[:50]}...")
+
             # Send via RPC
             payload = {
                 "jsonrpc": "2.0",
@@ -426,15 +429,22 @@ class JupiterHelper:
                         logger.info(f"✅ Transaction sent: {signature}")
                         return signature
                     elif 'error' in result:
-                        logger.error(f"RPC error: {result['error']}")
+                        error = result['error']
+                        error_msg = error.get('message', str(error)) if isinstance(error, dict) else str(error)
+                        error_code = error.get('code', 'N/A') if isinstance(error, dict) else 'N/A'
+                        # Log detailed error that will be visible
+                        logger.error(f"❌ RPC error [{error_code}]: {error_msg}")
+                        # Also log any additional error data
+                        if isinstance(error, dict) and 'data' in error:
+                            logger.error(f"   Error data: {error['data']}")
                         return None
                 else:
                     error_text = await response.text()
-                    logger.error(f"Send transaction error: {response.status} - {error_text}")
+                    logger.error(f"❌ HTTP {response.status}: {error_text[:200]}")
                     return None
 
         except Exception as e:
-            logger.error(f"Error sending transaction: {e}", exc_info=True)
+            logger.error(f"❌ Exception sending transaction: {e}", exc_info=True)
             return None
 
     async def confirm_transaction(
