@@ -266,20 +266,26 @@ class RaydiumClient:
 class JitoClient:
     """Jito MEV protection client (Solana's Flashbots)"""
 
-    # Regional Jito block engines for failover
+    # Regional Jito block engines for failover (from official docs)
+    # https://docs.jito.wtf/lowlatencytxnsend/
     JITO_ENDPOINTS = [
         "https://mainnet.block-engine.jito.wtf",
         "https://amsterdam.mainnet.block-engine.jito.wtf",
+        "https://dublin.mainnet.block-engine.jito.wtf",
         "https://frankfurt.mainnet.block-engine.jito.wtf",
+        "https://london.mainnet.block-engine.jito.wtf",
         "https://ny.mainnet.block-engine.jito.wtf",
+        "https://slc.mainnet.block-engine.jito.wtf",
+        "https://singapore.mainnet.block-engine.jito.wtf",
         "https://tokyo.mainnet.block-engine.jito.wtf",
     ]
 
-    # Jito tip accounts - send tip to one of these to incentivize block builders
+    # Official Jito tip accounts (from getTipAccounts API response)
+    # https://docs.jito.wtf/lowlatencytxnsend/
     JITO_TIP_ACCOUNTS = [
         "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
-        "HFqU5x63VTqvQss8hp11i4bVV9bKMWU9g67mxnCvmU3",
-        "Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QiEV5fGqZNyN9nmNhvrZU5",
+        "HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe",
+        "Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY",
         "ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49",
         "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh",
         "ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt",
@@ -399,6 +405,108 @@ class JitoClient:
         if env_tip:
             return env_tip
         return random.choice(self.JITO_TIP_ACCOUNTS)
+
+    async def create_tip_transaction(
+        self,
+        payer_keypair,
+        tip_lamports: int = 10000,
+        recent_blockhash: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Create a signed tip transaction for Jito bundle.
+
+        A tip is REQUIRED for bundles to be considered by Jito validators.
+        The tip should be the LAST transaction in the bundle.
+
+        Args:
+            payer_keypair: Solders Keypair object for signing
+            tip_lamports: Tip amount in lamports (min 1000, default 10000)
+            recent_blockhash: Recent blockhash (will fetch if not provided)
+
+        Returns:
+            Base64-encoded signed transaction, or None on failure
+        """
+        try:
+            import base64
+            from solders.keypair import Keypair
+            from solders.pubkey import Pubkey
+            from solders.system_program import TransferParams, transfer
+            from solders.message import Message
+            from solders.transaction import Transaction
+            from solders.hash import Hash
+
+            if not payer_keypair:
+                logger.error("No keypair provided for tip transaction")
+                return None
+
+            # Ensure minimum tip (1000 lamports per Jito docs)
+            tip_lamports = max(tip_lamports, 1000)
+
+            # Get random tip account
+            tip_account_str = self.get_random_tip_account()
+            tip_account = Pubkey.from_string(tip_account_str)
+            payer_pubkey = payer_keypair.pubkey()
+
+            logger.debug(f"Creating tip tx: {tip_lamports} lamports to {tip_account_str[:12]}...")
+
+            # Fetch recent blockhash if not provided
+            if not recent_blockhash:
+                import aiohttp
+                # Get RPC URL from environment
+                rpc_url = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
+                try:
+                    from config.rpc_provider import RPCProvider
+                    rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC') or rpc_url
+                except Exception:
+                    pass
+
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        rpc_url,
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "getLatestBlockhash",
+                            "params": [{"commitment": "finalized"}]
+                        }
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            recent_blockhash = data.get('result', {}).get('value', {}).get('blockhash')
+
+            if not recent_blockhash:
+                logger.error("Failed to get recent blockhash for tip transaction")
+                return None
+
+            # Create transfer instruction
+            transfer_ix = transfer(
+                TransferParams(
+                    from_pubkey=payer_pubkey,
+                    to_pubkey=tip_account,
+                    lamports=tip_lamports
+                )
+            )
+
+            # Create and sign transaction
+            blockhash = Hash.from_string(recent_blockhash)
+            message = Message.new_with_blockhash(
+                [transfer_ix],
+                payer_pubkey,
+                blockhash
+            )
+            tx = Transaction.new_unsigned(message)
+            tx.sign([payer_keypair], blockhash)
+
+            # Encode to base64
+            tx_bytes = bytes(tx)
+            tx_b64 = base64.b64encode(tx_bytes).decode('utf-8')
+
+            logger.info(f"✅ Tip transaction created: {tip_lamports} lamports to {tip_account_str[:12]}...")
+            return tx_b64
+
+        except Exception as e:
+            logger.error(f"Failed to create tip transaction: {e}")
+            return None
 
 
 class SolanaPriceFetcher:
@@ -868,7 +976,7 @@ class SolanaArbitrageEngine:
                 logger.error("Failed to get swap transactions")
                 return
 
-            # If Jito is enabled, bundle both transactions
+            # If Jito is enabled, bundle both transactions with a tip
             if self.use_jito and self.jito.session:
                 tx1_unsigned = swap1.get('swapTransaction')
                 tx2_unsigned = swap2.get('swapTransaction')
@@ -882,7 +990,28 @@ class SolanaArbitrageEngine:
                     logger.error("Failed to sign transactions for Jito bundle")
                     return
 
-                bundle_id = await self.jito.send_bundle([tx1_signed, tx2_signed])
+                # CRITICAL: Create tip transaction for Jito
+                # Jito requires a tip to consider the bundle (min 1000 lamports)
+                # Tip should be the LAST transaction in the bundle
+                keypair = self._get_keypair()
+                if not keypair:
+                    logger.error("Failed to get keypair for tip transaction")
+                    return
+
+                # Use configurable tip amount (default 10000 lamports = 0.00001 SOL)
+                tip_lamports = self.config.get('jito_tip_lamports', 10000)
+                tip_tx = await self.jito.create_tip_transaction(keypair, tip_lamports)
+
+                if not tip_tx:
+                    logger.error("Failed to create tip transaction - bundle will likely be rejected")
+                    # Continue anyway - sometimes bundles work without tips during low competition
+                    bundle_txs = [tx1_signed, tx2_signed]
+                else:
+                    # Add tip as the last transaction in bundle
+                    bundle_txs = [tx1_signed, tx2_signed, tip_tx]
+                    logger.info(f"   💰 Jito tip: {tip_lamports} lamports ({tip_lamports/1e9:.6f} SOL)")
+
+                bundle_id = await self.jito.send_bundle(bundle_txs)
                 if bundle_id:
                     logger.info(f"✅ Solana Arb executed via Jito: {bundle_id}")
                     await self._log_trade(
@@ -898,6 +1027,65 @@ class SolanaArbitrageEngine:
 
         except Exception as e:
             logger.error(f"Solana arb execution error: {e}")
+
+    def _get_keypair(self):
+        """
+        Get a Solders Keypair object from the configured private key.
+
+        Supports multiple key formats: JSON array, base58, hex
+
+        Returns:
+            Keypair object or None on failure
+        """
+        try:
+            import base58
+            import json as json_module
+            from solders.keypair import Keypair
+
+            if not self.private_key:
+                logger.error("No private key configured")
+                return None
+
+            key_bytes = None
+
+            # Format 1: JSON array (e.g., [1,2,3,...])
+            if self.private_key.startswith('['):
+                try:
+                    key_array = json_module.loads(self.private_key)
+                    key_bytes = bytes(key_array)
+                except Exception:
+                    pass
+
+            # Format 2: Base58 encoded (most common)
+            if key_bytes is None:
+                try:
+                    key_bytes = base58.b58decode(self.private_key)
+                except Exception:
+                    pass
+
+            # Format 3: Hex encoded
+            if key_bytes is None:
+                try:
+                    key_bytes = bytes.fromhex(self.private_key)
+                except Exception:
+                    pass
+
+            if key_bytes is None:
+                logger.error("Failed to parse private key")
+                return None
+
+            # Create keypair based on key length
+            if len(key_bytes) == 64:
+                return Keypair.from_bytes(key_bytes)
+            elif len(key_bytes) == 32:
+                return Keypair.from_seed(key_bytes)
+            else:
+                logger.error(f"Invalid key length: {len(key_bytes)} bytes")
+                return None
+
+        except Exception as e:
+            logger.error(f"Failed to get keypair: {e}")
+            return None
 
     async def _sign_transaction(self, transaction_b64: str) -> Optional[str]:
         """
