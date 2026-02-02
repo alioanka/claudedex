@@ -845,11 +845,15 @@ class SolanaArbitrageEngine:
                     logger.error(f"Failed to create keypair from private key: {e}")
                     return None
 
-            # Sign the transaction
-            tx.sign([keypair])
+            # Sign the transaction message and create signed transaction
+            # Note: solders VersionedTransaction doesn't have a .sign() method
+            # We need to sign the message and use VersionedTransaction.populate()
+            message = tx.message
+            signature = keypair.sign_message(bytes(message))
+            signed_tx = VersionedTransaction.populate(message, [signature])
 
             # Encode back to base64
-            signed_bytes = bytes(tx)
+            signed_bytes = bytes(signed_tx)
             signed_b64 = base64.b64encode(signed_bytes).decode('utf-8')
 
             logger.debug(f"Transaction signed successfully (pubkey: {str(keypair.pubkey())[:12]}...)")
