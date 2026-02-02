@@ -692,14 +692,15 @@ class JupiterExecutor(BaseExecutor):
             # Deserialize and sign transaction
             transaction_bytes = base64.b64decode(swap_transaction_str)
             transaction = VersionedTransaction.from_bytes(transaction_bytes)
-            
-            # Sign transaction
-            signed_tx = self.keypair.sign_message(bytes(transaction.message))
-            transaction.signatures[0] = signed_tx
-            
-            # Send transaction to Solana network
+
+            # Sign transaction using correct VersionedTransaction.populate() pattern
+            # The .sign() method doesn't work with solders VersionedTransaction
+            message = transaction.message
+            signature = self.keypair.sign_message(bytes(message))
+            signed_transaction = VersionedTransaction.populate(message, [signature])
+
             # Send transaction to Solana network (with retry)
-            serialized_tx = base64.b64encode(bytes(transaction)).decode('utf-8')
+            serialized_tx = base64.b64encode(bytes(signed_transaction)).decode('utf-8')
             
             start_time = time.time()
             

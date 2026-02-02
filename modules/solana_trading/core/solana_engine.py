@@ -2166,9 +2166,12 @@ class SolanaTradingEngine:
                             logger.info(f"🟢 LIVE SWAP executed: {tx_signature}")
                             position.tx_signature = tx_signature
                         else:
-                            logger.error("❌ Jupiter swap failed - no signature returned")
+                            logger.error("❌ Jupiter swap failed - check logs above for specific RPC error")
+                            logger.error(f"   Token: {token_symbol} ({token_mint})")
+                            logger.error(f"   Amount: {amount_sol} SOL, Slippage: {self.slippage_bps} bps")
                             if strategy == Strategy.PUMPFUN:
                                 logger.error("   Pump.fun token may not have graduated to Raydium")
+                            logger.error("   Common causes: insufficient SOL, high slippage, RPC issues")
                             return
                     else:
                         # Fallback: get quote but warn about no execution
