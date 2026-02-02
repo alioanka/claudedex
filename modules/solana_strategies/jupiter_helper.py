@@ -75,14 +75,18 @@ class JupiterHelper:
 
         logger.info(f"🔗 Jupiter API endpoint: {self.api_url}")
 
+        # Use SolanaTradingEngine logger for visibility in main logs
+        init_logger = logging.getLogger("SolanaTradingEngine")
+
         # Load keypair for signing - use secrets manager (database/Docker secrets)
         if private_key:
             # Use the multi-format parser for provided private key
             self.keypair = self._load_keypair_from_value(private_key)
             if self.keypair:
-                logger.info(f"✅ Jupiter keypair loaded (pubkey: {str(self.keypair.pubkey())[:12]}...)")
+                pubkey_str = str(self.keypair.pubkey())
+                init_logger.info(f"   ✅ Jupiter keypair loaded: {pubkey_str[:8]}...{pubkey_str[-8:]}")
             else:
-                logger.error("❌ Failed to load keypair from provided private_key")
+                init_logger.error("   ❌ Failed to load keypair from provided private_key")
         else:
             # Get private key from secrets manager
             try:
@@ -90,16 +94,22 @@ class JupiterHelper:
                 pk_value = secrets.get('SOLANA_PRIVATE_KEY', log_access=False)
                 if pk_value:
                     self.keypair = self._load_keypair_from_value(pk_value)
+                    if self.keypair:
+                        pubkey_str = str(self.keypair.pubkey())
+                        init_logger.info(f"   ✅ Jupiter keypair loaded: {pubkey_str[:8]}...{pubkey_str[-8:]}")
                 else:
                     self.keypair = None
-                    logger.warning("No Solana private key provided, signing will fail")
+                    init_logger.warning("   No Solana private key provided, signing will fail")
             except Exception:
                 # Fallback to environment
                 if os.getenv('SOLANA_PRIVATE_KEY'):
                     self.keypair = self._load_keypair_from_env()
+                    if self.keypair:
+                        pubkey_str = str(self.keypair.pubkey())
+                        init_logger.info(f"   ✅ Jupiter keypair loaded: {pubkey_str[:8]}...{pubkey_str[-8:]}")
                 else:
                     self.keypair = None
-                    logger.warning("No Solana private key provided, signing will fail")
+                    init_logger.warning("   No Solana private key provided, signing will fail")
 
         self.session: Optional[aiohttp.ClientSession] = None
 
