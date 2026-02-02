@@ -75,14 +75,18 @@ class JupiterHelper:
 
         logger.info(f"🔗 Jupiter API endpoint: {self.api_url}")
 
+        # Use SolanaTradingEngine logger for visibility in main logs
+        init_logger = logging.getLogger("SolanaTradingEngine")
+
         # Load keypair for signing - use secrets manager (database/Docker secrets)
         if private_key:
             # Use the multi-format parser for provided private key
             self.keypair = self._load_keypair_from_value(private_key)
             if self.keypair:
-                logger.info(f"✅ Jupiter keypair loaded (pubkey: {str(self.keypair.pubkey())[:12]}...)")
+                pubkey_str = str(self.keypair.pubkey())
+                init_logger.info(f"   ✅ Jupiter keypair loaded: {pubkey_str[:8]}...{pubkey_str[-8:]}")
             else:
-                logger.error("❌ Failed to load keypair from provided private_key")
+                init_logger.error("   ❌ Failed to load keypair from provided private_key")
         else:
             # Get private key from secrets manager
             try:
@@ -90,16 +94,22 @@ class JupiterHelper:
                 pk_value = secrets.get('SOLANA_PRIVATE_KEY', log_access=False)
                 if pk_value:
                     self.keypair = self._load_keypair_from_value(pk_value)
+                    if self.keypair:
+                        pubkey_str = str(self.keypair.pubkey())
+                        init_logger.info(f"   ✅ Jupiter keypair loaded: {pubkey_str[:8]}...{pubkey_str[-8:]}")
                 else:
                     self.keypair = None
-                    logger.warning("No Solana private key provided, signing will fail")
+                    init_logger.warning("   No Solana private key provided, signing will fail")
             except Exception:
                 # Fallback to environment
                 if os.getenv('SOLANA_PRIVATE_KEY'):
                     self.keypair = self._load_keypair_from_env()
+                    if self.keypair:
+                        pubkey_str = str(self.keypair.pubkey())
+                        init_logger.info(f"   ✅ Jupiter keypair loaded: {pubkey_str[:8]}...{pubkey_str[-8:]}")
                 else:
                     self.keypair = None
-                    logger.warning("No Solana private key provided, signing will fail")
+                    init_logger.warning("   No Solana private key provided, signing will fail")
 
         self.session: Optional[aiohttp.ClientSession] = None
 
@@ -395,20 +405,23 @@ class JupiterHelper:
         Returns:
             Optional[str]: Signed transaction as base64 or None
         """
+        # Use SolanaTradingEngine logger for visibility in main logs
+        sign_logger = logging.getLogger("SolanaTradingEngine")
+
         try:
             if not self.keypair:
-                logger.error("No keypair available for signing")
-                logger.error("   Ensure SOLANA_MODULE_PRIVATE_KEY is set in database secrets")
+                sign_logger.error("No keypair available for signing")
+                sign_logger.error("   Ensure SOLANA_MODULE_PRIVATE_KEY is set in database secrets")
                 return None
 
             # Decode the transaction
             import base64
-            logger.debug(f"Decoding transaction ({len(transaction_data)} chars)...")
+            sign_logger.debug(f"Decoding transaction ({len(transaction_data)} chars)...")
             tx_bytes = base64.b64decode(transaction_data)
-            logger.debug(f"Transaction decoded ({len(tx_bytes)} bytes)")
+            sign_logger.debug(f"Transaction decoded ({len(tx_bytes)} bytes)")
 
             # Parse as versioned transaction
-            logger.debug("Parsing versioned transaction...")
+            sign_logger.debug("Parsing versioned transaction...")
             tx = VersionedTransaction.from_bytes(tx_bytes)
 
             # Get the message for signing
@@ -430,26 +443,26 @@ class JupiterHelper:
                     if keys:
                         fee_payer = keys[0]
             except Exception as e:
-                logger.warning(f"Could not extract fee payer from message: {e}")
+                sign_logger.warning(f"Could not extract fee payer from message: {e}")
 
             if fee_payer:
                 fee_payer_str = str(fee_payer)
-                logger.info(f"   🔑 Fee payer: {fee_payer_str[:12]}... | Our key: {our_pubkey_str[:12]}...")
+                sign_logger.info(f"   🔑 Fee payer: {fee_payer_str[:12]}... | Our key: {our_pubkey_str[:12]}...")
 
                 if fee_payer_str != our_pubkey_str:
-                    logger.error(f"❌ PUBKEY MISMATCH! Transaction expects fee payer: {fee_payer_str}")
-                    logger.error(f"   But we are signing with pubkey: {our_pubkey_str}")
-                    logger.error("   This will cause 'Transaction signature verification failure'")
-                    logger.error("   Check that SOLANA_MODULE_PRIVATE_KEY matches the wallet pubkey")
+                    sign_logger.error(f"❌ PUBKEY MISMATCH! Transaction expects fee payer: {fee_payer_str}")
+                    sign_logger.error(f"   But we are signing with pubkey: {our_pubkey_str}")
+                    sign_logger.error("   This will cause 'Transaction signature verification failure'")
+                    sign_logger.error("   Check that SOLANA_MODULE_PRIVATE_KEY matches the wallet pubkey")
                     return None
-                logger.info("   ✓ Fee payer matches our keypair")
+                sign_logger.info("   ✓ Fee payer matches our keypair")
             else:
-                logger.warning(f"   ⚠️ Could not verify fee payer, signing with: {our_pubkey_str[:12]}...")
+                sign_logger.warning(f"   ⚠️ Could not verify fee payer, signing with: {our_pubkey_str[:12]}...")
 
             # Sign the transaction message and create signed transaction
             # Note: solders VersionedTransaction doesn't have a .sign() method
             # We need to sign the message and use VersionedTransaction.populate()
-            logger.debug(f"Signing with keypair (pubkey: {str(our_pubkey)[:12]}...)")
+            sign_logger.debug(f"Signing with keypair (pubkey: {str(our_pubkey)[:12]}...)")
             signature = self.keypair.sign_message(bytes(message))
             signed_tx = VersionedTransaction.populate(message, [signature])
 
@@ -457,11 +470,11 @@ class JupiterHelper:
             signed_tx_bytes = bytes(signed_tx)
             signed_tx_b64 = base64.b64encode(signed_tx_bytes).decode('utf-8')
 
-            logger.info("✅ Transaction signed successfully")
+            sign_logger.info("✅ Transaction signed successfully")
             return signed_tx_b64
 
         except Exception as e:
-            logger.error(f"Error signing transaction: {e}", exc_info=True)
+            sign_logger.error(f"Error signing transaction: {e}", exc_info=True)
             return None
 
     async def send_transaction(self, signed_transaction: str) -> Optional[str]:
