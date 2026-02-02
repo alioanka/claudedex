@@ -542,19 +542,6 @@ class SolanaArbitrageEngine:
     async def initialize(self):
         logger.info("🌊 Initializing Solana Arbitrage Engine...")
 
-        # Load wallet address from secrets manager (database) - try multiple key names
-        # Priority order: SOLANA_WALLET (DEX wallet) > SOLANA_MODULE_WALLET (strategies)
-        if not self.wallet_address:
-            wallet_key_names = [
-                'SOLANA_WALLET',           # DEX trading wallet
-                'SOLANA_MODULE_WALLET',    # Solana strategies wallet
-            ]
-            for key_name in wallet_key_names:
-                self.wallet_address = await self._get_decrypted_key(key_name)
-                if self.wallet_address:
-                    logger.debug(f"Loaded wallet address from {key_name}")
-                    break
-
         # Load private key from secrets manager - try multiple key names
         # Priority order: SOLANA_PRIVATE_KEY (DEX) > SOLANA_MODULE_PRIVATE_KEY (strategies)
         private_key_names = [
@@ -567,6 +554,53 @@ class SolanaArbitrageEngine:
                 logger.debug(f"Loaded private key from {key_name}")
                 break
 
+        # CRITICAL: Derive wallet address from private key to ensure they always match
+        # This prevents signature verification failures from mismatched wallet/key pairs
+        if self.private_key:
+            import base58
+            import json as json_module
+            from solders.keypair import Keypair
+
+            pk = self.private_key
+            key_bytes = None
+
+            # Format 1: JSON array (e.g., [1,2,3,...])
+            if pk.startswith('['):
+                try:
+                    key_array = json_module.loads(pk)
+                    key_bytes = bytes(key_array)
+                except Exception:
+                    pass
+
+            # Format 2: Base58 encoded (most common)
+            if key_bytes is None:
+                try:
+                    key_bytes = base58.b58decode(pk)
+                except Exception:
+                    pass
+
+            # Format 3: Hex encoded
+            if key_bytes is None:
+                try:
+                    key_bytes = bytes.fromhex(pk)
+                except Exception:
+                    pass
+
+            if key_bytes:
+                if len(key_bytes) == 64:
+                    keypair = Keypair.from_bytes(key_bytes)
+                elif len(key_bytes) == 32:
+                    keypair = Keypair.from_seed(key_bytes)
+                else:
+                    keypair = None
+                    logger.error(f"Invalid private key length: {len(key_bytes)} bytes")
+
+                if keypair:
+                    self.wallet_address = str(keypair.pubkey())
+                    logger.info(f"✅ Derived wallet from private key: {self.wallet_address[:8]}...{self.wallet_address[-8:]}")
+            else:
+                logger.error("Failed to parse private key for wallet derivation")
+
         await self.jupiter.initialize()
         await self.raydium.initialize()
 
@@ -576,7 +610,7 @@ class SolanaArbitrageEngine:
 
         # Log wallet configuration status
         if not self.wallet_address:
-            logger.warning("⚠️ No Solana wallet address configured - store SOLANA_WALLET in database")
+            logger.warning("⚠️ No Solana wallet address - check SOLANA_PRIVATE_KEY in database")
 
         logger.info(f"   RPC: {self.rpc_url[:40]}...")
         logger.info(f"   Mode: {'DRY_RUN (Simulated)' if self.dry_run else 'LIVE TRADING'}")
