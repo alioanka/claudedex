@@ -385,7 +385,13 @@ class JitoClient:
                         continue  # Try next endpoint
 
                     else:
-                        logger.error(f"❌ Jito HTTP {resp.status} on {endpoint[:30]}...")
+                        # Log detailed error for debugging
+                        try:
+                            error_body = await resp.text()
+                            logger.error(f"❌ Jito HTTP {resp.status} on {endpoint[:30]}...")
+                            logger.error(f"   Response: {error_body[:500]}")
+                        except Exception:
+                            logger.error(f"❌ Jito HTTP {resp.status} on {endpoint[:30]}...")
                         continue  # Try next endpoint
 
             except asyncio.TimeoutError:
