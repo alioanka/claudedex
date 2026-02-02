@@ -813,6 +813,8 @@ class SolanaArbitrageEngine:
         """
         Sign a base64-encoded Solana transaction with the configured private key.
 
+        Supports multiple key formats: JSON array, base58, hex
+
         Args:
             transaction_b64: Base64-encoded unsigned transaction from Jupiter
 
@@ -822,6 +824,7 @@ class SolanaArbitrageEngine:
         try:
             import base64
             import base58
+            import json as json_module
             from solders.keypair import Keypair
             from solders.transaction import VersionedTransaction
 
@@ -833,22 +836,61 @@ class SolanaArbitrageEngine:
             tx_bytes = base64.b64decode(transaction_b64)
             tx = VersionedTransaction.from_bytes(tx_bytes)
 
-            # Create keypair from private key (base58 encoded)
-            try:
-                keypair = Keypair.from_base58_string(self.private_key)
-            except Exception:
-                # Try decoding as raw bytes
+            # Create keypair from private key (supports multiple formats)
+            key_bytes = None
+            format_used = None
+
+            # Format 1: JSON array (e.g., [1,2,3,...])
+            if self.private_key.startswith('['):
                 try:
-                    pk_bytes = base58.b58decode(self.private_key)
-                    keypair = Keypair.from_bytes(pk_bytes)
-                except Exception as e:
-                    logger.error(f"Failed to create keypair from private key: {e}")
+                    key_array = json_module.loads(self.private_key)
+                    key_bytes = bytes(key_array)
+                    format_used = "JSON array"
+                except Exception:
+                    pass
+
+            # Format 2: Base58 encoded (most common)
+            if key_bytes is None:
+                try:
+                    key_bytes = base58.b58decode(self.private_key)
+                    format_used = "base58"
+                except Exception:
+                    pass
+
+            # Format 3: Hex encoded
+            if key_bytes is None:
+                try:
+                    key_bytes = bytes.fromhex(self.private_key)
+                    format_used = "hex"
+                except Exception:
+                    pass
+
+            if key_bytes is None:
+                logger.error("Failed to parse private key - tried JSON array, base58, and hex formats")
+                return None
+
+            # Create keypair based on key length
+            if len(key_bytes) == 64:
+                keypair = Keypair.from_bytes(key_bytes)
+            elif len(key_bytes) == 32:
+                keypair = Keypair.from_seed(key_bytes)
+            else:
+                logger.error(f"Invalid key length: {len(key_bytes)} bytes (expected 32 or 64)")
+                return None
+
+            # Get message and verify pubkey match
+            message = tx.message
+            our_pubkey = keypair.pubkey()
+
+            # Verify fee payer matches our keypair
+            if hasattr(message, 'account_keys') and len(message.account_keys) > 0:
+                fee_payer = message.account_keys[0]
+                if str(fee_payer) != str(our_pubkey):
+                    logger.error(f"❌ PUBKEY MISMATCH! Transaction expects: {str(fee_payer)}")
+                    logger.error(f"   But we have: {str(our_pubkey)}")
                     return None
 
             # Sign the transaction message and create signed transaction
-            # Note: solders VersionedTransaction doesn't have a .sign() method
-            # We need to sign the message and use VersionedTransaction.populate()
-            message = tx.message
             signature = keypair.sign_message(bytes(message))
             signed_tx = VersionedTransaction.populate(message, [signature])
 
@@ -856,7 +898,7 @@ class SolanaArbitrageEngine:
             signed_bytes = bytes(signed_tx)
             signed_b64 = base64.b64encode(signed_bytes).decode('utf-8')
 
-            logger.debug(f"Transaction signed successfully (pubkey: {str(keypair.pubkey())[:12]}...)")
+            logger.debug(f"Transaction signed ({format_used}, pubkey: {str(our_pubkey)[:12]}...)")
             return signed_b64
 
         except Exception as e:

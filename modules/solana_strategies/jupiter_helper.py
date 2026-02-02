@@ -107,8 +107,13 @@ class JupiterHelper:
         """
         Load keypair from a string value (from secrets manager or env)
 
+        Supports multiple key formats:
+        - JSON array: [1, 2, 3, ...] (64 bytes)
+        - Base58 encoded: string of base58 characters
+        - Hex encoded: hexadecimal string
+
         Args:
-            pk_str: Private key string (base58 encoded or encrypted)
+            pk_str: Private key string (base58 encoded, JSON array, hex, or encrypted)
 
         Returns:
             Optional[Keypair]: Loaded keypair or None
@@ -126,12 +131,54 @@ class JupiterHelper:
                     return None
                 logger.info("✅ Successfully decrypted Solana private key")
 
-            # Try to parse as base58
-            try:
-                return Keypair.from_base58_string(pk_str)
-            except (ValueError, Exception) as e:
-                logger.warning(f"Private key parse failed: {e}")
+            key_bytes = None
+            format_used = None
+
+            # Format 1: JSON array (e.g., [1,2,3,...])
+            if pk_str.startswith('['):
+                try:
+                    import json
+                    key_array = json.loads(pk_str)
+                    key_bytes = bytes(key_array)
+                    format_used = "JSON array"
+                    logger.debug(f"Parsed private key from JSON array format ({len(key_bytes)} bytes)")
+                except Exception as json_error:
+                    logger.debug(f"Not JSON array format: {json_error}")
+
+            # Format 2: Base58 encoded (most common)
+            if key_bytes is None:
+                try:
+                    key_bytes = base58.b58decode(pk_str)
+                    format_used = "base58"
+                    logger.debug(f"Parsed private key from base58 format ({len(key_bytes)} bytes)")
+                except (ValueError, Exception) as b58_error:
+                    logger.debug(f"Not base58 format: {b58_error}")
+
+            # Format 3: Hex encoded
+            if key_bytes is None:
+                try:
+                    key_bytes = bytes.fromhex(pk_str)
+                    format_used = "hex"
+                    logger.debug(f"Parsed private key from hex format ({len(key_bytes)} bytes)")
+                except (ValueError, Exception) as hex_error:
+                    logger.debug(f"Not hex format: {hex_error}")
+
+            if key_bytes is None:
+                logger.error("Failed to parse private key - tried JSON array, base58, and hex formats")
                 return None
+
+            # Verify key length (should be 64 bytes: 32 secret + 32 public)
+            if len(key_bytes) == 64:
+                keypair = Keypair.from_bytes(key_bytes)
+            elif len(key_bytes) == 32:
+                # Some keys are just the 32-byte seed - create keypair from seed
+                keypair = Keypair.from_seed(key_bytes)
+            else:
+                logger.error(f"Invalid key length: {len(key_bytes)} bytes (expected 32 or 64)")
+                return None
+
+            logger.info(f"✅ Keypair loaded from {format_used} format (pubkey: {str(keypair.pubkey())[:12]}...)")
+            return keypair
 
         except Exception as e:
             logger.error(f"Error loading keypair: {e}")
@@ -363,13 +410,30 @@ class JupiterHelper:
             # Parse as versioned transaction
             logger.debug("Parsing versioned transaction...")
             tx = VersionedTransaction.from_bytes(tx_bytes)
-            logger.debug(f"Transaction parsed, message signatures required: {len(tx.message.account_keys) if hasattr(tx.message, 'account_keys') else 'N/A'}")
+
+            # Get the message for signing
+            message = tx.message
+            our_pubkey = self.keypair.pubkey()
+
+            # CRITICAL: Verify that the fee payer (first account) matches our keypair
+            # This catches pubkey mismatches that would cause signature verification failure
+            if hasattr(message, 'account_keys') and len(message.account_keys) > 0:
+                fee_payer = message.account_keys[0]
+                logger.debug(f"Fee payer in transaction: {str(fee_payer)[:12]}...")
+                logger.debug(f"Our keypair pubkey: {str(our_pubkey)[:12]}...")
+
+                if str(fee_payer) != str(our_pubkey):
+                    logger.error(f"❌ PUBKEY MISMATCH! Transaction expects fee payer: {str(fee_payer)}")
+                    logger.error(f"   But we are signing with pubkey: {str(our_pubkey)}")
+                    logger.error("   This will cause 'Transaction signature verification failure'")
+                    logger.error("   Check that SOLANA_MODULE_PRIVATE_KEY matches the wallet pubkey")
+                    return None
+                logger.debug("✓ Fee payer matches our keypair")
 
             # Sign the transaction message and create signed transaction
             # Note: solders VersionedTransaction doesn't have a .sign() method
             # We need to sign the message and use VersionedTransaction.populate()
-            logger.debug(f"Signing with keypair (pubkey: {str(self.keypair.pubkey())[:12]}...)")
-            message = tx.message
+            logger.debug(f"Signing with keypair (pubkey: {str(our_pubkey)[:12]}...)")
             signature = self.keypair.sign_message(bytes(message))
             signed_tx = VersionedTransaction.populate(message, [signature])
 
@@ -394,16 +458,19 @@ class JupiterHelper:
         Returns:
             Optional[str]: Transaction signature or None
         """
+        # Use SolanaTradingEngine logger for visibility in main logs
+        tx_logger = logging.getLogger("SolanaTradingEngine")
+
         try:
             if not self.solana_rpc:
-                logger.error("No Solana RPC URL configured")
+                tx_logger.error("   ❌ No Solana RPC URL configured")
                 return None
 
             if not self.session:
                 await self.initialize()
 
             # Log the RPC being used
-            logger.info(f"   📡 Using RPC: {self.solana_rpc[:50]}...")
+            tx_logger.info(f"   📡 Using RPC: {self.solana_rpc[:50]}...")
 
             # Send via RPC
             payload = {
@@ -426,25 +493,31 @@ class JupiterHelper:
                     result = await response.json()
                     if 'result' in result:
                         signature = result['result']
-                        logger.info(f"✅ Transaction sent: {signature}")
+                        tx_logger.info(f"   ✅ Transaction sent: {signature}")
                         return signature
                     elif 'error' in result:
                         error = result['error']
                         error_msg = error.get('message', str(error)) if isinstance(error, dict) else str(error)
                         error_code = error.get('code', 'N/A') if isinstance(error, dict) else 'N/A'
-                        # Log detailed error that will be visible
-                        logger.error(f"❌ RPC error [{error_code}]: {error_msg}")
-                        # Also log any additional error data
+                        # Log detailed error that will be visible in main logs
+                        tx_logger.error(f"   ❌ RPC error [{error_code}]: {error_msg}")
+                        # Also log any additional error data (like transaction simulation logs)
                         if isinstance(error, dict) and 'data' in error:
-                            logger.error(f"   Error data: {error['data']}")
+                            data = error['data']
+                            if isinstance(data, dict):
+                                logs = data.get('logs', [])
+                                if logs:
+                                    tx_logger.error(f"   📋 Simulation logs: {logs[-3:]}")
+                            else:
+                                tx_logger.error(f"   📋 Error data: {str(data)[:200]}")
                         return None
                 else:
                     error_text = await response.text()
-                    logger.error(f"❌ HTTP {response.status}: {error_text[:200]}")
+                    tx_logger.error(f"   ❌ HTTP {response.status}: {error_text[:200]}")
                     return None
 
         except Exception as e:
-            logger.error(f"❌ Exception sending transaction: {e}", exc_info=True)
+            tx_logger.error(f"   ❌ Exception sending transaction: {e}", exc_info=True)
             return None
 
     async def confirm_transaction(

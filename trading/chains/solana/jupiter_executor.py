@@ -693,9 +693,22 @@ class JupiterExecutor(BaseExecutor):
             transaction_bytes = base64.b64decode(swap_transaction_str)
             transaction = VersionedTransaction.from_bytes(transaction_bytes)
 
+            # Get message and verify pubkey match before signing
+            message = transaction.message
+            our_pubkey = self.keypair.pubkey()
+
+            # CRITICAL: Verify fee payer matches our keypair
+            if hasattr(message, 'account_keys') and len(message.account_keys) > 0:
+                fee_payer = message.account_keys[0]
+                if str(fee_payer) != str(our_pubkey):
+                    logger.error(f"❌ PUBKEY MISMATCH! TX expects: {fee_payer}, we have: {our_pubkey}")
+                    return {
+                        'success': False,
+                        'error': f'Pubkey mismatch: expected {fee_payer}'
+                    }
+
             # Sign transaction using correct VersionedTransaction.populate() pattern
             # The .sign() method doesn't work with solders VersionedTransaction
-            message = transaction.message
             signature = self.keypair.sign_message(bytes(message))
             signed_transaction = VersionedTransaction.populate(message, [signature])
 
