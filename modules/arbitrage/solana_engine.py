@@ -1199,25 +1199,25 @@ class SolanaArbitrageEngine:
                 logger.error(f"❌ Our pubkey not found in required signers!")
                 return None
 
-            # Sign the message
-            our_signature = keypair.sign_message(bytes(message))
+            # Sign the transaction using the CORRECT solders approach
+            # Per solders docs: Pass keypairs directly to VersionedTransaction constructor
+            # This properly handles MessageV0 with address lookup tables
+            from solders.null_signer import NullSigner
 
-            # Create signature array with our signature at the correct position
-            from solders.signature import Signature
-            null_sig = Signature.default()
-
-            signatures = []
+            signers = []
             for i in range(num_required_signatures):
                 if i == our_position:
-                    signatures.append(our_signature)
+                    signers.append(keypair)
                 else:
-                    # Preserve existing signatures if present
-                    if i < len(tx.signatures) and tx.signatures[i] != null_sig:
-                        signatures.append(tx.signatures[i])
+                    # Use NullSigner for accounts we don't control
+                    if account_keys and i < len(account_keys):
+                        signers.append(NullSigner(account_keys[i]))
                     else:
-                        signatures.append(null_sig)
+                        logger.error(f"Missing account key for signer position {i}")
+                        return None
 
-            signed_tx = VersionedTransaction.populate(message, signatures)
+            # Create signed transaction using the constructor (NOT populate)
+            signed_tx = VersionedTransaction(message, signers)
 
             # Encode back to base64
             signed_bytes = bytes(signed_tx)

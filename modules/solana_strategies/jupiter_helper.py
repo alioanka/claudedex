@@ -429,6 +429,11 @@ class JupiterHelper:
             our_pubkey = self.keypair.pubkey()
             our_pubkey_str = str(our_pubkey)
 
+            # Log message type for debugging
+            msg_type = type(message).__name__
+            sign_logger.debug(f"Message type: {msg_type}")
+            sign_logger.debug(f"Original tx has {len(tx.signatures)} signature slot(s)")
+
             # CRITICAL: Verify that the fee payer (first account) matches our keypair
             # This catches pubkey mismatches that would cause signature verification failure
             # Handle both legacy Message and MessageV0 formats
@@ -496,29 +501,32 @@ class JupiterHelper:
 
             sign_logger.debug(f"Our pubkey is at signer position {our_position}")
 
-            # Sign the message
+            # Sign the transaction using the CORRECT solders approach
+            # Per solders docs: Pass keypairs directly to VersionedTransaction constructor
+            # This properly handles MessageV0 with address lookup tables
             sign_logger.debug(f"Signing with keypair (pubkey: {str(our_pubkey)[:12]}...)")
-            our_signature = self.keypair.sign_message(bytes(message))
 
-            # Create signature array with our signature at the correct position
-            # Other positions get a default "null" signature (64 zero bytes)
-            from solders.signature import Signature
-            null_sig = Signature.default()
+            # Build the signers list - we need exactly num_required_signatures signers
+            # Use NullSigner for any signers we don't have the key for
+            from solders.null_signer import NullSigner
 
-            signatures = []
+            signers = []
             for i in range(num_required_signatures):
                 if i == our_position:
-                    signatures.append(our_signature)
+                    signers.append(self.keypair)
                 else:
-                    # Check if original transaction had a signature here
-                    if i < len(tx.signatures) and tx.signatures[i] != null_sig:
-                        signatures.append(tx.signatures[i])
-                        sign_logger.debug(f"   Preserving existing signature at position {i}")
+                    # Use NullSigner for accounts we don't control
+                    # The original transaction should have their signatures
+                    if account_keys and i < len(account_keys):
+                        signers.append(NullSigner(account_keys[i]))
                     else:
-                        signatures.append(null_sig)
+                        sign_logger.error(f"Missing account key for signer position {i}")
+                        return None
 
-            sign_logger.debug(f"Created signature array with {len(signatures)} signature(s)")
-            signed_tx = VersionedTransaction.populate(message, signatures)
+            # Create signed transaction using the constructor (NOT populate)
+            # This is the correct solders way per documentation
+            signed_tx = VersionedTransaction(message, signers)
+            sign_logger.debug(f"Created signed transaction with {len(signed_tx.signatures)} signature(s)")
 
             # Encode back to base64
             signed_tx_bytes = bytes(signed_tx)
