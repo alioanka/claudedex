@@ -1065,18 +1065,47 @@ class FuturesTradingEngine:
                         if self.verbose_signals:
                             logger.info(f"     ⚠️ Volume filter: {signals.volume_ratio:.2f}x < required {self.min_volume_multiplier:.2f}x")
 
-                if signal_score >= self.min_signal_score and trend_ok and volume_ok:
+                # MOMENTUM CONFIRMATION: Recent price must move in signal direction
+                momentum_ok = True
+                if signal_score > 0 and signals.price_change_1h < -0.5:
+                    # Bullish signal but price falling - weak setup
+                    momentum_ok = False
+                    if self.verbose_signals:
+                        logger.info(f"     ⚠️ Momentum filter: Bullish signal but 1h change {signals.price_change_1h:+.2f}%")
+                elif signal_score < 0 and signals.price_change_1h > 0.5:
+                    # Bearish signal but price rising - weak setup
+                    momentum_ok = False
+                    if self.verbose_signals:
+                        logger.info(f"     ⚠️ Momentum filter: Bearish signal but 1h change {signals.price_change_1h:+.2f}%")
+
+                # CONFLICTING SIGNALS CHECK: RSI and MACD must not strongly disagree
+                signals_aligned = True
+                # Strong RSI oversold + Strong MACD bearish = RSI says buy but MACD says sell
+                if signals.rsi_signal == SignalStrength.STRONG_BUY and signals.macd_signal == SignalStrength.STRONG_SELL:
+                    signals_aligned = False
+                    if self.verbose_signals:
+                        logger.info(f"     ⚠️ Conflicting signals: RSI oversold but MACD strongly bearish")
+                # Strong RSI overbought + Strong MACD bullish = RSI says sell but MACD says buy
+                elif signals.rsi_signal == SignalStrength.STRONG_SELL and signals.macd_signal == SignalStrength.STRONG_BUY:
+                    signals_aligned = False
+                    if self.verbose_signals:
+                        logger.info(f"     ⚠️ Conflicting signals: RSI overbought but MACD strongly bullish")
+
+                # All filters must pass
+                all_filters_ok = trend_ok and volume_ok and momentum_ok and signals_aligned
+
+                if signal_score >= self.min_signal_score and all_filters_ok:
                     entry_side = TradeSide.LONG
                     if self.verbose_signals:
                         logger.info(f"     ✅ LONG signal triggered (score {signal_score} >= {self.min_signal_score})")
-                elif signal_score <= -self.min_signal_score and trend_ok and volume_ok:
+                elif signal_score <= -self.min_signal_score and all_filters_ok:
                     entry_side = TradeSide.SHORT
                     if self.verbose_signals:
                         logger.info(f"     ✅ SHORT signal triggered (score {signal_score} <= -{self.min_signal_score})")
                 else:
                     if self.verbose_signals:
-                        if not trend_ok or not volume_ok:
-                            logger.info(f"     ❌ REJECTED: Quality filters failed (trend={trend_ok}, volume={volume_ok})")
+                        if not all_filters_ok:
+                            logger.info(f"     ❌ REJECTED: Quality filters failed (trend={trend_ok}, volume={volume_ok}, momentum={momentum_ok}, aligned={signals_aligned})")
                         elif signal_score > 0:
                             logger.info(f"     ❌ REJECTED: Bullish but weak (score {signal_score} < {self.min_signal_score})")
                         elif signal_score < 0:
@@ -1169,18 +1198,23 @@ class FuturesTradingEngine:
 
                 current_price = closes[-1]
                 # Determine Bollinger position and signal
-                if current_price <= signals.bb_lower:
-                    signals.bb_position = "below_lower"
-                    signals.bb_signal = SignalStrength.STRONG_BUY  # Oversold, expect bounce
-                elif current_price >= signals.bb_upper:
+                # TREND-FOLLOWING logic (breakout/breakdown confirmation):
+                # - Price breaking above upper band = strong momentum UP (bullish)
+                # - Price breaking below lower band = strong momentum DOWN (bearish)
+                # - Price above middle = bullish continuation
+                # - Price below middle = bearish continuation
+                if current_price >= signals.bb_upper:
                     signals.bb_position = "above_upper"
-                    signals.bb_signal = SignalStrength.STRONG_SELL  # Overbought, expect pullback
-                elif current_price < signals.bb_middle:
-                    signals.bb_position = "lower_half"
-                    signals.bb_signal = SignalStrength.BUY  # Below middle, slight bullish
+                    signals.bb_signal = SignalStrength.STRONG_BUY  # Breakout, strong bullish momentum
+                elif current_price <= signals.bb_lower:
+                    signals.bb_position = "below_lower"
+                    signals.bb_signal = SignalStrength.STRONG_SELL  # Breakdown, strong bearish momentum
                 elif current_price > signals.bb_middle:
                     signals.bb_position = "upper_half"
-                    signals.bb_signal = SignalStrength.SELL  # Above middle, slight bearish
+                    signals.bb_signal = SignalStrength.BUY  # Above middle, bullish continuation
+                elif current_price < signals.bb_middle:
+                    signals.bb_position = "lower_half"
+                    signals.bb_signal = SignalStrength.SELL  # Below middle, bearish continuation
                 else:
                     signals.bb_position = "middle"
                     signals.bb_signal = SignalStrength.NEUTRAL

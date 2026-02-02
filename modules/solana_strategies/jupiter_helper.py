@@ -353,12 +353,16 @@ class JupiterHelper:
             tx = VersionedTransaction.from_bytes(tx_bytes)
             logger.debug(f"Transaction parsed, message signatures required: {len(tx.message.account_keys) if hasattr(tx.message, 'account_keys') else 'N/A'}")
 
-            # Sign the transaction
+            # Sign the transaction message and create signed transaction
+            # Note: solders VersionedTransaction doesn't have a .sign() method
+            # We need to sign the message and use VersionedTransaction.populate()
             logger.debug(f"Signing with keypair (pubkey: {str(self.keypair.pubkey())[:12]}...)")
-            tx.sign([self.keypair])
+            message = tx.message
+            signature = self.keypair.sign_message(bytes(message))
+            signed_tx = VersionedTransaction.populate(message, [signature])
 
             # Encode back to base64
-            signed_tx_bytes = bytes(tx)
+            signed_tx_bytes = bytes(signed_tx)
             signed_tx_b64 = base64.b64encode(signed_tx_bytes).decode('utf-8')
 
             logger.info("✅ Transaction signed successfully")
