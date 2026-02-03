@@ -1294,6 +1294,60 @@ class SolanaTradingEngine:
             logger.error(f"Error getting wallet balance: {e}")
             return 0.0
 
+    async def _get_token_balance(self, token_mint: str, decimals: int = 6) -> float:
+        """
+        Get actual SPL token balance from wallet.
+
+        Args:
+            token_mint: Token mint address
+            decimals: Token decimals (default 6 for most SPL tokens)
+
+        Returns:
+            Token balance as float, or 0.0 if not found
+        """
+        try:
+            from solders.pubkey import Pubkey
+            from solana.rpc.types import TokenAccountOpts
+
+            owner_pubkey = Pubkey.from_string(self.wallet_pubkey)
+            mint_pubkey = Pubkey.from_string(token_mint)
+
+            # Get token accounts for this mint
+            response = await self.client.get_token_accounts_by_owner(
+                owner_pubkey,
+                TokenAccountOpts(mint=mint_pubkey)
+            )
+
+            if response.value:
+                total_balance = 0
+                for account in response.value:
+                    # Parse the account data to get balance
+                    account_data = account.account.data
+                    if hasattr(account_data, 'parsed'):
+                        # JSON parsed format
+                        parsed = account_data.parsed
+                        if 'info' in parsed and 'tokenAmount' in parsed['info']:
+                            amount = int(parsed['info']['tokenAmount']['amount'])
+                            total_balance += amount
+                    else:
+                        # Raw format - token balance is at offset 64, 8 bytes little endian
+                        import base64
+                        if isinstance(account_data, str):
+                            data = base64.b64decode(account_data)
+                        else:
+                            data = bytes(account_data)
+                        if len(data) >= 72:
+                            amount = int.from_bytes(data[64:72], 'little')
+                            total_balance += amount
+
+                return total_balance / (10 ** decimals)
+
+            return 0.0
+
+        except Exception as e:
+            logger.warning(f"Error getting token balance for {token_mint[:10]}...: {e}")
+            return 0.0
+
     async def _update_sol_price(self):
         """Update SOL price in USD"""
         if self.jupiter_client:
@@ -2165,6 +2219,20 @@ class SolanaTradingEngine:
                         if tx_signature:
                             logger.info(f"🟢 LIVE SWAP executed: {tx_signature}")
                             position.tx_signature = tx_signature
+
+                            # Update position.amount with actual tokens received
+                            # This ensures accurate tracking for closes/partial exits
+                            try:
+                                await asyncio.sleep(1)  # Brief delay for balance to update
+                                actual_tokens = await self._get_token_balance(token_mint, 6)
+                                if actual_tokens > 0:
+                                    if position.amount > 0:
+                                        diff_pct = abs(actual_tokens - position.amount) / position.amount * 100
+                                        if diff_pct > 5:
+                                            logger.info(f"📊 Token amount adjusted: estimated {position.amount:.2f} → actual {actual_tokens:.2f} ({diff_pct:.1f}% diff)")
+                                    position.amount = actual_tokens
+                            except Exception as e:
+                                logger.debug(f"Could not verify token balance: {e}")
                         else:
                             logger.error("❌ Jupiter swap failed - check logs above for specific RPC error")
                             logger.error(f"   Token: {token_symbol} ({token_mint})")
@@ -2287,9 +2355,35 @@ class SolanaTradingEngine:
                 # Execute real swap back to SOL
                 try:
                     if self.jupiter_helper:
-                        # Calculate token amount in smallest units (lamports equivalent)
-                        # Most SPL tokens use 6 or 9 decimals
-                        token_decimals = 6  # Default, would need to fetch actual decimals
+                        # CRITICAL: Use ACTUAL wallet balance, not estimated position.amount!
+                        # The estimated amount from buy may differ from actual tokens received
+                        # due to slippage, fees, and execution price differences.
+                        token_decimals = 6  # Default for most SPL tokens
+                        actual_balance = await self._get_token_balance(token_mint, token_decimals)
+
+                        if actual_balance <= 0:
+                            logger.warning(f"⚠️ No tokens found in wallet for {position.token_symbol}")
+                            logger.warning(f"   Expected: {close_amount:.6f}, Actual: {actual_balance:.6f}")
+                            # Still continue to close position in tracking (phantom position cleanup)
+                        else:
+                            # Log discrepancy if significant (>5% difference)
+                            if position.amount > 0:
+                                discrepancy = abs(actual_balance - position.amount) / position.amount
+                                if discrepancy > 0.05:
+                                    logger.info(f"📊 Balance discrepancy: tracked={position.amount:.2f}, actual={actual_balance:.2f}")
+
+                            # For full close: sell ALL actual tokens
+                            # For partial: sell percentage of actual balance
+                            if is_partial:
+                                sell_amount = actual_balance * close_pct
+                                logger.info(f"🔄 Partial close {close_pct*100:.0f}%: selling {sell_amount:.2f} of {actual_balance:.2f} tokens")
+                            else:
+                                sell_amount = actual_balance  # Sell ALL tokens
+                                logger.info(f"🔄 Full close: selling ALL {actual_balance:.2f} tokens")
+
+                            # Update close_amount to actual amount being sold
+                            close_amount = sell_amount
+
                         token_amount_raw = int(close_amount * (10 ** token_decimals))
 
                         logger.info(f"🔄 Executing LIVE close: {position.token_symbol} → SOL")
@@ -2380,7 +2474,20 @@ class SolanaTradingEngine:
 
             if is_partial:
                 # Partial exit: Update position instead of removing
-                position.amount -= close_amount
+                # For LIVE trading, get actual remaining balance to keep tracking accurate
+                if not self.dry_run:
+                    try:
+                        remaining_balance = await self._get_token_balance(token_mint, 6)
+                        if remaining_balance > 0:
+                            position.amount = remaining_balance  # Use actual remaining balance
+                            logger.info(f"📊 Updated position tracking: {remaining_balance:.2f} tokens remaining")
+                        else:
+                            position.amount -= close_amount  # Fallback to calculated
+                    except Exception:
+                        position.amount -= close_amount  # Fallback if balance check fails
+                else:
+                    position.amount -= close_amount  # Dry run: use calculated values
+
                 position.value_sol -= close_value_sol
                 position.fees_paid -= position.fees_paid * close_pct  # Reduce tracked fees
 
