@@ -11,6 +11,7 @@ Features:
 - HTTP health/metrics endpoints for monitoring
 - Database-backed configuration
 - Separate log files for errors and trades
+- Telegram remote control commands
 """
 
 import asyncio
@@ -27,6 +28,19 @@ from aiohttp import web
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+# Import RPCProvider for centralized RPC management
+try:
+    from config.rpc_provider import RPCProvider
+except ImportError:
+    RPCProvider = None
+
+# Import Telegram controller for remote control
+try:
+    from monitoring.telegram_bot import get_telegram_controller, TelegramBotController
+except ImportError:
+    get_telegram_controller = None
+    TelegramBotController = None
 
 # Load environment variables
 load_dotenv()
@@ -373,6 +387,7 @@ class SolanaTradingApplication:
         self.mode = mode
         self.engine = None
         self.health_server = None
+        self.telegram_controller = None
         self.shutdown_event = asyncio.Event()
         self.logger = logger
         self.config_manager = None
@@ -383,7 +398,11 @@ class SolanaTradingApplication:
         signal.signal(signal.SIGTERM, self._signal_handler)
 
         # Default config (will be overridden from DB if available)
-        self.rpc_url = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
+        # Use Pool Engine for RPC management
+        if RPCProvider:
+            self.rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC')
+        else:
+            self.rpc_url = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
         self.strategies = os.getenv('SOLANA_STRATEGIES', 'jupiter,drift').split(',')
         self.max_positions = int(os.getenv('SOLANA_MAX_POSITIONS', '3'))
         self.health_port = int(os.getenv('SOLANA_HEALTH_PORT', '8082'))
@@ -530,6 +549,28 @@ class SolanaTradingApplication:
             self.health_server = HealthServer(self, port=self.health_port)
             await self.health_server.start()
 
+            # Initialize Telegram controller for remote control (credentials from secrets manager)
+            if get_telegram_controller:
+                try:
+                    self.telegram_controller = get_telegram_controller(self.db_pool)
+                    if await self.telegram_controller.initialize():
+                        # Register Solana engine for remote control
+                        self.telegram_controller.register_module(
+                            name='solana',
+                            engine=self.engine,
+                            start_method='run',
+                            stop_method='shutdown',
+                            positions_attr='active_positions'
+                        )
+                        await self.telegram_controller.start_polling()
+                        self.logger.info("📱 Telegram remote control enabled")
+                        await self.telegram_controller.notify(
+                            "Solana Trading Bot started. Send /help for commands.",
+                            priority="normal"
+                        )
+                except Exception as e:
+                    self.logger.warning(f"Telegram controller failed to initialize: {e}")
+
             self.logger.info("🎯 Starting Solana trading engine...")
 
             tasks = [
@@ -580,7 +621,13 @@ class SolanaTradingApplication:
         try:
             self.logger.info("Initiating graceful shutdown...")
 
-            # Stop health server first
+            # Stop Telegram controller first
+            if self.telegram_controller:
+                self.logger.info("Stopping Telegram controller...")
+                await self.telegram_controller.notify("Bot shutting down...", priority="high")
+                await self.telegram_controller.stop_polling()
+
+            # Stop health server
             if self.health_server:
                 self.logger.info("Stopping health server...")
                 await self.health_server.stop()

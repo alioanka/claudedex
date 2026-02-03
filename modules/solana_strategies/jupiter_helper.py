@@ -13,6 +13,12 @@ from solders.transaction import VersionedTransaction
 from solders.message import MessageV0
 from solders.pubkey import Pubkey
 
+# Import RPCProvider for centralized RPC management
+try:
+    from config.rpc_provider import RPCProvider
+except ImportError:
+    RPCProvider = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,18 +65,28 @@ class JupiterHelper:
         else:
             self.api_url = raw_url
 
-        self.solana_rpc = solana_rpc_url or os.getenv('SOLANA_RPC_URL')
+        # Use Pool Engine via RPCProvider for centralized RPC management
+        if solana_rpc_url:
+            self.solana_rpc = solana_rpc_url
+        elif RPCProvider:
+            self.solana_rpc = RPCProvider.get_rpc_sync('SOLANA_RPC')
+        else:
+            self.solana_rpc = os.getenv('SOLANA_RPC_URL')
 
         logger.info(f"🔗 Jupiter API endpoint: {self.api_url}")
 
+        # Use SolanaTradingEngine logger for visibility in main logs
+        init_logger = logging.getLogger("SolanaTradingEngine")
+
         # Load keypair for signing - use secrets manager (database/Docker secrets)
         if private_key:
-            try:
-                self.keypair = Keypair.from_base58_string(private_key)
-                logger.info(f"✅ Jupiter keypair loaded (pubkey: {str(self.keypair.pubkey())[:12]}...)")
-            except Exception as e:
-                logger.error(f"❌ Failed to load keypair from provided private_key: {e}")
-                self.keypair = None
+            # Use the multi-format parser for provided private key
+            self.keypair = self._load_keypair_from_value(private_key)
+            if self.keypair:
+                pubkey_str = str(self.keypair.pubkey())
+                init_logger.info(f"   ✅ Jupiter keypair loaded: {pubkey_str[:8]}...{pubkey_str[-8:]}")
+            else:
+                init_logger.error("   ❌ Failed to load keypair from provided private_key")
         else:
             # Get private key from secrets manager
             try:
@@ -78,16 +94,22 @@ class JupiterHelper:
                 pk_value = secrets.get('SOLANA_PRIVATE_KEY', log_access=False)
                 if pk_value:
                     self.keypair = self._load_keypair_from_value(pk_value)
+                    if self.keypair:
+                        pubkey_str = str(self.keypair.pubkey())
+                        init_logger.info(f"   ✅ Jupiter keypair loaded: {pubkey_str[:8]}...{pubkey_str[-8:]}")
                 else:
                     self.keypair = None
-                    logger.warning("No Solana private key provided, signing will fail")
+                    init_logger.warning("   No Solana private key provided, signing will fail")
             except Exception:
                 # Fallback to environment
                 if os.getenv('SOLANA_PRIVATE_KEY'):
                     self.keypair = self._load_keypair_from_env()
+                    if self.keypair:
+                        pubkey_str = str(self.keypair.pubkey())
+                        init_logger.info(f"   ✅ Jupiter keypair loaded: {pubkey_str[:8]}...{pubkey_str[-8:]}")
                 else:
                     self.keypair = None
-                    logger.warning("No Solana private key provided, signing will fail")
+                    init_logger.warning("   No Solana private key provided, signing will fail")
 
         self.session: Optional[aiohttp.ClientSession] = None
 
@@ -95,8 +117,13 @@ class JupiterHelper:
         """
         Load keypair from a string value (from secrets manager or env)
 
+        Supports multiple key formats:
+        - JSON array: [1, 2, 3, ...] (64 bytes)
+        - Base58 encoded: string of base58 characters
+        - Hex encoded: hexadecimal string
+
         Args:
-            pk_str: Private key string (base58 encoded or encrypted)
+            pk_str: Private key string (base58 encoded, JSON array, hex, or encrypted)
 
         Returns:
             Optional[Keypair]: Loaded keypair or None
@@ -114,12 +141,54 @@ class JupiterHelper:
                     return None
                 logger.info("✅ Successfully decrypted Solana private key")
 
-            # Try to parse as base58
-            try:
-                return Keypair.from_base58_string(pk_str)
-            except (ValueError, Exception) as e:
-                logger.warning(f"Private key parse failed: {e}")
+            key_bytes = None
+            format_used = None
+
+            # Format 1: JSON array (e.g., [1,2,3,...])
+            if pk_str.startswith('['):
+                try:
+                    import json
+                    key_array = json.loads(pk_str)
+                    key_bytes = bytes(key_array)
+                    format_used = "JSON array"
+                    logger.debug(f"Parsed private key from JSON array format ({len(key_bytes)} bytes)")
+                except Exception as json_error:
+                    logger.debug(f"Not JSON array format: {json_error}")
+
+            # Format 2: Base58 encoded (most common)
+            if key_bytes is None:
+                try:
+                    key_bytes = base58.b58decode(pk_str)
+                    format_used = "base58"
+                    logger.debug(f"Parsed private key from base58 format ({len(key_bytes)} bytes)")
+                except (ValueError, Exception) as b58_error:
+                    logger.debug(f"Not base58 format: {b58_error}")
+
+            # Format 3: Hex encoded
+            if key_bytes is None:
+                try:
+                    key_bytes = bytes.fromhex(pk_str)
+                    format_used = "hex"
+                    logger.debug(f"Parsed private key from hex format ({len(key_bytes)} bytes)")
+                except (ValueError, Exception) as hex_error:
+                    logger.debug(f"Not hex format: {hex_error}")
+
+            if key_bytes is None:
+                logger.error("Failed to parse private key - tried JSON array, base58, and hex formats")
                 return None
+
+            # Verify key length (should be 64 bytes: 32 secret + 32 public)
+            if len(key_bytes) == 64:
+                keypair = Keypair.from_bytes(key_bytes)
+            elif len(key_bytes) == 32:
+                # Some keys are just the 32-byte seed - create keypair from seed
+                keypair = Keypair.from_seed(key_bytes)
+            else:
+                logger.error(f"Invalid key length: {len(key_bytes)} bytes (expected 32 or 64)")
+                return None
+
+            logger.info(f"✅ Keypair loaded from {format_used} format (pubkey: {str(keypair.pubkey())[:12]}...)")
+            return keypair
 
         except Exception as e:
             logger.error(f"Error loading keypair: {e}")
@@ -336,40 +405,174 @@ class JupiterHelper:
         Returns:
             Optional[str]: Signed transaction as base64 or None
         """
+        # Use SolanaTradingEngine logger for visibility in main logs
+        sign_logger = logging.getLogger("SolanaTradingEngine")
+
         try:
             if not self.keypair:
-                logger.error("No keypair available for signing")
-                logger.error("   Ensure SOLANA_MODULE_PRIVATE_KEY is set in database secrets")
+                sign_logger.error("No keypair available for signing")
+                sign_logger.error("   Ensure SOLANA_MODULE_PRIVATE_KEY is set in database secrets")
                 return None
 
             # Decode the transaction
             import base64
-            logger.debug(f"Decoding transaction ({len(transaction_data)} chars)...")
+            sign_logger.debug(f"Decoding transaction ({len(transaction_data)} chars)...")
             tx_bytes = base64.b64decode(transaction_data)
-            logger.debug(f"Transaction decoded ({len(tx_bytes)} bytes)")
+            sign_logger.debug(f"Transaction decoded ({len(tx_bytes)} bytes)")
 
             # Parse as versioned transaction
-            logger.debug("Parsing versioned transaction...")
+            sign_logger.debug("Parsing versioned transaction...")
             tx = VersionedTransaction.from_bytes(tx_bytes)
-            logger.debug(f"Transaction parsed, message signatures required: {len(tx.message.account_keys) if hasattr(tx.message, 'account_keys') else 'N/A'}")
+
+            # Get the message for signing
+            message = tx.message
+            our_pubkey = self.keypair.pubkey()
+            our_pubkey_str = str(our_pubkey)
+
+            # Log message type for debugging
+            msg_type = type(message).__name__
+            sign_logger.debug(f"Message type: {msg_type}")
+            sign_logger.debug(f"Original tx has {len(tx.signatures)} signature slot(s)")
+
+            # CRITICAL: Verify that the fee payer (first account) matches our keypair
+            # This catches pubkey mismatches that would cause signature verification failure
+            # Handle both legacy Message and MessageV0 formats
+            fee_payer = None
+            try:
+                # Try direct attribute access (works for most message types)
+                if hasattr(message, 'account_keys') and message.account_keys:
+                    fee_payer = message.account_keys[0]
+                # Alternative: some versions use static_account_keys()
+                elif hasattr(message, 'static_account_keys'):
+                    keys = message.static_account_keys()
+                    if keys:
+                        fee_payer = keys[0]
+            except Exception as e:
+                sign_logger.warning(f"Could not extract fee payer from message: {e}")
+
+            if fee_payer:
+                fee_payer_str = str(fee_payer)
+                sign_logger.info(f"   🔑 Fee payer: {fee_payer_str[:12]}... | Our key: {our_pubkey_str[:12]}...")
+
+                if fee_payer_str != our_pubkey_str:
+                    sign_logger.error(f"❌ PUBKEY MISMATCH! Transaction expects fee payer: {fee_payer_str}")
+                    sign_logger.error(f"   But we are signing with pubkey: {our_pubkey_str}")
+                    sign_logger.error("   This will cause 'Transaction signature verification failure'")
+                    sign_logger.error("   Check that SOLANA_MODULE_PRIVATE_KEY matches the wallet pubkey")
+                    return None
+                sign_logger.info("   ✓ Fee payer matches our keypair")
+            else:
+                sign_logger.warning(f"   ⚠️ Could not verify fee payer, signing with: {our_pubkey_str[:12]}...")
 
             # Sign the transaction message and create signed transaction
-            # Note: solders VersionedTransaction doesn't have a .sign() method
-            # We need to sign the message and use VersionedTransaction.populate()
-            logger.debug(f"Signing with keypair (pubkey: {str(self.keypair.pubkey())[:12]}...)")
-            message = tx.message
-            signature = self.keypair.sign_message(bytes(message))
-            signed_tx = VersionedTransaction.populate(message, [signature])
+            # CRITICAL: VersionedTransaction may require multiple signatures
+            # We need to:
+            # 1. Check how many signatures the transaction requires
+            # 2. Find which slot corresponds to our pubkey
+            # 3. Create signature array with our signature in the correct position
+
+            # Get the number of required signatures from the message header
+            num_required_signatures = message.header.num_required_signatures
+            sign_logger.debug(f"Transaction requires {num_required_signatures} signature(s)")
+
+            # Get account keys to find our pubkey position
+            account_keys = None
+            try:
+                if hasattr(message, 'account_keys') and message.account_keys:
+                    account_keys = list(message.account_keys)
+                elif hasattr(message, 'static_account_keys'):
+                    account_keys = list(message.static_account_keys())
+            except Exception as e:
+                sign_logger.warning(f"Could not get account keys: {e}")
+
+            # Find our pubkey position in the signers (first num_required_signatures accounts)
+            our_position = None
+            if account_keys:
+                for i in range(min(num_required_signatures, len(account_keys))):
+                    if str(account_keys[i]) == our_pubkey_str:
+                        our_position = i
+                        break
+
+            if our_position is None:
+                sign_logger.error(f"❌ Our pubkey not found in required signers!")
+                sign_logger.error(f"   Required signers: {[str(k)[:12] for k in account_keys[:num_required_signatures]]}")
+                sign_logger.error(f"   Our pubkey: {our_pubkey_str[:12]}...")
+                return None
+
+            sign_logger.debug(f"Our pubkey is at signer position {our_position}")
+
+            # Sign the transaction using the CORRECT solders approach
+            # Per solders docs: Pass keypairs directly to VersionedTransaction constructor
+            # This properly handles MessageV0 with address lookup tables
+            sign_logger.debug(f"Signing with keypair (pubkey: {str(our_pubkey)[:12]}...)")
+
+            # Check if there are any existing non-null signatures we need to preserve
+            from solders.signature import Signature
+            from solders.null_signer import NullSigner
+            null_sig = Signature.default()
+
+            has_existing_signatures = False
+            for i, sig in enumerate(tx.signatures):
+                if i != our_position and sig != null_sig:
+                    has_existing_signatures = True
+                    sign_logger.debug(f"   Found existing signature at position {i}")
+
+            if has_existing_signatures:
+                # HYBRID APPROACH: Use constructor to get correct signature, then preserve others
+                # Step 1: Create a temp transaction to get the correctly computed signature
+                temp_signers = []
+                for i in range(num_required_signatures):
+                    if i == our_position:
+                        temp_signers.append(self.keypair)
+                    elif account_keys and i < len(account_keys):
+                        temp_signers.append(NullSigner(account_keys[i]))
+                    else:
+                        sign_logger.error(f"Missing account key for signer position {i}")
+                        return None
+
+                temp_tx = VersionedTransaction(message, temp_signers)
+                our_computed_signature = temp_tx.signatures[our_position]
+
+                # Step 2: Build final signatures array preserving existing signatures
+                final_signatures = []
+                for i in range(num_required_signatures):
+                    if i == our_position:
+                        final_signatures.append(our_computed_signature)
+                    elif i < len(tx.signatures) and tx.signatures[i] != null_sig:
+                        final_signatures.append(tx.signatures[i])
+                        sign_logger.debug(f"   Preserved existing signature at position {i}")
+                    else:
+                        final_signatures.append(null_sig)
+
+                # Step 3: Use populate with the correctly computed signatures
+                signed_tx = VersionedTransaction.populate(message, final_signatures)
+                sign_logger.debug(f"Created signed tx (hybrid approach) with {len(signed_tx.signatures)} signature(s)")
+            else:
+                # STANDARD APPROACH: No existing signatures to preserve
+                # Build the signers list - use NullSigner for any signers we don't have
+                signers = []
+                for i in range(num_required_signatures):
+                    if i == our_position:
+                        signers.append(self.keypair)
+                    elif account_keys and i < len(account_keys):
+                        signers.append(NullSigner(account_keys[i]))
+                    else:
+                        sign_logger.error(f"Missing account key for signer position {i}")
+                        return None
+
+                # Create signed transaction using the constructor
+                signed_tx = VersionedTransaction(message, signers)
+                sign_logger.debug(f"Created signed tx with {len(signed_tx.signatures)} signature(s)")
 
             # Encode back to base64
             signed_tx_bytes = bytes(signed_tx)
             signed_tx_b64 = base64.b64encode(signed_tx_bytes).decode('utf-8')
 
-            logger.info("✅ Transaction signed successfully")
+            sign_logger.info("✅ Transaction signed successfully")
             return signed_tx_b64
 
         except Exception as e:
-            logger.error(f"Error signing transaction: {e}", exc_info=True)
+            sign_logger.error(f"Error signing transaction: {e}", exc_info=True)
             return None
 
     async def send_transaction(self, signed_transaction: str) -> Optional[str]:
@@ -382,13 +585,19 @@ class JupiterHelper:
         Returns:
             Optional[str]: Transaction signature or None
         """
+        # Use SolanaTradingEngine logger for visibility in main logs
+        tx_logger = logging.getLogger("SolanaTradingEngine")
+
         try:
             if not self.solana_rpc:
-                logger.error("No Solana RPC URL configured")
+                tx_logger.error("   ❌ No Solana RPC URL configured")
                 return None
 
             if not self.session:
                 await self.initialize()
+
+            # Log the RPC being used
+            tx_logger.info(f"   📡 Using RPC: {self.solana_rpc[:50]}...")
 
             # Send via RPC
             payload = {
@@ -411,18 +620,31 @@ class JupiterHelper:
                     result = await response.json()
                     if 'result' in result:
                         signature = result['result']
-                        logger.info(f"✅ Transaction sent: {signature}")
+                        tx_logger.info(f"   ✅ Transaction sent: {signature}")
                         return signature
                     elif 'error' in result:
-                        logger.error(f"RPC error: {result['error']}")
+                        error = result['error']
+                        error_msg = error.get('message', str(error)) if isinstance(error, dict) else str(error)
+                        error_code = error.get('code', 'N/A') if isinstance(error, dict) else 'N/A'
+                        # Log detailed error that will be visible in main logs
+                        tx_logger.error(f"   ❌ RPC error [{error_code}]: {error_msg}")
+                        # Also log any additional error data (like transaction simulation logs)
+                        if isinstance(error, dict) and 'data' in error:
+                            data = error['data']
+                            if isinstance(data, dict):
+                                logs = data.get('logs', [])
+                                if logs:
+                                    tx_logger.error(f"   📋 Simulation logs: {logs[-3:]}")
+                            else:
+                                tx_logger.error(f"   📋 Error data: {str(data)[:200]}")
                         return None
                 else:
                     error_text = await response.text()
-                    logger.error(f"Send transaction error: {response.status} - {error_text}")
+                    tx_logger.error(f"   ❌ HTTP {response.status}: {error_text[:200]}")
                     return None
 
         except Exception as e:
-            logger.error(f"Error sending transaction: {e}", exc_info=True)
+            tx_logger.error(f"   ❌ Exception sending transaction: {e}", exc_info=True)
             return None
 
     async def confirm_transaction(
@@ -570,8 +792,13 @@ class JupiterHelper:
                 swap_logger.info(f"   ✅ Jupiter: Swap completed: {signature}")
                 return signature
             else:
-                swap_logger.warning(f"   ⚠️ Jupiter: Sent but unconfirmed: {signature}")
-                return signature
+                # CRITICAL: Do NOT return signature for unconfirmed transactions!
+                # Returning signature here would create a phantom position
+                # since caller treats any non-None return as success
+                swap_logger.error(f"   ❌ Jupiter: Transaction NOT confirmed after timeout: {signature}")
+                swap_logger.error(f"      Signature sent but not confirmed - NO position will be opened")
+                swap_logger.error(f"      Check explorer: https://solscan.io/tx/{signature}")
+                return None
 
         except Exception as e:
             swap_logger.error(f"❌ Jupiter swap error: {e}", exc_info=True)

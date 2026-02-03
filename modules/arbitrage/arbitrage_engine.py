@@ -559,7 +559,9 @@ class ArbitrageEngine:
         self.flashbots_executor: Optional[FlashbotsExecutor] = None
 
         # Settings
-        self.min_profit_threshold = 0.005  # 0.5% minimum profit
+        # IMPORTANT: Real DEX arbitrage opportunities are typically 0.1-0.5%
+        # After costs (~0.55%): flash loan 0.05% + slippage ~0.5% = need ~0.6% raw spread
+        self.min_profit_threshold = 0.003  # 0.3% minimum NET profit (after costs)
         self.use_flash_loans = True
         self.use_flashbots = True
         self.flash_loan_amount = 10 * 10**18  # 10 ETH default
@@ -570,7 +572,14 @@ class ArbitrageEngine:
         # Rate limiting for logging and execution
         self._last_opportunity_time = None
         self._last_opportunity_key = None
-        self._opportunity_cooldown = 3600  # 1 hour cooldown for same opportunity (prevent spam)
+        self._opportunity_cooldown = 300  # 5 min cooldown for same opportunity (was 1 hour - too long)
+
+        # Visibility logging - track spreads even when not executing
+        self._last_spread_log_time = None
+        self._best_spread_seen = 0.0
+        self._best_spread_pair = ""
+        self._total_pairs_scanned = 0
+        self._pairs_with_liquidity = 0
 
         # Per-pair daily execution limit (realistic arbitrage opportunities are rare)
         self._pair_execution_count: Dict[str, int] = {}  # pair_key -> count today
@@ -786,15 +795,24 @@ class ArbitrageEngine:
                 await asyncio.sleep(5)
 
     async def _log_stats_if_needed(self):
-        """Log statistics every 5 minutes"""
+        """Log statistics every 5 minutes with spread visibility"""
         now = datetime.now()
         elapsed = (now - self._stats['last_stats_log']).total_seconds()
 
         if elapsed >= 300:  # 5 minutes
+            # Enhanced logging with spread visibility
             logger.info(f"📊 ARBITRAGE STATS (Last 5 min): "
                        f"Scans: {self._stats['scans']} | "
+                       f"Pairs w/Liquidity: {self._pairs_with_liquidity}/{self._total_pairs_scanned} | "
                        f"Opportunities: {self._stats['opportunities_found']} | "
                        f"Executed: {self._stats['opportunities_executed']}")
+
+            # Log best spread seen (even if below threshold)
+            if self._best_spread_seen > 0:
+                status = "✅ ABOVE" if self._best_spread_seen > self.min_profit_threshold else "❌ BELOW"
+                logger.info(f"   Best spread: {self._best_spread_seen:.4%} on {self._best_spread_pair} ({status} threshold {self.min_profit_threshold:.2%})")
+            else:
+                logger.info(f"   No spreads found - check RPC connection and DEX liquidity")
 
             # Reset stats
             self._stats = {
@@ -803,37 +821,84 @@ class ArbitrageEngine:
                 'opportunities_executed': 0,
                 'last_stats_log': now
             }
+            self._best_spread_seen = 0.0
+            self._best_spread_pair = ""
+            self._total_pairs_scanned = 0
+            self._pairs_with_liquidity = 0
 
     async def _check_arb_opportunity(self, token_in: str, token_out: str, token_symbol: str = "UNKNOWN") -> bool:
         """Check price difference between two DEXs. Returns True if opportunity found."""
         try:
+            self._total_pairs_scanned += 1
             amount_in = self.flash_loan_amount  # Use configured flash loan amount
 
-            prices = {}
+            # Query BOTH directions on all DEXs to find real arbitrage opportunities
+            # Forward direction: token_in → token_out (first leg of arbitrage)
+            forward_prices = {}
             for name, contract in self.router_contracts.items():
                 try:
                     amounts = contract.functions.getAmountsOut(amount_in, [token_in, token_out]).call()
-                    prices[name] = amounts[1]
+                    forward_prices[name] = amounts[1]
                 except Exception:
                     # Silently skip - many pairs won't have liquidity on all DEXs
                     pass
 
-            if len(prices) < 2:
+            if len(forward_prices) < 2:
                 return False
 
-            # Find best buy and sell
-            best_buy_dex = min(prices, key=prices.get)
-            best_sell_dex = max(prices, key=prices.get)
+            self._pairs_with_liquidity += 1
 
-            buy_price = prices[best_buy_dex]
-            sell_price = prices[best_sell_dex]
+            # Find best forward DEX (gives most token_out for our token_in)
+            best_buy_dex = max(forward_prices, key=forward_prices.get)
+            forward_output = forward_prices[best_buy_dex]
 
-            if buy_price == 0:
+            if forward_output == 0:
                 return False
 
-            spread = (sell_price - buy_price) / buy_price
+            # Now query reverse direction on OTHER DEXs: token_out → token_in
+            # This is the actual second leg of the arbitrage
+            reverse_outputs = {}
+            for name, contract in self.router_contracts.items():
+                if name == best_buy_dex:
+                    continue  # Skip same DEX - no arbitrage within same DEX
+                try:
+                    amounts = contract.functions.getAmountsOut(forward_output, [token_out, token_in]).call()
+                    reverse_outputs[name] = amounts[1]
+                except Exception:
+                    pass
 
-            if spread > self.min_profit_threshold:
+            if not reverse_outputs:
+                return False
+
+            # Find best reverse DEX (gives most token_in back for our token_out)
+            best_sell_dex = max(reverse_outputs, key=reverse_outputs.get)
+            final_output = reverse_outputs[best_sell_dex]
+
+            # Calculate actual profit: final_output - (borrowed_amount + flash_loan_fee)
+            flash_loan_fee = amount_in * 5 // 10000  # 0.05% Aave fee
+            amount_owed = amount_in + flash_loan_fee
+
+            # Even if no profit, track the spread for visibility
+            if final_output > 0:
+                raw_spread = (final_output - amount_owed) / amount_in
+                pair_key = f"{token_symbol} ({best_buy_dex}→{best_sell_dex})"
+
+                # Track best spread seen (even negative ones)
+                if raw_spread > self._best_spread_seen:
+                    self._best_spread_seen = raw_spread
+                    self._best_spread_pair = pair_key
+
+            if final_output <= amount_owed:
+                return False  # No profit possible
+
+            profit = final_output - amount_owed
+            raw_spread = profit / amount_in
+
+            # Estimated additional costs (slippage, gas)
+            estimated_costs = 0.005  # 0.5% for slippage and gas
+            net_spread = raw_spread - estimated_costs
+
+            if net_spread > self.min_profit_threshold:
                 self._stats['opportunities_found'] += 1
 
                 # Create unique key for this opportunity
@@ -868,7 +933,8 @@ class ArbitrageEngine:
                 self._pair_execution_count[opp_key] = current_count + 1
                 remaining = self._max_executions_per_pair_per_day - (current_count + 1)
 
-                logger.info(f"🚨 ARBITRAGE OPPORTUNITY [{token_symbol}]: Buy on {best_buy_dex}, Sell on {best_sell_dex}. Spread: {spread:.2%} (#{current_count + 1} today, {remaining} remaining)")
+                logger.info(f"🚨 ARBITRAGE OPPORTUNITY [{token_symbol}]: Buy on {best_buy_dex}, Sell on {best_sell_dex}. Raw: {raw_spread:.2%}, Net: {net_spread:.2%} (#{current_count + 1} today, {remaining} remaining)")
+                logger.info(f"   Path: {amount_in/1e18:.4f} {token_symbol} → {forward_output/1e18:.4f} intermediate → {final_output/1e18:.4f} {token_symbol} (profit: {profit/1e18:.4f})")
                 self._stats['opportunities_executed'] += 1
 
                 # Execute arbitrage
@@ -878,7 +944,7 @@ class ArbitrageEngine:
                     token_in=token_in,
                     token_out=token_out,
                     amount=amount_in,
-                    expected_profit=spread,
+                    expected_profit=net_spread,
                     token_symbol=token_symbol
                 )
                 return True

@@ -13,6 +13,12 @@ import os
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+# Import RPCProvider for centralized RPC management
+try:
+    from config.rpc_provider import RPCProvider
+except ImportError:
+    RPCProvider = None
+
 # Load env
 load_dotenv()
 
@@ -56,6 +62,12 @@ logger.addHandler(console)
 from modules.copy_trading.copy_engine import CopyTradingEngine, CopyTradeExecutor
 from config.config_manager import ConfigManager
 
+# Import Telegram controller for remote control
+try:
+    from monitoring.telegram_bot import get_telegram_controller
+except ImportError:
+    get_telegram_controller = None
+
 # Also configure logging for engine classes
 for engine_name in ["CopyTradingEngine", "CopyTradeExecutor"]:
     engine_logger = logging.getLogger(engine_name)
@@ -69,17 +81,22 @@ async def main():
     logger.info(f"   Working dir: {Path.cwd()}")
     logger.info(f"   Log dir: {log_dir.absolute()}")
 
-    # Check for API keys and RPC URLs - use secrets manager (database/Docker secrets)
+    # Check for API keys and RPC URLs - use Pool Engine for RPC management
     try:
         from security.secrets_manager import secrets
         etherscan_key = secrets.get('ETHERSCAN_API_KEY', log_access=False)
-        solana_rpc = secrets.get('SOLANA_RPC_URL', log_access=False)
         helius_key = secrets.get('HELIUS_API_KEY', log_access=False)
     except Exception:
         # Fallback to env if secrets manager unavailable
         etherscan_key = os.getenv('ETHERSCAN_API_KEY')
-        solana_rpc = os.getenv('SOLANA_RPC_URL')
         helius_key = os.getenv('HELIUS_API_KEY')
+
+    # Use Pool Engine for Solana RPC
+    solana_rpc = None
+    if RPCProvider:
+        solana_rpc = RPCProvider.get_rpc_sync('SOLANA_RPC')
+    if not solana_rpc:
+        solana_rpc = os.getenv('SOLANA_RPC_URL')
 
     logger.info(f"   ETHERSCAN_API_KEY: {'Configured' if etherscan_key else 'NOT SET - EVM monitoring disabled'}")
     logger.info(f"   SOLANA_RPC_URL: {'Configured' if solana_rpc else 'NOT SET - Solana monitoring disabled'}")
@@ -115,15 +132,39 @@ async def main():
     config = {'copy_trading_enabled': True}
     engine = CopyTradingEngine(config, db_pool)
 
+    # Initialize Telegram controller for remote control (credentials from secrets manager)
+    telegram_controller = None
+    if get_telegram_controller:
+        try:
+            telegram_controller = get_telegram_controller(db_pool)
+            if await telegram_controller.initialize():
+                telegram_controller.register_module(
+                    name='copy_trading',
+                    engine=engine,
+                    start_method='run',
+                    stop_method='stop',
+                    positions_attr='active_copies'
+                )
+                await telegram_controller.start_polling()
+                logger.info("📱 Telegram remote control enabled")
+                await telegram_controller.notify("Copy Trading Module started. Send /help for commands.", priority="normal")
+        except Exception as e:
+            logger.warning(f"Telegram controller failed to initialize: {e}")
+
     try:
         logger.info("✅ Copy Trading Engine initialized successfully")
         await engine.run()
     except KeyboardInterrupt:
+        if telegram_controller:
+            await telegram_controller.notify("Copy Trading module shutting down...", priority="high")
+            await telegram_controller.stop_polling()
         await engine.stop()
     except Exception as e:
         logger.error(f"❌ Engine error: {e}")
         import traceback
         logger.error(traceback.format_exc())
+        if telegram_controller:
+            await telegram_controller.stop_polling()
         await engine.stop()
 
 if __name__ == "__main__":

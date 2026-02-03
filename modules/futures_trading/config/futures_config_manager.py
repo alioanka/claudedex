@@ -113,9 +113,10 @@ class FuturesRiskConfig(BaseModel):
     # Risk controls
     max_consecutive_losses: int = 4  # Reduced from 5 to pause earlier
 
-    # Market condition filters (new)
-    require_trend_confirmation: bool = True  # Only trade with confirmed trends
-    min_volume_multiplier: float = 1.2  # Require 20% above average volume
+    # Market condition filters
+    # Relaxed for live trading - strict filters were rejecting all trades in sideways markets
+    require_trend_confirmation: bool = False  # Allow trading in sideways markets (was True)
+    min_volume_multiplier: float = 0.8  # Allow 80% of average volume (was 1.2)
 
 
 class FuturesPairsConfig(BaseModel):

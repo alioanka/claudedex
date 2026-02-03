@@ -266,11 +266,25 @@ class RaydiumClient:
 class JitoClient:
     """Jito MEV protection client (Solana's Flashbots)"""
 
-    JITO_BLOCK_ENGINE = "https://mainnet.block-engine.jito.wtf"
-    # Jito tip accounts - send tip to one of these to incentivize block builders
+    # Regional Jito block engines for failover (from official docs)
+    # https://docs.jito.wtf/lowlatencytxnsend/
+    JITO_ENDPOINTS = [
+        "https://mainnet.block-engine.jito.wtf",
+        "https://amsterdam.mainnet.block-engine.jito.wtf",
+        "https://dublin.mainnet.block-engine.jito.wtf",
+        "https://frankfurt.mainnet.block-engine.jito.wtf",
+        "https://london.mainnet.block-engine.jito.wtf",
+        "https://ny.mainnet.block-engine.jito.wtf",
+        "https://slc.mainnet.block-engine.jito.wtf",
+        "https://singapore.mainnet.block-engine.jito.wtf",
+        "https://tokyo.mainnet.block-engine.jito.wtf",
+    ]
+
+    # Official Jito tip accounts (from getTipAccounts API response)
+    # https://docs.jito.wtf/lowlatencytxnsend/
     JITO_TIP_ACCOUNTS = [
         "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
-        "HFqU5x63VTqvQss8hp11i4bVV9bKMWU9g67mxnCvmU3",
+        "HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe",
         "Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY",
         "ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49",
         "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh",
@@ -282,19 +296,30 @@ class JitoClient:
     def __init__(self):
         self.session: Optional[aiohttp.ClientSession] = None
         self.keypair = None  # Set during initialization
+        # Use env var if set, otherwise use default
+        self.primary_endpoint = os.getenv('JITO_BLOCK_ENGINE_URL', self.JITO_ENDPOINTS[0])
+        self.current_endpoint_idx = 0
+        self._last_429_time = 0
+        self._backoff_seconds = 0
 
     async def initialize(self, keypair=None):
         timeout = aiohttp.ClientTimeout(total=10)
         self.session = aiohttp.ClientSession(timeout=timeout)
         self.keypair = keypair
+        logger.info(f"   Jito endpoint: {self.primary_endpoint}")
 
     async def close(self):
         if self.session:
             await self.session.close()
 
+    def _get_next_endpoint(self) -> str:
+        """Rotate through Jito endpoints for load balancing"""
+        self.current_endpoint_idx = (self.current_endpoint_idx + 1) % len(self.JITO_ENDPOINTS)
+        return self.JITO_ENDPOINTS[self.current_endpoint_idx]
+
     async def send_bundle(self, transactions: List[str], tip_lamports: int = 10000) -> Optional[str]:
         """
-        Send transaction bundle to Jito block engine.
+        Send transaction bundle to Jito block engine with retry and failover.
         Protects against sandwich attacks and ensures atomic execution.
 
         Args:
@@ -304,45 +329,193 @@ class JitoClient:
         Returns:
             Bundle ID if successful, None otherwise
         """
-        try:
-            # Jito requires signed transactions
-            # The transactions should already be signed before calling this method
+        import time
 
-            payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "sendBundle",
-                "params": [transactions]
-            }
-
-            async with self.session.post(
-                f"{self.JITO_BLOCK_ENGINE}/api/v1/bundles",
-                json=payload
-            ) as resp:
-                response_text = await resp.text()
-                if resp.status == 200:
-                    result = await resp.json()
-                    if 'result' in result:
-                        bundle_id = result.get('result')
-                        logger.info(f"🛡️ Jito bundle submitted: {bundle_id}")
-                        return bundle_id
-                    elif 'error' in result:
-                        error = result.get('error', {})
-                        logger.error(f"❌ Jito bundle error: {error.get('message', 'Unknown error')}")
-                        logger.error(f"   Error code: {error.get('code', 'N/A')}")
-                        return None
-                else:
-                    logger.error(f"❌ Jito HTTP error {resp.status}: {response_text[:200]}")
-                    return None
-
-        except Exception as e:
-            logger.error(f"Jito bundle error: {e}")
+        # Check if we're in backoff period from previous 429
+        now = time.time()
+        if self._backoff_seconds > 0 and (now - self._last_429_time) < self._backoff_seconds:
+            remaining = self._backoff_seconds - (now - self._last_429_time)
+            logger.warning(f"⏳ Jito backoff: {remaining:.1f}s remaining")
             return None
 
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "sendBundle",
+            "params": [transactions]
+        }
+
+        # Try primary endpoint first, then failover to others
+        endpoints_to_try = [self.primary_endpoint] + [e for e in self.JITO_ENDPOINTS if e != self.primary_endpoint]
+
+        for endpoint in endpoints_to_try[:3]:  # Try up to 3 endpoints
+            try:
+                async with self.session.post(
+                    f"{endpoint}/api/v1/bundles",
+                    json=payload
+                ) as resp:
+                    response_text = await resp.text()
+
+                    if resp.status == 200:
+                        result = await resp.json()
+                        if 'result' in result:
+                            bundle_id = result.get('result')
+                            logger.info(f"🛡️ Jito bundle submitted: {bundle_id}")
+                            self._backoff_seconds = 0  # Reset backoff on success
+                            return bundle_id
+                        elif 'error' in result:
+                            error = result.get('error', {})
+                            error_code = error.get('code', 'N/A')
+                            error_msg = error.get('message', 'Unknown error')
+
+                            # Check for rate limit error
+                            if error_code == -32097 or 'rate limit' in error_msg.lower():
+                                logger.warning(f"⚠️ Jito rate limited on {endpoint[:30]}... waiting 2s before next")
+                                await asyncio.sleep(2)  # Wait before trying next endpoint
+                                continue
+
+                            logger.error(f"❌ Jito bundle error: {error_msg}")
+                            logger.error(f"   Error code: {error_code}")
+                            return None
+
+                    elif resp.status == 429:
+                        # Global rate limit - Jito endpoints share rate limits!
+                        # Add delay BEFORE trying next endpoint to avoid burning all endpoints
+                        self._last_429_time = time.time()
+                        self._backoff_seconds = min(self._backoff_seconds * 2 + 5, 60)
+                        logger.warning(f"⚠️ Jito 429 on {endpoint[:30]}... waiting 2s before next endpoint")
+                        await asyncio.sleep(2)  # Wait before trying next endpoint
+                        continue
+
+                    else:
+                        # Log detailed error for debugging
+                        try:
+                            error_body = await resp.text()
+                            logger.error(f"❌ Jito HTTP {resp.status} on {endpoint[:30]}...")
+                            logger.error(f"   Response: {error_body[:500]}")
+                        except Exception:
+                            logger.error(f"❌ Jito HTTP {resp.status} on {endpoint[:30]}...")
+                        continue  # Try next endpoint
+
+            except asyncio.TimeoutError:
+                logger.warning(f"⏱️ Jito timeout on {endpoint[:30]}... trying next")
+                continue
+            except Exception as e:
+                logger.warning(f"Jito error on {endpoint[:30]}...: {e}")
+                continue
+
+        logger.error("❌ All Jito endpoints failed or rate limited")
+        return None
+
     def get_random_tip_account(self) -> str:
-        """Get a random Jito tip account"""
+        """Get a random Jito tip account (or from env)"""
         import random
+        env_tip = os.getenv('JITO_TIP_ACCOUNT')
+        if env_tip:
+            return env_tip
         return random.choice(self.JITO_TIP_ACCOUNTS)
+
+    async def create_tip_transaction(
+        self,
+        payer_keypair,
+        tip_lamports: int = 10000,
+        recent_blockhash: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Create a signed tip transaction for Jito bundle.
+
+        A tip is REQUIRED for bundles to be considered by Jito validators.
+        The tip should be the LAST transaction in the bundle.
+
+        Args:
+            payer_keypair: Solders Keypair object for signing
+            tip_lamports: Tip amount in lamports (min 1000, default 10000)
+            recent_blockhash: Recent blockhash (will fetch if not provided)
+
+        Returns:
+            Base64-encoded signed transaction, or None on failure
+        """
+        try:
+            import base64
+            from solders.keypair import Keypair
+            from solders.pubkey import Pubkey
+            from solders.system_program import TransferParams, transfer
+            from solders.message import Message
+            from solders.transaction import Transaction
+            from solders.hash import Hash
+
+            if not payer_keypair:
+                logger.error("No keypair provided for tip transaction")
+                return None
+
+            # Ensure minimum tip (1000 lamports per Jito docs)
+            tip_lamports = max(tip_lamports, 1000)
+
+            # Get random tip account
+            tip_account_str = self.get_random_tip_account()
+            tip_account = Pubkey.from_string(tip_account_str)
+            payer_pubkey = payer_keypair.pubkey()
+
+            logger.debug(f"Creating tip tx: {tip_lamports} lamports to {tip_account_str[:12]}...")
+
+            # Fetch recent blockhash if not provided
+            if not recent_blockhash:
+                import aiohttp
+                # Get RPC URL from environment
+                rpc_url = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
+                try:
+                    from config.rpc_provider import RPCProvider
+                    rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC') or rpc_url
+                except Exception:
+                    pass
+
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        rpc_url,
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "getLatestBlockhash",
+                            "params": [{"commitment": "finalized"}]
+                        }
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            recent_blockhash = data.get('result', {}).get('value', {}).get('blockhash')
+
+            if not recent_blockhash:
+                logger.error("Failed to get recent blockhash for tip transaction")
+                return None
+
+            # Create transfer instruction
+            transfer_ix = transfer(
+                TransferParams(
+                    from_pubkey=payer_pubkey,
+                    to_pubkey=tip_account,
+                    lamports=tip_lamports
+                )
+            )
+
+            # Create and sign transaction
+            blockhash = Hash.from_string(recent_blockhash)
+            message = Message.new_with_blockhash(
+                [transfer_ix],
+                payer_pubkey,
+                blockhash
+            )
+            tx = Transaction.new_unsigned(message)
+            tx.sign([payer_keypair], blockhash)
+
+            # Encode to base64
+            tx_bytes = bytes(tx)
+            tx_b64 = base64.b64encode(tx_bytes).decode('utf-8')
+
+            logger.info(f"✅ Tip transaction created: {tip_lamports} lamports to {tip_account_str[:12]}...")
+            return tx_b64
+
+        except Exception as e:
+            logger.error(f"Failed to create tip transaction: {e}")
+            return None
 
 
 class SolanaPriceFetcher:
@@ -542,19 +715,6 @@ class SolanaArbitrageEngine:
     async def initialize(self):
         logger.info("🌊 Initializing Solana Arbitrage Engine...")
 
-        # Load wallet address from secrets manager (database) - try multiple key names
-        # Priority order: SOLANA_WALLET (DEX wallet) > SOLANA_MODULE_WALLET (strategies)
-        if not self.wallet_address:
-            wallet_key_names = [
-                'SOLANA_WALLET',           # DEX trading wallet
-                'SOLANA_MODULE_WALLET',    # Solana strategies wallet
-            ]
-            for key_name in wallet_key_names:
-                self.wallet_address = await self._get_decrypted_key(key_name)
-                if self.wallet_address:
-                    logger.debug(f"Loaded wallet address from {key_name}")
-                    break
-
         # Load private key from secrets manager - try multiple key names
         # Priority order: SOLANA_PRIVATE_KEY (DEX) > SOLANA_MODULE_PRIVATE_KEY (strategies)
         private_key_names = [
@@ -567,6 +727,53 @@ class SolanaArbitrageEngine:
                 logger.debug(f"Loaded private key from {key_name}")
                 break
 
+        # CRITICAL: Derive wallet address from private key to ensure they always match
+        # This prevents signature verification failures from mismatched wallet/key pairs
+        if self.private_key:
+            import base58
+            import json as json_module
+            from solders.keypair import Keypair
+
+            pk = self.private_key
+            key_bytes = None
+
+            # Format 1: JSON array (e.g., [1,2,3,...])
+            if pk.startswith('['):
+                try:
+                    key_array = json_module.loads(pk)
+                    key_bytes = bytes(key_array)
+                except Exception:
+                    pass
+
+            # Format 2: Base58 encoded (most common)
+            if key_bytes is None:
+                try:
+                    key_bytes = base58.b58decode(pk)
+                except Exception:
+                    pass
+
+            # Format 3: Hex encoded
+            if key_bytes is None:
+                try:
+                    key_bytes = bytes.fromhex(pk)
+                except Exception:
+                    pass
+
+            if key_bytes:
+                if len(key_bytes) == 64:
+                    keypair = Keypair.from_bytes(key_bytes)
+                elif len(key_bytes) == 32:
+                    keypair = Keypair.from_seed(key_bytes)
+                else:
+                    keypair = None
+                    logger.error(f"Invalid private key length: {len(key_bytes)} bytes")
+
+                if keypair:
+                    self.wallet_address = str(keypair.pubkey())
+                    logger.info(f"✅ Derived wallet from private key: {self.wallet_address[:8]}...{self.wallet_address[-8:]}")
+            else:
+                logger.error("Failed to parse private key for wallet derivation")
+
         await self.jupiter.initialize()
         await self.raydium.initialize()
 
@@ -576,7 +783,7 @@ class SolanaArbitrageEngine:
 
         # Log wallet configuration status
         if not self.wallet_address:
-            logger.warning("⚠️ No Solana wallet address configured - store SOLANA_WALLET in database")
+            logger.warning("⚠️ No Solana wallet address - check SOLANA_PRIVATE_KEY in database")
 
         logger.info(f"   RPC: {self.rpc_url[:40]}...")
         logger.info(f"   Mode: {'DRY_RUN (Simulated)' if self.dry_run else 'LIVE TRADING'}")
@@ -778,7 +985,7 @@ class SolanaArbitrageEngine:
                 logger.error("Failed to get swap transactions")
                 return
 
-            # If Jito is enabled, bundle both transactions
+            # If Jito is enabled, bundle both transactions with a tip
             if self.use_jito and self.jito.session:
                 tx1_unsigned = swap1.get('swapTransaction')
                 tx2_unsigned = swap2.get('swapTransaction')
@@ -792,7 +999,28 @@ class SolanaArbitrageEngine:
                     logger.error("Failed to sign transactions for Jito bundle")
                     return
 
-                bundle_id = await self.jito.send_bundle([tx1_signed, tx2_signed])
+                # CRITICAL: Create tip transaction for Jito
+                # Jito requires a tip to consider the bundle (min 1000 lamports)
+                # Tip should be the LAST transaction in the bundle
+                keypair = self._get_keypair()
+                if not keypair:
+                    logger.error("Failed to get keypair for tip transaction")
+                    return
+
+                # Use configurable tip amount (default 10000 lamports = 0.00001 SOL)
+                tip_lamports = self.config.get('jito_tip_lamports', 10000)
+                tip_tx = await self.jito.create_tip_transaction(keypair, tip_lamports)
+
+                if not tip_tx:
+                    logger.error("Failed to create tip transaction - bundle will likely be rejected")
+                    # Continue anyway - sometimes bundles work without tips during low competition
+                    bundle_txs = [tx1_signed, tx2_signed]
+                else:
+                    # Add tip as the last transaction in bundle
+                    bundle_txs = [tx1_signed, tx2_signed, tip_tx]
+                    logger.info(f"   💰 Jito tip: {tip_lamports} lamports ({tip_lamports/1e9:.6f} SOL)")
+
+                bundle_id = await self.jito.send_bundle(bundle_txs)
                 if bundle_id:
                     logger.info(f"✅ Solana Arb executed via Jito: {bundle_id}")
                     await self._log_trade(
@@ -801,17 +1029,106 @@ class SolanaArbitrageEngine:
                         quote1.get('routePlan', [])
                     )
                 else:
-                    logger.error("Jito bundle rejected - check logs for details")
+                    # FALLBACK: Jito failed, try direct RPC submission
+                    logger.warning("⚠️ Jito bundle failed - falling back to direct RPC (front-run risk!)")
+
+                    # Submit transactions directly via RPC
+                    fallback_result = await self._submit_via_rpc(tx1_signed, tx2_signed)
+                    if fallback_result:
+                        logger.info(f"✅ Solana Arb executed via RPC fallback: {fallback_result}")
+                        await self._log_trade(
+                            in_symbol, out_symbol, token_in,
+                            amount, profit_pct, fallback_result,
+                            quote1.get('routePlan', [])
+                        )
+                    else:
+                        logger.error("❌ Both Jito and RPC fallback failed")
             else:
-                # Direct execution (not recommended for arb)
-                logger.warning("Direct execution not recommended - use Jito for MEV protection")
+                # Direct execution (Jito disabled)
+                logger.warning("Direct execution - Jito disabled, front-run risk!")
+
+                tx1_unsigned = swap1.get('swapTransaction')
+                tx2_unsigned = swap2.get('swapTransaction')
+                tx1_signed = await self._sign_transaction(tx1_unsigned)
+                tx2_signed = await self._sign_transaction(tx2_unsigned)
+
+                if tx1_signed and tx2_signed:
+                    result = await self._submit_via_rpc(tx1_signed, tx2_signed)
+                    if result:
+                        logger.info(f"✅ Solana Arb executed via RPC: {result}")
+                        await self._log_trade(
+                            in_symbol, out_symbol, token_in,
+                            amount, profit_pct, result,
+                            quote1.get('routePlan', [])
+                        )
 
         except Exception as e:
             logger.error(f"Solana arb execution error: {e}")
 
+    def _get_keypair(self):
+        """
+        Get a Solders Keypair object from the configured private key.
+
+        Supports multiple key formats: JSON array, base58, hex
+
+        Returns:
+            Keypair object or None on failure
+        """
+        try:
+            import base58
+            import json as json_module
+            from solders.keypair import Keypair
+
+            if not self.private_key:
+                logger.error("No private key configured")
+                return None
+
+            key_bytes = None
+
+            # Format 1: JSON array (e.g., [1,2,3,...])
+            if self.private_key.startswith('['):
+                try:
+                    key_array = json_module.loads(self.private_key)
+                    key_bytes = bytes(key_array)
+                except Exception:
+                    pass
+
+            # Format 2: Base58 encoded (most common)
+            if key_bytes is None:
+                try:
+                    key_bytes = base58.b58decode(self.private_key)
+                except Exception:
+                    pass
+
+            # Format 3: Hex encoded
+            if key_bytes is None:
+                try:
+                    key_bytes = bytes.fromhex(self.private_key)
+                except Exception:
+                    pass
+
+            if key_bytes is None:
+                logger.error("Failed to parse private key")
+                return None
+
+            # Create keypair based on key length
+            if len(key_bytes) == 64:
+                return Keypair.from_bytes(key_bytes)
+            elif len(key_bytes) == 32:
+                return Keypair.from_seed(key_bytes)
+            else:
+                logger.error(f"Invalid key length: {len(key_bytes)} bytes")
+                return None
+
+        except Exception as e:
+            logger.error(f"Failed to get keypair: {e}")
+            return None
+
     async def _sign_transaction(self, transaction_b64: str) -> Optional[str]:
         """
         Sign a base64-encoded Solana transaction with the configured private key.
+
+        Supports multiple key formats: JSON array, base58, hex
 
         Args:
             transaction_b64: Base64-encoded unsigned transaction from Jupiter
@@ -822,6 +1139,7 @@ class SolanaArbitrageEngine:
         try:
             import base64
             import base58
+            import json as json_module
             from solders.keypair import Keypair
             from solders.transaction import VersionedTransaction
 
@@ -833,34 +1151,233 @@ class SolanaArbitrageEngine:
             tx_bytes = base64.b64decode(transaction_b64)
             tx = VersionedTransaction.from_bytes(tx_bytes)
 
-            # Create keypair from private key (base58 encoded)
-            try:
-                keypair = Keypair.from_base58_string(self.private_key)
-            except Exception:
-                # Try decoding as raw bytes
+            # Create keypair from private key (supports multiple formats)
+            key_bytes = None
+            format_used = None
+
+            # Format 1: JSON array (e.g., [1,2,3,...])
+            if self.private_key.startswith('['):
                 try:
-                    pk_bytes = base58.b58decode(self.private_key)
-                    keypair = Keypair.from_bytes(pk_bytes)
-                except Exception as e:
-                    logger.error(f"Failed to create keypair from private key: {e}")
+                    key_array = json_module.loads(self.private_key)
+                    key_bytes = bytes(key_array)
+                    format_used = "JSON array"
+                except Exception:
+                    pass
+
+            # Format 2: Base58 encoded (most common)
+            if key_bytes is None:
+                try:
+                    key_bytes = base58.b58decode(self.private_key)
+                    format_used = "base58"
+                except Exception:
+                    pass
+
+            # Format 3: Hex encoded
+            if key_bytes is None:
+                try:
+                    key_bytes = bytes.fromhex(self.private_key)
+                    format_used = "hex"
+                except Exception:
+                    pass
+
+            if key_bytes is None:
+                logger.error("Failed to parse private key - tried JSON array, base58, and hex formats")
+                return None
+
+            # Create keypair based on key length
+            if len(key_bytes) == 64:
+                keypair = Keypair.from_bytes(key_bytes)
+            elif len(key_bytes) == 32:
+                keypair = Keypair.from_seed(key_bytes)
+            else:
+                logger.error(f"Invalid key length: {len(key_bytes)} bytes (expected 32 or 64)")
+                return None
+
+            # Get message and verify pubkey match
+            message = tx.message
+            our_pubkey = keypair.pubkey()
+
+            # Get account keys
+            account_keys = None
+            if hasattr(message, 'account_keys') and message.account_keys:
+                account_keys = list(message.account_keys)
+            elif hasattr(message, 'static_account_keys'):
+                account_keys = list(message.static_account_keys())
+
+            # Verify fee payer matches our keypair
+            if account_keys and len(account_keys) > 0:
+                fee_payer = account_keys[0]
+                if str(fee_payer) != str(our_pubkey):
+                    logger.error(f"❌ PUBKEY MISMATCH! Transaction expects: {str(fee_payer)}")
+                    logger.error(f"   But we have: {str(our_pubkey)}")
                     return None
 
-            # Sign the transaction message and create signed transaction
-            # Note: solders VersionedTransaction doesn't have a .sign() method
-            # We need to sign the message and use VersionedTransaction.populate()
-            message = tx.message
-            signature = keypair.sign_message(bytes(message))
-            signed_tx = VersionedTransaction.populate(message, [signature])
+            # Sign the transaction - handle multiple signature slots
+            # CRITICAL: Transaction may require multiple signatures
+            num_required_signatures = message.header.num_required_signatures
+            logger.debug(f"Transaction requires {num_required_signatures} signature(s)")
+
+            # Find our pubkey position in the required signers
+            our_position = None
+            our_pubkey_str = str(our_pubkey)
+            if account_keys:
+                for i in range(min(num_required_signatures, len(account_keys))):
+                    if str(account_keys[i]) == our_pubkey_str:
+                        our_position = i
+                        break
+
+            if our_position is None:
+                logger.error(f"❌ Our pubkey not found in required signers!")
+                return None
+
+            # Sign the transaction using the CORRECT solders approach
+            # Per solders docs: Pass keypairs directly to VersionedTransaction constructor
+            # This properly handles MessageV0 with address lookup tables
+            from solders.signature import Signature
+            from solders.null_signer import NullSigner
+            null_sig = Signature.default()
+
+            # Check if there are existing non-null signatures we need to preserve
+            has_existing_signatures = False
+            for i, sig in enumerate(tx.signatures):
+                if i != our_position and sig != null_sig:
+                    has_existing_signatures = True
+                    logger.debug(f"   Found existing signature at position {i}")
+
+            if has_existing_signatures:
+                # HYBRID APPROACH: Use constructor to get correct signature, then preserve others
+                temp_signers = []
+                for i in range(num_required_signatures):
+                    if i == our_position:
+                        temp_signers.append(keypair)
+                    elif account_keys and i < len(account_keys):
+                        temp_signers.append(NullSigner(account_keys[i]))
+                    else:
+                        logger.error(f"Missing account key for signer position {i}")
+                        return None
+
+                temp_tx = VersionedTransaction(message, temp_signers)
+                our_computed_signature = temp_tx.signatures[our_position]
+
+                # Build final signatures array preserving existing signatures
+                final_signatures = []
+                for i in range(num_required_signatures):
+                    if i == our_position:
+                        final_signatures.append(our_computed_signature)
+                    elif i < len(tx.signatures) and tx.signatures[i] != null_sig:
+                        final_signatures.append(tx.signatures[i])
+                    else:
+                        final_signatures.append(null_sig)
+
+                signed_tx = VersionedTransaction.populate(message, final_signatures)
+            else:
+                # STANDARD APPROACH: No existing signatures to preserve
+                signers = []
+                for i in range(num_required_signatures):
+                    if i == our_position:
+                        signers.append(keypair)
+                    elif account_keys and i < len(account_keys):
+                        signers.append(NullSigner(account_keys[i]))
+                    else:
+                        logger.error(f"Missing account key for signer position {i}")
+                        return None
+
+                signed_tx = VersionedTransaction(message, signers)
 
             # Encode back to base64
             signed_bytes = bytes(signed_tx)
             signed_b64 = base64.b64encode(signed_bytes).decode('utf-8')
 
-            logger.debug(f"Transaction signed successfully (pubkey: {str(keypair.pubkey())[:12]}...)")
+            logger.debug(f"Transaction signed ({format_used}, pubkey: {str(our_pubkey)[:12]}...)")
             return signed_b64
 
         except Exception as e:
             logger.error(f"Transaction signing failed: {e}")
+            return None
+
+    async def _submit_via_rpc(self, tx1_signed: str, tx2_signed: str) -> Optional[str]:
+        """
+        Submit signed transactions directly via RPC (fallback when Jito fails).
+
+        WARNING: Direct RPC submission is vulnerable to front-running!
+        Only use as fallback when Jito MEV protection is unavailable.
+
+        Args:
+            tx1_signed: First signed transaction (base64)
+            tx2_signed: Second signed transaction (base64)
+
+        Returns:
+            Second transaction signature on success, None on failure
+        """
+        try:
+            import aiohttp
+            import base64
+
+            rpc_url = self.rpc_url
+
+            # Submit first transaction
+            payload1 = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "sendTransaction",
+                "params": [
+                    tx1_signed,
+                    {
+                        "encoding": "base64",
+                        "skipPreflight": True,
+                        "maxRetries": 3
+                    }
+                ]
+            }
+
+            async with aiohttp.ClientSession() as session:
+                # Send first swap
+                async with session.post(rpc_url, json=payload1) as resp:
+                    result1 = await resp.json()
+
+                    if 'error' in result1:
+                        error = result1.get('error', {})
+                        logger.error(f"RPC tx1 failed: {error.get('message', 'Unknown')}")
+                        return None
+
+                    sig1 = result1.get('result')
+                    logger.info(f"   TX1 submitted: {sig1[:20]}...")
+
+                # Brief delay to let first tx settle
+                await asyncio.sleep(0.5)
+
+                # Send second swap
+                payload2 = {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "sendTransaction",
+                    "params": [
+                        tx2_signed,
+                        {
+                            "encoding": "base64",
+                            "skipPreflight": True,
+                            "maxRetries": 3
+                        }
+                    ]
+                }
+
+                async with session.post(rpc_url, json=payload2) as resp:
+                    result2 = await resp.json()
+
+                    if 'error' in result2:
+                        error = result2.get('error', {})
+                        logger.error(f"RPC tx2 failed: {error.get('message', 'Unknown')}")
+                        # First tx may have gone through - log for manual review
+                        logger.warning(f"⚠️ TX1 may have executed without TX2 - check: {sig1}")
+                        return None
+
+                    sig2 = result2.get('result')
+                    logger.info(f"   TX2 submitted: {sig2[:20]}...")
+
+                    return sig2
+
+        except Exception as e:
+            logger.error(f"RPC submission failed: {e}")
             return None
 
     async def _log_trade(
