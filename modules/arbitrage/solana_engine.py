@@ -370,19 +370,22 @@ class JitoClient:
 
                             # Check for rate limit error
                             if error_code == -32097 or 'rate limit' in error_msg.lower():
-                                logger.warning(f"⚠️ Jito rate limited on {endpoint[:30]}... trying next")
-                                continue  # Try next endpoint
+                                logger.warning(f"⚠️ Jito rate limited on {endpoint[:30]}... waiting 2s before next")
+                                await asyncio.sleep(2)  # Wait before trying next endpoint
+                                continue
 
                             logger.error(f"❌ Jito bundle error: {error_msg}")
                             logger.error(f"   Error code: {error_code}")
                             return None
 
                     elif resp.status == 429:
-                        # Global rate limit - set backoff
+                        # Global rate limit - Jito endpoints share rate limits!
+                        # Add delay BEFORE trying next endpoint to avoid burning all endpoints
                         self._last_429_time = time.time()
-                        self._backoff_seconds = min(self._backoff_seconds * 2 + 5, 60)  # Exponential backoff, max 60s
-                        logger.warning(f"⚠️ Jito 429 on {endpoint[:30]}... backoff {self._backoff_seconds}s, trying next")
-                        continue  # Try next endpoint
+                        self._backoff_seconds = min(self._backoff_seconds * 2 + 5, 60)
+                        logger.warning(f"⚠️ Jito 429 on {endpoint[:30]}... waiting 2s before next endpoint")
+                        await asyncio.sleep(2)  # Wait before trying next endpoint
+                        continue
 
                     else:
                         # Log detailed error for debugging

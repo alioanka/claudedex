@@ -792,8 +792,13 @@ class JupiterHelper:
                 swap_logger.info(f"   ✅ Jupiter: Swap completed: {signature}")
                 return signature
             else:
-                swap_logger.warning(f"   ⚠️ Jupiter: Sent but unconfirmed: {signature}")
-                return signature
+                # CRITICAL: Do NOT return signature for unconfirmed transactions!
+                # Returning signature here would create a phantom position
+                # since caller treats any non-None return as success
+                swap_logger.error(f"   ❌ Jupiter: Transaction NOT confirmed after timeout: {signature}")
+                swap_logger.error(f"      Signature sent but not confirmed - NO position will be opened")
+                swap_logger.error(f"      Check explorer: https://solscan.io/tx/{signature}")
+                return None
 
         except Exception as e:
             swap_logger.error(f"❌ Jupiter swap error: {e}", exc_info=True)
