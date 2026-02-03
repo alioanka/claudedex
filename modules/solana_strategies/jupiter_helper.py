@@ -506,27 +506,63 @@ class JupiterHelper:
             # This properly handles MessageV0 with address lookup tables
             sign_logger.debug(f"Signing with keypair (pubkey: {str(our_pubkey)[:12]}...)")
 
-            # Build the signers list - we need exactly num_required_signatures signers
-            # Use NullSigner for any signers we don't have the key for
+            # Check if there are any existing non-null signatures we need to preserve
+            from solders.signature import Signature
             from solders.null_signer import NullSigner
+            null_sig = Signature.default()
 
-            signers = []
-            for i in range(num_required_signatures):
-                if i == our_position:
-                    signers.append(self.keypair)
-                else:
-                    # Use NullSigner for accounts we don't control
-                    # The original transaction should have their signatures
-                    if account_keys and i < len(account_keys):
+            has_existing_signatures = False
+            for i, sig in enumerate(tx.signatures):
+                if i != our_position and sig != null_sig:
+                    has_existing_signatures = True
+                    sign_logger.debug(f"   Found existing signature at position {i}")
+
+            if has_existing_signatures:
+                # HYBRID APPROACH: Use constructor to get correct signature, then preserve others
+                # Step 1: Create a temp transaction to get the correctly computed signature
+                temp_signers = []
+                for i in range(num_required_signatures):
+                    if i == our_position:
+                        temp_signers.append(self.keypair)
+                    elif account_keys and i < len(account_keys):
+                        temp_signers.append(NullSigner(account_keys[i]))
+                    else:
+                        sign_logger.error(f"Missing account key for signer position {i}")
+                        return None
+
+                temp_tx = VersionedTransaction(message, temp_signers)
+                our_computed_signature = temp_tx.signatures[our_position]
+
+                # Step 2: Build final signatures array preserving existing signatures
+                final_signatures = []
+                for i in range(num_required_signatures):
+                    if i == our_position:
+                        final_signatures.append(our_computed_signature)
+                    elif i < len(tx.signatures) and tx.signatures[i] != null_sig:
+                        final_signatures.append(tx.signatures[i])
+                        sign_logger.debug(f"   Preserved existing signature at position {i}")
+                    else:
+                        final_signatures.append(null_sig)
+
+                # Step 3: Use populate with the correctly computed signatures
+                signed_tx = VersionedTransaction.populate(message, final_signatures)
+                sign_logger.debug(f"Created signed tx (hybrid approach) with {len(signed_tx.signatures)} signature(s)")
+            else:
+                # STANDARD APPROACH: No existing signatures to preserve
+                # Build the signers list - use NullSigner for any signers we don't have
+                signers = []
+                for i in range(num_required_signatures):
+                    if i == our_position:
+                        signers.append(self.keypair)
+                    elif account_keys and i < len(account_keys):
                         signers.append(NullSigner(account_keys[i]))
                     else:
                         sign_logger.error(f"Missing account key for signer position {i}")
                         return None
 
-            # Create signed transaction using the constructor (NOT populate)
-            # This is the correct solders way per documentation
-            signed_tx = VersionedTransaction(message, signers)
-            sign_logger.debug(f"Created signed transaction with {len(signed_tx.signatures)} signature(s)")
+                # Create signed transaction using the constructor
+                signed_tx = VersionedTransaction(message, signers)
+                sign_logger.debug(f"Created signed tx with {len(signed_tx.signatures)} signature(s)")
 
             # Encode back to base64
             signed_tx_bytes = bytes(signed_tx)

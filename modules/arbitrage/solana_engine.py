@@ -1202,22 +1202,56 @@ class SolanaArbitrageEngine:
             # Sign the transaction using the CORRECT solders approach
             # Per solders docs: Pass keypairs directly to VersionedTransaction constructor
             # This properly handles MessageV0 with address lookup tables
+            from solders.signature import Signature
             from solders.null_signer import NullSigner
+            null_sig = Signature.default()
 
-            signers = []
-            for i in range(num_required_signatures):
-                if i == our_position:
-                    signers.append(keypair)
-                else:
-                    # Use NullSigner for accounts we don't control
-                    if account_keys and i < len(account_keys):
+            # Check if there are existing non-null signatures we need to preserve
+            has_existing_signatures = False
+            for i, sig in enumerate(tx.signatures):
+                if i != our_position and sig != null_sig:
+                    has_existing_signatures = True
+                    logger.debug(f"   Found existing signature at position {i}")
+
+            if has_existing_signatures:
+                # HYBRID APPROACH: Use constructor to get correct signature, then preserve others
+                temp_signers = []
+                for i in range(num_required_signatures):
+                    if i == our_position:
+                        temp_signers.append(keypair)
+                    elif account_keys and i < len(account_keys):
+                        temp_signers.append(NullSigner(account_keys[i]))
+                    else:
+                        logger.error(f"Missing account key for signer position {i}")
+                        return None
+
+                temp_tx = VersionedTransaction(message, temp_signers)
+                our_computed_signature = temp_tx.signatures[our_position]
+
+                # Build final signatures array preserving existing signatures
+                final_signatures = []
+                for i in range(num_required_signatures):
+                    if i == our_position:
+                        final_signatures.append(our_computed_signature)
+                    elif i < len(tx.signatures) and tx.signatures[i] != null_sig:
+                        final_signatures.append(tx.signatures[i])
+                    else:
+                        final_signatures.append(null_sig)
+
+                signed_tx = VersionedTransaction.populate(message, final_signatures)
+            else:
+                # STANDARD APPROACH: No existing signatures to preserve
+                signers = []
+                for i in range(num_required_signatures):
+                    if i == our_position:
+                        signers.append(keypair)
+                    elif account_keys and i < len(account_keys):
                         signers.append(NullSigner(account_keys[i]))
                     else:
                         logger.error(f"Missing account key for signer position {i}")
                         return None
 
-            # Create signed transaction using the constructor (NOT populate)
-            signed_tx = VersionedTransaction(message, signers)
+                signed_tx = VersionedTransaction(message, signers)
 
             # Encode back to base64
             signed_bytes = bytes(signed_tx)
