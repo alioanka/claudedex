@@ -605,6 +605,18 @@
                         </div>
 
                         <div class="mb-3">
+                            <label class="form-label">Slippage Tolerance (bps)</label>
+                            <input type="number" class="form-control" id="sol_arb_slippage_bps" min="50" max="500" step="10" value="150">
+                            <div class="form-text">Slippage tolerance for arbitrage swaps (1 bps = 0.01%). Higher = less failed txs but lower profit. Recommended: 150-200 bps.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Jito Tip (lamports)</label>
+                            <input type="number" class="form-control" id="jito_tip_lamports" min="1000" max="100000" step="1000" value="10000">
+                            <div class="form-text">Tip amount for Jito validators. Higher = faster inclusion. 10000 lamports = 0.00001 SOL.</div>
+                        </div>
+
+                        <div class="mb-3">
                             <label class="form-label">Cooldown Between Executions (seconds)</label>
                             <input type="number" class="form-control" id="sol_arb_cooldown" min="60" max="3600" step="60" value="300">
                             <div class="form-text">Wait time before re-executing same pair. Default: 5 min.</div>
@@ -1103,6 +1115,8 @@ DRY_RUN=true &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&
 
                 // Solana Engine Tuning
                 document.getElementById('sol_arb_threshold').value = s.sol_arb_threshold || 0.2;
+                document.getElementById('sol_arb_slippage_bps').value = s.sol_arb_slippage_bps || 150;
+                document.getElementById('jito_tip_lamports').value = s.jito_tip_lamports || 10000;
                 document.getElementById('sol_arb_cooldown').value = s.sol_arb_cooldown || 300;
                 document.getElementById('jupiter_rps').value = s.jupiter_rps || 2;
                 document.getElementById('sol_arb_verbose').checked = s.sol_arb_verbose === true;
@@ -1168,6 +1182,8 @@ DRY_RUN=true &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&
 
             // Solana Engine Tuning
             sol_arb_threshold: parseFloat(document.getElementById('sol_arb_threshold').value),
+            sol_arb_slippage_bps: parseInt(document.getElementById('sol_arb_slippage_bps').value),
+            jito_tip_lamports: parseInt(document.getElementById('jito_tip_lamports').value),
             sol_arb_cooldown: parseInt(document.getElementById('sol_arb_cooldown').value),
             jupiter_rps: parseFloat(document.getElementById('jupiter_rps').value),
             sol_arb_verbose: document.getElementById('sol_arb_verbose').checked
