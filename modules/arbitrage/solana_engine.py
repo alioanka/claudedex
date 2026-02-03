@@ -1029,10 +1029,38 @@ class SolanaArbitrageEngine:
                         quote1.get('routePlan', [])
                     )
                 else:
-                    logger.error("Jito bundle rejected - check logs for details")
+                    # FALLBACK: Jito failed, try direct RPC submission
+                    logger.warning("⚠️ Jito bundle failed - falling back to direct RPC (front-run risk!)")
+
+                    # Submit transactions directly via RPC
+                    fallback_result = await self._submit_via_rpc(tx1_signed, tx2_signed)
+                    if fallback_result:
+                        logger.info(f"✅ Solana Arb executed via RPC fallback: {fallback_result}")
+                        await self._log_trade(
+                            in_symbol, out_symbol, token_in,
+                            amount, profit_pct, fallback_result,
+                            quote1.get('routePlan', [])
+                        )
+                    else:
+                        logger.error("❌ Both Jito and RPC fallback failed")
             else:
-                # Direct execution (not recommended for arb)
-                logger.warning("Direct execution not recommended - use Jito for MEV protection")
+                # Direct execution (Jito disabled)
+                logger.warning("Direct execution - Jito disabled, front-run risk!")
+
+                tx1_unsigned = swap1.get('swapTransaction')
+                tx2_unsigned = swap2.get('swapTransaction')
+                tx1_signed = await self._sign_transaction(tx1_unsigned)
+                tx2_signed = await self._sign_transaction(tx2_unsigned)
+
+                if tx1_signed and tx2_signed:
+                    result = await self._submit_via_rpc(tx1_signed, tx2_signed)
+                    if result:
+                        logger.info(f"✅ Solana Arb executed via RPC: {result}")
+                        await self._log_trade(
+                            in_symbol, out_symbol, token_in,
+                            amount, profit_pct, result,
+                            quote1.get('routePlan', [])
+                        )
 
         except Exception as e:
             logger.error(f"Solana arb execution error: {e}")
@@ -1265,6 +1293,91 @@ class SolanaArbitrageEngine:
 
         except Exception as e:
             logger.error(f"Transaction signing failed: {e}")
+            return None
+
+    async def _submit_via_rpc(self, tx1_signed: str, tx2_signed: str) -> Optional[str]:
+        """
+        Submit signed transactions directly via RPC (fallback when Jito fails).
+
+        WARNING: Direct RPC submission is vulnerable to front-running!
+        Only use as fallback when Jito MEV protection is unavailable.
+
+        Args:
+            tx1_signed: First signed transaction (base64)
+            tx2_signed: Second signed transaction (base64)
+
+        Returns:
+            Second transaction signature on success, None on failure
+        """
+        try:
+            import aiohttp
+            import base64
+
+            rpc_url = self.rpc_url
+
+            # Submit first transaction
+            payload1 = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "sendTransaction",
+                "params": [
+                    tx1_signed,
+                    {
+                        "encoding": "base64",
+                        "skipPreflight": True,
+                        "maxRetries": 3
+                    }
+                ]
+            }
+
+            async with aiohttp.ClientSession() as session:
+                # Send first swap
+                async with session.post(rpc_url, json=payload1) as resp:
+                    result1 = await resp.json()
+
+                    if 'error' in result1:
+                        error = result1.get('error', {})
+                        logger.error(f"RPC tx1 failed: {error.get('message', 'Unknown')}")
+                        return None
+
+                    sig1 = result1.get('result')
+                    logger.info(f"   TX1 submitted: {sig1[:20]}...")
+
+                # Brief delay to let first tx settle
+                await asyncio.sleep(0.5)
+
+                # Send second swap
+                payload2 = {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "sendTransaction",
+                    "params": [
+                        tx2_signed,
+                        {
+                            "encoding": "base64",
+                            "skipPreflight": True,
+                            "maxRetries": 3
+                        }
+                    ]
+                }
+
+                async with session.post(rpc_url, json=payload2) as resp:
+                    result2 = await resp.json()
+
+                    if 'error' in result2:
+                        error = result2.get('error', {})
+                        logger.error(f"RPC tx2 failed: {error.get('message', 'Unknown')}")
+                        # First tx may have gone through - log for manual review
+                        logger.warning(f"⚠️ TX1 may have executed without TX2 - check: {sig1}")
+                        return None
+
+                    sig2 = result2.get('result')
+                    logger.info(f"   TX2 submitted: {sig2[:20]}...")
+
+                    return sig2
+
+        except Exception as e:
+            logger.error(f"RPC submission failed: {e}")
             return None
 
     async def _log_trade(

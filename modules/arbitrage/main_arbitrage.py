@@ -62,6 +62,13 @@ logger.addHandler(console)
 from modules.arbitrage.arbitrage_engine import ArbitrageEngine
 from config.config_manager import ConfigManager
 
+# Import Telegram controller for remote control
+try:
+    from monitoring.telegram_bot import get_telegram_controller, TelegramBotController
+except ImportError:
+    get_telegram_controller = None
+    TelegramBotController = None
+
 # Configure logging for all engines
 for engine_name in ["ArbitrageEngine", "SolanaArbitrageEngine", "TriangularArbitrageEngine"]:
     eng_logger = logging.getLogger(engine_name)
@@ -290,9 +297,36 @@ async def main():
         logger.error("❌ Failed to initialize arbitrage manager")
         return
 
+    # Initialize Telegram controller for remote control (credentials from secrets manager)
+    telegram_controller = None
+    if get_telegram_controller:
+        try:
+            telegram_controller = get_telegram_controller(db_pool)
+            if await telegram_controller.initialize():
+                # Register all arbitrage engines for remote control
+                for chain, engine in manager.engines:
+                    telegram_controller.register_module(
+                        name=f'arbitrage_{chain}',
+                        engine=engine,
+                        start_method='run',
+                        stop_method='stop',
+                        positions_attr='active_positions'  # Arbitrage engines don't have positions
+                    )
+                await telegram_controller.start_polling()
+                logger.info("📱 Telegram remote control enabled")
+                await telegram_controller.notify(
+                    f"Arbitrage Module started with {len(manager.engines)} engines. Send /help for commands.",
+                    priority="normal"
+                )
+        except Exception as e:
+            logger.warning(f"Telegram controller failed to initialize: {e}")
+
     try:
         await manager.run()
     except KeyboardInterrupt:
+        if telegram_controller:
+            await telegram_controller.notify("Arbitrage module shutting down...", priority="high")
+            await telegram_controller.stop_polling()
         await manager.stop()
     except Exception as e:
         logger.error(f"❌ Manager error: {e}")
