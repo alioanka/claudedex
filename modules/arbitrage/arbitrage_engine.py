@@ -559,8 +559,9 @@ class ArbitrageEngine:
         self.flashbots_executor: Optional[FlashbotsExecutor] = None
 
         # Settings
-        # Increased threshold to filter out false positives - costs are ~0.75% so need higher raw spread
-        self.min_profit_threshold = 0.015  # 1.5% minimum profit (after 0.75% costs = 0.75% net)
+        # IMPORTANT: Real DEX arbitrage opportunities are typically 0.1-0.5%
+        # After costs (~0.55%): flash loan 0.05% + slippage ~0.5% = need ~0.6% raw spread
+        self.min_profit_threshold = 0.003  # 0.3% minimum NET profit (after costs)
         self.use_flash_loans = True
         self.use_flashbots = True
         self.flash_loan_amount = 10 * 10**18  # 10 ETH default
@@ -571,7 +572,14 @@ class ArbitrageEngine:
         # Rate limiting for logging and execution
         self._last_opportunity_time = None
         self._last_opportunity_key = None
-        self._opportunity_cooldown = 3600  # 1 hour cooldown for same opportunity (prevent spam)
+        self._opportunity_cooldown = 300  # 5 min cooldown for same opportunity (was 1 hour - too long)
+
+        # Visibility logging - track spreads even when not executing
+        self._last_spread_log_time = None
+        self._best_spread_seen = 0.0
+        self._best_spread_pair = ""
+        self._total_pairs_scanned = 0
+        self._pairs_with_liquidity = 0
 
         # Per-pair daily execution limit (realistic arbitrage opportunities are rare)
         self._pair_execution_count: Dict[str, int] = {}  # pair_key -> count today
@@ -787,15 +795,24 @@ class ArbitrageEngine:
                 await asyncio.sleep(5)
 
     async def _log_stats_if_needed(self):
-        """Log statistics every 5 minutes"""
+        """Log statistics every 5 minutes with spread visibility"""
         now = datetime.now()
         elapsed = (now - self._stats['last_stats_log']).total_seconds()
 
         if elapsed >= 300:  # 5 minutes
+            # Enhanced logging with spread visibility
             logger.info(f"📊 ARBITRAGE STATS (Last 5 min): "
                        f"Scans: {self._stats['scans']} | "
+                       f"Pairs w/Liquidity: {self._pairs_with_liquidity}/{self._total_pairs_scanned} | "
                        f"Opportunities: {self._stats['opportunities_found']} | "
                        f"Executed: {self._stats['opportunities_executed']}")
+
+            # Log best spread seen (even if below threshold)
+            if self._best_spread_seen > 0:
+                status = "✅ ABOVE" if self._best_spread_seen > self.min_profit_threshold else "❌ BELOW"
+                logger.info(f"   Best spread: {self._best_spread_seen:.4%} on {self._best_spread_pair} ({status} threshold {self.min_profit_threshold:.2%})")
+            else:
+                logger.info(f"   No spreads found - check RPC connection and DEX liquidity")
 
             # Reset stats
             self._stats = {
@@ -804,10 +821,15 @@ class ArbitrageEngine:
                 'opportunities_executed': 0,
                 'last_stats_log': now
             }
+            self._best_spread_seen = 0.0
+            self._best_spread_pair = ""
+            self._total_pairs_scanned = 0
+            self._pairs_with_liquidity = 0
 
     async def _check_arb_opportunity(self, token_in: str, token_out: str, token_symbol: str = "UNKNOWN") -> bool:
         """Check price difference between two DEXs. Returns True if opportunity found."""
         try:
+            self._total_pairs_scanned += 1
             amount_in = self.flash_loan_amount  # Use configured flash loan amount
 
             # Query BOTH directions on all DEXs to find real arbitrage opportunities
@@ -823,6 +845,8 @@ class ArbitrageEngine:
 
             if len(forward_prices) < 2:
                 return False
+
+            self._pairs_with_liquidity += 1
 
             # Find best forward DEX (gives most token_out for our token_in)
             best_buy_dex = max(forward_prices, key=forward_prices.get)
@@ -853,6 +877,16 @@ class ArbitrageEngine:
             # Calculate actual profit: final_output - (borrowed_amount + flash_loan_fee)
             flash_loan_fee = amount_in * 5 // 10000  # 0.05% Aave fee
             amount_owed = amount_in + flash_loan_fee
+
+            # Even if no profit, track the spread for visibility
+            if final_output > 0:
+                raw_spread = (final_output - amount_owed) / amount_in
+                pair_key = f"{token_symbol} ({best_buy_dex}→{best_sell_dex})"
+
+                # Track best spread seen (even negative ones)
+                if raw_spread > self._best_spread_seen:
+                    self._best_spread_seen = raw_spread
+                    self._best_spread_pair = pair_key
 
             if final_output <= amount_owed:
                 return False  # No profit possible
