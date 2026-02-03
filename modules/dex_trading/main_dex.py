@@ -33,6 +33,12 @@ from core.risk_manager import RiskManager
 from monitoring.alerts import AlertsSystem
 from core.analytics_engine import AnalyticsEngine
 
+# Import Telegram controller for remote control
+try:
+    from monitoring.telegram_bot import get_telegram_controller
+except ImportError:
+    get_telegram_controller = None
+
 # Load environment variables
 load_dotenv()
 
@@ -352,6 +358,7 @@ class TradingBotApplication:
         self.analytics_engine = None
         self.dashboard = None
         self.health_server = None
+        self.telegram_controller = None
 
         # DEX Health server port (for standalone dashboard communication)
         self.health_port = int(os.getenv('DEX_HEALTH_PORT', '8085'))
@@ -794,6 +801,27 @@ class TradingBotApplication:
 
             await test_dex_collector(self.logger)
 
+            # Initialize Telegram controller for remote control (credentials from secrets manager)
+            if get_telegram_controller and self.db_manager and self.db_manager.pool:
+                try:
+                    self.telegram_controller = get_telegram_controller(self.db_manager.pool)
+                    if await self.telegram_controller.initialize():
+                        self.telegram_controller.register_module(
+                            name='dex',
+                            engine=self.engine,
+                            start_method='run',
+                            stop_method='shutdown',
+                            positions_attr='active_positions'
+                        )
+                        await self.telegram_controller.start_polling()
+                        self.logger.info("📱 Telegram remote control enabled")
+                        await self.telegram_controller.notify(
+                            "DEX Trading Bot started. Send /help for commands.",
+                            priority="normal"
+                        )
+                except Exception as e:
+                    self.logger.warning(f"Telegram controller failed to initialize: {e}")
+
             self.logger.info("🎯 Starting trading engine...")
 
             chain_config = self.config.get_config(ConfigType.CHAIN)
@@ -864,6 +892,12 @@ class TradingBotApplication:
         """Graceful shutdown procedure"""
         try:
             self.logger.info("Initiating graceful shutdown...")
+
+            # Stop Telegram controller first
+            if self.telegram_controller:
+                self.logger.info("Stopping Telegram controller...")
+                await self.telegram_controller.notify("DEX bot shutting down...", priority="high")
+                await self.telegram_controller.stop_polling()
 
             # Stop health server if running
             if self.health_server:

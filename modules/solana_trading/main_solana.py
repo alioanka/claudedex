@@ -549,8 +549,8 @@ class SolanaTradingApplication:
             self.health_server = HealthServer(self, port=self.health_port)
             await self.health_server.start()
 
-            # Initialize Telegram controller for remote control
-            if get_telegram_controller and os.getenv('TELEGRAM_BOT_TOKEN'):
+            # Initialize Telegram controller for remote control (credentials from secrets manager)
+            if get_telegram_controller:
                 try:
                     self.telegram_controller = get_telegram_controller(self.db_pool)
                     if await self.telegram_controller.initialize():

@@ -297,9 +297,9 @@ async def main():
         logger.error("❌ Failed to initialize arbitrage manager")
         return
 
-    # Initialize Telegram controller for remote control
+    # Initialize Telegram controller for remote control (credentials from secrets manager)
     telegram_controller = None
-    if get_telegram_controller and os.getenv('TELEGRAM_BOT_TOKEN'):
+    if get_telegram_controller:
         try:
             telegram_controller = get_telegram_controller(db_pool)
             if await telegram_controller.initialize():

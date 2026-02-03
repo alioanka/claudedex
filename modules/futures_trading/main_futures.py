@@ -76,6 +76,12 @@ class TradeLogFilter(logging.Filter):
 
 from logging.handlers import RotatingFileHandler
 
+# Import Telegram controller for remote control
+try:
+    from monitoring.telegram_bot import get_telegram_controller
+except ImportError:
+    get_telegram_controller = None
+
 # Log format
 log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 formatter = logging.Formatter(log_format)
@@ -505,6 +511,7 @@ class FuturesTradingApplication:
         self.mode = mode
         self.engine = None
         self.health_server = None
+        self.telegram_controller = None
         self.shutdown_event = asyncio.Event()
         self.logger = logger
         self.db_pool = None
@@ -610,6 +617,27 @@ class FuturesTradingApplication:
             self.health_server = HealthServer(self, port=self.health_port)
             await self.health_server.start()
 
+            # Initialize Telegram controller for remote control (credentials from secrets manager)
+            if get_telegram_controller:
+                try:
+                    self.telegram_controller = get_telegram_controller(self.db_pool)
+                    if await self.telegram_controller.initialize():
+                        self.telegram_controller.register_module(
+                            name='futures',
+                            engine=self.engine,
+                            start_method='run',
+                            stop_method='shutdown',
+                            positions_attr='active_positions'
+                        )
+                        await self.telegram_controller.start_polling()
+                        self.logger.info("📱 Telegram remote control enabled")
+                        await self.telegram_controller.notify(
+                            "Futures Trading Bot started. Send /help for commands.",
+                            priority="normal"
+                        )
+                except Exception as e:
+                    self.logger.warning(f"Telegram controller failed to initialize: {e}")
+
             self.logger.info("🎯 Starting futures trading engine...")
 
             tasks = [
@@ -677,7 +705,13 @@ class FuturesTradingApplication:
         try:
             self.logger.info("Initiating graceful shutdown...")
 
-            # Stop health server first
+            # Stop Telegram controller first
+            if self.telegram_controller:
+                self.logger.info("Stopping Telegram controller...")
+                await self.telegram_controller.notify("Futures bot shutting down...", priority="high")
+                await self.telegram_controller.stop_polling()
+
+            # Stop health server
             if self.health_server:
                 self.logger.info("Stopping health server...")
                 await self.health_server.stop()

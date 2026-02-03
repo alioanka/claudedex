@@ -28,6 +28,13 @@ from enum import Enum
 import aiohttp
 import json
 
+# Import secrets manager for secure credential access
+try:
+    from security.secrets_manager import SecureSecretsManager
+    secrets = SecureSecretsManager.get_instance()
+except ImportError:
+    secrets = None
+
 logger = logging.getLogger("TelegramBot")
 
 
@@ -69,12 +76,27 @@ class TelegramBotController:
 
     def __init__(self, db_pool=None):
         self.db_pool = db_pool
-        self.bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
-        self.chat_id = os.getenv('TELEGRAM_CHAT_ID')
+        self.bot_token = None
+        self.chat_id = None
         self.admin_chat_ids: List[str] = []  # Authorized admin chat IDs
 
-        # Parse admin chat IDs from env
-        admin_ids = os.getenv('TELEGRAM_ADMIN_IDS', '')
+        # Load credentials from secrets manager (database-backed)
+        if secrets:
+            # Initialize secrets manager with db_pool if available
+            if db_pool:
+                secrets.initialize(db_pool)
+
+            self.bot_token = secrets.get('TELEGRAM_BOT_TOKEN')
+            self.chat_id = secrets.get('TELEGRAM_CHAT_ID')
+            admin_ids = secrets.get('TELEGRAM_ADMIN_IDS', '')
+        else:
+            # Fallback to env only if secrets manager not available
+            logger.warning("Secrets manager not available - falling back to .env")
+            self.bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+            self.chat_id = os.getenv('TELEGRAM_CHAT_ID')
+            admin_ids = os.getenv('TELEGRAM_ADMIN_IDS', '')
+
+        # Parse admin chat IDs
         if admin_ids:
             self.admin_chat_ids = [id.strip() for id in admin_ids.split(',')]
         if self.chat_id:

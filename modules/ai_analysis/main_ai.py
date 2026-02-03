@@ -47,6 +47,12 @@ logger.addHandler(console)
 from modules.ai_analysis.core.sentiment_engine import SentimentEngine, AITradeExecutor
 from config.config_manager import ConfigManager
 
+# Import Telegram controller for remote control
+try:
+    from monitoring.telegram_bot import get_telegram_controller
+except ImportError:
+    get_telegram_controller = None
+
 # Also configure logging for the engine classes
 for engine_name in ["SentimentEngine", "AITradeExecutor"]:
     engine_logger = logging.getLogger(engine_name)
@@ -138,14 +144,38 @@ async def main():
         logger.error(traceback.format_exc())
         return
 
+    # Initialize Telegram controller for remote control (credentials from secrets manager)
+    telegram_controller = None
+    if get_telegram_controller:
+        try:
+            telegram_controller = get_telegram_controller(db_pool)
+            if await telegram_controller.initialize():
+                telegram_controller.register_module(
+                    name='ai_analysis',
+                    engine=engine,
+                    start_method='run',
+                    stop_method='stop',
+                    positions_attr='active_signals'
+                )
+                await telegram_controller.start_polling()
+                logger.info("📱 Telegram remote control enabled")
+                await telegram_controller.notify("AI Analysis Module started. Send /help for commands.", priority="normal")
+        except Exception as e:
+            logger.warning(f"Telegram controller failed to initialize: {e}")
+
     try:
         await engine.run()
     except KeyboardInterrupt:
+        if telegram_controller:
+            await telegram_controller.notify("AI Analysis module shutting down...", priority="high")
+            await telegram_controller.stop_polling()
         await engine.stop()
     except Exception as e:
         logger.error(f"❌ Engine error: {e}")
         import traceback
         logger.error(traceback.format_exc())
+        if telegram_controller:
+            await telegram_controller.stop_polling()
         await engine.stop()
 
 if __name__ == "__main__":
