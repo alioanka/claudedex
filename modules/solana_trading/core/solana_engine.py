@@ -84,6 +84,15 @@ try:
 except ImportError:
     JUPITER_HELPER_AVAILABLE = False
 
+# Import SafetyEngine for honeypot detection and close retry logic
+try:
+    from modules.solana_trading.core.safety_engine import (
+        SafetyEngine, SafetyConfig, CloseFailureReason
+    )
+    SAFETY_ENGINE_AVAILABLE = True
+except ImportError:
+    SAFETY_ENGINE_AVAILABLE = False
+
 # Import DriftHelper for live perpetual trading
 try:
     from modules.solana_strategies.drift_helper import DriftHelper
@@ -1191,6 +1200,29 @@ class SolanaTradingEngine:
                     logger.warning(f"⚠️ JupiterHelper not available for live swaps: {e}")
                     self.jupiter_helper = None
 
+            # Initialize SafetyEngine for honeypot detection and close retry logic
+            if SAFETY_ENGINE_AVAILABLE:
+                # Get pump.fun slippage from config or use safe default
+                pumpfun_slippage = 500  # 5% default for pump.fun
+                if self.config_manager:
+                    # Use higher slippage for pump.fun tokens
+                    pumpfun_slippage = max(500, self.slippage_bps * 10)
+
+                safety_config = SafetyConfig(
+                    default_slippage_bps=self.slippage_bps,
+                    pumpfun_slippage_bps=pumpfun_slippage,
+                    max_emergency_slippage_bps=2000,  # 20% max for emergency exits
+                    max_close_retries=5,
+                    retry_slippage_increment_bps=200,  # +2% each retry
+                    circuit_breaker_failures=3,
+                    circuit_breaker_cooldown_seconds=300
+                )
+                self.safety_engine = SafetyEngine(safety_config)
+                logger.info(f"🛡️ SafetyEngine initialized (pump.fun slippage: {pumpfun_slippage}bps)")
+            else:
+                self.safety_engine = None
+                logger.warning("⚠️ SafetyEngine not available - running without safety features")
+
             # Test with SOL price - uses multi-source price fetching
             sol_price = await self.jupiter_client.get_price(SOL_MINT)
             if sol_price:
@@ -1605,6 +1637,10 @@ class SolanaTradingEngine:
             # This ensures SL/TP checks, price updates, and time-based exits still work
             await self._monitor_positions()
 
+            # CRITICAL: Retry stuck positions that failed to close
+            # This runs even when trading is paused to ensure we can exit positions
+            await self._retry_stuck_positions()
+
             # Check risk limits for NEW trades only
             if not self.risk_metrics.can_trade:
                 # Provide detailed reason for pause
@@ -1698,6 +1734,147 @@ class SolanaTradingEngine:
 
             except Exception as e:
                 logger.error(f"Error monitoring position {token_mint[:8]}...: {e}")
+
+    async def _retry_stuck_positions(self):
+        """
+        Emergency close mechanism: Retry stuck positions that previously failed to close.
+
+        This runs periodically to attempt closing positions that are tracked by the SafetyEngine
+        as stuck (failed to close in previous attempts). Uses escalating slippage.
+        """
+        if not self.safety_engine:
+            return
+
+        # Get positions that are ready to retry
+        positions_to_retry = self.safety_engine.get_positions_to_retry()
+
+        if not positions_to_retry:
+            return
+
+        logger.info(f"🔄 EMERGENCY CLOSE: Retrying {len(positions_to_retry)} stuck position(s)")
+
+        for stuck in positions_to_retry:
+            try:
+                token_mint = stuck.token_mint
+
+                # Check if position is still in our active tracking
+                # (might have been manually closed or sold externally)
+                if token_mint not in self.active_positions:
+                    # Check actual wallet balance
+                    actual_balance = await self._get_token_balance(token_mint, 6)
+                    if actual_balance <= 0:
+                        logger.info(f"✅ {stuck.token_symbol} no longer in wallet - removing from stuck list")
+                        self.safety_engine.record_close_success(token_mint)
+                        continue
+                    else:
+                        # Token still in wallet but not in our tracking - add to active positions for close
+                        logger.warning(f"⚠️ {stuck.token_symbol} found in wallet but not tracked - attempting emergency close")
+
+                logger.info(f"🚨 EMERGENCY CLOSE attempt for {stuck.token_symbol}")
+                logger.info(f"   Failure count: {stuck.failure_count}, Last reason: {stuck.last_failure_reason.value}")
+
+                # Get escalating slippage based on failure count
+                close_slippage = self.safety_engine.get_slippage_for_strategy(
+                    'pumpfun',  # Use highest slippage settings for emergency closes
+                    is_close=True,
+                    retry_count=stuck.failure_count
+                )
+
+                # Get actual token balance
+                actual_balance = await self._get_token_balance(token_mint, 6)
+
+                if actual_balance <= 0:
+                    logger.info(f"✅ {stuck.token_symbol} balance is 0 - position already closed")
+                    self.safety_engine.record_close_success(token_mint)
+
+                    # Also remove from active positions if present
+                    if token_mint in self.active_positions:
+                        del self.active_positions[token_mint]
+                    continue
+
+                token_amount_raw = int(actual_balance * (10 ** 6))
+
+                logger.info(f"   Selling {actual_balance:.2f} tokens with {close_slippage}bps slippage")
+
+                # Attempt the close
+                close_tx_signature = await self.jupiter_helper.execute_swap(
+                    input_mint=token_mint,
+                    output_mint=SOL_MINT,
+                    amount=token_amount_raw,
+                    slippage_bps=close_slippage
+                )
+
+                if close_tx_signature:
+                    logger.info(f"🟢 EMERGENCY CLOSE SUCCESS: {stuck.token_symbol}")
+                    logger.info(f"   TX: {close_tx_signature}")
+
+                    # Record success
+                    self.safety_engine.record_close_success(token_mint)
+
+                    # Remove from active positions if present
+                    if token_mint in self.active_positions:
+                        position = self.active_positions[token_mint]
+
+                        # Record the trade (even if it's a loss, we want to track it)
+                        pnl_pct = -50  # Assume worst case for emergency close
+                        pnl_sol = -abs(position.value_sol * 0.5)  # Assume 50% loss
+
+                        trade = Trade(
+                            trade_id=str(uuid.uuid4()),
+                            token_mint=token_mint,
+                            token_symbol=position.token_symbol,
+                            strategy=position.strategy,
+                            side=TradeSide.SELL,
+                            entry_price=position.entry_price,
+                            exit_price=position.entry_price * 0.5,  # Estimate
+                            amount=position.value_sol,
+                            pnl_sol=pnl_sol,
+                            pnl_usd=pnl_sol * self.sol_price_usd,
+                            pnl_pct=pnl_pct,
+                            fees=position.fees_paid,
+                            opened_at=position.opened_at,
+                            closed_at=datetime.utcnow(),
+                            close_reason="emergency_close",
+                            is_simulated=position.is_simulated
+                        )
+                        self.trade_history.append(trade)
+                        await self._save_trade_to_db(trade)
+
+                        # Update stats
+                        self.total_trades += 1
+                        self.total_pnl_sol += pnl_sol
+                        self.losing_trades += 1
+
+                        del self.active_positions[token_mint]
+                else:
+                    logger.warning(f"❌ Emergency close failed for {stuck.token_symbol}")
+
+                    # Record another failure
+                    failure_reason = self.safety_engine.parse_error_reason("no signature returned")
+                    self.safety_engine.record_close_failure(
+                        token_mint=token_mint,
+                        token_symbol=stuck.token_symbol,
+                        value_sol=stuck.original_value_sol,
+                        reason=failure_reason,
+                        slippage_used=close_slippage
+                    )
+
+            except Exception as e:
+                logger.error(f"Error in emergency close for {stuck.token_symbol}: {e}")
+
+                # Record the failure
+                if self.safety_engine:
+                    failure_reason = self.safety_engine.parse_error_reason(str(e))
+                    self.safety_engine.record_close_failure(
+                        token_mint=stuck.token_mint,
+                        token_symbol=stuck.token_symbol,
+                        value_sol=stuck.original_value_sol,
+                        reason=failure_reason,
+                        slippage_used=self.safety_engine.config.max_emergency_slippage_bps
+                    )
+
+            # Small delay between emergency close attempts to avoid rate limits
+            await asyncio.sleep(2)
 
     async def _check_exit_conditions(self, position: Position) -> Optional[str]:
         """Check if position should be closed using strategy-specific TP/SL with trailing support"""
@@ -2187,6 +2364,13 @@ class SolanaTradingEngine:
 
                 # Execute real swap based on strategy
                 try:
+                    # Check circuit breaker before any new trade
+                    if self.safety_engine:
+                        is_tripped, seconds_remaining = self.safety_engine.check_circuit_breaker()
+                        if is_tripped:
+                            logger.warning(f"🚨 Circuit breaker ACTIVE - skipping trade ({seconds_remaining}s remaining)")
+                            return
+
                     # Check if this is a pump.fun token that hasn't graduated
                     # Pump.fun tokens without Raydium routes can't be traded via Jupiter
                     is_pumpfun_only = False
@@ -2206,14 +2390,43 @@ class SolanaTradingEngine:
                                 logger.info(f"   Skipping live trade - monitor for graduation to Raydium")
                                 return
 
+                    # CRITICAL: Verify SELL route exists before buying (honeypot detection)
+                    # This prevents buying tokens that can't be sold back
+                    if self.safety_engine and self.jupiter_client:
+                        logger.info(f"🔍 Verifying sell route for {token_symbol}...")
+                        can_sell, reason = await self.safety_engine.verify_sell_route(
+                            self.jupiter_client,
+                            token_mint,
+                            SOL_MINT,
+                            test_amount=1000000  # 1M tokens test
+                        )
+                        if not can_sell:
+                            logger.error(f"🚫 HONEYPOT DETECTED: {token_symbol}")
+                            logger.error(f"   Reason: {reason}")
+                            logger.error(f"   Token: {token_mint}")
+                            logger.warning(f"   Skipping buy - cannot verify sell route")
+                            return
+                        logger.info(f"✅ Sell route verified for {token_symbol}")
+
+                    # Get appropriate slippage for strategy
+                    if self.safety_engine:
+                        trade_slippage = self.safety_engine.get_slippage_for_strategy(
+                            strategy.value, is_close=False
+                        )
+                    else:
+                        trade_slippage = self.slippage_bps
+                        # Fallback: use higher slippage for pump.fun
+                        if strategy == Strategy.PUMPFUN:
+                            trade_slippage = max(500, self.slippage_bps * 5)  # Min 5% for pump.fun
+
                     if self.jupiter_helper:
                         # Use JupiterHelper for full swap execution
-                        logger.info(f"🔄 Executing LIVE swap: {amount_sol} SOL → {token_symbol}")
+                        logger.info(f"🔄 Executing LIVE swap: {amount_sol} SOL → {token_symbol} (slippage: {trade_slippage}bps)")
                         tx_signature = await self.jupiter_helper.execute_swap(
                             input_mint=SOL_MINT,
                             output_mint=token_mint,
                             amount=int(amount_sol * self.LAMPORTS_PER_SOL),
-                            slippage_bps=self.slippage_bps
+                            slippage_bps=trade_slippage
                         )
 
                         if tx_signature:
@@ -2347,71 +2560,128 @@ class SolanaTradingEngine:
 
             # Execute close (or simulate)
             close_tx_signature = None
+            close_actually_executed = False  # Track if close actually succeeded
+
             if self.dry_run:
                 partial_tag = f" ({close_pct*100:.0f}%)" if is_partial else ""
                 logger.info(f"🔵 [DRY_RUN] SIMULATED SELL{partial_tag} {position.token_symbol} ({reason})")
                 close_tx_signature = f"DRY_RUN_CLOSE_{uuid.uuid4().hex[:16]}"
+                close_actually_executed = True
             else:
-                # Execute real swap back to SOL
-                try:
-                    if self.jupiter_helper:
-                        # CRITICAL: Use ACTUAL wallet balance, not estimated position.amount!
-                        # The estimated amount from buy may differ from actual tokens received
-                        # due to slippage, fees, and execution price differences.
-                        token_decimals = 6  # Default for most SPL tokens
-                        actual_balance = await self._get_token_balance(token_mint, token_decimals)
+                # Execute real swap back to SOL with RETRY LOGIC
+                if not self.jupiter_helper:
+                    logger.warning(f"⚠️ JupiterHelper not available - close NOT executed")
+                    logger.warning(f"   Position {position.token_symbol} needs manual close!")
+                    return  # Don't record failed close
 
-                        if actual_balance <= 0:
-                            logger.warning(f"⚠️ No tokens found in wallet for {position.token_symbol}")
-                            logger.warning(f"   Expected: {close_amount:.6f}, Actual: {actual_balance:.6f}")
-                            # Still continue to close position in tracking (phantom position cleanup)
-                        else:
-                            # Log discrepancy if significant (>5% difference)
-                            if position.amount > 0:
-                                discrepancy = abs(actual_balance - position.amount) / position.amount
-                                if discrepancy > 0.05:
-                                    logger.info(f"📊 Balance discrepancy: tracked={position.amount:.2f}, actual={actual_balance:.2f}")
+                # CRITICAL: Use ACTUAL wallet balance, not estimated position.amount!
+                token_decimals = 6  # Default for most SPL tokens
+                actual_balance = await self._get_token_balance(token_mint, token_decimals)
 
-                            # For full close: sell ALL actual tokens
-                            # For partial: sell percentage of actual balance
-                            if is_partial:
-                                sell_amount = actual_balance * close_pct
-                                logger.info(f"🔄 Partial close {close_pct*100:.0f}%: selling {sell_amount:.2f} of {actual_balance:.2f} tokens")
-                            else:
-                                sell_amount = actual_balance  # Sell ALL tokens
-                                logger.info(f"🔄 Full close: selling ALL {actual_balance:.2f} tokens")
+                if actual_balance <= 0:
+                    logger.warning(f"⚠️ No tokens found in wallet for {position.token_symbol}")
+                    logger.warning(f"   Expected: {close_amount:.6f}, Actual: {actual_balance:.6f}")
+                    # This is a phantom position - close it in tracking only
+                    close_actually_executed = True
+                    close_tx_signature = "PHANTOM_POSITION_CLEANUP"
+                else:
+                    # Log discrepancy if significant (>5% difference)
+                    if position.amount > 0:
+                        discrepancy = abs(actual_balance - position.amount) / position.amount
+                        if discrepancy > 0.05:
+                            logger.info(f"📊 Balance discrepancy: tracked={position.amount:.2f}, actual={actual_balance:.2f}")
 
-                            # Update close_amount to actual amount being sold
-                            close_amount = sell_amount
-
-                        token_amount_raw = int(close_amount * (10 ** token_decimals))
-
-                        logger.info(f"🔄 Executing LIVE close: {position.token_symbol} → SOL")
-                        close_tx_signature = await self.jupiter_helper.execute_swap(
-                            input_mint=token_mint,
-                            output_mint=SOL_MINT,
-                            amount=token_amount_raw,
-                            slippage_bps=self.slippage_bps
-                        )
-
-                        if close_tx_signature:
-                            logger.info(f"🟢 LIVE CLOSE executed: {close_tx_signature}")
-                        else:
-                            logger.error(f"❌ Close swap failed for {position.token_symbol}")
-                            # Check if this is a pump.fun token issue
-                            if position.strategy == Strategy.PUMPFUN:
-                                logger.error(f"   Pump.fun token may not have Jupiter routes yet")
-                                logger.error(f"   Token needs to graduate to Raydium for Jupiter trading")
-                                logger.warning(f"   ⚠️ MANUAL ACTION REQUIRED: Close position via pump.fun UI")
-                            # Still record the position close attempt
+                    # For full close: sell ALL actual tokens
+                    # For partial: sell percentage of actual balance
+                    if is_partial:
+                        sell_amount = actual_balance * close_pct
+                        logger.info(f"🔄 Partial close {close_pct*100:.0f}%: selling {sell_amount:.2f} of {actual_balance:.2f} tokens")
                     else:
-                        logger.warning(f"⚠️ JupiterHelper not available - close NOT executed")
-                        logger.warning(f"   Position {position.token_symbol} needs manual close!")
+                        sell_amount = actual_balance  # Sell ALL tokens
+                        logger.info(f"🔄 Full close: selling ALL {actual_balance:.2f} tokens")
 
-                except Exception as e:
-                    logger.error(f"❌ Close execution failed: {e}", exc_info=True)
-                    if position.strategy == Strategy.PUMPFUN:
-                        logger.error(f"   Pump.fun token may need manual close via bonding curve")
+                    # Update close_amount to actual amount being sold
+                    close_amount = sell_amount
+                    token_amount_raw = int(close_amount * (10 ** token_decimals))
+
+                    # RETRY LOOP with escalating slippage
+                    max_retries = 5 if self.safety_engine else 3
+                    last_error = None
+
+                    for retry in range(max_retries):
+                        try:
+                            # Get slippage for this retry attempt
+                            if self.safety_engine:
+                                close_slippage = self.safety_engine.get_slippage_for_strategy(
+                                    position.strategy.value,
+                                    is_close=True,
+                                    retry_count=retry
+                                )
+                            else:
+                                # Fallback: escalate slippage manually
+                                base_slippage = 500 if position.strategy == Strategy.PUMPFUN else 100
+                                close_slippage = base_slippage + (retry * 200)
+                                close_slippage = min(close_slippage, 2000)  # Cap at 20%
+
+                            logger.info(f"🔄 Close attempt {retry + 1}/{max_retries}: {position.token_symbol} → SOL (slippage: {close_slippage}bps)")
+
+                            close_tx_signature = await self.jupiter_helper.execute_swap(
+                                input_mint=token_mint,
+                                output_mint=SOL_MINT,
+                                amount=token_amount_raw,
+                                slippage_bps=close_slippage
+                            )
+
+                            if close_tx_signature:
+                                logger.info(f"🟢 LIVE CLOSE executed: {close_tx_signature}")
+                                close_actually_executed = True
+
+                                # Record success with safety engine
+                                if self.safety_engine:
+                                    self.safety_engine.record_close_success(token_mint)
+                                break  # Success!
+                            else:
+                                last_error = "No transaction signature returned"
+                                logger.warning(f"⚠️ Close attempt {retry + 1} failed - no signature")
+
+                        except Exception as e:
+                            last_error = str(e)
+                            logger.warning(f"⚠️ Close attempt {retry + 1} failed: {e}")
+
+                        # Wait before retry (exponential backoff)
+                        if retry < max_retries - 1:
+                            wait_time = (retry + 1) * 2  # 2s, 4s, 6s, 8s
+                            logger.info(f"   Waiting {wait_time}s before retry...")
+                            await asyncio.sleep(wait_time)
+
+                    # All retries failed
+                    if not close_actually_executed:
+                        logger.error(f"🚨 CRITICAL: All {max_retries} close attempts FAILED for {position.token_symbol}")
+                        logger.error(f"   Last error: {last_error}")
+                        logger.error(f"   Token mint: {token_mint}")
+                        logger.error(f"   ⚠️ MANUAL ACTION REQUIRED")
+
+                        # Record failure with safety engine
+                        if self.safety_engine:
+                            failure_reason = self.safety_engine.parse_error_reason(str(last_error))
+                            should_keep_retrying = self.safety_engine.record_close_failure(
+                                token_mint=token_mint,
+                                token_symbol=position.token_symbol,
+                                value_sol=position.value_sol,
+                                reason=failure_reason,
+                                slippage_used=close_slippage if 'close_slippage' in dir() else self.slippage_bps
+                            )
+
+                            if not should_keep_retrying:
+                                logger.error(f"🚨 Position {position.token_symbol} marked as STUCK - manual intervention needed")
+
+                        # DON'T record the trade or update position - keep it open for manual handling
+                        return
+
+            # Only proceed if close actually executed
+            if not close_actually_executed:
+                logger.error(f"Close not executed for {position.token_symbol} - keeping position open")
+                return
 
             # Record trade - store value_sol for position size tracking
             trade = Trade(
