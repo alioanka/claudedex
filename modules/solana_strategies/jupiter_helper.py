@@ -5,6 +5,7 @@ Handles swap routing, quote fetching, and transaction signing for Jupiter v6 API
 import os
 import asyncio
 import logging
+import time
 from typing import Dict, Optional, List
 import aiohttp
 import base58
@@ -20,6 +21,63 @@ except ImportError:
     RPCProvider = None
 
 logger = logging.getLogger(__name__)
+
+
+class RateLimiter:
+    """
+    Simple rate limiter to prevent hitting Jupiter 429 errors.
+    Uses token bucket algorithm with configurable RPS.
+    """
+
+    def __init__(self, requests_per_second: float = 0.8):
+        """
+        Initialize rate limiter.
+
+        Args:
+            requests_per_second: Max RPS (default 0.8 to stay under 1 RPS lite limit)
+        """
+        self.rps = requests_per_second
+        self.min_interval = 1.0 / requests_per_second
+        self.last_request_time = 0.0
+        self._lock = asyncio.Lock()
+
+        # Adaptive backoff for 429 errors
+        self.consecutive_429s = 0
+        self.base_backoff = 2.0  # Start with 2 second backoff
+        self.max_backoff = 60.0  # Cap at 60 seconds
+
+    async def acquire(self):
+        """Wait until we can make a request without exceeding rate limit."""
+        async with self._lock:
+            now = time.time()
+            time_since_last = now - self.last_request_time
+
+            # Calculate required wait time
+            if time_since_last < self.min_interval:
+                wait_time = self.min_interval - time_since_last
+                await asyncio.sleep(wait_time)
+
+            self.last_request_time = time.time()
+
+    def record_429(self):
+        """Record a 429 error and increase backoff."""
+        self.consecutive_429s += 1
+        # Exponential backoff: 2s, 4s, 8s, 16s, 32s, 60s (max)
+        backoff = min(self.base_backoff * (2 ** (self.consecutive_429s - 1)), self.max_backoff)
+        logger.warning(f"⏱️ Rate limit hit #{self.consecutive_429s}, backing off {backoff:.1f}s")
+        return backoff
+
+    def record_success(self):
+        """Record a successful request and reset backoff."""
+        if self.consecutive_429s > 0:
+            logger.info(f"✅ Rate limit recovered after {self.consecutive_429s} 429s")
+        self.consecutive_429s = 0
+
+    def get_current_backoff(self) -> float:
+        """Get current backoff time based on 429 history."""
+        if self.consecutive_429s == 0:
+            return 0.0
+        return min(self.base_backoff * (2 ** (self.consecutive_429s - 1)), self.max_backoff)
 
 
 class JupiterHelper:
@@ -112,6 +170,13 @@ class JupiterHelper:
                     init_logger.warning("   No Solana private key provided, signing will fail")
 
         self.session: Optional[aiohttp.ClientSession] = None
+
+        # Rate limiter for Jupiter API
+        # Lite API is 1 RPS, we use 0.8 to stay safely under
+        # Can be overridden via JUPITER_RPS env var
+        rps = float(os.getenv('JUPITER_RPS', '0.8'))
+        self.rate_limiter = RateLimiter(requests_per_second=rps)
+        logger.info(f"   🚦 Jupiter rate limiter: {rps} RPS")
 
     def _load_keypair_from_value(self, pk_str: str) -> Optional[Keypair]:
         """
@@ -301,10 +366,11 @@ class JupiterHelper:
         output_mint: str,
         amount: int,
         slippage_bps: int = 50,
-        only_direct_routes: bool = False
+        only_direct_routes: bool = False,
+        max_retries: int = 3
     ) -> Optional[Dict]:
         """
-        Get swap quote from Jupiter
+        Get swap quote from Jupiter with rate limiting and retry logic.
 
         Args:
             input_mint: Input token mint address
@@ -312,88 +378,157 @@ class JupiterHelper:
             amount: Amount in smallest unit (lamports for SOL)
             slippage_bps: Slippage tolerance in basis points (50 = 0.5%)
             only_direct_routes: Only use direct routes (no intermediate swaps)
+            max_retries: Maximum retries for rate limit errors
 
         Returns:
             Optional[Dict]: Quote data or None if failed
         """
-        try:
-            if not self.session:
-                await self.initialize()
+        if not self.session:
+            await self.initialize()
 
-            params = {
-                'inputMint': input_mint,
-                'outputMint': output_mint,
-                'amount': str(amount),
-                'slippageBps': str(slippage_bps),
-                'onlyDirectRoutes': str(only_direct_routes).lower(),
-            }
+        params = {
+            'inputMint': input_mint,
+            'outputMint': output_mint,
+            'amount': str(amount),
+            'slippageBps': str(slippage_bps),
+            'onlyDirectRoutes': str(only_direct_routes).lower(),
+        }
 
-            url = f"{self.api_url}/quote"
+        url = f"{self.api_url}/quote"
 
-            async with self.session.get(url, params=params) as response:
-                if response.status == 200:
-                    quote = await response.json()
-                    logger.info(
-                        f"✅ Jupiter quote: {input_mint[:10]}... → {output_mint[:10]}... "
-                        f"Amount: {amount}, Output: {quote.get('outAmount', 0)}"
-                    )
-                    return quote
-                else:
-                    error_text = await response.text()
-                    # Parse Jupiter error response for better diagnostics
-                    error_reason = self._parse_quote_error(response.status, error_text, input_mint, output_mint)
-                    logger.warning(f"⚠️ Jupiter quote failed: {error_reason}")
-                    return None
+        for attempt in range(max_retries + 1):
+            try:
+                # Wait for rate limiter before making request
+                await self.rate_limiter.acquire()
 
-        except Exception as e:
-            logger.error(f"Error getting Jupiter quote: {e}", exc_info=True)
-            return None
+                # If we have recent 429s, add extra backoff
+                current_backoff = self.rate_limiter.get_current_backoff()
+                if current_backoff > 0:
+                    logger.debug(f"Rate limit backoff: waiting {current_backoff:.1f}s")
+                    await asyncio.sleep(current_backoff)
+
+                async with self.session.get(url, params=params) as response:
+                    if response.status == 200:
+                        quote = await response.json()
+                        self.rate_limiter.record_success()
+                        logger.info(
+                            f"✅ Jupiter quote: {input_mint[:10]}... → {output_mint[:10]}... "
+                            f"Amount: {amount}, Output: {quote.get('outAmount', 0)}"
+                        )
+                        return quote
+
+                    elif response.status == 429:
+                        # Rate limited - apply backoff and retry
+                        backoff = self.rate_limiter.record_429()
+                        if attempt < max_retries:
+                            logger.warning(f"⚠️ Jupiter rate limited (attempt {attempt + 1}/{max_retries + 1}), "
+                                         f"retrying in {backoff:.1f}s...")
+                            await asyncio.sleep(backoff)
+                            continue
+                        else:
+                            logger.error(f"❌ Jupiter rate limited, max retries ({max_retries}) exceeded")
+                            return None
+
+                    else:
+                        error_text = await response.text()
+                        # Parse Jupiter error response for better diagnostics
+                        error_reason = self._parse_quote_error(response.status, error_text, input_mint, output_mint)
+                        logger.warning(f"⚠️ Jupiter quote failed: {error_reason}")
+                        # Non-429 errors don't benefit from retry
+                        return None
+
+            except asyncio.TimeoutError:
+                logger.warning(f"Jupiter quote timeout (attempt {attempt + 1}/{max_retries + 1})")
+                if attempt < max_retries:
+                    await asyncio.sleep(2.0)  # Brief wait before retry
+                    continue
+                return None
+
+            except Exception as e:
+                logger.error(f"Error getting Jupiter quote: {e}", exc_info=True)
+                return None
+
+        return None
 
     async def get_swap_transaction(
         self,
         quote: Dict,
         user_public_key: str,
         wrap_unwrap_sol: bool = True,
-        as_legacy_transaction: bool = False
+        as_legacy_transaction: bool = False,
+        max_retries: int = 3
     ) -> Optional[Dict]:
         """
-        Get swap transaction from quote
+        Get swap transaction from quote with rate limiting.
 
         Args:
             quote: Quote from get_quote()
             user_public_key: User's wallet public key
             wrap_unwrap_sol: Auto wrap/unwrap SOL
             as_legacy_transaction: Use legacy transaction format
+            max_retries: Maximum retries for rate limit errors
 
         Returns:
             Optional[Dict]: Transaction data or None
         """
-        try:
-            if not self.session:
-                await self.initialize()
+        if not self.session:
+            await self.initialize()
 
-            url = f"{self.api_url}/swap"
+        url = f"{self.api_url}/swap"
 
-            payload = {
-                'quoteResponse': quote,
-                'userPublicKey': user_public_key,
-                'wrapAndUnwrapSol': wrap_unwrap_sol,
-                'asLegacyTransaction': as_legacy_transaction,
-            }
+        payload = {
+            'quoteResponse': quote,
+            'userPublicKey': user_public_key,
+            'wrapAndUnwrapSol': wrap_unwrap_sol,
+            'asLegacyTransaction': as_legacy_transaction,
+        }
 
-            async with self.session.post(url, json=payload) as response:
-                if response.status == 200:
-                    swap_data = await response.json()
-                    logger.debug("✅ Got swap transaction from Jupiter")
-                    return swap_data
-                else:
-                    error_text = await response.text()
-                    logger.error(f"Jupiter swap transaction error: {response.status} - {error_text}")
-                    return None
+        for attempt in range(max_retries + 1):
+            try:
+                # Wait for rate limiter before making request
+                await self.rate_limiter.acquire()
 
-        except Exception as e:
-            logger.error(f"Error getting swap transaction: {e}", exc_info=True)
-            return None
+                # If we have recent 429s, add extra backoff
+                current_backoff = self.rate_limiter.get_current_backoff()
+                if current_backoff > 0:
+                    await asyncio.sleep(current_backoff)
+
+                async with self.session.post(url, json=payload) as response:
+                    if response.status == 200:
+                        swap_data = await response.json()
+                        self.rate_limiter.record_success()
+                        logger.debug("✅ Got swap transaction from Jupiter")
+                        return swap_data
+
+                    elif response.status == 429:
+                        # Rate limited - apply backoff and retry
+                        backoff = self.rate_limiter.record_429()
+                        if attempt < max_retries:
+                            logger.warning(f"⚠️ Jupiter swap tx rate limited (attempt {attempt + 1}), "
+                                         f"retrying in {backoff:.1f}s...")
+                            await asyncio.sleep(backoff)
+                            continue
+                        else:
+                            logger.error(f"❌ Jupiter swap tx rate limited, max retries exceeded")
+                            return None
+
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"Jupiter swap transaction error: {response.status} - {error_text}")
+                        return None
+
+            except asyncio.TimeoutError:
+                logger.warning(f"Jupiter swap tx timeout (attempt {attempt + 1})")
+                if attempt < max_retries:
+                    await asyncio.sleep(2.0)
+                    continue
+                return None
+
+            except Exception as e:
+                logger.error(f"Error getting swap transaction: {e}", exc_info=True)
+                return None
+
+        return None
 
     def sign_transaction(self, transaction_data: str) -> Optional[str]:
         """
