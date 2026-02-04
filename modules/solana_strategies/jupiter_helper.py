@@ -775,54 +775,106 @@ class JupiterHelper:
     async def confirm_transaction(
         self,
         signature: str,
-        timeout: int = 60,
+        timeout: int = None,
         commitment: str = "confirmed"
     ) -> bool:
         """
-        Confirm transaction on Solana
+        Confirm transaction on Solana with robust retry logic.
 
         Args:
             signature: Transaction signature
-            timeout: Timeout in seconds
+            timeout: Timeout in seconds (default: 90s)
             commitment: Commitment level
 
         Returns:
             bool: True if confirmed, False otherwise
         """
         try:
-            import time
             if not self.solana_rpc or not self.session:
                 return False
 
+            # Default 90s timeout for congested networks
+            if timeout is None:
+                timeout = 90
+
             start_time = time.monotonic()
+            poll_interval = 1.5  # Start with 1.5s polling
+            max_poll_interval = 5.0  # Cap at 5s
+            consecutive_errors = 0
+            max_consecutive_errors = 5
 
             while (time.monotonic() - start_time) < timeout:
-                payload = {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getSignatureStatuses",
-                    "params": [[signature], {"searchTransactionHistory": True}]
-                }
+                try:
+                    payload = {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "getSignatureStatuses",
+                        "params": [[signature], {"searchTransactionHistory": True}]
+                    }
 
-                async with self.session.post(self.solana_rpc, json=payload) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        value = result.get('result', {}).get('value', [])
+                    async with self.session.post(
+                        self.solana_rpc,
+                        json=payload,
+                        timeout=aiohttp.ClientTimeout(total=10)
+                    ) as response:
+                        if response.status == 200:
+                            result = await response.json()
+                            value = result.get('result', {}).get('value', [])
 
-                        if value and value[0]:
-                            status = value[0]
-                            if status.get('confirmationStatus') == commitment:
-                                logger.info(f"✅ Transaction confirmed: {signature}")
-                                return True
+                            if value and value[0]:
+                                status = value[0]
+                                confirmation_status = status.get('confirmationStatus')
 
-                            if status.get('err'):
-                                logger.error(f"Transaction failed: {status['err']}")
-                                return False
+                                if confirmation_status in ['confirmed', 'finalized']:
+                                    logger.info(f"✅ Transaction confirmed ({confirmation_status}): {signature}")
+                                    return True
 
-                # Wait before checking again
-                await asyncio.sleep(2)
+                                if status.get('err'):
+                                    logger.error(f"Transaction failed on-chain: {status['err']}")
+                                    return False
 
-            logger.warning(f"Transaction confirmation timeout: {signature}")
+                                # Transaction found but not yet confirmed
+                                if confirmation_status == 'processed':
+                                    logger.debug(f"Transaction processed, waiting for confirmation...")
+
+                            consecutive_errors = 0  # Reset on success
+
+                        elif response.status == 429:
+                            # RPC rate limited - back off
+                            logger.warning(f"RPC rate limited during confirmation check, backing off...")
+                            consecutive_errors += 1
+                            poll_interval = min(poll_interval * 1.5, max_poll_interval)
+
+                        else:
+                            logger.debug(f"RPC returned {response.status} during confirmation")
+                            consecutive_errors += 1
+
+                except asyncio.TimeoutError:
+                    logger.debug(f"RPC timeout during confirmation check")
+                    consecutive_errors += 1
+
+                except Exception as e:
+                    logger.debug(f"Confirmation check error: {e}")
+                    consecutive_errors += 1
+
+                # If too many errors, try rotating RPC
+                if consecutive_errors >= max_consecutive_errors and RPCProvider:
+                    try:
+                        new_rpc = RPCProvider.get_rpc_sync('SOLANA_RPC')
+                        if new_rpc and new_rpc != self.solana_rpc:
+                            logger.info(f"Rotating RPC for confirmation checks...")
+                            self.solana_rpc = new_rpc
+                            consecutive_errors = 0
+                    except Exception:
+                        pass
+
+                # Wait before next check with exponential backoff on errors
+                await asyncio.sleep(poll_interval)
+                if consecutive_errors > 0:
+                    poll_interval = min(poll_interval * 1.2, max_poll_interval)
+
+            elapsed = time.monotonic() - start_time
+            logger.warning(f"Transaction confirmation timeout after {elapsed:.1f}s: {signature}")
             return False
 
         except Exception as e:
