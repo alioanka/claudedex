@@ -849,13 +849,21 @@ class ArbitrageEngine:
             # Query BOTH directions on all DEXs to find real arbitrage opportunities
             # Forward direction: token_in → token_out (first leg of arbitrage)
             forward_prices = {}
+            forward_errors = {}
             for name, contract in self.router_contracts.items():
                 try:
                     amounts = contract.functions.getAmountsOut(amount_in, [token_in, token_out]).call()
                     forward_prices[name] = amounts[1]
-                except Exception:
-                    # Silently skip - many pairs won't have liquidity on all DEXs
-                    pass
+                except Exception as e:
+                    # Track errors for diagnostic logging
+                    forward_errors[name] = str(e)[:50]
+
+            # Log diagnostic info periodically (every 60 scans = ~2 minutes)
+            if self._total_pairs_scanned % 60 == 1:
+                if forward_prices:
+                    logger.debug(f"📊 [{token_symbol}] Forward prices: {len(forward_prices)} DEXs responded")
+                else:
+                    logger.warning(f"⚠️ [{token_symbol}] No forward prices from any DEX. Errors: {forward_errors}")
 
             if len(forward_prices) < 2:
                 return False
