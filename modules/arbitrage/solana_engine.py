@@ -988,6 +988,17 @@ class SolanaArbitrageEngine:
             if profit_pct > self.min_profit_threshold:
                 self._stats['opportunities_found'] += 1
 
+                # SANITY CHECK: Reject obvious false positives
+                # Real arbitrage opportunities are typically 0.1-1%. Anything > 5% is almost
+                # certainly stale/manipulated price data from low-liquidity DEXs.
+                MAX_REALISTIC_PROFIT = 0.05  # 5% max realistic profit
+                if profit_pct > MAX_REALISTIC_PROFIT:
+                    route_info = jupiter_quote.get('routePlan', [])
+                    route_str = " → ".join([r.get('swapInfo', {}).get('label', 'DEX') for r in route_info[:3]])
+                    logger.warning(f"🚫 REJECTED [{in_symbol}/{out_symbol}]: {profit_pct:.2%} profit is unrealistic (max {MAX_REALISTIC_PROFIT:.0%})")
+                    logger.warning(f"   Route: {route_str} - likely stale/manipulated price data")
+                    return False
+
                 # Check rate limiting
                 opp_key = f"{in_symbol}_{out_symbol}"
                 now = datetime.now()
