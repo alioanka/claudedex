@@ -362,7 +362,17 @@ class JitoClient:
                             bundle_id = result.get('result')
                             logger.info(f"🛡️ Jito bundle submitted: {bundle_id}")
                             self._backoff_seconds = 0  # Reset backoff on success
-                            return bundle_id
+
+                            # CRITICAL: Verify bundle was actually landed on-chain
+                            # Bundle ID != transaction success - must check status
+                            confirmed = await self._confirm_bundle(bundle_id, endpoint)
+                            if confirmed:
+                                logger.info(f"✅ Jito bundle CONFIRMED on-chain: {bundle_id}")
+                                return bundle_id
+                            else:
+                                logger.warning(f"⚠️ Jito bundle NOT confirmed: {bundle_id} - bundle may have been dropped")
+                                return None
+
                         elif 'error' in result:
                             error = result.get('error', {})
                             error_code = error.get('code', 'N/A')
@@ -406,6 +416,86 @@ class JitoClient:
 
         logger.error("❌ All Jito endpoints failed or rate limited")
         return None
+
+    async def _confirm_bundle(self, bundle_id: str, endpoint: str, timeout_seconds: int = 30) -> bool:
+        """
+        Confirm that a Jito bundle was actually landed on-chain.
+
+        Jito's getBundleStatuses API returns the status of submitted bundles.
+        A bundle is only successful if it shows 'Landed' status.
+
+        Args:
+            bundle_id: The bundle ID returned from sendBundle
+            endpoint: The Jito endpoint to check
+            timeout_seconds: How long to wait for confirmation
+
+        Returns:
+            True if bundle was confirmed landed, False otherwise
+        """
+        import time
+        start_time = time.time()
+
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getBundleStatuses",
+            "params": [[bundle_id]]
+        }
+
+        # Poll for bundle status with exponential backoff
+        check_interval = 1.0  # Start with 1 second
+
+        while (time.time() - start_time) < timeout_seconds:
+            try:
+                async with self.session.post(
+                    f"{endpoint}/api/v1/bundles",
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+
+                        if 'result' in result and 'value' in result['result']:
+                            statuses = result['result']['value']
+
+                            if statuses and len(statuses) > 0:
+                                bundle_status = statuses[0]
+
+                                if bundle_status is None:
+                                    # Bundle not found yet - keep waiting
+                                    logger.debug(f"Bundle {bundle_id[:16]}... not found yet, waiting...")
+                                else:
+                                    confirmation_status = bundle_status.get('confirmation_status')
+                                    err = bundle_status.get('err')
+
+                                    if err:
+                                        # Bundle failed with error
+                                        logger.error(f"❌ Jito bundle failed: {err}")
+                                        return False
+
+                                    if confirmation_status == 'finalized' or confirmation_status == 'confirmed':
+                                        # Bundle landed successfully!
+                                        slot = bundle_status.get('slot', 'unknown')
+                                        logger.info(f"   Bundle landed in slot {slot}")
+                                        return True
+                                    elif confirmation_status == 'processed':
+                                        # Still processing - keep waiting
+                                        logger.debug(f"Bundle {bundle_id[:16]}... processing...")
+                                    else:
+                                        logger.debug(f"Bundle status: {confirmation_status}")
+
+            except asyncio.TimeoutError:
+                logger.debug(f"Bundle status check timeout, retrying...")
+            except Exception as e:
+                logger.debug(f"Bundle status check error: {e}")
+
+            # Wait before next check with exponential backoff (max 5 seconds)
+            await asyncio.sleep(check_interval)
+            check_interval = min(check_interval * 1.5, 5.0)
+
+        # Timeout reached without confirmation
+        logger.warning(f"⚠️ Bundle confirmation timeout after {timeout_seconds}s - bundle may have been dropped")
+        return False
 
     def get_random_tip_account(self) -> str:
         """Get a random Jito tip account (or from env)"""

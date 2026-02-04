@@ -6,16 +6,38 @@ Provides multiple layers of protection:
 2. Aggressive retry for failed closes with escalating slippage
 3. Circuit breaker to pause trading on multiple failures
 4. Emergency close mechanism for stuck positions
+5. Quote caching for rate-limit-resilient emergency closes
 """
 
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 from enum import Enum
+import time
 
 logger = logging.getLogger('SolanaTradingEngine')
+
+
+@dataclass
+class CachedQuote:
+    """Cached sell quote for emergency closes"""
+    token_mint: str
+    token_symbol: str
+    quote_data: Dict[str, Any]
+    estimated_out_lamports: int
+    cached_at: float  # Unix timestamp
+    slippage_bps: int
+    route_label: str  # e.g., "Raydium CLMM"
+
+    def is_fresh(self, max_age_seconds: int = 60) -> bool:
+        """Check if quote is still fresh enough to use"""
+        return (time.time() - self.cached_at) < max_age_seconds
+
+    def get_age_seconds(self) -> float:
+        """Get age of quote in seconds"""
+        return time.time() - self.cached_at
 
 
 class CloseFailureReason(Enum):
@@ -86,10 +108,16 @@ class SafetyEngine:
         # Stuck positions tracking
         self.stuck_positions: Dict[str, StuckPosition] = {}
 
+        # Quote cache for emergency closes during rate limits
+        self.quote_cache: Dict[str, CachedQuote] = {}
+        self.quote_cache_max_age_seconds: int = 120  # 2 minute cache
+        self.quote_cache_emergency_max_age_seconds: int = 300  # 5 min for emergencies
+
         # Stats
         self.total_close_attempts = 0
         self.total_close_failures = 0
         self.honeypots_detected = 0
+        self.emergency_closes_from_cache = 0
 
     def get_slippage_for_strategy(self, strategy: str, is_close: bool = False,
                                    retry_count: int = 0) -> int:
@@ -308,5 +336,163 @@ class SafetyEngine:
             'honeypots_detected': self.honeypots_detected,
             'stuck_positions': len(self.stuck_positions),
             'circuit_breaker_tripped': self.circuit_breaker_tripped,
-            'consecutive_failures': self.consecutive_failures
+            'consecutive_failures': self.consecutive_failures,
+            'cached_quotes': len(self.quote_cache),
+            'emergency_closes_from_cache': self.emergency_closes_from_cache
         }
+
+    # ==================== Quote Caching Methods ====================
+
+    def cache_sell_quote(self, token_mint: str, token_symbol: str,
+                         quote_data: Dict[str, Any], slippage_bps: int) -> bool:
+        """
+        Cache a sell quote for potential emergency close during rate limits.
+
+        Should be called after successfully getting a quote for position monitoring.
+
+        Args:
+            token_mint: Token mint address
+            token_symbol: Token symbol for logging
+            quote_data: Raw Jupiter quote response
+            slippage_bps: Slippage used for quote
+
+        Returns:
+            True if cached successfully
+        """
+        try:
+            out_amount = int(quote_data.get('outAmount', 0))
+            route_info = quote_data.get('routePlan', [{}])
+            route_label = route_info[0].get('swapInfo', {}).get('label', 'Unknown') if route_info else 'Unknown'
+
+            cached = CachedQuote(
+                token_mint=token_mint,
+                token_symbol=token_symbol,
+                quote_data=quote_data,
+                estimated_out_lamports=out_amount,
+                cached_at=time.time(),
+                slippage_bps=slippage_bps,
+                route_label=route_label
+            )
+
+            self.quote_cache[token_mint] = cached
+            logger.debug(f"📦 Cached sell quote for {token_symbol}: ~{out_amount / 1e9:.6f} SOL via {route_label}")
+            return True
+
+        except Exception as e:
+            logger.warning(f"Failed to cache quote for {token_symbol}: {e}")
+            return False
+
+    def get_cached_quote(self, token_mint: str, emergency: bool = False) -> Optional[CachedQuote]:
+        """
+        Get a cached sell quote for a token.
+
+        Args:
+            token_mint: Token mint address
+            emergency: If True, use longer max age (for rate-limited emergencies)
+
+        Returns:
+            CachedQuote if available and fresh, None otherwise
+        """
+        cached = self.quote_cache.get(token_mint)
+        if not cached:
+            return None
+
+        max_age = (self.quote_cache_emergency_max_age_seconds if emergency
+                   else self.quote_cache_max_age_seconds)
+
+        if cached.is_fresh(max_age):
+            return cached
+
+        # Quote too old, remove it
+        logger.debug(f"Cached quote for {cached.token_symbol} expired ({cached.get_age_seconds():.0f}s old)")
+        del self.quote_cache[token_mint]
+        return None
+
+    def remove_cached_quote(self, token_mint: str):
+        """Remove a cached quote (e.g., after position is closed)."""
+        if token_mint in self.quote_cache:
+            del self.quote_cache[token_mint]
+
+    def cleanup_stale_quotes(self):
+        """Remove all expired quotes from cache."""
+        stale = []
+        for mint, cached in self.quote_cache.items():
+            # Use emergency max age for cleanup to keep quotes longer
+            if not cached.is_fresh(self.quote_cache_emergency_max_age_seconds):
+                stale.append(mint)
+
+        for mint in stale:
+            del self.quote_cache[mint]
+
+        if stale:
+            logger.debug(f"Cleaned up {len(stale)} stale cached quotes")
+
+    async def emergency_close_with_cache(self, token_mint: str, jupiter_client,
+                                          wallet_keypair, token_balance: int,
+                                          sol_mint: str) -> Tuple[bool, str]:
+        """
+        Attempt to close a position using cached quote when rate limited.
+
+        This is a last-resort mechanism when fresh quotes cannot be obtained
+        due to rate limiting. Uses previously cached route information.
+
+        Args:
+            token_mint: Token to sell
+            jupiter_client: JupiterClient instance
+            wallet_keypair: Wallet keypair for signing
+            token_balance: Amount of tokens to sell
+            sol_mint: SOL mint address
+
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        cached = self.get_cached_quote(token_mint, emergency=True)
+
+        if not cached:
+            return False, "No cached quote available for emergency close"
+
+        age_seconds = cached.get_age_seconds()
+        logger.warning(f"⚠️ EMERGENCY CLOSE using {age_seconds:.0f}s old cached quote for {cached.token_symbol}")
+        logger.warning(f"   Cached route: {cached.route_label}, slippage: {cached.slippage_bps}bps")
+
+        try:
+            # Increase slippage for emergency (prices may have moved)
+            emergency_slippage = min(
+                cached.slippage_bps + 500,  # Add 5% to cached slippage
+                self.config.max_emergency_slippage_bps
+            )
+
+            # Try to get a fresh quote first (might work now)
+            fresh_quote = None
+            try:
+                fresh_quote = await jupiter_client.get_quote(
+                    input_mint=token_mint,
+                    output_mint=sol_mint,
+                    amount=token_balance,
+                    slippage_bps=emergency_slippage
+                )
+            except Exception as e:
+                logger.warning(f"Fresh quote failed during emergency close: {e}")
+
+            quote_to_use = fresh_quote if fresh_quote else cached.quote_data
+
+            # Execute the swap
+            swap_result = await jupiter_client.execute_swap(
+                quote=quote_to_use,
+                wallet_keypair=wallet_keypair,
+                slippage_bps=emergency_slippage
+            )
+
+            if swap_result and swap_result.get('success'):
+                self.emergency_closes_from_cache += 1
+                self.remove_cached_quote(token_mint)
+                tx_sig = swap_result.get('signature', 'unknown')
+                logger.info(f"✅ Emergency close successful for {cached.token_symbol}: {tx_sig}")
+                return True, f"Emergency close successful: {tx_sig}"
+            else:
+                error = swap_result.get('error', 'Unknown error') if swap_result else 'Swap failed'
+                return False, f"Emergency close failed: {error}"
+
+        except Exception as e:
+            logger.error(f"Emergency close exception for {cached.token_symbol}: {e}")
+            return False, f"Emergency close exception: {e}"
