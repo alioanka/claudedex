@@ -583,7 +583,7 @@ class ArbitrageEngine:
 
         # Visibility logging - track spreads even when not executing
         self._last_spread_log_time = None
-        self._best_spread_seen = 0.0
+        self._best_spread_seen = -999.0  # Start negative so we track even negative spreads
         self._best_spread_pair = ""
         self._total_pairs_scanned = 0
         self._pairs_with_liquidity = 0
@@ -821,12 +821,15 @@ class ArbitrageEngine:
                        f"Opportunities: {self._stats['opportunities_found']} | "
                        f"Executed: {self._stats['opportunities_executed']}")
 
-            # Log best spread seen (even if below threshold)
-            if self._best_spread_seen > 0:
+            # Log best spread seen (even if negative)
+            if self._best_spread_seen > -999.0:  # -999 is initial value, means no spreads checked
                 status = "✅ ABOVE" if self._best_spread_seen > self.min_profit_threshold else "❌ BELOW"
-                logger.info(f"   Best spread: {self._best_spread_seen:.4%} on {self._best_spread_pair} ({status} threshold {self.min_profit_threshold:.2%})")
+                sign = "+" if self._best_spread_seen >= 0 else ""
+                logger.info(f"   Best spread: {sign}{self._best_spread_seen:.4%} on {self._best_spread_pair} ({status} threshold {self.min_profit_threshold:.2%})")
+                if self._best_spread_seen < 0:
+                    logger.info(f"   ⚠️ All spreads are NEGATIVE - arbitrage not profitable on current DEXs")
             else:
-                logger.info(f"   No spreads found - check RPC connection and DEX liquidity")
+                logger.info(f"   No spreads calculated - check RPC connection and DEX liquidity")
 
             # Reset stats
             self._stats = {
@@ -835,7 +838,7 @@ class ArbitrageEngine:
                 'opportunities_executed': 0,
                 'last_stats_log': now
             }
-            self._best_spread_seen = 0.0
+            self._best_spread_seen = -999.0  # Start negative so we track even negative spreads
             self._best_spread_pair = ""
             self._total_pairs_scanned = 0
             self._pairs_with_liquidity = 0
@@ -849,13 +852,21 @@ class ArbitrageEngine:
             # Query BOTH directions on all DEXs to find real arbitrage opportunities
             # Forward direction: token_in → token_out (first leg of arbitrage)
             forward_prices = {}
+            forward_errors = {}
             for name, contract in self.router_contracts.items():
                 try:
                     amounts = contract.functions.getAmountsOut(amount_in, [token_in, token_out]).call()
                     forward_prices[name] = amounts[1]
-                except Exception:
-                    # Silently skip - many pairs won't have liquidity on all DEXs
-                    pass
+                except Exception as e:
+                    # Track errors for diagnostic logging
+                    forward_errors[name] = str(e)[:50]
+
+            # Log diagnostic info periodically (every 60 scans = ~2 minutes)
+            if self._total_pairs_scanned % 60 == 1:
+                if forward_prices:
+                    logger.debug(f"📊 [{token_symbol}] Forward prices: {len(forward_prices)} DEXs responded")
+                else:
+                    logger.warning(f"⚠️ [{token_symbol}] No forward prices from any DEX. Errors: {forward_errors}")
 
             if len(forward_prices) < 2:
                 return False

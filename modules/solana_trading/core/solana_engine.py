@@ -2270,8 +2270,8 @@ class SolanaTradingEngine:
 
                 logger.info(f"🎯 Pump.fun: Opening position on {token.get('symbol', 'UNKNOWN')}")
 
-                # Open position
-                await self._open_position(
+                # Open position - returns True if successful
+                success = await self._open_position(
                     token_mint=token_mint,
                     token_symbol=token.get('symbol', 'UNKNOWN'),
                     strategy=Strategy.PUMPFUN,
@@ -2279,7 +2279,8 @@ class SolanaTradingEngine:
                     metadata=token
                 )
 
-                break  # One token per cycle
+                if success:
+                    break  # Only stop after successfully opening one position
 
         except Exception as e:
             logger.error(f"Error scanning Pump.fun: {e}")
@@ -2297,14 +2298,19 @@ class SolanaTradingEngine:
         strategy: Strategy,
         amount_sol: float,
         metadata: Dict = None
-    ):
-        """Open a new position"""
+    ) -> bool:
+        """
+        Open a new position.
+
+        Returns:
+            True if position was successfully opened, False otherwise
+        """
         try:
             # Get token price
             current_price = await self._get_token_price(token_mint)
             if current_price is None:
                 logger.warning(f"Could not get price for {token_symbol}")
-                return
+                return False
 
             # Calculate values
             value_usd = amount_sol * self.sol_price_usd
@@ -2358,7 +2364,7 @@ class SolanaTradingEngine:
                     if wallet_balance < min_required:
                         logger.error(f"❌ Insufficient balance: {wallet_balance:.4f} SOL < {min_required:.4f} SOL required")
                         logger.error(f"   Please fund your wallet before live trading")
-                        return
+                        return False
                 except Exception as e:
                     logger.warning(f"⚠️ Could not check wallet balance: {e}")
 
@@ -2369,7 +2375,7 @@ class SolanaTradingEngine:
                         is_tripped, seconds_remaining = self.safety_engine.check_circuit_breaker()
                         if is_tripped:
                             logger.warning(f"🚨 Circuit breaker ACTIVE - skipping trade ({seconds_remaining}s remaining)")
-                            return
+                            return False
 
                     # Check if this is a pump.fun token that hasn't graduated
                     # Pump.fun tokens without Raydium routes can't be traded via Jupiter
@@ -2388,7 +2394,7 @@ class SolanaTradingEngine:
                                 logger.warning(f"   Token has not graduated to Raydium yet")
                                 logger.warning(f"   Pump.fun bonding curve trading not yet implemented")
                                 logger.info(f"   Skipping live trade - monitor for graduation to Raydium")
-                                return
+                                return False
 
                     # CRITICAL: Verify SELL route exists before buying (honeypot detection)
                     # This prevents buying tokens that can't be sold back
@@ -2405,7 +2411,7 @@ class SolanaTradingEngine:
                             logger.error(f"   Reason: {reason}")
                             logger.error(f"   Token: {token_mint}")
                             logger.warning(f"   Skipping buy - cannot verify sell route")
-                            return
+                            return False
                         logger.info(f"✅ Sell route verified for {token_symbol}")
 
                     # Get appropriate slippage for strategy
@@ -2453,7 +2459,7 @@ class SolanaTradingEngine:
                             if strategy == Strategy.PUMPFUN:
                                 logger.error("   Pump.fun token may not have graduated to Raydium")
                             logger.error("   Common causes: insufficient SOL, high slippage, RPC issues")
-                            return
+                            return False
                     else:
                         # Fallback: get quote but warn about no execution
                         quote = await self.jupiter_client.get_quote(
@@ -2466,15 +2472,15 @@ class SolanaTradingEngine:
                             logger.error("Failed to get Jupiter quote")
                             if strategy == Strategy.PUMPFUN:
                                 logger.error("   Token may be pump.fun-only (not yet graduated to Raydium)")
-                            return
+                            return False
 
                         logger.warning(f"⚠️ JupiterHelper not available - swap NOT executed (quote only)")
                         logger.warning(f"   Quote output: {quote.get('outAmount', 'N/A')} lamports")
-                        return  # Don't open position without actual swap
+                        return False  # Don't open position without actual swap
 
                 except Exception as e:
                     logger.error(f"❌ Swap execution failed: {e}", exc_info=True)
-                    return
+                    return False
 
             # Add to positions
             self.active_positions[token_mint] = position
@@ -2517,8 +2523,11 @@ class SolanaTradingEngine:
                 except Exception as e:
                     logger.debug(f"Telegram entry alert failed: {e}")
 
+            return True  # Position successfully opened
+
         except Exception as e:
             logger.error(f"Error opening position: {e}")
+            return False
 
     async def _close_position(self, token_mint: str, reason: str):
         """Close a position (full or partial)"""

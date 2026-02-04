@@ -511,15 +511,42 @@ class TriangularArbitrageEngine:
         Calculate dynamic profit threshold based on gas costs.
 
         Formula: threshold = base_threshold + (gas_cost / trade_value) * buffer
+
+        IMPORTANT: When trade amounts are small (e.g., 0.05 ETH), gas costs can
+        dominate the threshold calculation (e.g., 30%+ threshold). This makes
+        triangular arbitrage impractical for small trades without flash loans.
+
+        This method caps the gas-based threshold to prevent unreasonable values.
         """
         gas_cost_usd = self.gas_oracle.calculate_gas_cost_usd(gas_used, self._eth_price)
-        trade_value_usd = self.trade_amount_eth * self._eth_price
+
+        # Use flash loan amount if configured, otherwise use trade amount
+        # Flash loans allow larger trades without capital, making gas costs negligible
+        flash_loan_amount = self.config.get('flash_loan_amount', 0)
+        use_flash_loans = self.config.get('use_flash_loans', False)
+
+        if use_flash_loans and flash_loan_amount > 0:
+            effective_trade_amount = float(flash_loan_amount)
+        else:
+            effective_trade_amount = self.trade_amount_eth
+
+        trade_value_usd = effective_trade_amount * self._eth_price
 
         # Gas cost as percentage of trade
         gas_pct = gas_cost_usd / trade_value_usd
 
         # Dynamic threshold = base + gas buffer
-        threshold = self.base_profit_threshold + (gas_pct * self.gas_buffer_multiplier)
+        raw_threshold = self.base_profit_threshold + (gas_pct * self.gas_buffer_multiplier)
+
+        # CAP the maximum threshold to 5% - anything higher is impractical
+        # and indicates the trade size is too small for gas costs
+        MAX_THRESHOLD = 0.05  # 5%
+        threshold = min(raw_threshold, MAX_THRESHOLD)
+
+        # Log if threshold was capped (indicates trade size too small)
+        if raw_threshold > MAX_THRESHOLD and self.verbose_logging:
+            logger.warning(f"⚠️ Threshold capped: {raw_threshold:.1%} → {MAX_THRESHOLD:.0%} "
+                          f"(trade: {effective_trade_amount} ETH, gas: ${gas_cost_usd:.2f})")
 
         return threshold
 
