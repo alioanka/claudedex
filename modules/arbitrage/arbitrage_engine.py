@@ -593,6 +593,13 @@ class ArbitrageEngine:
         self._pair_execution_date: str = ""  # Track which day we're on
         self._max_executions_per_pair_per_day = 5  # Max 5 arbitrage trades per DEX pair per day
 
+        # Gas tracking
+        self._last_gas_check_time: Optional[datetime] = None
+        self._gas_check_interval = 60  # Check gas every 60 seconds
+        self._cached_balance_eth: float = 0.0
+        self._min_gas_eth: float = 0.01  # Minimum 0.01 ETH required for gas
+        self._low_gas_warning_shown = False
+
         self._stats = {
             'scans': 0,
             'opportunities_found': 0,
@@ -961,6 +968,49 @@ class ArbitrageEngine:
             logger.error(f"Arb check failed for {token_symbol}: {e}")
             return False
 
+    async def _check_gas_balance(self) -> Tuple[bool, float]:
+        """
+        Check if wallet has sufficient ETH for gas.
+
+        Uses caching to avoid excessive RPC calls.
+
+        Returns:
+            Tuple of (has_sufficient_gas: bool, balance_eth: float)
+        """
+        now = datetime.now()
+
+        # Use cached value if recent enough
+        if self._last_gas_check_time:
+            elapsed = (now - self._last_gas_check_time).total_seconds()
+            if elapsed < self._gas_check_interval:
+                return self._cached_balance_eth >= self._min_gas_eth, self._cached_balance_eth
+
+        # Fetch fresh balance
+        try:
+            if not self.w3 or not self.wallet_address:
+                return False, 0.0
+
+            balance_wei = self.w3.eth.get_balance(self.wallet_address)
+            self._cached_balance_eth = balance_wei / 1e18
+            self._last_gas_check_time = now
+
+            has_gas = self._cached_balance_eth >= self._min_gas_eth
+
+            # Log warning only once when gas becomes insufficient
+            if not has_gas and not self._low_gas_warning_shown:
+                logger.warning(f"⚠️ Insufficient gas: {self._cached_balance_eth:.6f} ETH < {self._min_gas_eth} ETH minimum")
+                logger.warning(f"   Fund wallet {self.wallet_address} to enable execution")
+                self._low_gas_warning_shown = True
+            elif has_gas and self._low_gas_warning_shown:
+                logger.info(f"✅ Gas balance recovered: {self._cached_balance_eth:.6f} ETH")
+                self._low_gas_warning_shown = False
+
+            return has_gas, self._cached_balance_eth
+
+        except Exception as e:
+            logger.debug(f"Gas check failed: {e}")
+            return False, 0.0
+
     async def _execute_flash_swap(
         self,
         buy_dex: str,
@@ -984,6 +1034,12 @@ class ArbitrageEngine:
         # Validate credentials before live execution
         if not self.private_key or not self.wallet_address:
             logger.error(f"❌ Cannot execute - PRIVATE_KEY or WALLET_ADDRESS not configured in database")
+            return
+
+        # Check gas balance before execution
+        has_gas, balance = await self._check_gas_balance()
+        if not has_gas:
+            logger.warning(f"⏸️ Skipping execution - insufficient gas ({balance:.6f} ETH < {self._min_gas_eth} ETH)")
             return
 
         try:
