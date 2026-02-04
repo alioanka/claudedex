@@ -355,11 +355,16 @@ class JitoClient:
             logger.warning(f"⏳ Jito backoff: {remaining:.1f}s remaining")
             return None
 
+        # CRITICAL: Jito sendBundle requires encoding specification
+        # Without this, Jito may fail to decode base64 transactions
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "sendBundle",
-            "params": [transactions]
+            "params": [
+                transactions,
+                {"encoding": "base64"}  # Explicit encoding for base64 transactions
+            ]
         }
 
         # Try primary endpoint first, then failover to others
@@ -728,13 +733,24 @@ class SolanaArbitrageEngine:
 
         self.private_key = None  # Loaded in initialize() from secrets manager
         self.wallet_address = config.get('wallet_address')  # Will be loaded from DB in initialize()
-        self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
+
+        # dry_run: Priority is database config > environment variable
+        # This allows dashboard settings to override .env
+        db_dry_run = config.get('dry_run')
+        if db_dry_run is not None:
+            self.dry_run = db_dry_run if isinstance(db_dry_run, bool) else str(db_dry_run).lower() in ('true', '1', 'yes')
+        else:
+            self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
         # Settings from config (loaded from DB via settings page)
         # Threshold is stored as percentage (0.2 = 0.2%), convert to decimal (0.002)
         self.min_profit_threshold = config.get('sol_arb_threshold', 0.2) / 100.0
         self.trade_amount_sol = config.get('sol_trade_amount', 1.0)
         self.use_jito = config.get('use_jito', True)
+
+        # Arbitrage slippage - higher than normal trading to account for price movement
+        # during signing and bundle submission (default 150 bps = 1.5%)
+        self.arb_slippage_bps = config.get('sol_arb_slippage_bps', 150)
 
         # Verbose logging (configurable via settings page)
         self.verbose_logging = config.get('sol_arb_verbose', False)
@@ -969,7 +985,10 @@ class SolanaArbitrageEngine:
                 amount = int(1e9)
 
             # Get Jupiter quote (best aggregated route)
-            jupiter_quote = await self.jupiter.get_quote(token_in, token_out, amount)
+            # Use higher slippage for arbitrage to account for price movement during execution
+            jupiter_quote = await self.jupiter.get_quote(
+                token_in, token_out, amount, slippage_bps=self.arb_slippage_bps
+            )
 
             if not jupiter_quote:
                 if self.verbose_logging:
@@ -983,7 +1002,10 @@ class SolanaArbitrageEngine:
                 return False
 
             # Get reverse route quote to check round-trip profitability
-            reverse_quote = await self.jupiter.get_quote(token_out, token_in, jupiter_out)
+            # Use higher slippage for arbitrage
+            reverse_quote = await self.jupiter.get_quote(
+                token_out, token_in, jupiter_out, slippage_bps=self.arb_slippage_bps
+            )
 
             if not reverse_quote:
                 if self.verbose_logging:
@@ -1062,6 +1084,23 @@ class SolanaArbitrageEngine:
             logger.error(f"Solana arb check error [{in_symbol}/{out_symbol}]: {e}")
             return False
 
+    def _is_quote_stale(self, quote: Dict, max_age_seconds: float = 5.0) -> bool:
+        """
+        Check if a quote is too old to execute safely.
+
+        Args:
+            quote: Quote dict with '_fetched_at' timestamp
+            max_age_seconds: Maximum age in seconds (default: 5s for arbitrage)
+
+        Returns:
+            True if quote is stale, False if still fresh
+        """
+        import time
+        if '_fetched_at' not in quote:
+            return True  # No timestamp means we can't verify freshness
+        age = time.time() - quote['_fetched_at']
+        return age > max_age_seconds
+
     async def _execute_arbitrage(
         self,
         quote1: Dict,
@@ -1119,6 +1158,39 @@ class SolanaArbitrageEngine:
             quote1, quote2, profit_pct = fresh_quote1, fresh_quote2, fresh_profit_pct
 
         logger.info(f"⚡ Executing Solana Arbitrage [{in_symbol}/{out_symbol}] | Expected: +{profit_pct:.2%}")
+
+        # CRITICAL: Check quote freshness before execution
+        # Arbitrage quotes become stale very quickly - prices move fast
+        max_quote_age = 5.0  # 5 seconds max for arbitrage
+        if self._is_quote_stale(quote1, max_quote_age) or self._is_quote_stale(quote2, max_quote_age):
+            logger.warning(f"⚠️ Quotes are stale (>5s old) - refreshing before execution")
+            # Refresh quotes
+            quote1 = await self.jupiter.get_quote(
+                token_in, token_out, amount, slippage_bps=self.arb_slippage_bps
+            )
+            if not quote1:
+                logger.error("❌ Failed to refresh forward quote - aborting arbitrage")
+                return
+
+            jupiter_out = int(quote1.get('outAmount', 0))
+            quote2 = await self.jupiter.get_quote(
+                token_out, token_in, jupiter_out, slippage_bps=self.arb_slippage_bps
+            )
+            if not quote2:
+                logger.error("❌ Failed to refresh reverse quote - aborting arbitrage")
+                return
+
+            # Recalculate profit with fresh quotes
+            reverse_out = int(quote2.get('outAmount', 0))
+            new_profit_pct = (reverse_out - amount) / amount if amount > 0 else 0
+
+            # Verify opportunity still exists
+            if new_profit_pct < self.min_profit_threshold:
+                logger.warning(f"⚠️ Opportunity disappeared after refresh: {new_profit_pct:.3%} < {self.min_profit_threshold:.3%}")
+                return
+
+            profit_pct = new_profit_pct
+            logger.info(f"✅ Quotes refreshed, profit: {profit_pct:.3%}")
 
         if self.dry_run:
             await asyncio.sleep(0.3)
@@ -1458,12 +1530,58 @@ class SolanaArbitrageEngine:
             logger.error(f"Transaction signing failed: {e}")
             return None
 
+    async def _wait_for_tx_confirmation(self, signature: str, session, timeout: float = 30.0) -> bool:
+        """
+        Wait for a transaction to be confirmed.
+
+        Args:
+            signature: Transaction signature
+            session: aiohttp session
+            timeout: Maximum time to wait in seconds
+
+        Returns:
+            True if confirmed, False otherwise
+        """
+        import time
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            try:
+                payload = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getSignatureStatuses",
+                    "params": [[signature], {"searchTransactionHistory": True}]
+                }
+
+                async with session.post(self.rpc_url, json=payload) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        statuses = result.get('result', {}).get('value', [])
+                        if statuses and statuses[0]:
+                            status = statuses[0]
+                            confirmation = status.get('confirmationStatus')
+                            if confirmation in ['confirmed', 'finalized']:
+                                return True
+                            if status.get('err'):
+                                logger.error(f"Transaction failed on-chain: {status['err']}")
+                                return False
+            except Exception as e:
+                logger.debug(f"Confirmation check error: {e}")
+
+            await asyncio.sleep(1)
+
+        return False
+
     async def _submit_via_rpc(self, tx1_signed: str, tx2_signed: str) -> Optional[str]:
         """
         Submit signed transactions directly via RPC (fallback when Jito fails).
 
         WARNING: Direct RPC submission is vulnerable to front-running!
         Only use as fallback when Jito MEV protection is unavailable.
+
+        IMPORTANT: This method waits for TX1 confirmation before submitting TX2
+        to reduce the risk of partial execution causing losses.
 
         Args:
             tx1_signed: First signed transaction (base64)
@@ -1487,7 +1605,8 @@ class SolanaArbitrageEngine:
                     tx1_signed,
                     {
                         "encoding": "base64",
-                        "skipPreflight": True,
+                        "skipPreflight": False,  # Enable preflight to catch errors early
+                        "preflightCommitment": "confirmed",
                         "maxRetries": 3
                     }
                 ]
@@ -1500,14 +1619,30 @@ class SolanaArbitrageEngine:
 
                     if 'error' in result1:
                         error = result1.get('error', {})
-                        logger.error(f"RPC tx1 failed: {error.get('message', 'Unknown')}")
+                        error_msg = error.get('message', 'Unknown')
+                        error_code = error.get('code', 'N/A')
+                        logger.error(f"RPC tx1 failed [{error_code}]: {error_msg}")
+                        # Log simulation logs if available
+                        if isinstance(error.get('data'), dict):
+                            logs = error['data'].get('logs', [])
+                            if logs:
+                                logger.error(f"   Simulation logs: {logs[-3:]}")
                         return None
 
                     sig1 = result1.get('result')
                     logger.info(f"   TX1 submitted: {sig1[:20]}...")
 
-                # Brief delay to let first tx settle
-                await asyncio.sleep(0.5)
+                # CRITICAL: Wait for TX1 confirmation before sending TX2
+                # This reduces the risk of TX1 failing after TX2 is sent
+                logger.info(f"   ⏳ Waiting for TX1 confirmation...")
+                tx1_confirmed = await self._wait_for_tx_confirmation(sig1, session, timeout=20.0)
+
+                if not tx1_confirmed:
+                    logger.error(f"❌ TX1 not confirmed - aborting TX2 to prevent partial execution")
+                    logger.warning(f"   Check TX1 status manually: {sig1}")
+                    return None
+
+                logger.info(f"   ✅ TX1 confirmed, submitting TX2...")
 
                 # Send second swap
                 payload2 = {
@@ -1518,7 +1653,8 @@ class SolanaArbitrageEngine:
                         tx2_signed,
                         {
                             "encoding": "base64",
-                            "skipPreflight": True,
+                            "skipPreflight": False,
+                            "preflightCommitment": "confirmed",
                             "maxRetries": 3
                         }
                     ]
@@ -1529,9 +1665,18 @@ class SolanaArbitrageEngine:
 
                     if 'error' in result2:
                         error = result2.get('error', {})
-                        logger.error(f"RPC tx2 failed: {error.get('message', 'Unknown')}")
-                        # First tx may have gone through - log for manual review
-                        logger.warning(f"⚠️ TX1 may have executed without TX2 - check: {sig1}")
+                        error_msg = error.get('message', 'Unknown')
+                        error_code = error.get('code', 'N/A')
+                        logger.error(f"RPC tx2 failed [{error_code}]: {error_msg}")
+                        # CRITICAL: TX1 succeeded but TX2 failed - partial execution!
+                        logger.error(f"🚨 PARTIAL EXECUTION: TX1 succeeded, TX2 failed!")
+                        logger.error(f"   TX1 (confirmed): {sig1}")
+                        logger.error(f"   You may need to manually reverse the first swap")
+                        # Log simulation logs if available
+                        if isinstance(error.get('data'), dict):
+                            logs = error['data'].get('logs', [])
+                            if logs:
+                                logger.error(f"   TX2 simulation logs: {logs[-3:]}")
                         return None
 
                     sig2 = result2.get('result')
