@@ -191,11 +191,12 @@ class JupiterClient:
                     data['_quote_timestamp'] = datetime.now().timestamp()
                     return data
                 elif resp.status == 429:
-                    # Rate limited - exponential backoff
+                    # Rate limited - notify global rate limiter for coordinated backoff
                     self._consecutive_errors += 1
-                    backoff_seconds = min(60, 2 ** self._consecutive_errors)
+                    # Use the shared rate limiter's backoff mechanism
+                    backoff_seconds = self.rate_limiter.record_429()
                     self._backoff_until = datetime.now() + timedelta(seconds=backoff_seconds)
-                    logger.warning(f"⚠️ Jupiter rate limited (429) - backing off {backoff_seconds}s")
+                    logger.warning(f"⚠️ Jupiter rate limited (429) - backing off {backoff_seconds:.0f}s")
                     return None
                 elif resp.status == 400:
                     # Bad request - likely invalid token pair or amount
@@ -1142,21 +1143,23 @@ class SolanaArbitrageEngine:
             logger.error(f"Solana arb check error [{in_symbol}/{out_symbol}]: {e}")
             return False
 
-    def _is_quote_stale(self, quote: Dict, max_age_seconds: float = 5.0) -> bool:
+    def _is_quote_stale(self, quote: Dict, max_age_seconds: float = 10.0) -> bool:
         """
         Check if a quote is too old to execute safely.
 
         Args:
-            quote: Quote dict with '_fetched_at' timestamp
-            max_age_seconds: Maximum age in seconds (default: 5s for arbitrage)
+            quote: Quote dict with '_quote_timestamp' timestamp
+            max_age_seconds: Maximum age in seconds (default: 10s for arbitrage)
 
         Returns:
             True if quote is stale, False if still fresh
         """
         import time
-        if '_fetched_at' not in quote:
+        # Check for the timestamp key (set in get_quote)
+        timestamp = quote.get('_quote_timestamp', 0)
+        if timestamp == 0:
             return True  # No timestamp means we can't verify freshness
-        age = time.time() - quote['_fetched_at']
+        age = time.time() - timestamp
         return age > max_age_seconds
 
     async def _execute_arbitrage(
@@ -1173,56 +1176,18 @@ class SolanaArbitrageEngine:
         """Execute arbitrage trade"""
         import time
 
-        # QUOTE FRESHNESS VALIDATION
-        # Jupiter quotes expire quickly (10-30 seconds). Stale quotes cause 0x1789 errors.
-        MAX_QUOTE_AGE_SECONDS = 5.0  # Max 5 seconds old
-
-        quote1_timestamp = quote1.get('_quote_timestamp', 0)
-        quote2_timestamp = quote2.get('_quote_timestamp', 0)
-        now = time.time()
-
-        quote1_age = now - quote1_timestamp
-        quote2_age = now - quote2_timestamp
-
-        if quote1_age > MAX_QUOTE_AGE_SECONDS or quote2_age > MAX_QUOTE_AGE_SECONDS:
-            logger.warning(f"⚠️ [{in_symbol}/{out_symbol}] Quotes too stale (age: {quote1_age:.1f}s, {quote2_age:.1f}s) - refreshing...")
-
-            # Refresh quotes before execution
-            fresh_quote1 = await self.jupiter.get_quote(token_in, token_out, amount)
-            if not fresh_quote1:
-                logger.error(f"❌ [{in_symbol}/{out_symbol}] Failed to refresh forward quote")
-                return
-
-            fresh_out = int(fresh_quote1.get('outAmount', 0))
-            if fresh_out == 0:
-                logger.error(f"❌ [{in_symbol}/{out_symbol}] Fresh forward quote has 0 output")
-                return
-
-            fresh_quote2 = await self.jupiter.get_quote(token_out, token_in, fresh_out)
-            if not fresh_quote2:
-                logger.error(f"❌ [{in_symbol}/{out_symbol}] Failed to refresh reverse quote")
-                return
-
-            # Recalculate profit with fresh quotes
-            fresh_reverse_out = int(fresh_quote2.get('outAmount', 0))
-            fresh_profit_pct = (fresh_reverse_out - amount) / amount
-
-            # Check if still profitable after refresh
-            if fresh_profit_pct < self.min_profit_threshold:
-                logger.warning(f"⚠️ [{in_symbol}/{out_symbol}] No longer profitable after refresh ({fresh_profit_pct:.2%} < {self.min_profit_threshold:.2%})")
-                return
-
-            logger.info(f"✅ [{in_symbol}/{out_symbol}] Refreshed quotes: {profit_pct:.2%} → {fresh_profit_pct:.2%}")
-            quote1, quote2, profit_pct = fresh_quote1, fresh_quote2, fresh_profit_pct
-
         logger.info(f"⚡ Executing Solana Arbitrage [{in_symbol}/{out_symbol}] | Expected: +{profit_pct:.2%}")
 
-        # CRITICAL: Check quote freshness before execution
-        # Arbitrage quotes become stale very quickly - prices move fast
-        max_quote_age = 5.0  # 5 seconds max for arbitrage
+        # QUOTE FRESHNESS VALIDATION
+        # Jupiter quotes are valid for ~10-30 seconds, using 10s as safe threshold
+        # Stale quotes cause 0x1789 slippage errors
+        max_quote_age = 10.0  # 10 seconds max for arbitrage
         if self._is_quote_stale(quote1, max_quote_age) or self._is_quote_stale(quote2, max_quote_age):
-            logger.warning(f"⚠️ Quotes are stale (>5s old) - refreshing before execution")
-            # Refresh quotes
+            quote1_age = time.time() - quote1.get('_quote_timestamp', 0)
+            quote2_age = time.time() - quote2.get('_quote_timestamp', 0)
+            logger.warning(f"⚠️ Quotes are stale (age: {quote1_age:.1f}s, {quote2_age:.1f}s) - refreshing before execution")
+
+            # Refresh quotes with proper slippage
             quote1 = await self.jupiter.get_quote(
                 token_in, token_out, amount, slippage_bps=self.arb_slippage_bps
             )
@@ -1231,6 +1196,10 @@ class SolanaArbitrageEngine:
                 return
 
             jupiter_out = int(quote1.get('outAmount', 0))
+            if jupiter_out == 0:
+                logger.error("❌ Fresh forward quote has 0 output - aborting arbitrage")
+                return
+
             quote2 = await self.jupiter.get_quote(
                 token_out, token_in, jupiter_out, slippage_bps=self.arb_slippage_bps
             )
@@ -1328,14 +1297,20 @@ class SolanaArbitrageEngine:
                     # We MUST refresh quotes before attempting RPC fallback.
                     logger.warning("⚠️ Jito bundle failed - attempting RPC fallback with FRESH quotes")
 
-                    # Refresh quotes before RPC fallback
-                    fresh_quote1 = await self.jupiter.get_quote(token_in, token_out, amount)
+                    # Refresh quotes before RPC fallback with HIGHER slippage for volatile tokens
+                    # RPC execution is slower than Jito, so use 2x slippage to handle price movement
+                    rpc_slippage = min(self.arb_slippage_bps * 2, 500)  # Max 5% slippage
+                    fresh_quote1 = await self.jupiter.get_quote(
+                        token_in, token_out, amount, slippage_bps=rpc_slippage
+                    )
                     if not fresh_quote1:
                         logger.error(f"❌ [{in_symbol}/{out_symbol}] Failed to get fresh quote for RPC fallback")
                         return
 
                     fresh_out = int(fresh_quote1.get('outAmount', 0))
-                    fresh_quote2 = await self.jupiter.get_quote(token_out, token_in, fresh_out)
+                    fresh_quote2 = await self.jupiter.get_quote(
+                        token_out, token_in, fresh_out, slippage_bps=rpc_slippage
+                    )
                     if not fresh_quote2:
                         logger.error(f"❌ [{in_symbol}/{out_symbol}] Failed to get reverse quote for RPC fallback")
                         return
