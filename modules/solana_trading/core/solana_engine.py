@@ -2400,11 +2400,15 @@ class SolanaTradingEngine:
                     # This prevents buying tokens that can't be sold back
                     if self.safety_engine and self.jupiter_client:
                         logger.info(f"🔍 Verifying sell route for {token_symbol}...")
+                        # Get decimals from metadata or use default (9 for most modern tokens)
+                        token_decimals = metadata.get('decimals', 9) if metadata else 9
                         can_sell, reason = await self.safety_engine.verify_sell_route(
                             self.jupiter_client,
                             token_mint,
                             SOL_MINT,
-                            test_amount=1000000  # 1M tokens test
+                            test_amount=1000000,  # Base test amount (may be adjusted by price)
+                            token_price_usd=current_price,
+                            token_decimals=token_decimals
                         )
                         if not can_sell:
                             logger.error(f"🚫 HONEYPOT DETECTED: {token_symbol}")
@@ -2412,7 +2416,7 @@ class SolanaTradingEngine:
                             logger.error(f"   Token: {token_mint}")
                             logger.warning(f"   Skipping buy - cannot verify sell route")
                             return False
-                        logger.info(f"✅ Sell route verified for {token_symbol}")
+                        logger.info(f"✅ Sell route verified for {token_symbol}: {reason}")
 
                     # Get appropriate slippage for strategy
                     if self.safety_engine:

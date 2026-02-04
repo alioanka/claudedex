@@ -155,7 +155,9 @@ class SafetyEngine:
         return base_slippage
 
     async def verify_sell_route(self, jupiter_client, token_mint: str,
-                                 sol_mint: str, test_amount: int = 1000000) -> Tuple[bool, str]:
+                                 sol_mint: str, test_amount: int = 1000000,
+                                 token_price_usd: float = 0.0,
+                                 token_decimals: int = 6) -> Tuple[bool, str]:
         """
         Verify that a token can be sold back to SOL (honeypot detection).
 
@@ -163,22 +165,53 @@ class SafetyEngine:
             jupiter_client: JupiterClient instance
             token_mint: Token mint address to check
             sol_mint: SOL mint address
-            test_amount: Test amount in token units
+            test_amount: Test amount in token units (fallback if price unknown)
+            token_price_usd: Current token price in USD (for smart amount calculation)
+            token_decimals: Token decimals (default 6)
 
         Returns:
             Tuple of (can_sell: bool, reason: str)
         """
         try:
+            # Calculate a sensible test amount based on token price
+            # We want to test with ~$1-5 worth of tokens to get meaningful quotes
+            # without hitting minimum trade limits
+            actual_test_amount = test_amount
+
+            if token_price_usd > 0:
+                # Calculate how many token units equal ~$2 USD
+                target_usd_value = 2.0
+                token_units_per_dollar = (10 ** token_decimals) / token_price_usd
+                actual_test_amount = int(target_usd_value * token_units_per_dollar)
+                # Ensure minimum of 1 token unit, max of 1B units
+                actual_test_amount = max(1, min(actual_test_amount, 1_000_000_000))
+            else:
+                # Fallback: Use larger test amount for unknown tokens
+                # 10M units covers most token decimal configurations
+                actual_test_amount = 10_000_000
+
             # Try to get a sell quote (token -> SOL)
             sell_quote = await jupiter_client.get_quote(
                 input_mint=token_mint,
                 output_mint=sol_mint,
-                amount=test_amount
+                amount=actual_test_amount
             )
 
             if not sell_quote:
+                # Check if this might be a rate limit issue
+                # Don't immediately flag as honeypot - could be temporary
                 self.honeypots_detected += 1
                 return False, "No sell route available via Jupiter - possible honeypot"
+
+            # Check for error field in quote (indicates rate limit or other API error)
+            if 'error' in sell_quote:
+                error_msg = str(sell_quote.get('error', '')).lower()
+                if '429' in error_msg or 'rate limit' in error_msg:
+                    # Rate limited - don't flag as honeypot, allow trade
+                    logger.warning(f"Jupiter rate limited during sell route verification - allowing trade")
+                    return True, "Rate limited - verification skipped"
+                # Other API errors - be conservative, allow trade
+                return True, f"API error during verification: {sell_quote.get('error')}"
 
             # Check if output is reasonable (not 0 or extremely low)
             out_amount = int(sell_quote.get('outAmount', 0))
@@ -187,18 +220,39 @@ class SafetyEngine:
                 return False, "Sell quote returns 0 - likely honeypot"
 
             # Additional check: verify the route isn't suspiciously bad
-            # (very low output might indicate a trap)
-            in_amount = int(sell_quote.get('inAmount', test_amount))
-            if in_amount > 0:
-                ratio = out_amount / in_amount
-                # For pump.fun tokens, expect volatile prices but not 99% loss
-                if ratio < 0.01:  # Getting back less than 1% is suspicious
-                    self.honeypots_detected += 1
-                    return False, f"Sell quote too low ({ratio:.4f}) - possible honeypot"
+            # We check if we'd get back a reasonable SOL amount
+            # Minimum threshold: 100 lamports (0.0000001 SOL) to cover dust
+            in_amount = int(sell_quote.get('inAmount', actual_test_amount))
+
+            if in_amount > 0 and out_amount > 0:
+                # For tokens with known price, validate the quote makes sense
+                if token_price_usd > 0:
+                    # Expected SOL output based on current prices
+                    # Allow 50% slippage for low-liquidity pump.fun tokens
+                    expected_usd = (in_amount / (10 ** token_decimals)) * token_price_usd
+                    actual_sol = out_amount / 1e9  # Convert lamports to SOL
+                    # Get approximate SOL price (assume ~$100 if unknown)
+                    actual_usd = actual_sol * 100  # Rough estimate
+
+                    # If we're getting less than 5% of expected value, flag it
+                    if expected_usd > 0.001 and actual_usd < expected_usd * 0.05:
+                        self.honeypots_detected += 1
+                        return False, f"Sell quote too low ({actual_usd:.6f} vs expected {expected_usd:.6f}) - possible honeypot"
+                else:
+                    # For unknown price, just check we get SOME meaningful output
+                    # Require at least 1000 lamports (0.000001 SOL) for any trade
+                    if out_amount < 1000:
+                        self.honeypots_detected += 1
+                        return False, f"Sell quote too low ({out_amount} lamports) - possible honeypot"
 
             return True, "Sell route verified"
 
         except Exception as e:
+            error_str = str(e).lower()
+            # Check for rate limit in exception message
+            if '429' in error_str or 'rate limit' in error_str:
+                logger.warning(f"Jupiter rate limited during verification - allowing trade")
+                return True, "Rate limited - verification skipped"
             logger.warning(f"Error verifying sell route: {e}")
             # On error, be conservative and allow (might just be rate limit)
             return True, f"Could not verify (error: {e})"

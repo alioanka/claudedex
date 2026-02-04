@@ -95,6 +95,7 @@ class RateLimiter:
         self.min_interval = 1.0 / requests_per_second
         self.last_request_time: Optional[datetime] = None
         self._lock = asyncio.Lock()
+        self._consecutive_429s = 0
 
     async def acquire(self):
         async with self._lock:
@@ -104,6 +105,15 @@ class RateLimiter:
                 if elapsed < self.min_interval:
                     await asyncio.sleep(self.min_interval - elapsed)
             self.last_request_time = datetime.now()
+
+    def record_success(self) -> None:
+        """Record a successful request and reset backoff counter."""
+        self._consecutive_429s = 0
+
+    def record_429(self) -> float:
+        """Record a 429 error and return backoff time."""
+        self._consecutive_429s += 1
+        return min(2.0 * (2 ** (self._consecutive_429s - 1)), 60.0)
 
 
 class JupiterClient:
@@ -1617,20 +1627,31 @@ class SolanaArbitrageEngine:
             logger.error(f"Transaction signing failed: {e}")
             return None
 
-    async def _wait_for_tx_confirmation(self, signature: str, session, timeout: float = 30.0) -> bool:
+    async def _wait_for_tx_confirmation(self, signature: str, session, timeout: float = None) -> bool:
         """
-        Wait for a transaction to be confirmed.
+        Wait for a transaction to be confirmed with robust error handling.
 
         Args:
             signature: Transaction signature
             session: aiohttp session
-            timeout: Maximum time to wait in seconds
+            timeout: Maximum time to wait in seconds (default: TX_CONFIRM_TIMEOUT env or 60s)
 
         Returns:
             True if confirmed, False otherwise
         """
         import time
+        import os
+
+        # Configurable timeout - default 60s for arbitrage (faster than trading)
+        if timeout is None:
+            timeout = float(os.getenv('ARB_TX_CONFIRM_TIMEOUT', '60'))
+
         start_time = time.time()
+        poll_interval = 1.0  # Start with 1s polling
+        max_poll_interval = 4.0  # Cap at 4s
+        consecutive_errors = 0
+        max_consecutive_errors = 5
+        current_rpc = self.rpc_url
 
         while time.time() - start_time < timeout:
             try:
@@ -1641,7 +1662,11 @@ class SolanaArbitrageEngine:
                     "params": [[signature], {"searchTransactionHistory": True}]
                 }
 
-                async with session.post(self.rpc_url, json=payload) as resp:
+                async with session.post(
+                    current_rpc,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
                     if resp.status == 200:
                         result = await resp.json()
                         statuses = result.get('result', {}).get('value', [])
@@ -1649,15 +1674,52 @@ class SolanaArbitrageEngine:
                             status = statuses[0]
                             confirmation = status.get('confirmationStatus')
                             if confirmation in ['confirmed', 'finalized']:
+                                logger.debug(f"TX confirmed ({confirmation}): {signature[:16]}...")
                                 return True
                             if status.get('err'):
                                 logger.error(f"Transaction failed on-chain: {status['err']}")
                                 return False
+                            # Transaction found but not confirmed yet
+                            if confirmation == 'processed':
+                                logger.debug(f"TX processed, awaiting confirmation...")
+                        consecutive_errors = 0  # Reset on success
+
+                    elif resp.status == 429:
+                        # RPC rate limited
+                        logger.debug(f"RPC rate limited during confirmation")
+                        consecutive_errors += 1
+                        poll_interval = min(poll_interval * 1.5, max_poll_interval)
+
+                    else:
+                        logger.debug(f"RPC returned {resp.status}")
+                        consecutive_errors += 1
+
+            except asyncio.TimeoutError:
+                logger.debug(f"RPC timeout during confirmation check")
+                consecutive_errors += 1
+
             except Exception as e:
                 logger.debug(f"Confirmation check error: {e}")
+                consecutive_errors += 1
 
-            await asyncio.sleep(1)
+            # Try rotating RPC if too many errors
+            if consecutive_errors >= max_consecutive_errors:
+                try:
+                    from config.rpc_provider import RPCProvider
+                    new_rpc = RPCProvider.get_rpc_sync('SOLANA_RPC')
+                    if new_rpc and new_rpc != current_rpc:
+                        logger.debug(f"Rotating RPC for confirmation...")
+                        current_rpc = new_rpc
+                        consecutive_errors = 0
+                except Exception:
+                    pass
 
+            await asyncio.sleep(poll_interval)
+            if consecutive_errors > 0:
+                poll_interval = min(poll_interval * 1.2, max_poll_interval)
+
+        elapsed = time.time() - start_time
+        logger.warning(f"TX confirmation timeout after {elapsed:.1f}s: {signature[:16]}...")
         return False
 
     async def _submit_via_rpc(self, tx1_signed: str, tx2_signed: str) -> Optional[str]:
