@@ -550,7 +550,14 @@ class ArbitrageEngine:
 
         self.private_key = None  # Loaded in initialize() from secrets manager
         self.wallet_address = None  # Loaded in initialize() from secrets manager
-        self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
+
+        # dry_run: Priority is database config > environment variable
+        # This allows dashboard settings to override .env
+        db_dry_run = config.get('dry_run')
+        if db_dry_run is not None:
+            self.dry_run = db_dry_run if isinstance(db_dry_run, bool) else str(db_dry_run).lower() in ('true', '1', 'yes')
+        else:
+            self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
         self.router_contracts = {}
 
