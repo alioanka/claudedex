@@ -310,6 +310,14 @@ class JitoClient:
         "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT",
     ]
 
+    # Global rate limit - Jito has strict limits across ALL endpoints
+    # These are NOT independent - hitting one affects all
+    # Free tier is approximately 1-2 bundles per 10 seconds
+    _global_last_request_time = 0.0
+    _global_backoff_until = 0.0
+    _global_consecutive_429s = 0
+    MIN_REQUEST_INTERVAL = 5.0  # Minimum 5 seconds between bundle requests
+
     def __init__(self):
         self.session: Optional[aiohttp.ClientSession] = None
         self.keypair = None  # Set during initialization
@@ -324,6 +332,7 @@ class JitoClient:
         self.session = aiohttp.ClientSession(timeout=timeout)
         self.keypair = keypair
         logger.info(f"   Jito endpoint: {self.primary_endpoint}")
+        logger.info(f"   Jito rate limit: {self.MIN_REQUEST_INTERVAL}s between bundles")
 
     async def close(self):
         if self.session:
@@ -333,6 +342,25 @@ class JitoClient:
         """Rotate through Jito endpoints for load balancing"""
         self.current_endpoint_idx = (self.current_endpoint_idx + 1) % len(self.JITO_ENDPOINTS)
         return self.JITO_ENDPOINTS[self.current_endpoint_idx]
+
+    def _handle_rate_limit(self, source: str):
+        """
+        Handle rate limit by setting global backoff.
+
+        Jito's rate limits are GLOBAL across all endpoints, so we need to
+        back off from ALL endpoints when any one returns 429.
+        """
+        import time
+
+        JitoClient._global_consecutive_429s += 1
+
+        # Exponential backoff: 10s, 20s, 40s, 60s (max)
+        backoff_seconds = min(10 * (2 ** (JitoClient._global_consecutive_429s - 1)), 60)
+        JitoClient._global_backoff_until = time.time() + backoff_seconds
+
+        logger.warning(f"⚠️ Jito rate limited ({source}): "
+                      f"429 #{JitoClient._global_consecutive_429s}, "
+                      f"global backoff {backoff_seconds}s")
 
     async def send_bundle(self, transactions: List[str], tip_lamports: int = 10000) -> Optional[str]:
         """
@@ -348,12 +376,24 @@ class JitoClient:
         """
         import time
 
-        # Check if we're in backoff period from previous 429
         now = time.time()
-        if self._backoff_seconds > 0 and (now - self._last_429_time) < self._backoff_seconds:
-            remaining = self._backoff_seconds - (now - self._last_429_time)
-            logger.warning(f"⏳ Jito backoff: {remaining:.1f}s remaining")
+
+        # GLOBAL RATE LIMIT CHECK - Jito limits are SHARED across ALL endpoints
+        # Check if we're in global backoff period
+        if JitoClient._global_backoff_until > now:
+            remaining = JitoClient._global_backoff_until - now
+            logger.warning(f"⏳ Jito GLOBAL backoff: {remaining:.1f}s remaining (after {JitoClient._global_consecutive_429s} 429s)")
             return None
+
+        # Enforce minimum interval between requests
+        time_since_last = now - JitoClient._global_last_request_time
+        if time_since_last < self.MIN_REQUEST_INTERVAL:
+            wait_time = self.MIN_REQUEST_INTERVAL - time_since_last
+            logger.info(f"⏳ Jito rate limit: waiting {wait_time:.1f}s before next bundle")
+            await asyncio.sleep(wait_time)
+            now = time.time()
+
+        JitoClient._global_last_request_time = now
 
         # CRITICAL: Jito sendBundle requires encoding specification
         # Without this, Jito may fail to decode base64 transactions
@@ -367,10 +407,12 @@ class JitoClient:
             ]
         }
 
-        # Try primary endpoint first, then failover to others
-        endpoints_to_try = [self.primary_endpoint] + [e for e in self.JITO_ENDPOINTS if e != self.primary_endpoint]
+        # Try primary endpoint first, then ONE failover only
+        # IMPORTANT: Jito endpoints share rate limits globally, so trying many endpoints
+        # when rate limited just burns through all of them and extends the cooldown
+        endpoints_to_try = [self.primary_endpoint, self._get_next_endpoint()]
 
-        for endpoint in endpoints_to_try[:3]:  # Try up to 3 endpoints
+        for i, endpoint in enumerate(endpoints_to_try):
             try:
                 async with self.session.post(
                     f"{endpoint}/api/v1/bundles",
@@ -383,7 +425,10 @@ class JitoClient:
                         if 'result' in result:
                             bundle_id = result.get('result')
                             logger.info(f"🛡️ Jito bundle submitted: {bundle_id}")
-                            self._backoff_seconds = 0  # Reset backoff on success
+
+                            # Reset global backoff on success
+                            JitoClient._global_consecutive_429s = 0
+                            JitoClient._global_backoff_until = 0
 
                             # CRITICAL: Verify bundle was actually landed on-chain
                             # Bundle ID != transaction success - must check status
@@ -400,24 +445,27 @@ class JitoClient:
                             error_code = error.get('code', 'N/A')
                             error_msg = error.get('message', 'Unknown error')
 
-                            # Check for rate limit error
+                            # Check for rate limit error in response body
                             if error_code == -32097 or 'rate limit' in error_msg.lower():
-                                logger.warning(f"⚠️ Jito rate limited on {endpoint[:30]}... waiting 2s before next")
-                                await asyncio.sleep(2)  # Wait before trying next endpoint
-                                continue
+                                self._handle_rate_limit("API error")
+                                if i < len(endpoints_to_try) - 1:
+                                    await asyncio.sleep(5)
+                                    continue
+                                return None
 
                             logger.error(f"❌ Jito bundle error: {error_msg}")
                             logger.error(f"   Error code: {error_code}")
                             return None
 
                     elif resp.status == 429:
-                        # Global rate limit - Jito endpoints share rate limits!
-                        # Add delay BEFORE trying next endpoint to avoid burning all endpoints
-                        self._last_429_time = time.time()
-                        self._backoff_seconds = min(self._backoff_seconds * 2 + 5, 60)
-                        logger.warning(f"⚠️ Jito 429 on {endpoint[:30]}... waiting 2s before next endpoint")
-                        await asyncio.sleep(2)  # Wait before trying next endpoint
-                        continue
+                        # GLOBAL rate limit - ALL Jito endpoints share the same limit!
+                        self._handle_rate_limit(f"HTTP 429 on {endpoint[:30]}")
+                        # Don't try next endpoint immediately - they ALL share the limit
+                        # Only try failover if this wasn't a repeated 429
+                        if JitoClient._global_consecutive_429s <= 2 and i < len(endpoints_to_try) - 1:
+                            await asyncio.sleep(5)  # Wait 5s before trying alternate
+                            continue
+                        return None
 
                     else:
                         # Log detailed error for debugging
@@ -1265,19 +1313,58 @@ class SolanaArbitrageEngine:
                     )
                 else:
                     # FALLBACK: Jito failed, try direct RPC submission
-                    logger.warning("⚠️ Jito bundle failed - falling back to direct RPC (front-run risk!)")
+                    # CRITICAL: After Jito attempts (can take 10+ seconds with rate limits),
+                    # the original quotes/transactions are STALE and will fail with 0x1789.
+                    # We MUST refresh quotes before attempting RPC fallback.
+                    logger.warning("⚠️ Jito bundle failed - attempting RPC fallback with FRESH quotes")
 
-                    # Submit transactions directly via RPC
-                    fallback_result = await self._submit_via_rpc(tx1_signed, tx2_signed)
+                    # Refresh quotes before RPC fallback
+                    fresh_quote1 = await self.jupiter.get_quote(token_in, token_out, amount)
+                    if not fresh_quote1:
+                        logger.error(f"❌ [{in_symbol}/{out_symbol}] Failed to get fresh quote for RPC fallback")
+                        return
+
+                    fresh_out = int(fresh_quote1.get('outAmount', 0))
+                    fresh_quote2 = await self.jupiter.get_quote(token_out, token_in, fresh_out)
+                    if not fresh_quote2:
+                        logger.error(f"❌ [{in_symbol}/{out_symbol}] Failed to get reverse quote for RPC fallback")
+                        return
+
+                    # Verify still profitable
+                    fresh_reverse_out = int(fresh_quote2.get('outAmount', 0))
+                    fresh_profit = (fresh_reverse_out - amount) / amount
+                    if fresh_profit < self.min_profit_threshold:
+                        logger.warning(f"⚠️ [{in_symbol}/{out_symbol}] No longer profitable for RPC fallback ({fresh_profit:.2%})")
+                        return
+
+                    logger.info(f"   📊 Fresh quotes for RPC: {fresh_profit:.2%} profit")
+
+                    # Create new swap transactions with fresh quotes
+                    fresh_swap1 = await self.jupiter.get_swap_transaction(fresh_quote1, self.wallet_address)
+                    fresh_swap2 = await self.jupiter.get_swap_transaction(fresh_quote2, self.wallet_address)
+                    if not fresh_swap1 or not fresh_swap2:
+                        logger.error("Failed to get fresh swap transactions for RPC fallback")
+                        return
+
+                    # Sign fresh transactions
+                    fresh_tx1 = await self._sign_transaction(fresh_swap1.get('swapTransaction'))
+                    fresh_tx2 = await self._sign_transaction(fresh_swap2.get('swapTransaction'))
+                    if not fresh_tx1 or not fresh_tx2:
+                        logger.error("Failed to sign fresh transactions for RPC fallback")
+                        return
+
+                    # Submit fresh transactions via RPC (front-run risk!)
+                    logger.warning("   ⚠️ Submitting via RPC (front-run risk!)")
+                    fallback_result = await self._submit_via_rpc(fresh_tx1, fresh_tx2)
                     if fallback_result:
                         logger.info(f"✅ Solana Arb executed via RPC fallback: {fallback_result}")
                         await self._log_trade(
                             in_symbol, out_symbol, token_in,
-                            amount, profit_pct, fallback_result,
-                            quote1.get('routePlan', [])
+                            amount, fresh_profit, fallback_result,
+                            fresh_quote1.get('routePlan', [])
                         )
                     else:
-                        logger.error("❌ Both Jito and RPC fallback failed")
+                        logger.error("❌ RPC fallback also failed")
             else:
                 # Direct execution (Jito disabled)
                 logger.warning("Direct execution - Jito disabled, front-run risk!")

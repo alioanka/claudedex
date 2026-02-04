@@ -583,7 +583,7 @@ class ArbitrageEngine:
 
         # Visibility logging - track spreads even when not executing
         self._last_spread_log_time = None
-        self._best_spread_seen = 0.0
+        self._best_spread_seen = -999.0  # Start negative so we track even negative spreads
         self._best_spread_pair = ""
         self._total_pairs_scanned = 0
         self._pairs_with_liquidity = 0
@@ -821,12 +821,15 @@ class ArbitrageEngine:
                        f"Opportunities: {self._stats['opportunities_found']} | "
                        f"Executed: {self._stats['opportunities_executed']}")
 
-            # Log best spread seen (even if below threshold)
-            if self._best_spread_seen > 0:
+            # Log best spread seen (even if negative)
+            if self._best_spread_seen > -999.0:  # -999 is initial value, means no spreads checked
                 status = "✅ ABOVE" if self._best_spread_seen > self.min_profit_threshold else "❌ BELOW"
-                logger.info(f"   Best spread: {self._best_spread_seen:.4%} on {self._best_spread_pair} ({status} threshold {self.min_profit_threshold:.2%})")
+                sign = "+" if self._best_spread_seen >= 0 else ""
+                logger.info(f"   Best spread: {sign}{self._best_spread_seen:.4%} on {self._best_spread_pair} ({status} threshold {self.min_profit_threshold:.2%})")
+                if self._best_spread_seen < 0:
+                    logger.info(f"   ⚠️ All spreads are NEGATIVE - arbitrage not profitable on current DEXs")
             else:
-                logger.info(f"   No spreads found - check RPC connection and DEX liquidity")
+                logger.info(f"   No spreads calculated - check RPC connection and DEX liquidity")
 
             # Reset stats
             self._stats = {
@@ -835,7 +838,7 @@ class ArbitrageEngine:
                 'opportunities_executed': 0,
                 'last_stats_log': now
             }
-            self._best_spread_seen = 0.0
+            self._best_spread_seen = -999.0  # Start negative so we track even negative spreads
             self._best_spread_pair = ""
             self._total_pairs_scanned = 0
             self._pairs_with_liquidity = 0
