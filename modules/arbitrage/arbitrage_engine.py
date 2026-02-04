@@ -849,13 +849,17 @@ class ArbitrageEngine:
             self._total_pairs_scanned += 1
             amount_in = self.flash_loan_amount  # Use configured flash loan amount
 
+            # Ensure addresses are checksummed for web3.py compatibility
+            token_in_checksum = Web3.to_checksum_address(token_in)
+            token_out_checksum = Web3.to_checksum_address(token_out)
+
             # Query BOTH directions on all DEXs to find real arbitrage opportunities
             # Forward direction: token_in → token_out (first leg of arbitrage)
             forward_prices = {}
             forward_errors = {}
             for name, contract in self.router_contracts.items():
                 try:
-                    amounts = contract.functions.getAmountsOut(amount_in, [token_in, token_out]).call()
+                    amounts = contract.functions.getAmountsOut(amount_in, [token_in_checksum, token_out_checksum]).call()
                     forward_prices[name] = amounts[1]
                 except Exception as e:
                     # Track errors for diagnostic logging
@@ -887,7 +891,7 @@ class ArbitrageEngine:
                 if name == best_buy_dex:
                     continue  # Skip same DEX - no arbitrage within same DEX
                 try:
-                    amounts = contract.functions.getAmountsOut(forward_output, [token_out, token_in]).call()
+                    amounts = contract.functions.getAmountsOut(forward_output, [token_out_checksum, token_in_checksum]).call()
                     reverse_outputs[name] = amounts[1]
                 except Exception:
                     pass
