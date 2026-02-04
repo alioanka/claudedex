@@ -25,56 +25,40 @@ logger = logging.getLogger(__name__)
 
 class RateLimiter:
     """
-    Simple rate limiter to prevent hitting Jupiter 429 errors.
-    Uses token bucket algorithm with configurable RPS.
+    DEPRECATED: Local rate limiter - use SharedJupiterRateLimiter instead.
+    Kept for backwards compatibility.
     """
 
     def __init__(self, requests_per_second: float = 0.8):
-        """
-        Initialize rate limiter.
-
-        Args:
-            requests_per_second: Max RPS (default 0.8 to stay under 1 RPS lite limit)
-        """
         self.rps = requests_per_second
         self.min_interval = 1.0 / requests_per_second
         self.last_request_time = 0.0
         self._lock = asyncio.Lock()
-
-        # Adaptive backoff for 429 errors
         self.consecutive_429s = 0
-        self.base_backoff = 2.0  # Start with 2 second backoff
-        self.max_backoff = 60.0  # Cap at 60 seconds
+        self.base_backoff = 2.0
+        self.max_backoff = 60.0
 
     async def acquire(self):
-        """Wait until we can make a request without exceeding rate limit."""
         async with self._lock:
             now = time.time()
             time_since_last = now - self.last_request_time
-
-            # Calculate required wait time
             if time_since_last < self.min_interval:
                 wait_time = self.min_interval - time_since_last
                 await asyncio.sleep(wait_time)
-
             self.last_request_time = time.time()
 
     def record_429(self):
-        """Record a 429 error and increase backoff."""
         self.consecutive_429s += 1
-        # Exponential backoff: 2s, 4s, 8s, 16s, 32s, 60s (max)
         backoff = min(self.base_backoff * (2 ** (self.consecutive_429s - 1)), self.max_backoff)
         logger.warning(f"⏱️ Rate limit hit #{self.consecutive_429s}, backing off {backoff:.1f}s")
         return backoff
 
     def record_success(self):
-        """Record a successful request and reset backoff."""
         if self.consecutive_429s > 0:
             logger.info(f"✅ Rate limit recovered after {self.consecutive_429s} 429s")
         self.consecutive_429s = 0
 
     def get_current_backoff(self) -> float:
-        """Get current backoff time based on 429 history."""
         if self.consecutive_429s == 0:
             return 0.0
         return min(self.base_backoff * (2 ** (self.consecutive_429s - 1)), self.max_backoff)
@@ -172,11 +156,17 @@ class JupiterHelper:
         self.session: Optional[aiohttp.ClientSession] = None
 
         # Rate limiter for Jupiter API
-        # Lite API is 1 RPS, we use 0.8 to stay safely under
-        # Can be overridden via JUPITER_RPS env var
-        rps = float(os.getenv('JUPITER_RPS', '0.8'))
-        self.rate_limiter = RateLimiter(requests_per_second=rps)
-        logger.info(f"   🚦 Jupiter rate limiter: {rps} RPS")
+        # Use SHARED global rate limiter to coordinate with other modules
+        # (Solana Arbitrage, etc.) and prevent exceeding Jupiter's 1 RPS limit
+        try:
+            from config.jupiter_rate_limiter import SharedJupiterRateLimiter
+            self.rate_limiter = SharedJupiterRateLimiter(caller="SolanaTrading")
+            logger.info(f"   🚦 Using shared global Jupiter rate limiter")
+        except ImportError:
+            # Fallback to local rate limiter (not recommended)
+            rps = float(os.getenv('JUPITER_RPS', '0.8'))
+            self.rate_limiter = RateLimiter(requests_per_second=rps)
+            logger.warning(f"   ⚠️ Global rate limiter unavailable, using local limiter: {rps} RPS")
 
     def _load_keypair_from_value(self, pk_str: str) -> Optional[Keypair]:
         """

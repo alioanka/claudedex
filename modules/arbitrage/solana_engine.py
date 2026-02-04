@@ -85,7 +85,11 @@ RAYDIUM_API = "https://api.raydium.io/v2"
 
 
 class RateLimiter:
-    """Simple rate limiter to prevent API rate limit errors"""
+    """
+    Simple rate limiter - DEPRECATED for Jupiter API.
+    Use SharedJupiterRateLimiter from config.jupiter_rate_limiter instead.
+    Kept for backwards compatibility with non-Jupiter APIs.
+    """
 
     def __init__(self, requests_per_second: float = 2.0):
         self.min_interval = 1.0 / requests_per_second
@@ -103,13 +107,23 @@ class RateLimiter:
 
 
 class JupiterClient:
-    """Jupiter Aggregator API client with rate limiting"""
+    """Jupiter Aggregator API client with SHARED global rate limiting"""
 
     def __init__(self, rate_limit: float = 2.0):
         self.base_url = JUPITER_API
         self.session: Optional[aiohttp.ClientSession] = None
-        # Rate limit from config (default 2 req/sec)
-        self.rate_limiter = RateLimiter(rate_limit)
+
+        # Use SHARED global rate limiter to coordinate with other modules
+        # This prevents combined module RPS from exceeding Jupiter's 1 RPS limit
+        try:
+            from config.jupiter_rate_limiter import SharedJupiterRateLimiter
+            self.rate_limiter = SharedJupiterRateLimiter(caller="SolanaArbitrage")
+            logger.info("   🚦 Using shared global Jupiter rate limiter")
+        except ImportError:
+            # Fallback to local rate limiter (not recommended)
+            logger.warning("   ⚠️ Global rate limiter unavailable, using local limiter")
+            self.rate_limiter = RateLimiter(rate_limit)
+
         self._consecutive_errors = 0
         self._backoff_until: Optional[datetime] = None
 
@@ -126,7 +140,7 @@ class JupiterClient:
         input_mint: str,
         output_mint: str,
         amount: int,
-        slippage_bps: int = 50
+        slippage_bps: int = 150  # Increased from 50 to 150 bps (1.5%) for arbitrage
     ) -> Optional[Dict]:
         """
         Get quote from Jupiter aggregator.
@@ -157,11 +171,14 @@ class JupiterClient:
             async with self.session.get(f"{self.base_url}/quote", params=params) as resp:
                 if resp.status == 200:
                     self._consecutive_errors = 0
+                    self.rate_limiter.record_success()
                     data = await resp.json()
                     # Check for error in response
                     if 'error' in data:
                         logger.warning(f"Jupiter API error: {data.get('error')}")
                         return None
+                    # Add timestamp for quote freshness validation
+                    data['_quote_timestamp'] = datetime.now().timestamp()
                     return data
                 elif resp.status == 429:
                     # Rate limited - exponential backoff
@@ -1057,6 +1074,50 @@ class SolanaArbitrageEngine:
         profit_pct: float
     ):
         """Execute arbitrage trade"""
+        import time
+
+        # QUOTE FRESHNESS VALIDATION
+        # Jupiter quotes expire quickly (10-30 seconds). Stale quotes cause 0x1789 errors.
+        MAX_QUOTE_AGE_SECONDS = 5.0  # Max 5 seconds old
+
+        quote1_timestamp = quote1.get('_quote_timestamp', 0)
+        quote2_timestamp = quote2.get('_quote_timestamp', 0)
+        now = time.time()
+
+        quote1_age = now - quote1_timestamp
+        quote2_age = now - quote2_timestamp
+
+        if quote1_age > MAX_QUOTE_AGE_SECONDS or quote2_age > MAX_QUOTE_AGE_SECONDS:
+            logger.warning(f"⚠️ [{in_symbol}/{out_symbol}] Quotes too stale (age: {quote1_age:.1f}s, {quote2_age:.1f}s) - refreshing...")
+
+            # Refresh quotes before execution
+            fresh_quote1 = await self.jupiter.get_quote(token_in, token_out, amount)
+            if not fresh_quote1:
+                logger.error(f"❌ [{in_symbol}/{out_symbol}] Failed to refresh forward quote")
+                return
+
+            fresh_out = int(fresh_quote1.get('outAmount', 0))
+            if fresh_out == 0:
+                logger.error(f"❌ [{in_symbol}/{out_symbol}] Fresh forward quote has 0 output")
+                return
+
+            fresh_quote2 = await self.jupiter.get_quote(token_out, token_in, fresh_out)
+            if not fresh_quote2:
+                logger.error(f"❌ [{in_symbol}/{out_symbol}] Failed to refresh reverse quote")
+                return
+
+            # Recalculate profit with fresh quotes
+            fresh_reverse_out = int(fresh_quote2.get('outAmount', 0))
+            fresh_profit_pct = (fresh_reverse_out - amount) / amount
+
+            # Check if still profitable after refresh
+            if fresh_profit_pct < self.min_profit_threshold:
+                logger.warning(f"⚠️ [{in_symbol}/{out_symbol}] No longer profitable after refresh ({fresh_profit_pct:.2%} < {self.min_profit_threshold:.2%})")
+                return
+
+            logger.info(f"✅ [{in_symbol}/{out_symbol}] Refreshed quotes: {profit_pct:.2%} → {fresh_profit_pct:.2%}")
+            quote1, quote2, profit_pct = fresh_quote1, fresh_quote2, fresh_profit_pct
+
         logger.info(f"⚡ Executing Solana Arbitrage [{in_symbol}/{out_symbol}] | Expected: +{profit_pct:.2%}")
 
         if self.dry_run:
@@ -1078,7 +1139,8 @@ class SolanaArbitrageEngine:
                 logger.error("No Solana private key configured - cannot sign transactions")
                 return
 
-            # Get swap transactions
+            # Get swap transactions with increased slippage to handle 0x1789 errors
+            # Note: Slippage is set in get_quote (150 bps = 1.5%)
             swap1 = await self.jupiter.get_swap_transaction(quote1, self.wallet_address)
             swap2 = await self.jupiter.get_swap_transaction(quote2, self.wallet_address)
 
