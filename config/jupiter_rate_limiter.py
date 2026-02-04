@@ -9,7 +9,6 @@ that combined module usage stays within that limit.
 """
 import asyncio
 import time
-import os
 import logging
 from typing import Optional
 from datetime import datetime, timedelta
@@ -44,9 +43,8 @@ class GlobalJupiterRateLimiter:
             return
 
         # Jupiter lite-api.jup.ag limit is 1 RPS
-        # Use 0.9 to stay safely under the limit
-        # Can be overridden via JUPITER_GLOBAL_RPS env var
-        self.rps = float(os.getenv('JUPITER_GLOBAL_RPS', '0.9'))
+        # Use 0.8 to stay safely under the limit (leaves margin for burst)
+        self.rps = 0.8
         self.min_interval = 1.0 / self.rps
         self.last_request_time = 0.0
         self._lock = asyncio.Lock()

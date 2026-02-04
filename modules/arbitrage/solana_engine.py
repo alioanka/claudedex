@@ -191,11 +191,12 @@ class JupiterClient:
                     data['_quote_timestamp'] = datetime.now().timestamp()
                     return data
                 elif resp.status == 429:
-                    # Rate limited - exponential backoff
+                    # Rate limited - notify global rate limiter for coordinated backoff
                     self._consecutive_errors += 1
-                    backoff_seconds = min(60, 2 ** self._consecutive_errors)
+                    # Use the shared rate limiter's backoff mechanism
+                    backoff_seconds = self.rate_limiter.record_429()
                     self._backoff_until = datetime.now() + timedelta(seconds=backoff_seconds)
-                    logger.warning(f"⚠️ Jupiter rate limited (429) - backing off {backoff_seconds}s")
+                    logger.warning(f"⚠️ Jupiter rate limited (429) - backing off {backoff_seconds:.0f}s")
                     return None
                 elif resp.status == 400:
                     # Bad request - likely invalid token pair or amount
