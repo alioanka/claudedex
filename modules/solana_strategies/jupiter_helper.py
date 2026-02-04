@@ -783,7 +783,7 @@ class JupiterHelper:
 
         Args:
             signature: Transaction signature
-            timeout: Timeout in seconds (default: TX_CONFIRM_TIMEOUT env or 90s)
+            timeout: Timeout in seconds (default: 90s)
             commitment: Commitment level
 
         Returns:
@@ -793,9 +793,9 @@ class JupiterHelper:
             if not self.solana_rpc or not self.session:
                 return False
 
-            # Configurable timeout - default 90s for congested networks
+            # Default 90s timeout for congested networks
             if timeout is None:
-                timeout = int(os.getenv('TX_CONFIRM_TIMEOUT', '90'))
+                timeout = 90
 
             start_time = time.monotonic()
             poll_interval = 1.5  # Start with 1.5s polling

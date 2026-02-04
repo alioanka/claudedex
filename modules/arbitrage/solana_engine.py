@@ -1634,17 +1634,16 @@ class SolanaArbitrageEngine:
         Args:
             signature: Transaction signature
             session: aiohttp session
-            timeout: Maximum time to wait in seconds (default: TX_CONFIRM_TIMEOUT env or 60s)
+            timeout: Maximum time to wait in seconds (default: 60s)
 
         Returns:
             True if confirmed, False otherwise
         """
         import time
-        import os
 
-        # Configurable timeout - default 60s for arbitrage (faster than trading)
+        # Default 60s timeout for arbitrage (faster than trading)
         if timeout is None:
-            timeout = float(os.getenv('ARB_TX_CONFIRM_TIMEOUT', '60'))
+            timeout = 60.0
 
         start_time = time.time()
         poll_interval = 1.0  # Start with 1s polling
