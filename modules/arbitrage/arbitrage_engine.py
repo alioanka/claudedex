@@ -849,6 +849,9 @@ class EVMArbitrageEngine:
             'last_stats_log': datetime.now()
         }
 
+        # Telegram alerts - initialized in initialize() method
+        self.telegram_alerts = None
+
     async def _get_decrypted_key(self, key_name: str) -> Optional[str]:
         """
         Get decrypted private key from secrets manager or environment.
@@ -1047,6 +1050,16 @@ class EVMArbitrageEngine:
         self.logger.info(f"   Mode: {'DRY_RUN (Simulated)' if self.dry_run else 'LIVE TRADING'}")
         self.logger.info(f"   Flash Loans: {'Enabled' if self.flash_loan_executor else 'Disabled'}")
         self.logger.info(f"   Flashbots: {'Enabled' if self.flashbots_executor else 'Disabled'}")
+
+        # Initialize Telegram alerts for arbitrage notifications
+        try:
+            from arbitrage.arbitrage_alerts import ArbitrageTelegramAlerts, ArbitrageChain
+            self.telegram_alerts = ArbitrageTelegramAlerts()
+            if self.telegram_alerts.enabled:
+                self.logger.info(f"📱 Telegram alerts enabled for {self.chain_name.upper()} arbitrage")
+        except Exception as e:
+            self.logger.warning(f"Telegram alerts not available: {e}")
+            self.telegram_alerts = None
 
     async def run(self):
         self.is_running = True
@@ -1373,9 +1386,21 @@ class EVMArbitrageEngine:
                 await self._log_arb_trade(buy_dex, sell_dex, token_in, amount, expected_profit, tx_hash, token_symbol)
             else:
                 self.logger.error(f"❌ [{self.chain_name.upper()}] Arbitrage execution failed [{token_symbol}]")
+                # Send Telegram error alert for failed execution
+                await self._send_error_alert(
+                    error_type="Execution Failed",
+                    details=f"Flash swap failed for {token_symbol}\nBuy: {buy_dex} → Sell: {sell_dex}\nAmount: {amount/1e18:.4f} ETH",
+                    token_symbol=token_symbol
+                )
 
         except Exception as e:
             self.logger.error(f"Arbitrage execution error [{token_symbol}]: {e}")
+            # Send Telegram error alert for exception
+            await self._send_error_alert(
+                error_type="Execution Error",
+                details=f"Exception during arbitrage: {str(e)[:200]}",
+                token_symbol=token_symbol
+            )
 
     async def _execute_with_flash_loan(
         self,
@@ -1619,8 +1644,74 @@ class EVMArbitrageEngine:
                     })
                 )
             self.logger.debug(f"💾 Logged to arbitrage_trades: {trade_id} [{token_symbol}]")
+
+            # Send Telegram alert for successful trade
+            if self.telegram_alerts and self.telegram_alerts.enabled:
+                try:
+                    from arbitrage.arbitrage_alerts import ArbitrageTradeAlert, ArbitrageChain
+
+                    # Map chain name to ArbitrageChain enum
+                    chain_map = {
+                        'ethereum': ArbitrageChain.ETHEREUM,
+                        'arbitrum': ArbitrageChain.ARBITRUM,
+                        'base': ArbitrageChain.BASE,
+                    }
+                    chain = chain_map.get(self.chain_name, ArbitrageChain.ETHEREUM)
+
+                    alert = ArbitrageTradeAlert(
+                        chain=chain,
+                        token_symbol=token_symbol,
+                        buy_dex=buy_dex,
+                        sell_dex=sell_dex,
+                        amount=amount_eth,
+                        amount_usd=entry_usd,
+                        profit_pct=net_profit_pct * 100,
+                        profit_amount=net_profit_usd / eth_price if eth_price > 0 else 0,
+                        profit_usd=net_profit_usd,
+                        tx_hash=tx_hash,
+                        is_simulated=self.dry_run,
+                        gas_cost_usd=GAS_COST_USD,
+                        flash_loan_fee=flash_loan_cost,
+                    )
+                    await self.telegram_alerts.send_trade_alert(alert)
+                except Exception as tg_err:
+                    self.logger.debug(f"Telegram alert failed: {tg_err}")
+
         except Exception as e:
             self.logger.error(f"Error logging arb trade: {e}")
+
+    async def _send_error_alert(
+        self,
+        error_type: str,
+        details: str,
+        token_symbol: Optional[str] = None,
+        tx_hash: Optional[str] = None
+    ):
+        """Send Telegram error alert"""
+        if not self.telegram_alerts or not self.telegram_alerts.enabled:
+            return
+
+        try:
+            from arbitrage.arbitrage_alerts import ArbitrageErrorAlert, ArbitrageChain
+
+            # Map chain name to ArbitrageChain enum
+            chain_map = {
+                'ethereum': ArbitrageChain.ETHEREUM,
+                'arbitrum': ArbitrageChain.ARBITRUM,
+                'base': ArbitrageChain.BASE,
+            }
+            chain = chain_map.get(self.chain_name, ArbitrageChain.ETHEREUM)
+
+            alert = ArbitrageErrorAlert(
+                chain=chain,
+                error_type=error_type,
+                details=details,
+                token_symbol=token_symbol,
+                tx_hash=tx_hash
+            )
+            await self.telegram_alerts.send_error_alert(alert)
+        except Exception as e:
+            self.logger.debug(f"Failed to send error alert: {e}")
 
     async def stop(self):
         """Stop the engine"""
