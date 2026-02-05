@@ -1124,19 +1124,8 @@ class SolanaArbitrageEngine:
                     logger.warning(f"   Route: {route_str} - likely stale/manipulated price data")
                     return False
 
-                # CHECK JITO AVAILABILITY BEFORE ATTEMPTING EXECUTION
-                # If Jito is in backoff or rate limited, don't waste time getting swap txns
-                # The opportunity will likely be gone by the time Jito is available
-                if self.use_jito:
-                    jito_available, wait_seconds = JitoClient.is_available()
-                    if not jito_available:
-                        if wait_seconds > 5:
-                            # Log but don't execute - opportunity will be stale by time Jito is ready
-                            route_info = jupiter_quote.get('routePlan', [])
-                            route_str = " → ".join([r.get('swapInfo', {}).get('label', 'DEX') for r in route_info[:3]])
-                            logger.info(f"⏸️ OPPORTUNITY SKIPPED [{in_symbol}/{out_symbol}]: {profit_pct:.2%} | Jito unavailable ({wait_seconds:.0f}s remaining)")
-                            return True  # Return True to indicate we found an opportunity (for stats)
-                        # If wait is short (<5s), we can wait and try
+                # Note: We no longer skip opportunities when Jito is unavailable
+                # Instead, we fall back to direct RPC execution in _execute_arbitrage
 
                 # Check rate limiting
                 opp_key = f"{in_symbol}_{out_symbol}"
@@ -1298,8 +1287,16 @@ class SolanaArbitrageEngine:
                 logger.error("Failed to get swap transactions")
                 return
 
-            # If Jito is enabled, bundle both transactions with a tip
-            if self.use_jito and self.jito.session:
+            # Check Jito availability BEFORE building bundle
+            # If Jito is rate limited, skip directly to RPC to save time
+            jito_available, jito_wait = JitoClient.is_available() if self.use_jito else (False, 0)
+            use_jito_this_time = self.use_jito and self.jito.session and jito_available
+
+            if self.use_jito and not jito_available:
+                logger.info(f"⏩ Jito rate limited ({jito_wait:.0f}s wait) - using RPC directly")
+
+            # If Jito is available, try bundle submission
+            if use_jito_this_time:
                 tx1_unsigned = swap1.get('swapTransaction')
                 tx2_unsigned = swap2.get('swapTransaction')
 
@@ -1320,8 +1317,12 @@ class SolanaArbitrageEngine:
                     logger.error("Failed to get keypair for tip transaction")
                     return
 
-                # Use configurable tip amount (default 10000 lamports = 0.00001 SOL)
+                # Use configurable tip amount
+                # NOTE: 10,000 lamports ($0.002) is TOO LOW for competitive arbitrage
+                # Recommend 50,000-100,000 lamports ($0.01-0.02) minimum
                 tip_lamports = self.config.get('jito_tip_lamports', 10000)
+                if tip_lamports < 50000:
+                    logger.warning(f"⚠️ Jito tip {tip_lamports} lamports is low - consider 50,000+ for better success")
                 tip_tx = await self.jito.create_tip_transaction(keypair, tip_lamports)
 
                 if not tip_tx:
@@ -1402,8 +1403,10 @@ class SolanaArbitrageEngine:
                     else:
                         logger.error("❌ RPC fallback also failed")
             else:
-                # Direct execution (Jito disabled)
-                logger.warning("Direct execution - Jito disabled, front-run risk!")
+                # Direct RPC execution (Jito disabled OR rate limited)
+                # Use the quotes we already have since they're fresh (no Jito delay)
+                reason = "rate limited" if (self.use_jito and not jito_available) else "disabled"
+                logger.info(f"📡 Direct RPC execution (Jito {reason})")
 
                 tx1_unsigned = swap1.get('swapTransaction')
                 tx2_unsigned = swap2.get('swapTransaction')
