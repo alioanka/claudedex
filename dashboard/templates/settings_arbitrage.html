@@ -55,6 +55,8 @@
         font-size: 1.2rem;
     }
     .chain-icon.ethereum { background: linear-gradient(135deg, #627eea, #3c3c3d); color: white; }
+    .chain-icon.arbitrum { background: linear-gradient(135deg, #28a0f0, #1b4f72); color: white; }
+    .chain-icon.base { background: linear-gradient(135deg, #0052ff, #1652f0); color: white; }
     .chain-icon.solana { background: linear-gradient(135deg, #9945FF, #14F195); color: white; }
     .chain-icon.triangular { background: linear-gradient(135deg, #f59e0b, #ef4444); color: white; }
     .feature-badge {
@@ -326,6 +328,120 @@
                             <div class="token-tag">SHIB/WETH</div>
                             <div class="token-tag">PEPE/WETH</div>
                             <div class="token-tag">SUSHI/WETH</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Arbitrum Chain -->
+            <div class="chain-card">
+                <div class="chain-header">
+                    <div class="chain-icon arbitrum"><i class="fas fa-layer-group"></i></div>
+                    <div>
+                        <h5 class="mb-0">Arbitrum <span class="feature-badge badge-new">New</span></h5>
+                        <small class="text-muted">SushiSwap, Camelot, Uniswap V3 - 95% lower gas than ETH</small>
+                    </div>
+                    <div class="form-check form-switch ms-auto">
+                        <input class="form-check-input" type="checkbox" id="arbitrum_enabled">
+                        <label class="form-check-label" for="arbitrum_enabled">Enabled</label>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6 class="mb-3">DEX Selection</h6>
+                        <div class="mb-2 form-check">
+                            <input class="form-check-input" type="checkbox" id="arb_dex_sushiswap" checked>
+                            <label class="form-check-label">SushiSwap</label>
+                        </div>
+                        <div class="mb-2 form-check">
+                            <input class="form-check-input" type="checkbox" id="arb_dex_camelot" checked>
+                            <label class="form-check-label">Camelot DEX</label>
+                        </div>
+                        <div class="mb-2 form-check">
+                            <input class="form-check-input" type="checkbox" id="arb_dex_uniswap_v3" checked>
+                            <label class="form-check-label">Uniswap V3</label>
+                        </div>
+
+                        <h6 class="mt-4 mb-3">Flash Loan Contract</h6>
+                        <div class="mb-2">
+                            <input type="text" class="form-control form-control-sm" id="flash_loan_contract_arb" placeholder="0x... (deploy on Arbitrum)">
+                            <div class="form-text">Set FLASH_LOAN_RECEIVER_CONTRACT_ARB in .env</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="mb-3">Token Pairs (18 pairs)</h6>
+                        <div class="token-grid">
+                            <div class="token-tag">WETH/USDC</div>
+                            <div class="token-tag">WETH/USDT</div>
+                            <div class="token-tag">ARB/WETH</div>
+                            <div class="token-tag">ARB/USDC</div>
+                            <div class="token-tag">GMX/WETH</div>
+                            <div class="token-tag">MAGIC/WETH</div>
+                            <div class="token-tag">RDNT/WETH</div>
+                            <div class="token-tag">PENDLE/WETH</div>
+                            <div class="token-tag">LINK/WETH</div>
+                            <div class="token-tag">USDC/USDT</div>
+                        </div>
+                        <div class="alert alert-info mt-3 mb-0">
+                            <small><i class="fas fa-gas-pump me-1"></i> Gas: ~0.0005 ETH (~$1) per flash loan TX</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Base Chain -->
+            <div class="chain-card">
+                <div class="chain-header">
+                    <div class="chain-icon base"><i class="fas fa-cube"></i></div>
+                    <div>
+                        <h5 class="mb-0">Base <span class="feature-badge badge-new">New</span></h5>
+                        <small class="text-muted">Aerodrome, BaseSwap, Uniswap V3 - Coinbase L2</small>
+                    </div>
+                    <div class="form-check form-switch ms-auto">
+                        <input class="form-check-input" type="checkbox" id="base_enabled">
+                        <label class="form-check-label" for="base_enabled">Enabled</label>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6 class="mb-3">DEX Selection</h6>
+                        <div class="mb-2 form-check">
+                            <input class="form-check-input" type="checkbox" id="base_dex_aerodrome" checked>
+                            <label class="form-check-label">Aerodrome</label>
+                        </div>
+                        <div class="mb-2 form-check">
+                            <input class="form-check-input" type="checkbox" id="base_dex_baseswap" checked>
+                            <label class="form-check-label">BaseSwap</label>
+                        </div>
+                        <div class="mb-2 form-check">
+                            <input class="form-check-input" type="checkbox" id="base_dex_uniswap_v3" checked>
+                            <label class="form-check-label">Uniswap V3</label>
+                        </div>
+
+                        <h6 class="mt-4 mb-3">Flash Loan Contract</h6>
+                        <div class="mb-2">
+                            <input type="text" class="form-control form-control-sm" id="flash_loan_contract_base" placeholder="0x... (deploy on Base)">
+                            <div class="form-text">Set FLASH_LOAN_RECEIVER_CONTRACT_BASE in .env</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="mb-3">Token Pairs (12 pairs)</h6>
+                        <div class="token-grid">
+                            <div class="token-tag">WETH/USDC</div>
+                            <div class="token-tag">WETH/USDbC</div>
+                            <div class="token-tag">cbETH/WETH</div>
+                            <div class="token-tag">rETH/WETH</div>
+                            <div class="token-tag">AERO/WETH</div>
+                            <div class="token-tag">AERO/USDC</div>
+                            <div class="token-tag">BRETT/WETH</div>
+                            <div class="token-tag">DEGEN/WETH</div>
+                            <div class="token-tag">USDC/USDbC</div>
+                            <div class="token-tag">USDC/DAI</div>
+                        </div>
+                        <div class="alert alert-info mt-3 mb-0">
+                            <small><i class="fas fa-gas-pump me-1"></i> Gas: ~0.0003 ETH (~$0.50) per flash loan TX</small>
                         </div>
                     </div>
                 </div>
@@ -1084,8 +1200,20 @@ DRY_RUN=true &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&
 
                 // Chains
                 document.getElementById('ethereum_enabled').checked = s.ethereum_enabled !== false;
+                document.getElementById('arbitrum_enabled').checked = s.arbitrum_enabled === true;
+                document.getElementById('base_enabled').checked = s.base_enabled === true;
                 document.getElementById('solana_enabled').checked = s.solana_enabled === true;
                 document.getElementById('triangular_enabled').checked = s.triangular_enabled === true;
+
+                // Arbitrum DEXs
+                document.getElementById('arb_dex_sushiswap').checked = s.arb_dex_sushiswap !== false;
+                document.getElementById('arb_dex_camelot').checked = s.arb_dex_camelot !== false;
+                document.getElementById('arb_dex_uniswap_v3').checked = s.arb_dex_uniswap_v3 !== false;
+
+                // Base DEXs
+                document.getElementById('base_dex_aerodrome').checked = s.base_dex_aerodrome !== false;
+                document.getElementById('base_dex_baseswap').checked = s.base_dex_baseswap !== false;
+                document.getElementById('base_dex_uniswap_v3').checked = s.base_dex_uniswap_v3 !== false;
 
                 // DEXs
                 document.getElementById('dex_uniswap_v2').checked = s.dex_uniswap_v2 !== false;
@@ -1142,8 +1270,20 @@ DRY_RUN=true &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&
 
             // Chains
             ethereum_enabled: document.getElementById('ethereum_enabled').checked,
+            arbitrum_enabled: document.getElementById('arbitrum_enabled').checked,
+            base_enabled: document.getElementById('base_enabled').checked,
             solana_enabled: document.getElementById('solana_enabled').checked,
             triangular_enabled: document.getElementById('triangular_enabled').checked,
+
+            // Arbitrum DEXs
+            arb_dex_sushiswap: document.getElementById('arb_dex_sushiswap').checked,
+            arb_dex_camelot: document.getElementById('arb_dex_camelot').checked,
+            arb_dex_uniswap_v3: document.getElementById('arb_dex_uniswap_v3').checked,
+
+            // Base DEXs
+            base_dex_aerodrome: document.getElementById('base_dex_aerodrome').checked,
+            base_dex_baseswap: document.getElementById('base_dex_baseswap').checked,
+            base_dex_uniswap_v3: document.getElementById('base_dex_uniswap_v3').checked,
 
             // DEXs
             dex_uniswap_v2: document.getElementById('dex_uniswap_v2').checked,

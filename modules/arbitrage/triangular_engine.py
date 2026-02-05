@@ -372,6 +372,22 @@ class TriangularArbitrageEngine:
         # Load private key from secrets manager
         self.private_key = await self._get_decrypted_key('PRIVATE_KEY')
 
+        # Derive wallet address from private key (like ArbitrageEngine does)
+        if self.private_key:
+            try:
+                from eth_account import Account
+                pk = self.private_key if self.private_key.startswith('0x') else f'0x{self.private_key}'
+                account = Account.from_key(pk)
+                self.wallet_address = account.address
+                masked_addr = self.wallet_address[:8] + "..." + self.wallet_address[-6:]
+                logger.info(f"✅ Loaded EVM credentials from database (wallet: {masked_addr})")
+            except Exception as e:
+                logger.error(f"❌ Failed to derive wallet from private key: {e}")
+                self.wallet_address = None
+        else:
+            logger.warning(f"⚠️ Missing PRIVATE_KEY in database - store via Arbitrage settings page")
+            self.wallet_address = None
+
         if self.rpc_url:
             self.w3 = Web3(Web3.HTTPProvider(self.rpc_url.split(',')[0]))
             if self.w3.is_connected():
