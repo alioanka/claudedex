@@ -68,19 +68,21 @@ class StuckPosition:
 @dataclass
 class SafetyConfig:
     """Configuration for safety mechanisms"""
-    # Slippage settings
-    default_slippage_bps: int = 50  # 0.5% for stable tokens
-    pumpfun_slippage_bps: int = 500  # 5% for pump.fun tokens
-    max_emergency_slippage_bps: int = 2000  # 20% max emergency slippage
+    # Slippage settings - INCREASED to handle 0x1771 (SlippageExceeded) errors
+    # Pump.fun tokens have low liquidity and high volatility
+    default_slippage_bps: int = 100  # 1% for stable tokens (was 0.5%)
+    pumpfun_slippage_bps: int = 800  # 8% for pump.fun buys (was 5%)
+    pumpfun_close_slippage_bps: int = 1200  # 12% BASE for pump.fun sells (new)
+    max_emergency_slippage_bps: int = 3500  # 35% max emergency slippage (was 20%)
 
-    # Retry settings
-    max_close_retries: int = 5
-    retry_slippage_increment_bps: int = 200  # Increase by 2% each retry
-    retry_delay_seconds: int = 5
+    # Retry settings - MORE AGGRESSIVE to prevent stuck positions
+    max_close_retries: int = 7  # More retries (was 5)
+    retry_slippage_increment_bps: int = 400  # Increase by 4% each retry (was 2%)
+    retry_delay_seconds: int = 3  # Faster retries (was 5s)
 
     # Circuit breaker
-    circuit_breaker_failures: int = 3  # Consecutive failures to trigger
-    circuit_breaker_cooldown_seconds: int = 300  # 5 min cooldown
+    circuit_breaker_failures: int = 5  # More tolerance before tripping (was 3)
+    circuit_breaker_cooldown_seconds: int = 180  # 3 min cooldown (was 5 min)
 
     # Honeypot detection
     min_sell_quote_ratio: float = 0.5  # Must get back at least 50% of input
@@ -120,7 +122,7 @@ class SafetyEngine:
         self.emergency_closes_from_cache = 0
 
     def get_slippage_for_strategy(self, strategy: str, is_close: bool = False,
-                                   retry_count: int = 0) -> int:
+                                   retry_count: int = 0, is_emergency: bool = False) -> int:
         """
         Get appropriate slippage for a trade.
 
@@ -128,20 +130,32 @@ class SafetyEngine:
             strategy: Trading strategy (pumpfun, jupiter, etc.)
             is_close: Whether this is a close/sell transaction
             retry_count: Number of previous failed attempts
+            is_emergency: Whether this is an emergency exit (rapid decline)
 
         Returns:
             Slippage in basis points
         """
+        is_pumpfun = strategy.lower() == 'pumpfun'
+
         # Base slippage depends on strategy
-        if strategy.lower() == 'pumpfun':
+        if is_pumpfun:
             base_slippage = self.config.pumpfun_slippage_bps
         else:
             base_slippage = self.config.default_slippage_bps
 
-        # For closes, use higher slippage and escalate on retries
+        # For closes/sells, use higher slippage and escalate on retries
         if is_close:
-            # Minimum 2x for closes
-            base_slippage = max(base_slippage, self.config.default_slippage_bps * 2)
+            # CRITICAL: Use dedicated close slippage for pump.fun
+            # These tokens have high volatility and 0x1771 errors are common
+            if is_pumpfun:
+                base_slippage = self.config.pumpfun_close_slippage_bps  # 12% base
+            else:
+                base_slippage = max(base_slippage, self.config.default_slippage_bps * 2)
+
+            # Emergency exits get even higher starting slippage
+            if is_emergency:
+                base_slippage = int(base_slippage * 1.5)  # 50% higher for emergencies
+                logger.warning(f"🚨 Emergency slippage: {base_slippage}bps for rapid decline exit")
 
             # Add increment for each retry
             escalation = retry_count * self.config.retry_slippage_increment_bps
@@ -198,10 +212,16 @@ class SafetyEngine:
             )
 
             if not sell_quote:
-                # Check if this might be a rate limit issue
-                # Don't immediately flag as honeypot - could be temporary
-                self.honeypots_detected += 1
-                return False, "No sell route available via Jupiter - possible honeypot"
+                # CRITICAL FIX: Quote failure (None) is often caused by rate limiting (429),
+                # NOT by the token being a honeypot. Major tokens like RENDER, ORCA, JTO,
+                # PYTH, RAY were being incorrectly flagged as honeypots due to this.
+                #
+                # Conservative approach: Allow the trade when verification fails.
+                # Real honeypots will fail at sell time with more specific errors.
+                logger.warning(f"⚠️ Could not verify sell route for {token_mint[:8]}... - quote returned None")
+                logger.warning(f"   This may be due to rate limiting, not a honeypot")
+                logger.warning(f"   Allowing trade - monitor for sell issues")
+                return True, "Verification skipped - quote failed (possible rate limit)"
 
             # Check for error field in quote (indicates rate limit or other API error)
             if 'error' in sell_quote:

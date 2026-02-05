@@ -346,7 +346,26 @@ class FlashLoanExecutor:
 
             # Get current gas price with buffer for faster inclusion
             gas_price = self.w3.eth.gas_price
-            gas_price = int(gas_price * 1.2)  # 20% buffer
+            gas_price_with_buffer = int(gas_price * 1.2)  # 20% buffer for faster inclusion
+
+            # CRITICAL: Verify profit exceeds gas cost + safety buffer
+            # Flash loan reverts are caused by profit being consumed by gas or price movement
+            gas_limit = 800000
+            gas_cost_wei = gas_price_with_buffer * gas_limit
+            # Require profit to be 50% higher than gas cost to account for:
+            # - Price movement during block inclusion
+            # - Slippage in actual execution vs simulation
+            min_profit_required = int(gas_cost_wei * 1.5)
+
+            if expected_profit is not None and expected_profit < min_profit_required:
+                gas_cost_eth = gas_cost_wei / 1e18
+                profit_eth = expected_profit / 1e18
+                logger.warning(f"⚠️ Profit too low to cover gas + buffer, skipping execution")
+                logger.warning(f"   Expected profit: {profit_eth:.6f} ETH | Gas cost: {gas_cost_eth:.6f} ETH")
+                logger.warning(f"   Required: {min_profit_required/1e18:.6f} ETH (1.5x gas)")
+                return None
+
+            gas_price = gas_price_with_buffer
 
             # Rate limit: wait at least 12 seconds between transactions (1 block)
             if self._last_tx_time:
@@ -597,7 +616,7 @@ class ArbitrageEngine:
         self._last_gas_check_time: Optional[datetime] = None
         self._gas_check_interval = 60  # Check gas every 60 seconds
         self._cached_balance_eth: float = 0.0
-        self._min_gas_eth: float = 0.01  # Minimum 0.01 ETH required for gas
+        self._min_gas_eth: float = 0.05  # Minimum 0.05 ETH required for flash loan gas
         self._low_gas_warning_shown = False
 
         self._stats = {
@@ -1056,6 +1075,23 @@ class ArbitrageEngine:
         if not has_gas:
             logger.warning(f"⏸️ Skipping execution - insufficient gas ({balance:.6f} ETH < {self._min_gas_eth} ETH)")
             return
+
+        # Additional check: estimate actual gas cost for flash loan transactions
+        if self.use_flash_loans and self.flash_loan_executor and self.w3:
+            try:
+                gas_price = self.w3.eth.gas_price
+                gas_limit = 800000  # Flash loan gas limit
+                estimated_cost_eth = (gas_price * gas_limit) / 1e18
+                # Add 20% buffer for gas price fluctuations
+                required_eth = estimated_cost_eth * 1.2
+
+                if balance < required_eth:
+                    logger.warning(f"⏸️ Skipping execution - insufficient ETH for gas cost")
+                    logger.warning(f"   Balance: {balance:.6f} ETH | Estimated cost: {required_eth:.6f} ETH")
+                    logger.warning(f"   Gas: {gas_price/1e9:.1f} gwei × {gas_limit:,} = {estimated_cost_eth:.6f} ETH")
+                    return
+            except Exception as e:
+                logger.debug(f"Gas estimation failed: {e}")
 
         try:
             if self.use_flash_loans and self.flash_loan_executor:

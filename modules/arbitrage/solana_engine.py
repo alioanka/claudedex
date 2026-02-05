@@ -1238,6 +1238,16 @@ class SolanaArbitrageEngine:
                 logger.error("No Solana private key configured - cannot sign transactions")
                 return
 
+            # Check SOL balance before execution
+            # "Attempt to debit an account" error means insufficient SOL for tx fees + tip
+            # Minimum required: 0.01 SOL (covers ~2 tx signatures + Jito tip + buffer)
+            min_sol_required = 0.01
+            sol_balance = await self._get_sol_balance()
+            if sol_balance < min_sol_required:
+                logger.warning(f"⏸️ Skipping Solana arbitrage - insufficient SOL for transaction fees")
+                logger.warning(f"   Balance: {sol_balance:.6f} SOL | Required: {min_sol_required:.4f} SOL")
+                return
+
             # Get swap transactions with increased slippage to handle 0x1789 errors
             # Note: Slippage is set in get_quote (150 bps = 1.5%)
             swap1 = await self.jupiter.get_swap_transaction(quote1, self.wallet_address)
@@ -1430,6 +1440,42 @@ class SolanaArbitrageEngine:
         except Exception as e:
             logger.error(f"Failed to get keypair: {e}")
             return None
+
+    async def _get_sol_balance(self) -> float:
+        """
+        Get SOL balance for the configured wallet.
+
+        Returns:
+            Balance in SOL, or 0.0 on failure
+        """
+        try:
+            if not self.wallet_address:
+                return 0.0
+
+            import aiohttp
+
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getBalance",
+                "params": [self.wallet_address]
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.rpc_url,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        if 'result' in result and 'value' in result['result']:
+                            lamports = result['result']['value']
+                            return lamports / 1e9  # Convert lamports to SOL
+            return 0.0
+        except Exception as e:
+            logger.debug(f"Failed to get SOL balance: {e}")
+            return 0.0
 
     async def _sign_transaction(self, transaction_b64: str) -> Optional[str]:
         """
