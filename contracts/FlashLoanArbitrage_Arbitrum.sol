@@ -94,9 +94,10 @@ contract FlashLoanArbitrage_Arbitrum {
     // Owner (your wallet)
     address public owner;
 
-    // DEX Routers (Arbitrum One)
+    // DEX Routers (Arbitrum One) - All V2 compatible
     address public constant SUSHISWAP_ROUTER = 0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506;
     address public constant CAMELOT_ROUTER = 0xc873fEcbd354f5A56E00E710B90EF4201db2448d;
+    address public constant ZYBERSWAP_ROUTER = 0x16e71B13fE6079B4312063F7E81F76d165Ad32Ad;
 
     // Common tokens (Arbitrum) - pass these as parameters to executeArbitrage()
     // WETH: 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1

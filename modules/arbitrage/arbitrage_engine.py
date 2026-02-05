@@ -244,15 +244,18 @@ ROUTERS_ETHEREUM = {
 }
 
 ROUTERS_ARBITRUM = {
-    'sushiswap': '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',  # SushiSwap V2 Router
-    'camelot': '0xc873fEcbd354f5A56E00E710B90EF4201db2448d',    # Camelot DEX Router
-    'uniswap_v3': '0xE592427A0AEce92De3Edee1F18E0157C05861564', # Uniswap V3 (same address)
+    # Note: All V2-compatible routers for getAmountsOut/swapExactTokensForTokens interface
+    'sushiswap': '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',  # SushiSwap V2 Router (works!)
+    'camelot': '0xc873fEcbd354f5A56E00E710B90EF4201db2448d',    # Camelot DEX Router (V2 interface)
+    'zyberswap': '0x16e71B13fE6079B4312063F7E81F76d165Ad32Ad',  # Zyberswap V2 Router
 }
 
 ROUTERS_BASE = {
-    'uniswap_v3': '0x2626664c2603336E57B271c5C0b26F421741e481',  # Uniswap V3 SwapRouter02
-    'aerodrome': '0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43',   # Aerodrome Router
-    'baseswap': '0x327Df1E6de05895d2ab08513aaDD9313Fe505d86',    # BaseSwap Router
+    # Note: Using V2-compatible routers for getAmountsOut/swapExactTokensForTokens interface
+    # V3 routers require different interface (Quoter + SwapRouter)
+    'sushiswap': '0x6BDED42c6DA8FBf0d2bA55B2fa120C5e0c8D7891',   # SushiSwap V2 Router (works!)
+    'baseswap': '0x327Df1E6de05895d2ab08513aaDD9313Fe505d86',    # BaseSwap V2 Router
+    'swapbased': '0xaaa3b1F1bd7BCc97fD1917c18ADE665C5D31F066',   # SwapBased V2 Router
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

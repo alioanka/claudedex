@@ -94,9 +94,10 @@ contract FlashLoanArbitrage_Base {
     // Owner (your wallet)
     address public owner;
 
-    // DEX Routers (Base)
-    address public constant AERODROME_ROUTER = 0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43;
+    // DEX Routers (Base) - All V2 compatible (swapExactTokensForTokens interface)
+    address public constant SUSHISWAP_ROUTER = 0x6BDED42c6DA8FBf0d2bA55B2fa120C5e0c8D7891;
     address public constant BASESWAP_ROUTER = 0x327Df1E6de05895d2ab08513aaDD9313Fe505d86;
+    address public constant SWAPBASED_ROUTER = 0xaaa3b1F1bd7BCc97fD1917c18ADE665C5D31F066;
 
     // Common tokens (Base) - pass these as parameters to executeArbitrage()
     // WETH:  0x4200000000000000000000000000000000000006
