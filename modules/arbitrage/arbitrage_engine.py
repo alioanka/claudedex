@@ -350,12 +350,13 @@ class FlashLoanExecutor:
 
             # CRITICAL: Verify profit exceeds gas cost + safety buffer
             # Flash loan reverts are caused by profit being consumed by gas or price movement
-            gas_limit = 800000
+            # Realistic gas for flash loan arbitrage: ~450K (not 800K)
+            gas_limit = 450000
             gas_cost_wei = gas_price_with_buffer * gas_limit
-            # Require profit to be 50% higher than gas cost to account for:
+            # Require profit to be 30% higher than gas cost to account for:
             # - Price movement during block inclusion
             # - Slippage in actual execution vs simulation
-            min_profit_required = int(gas_cost_wei * 1.5)
+            min_profit_required = int(gas_cost_wei * 1.3)
 
             if expected_profit is not None and expected_profit < min_profit_required:
                 gas_cost_eth = gas_cost_wei / 1e18
@@ -616,7 +617,11 @@ class ArbitrageEngine:
         self._last_gas_check_time: Optional[datetime] = None
         self._gas_check_interval = 60  # Check gas every 60 seconds
         self._cached_balance_eth: float = 0.0
-        self._min_gas_eth: float = 0.05  # Minimum 0.05 ETH required for flash loan gas
+        # Minimum ETH balance to attempt flash loan arbitrage
+        # Actual cost is calculated dynamically, but we need at least this to try
+        # Flash loan arb uses ~450K gas, at 30 gwei = 0.0135 ETH
+        # Set minimum to 0.015 ETH to allow execution when gas is reasonable
+        self._min_gas_eth: float = 0.015
         self._low_gas_warning_shown = False
 
         self._stats = {
@@ -1080,15 +1085,21 @@ class ArbitrageEngine:
         if self.use_flash_loans and self.flash_loan_executor and self.w3:
             try:
                 gas_price = self.w3.eth.gas_price
-                gas_limit = 800000  # Flash loan gas limit
+                # Realistic gas limit for flash loan arbitrage:
+                # - Flash loan borrow: ~100K gas
+                # - DEX swap 1: ~150K gas
+                # - DEX swap 2: ~150K gas
+                # - Flash loan repay: ~50K gas
+                # Total: ~450K gas (not 800K)
+                gas_limit = 450000
                 estimated_cost_eth = (gas_price * gas_limit) / 1e18
-                # Add 20% buffer for gas price fluctuations
-                required_eth = estimated_cost_eth * 1.2
+                # Add 30% buffer for gas price fluctuations and complex routes
+                required_eth = estimated_cost_eth * 1.3
 
                 if balance < required_eth:
                     logger.warning(f"⏸️ Skipping execution - insufficient ETH for gas cost")
-                    logger.warning(f"   Balance: {balance:.6f} ETH | Estimated cost: {required_eth:.6f} ETH")
-                    logger.warning(f"   Gas: {gas_price/1e9:.1f} gwei × {gas_limit:,} = {estimated_cost_eth:.6f} ETH")
+                    logger.warning(f"   Balance: {balance:.6f} ETH | Required: {required_eth:.6f} ETH")
+                    logger.warning(f"   Gas: {gas_price/1e9:.1f} gwei × {gas_limit:,} = {estimated_cost_eth:.6f} ETH + 30% buffer")
                     return
             except Exception as e:
                 logger.debug(f"Gas estimation failed: {e}")
