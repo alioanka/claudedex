@@ -434,7 +434,7 @@ class FlashLoanExecutor:
     4. Contract executes swaps and repays loan
     """
 
-    def __init__(self, w3: Web3, private_key: str, wallet_address: str, receiver_contract: str):
+    def __init__(self, w3: Web3, private_key: str, wallet_address: str, receiver_contract: str, logger_instance=None):
         self.w3 = w3
         self.private_key = private_key
         self.wallet_address = wallet_address  # EOA for signing/gas (must be contract owner)
@@ -442,6 +442,8 @@ class FlashLoanExecutor:
         self.flash_loan_contract = None
         self._pending_nonce = None  # Track nonce to avoid collisions
         self._last_tx_time = None
+        # Use passed logger or fall back to module logger
+        self.logger = logger_instance or logger
 
         if w3:
             self.flash_loan_contract = w3.eth.contract(
@@ -478,6 +480,7 @@ class FlashLoanExecutor:
 
         Returns:
             Expected profit in wei, or None if simulation fails
+            Contract returns -1 for no liquidity on buy DEX, -2 for no liquidity on sell DEX
         """
         if not self.flash_loan_contract:
             return None
@@ -490,9 +493,20 @@ class FlashLoanExecutor:
                 Web3.to_checksum_address(sell_router),
                 Web3.to_checksum_address(intermediate_token)
             ).call()
+
+            # Log detailed results for debugging
+            if profit == -1:
+                self.logger.warning(f"   ⚠️ Simulation: No liquidity on BUY router ({buy_router[:10]}...)")
+            elif profit == -2:
+                self.logger.warning(f"   ⚠️ Simulation: No liquidity on SELL router ({sell_router[:10]}...)")
+            elif profit <= 0:
+                self.logger.info(f"   📊 Simulation: Profit={profit/1e18:.6f} ETH (not profitable)")
+            else:
+                self.logger.info(f"   📊 Simulation: Profit={profit/1e18:.6f} ETH")
+
             return profit
         except Exception as e:
-            logger.debug(f"Arbitrage simulation failed: {e}")
+            self.logger.warning(f"   ⚠️ Simulation call failed: {str(e)[:100]}")
             return None
 
     async def execute_arbitrage(
@@ -523,7 +537,7 @@ class FlashLoanExecutor:
             Transaction hash if successful
         """
         if not self.flash_loan_contract:
-            logger.error("Flash loan contract not initialized")
+            self.logger.error("Flash loan contract not initialized")
             return None
 
         try:
@@ -533,7 +547,7 @@ class FlashLoanExecutor:
             )
 
             if expected_profit is not None and expected_profit <= 0:
-                logger.warning(f"⚠️ Simulation shows no profit ({expected_profit}), skipping execution")
+                self.logger.warning(f"⚠️ Simulation shows no profit ({expected_profit}), skipping execution")
                 return None
 
             # Get EIP-1559 gas pricing for better reliability
@@ -547,7 +561,7 @@ class FlashLoanExecutor:
             # Max fee: base fee + 50% buffer + priority fee (handles fee spikes)
             max_fee = int(base_fee * 1.5) + priority_fee
 
-            logger.info(f"   Gas pricing: base={base_fee/1e9:.2f} gwei, maxFee={max_fee/1e9:.2f} gwei, priority={priority_fee/1e9:.1f} gwei")
+            self.logger.info(f"   Gas pricing: base={base_fee/1e9:.2f} gwei, maxFee={max_fee/1e9:.2f} gwei, priority={priority_fee/1e9:.1f} gwei")
 
             # CRITICAL: Verify profit exceeds gas cost + safety buffer
             # Flash loan reverts are caused by profit being consumed by gas or price movement
@@ -562,9 +576,9 @@ class FlashLoanExecutor:
             if expected_profit is not None and expected_profit < min_profit_required:
                 gas_cost_eth = gas_cost_wei / 1e18
                 profit_eth = expected_profit / 1e18
-                logger.warning(f"⚠️ Profit too low to cover gas + buffer, skipping execution")
-                logger.warning(f"   Expected profit: {profit_eth:.6f} ETH | Gas cost: {gas_cost_eth:.6f} ETH")
-                logger.warning(f"   Required: {min_profit_required/1e18:.6f} ETH (1.5x gas)")
+                self.logger.warning(f"⚠️ Profit too low to cover gas + buffer, skipping execution")
+                self.logger.warning(f"   Expected profit: {profit_eth:.6f} ETH | Gas cost: {gas_cost_eth:.6f} ETH")
+                self.logger.warning(f"   Required: {min_profit_required/1e18:.6f} ETH (1.3x gas)")
                 return None
 
             # Rate limit: wait at least 12 seconds between transactions (1 block)
@@ -572,7 +586,7 @@ class FlashLoanExecutor:
                 elapsed = (datetime.now() - self._last_tx_time).total_seconds()
                 if elapsed < 12:
                     wait_time = 12 - elapsed
-                    logger.info(f"⏳ Waiting {wait_time:.1f}s for block confirmation...")
+                    self.logger.info(f"⏳ Waiting {wait_time:.1f}s for block confirmation...")
                     await asyncio.sleep(wait_time)
 
             # Build transaction to call contract's executeArbitrage function
@@ -598,17 +612,17 @@ class FlashLoanExecutor:
 
             self._last_tx_time = datetime.now()
 
-            logger.info(f"⚡ Flash loan TX sent: {tx_hash.hex()}")
+            self.logger.info(f"⚡ Flash loan TX sent: {tx_hash.hex()}")
             return tx_hash.hex()
 
         except Exception as e:
             error_msg = str(e)
             if 'replacement transaction underpriced' in error_msg:
-                logger.warning(f"⚠️ Nonce collision detected, resetting nonce tracker")
+                self.logger.warning(f"⚠️ Nonce collision detected, resetting nonce tracker")
                 self._pending_nonce = None  # Reset to force fresh nonce fetch
-            logger.error(f"Flash loan execution failed: {e}")
+            self.logger.error(f"Flash loan execution failed: {e}")
             import traceback
-            logger.error(f"   Traceback: {traceback.format_exc()}")
+            self.logger.error(f"   Traceback: {traceback.format_exc()}")
             return None
 
 
@@ -1007,7 +1021,8 @@ class EVMArbitrageEngine:
                             self.w3,
                             self.private_key,
                             self.wallet_address,  # EOA wallet - signs TX and pays gas
-                            flash_loan_contract   # Contract - receives flash loan callback
+                            flash_loan_contract,  # Contract - receives flash loan callback
+                            logger_instance=self.logger  # Use engine's logger for visibility
                         )
                         self.logger.info(f"⚡ Flash Loan executor initialized:")
                         self.logger.info(f"   Wallet (signer): {self.wallet_address[:10]}...")
