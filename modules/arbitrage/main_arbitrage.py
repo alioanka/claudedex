@@ -139,7 +139,7 @@ class MultiChainArbitrageManager:
             try:
                 from modules.arbitrage.arbitrage_engine import ArbitrageEngine
                 config = {'arbitrage_enabled': True, 'rpc_url': eth_rpc, **self.settings}
-                eth_engine = ArbitrageEngine(config, self.db_pool)
+                eth_engine = ArbitrageEngine(config, self.db_pool, chain='ethereum')
                 await eth_engine.initialize()
                 self.engines.append(('ethereum', eth_engine))
                 logger.info("✅ Ethereum Arbitrage Engine initialized")
@@ -150,6 +150,32 @@ class MultiChainArbitrageManager:
                 logger.warning("⚠️ No Ethereum RPC - Ethereum arbitrage disabled")
             else:
                 logger.info("ℹ️ Ethereum arbitrage disabled in settings")
+
+        # Check for Arbitrum RPC - use Pool Engine with fallback
+        arb_rpc = None
+        try:
+            arb_rpc = RPCProvider.get_rpc_sync('ARBITRUM_RPC')
+        except Exception:
+            pass
+        if not arb_rpc:
+            arb_rpc = os.getenv('ARBITRUM_RPC_URL')
+
+        if arb_rpc and self.settings.get('arbitrum_enabled', False):
+            try:
+                from modules.arbitrage.arbitrage_engine import ArbitrageEngine
+                config = {'arbitrage_enabled': True, 'rpc_url': arb_rpc, **self.settings}
+                arb_engine = ArbitrageEngine(config, self.db_pool, chain='arbitrum')
+                await arb_engine.initialize()
+                self.engines.append(('arbitrum', arb_engine))
+                logger.info("✅ Arbitrum Arbitrage Engine initialized")
+                logger.info("   💡 Arbitrum has ~95% lower gas costs than Ethereum mainnet")
+            except Exception as e:
+                logger.error(f"❌ Failed to init Arbitrum engine: {e}")
+        else:
+            if not arb_rpc:
+                logger.info("ℹ️ No Arbitrum RPC configured - set ARBITRUM_RPC_URL or add via Pool Engine")
+            else:
+                logger.info("ℹ️ Arbitrum arbitrage disabled in settings (set arbitrum_enabled=true to enable)")
 
         # Check for Solana RPC - use Pool Engine with fallback
         sol_rpc = None

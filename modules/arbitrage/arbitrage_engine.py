@@ -146,8 +146,22 @@ FLASH_LOAN_CONTRACT_ABI = [
     }
 ]
 
-# Common Token Addresses (Ethereum Mainnet)
-TOKENS = {
+# ═══════════════════════════════════════════════════════════════════════════════
+# MULTI-CHAIN ADDRESS CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Chain IDs
+CHAIN_IDS = {
+    'ethereum': 1,
+    'arbitrum': 42161,
+    'optimism': 10,
+    'base': 8453,
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ETHEREUM MAINNET (Chain ID: 1)
+# ═══════════════════════════════════════════════════════════════════════════════
+TOKENS_ETHEREUM = {
     # Major tokens
     'WETH': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
@@ -188,9 +202,65 @@ TOKENS = {
     'ENS': '0xC18360217D8F7Ab5e7c516566761Ea12Ce7F9D72',
 }
 
-# Token pairs to monitor for arbitrage (token_in, token_out)
-# These are the most liquid pairs that frequently have price discrepancies
-ARB_PAIRS = [
+# ═══════════════════════════════════════════════════════════════════════════════
+# ARBITRUM ONE (Chain ID: 42161)
+# Lower gas costs (~95% cheaper than mainnet), same EVM compatibility
+# ═══════════════════════════════════════════════════════════════════════════════
+TOKENS_ARBITRUM = {
+    # Major tokens - Arbitrum native/bridged addresses
+    'WETH': '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',  # Wrapped ETH on Arbitrum
+    'USDC': '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',  # Native USDC (Circle)
+    'USDC_BRIDGED': '0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8',  # Bridged USDC.e
+    'USDT': '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',  # Tether USD
+    'DAI': '0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1',  # DAI Stablecoin
+    'WBTC': '0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f',  # Wrapped BTC
+
+    # Native Arbitrum tokens
+    'ARB': '0x912CE59144191C1204E64559FE8253a0e49E6548',  # Arbitrum token
+    'GMX': '0xfc5A1A6EB076a2C7aD06eD22C90d7E710E35ad0a',  # GMX
+    'MAGIC': '0x539bdE0d7Dbd336b79148AA742883198BBF60342',  # Magic (TreasureDAO)
+    'RDNT': '0x3082CC23568eA640225c2467653dB90e9250AaA0',  # Radiant Capital
+    'PENDLE': '0x0c880f6761F1af8d9Aa9C466984b80DAb9a8c9e8',  # Pendle
+
+    # DeFi tokens on Arbitrum
+    'UNI': '0xFa7F8980b0f1E64A2062791cc3b0871572f1F7f0',  # Uniswap
+    'LINK': '0xf97f4df75117a78c1A5a0DBb814Af92458539FB4',  # Chainlink
+    'AAVE': '0xba5DdD1f9d7F570dc94a51479a000E3BCE967196',  # Aave
+    'CRV': '0x11cDb42B0EB46D95f990BeDD4695A6e3fA034978',  # Curve DAO
+    'SUSHI': '0xd4d42F0b6DEF4CE0383636770eF773390d85c61A',  # SushiSwap
+
+    # Stablecoins
+    'FRAX': '0x17FC002b466eEc40DaE837Fc4bE5c67993ddBd6F',  # Frax
+    'LUSD': '0x93b346b6BC2548dA6A1E7d98E9a421B42541425b',  # Liquity USD
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ROUTER ADDRESSES PER CHAIN
+# ═══════════════════════════════════════════════════════════════════════════════
+ROUTERS_ETHEREUM = {
+    'uniswap_v2': '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',
+    'sushiswap': '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F',
+    'uniswap_v3': '0xE592427A0AEce92De3Edee1F18E0157C05861564',
+}
+
+ROUTERS_ARBITRUM = {
+    'sushiswap': '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',  # SushiSwap V2 Router
+    'camelot': '0xc873fEcbd354f5A56E00E710B90EF4201db2448d',    # Camelot DEX Router
+    'uniswap_v3': '0xE592427A0AEce92De3Edee1F18E0157C05861564', # Uniswap V3 (same address)
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AAVE V3 POOL ADDRESSES PER CHAIN
+# ═══════════════════════════════════════════════════════════════════════════════
+AAVE_POOLS = {
+    'ethereum': '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2',
+    'arbitrum': '0x794a61358D6845594F94dc1DB02A252b5b4814aD',
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ARBITRAGE PAIRS PER CHAIN
+# ═══════════════════════════════════════════════════════════════════════════════
+ARB_PAIRS_ETHEREUM = [
     ('WETH', 'USDC'),
     ('WETH', 'USDT'),
     ('WETH', 'DAI'),
@@ -213,15 +283,65 @@ ARB_PAIRS = [
     ('PEPE', 'WETH'),
 ]
 
-# Routers
-ROUTERS = {
-    'uniswap_v2': '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',
-    'sushiswap': '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F',
-    'uniswap_v3': '0xE592427A0AEce92De3Edee1F18E0157C05861564'
+ARB_PAIRS_ARBITRUM = [
+    # High liquidity pairs
+    ('WETH', 'USDC'),
+    ('WETH', 'USDT'),
+    ('WETH', 'DAI'),
+    ('WBTC', 'WETH'),
+    ('ARB', 'WETH'),       # Native ARB token - high volume
+    ('ARB', 'USDC'),       # ARB/stablecoin
+
+    # Native Arbitrum DeFi tokens
+    ('GMX', 'WETH'),       # GMX - major Arbitrum protocol
+    ('MAGIC', 'WETH'),     # TreasureDAO
+    ('RDNT', 'WETH'),      # Radiant Capital
+    ('PENDLE', 'WETH'),    # Pendle
+
+    # Bridged DeFi tokens
+    ('LINK', 'WETH'),
+    ('UNI', 'WETH'),
+    ('AAVE', 'WETH'),
+    ('CRV', 'WETH'),
+    ('SUSHI', 'WETH'),
+
+    # Stablecoin pairs (good for low-risk arb)
+    ('USDC', 'USDT'),
+    ('USDC', 'DAI'),
+    ('USDC', 'USDC_BRIDGED'),  # Native vs bridged USDC
+]
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CHAIN CONFIG AGGREGATION
+# ═══════════════════════════════════════════════════════════════════════════════
+CHAIN_CONFIGS = {
+    1: {  # Ethereum Mainnet
+        'name': 'ethereum',
+        'tokens': TOKENS_ETHEREUM,
+        'routers': ROUTERS_ETHEREUM,
+        'aave_pool': AAVE_POOLS['ethereum'],
+        'arb_pairs': ARB_PAIRS_ETHEREUM,
+        'native_symbol': 'ETH',
+        'min_gas_eth': 0.015,  # ~$30-50 for flash loan tx
+    },
+    42161: {  # Arbitrum One
+        'name': 'arbitrum',
+        'tokens': TOKENS_ARBITRUM,
+        'routers': ROUTERS_ARBITRUM,
+        'aave_pool': AAVE_POOLS['arbitrum'],
+        'arb_pairs': ARB_PAIRS_ARBITRUM,
+        'native_symbol': 'ETH',
+        'min_gas_eth': 0.0005,  # ~$1 for flash loan tx (95% cheaper!)
+    },
 }
 
-# Aave V3 Pool (Mainnet)
-AAVE_V3_POOL = '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2'
+# Default to Ethereum for backwards compatibility
+TOKENS = TOKENS_ETHEREUM
+
+# Backwards compatibility - default to Ethereum
+ARB_PAIRS = ARB_PAIRS_ETHEREUM
+ROUTERS = ROUTERS_ETHEREUM
+AAVE_V3_POOL = AAVE_POOLS['ethereum']
 
 # Flashbots Relay
 FLASHBOTS_RELAY_URL = 'https://relay.flashbots.net'
@@ -545,28 +665,46 @@ class ArbitrageEngine:
     Arbitrage Engine with flash loan and Flashbots support.
 
     Features:
+    - Multi-chain support (Ethereum, Arbitrum)
     - Multi-DEX price monitoring
     - Aave flash loans for capital-efficient arb
-    - Flashbots for MEV protection
+    - Flashbots for MEV protection (Ethereum only)
     - Configurable profit thresholds
     """
 
-    def __init__(self, config: Dict, db_pool):
+    def __init__(self, config: Dict, db_pool, chain: str = 'ethereum'):
         self.config = config
         self.db_pool = db_pool
         self.is_running = False
         self.w3 = None
 
-        # Get RPC URL from config (passed from main_arbitrage), Pool Engine, or env fallback
+        # Chain configuration
+        self.chain_name = chain.lower()  # 'ethereum' or 'arbitrum'
+        self.chain_id = None  # Set in initialize() from RPC
+        self.chain_config = None  # Set in initialize() based on chain_id
+
+        # Chain-specific addresses (set in initialize())
+        self.tokens = TOKENS_ETHEREUM  # Default, updated based on chain
+        self.routers = ROUTERS_ETHEREUM
+        self.arb_pairs = ARB_PAIRS_ETHEREUM
+        self.aave_pool = AAVE_POOLS['ethereum']
+
+        # Get RPC URL from config - support chain-specific RPC keys
         self.rpc_url = config.get('rpc_url')
         if not self.rpc_url:
             try:
                 from config.rpc_provider import RPCProvider
-                self.rpc_url = RPCProvider.get_rpc_sync('ETHEREUM_RPC')
+                # Try chain-specific RPC first
+                rpc_key = 'ARBITRUM_RPC' if chain == 'arbitrum' else 'ETHEREUM_RPC'
+                self.rpc_url = RPCProvider.get_rpc_sync(rpc_key)
             except Exception:
                 pass
         if not self.rpc_url:
-            self.rpc_url = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
+            # Fallback to environment variables
+            if chain == 'arbitrum':
+                self.rpc_url = os.getenv('ARBITRUM_RPC_URL')
+            else:
+                self.rpc_url = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
 
         self.private_key = None  # Loaded in initialize() from secrets manager
         self.wallet_address = None  # Loaded in initialize() from secrets manager
@@ -718,10 +856,29 @@ class ArbitrageEngine:
         if self.rpc_url:
             self.w3 = Web3(Web3.HTTPProvider(self.rpc_url.split(',')[0]))
             if self.w3.is_connected():
-                logger.info("✅ Connected to Arbitrage RPC")
+                # Detect chain from RPC
+                self.chain_id = self.w3.eth.chain_id
+                self.chain_config = CHAIN_CONFIGS.get(self.chain_id)
 
-                # Initialize router contracts
-                for name, address in ROUTERS.items():
+                if self.chain_config:
+                    # Use chain-specific addresses
+                    self.chain_name = self.chain_config['name']
+                    self.tokens = self.chain_config['tokens']
+                    self.routers = self.chain_config['routers']
+                    self.arb_pairs = self.chain_config['arb_pairs']
+                    self.aave_pool = self.chain_config['aave_pool']
+                    self._min_gas_eth = self.chain_config['min_gas_eth']
+
+                    logger.info(f"✅ Connected to {self.chain_name.upper()} RPC (chain_id: {self.chain_id})")
+                    logger.info(f"   Tokens: {len(self.tokens)} | Routers: {len(self.routers)} | Pairs: {len(self.arb_pairs)}")
+                    logger.info(f"   Min gas: {self._min_gas_eth} ETH")
+                else:
+                    # Unknown chain - use Ethereum defaults
+                    logger.warning(f"⚠️ Unknown chain_id {self.chain_id} - using Ethereum defaults")
+                    logger.info("✅ Connected to Arbitrage RPC")
+
+                # Initialize router contracts using chain-specific addresses
+                for name, address in self.routers.items():
                     try:
                         self.router_contracts[name] = self.w3.eth.contract(
                             address=Web3.to_checksum_address(address),
@@ -781,13 +938,18 @@ class ArbitrageEngine:
                     except Exception as e:
                         logger.warning(f"⚠️ Could not check wallet balance: {e}")
 
-                    # Initialize Flashbots executor
-                    self.flashbots_executor = FlashbotsExecutor(
-                        self.w3,
-                        self.private_key
-                    )
-                    await self.flashbots_executor.initialize()
-                    logger.info("📦 Flashbots executor initialized")
+                    # Initialize Flashbots executor (Ethereum mainnet only)
+                    # Flashbots is not available on L2s like Arbitrum
+                    if self.chain_id == 1:  # Ethereum mainnet
+                        self.flashbots_executor = FlashbotsExecutor(
+                            self.w3,
+                            self.private_key
+                        )
+                        await self.flashbots_executor.initialize()
+                        logger.info("📦 Flashbots executor initialized")
+                    else:
+                        logger.info(f"ℹ️ Flashbots not available on {self.chain_name} - using direct RPC")
+                        self.use_flashbots = False
 
             else:
                 logger.warning("⚠️ Failed to connect to Arbitrage RPC")
@@ -798,8 +960,8 @@ class ArbitrageEngine:
 
     async def run(self):
         self.is_running = True
-        logger.info("⚖️ Arbitrage Engine Started")
-        logger.info(f"   Monitoring {len(ARB_PAIRS)} token pairs across {len(self.router_contracts)} DEXs")
+        logger.info(f"⚖️ Arbitrage Engine Started [{self.chain_name.upper()}]")
+        logger.info(f"   Monitoring {len(self.arb_pairs)} token pairs across {len(self.router_contracts)} DEXs")
 
         if not self.w3:
             logger.error("RPC not connected, arbitrage disabled.")
@@ -811,16 +973,16 @@ class ArbitrageEngine:
             try:
                 self._stats['scans'] += 1
 
-                # Get current pair to scan
-                token_in_symbol, token_out_symbol = ARB_PAIRS[pair_index]
-                token_in = TOKENS.get(token_in_symbol)
-                token_out = TOKENS.get(token_out_symbol)
+                # Get current pair to scan (use chain-specific pairs and tokens)
+                token_in_symbol, token_out_symbol = self.arb_pairs[pair_index]
+                token_in = self.tokens.get(token_in_symbol)
+                token_out = self.tokens.get(token_out_symbol)
 
                 if token_in and token_out:
                     await self._check_arb_opportunity(token_in, token_out, token_in_symbol)
 
                 # Move to next pair (round-robin)
-                pair_index = (pair_index + 1) % len(ARB_PAIRS)
+                pair_index = (pair_index + 1) % len(self.arb_pairs)
 
                 # Log stats every 5 minutes
                 await self._log_stats_if_needed()
@@ -1334,7 +1496,7 @@ class ArbitrageEngine:
                 """,
                     trade_id,
                     token,
-                    'ethereum',
+                    self.chain_name,  # Use chain from engine instance
                     buy_dex,
                     sell_dex,
                     'buy',
@@ -1355,6 +1517,8 @@ class ArbitrageEngine:
                     eth_price,
                     json.dumps({
                         'dry_run': self.dry_run,
+                        'chain': self.chain_name,
+                        'chain_id': self.chain_id,
                         'token_symbol': token_symbol,
                         'gross_profit_pct': gross_profit_pct * 100,
                         'flash_loan_cost': flash_loan_cost,
