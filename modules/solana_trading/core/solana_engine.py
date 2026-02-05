@@ -60,6 +60,7 @@ httpx.AsyncClient = _CompatAsyncClient
 
 import asyncio
 import logging
+import time
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
@@ -1967,10 +1968,54 @@ class SolanaTradingEngine:
                 'original_amount': position.amount,
                 'remaining_pct': 100.0,
                 'partial_exits': [],
-                'total_realized_pnl': 0.0
+                'total_realized_pnl': 0.0,
+                'last_price': current_price,
+                'last_check_time': time.time()
             }
 
         trailing = meta['trailing']
+
+        # ============ RAPID DECLINE DETECTION (Emergency Exit) ============
+        # Check for rapid price crash BEFORE normal trailing stop logic.
+        # This catches fast-dying tokens that can drop 50%+ in seconds.
+        last_price = trailing.get('last_price', current_price)
+        last_check_time = trailing.get('last_check_time', time.time())
+        time_since_last_check = time.time() - last_check_time
+
+        # Calculate decline from last check
+        if last_price > 0 and time_since_last_check > 0:
+            decline_pct = ((last_price - current_price) / last_price) * 100
+
+            # EMERGENCY EXIT CRITERIA:
+            # 1. Price dropped >40% since last check (rapid crash)
+            # 2. OR price dropped >30% AND we've held for <5 minutes (new position crashing fast)
+            time_held = (datetime.utcnow() - position.opened_at).total_seconds()
+
+            if decline_pct >= 40:
+                logger.error(f"🚨 RAPID CRASH DETECTED: {position.token_symbol} dropped {decline_pct:.1f}% since last check!")
+                logger.error(f"   Price: {last_price:.10f} → {current_price:.10f}")
+                logger.error(f"   Triggering EMERGENCY EXIT")
+                return "emergency_rapid_decline"
+
+            if decline_pct >= 30 and time_held < 300:  # 5 minutes
+                logger.error(f"🚨 NEW POSITION CRASHING: {position.token_symbol} dropped {decline_pct:.1f}% in {time_held:.0f}s!")
+                logger.error(f"   Triggering EMERGENCY EXIT for new position rapid decline")
+                return "emergency_rapid_decline"
+
+            # Also check decline from peak (not just last check)
+            # If we've dropped more than 60% from peak, emergency exit
+            peak_price = trailing.get('peak_price', current_price)
+            if peak_price > 0:
+                decline_from_peak = ((peak_price - current_price) / peak_price) * 100
+                if decline_from_peak >= 60:
+                    logger.error(f"🚨 SEVERE PEAK DECLINE: {position.token_symbol} down {decline_from_peak:.1f}% from peak!")
+                    logger.error(f"   Peak: {peak_price:.10f} → Current: {current_price:.10f}")
+                    return "emergency_peak_decline"
+
+        # Update last price tracking for next check
+        trailing['last_price'] = current_price
+        trailing['last_check_time'] = time.time()
+        # ============ END RAPID DECLINE DETECTION ============
 
         # Update peak price
         if current_price > trailing['peak_price']:
@@ -2618,8 +2663,11 @@ class SolanaTradingEngine:
                     token_amount_raw = int(close_amount * (10 ** token_decimals))
 
                     # RETRY LOOP with escalating slippage
-                    max_retries = 5 if self.safety_engine else 3
+                    max_retries = 7 if self.safety_engine else 4  # More retries for stuck positions
                     last_error = None
+
+                    # Detect emergency exits - use higher slippage immediately
+                    is_emergency_exit = reason.startswith("emergency_")
 
                     for retry in range(max_retries):
                         try:
@@ -2628,15 +2676,19 @@ class SolanaTradingEngine:
                                 close_slippage = self.safety_engine.get_slippage_for_strategy(
                                     position.strategy.value,
                                     is_close=True,
-                                    retry_count=retry
+                                    retry_count=retry,
+                                    is_emergency=is_emergency_exit
                                 )
                             else:
-                                # Fallback: escalate slippage manually
-                                base_slippage = 500 if position.strategy == Strategy.PUMPFUN else 100
-                                close_slippage = base_slippage + (retry * 200)
-                                close_slippage = min(close_slippage, 2000)  # Cap at 20%
+                                # Fallback: escalate slippage manually (increased defaults)
+                                base_slippage = 1200 if position.strategy == Strategy.PUMPFUN else 200
+                                if is_emergency_exit:
+                                    base_slippage = int(base_slippage * 1.5)  # 50% more for emergencies
+                                close_slippage = base_slippage + (retry * 400)
+                                close_slippage = min(close_slippage, 3500)  # Cap at 35%
 
-                            logger.info(f"🔄 Close attempt {retry + 1}/{max_retries}: {position.token_symbol} → SOL (slippage: {close_slippage}bps)")
+                            emoji = "🚨" if is_emergency_exit else "🔄"
+                            logger.info(f"{emoji} Close attempt {retry + 1}/{max_retries}: {position.token_symbol} → SOL (slippage: {close_slippage}bps)")
 
                             close_tx_signature = await self.jupiter_helper.execute_swap(
                                 input_mint=token_mint,
