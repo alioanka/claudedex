@@ -323,11 +323,11 @@ class JitoClient:
 
     # Global rate limit - Jito has strict limits across ALL endpoints
     # These are NOT independent - hitting one affects all
-    # Free tier is approximately 1-2 bundles per 10 seconds
+    # Free tier is approximately 1 bundle per 10-15 seconds
     _global_last_request_time = 0.0
     _global_backoff_until = 0.0
     _global_consecutive_429s = 0
-    MIN_REQUEST_INTERVAL = 5.0  # Minimum 5 seconds between bundle requests
+    MIN_REQUEST_INTERVAL = 12.0  # Minimum 12 seconds between bundle requests (was 5s)
 
     def __init__(self):
         self.session: Optional[aiohttp.ClientSession] = None
@@ -337,6 +337,30 @@ class JitoClient:
         self.current_endpoint_idx = 0
         self._last_429_time = 0
         self._backoff_seconds = 0
+
+    @classmethod
+    def is_available(cls) -> Tuple[bool, float]:
+        """
+        Check if Jito is available for bundle submission.
+
+        Returns:
+            Tuple of (is_available, seconds_until_available)
+        """
+        import time
+        now = time.time()
+
+        # Check global backoff period
+        if cls._global_backoff_until > now:
+            remaining = cls._global_backoff_until - now
+            return False, remaining
+
+        # Check minimum interval since last request
+        time_since_last = now - cls._global_last_request_time
+        if time_since_last < cls.MIN_REQUEST_INTERVAL:
+            wait_time = cls.MIN_REQUEST_INTERVAL - time_since_last
+            return False, wait_time
+
+        return True, 0.0
 
     async def initialize(self, keypair=None):
         timeout = aiohttp.ClientTimeout(total=10)
@@ -1001,8 +1025,11 @@ class SolanaArbitrageEngine:
                 # Log stats
                 await self._log_stats_if_needed()
 
-                # Faster scanning on Solana (lower fees)
-                await asyncio.sleep(1)
+                # RATE LIMIT AWARE SCANNING
+                # Each pair check makes 2 Jupiter API calls (forward + reverse quote)
+                # Jupiter free tier is ~1 RPS, so we need 2+ seconds per pair minimum
+                # Use 2.5 seconds to stay safely under the limit
+                await asyncio.sleep(2.5)
 
             except Exception as e:
                 logger.error(f"Solana arb loop error: {e}")
@@ -1096,6 +1123,20 @@ class SolanaArbitrageEngine:
                     logger.warning(f"🚫 REJECTED [{in_symbol}/{out_symbol}]: {profit_pct:.2%} profit is unrealistic (max {MAX_REALISTIC_PROFIT:.0%})")
                     logger.warning(f"   Route: {route_str} - likely stale/manipulated price data")
                     return False
+
+                # CHECK JITO AVAILABILITY BEFORE ATTEMPTING EXECUTION
+                # If Jito is in backoff or rate limited, don't waste time getting swap txns
+                # The opportunity will likely be gone by the time Jito is available
+                if self.use_jito:
+                    jito_available, wait_seconds = JitoClient.is_available()
+                    if not jito_available:
+                        if wait_seconds > 5:
+                            # Log but don't execute - opportunity will be stale by time Jito is ready
+                            route_info = jupiter_quote.get('routePlan', [])
+                            route_str = " → ".join([r.get('swapInfo', {}).get('label', 'DEX') for r in route_info[:3]])
+                            logger.info(f"⏸️ OPPORTUNITY SKIPPED [{in_symbol}/{out_symbol}]: {profit_pct:.2%} | Jito unavailable ({wait_seconds:.0f}s remaining)")
+                            return True  # Return True to indicate we found an opportunity (for stats)
+                        # If wait is short (<5s), we can wait and try
 
                 # Check rate limiting
                 opp_key = f"{in_symbol}_{out_symbol}"
@@ -1796,6 +1837,19 @@ class SolanaArbitrageEngine:
                             logs = error['data'].get('logs', [])
                             if logs:
                                 logger.error(f"   Simulation logs: {logs[-3:]}")
+
+                        # Detect specific Jupiter errors for better diagnostics
+                        error_str = str(error_msg) + str(logs) if logs else str(error_msg)
+                        if '0x1789' in error_str or '6025' in error_str:
+                            # 0x1789 = InvalidInputIndex - route structure changed
+                            logger.error("   ⚠️ 0x1789 (InvalidInputIndex): Route is stale - pool state changed")
+                            logger.error("   This often happens with volatile/low-liquidity pools")
+                        elif '0x1771' in error_str or '6001' in error_str:
+                            # 0x1771 = SlippageToleranceExceeded
+                            logger.error("   ⚠️ 0x1771 (SlippageExceeded): Price moved beyond slippage tolerance")
+                        elif '0x1772' in error_str or '6002' in error_str:
+                            # 0x1772 = InsufficientFunds
+                            logger.error("   ⚠️ 0x1772 (InsufficientFunds): Not enough tokens for swap")
                         return None
 
                     sig1 = result1.get('result')
