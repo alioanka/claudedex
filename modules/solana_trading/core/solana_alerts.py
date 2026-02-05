@@ -110,19 +110,66 @@ class SolanaTelegramAlerts:
         }
         return strategy_map.get(strategy.lower(), strategy.upper())
 
+    def _get_strategy_header(self, strategy: str, is_entry: bool = True) -> str:
+        """Get strategy-specific header with unique styling"""
+        strategy_lower = strategy.lower()
+
+        if strategy_lower == 'pumpfun':
+            # Pump.fun: Pink/magenta theme with meme energy
+            if is_entry:
+                return "🚀🔥 *PUMP\\.FUN ENTRY* 🔥🚀"
+            else:
+                return "💸🎰 *PUMP\\.FUN EXIT* 🎰💸"
+        elif strategy_lower == 'jupiter':
+            # Jupiter: Purple/space theme
+            if is_entry:
+                return "🪐✨ *JUPITER ENTRY* ✨🪐"
+            else:
+                return "🌙💫 *JUPITER EXIT* 💫🌙"
+        elif strategy_lower == 'drift':
+            # Drift: Blue/chart theme
+            if is_entry:
+                return "📊📈 *DRIFT ENTRY* 📈📊"
+            else:
+                return "📉📊 *DRIFT EXIT* 📊📉"
+        else:
+            if is_entry:
+                return "☀️ *SOLANA ENTRY*"
+            else:
+                return "🌅 *SOLANA EXIT*"
+
+    def _get_strategy_color_bar(self, strategy: str) -> str:
+        """Get colored bar/indicator for strategy"""
+        strategy_lower = strategy.lower()
+        if strategy_lower == 'pumpfun':
+            return "🟣🟣🟣🟣🟣"  # Purple for meme vibes
+        elif strategy_lower == 'jupiter':
+            return "🟠🟠🟠🟠🟠"  # Orange for Jupiter
+        elif strategy_lower == 'drift':
+            return "🔵🔵🔵🔵🔵"  # Blue for perps
+        return "🟢🟢🟢🟢🟢"  # Green default
+
     def _format_entry_alert(self, alert: SolanaTradeAlert) -> str:
-        """Format entry trade alert message with Solana branding"""
+        """Format entry trade alert message with strategy-specific branding"""
         sim_tag = "\\[SIM\\] " if alert.is_simulated else ""
-        strategy_emoji = self._get_strategy_emoji(alert.strategy)
-        strategy_label = self._get_strategy_label(alert.strategy)
+        strategy_header = self._get_strategy_header(alert.strategy, is_entry=True)
+        color_bar = self._get_strategy_color_bar(alert.strategy)
 
         # Calculate USD value
         usd_value = alert.amount_sol * alert.sol_price_usd if alert.sol_price_usd else 0
 
-        message = f"""
-{sim_tag}☀️ *SOLANA ENTRY* \\| {strategy_emoji} {strategy_label}
+        # Strategy-specific token emoji
+        token_emoji = "🪙"
+        if alert.strategy.lower() == 'pumpfun':
+            token_emoji = "🎯"  # Target for meme snipes
+        elif alert.strategy.lower() == 'jupiter':
+            token_emoji = "💎"  # Gem for swaps
 
-🪙 *{self._escape_markdown(alert.token_symbol)}*
+        message = f"""
+{sim_tag}{strategy_header}
+{color_bar}
+
+{token_emoji} *{self._escape_markdown(alert.token_symbol)}*
 
 💰 Entry: ${self._escape_markdown(f"{alert.entry_price:.8f}")}
 📦 Amount: {self._escape_markdown(f"{alert.amount_sol:.4f}")} SOL \\(${self._escape_markdown(f"{usd_value:.2f}")}\\)
@@ -137,10 +184,10 @@ class SolanaTelegramAlerts:
         return message.strip()
 
     def _format_exit_alert(self, alert: SolanaTradeAlert) -> str:
-        """Format exit trade alert message with Solana branding"""
+        """Format exit trade alert message with strategy-specific branding"""
         sim_tag = "\\[SIM\\] " if alert.is_simulated else ""
-        strategy_emoji = self._get_strategy_emoji(alert.strategy)
-        strategy_label = self._get_strategy_label(alert.strategy)
+        strategy_header = self._get_strategy_header(alert.strategy, is_entry=False)
+        color_bar = self._get_strategy_color_bar(alert.strategy)
 
         # Determine exit reason emoji
         reason_map = {
@@ -150,26 +197,46 @@ class SolanaTelegramAlerts:
             'manual_close': '👤 MANUAL',
             'signal': '📊 SIGNAL',
             'max_age': '⏰ MAX AGE',
+            'rapid_decline': '📉 RAPID DECLINE',
+            'honeypot': '🍯 HONEYPOT',
         }
         exit_reason = reason_map.get(alert.action, self._escape_markdown(alert.reason or 'EXIT'))
 
-        # PnL formatting
+        # PnL formatting with strategy-specific styling
         pnl_sol = alert.pnl_sol or 0
         pnl_pct = alert.pnl_pct or 0
         pnl_usd = pnl_sol * alert.sol_price_usd if alert.sol_price_usd else 0
-        pnl_emoji = "✅" if pnl_sol >= 0 else "❌"
-        pnl_color = "🟩" if pnl_sol >= 0 else "🟥"
+
+        # Strategy and outcome specific emojis
+        if pnl_sol >= 0:
+            pnl_emoji = "💰" if alert.strategy.lower() == 'pumpfun' else "✅"
+            pnl_color = "🟩"
+            result_text = "PROFIT" if alert.strategy.lower() == 'pumpfun' else "WIN"
+        else:
+            pnl_emoji = "💸" if alert.strategy.lower() == 'pumpfun' else "❌"
+            pnl_color = "🟥"
+            result_text = "REKT" if alert.strategy.lower() == 'pumpfun' else "LOSS"
+
+        # Strategy-specific token emoji
+        token_emoji = "🪙"
+        if alert.strategy.lower() == 'pumpfun':
+            token_emoji = "🎰"  # Slot machine for meme gambling vibes
+        elif alert.strategy.lower() == 'jupiter':
+            token_emoji = "💎"
 
         message = f"""
-{sim_tag}🌅 *SOLANA EXIT* \\| {exit_reason}
+{sim_tag}{strategy_header}
+{color_bar}
 
-{strategy_emoji} {strategy_label} \\| 🪙 *{self._escape_markdown(alert.token_symbol)}*
+📋 {exit_reason}
+
+{token_emoji} *{self._escape_markdown(alert.token_symbol)}*
 
 💵 Entry: ${self._escape_markdown(f"{alert.entry_price:.8f}")}
 💰 Exit: ${self._escape_markdown(f"{alert.exit_price:.8f}" if alert.exit_price else "N/A")}
 📦 Amount: {self._escape_markdown(f"{alert.amount_sol:.4f}")} SOL
 
-{pnl_color} *P&L:* {pnl_emoji} {self._escape_markdown(f"{pnl_sol:+.4f}")} SOL \\(${self._escape_markdown(f"{pnl_usd:+.2f}")}\\)
+{pnl_color} *{result_text}:* {pnl_emoji} {self._escape_markdown(f"{pnl_sol:+.4f}")} SOL \\(${self._escape_markdown(f"{pnl_usd:+.2f}")}\\)
 📈 *Return:* {self._escape_markdown(f"{pnl_pct:+.2f}")}%
 
 🔗 `{self._escape_markdown(alert.token_mint[:8])}...{self._escape_markdown(alert.token_mint[-6:])}`

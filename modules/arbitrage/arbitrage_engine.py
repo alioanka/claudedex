@@ -146,8 +146,22 @@ FLASH_LOAN_CONTRACT_ABI = [
     }
 ]
 
-# Common Token Addresses (Ethereum Mainnet)
-TOKENS = {
+# ═══════════════════════════════════════════════════════════════════════════════
+# MULTI-CHAIN ADDRESS CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Chain IDs
+CHAIN_IDS = {
+    'ethereum': 1,
+    'arbitrum': 42161,
+    'optimism': 10,
+    'base': 8453,
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ETHEREUM MAINNET (Chain ID: 1)
+# ═══════════════════════════════════════════════════════════════════════════════
+TOKENS_ETHEREUM = {
     # Major tokens
     'WETH': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
@@ -188,9 +202,94 @@ TOKENS = {
     'ENS': '0xC18360217D8F7Ab5e7c516566761Ea12Ce7F9D72',
 }
 
-# Token pairs to monitor for arbitrage (token_in, token_out)
-# These are the most liquid pairs that frequently have price discrepancies
-ARB_PAIRS = [
+# ═══════════════════════════════════════════════════════════════════════════════
+# ARBITRUM ONE (Chain ID: 42161)
+# Lower gas costs (~95% cheaper than mainnet), same EVM compatibility
+# ═══════════════════════════════════════════════════════════════════════════════
+TOKENS_ARBITRUM = {
+    # Major tokens - Arbitrum native/bridged addresses
+    'WETH': '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',  # Wrapped ETH on Arbitrum
+    'USDC': '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',  # Native USDC (Circle)
+    'USDC_BRIDGED': '0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8',  # Bridged USDC.e
+    'USDT': '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',  # Tether USD
+    'DAI': '0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1',  # DAI Stablecoin
+    'WBTC': '0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f',  # Wrapped BTC
+
+    # Native Arbitrum tokens
+    'ARB': '0x912CE59144191C1204E64559FE8253a0e49E6548',  # Arbitrum token
+    'GMX': '0xfc5A1A6EB076a2C7aD06eD22C90d7E710E35ad0a',  # GMX
+    'MAGIC': '0x539bdE0d7Dbd336b79148AA742883198BBF60342',  # Magic (TreasureDAO)
+    'RDNT': '0x3082CC23568eA640225c2467653dB90e9250AaA0',  # Radiant Capital
+    'PENDLE': '0x0c880f6761F1af8d9Aa9C466984b80DAb9a8c9e8',  # Pendle
+
+    # DeFi tokens on Arbitrum
+    'UNI': '0xFa7F8980b0f1E64A2062791cc3b0871572f1F7f0',  # Uniswap
+    'LINK': '0xf97f4df75117a78c1A5a0DBb814Af92458539FB4',  # Chainlink
+    'AAVE': '0xba5DdD1f9d7F570dc94a51479a000E3BCE967196',  # Aave
+    'CRV': '0x11cDb42B0EB46D95f990BeDD4695A6e3fA034978',  # Curve DAO
+    'SUSHI': '0xd4d42F0b6DEF4CE0383636770eF773390d85c61A',  # SushiSwap
+
+    # Stablecoins
+    'FRAX': '0x17FC002b466eEc40DaE837Fc4bE5c67993ddBd6F',  # Frax
+    'LUSD': '0x93b346b6BC2548dA6A1E7d98E9a421B42541425b',  # Liquity USD
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ROUTER ADDRESSES PER CHAIN
+# ═══════════════════════════════════════════════════════════════════════════════
+ROUTERS_ETHEREUM = {
+    'uniswap_v2': '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',
+    'sushiswap': '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F',
+    'uniswap_v3': '0xE592427A0AEce92De3Edee1F18E0157C05861564',
+}
+
+ROUTERS_ARBITRUM = {
+    'sushiswap': '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',  # SushiSwap V2 Router
+    'camelot': '0xc873fEcbd354f5A56E00E710B90EF4201db2448d',    # Camelot DEX Router
+    'uniswap_v3': '0xE592427A0AEce92De3Edee1F18E0157C05861564', # Uniswap V3 (same address)
+}
+
+ROUTERS_BASE = {
+    'uniswap_v3': '0x2626664c2603336E57B271c5C0b26F421741e481',  # Uniswap V3 SwapRouter02
+    'aerodrome': '0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43',   # Aerodrome Router
+    'baseswap': '0x327Df1E6de05895d2ab08513aaDD9313Fe505d86',    # BaseSwap Router
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AAVE V3 POOL ADDRESSES PER CHAIN
+# ═══════════════════════════════════════════════════════════════════════════════
+AAVE_POOLS = {
+    'ethereum': '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2',
+    'arbitrum': '0x794a61358D6845594F94dc1DB02A252b5b4814aD',
+    'base': '0xA238Dd80C259a72e81d7e4664a9801593F98d1c5',
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BASE (Chain ID: 8453)
+# Coinbase L2, very low gas costs, growing DeFi ecosystem
+# ═══════════════════════════════════════════════════════════════════════════════
+TOKENS_BASE = {
+    # Major tokens - Base native/bridged addresses
+    'WETH': '0x4200000000000000000000000000000000000006',  # Wrapped ETH on Base
+    'USDC': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',  # Native USDC (Circle)
+    'USDbC': '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA', # Bridged USDC
+    'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',   # DAI Stablecoin
+
+    # Native Base tokens
+    'AERO': '0x940181a94A35A4569E4529A3CDfB74e38FD98631',  # Aerodrome
+    'BRETT': '0x532f27101965dd16442E59d40670FaF5eBB142E4', # Brett (meme)
+    'DEGEN': '0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed', # Degen
+    'TOSHI': '0xAC1Bd2486aAf3B5C0fc3Fd868558b082a531B2B4', # Toshi
+
+    # Bridged DeFi tokens
+    'cbETH': '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22', # Coinbase ETH
+    'rETH': '0xB6fe221Fe9EeF5aBa221c348bA20A1Bf5e73624c',  # Rocket Pool ETH
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ARBITRAGE PAIRS PER CHAIN
+# ═══════════════════════════════════════════════════════════════════════════════
+ARB_PAIRS_ETHEREUM = [
     ('WETH', 'USDC'),
     ('WETH', 'USDT'),
     ('WETH', 'DAI'),
@@ -213,15 +312,105 @@ ARB_PAIRS = [
     ('PEPE', 'WETH'),
 ]
 
-# Routers
-ROUTERS = {
-    'uniswap_v2': '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',
-    'sushiswap': '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F',
-    'uniswap_v3': '0xE592427A0AEce92De3Edee1F18E0157C05861564'
+ARB_PAIRS_ARBITRUM = [
+    # High liquidity pairs
+    ('WETH', 'USDC'),
+    ('WETH', 'USDT'),
+    ('WETH', 'DAI'),
+    ('WBTC', 'WETH'),
+    ('ARB', 'WETH'),       # Native ARB token - high volume
+    ('ARB', 'USDC'),       # ARB/stablecoin
+
+    # Native Arbitrum DeFi tokens
+    ('GMX', 'WETH'),       # GMX - major Arbitrum protocol
+    ('MAGIC', 'WETH'),     # TreasureDAO
+    ('RDNT', 'WETH'),      # Radiant Capital
+    ('PENDLE', 'WETH'),    # Pendle
+
+    # Bridged DeFi tokens
+    ('LINK', 'WETH'),
+    ('UNI', 'WETH'),
+    ('AAVE', 'WETH'),
+    ('CRV', 'WETH'),
+    ('SUSHI', 'WETH'),
+
+    # Stablecoin pairs (good for low-risk arb)
+    ('USDC', 'USDT'),
+    ('USDC', 'DAI'),
+    ('USDC', 'USDC_BRIDGED'),  # Native vs bridged USDC
+]
+
+ARB_PAIRS_BASE = [
+    # High liquidity pairs
+    ('WETH', 'USDC'),
+    ('WETH', 'USDbC'),     # Bridged USDC
+    ('WETH', 'DAI'),
+    ('cbETH', 'WETH'),     # Coinbase ETH
+    ('rETH', 'WETH'),      # Rocket Pool ETH
+
+    # Native Base tokens
+    ('AERO', 'WETH'),      # Aerodrome - major Base DEX
+    ('AERO', 'USDC'),
+
+    # Meme tokens (high volatility = potential arb)
+    ('BRETT', 'WETH'),
+    ('DEGEN', 'WETH'),
+    ('TOSHI', 'WETH'),
+
+    # Stablecoin pairs
+    ('USDC', 'USDbC'),     # Native vs bridged USDC - low risk arb
+    ('USDC', 'DAI'),
+]
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CHAIN CONFIG AGGREGATION
+# ═══════════════════════════════════════════════════════════════════════════════
+CHAIN_CONFIGS = {
+    1: {  # Ethereum Mainnet
+        'name': 'ethereum',
+        'display_name': 'Ethereum',
+        'tokens': TOKENS_ETHEREUM,
+        'routers': ROUTERS_ETHEREUM,
+        'aave_pool': AAVE_POOLS['ethereum'],
+        'arb_pairs': ARB_PAIRS_ETHEREUM,
+        'native_symbol': 'ETH',
+        'min_gas_eth': 0.015,  # ~$30-50 for flash loan tx
+        'flash_loan_env_key': 'FLASH_LOAN_RECEIVER_CONTRACT_ETH',
+        'flash_loan_env_fallback': 'FLASH_LOAN_RECEIVER_CONTRACT',  # Backwards compat
+    },
+    42161: {  # Arbitrum One
+        'name': 'arbitrum',
+        'display_name': 'Arbitrum',
+        'tokens': TOKENS_ARBITRUM,
+        'routers': ROUTERS_ARBITRUM,
+        'aave_pool': AAVE_POOLS['arbitrum'],
+        'arb_pairs': ARB_PAIRS_ARBITRUM,
+        'native_symbol': 'ETH',
+        'min_gas_eth': 0.0005,  # ~$1 for flash loan tx (95% cheaper!)
+        'flash_loan_env_key': 'FLASH_LOAN_RECEIVER_CONTRACT_ARB',
+        'flash_loan_env_fallback': None,
+    },
+    8453: {  # Base
+        'name': 'base',
+        'display_name': 'Base',
+        'tokens': TOKENS_BASE,
+        'routers': ROUTERS_BASE,
+        'aave_pool': AAVE_POOLS['base'],
+        'arb_pairs': ARB_PAIRS_BASE,
+        'native_symbol': 'ETH',
+        'min_gas_eth': 0.0003,  # ~$0.50 for flash loan tx (even cheaper than Arbitrum!)
+        'flash_loan_env_key': 'FLASH_LOAN_RECEIVER_CONTRACT_BASE',
+        'flash_loan_env_fallback': None,
+    },
 }
 
-# Aave V3 Pool (Mainnet)
-AAVE_V3_POOL = '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2'
+# Default to Ethereum for backwards compatibility
+TOKENS = TOKENS_ETHEREUM
+
+# Backwards compatibility - default to Ethereum
+ARB_PAIRS = ARB_PAIRS_ETHEREUM
+ROUTERS = ROUTERS_ETHEREUM
+AAVE_V3_POOL = AAVE_POOLS['ethereum']
 
 # Flashbots Relay
 FLASHBOTS_RELAY_URL = 'https://relay.flashbots.net'
@@ -350,12 +539,13 @@ class FlashLoanExecutor:
 
             # CRITICAL: Verify profit exceeds gas cost + safety buffer
             # Flash loan reverts are caused by profit being consumed by gas or price movement
-            gas_limit = 800000
+            # Realistic gas for flash loan arbitrage: ~450K (not 800K)
+            gas_limit = 450000
             gas_cost_wei = gas_price_with_buffer * gas_limit
-            # Require profit to be 50% higher than gas cost to account for:
+            # Require profit to be 30% higher than gas cost to account for:
             # - Price movement during block inclusion
             # - Slippage in actual execution vs simulation
-            min_profit_required = int(gas_cost_wei * 1.5)
+            min_profit_required = int(gas_cost_wei * 1.3)
 
             if expected_profit is not None and expected_profit < min_profit_required:
                 gas_cost_eth = gas_cost_wei / 1e18
@@ -539,16 +729,28 @@ class FlashbotsExecutor:
             logger.error(f"Bundle simulation failed: {e}")
             return None
 
-class ArbitrageEngine:
+class EVMArbitrageEngine:
     """
-    Arbitrage Engine with flash loan and Flashbots support.
+    Base EVM Arbitrage Engine with flash loan and Flashbots support.
 
     Features:
+    - Multi-chain support (Ethereum, Arbitrum, Base)
     - Multi-DEX price monitoring
     - Aave flash loans for capital-efficient arb
-    - Flashbots for MEV protection
+    - Flashbots for MEV protection (Ethereum only)
     - Configurable profit thresholds
+    - Chain-specific flash loan contracts
+
+    Subclasses: ETHArbitrageEngine, ARBArbitrageEngine, BaseArbitrageEngine
     """
+
+    # Override in subclasses for chain-specific configuration
+    CHAIN_NAME = 'ethereum'
+    EXPECTED_CHAIN_ID = 1
+    RPC_PROVIDER_KEY = 'ETHEREUM_RPC'
+    RPC_ENV_KEY = 'ETHEREUM_RPC_URL'
+    RPC_ENV_FALLBACK = 'WEB3_PROVIDER_URL'
+    LOGGER_NAME = 'ETHArbitrageEngine'
 
     def __init__(self, config: Dict, db_pool):
         self.config = config
@@ -556,16 +758,33 @@ class ArbitrageEngine:
         self.is_running = False
         self.w3 = None
 
-        # Get RPC URL from config (passed from main_arbitrage), Pool Engine, or env fallback
+        # Chain-specific logger
+        self.logger = logging.getLogger(self.LOGGER_NAME)
+
+        # Chain configuration
+        self.chain_name = self.CHAIN_NAME
+        self.chain_id = None  # Set in initialize() from RPC
+        self.chain_config = CHAIN_CONFIGS.get(self.EXPECTED_CHAIN_ID, {})
+
+        # Chain-specific addresses from config
+        self.tokens = self.chain_config.get('tokens', TOKENS_ETHEREUM)
+        self.routers = self.chain_config.get('routers', ROUTERS_ETHEREUM)
+        self.arb_pairs = self.chain_config.get('arb_pairs', ARB_PAIRS_ETHEREUM)
+        self.aave_pool = self.chain_config.get('aave_pool', AAVE_POOLS['ethereum'])
+
+        # Get RPC URL from config - support chain-specific RPC keys
         self.rpc_url = config.get('rpc_url')
         if not self.rpc_url:
             try:
                 from config.rpc_provider import RPCProvider
-                self.rpc_url = RPCProvider.get_rpc_sync('ETHEREUM_RPC')
+                self.rpc_url = RPCProvider.get_rpc_sync(self.RPC_PROVIDER_KEY)
             except Exception:
                 pass
         if not self.rpc_url:
-            self.rpc_url = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
+            # Fallback to environment variables
+            self.rpc_url = os.getenv(self.RPC_ENV_KEY)
+            if not self.rpc_url and self.RPC_ENV_FALLBACK:
+                self.rpc_url = os.getenv(self.RPC_ENV_FALLBACK)
 
         self.private_key = None  # Loaded in initialize() from secrets manager
         self.wallet_address = None  # Loaded in initialize() from secrets manager
@@ -616,7 +835,11 @@ class ArbitrageEngine:
         self._last_gas_check_time: Optional[datetime] = None
         self._gas_check_interval = 60  # Check gas every 60 seconds
         self._cached_balance_eth: float = 0.0
-        self._min_gas_eth: float = 0.05  # Minimum 0.05 ETH required for flash loan gas
+        # Minimum ETH balance to attempt flash loan arbitrage
+        # Actual cost is calculated dynamically, but we need at least this to try
+        # Flash loan arb uses ~450K gas, at 30 gwei = 0.0135 ETH
+        # Set minimum to 0.015 ETH to allow execution when gas is reasonable
+        self._min_gas_eth: float = 0.015
         self._low_gas_warning_shown = False
 
         self._stats = {
@@ -625,6 +848,9 @@ class ArbitrageEngine:
             'opportunities_executed': 0,
             'last_stats_log': datetime.now()
         }
+
+        # Telegram alerts - initialized in initialize() method
+        self.telegram_alerts = None
 
     async def _get_decrypted_key(self, key_name: str) -> Optional[str]:
         """
@@ -685,10 +911,10 @@ class ArbitrageEngine:
             return None
 
     async def initialize(self):
-        logger.info("⚖️ Initializing Arbitrage Engine...")
+        self.logger.info(f"⚖️ Initializing {self.LOGGER_NAME}...")
 
         # Load credentials from secrets manager (database)
-        logger.info("Loading credentials from database...")
+        self.logger.info("Loading credentials from database...")
         self.private_key = await self._get_decrypted_key('PRIVATE_KEY')
 
         # IMPORTANT: Derive wallet address from private key to avoid mismatch issues
@@ -701,35 +927,64 @@ class ArbitrageEngine:
                 account = Account.from_key(pk)
                 self.wallet_address = account.address
                 masked_addr = self.wallet_address[:8] + "..." + self.wallet_address[-6:]
-                logger.info(f"✅ Loaded EVM credentials from database (wallet: {masked_addr})")
-                logger.debug(f"   Wallet derived from private key (ignoring stored WALLET_ADDRESS)")
+                self.logger.info(f"✅ Loaded EVM credentials from database (wallet: {masked_addr})")
+                self.logger.debug(f"   Wallet derived from private key (ignoring stored WALLET_ADDRESS)")
             except Exception as e:
-                logger.error(f"❌ Failed to derive wallet from private key: {e}")
+                self.logger.error(f"❌ Failed to derive wallet from private key: {e}")
                 self.wallet_address = None
         else:
-            logger.warning(f"⚠️ Missing PRIVATE_KEY in database - store via settings page")
+            self.logger.warning(f"⚠️ Missing PRIVATE_KEY in database - store via settings page")
             self.wallet_address = None
 
         if self.rpc_url:
             self.w3 = Web3(Web3.HTTPProvider(self.rpc_url.split(',')[0]))
             if self.w3.is_connected():
-                logger.info("✅ Connected to Arbitrage RPC")
+                # Detect chain from RPC
+                self.chain_id = self.w3.eth.chain_id
+                self.chain_config = CHAIN_CONFIGS.get(self.chain_id)
 
-                # Initialize router contracts
-                for name, address in ROUTERS.items():
+                if self.chain_config:
+                    # Use chain-specific addresses
+                    self.chain_name = self.chain_config['name']
+                    self.tokens = self.chain_config['tokens']
+                    self.routers = self.chain_config['routers']
+                    self.arb_pairs = self.chain_config['arb_pairs']
+                    self.aave_pool = self.chain_config['aave_pool']
+                    self._min_gas_eth = self.chain_config['min_gas_eth']
+
+                    self.logger.info(f"✅ Connected to {self.chain_name.upper()} RPC (chain_id: {self.chain_id})")
+                    self.logger.info(f"   Tokens: {len(self.tokens)} | Routers: {len(self.routers)} | Pairs: {len(self.arb_pairs)}")
+                    self.logger.info(f"   Min gas: {self._min_gas_eth} ETH")
+                else:
+                    # Unknown chain - use Ethereum defaults
+                    self.logger.warning(f"⚠️ Unknown chain_id {self.chain_id} - using Ethereum defaults")
+                    self.logger.info("✅ Connected to Arbitrage RPC")
+
+                # Initialize router contracts using chain-specific addresses
+                for name, address in self.routers.items():
                     try:
                         self.router_contracts[name] = self.w3.eth.contract(
                             address=Web3.to_checksum_address(address),
                             abi=ROUTER_ABI
                         )
                     except Exception as e:
-                        logger.debug(f"Could not init {name} router: {e}")
+                        self.logger.debug(f"Could not init {name} router: {e}")
 
                 # Initialize Flash Loan executor
                 # IMPORTANT: Flash loans require a deployed smart contract with IFlashLoanReceiver
                 # The contract must implement executeOperation() callback
                 # EOA wallets CANNOT receive flash loan callbacks - they will always revert
-                flash_loan_contract = os.getenv('FLASH_LOAN_RECEIVER_CONTRACT')
+                #
+                # Chain-specific flash loan contracts:
+                # - FLASH_LOAN_RECEIVER_CONTRACT_ETH for Ethereum
+                # - FLASH_LOAN_RECEIVER_CONTRACT_ARB for Arbitrum
+                # - FLASH_LOAN_RECEIVER_CONTRACT_BASE for Base
+                # - FLASH_LOAN_RECEIVER_CONTRACT as fallback (for backwards compat)
+                flash_loan_env_key = self.chain_config.get('flash_loan_env_key', 'FLASH_LOAN_RECEIVER_CONTRACT')
+                flash_loan_env_fallback = self.chain_config.get('flash_loan_env_fallback')
+                flash_loan_contract = os.getenv(flash_loan_env_key)
+                if not flash_loan_contract and flash_loan_env_fallback:
+                    flash_loan_contract = os.getenv(flash_loan_env_fallback)
 
                 if self.private_key and self.wallet_address and not self.dry_run:
                     if flash_loan_contract:
@@ -742,23 +997,23 @@ class ArbitrageEngine:
                             self.wallet_address,  # EOA wallet - signs TX and pays gas
                             flash_loan_contract   # Contract - receives flash loan callback
                         )
-                        logger.info(f"⚡ Flash Loan executor initialized:")
-                        logger.info(f"   Wallet (signer): {self.wallet_address[:10]}...")
-                        logger.info(f"   Receiver contract: {flash_loan_contract[:10]}...")
+                        self.logger.info(f"⚡ Flash Loan executor initialized:")
+                        self.logger.info(f"   Wallet (signer): {self.wallet_address[:10]}...")
+                        self.logger.info(f"   Receiver contract: {flash_loan_contract[:10]}...")
                     else:
                         # No contract deployed - flash loans WILL NOT WORK with EOA
-                        logger.warning("=" * 70)
-                        logger.warning("⚠️ FLASH LOAN WARNING: No receiver contract deployed!")
-                        logger.warning("   Aave flash loans require a smart contract that implements")
-                        logger.warning("   IFlashLoanReceiver.executeOperation() callback.")
-                        logger.warning("   EOA wallets CANNOT receive flash loan callbacks.")
-                        logger.warning("")
-                        logger.warning("   To enable flash loans:")
-                        logger.warning("   1. Deploy a FlashLoanReceiver contract")
-                        logger.warning("   2. Set FLASH_LOAN_RECEIVER_CONTRACT=<contract_address> in .env")
-                        logger.warning("")
-                        logger.warning("   ⚡ Flash loans DISABLED - using direct swaps only")
-                        logger.warning("=" * 70)
+                        self.logger.warning("=" * 70)
+                        self.logger.warning(f"⚠️ FLASH LOAN WARNING: No receiver contract for {self.chain_name.upper()}!")
+                        self.logger.warning("   Aave flash loans require a smart contract that implements")
+                        self.logger.warning("   IFlashLoanReceiver.executeOperation() callback.")
+                        self.logger.warning("   EOA wallets CANNOT receive flash loan callbacks.")
+                        self.logger.warning("")
+                        self.logger.warning("   To enable flash loans:")
+                        self.logger.warning(f"   1. Deploy FlashLoanReceiver contract on {self.chain_name.upper()}")
+                        self.logger.warning(f"   2. Set {flash_loan_env_key}=<contract_address> in .env")
+                        self.logger.warning("")
+                        self.logger.warning("   ⚡ Flash loans DISABLED - using direct swaps only")
+                        self.logger.warning("=" * 70)
                         self.flash_loan_executor = None
                         self.use_flash_loans = False
 
@@ -767,37 +1022,52 @@ class ArbitrageEngine:
                         balance_wei = self.w3.eth.get_balance(self.wallet_address)
                         balance_eth = balance_wei / 1e18
                         if balance_eth < 0.01:
-                            logger.error(f"❌ CRITICAL: Wallet has insufficient ETH for gas!")
-                            logger.error(f"   Balance: {balance_eth:.6f} ETH")
-                            logger.error(f"   Required: At least 0.01 ETH for flash loan gas")
-                            logger.error(f"   Fund wallet: {self.wallet_address}")
+                            self.logger.error(f"❌ CRITICAL: Wallet has insufficient ETH for gas!")
+                            self.logger.error(f"   Balance: {balance_eth:.6f} ETH")
+                            self.logger.error(f"   Required: At least 0.01 ETH for flash loan gas")
+                            self.logger.error(f"   Fund wallet: {self.wallet_address}")
                         else:
-                            logger.info(f"   Wallet balance: {balance_eth:.4f} ETH")
+                            self.logger.info(f"   Wallet balance: {balance_eth:.4f} ETH")
                     except Exception as e:
-                        logger.warning(f"⚠️ Could not check wallet balance: {e}")
+                        self.logger.warning(f"⚠️ Could not check wallet balance: {e}")
 
-                    # Initialize Flashbots executor
-                    self.flashbots_executor = FlashbotsExecutor(
-                        self.w3,
-                        self.private_key
-                    )
-                    await self.flashbots_executor.initialize()
-                    logger.info("📦 Flashbots executor initialized")
+                    # Initialize Flashbots executor (Ethereum mainnet only)
+                    # Flashbots is not available on L2s like Arbitrum/Base
+                    if self.chain_id == 1:  # Ethereum mainnet
+                        self.flashbots_executor = FlashbotsExecutor(
+                            self.w3,
+                            self.private_key
+                        )
+                        await self.flashbots_executor.initialize()
+                        self.logger.info("📦 Flashbots executor initialized")
+                    else:
+                        self.logger.info(f"ℹ️ Flashbots not available on {self.chain_name} - using direct RPC")
+                        self.use_flashbots = False
 
             else:
-                logger.warning("⚠️ Failed to connect to Arbitrage RPC")
+                self.logger.warning("⚠️ Failed to connect to Arbitrage RPC")
 
-        logger.info(f"   Mode: {'DRY_RUN (Simulated)' if self.dry_run else 'LIVE TRADING'}")
-        logger.info(f"   Flash Loans: {'Enabled' if self.flash_loan_executor else 'Disabled'}")
-        logger.info(f"   Flashbots: {'Enabled' if self.flashbots_executor else 'Disabled'}")
+        self.logger.info(f"   Mode: {'DRY_RUN (Simulated)' if self.dry_run else 'LIVE TRADING'}")
+        self.logger.info(f"   Flash Loans: {'Enabled' if self.flash_loan_executor else 'Disabled'}")
+        self.logger.info(f"   Flashbots: {'Enabled' if self.flashbots_executor else 'Disabled'}")
+
+        # Initialize Telegram alerts for arbitrage notifications
+        try:
+            from arbitrage.arbitrage_alerts import ArbitrageTelegramAlerts, ArbitrageChain
+            self.telegram_alerts = ArbitrageTelegramAlerts()
+            if self.telegram_alerts.enabled:
+                self.logger.info(f"📱 Telegram alerts enabled for {self.chain_name.upper()} arbitrage")
+        except Exception as e:
+            self.logger.warning(f"Telegram alerts not available: {e}")
+            self.telegram_alerts = None
 
     async def run(self):
         self.is_running = True
-        logger.info("⚖️ Arbitrage Engine Started")
-        logger.info(f"   Monitoring {len(ARB_PAIRS)} token pairs across {len(self.router_contracts)} DEXs")
+        self.logger.info(f"⚖️ {self.LOGGER_NAME} Started [{self.chain_name.upper()}]")
+        self.logger.info(f"   Monitoring {len(self.arb_pairs)} token pairs across {len(self.router_contracts)} DEXs")
 
         if not self.w3:
-            logger.error("RPC not connected, arbitrage disabled.")
+            self.logger.error("RPC not connected, arbitrage disabled.")
             return
 
         pair_index = 0  # Track which pair we're scanning
@@ -806,16 +1076,16 @@ class ArbitrageEngine:
             try:
                 self._stats['scans'] += 1
 
-                # Get current pair to scan
-                token_in_symbol, token_out_symbol = ARB_PAIRS[pair_index]
-                token_in = TOKENS.get(token_in_symbol)
-                token_out = TOKENS.get(token_out_symbol)
+                # Get current pair to scan (use chain-specific pairs and tokens)
+                token_in_symbol, token_out_symbol = self.arb_pairs[pair_index]
+                token_in = self.tokens.get(token_in_symbol)
+                token_out = self.tokens.get(token_out_symbol)
 
                 if token_in and token_out:
                     await self._check_arb_opportunity(token_in, token_out, token_in_symbol)
 
                 # Move to next pair (round-robin)
-                pair_index = (pair_index + 1) % len(ARB_PAIRS)
+                pair_index = (pair_index + 1) % len(self.arb_pairs)
 
                 # Log stats every 5 minutes
                 await self._log_stats_if_needed()
@@ -824,7 +1094,7 @@ class ArbitrageEngine:
                 await asyncio.sleep(2)
 
             except Exception as e:
-                logger.error(f"Arb loop error: {e}")
+                self.logger.error(f"Arb loop error: {e}")
                 await asyncio.sleep(5)
 
     async def _log_stats_if_needed(self):
@@ -834,7 +1104,7 @@ class ArbitrageEngine:
 
         if elapsed >= 300:  # 5 minutes
             # Enhanced logging with spread visibility
-            logger.info(f"📊 ARBITRAGE STATS (Last 5 min): "
+            self.logger.info(f"📊 [{self.chain_name.upper()}] STATS (Last 5 min): "
                        f"Scans: {self._stats['scans']} | "
                        f"Pairs w/Liquidity: {self._pairs_with_liquidity}/{self._total_pairs_scanned} | "
                        f"Opportunities: {self._stats['opportunities_found']} | "
@@ -844,11 +1114,11 @@ class ArbitrageEngine:
             if self._best_spread_seen > -999.0:  # -999 is initial value, means no spreads checked
                 status = "✅ ABOVE" if self._best_spread_seen > self.min_profit_threshold else "❌ BELOW"
                 sign = "+" if self._best_spread_seen >= 0 else ""
-                logger.info(f"   Best spread: {sign}{self._best_spread_seen:.4%} on {self._best_spread_pair} ({status} threshold {self.min_profit_threshold:.2%})")
+                self.logger.info(f"   Best spread: {sign}{self._best_spread_seen:.4%} on {self._best_spread_pair} ({status} threshold {self.min_profit_threshold:.2%})")
                 if self._best_spread_seen < 0:
-                    logger.info(f"   ⚠️ All spreads are NEGATIVE - arbitrage not profitable on current DEXs")
+                    self.logger.info(f"   ⚠️ All spreads are NEGATIVE - arbitrage not profitable on current DEXs")
             else:
-                logger.info(f"   No spreads calculated - check RPC connection and DEX liquidity")
+                self.logger.info(f"   No spreads calculated - check RPC connection and DEX liquidity")
 
             # Reset stats
             self._stats = {
@@ -887,9 +1157,9 @@ class ArbitrageEngine:
             # Log diagnostic info periodically (every 60 scans = ~2 minutes)
             if self._total_pairs_scanned % 60 == 1:
                 if forward_prices:
-                    logger.debug(f"📊 [{token_symbol}] Forward prices: {len(forward_prices)} DEXs responded")
+                    self.logger.debug(f"📊 [{token_symbol}] Forward prices: {len(forward_prices)} DEXs responded")
                 else:
-                    logger.warning(f"⚠️ [{token_symbol}] No forward prices from any DEX. Errors: {forward_errors}")
+                    self.logger.warning(f"⚠️ [{token_symbol}] No forward prices from any DEX. Errors: {forward_errors}")
 
             if len(forward_prices) < 2:
                 return False
@@ -958,7 +1228,7 @@ class ArbitrageEngine:
                 if self._pair_execution_date != today:
                     self._pair_execution_count = {}
                     self._pair_execution_date = today
-                    logger.info(f"📅 New day - reset arbitrage execution counters")
+                    self.logger.info(f"📅 New day - reset arbitrage execution counters")
 
                 # Check daily execution limit per pair
                 current_count = self._pair_execution_count.get(opp_key, 0)
@@ -981,8 +1251,8 @@ class ArbitrageEngine:
                 self._pair_execution_count[opp_key] = current_count + 1
                 remaining = self._max_executions_per_pair_per_day - (current_count + 1)
 
-                logger.info(f"🚨 ARBITRAGE OPPORTUNITY [{token_symbol}]: Buy on {best_buy_dex}, Sell on {best_sell_dex}. Raw: {raw_spread:.2%}, Net: {net_spread:.2%} (#{current_count + 1} today, {remaining} remaining)")
-                logger.info(f"   Path: {amount_in/1e18:.4f} {token_symbol} → {forward_output/1e18:.4f} intermediate → {final_output/1e18:.4f} {token_symbol} (profit: {profit/1e18:.4f})")
+                self.logger.info(f"🚨 [{self.chain_name.upper()}] ARBITRAGE OPPORTUNITY [{token_symbol}]: Buy on {best_buy_dex}, Sell on {best_sell_dex}. Raw: {raw_spread:.2%}, Net: {net_spread:.2%} (#{current_count + 1} today, {remaining} remaining)")
+                self.logger.info(f"   Path: {amount_in/1e18:.4f} {token_symbol} → {forward_output/1e18:.4f} intermediate → {final_output/1e18:.4f} {token_symbol} (profit: {profit/1e18:.4f})")
                 self._stats['opportunities_executed'] += 1
 
                 # Execute arbitrage
@@ -999,7 +1269,7 @@ class ArbitrageEngine:
             return False
 
         except Exception as e:
-            logger.error(f"Arb check failed for {token_symbol}: {e}")
+            self.logger.error(f"Arb check failed for {token_symbol}: {e}")
             return False
 
     async def _check_gas_balance(self) -> Tuple[bool, float]:
@@ -1032,17 +1302,17 @@ class ArbitrageEngine:
 
             # Log warning only once when gas becomes insufficient
             if not has_gas and not self._low_gas_warning_shown:
-                logger.warning(f"⚠️ Insufficient gas: {self._cached_balance_eth:.6f} ETH < {self._min_gas_eth} ETH minimum")
-                logger.warning(f"   Fund wallet {self.wallet_address} to enable execution")
+                self.logger.warning(f"⚠️ [{self.chain_name.upper()}] Insufficient gas: {self._cached_balance_eth:.6f} ETH < {self._min_gas_eth} ETH minimum")
+                self.logger.warning(f"   Fund wallet {self.wallet_address} to enable execution")
                 self._low_gas_warning_shown = True
             elif has_gas and self._low_gas_warning_shown:
-                logger.info(f"✅ Gas balance recovered: {self._cached_balance_eth:.6f} ETH")
+                self.logger.info(f"✅ [{self.chain_name.upper()}] Gas balance recovered: {self._cached_balance_eth:.6f} ETH")
                 self._low_gas_warning_shown = False
 
             return has_gas, self._cached_balance_eth
 
         except Exception as e:
-            logger.debug(f"Gas check failed: {e}")
+            self.logger.debug(f"Gas check failed: {e}")
             return False, 0.0
 
     async def _execute_flash_swap(
@@ -1056,42 +1326,48 @@ class ArbitrageEngine:
         token_symbol: str = "UNKNOWN"
     ):
         """Execute the arbitrage trade using flash loans and Flashbots"""
-        logger.info(f"⚡ Executing Arbitrage [{token_symbol}]: {buy_dex} -> {sell_dex} | Amount: {amount/1e18:.4f} ETH | Expected: +{expected_profit:.2%}")
+        self.logger.info(f"⚡ [{self.chain_name.upper()}] Executing Arbitrage [{token_symbol}]: {buy_dex} -> {sell_dex} | Amount: {amount/1e18:.4f} ETH | Expected: +{expected_profit:.2%}")
 
         if self.dry_run:
             # Simulate execution
             await asyncio.sleep(0.5)
-            logger.info(f"✅ Flash Swap Executed (DRY RUN) [{token_symbol}]")
+            self.logger.info(f"✅ [{self.chain_name.upper()}] Flash Swap Executed (DRY RUN) [{token_symbol}]")
             await self._log_arb_trade(buy_dex, sell_dex, token_in, amount, expected_profit, "DRY_RUN", token_symbol)
             return
 
         # Validate credentials before live execution
         if not self.private_key or not self.wallet_address:
-            logger.error(f"❌ Cannot execute - PRIVATE_KEY or WALLET_ADDRESS not configured in database")
+            self.logger.error(f"❌ Cannot execute - PRIVATE_KEY or WALLET_ADDRESS not configured in database")
             return
 
         # Check gas balance before execution
         has_gas, balance = await self._check_gas_balance()
         if not has_gas:
-            logger.warning(f"⏸️ Skipping execution - insufficient gas ({balance:.6f} ETH < {self._min_gas_eth} ETH)")
+            self.logger.warning(f"⏸️ Skipping execution - insufficient gas ({balance:.6f} ETH < {self._min_gas_eth} ETH)")
             return
 
         # Additional check: estimate actual gas cost for flash loan transactions
         if self.use_flash_loans and self.flash_loan_executor and self.w3:
             try:
                 gas_price = self.w3.eth.gas_price
-                gas_limit = 800000  # Flash loan gas limit
+                # Realistic gas limit for flash loan arbitrage:
+                # - Flash loan borrow: ~100K gas
+                # - DEX swap 1: ~150K gas
+                # - DEX swap 2: ~150K gas
+                # - Flash loan repay: ~50K gas
+                # Total: ~450K gas (not 800K)
+                gas_limit = 450000
                 estimated_cost_eth = (gas_price * gas_limit) / 1e18
-                # Add 20% buffer for gas price fluctuations
-                required_eth = estimated_cost_eth * 1.2
+                # Add 30% buffer for gas price fluctuations and complex routes
+                required_eth = estimated_cost_eth * 1.3
 
                 if balance < required_eth:
-                    logger.warning(f"⏸️ Skipping execution - insufficient ETH for gas cost")
-                    logger.warning(f"   Balance: {balance:.6f} ETH | Estimated cost: {required_eth:.6f} ETH")
-                    logger.warning(f"   Gas: {gas_price/1e9:.1f} gwei × {gas_limit:,} = {estimated_cost_eth:.6f} ETH")
+                    self.logger.warning(f"⏸️ Skipping execution - insufficient ETH for gas cost")
+                    self.logger.warning(f"   Balance: {balance:.6f} ETH | Required: {required_eth:.6f} ETH")
+                    self.logger.warning(f"   Gas: {gas_price/1e9:.1f} gwei × {gas_limit:,} = {estimated_cost_eth:.6f} ETH + 30% buffer")
                     return
             except Exception as e:
-                logger.debug(f"Gas estimation failed: {e}")
+                self.logger.debug(f"Gas estimation failed: {e}")
 
         try:
             if self.use_flash_loans and self.flash_loan_executor:
@@ -1106,13 +1382,25 @@ class ArbitrageEngine:
                 )
 
             if tx_hash:
-                logger.info(f"✅ Arbitrage executed [{token_symbol}]: {tx_hash}")
+                self.logger.info(f"✅ [{self.chain_name.upper()}] Arbitrage executed [{token_symbol}]: {tx_hash}")
                 await self._log_arb_trade(buy_dex, sell_dex, token_in, amount, expected_profit, tx_hash, token_symbol)
             else:
-                logger.error(f"❌ Arbitrage execution failed [{token_symbol}]")
+                self.logger.error(f"❌ [{self.chain_name.upper()}] Arbitrage execution failed [{token_symbol}]")
+                # Send Telegram error alert for failed execution
+                await self._send_error_alert(
+                    error_type="Execution Failed",
+                    details=f"Flash swap failed for {token_symbol}\nBuy: {buy_dex} → Sell: {sell_dex}\nAmount: {amount/1e18:.4f} ETH",
+                    token_symbol=token_symbol
+                )
 
         except Exception as e:
-            logger.error(f"Arbitrage execution error [{token_symbol}]: {e}")
+            self.logger.error(f"Arbitrage execution error [{token_symbol}]: {e}")
+            # Send Telegram error alert for exception
+            await self._send_error_alert(
+                error_type="Execution Error",
+                details=f"Exception during arbitrage: {str(e)[:200]}",
+                token_symbol=token_symbol
+            )
 
     async def _execute_with_flash_loan(
         self,
@@ -1141,16 +1429,17 @@ class ArbitrageEngine:
         """
         # Safety check: flash loan executor must be initialized with a contract address
         if not self.flash_loan_executor:
-            logger.error("❌ Flash loan executor not initialized - no receiver contract deployed")
-            logger.error("   Set FLASH_LOAN_RECEIVER_CONTRACT in .env and restart")
+            flash_loan_env_key = self.chain_config.get('flash_loan_env_key', 'FLASH_LOAN_RECEIVER_CONTRACT')
+            self.logger.error(f"❌ Flash loan executor not initialized - no receiver contract for {self.chain_name.upper()}")
+            self.logger.error(f"   Set {flash_loan_env_key} in .env and restart")
             return None
 
-        # Get router addresses
-        buy_router = ROUTERS.get(buy_dex, ROUTERS['uniswap_v2'])
-        sell_router = ROUTERS.get(sell_dex, ROUTERS['sushiswap'])
+        # Get router addresses (use chain-specific routers)
+        buy_router = self.routers.get(buy_dex, list(self.routers.values())[0])
+        sell_router = self.routers.get(sell_dex, list(self.routers.values())[-1])
 
-        logger.info(f"   Flash loan params: borrow={token_in[:10]}..., intermediate={token_out[:10]}...")
-        logger.info(f"   Route: {buy_dex} ({buy_router[:10]}...) -> {sell_dex} ({sell_router[:10]}...)")
+        self.logger.info(f"   Flash loan params: borrow={token_in[:10]}..., intermediate={token_out[:10]}...")
+        self.logger.info(f"   Route: {buy_dex} ({buy_router[:10]}...) -> {sell_dex} ({sell_router[:10]}...)")
 
         # Execute via contract's executeArbitrage function
         # This ensures initiator == contract address (passes the check!)
@@ -1179,7 +1468,7 @@ class ArbitrageEngine:
             sell_router = self.router_contracts.get(sell_dex)
 
             if not buy_router or not sell_router:
-                logger.error("Router contracts not available")
+                self.logger.error("Router contracts not available")
                 return None
 
             deadline = int(datetime.now().timestamp()) + 120
@@ -1247,14 +1536,14 @@ class ArbitrageEngine:
                     if bundle_result:
                         return bundle_result.get('bundleHash', 'bundle_sent')
                     else:
-                        logger.warning("Flashbots bundle rejected, falling back to public mempool")
+                        self.logger.warning("Flashbots bundle rejected, falling back to public mempool")
 
             # Fallback: Send to public mempool
             tx_hash = self.w3.eth.send_raw_transaction(signed_buy.rawTransaction)
             return tx_hash.hex()
 
         except Exception as e:
-            logger.error(f"Direct swap execution error: {e}")
+            self.logger.error(f"Direct swap execution error: {e}")
             return None
 
     async def _log_arb_trade(
@@ -1278,7 +1567,7 @@ class ArbitrageEngine:
             # Get real ETH price - CRITICAL: don't use fake prices
             eth_price = await self.price_fetcher.get_price('eth')
             if not eth_price:
-                logger.warning(f"Cannot log trade - ETH price unavailable")
+                self.logger.warning(f"Cannot log trade - ETH price unavailable")
                 return
 
             # Realistic cost deductions
@@ -1303,8 +1592,8 @@ class ArbitrageEngine:
             entry_price = eth_price
             exit_price = eth_price * (1 + net_profit_pct)
 
-            logger.info(
-                f"💰 Arb value [{token_symbol}]: {amount_eth:.4f} ETH @ ${eth_price:.2f} = ${entry_usd:.2f} | "
+            self.logger.info(
+                f"💰 [{self.chain_name.upper()}] Arb value [{token_symbol}]: {amount_eth:.4f} ETH @ ${eth_price:.2f} = ${entry_usd:.2f} | "
                 f"Gross: +{gross_profit_pct:.2%} | Costs: ${total_costs:.2f} | Net: ${net_profit_usd:.2f}"
             )
 
@@ -1323,7 +1612,7 @@ class ArbitrageEngine:
                 """,
                     trade_id,
                     token,
-                    'ethereum',
+                    self.chain_name,  # Use chain from engine instance
                     buy_dex,
                     sell_dex,
                     'buy',
@@ -1344,6 +1633,8 @@ class ArbitrageEngine:
                     eth_price,
                     json.dumps({
                         'dry_run': self.dry_run,
+                        'chain': self.chain_name,
+                        'chain_id': self.chain_id,
                         'token_symbol': token_symbol,
                         'gross_profit_pct': gross_profit_pct * 100,
                         'flash_loan_cost': flash_loan_cost,
@@ -1352,9 +1643,75 @@ class ArbitrageEngine:
                         'total_costs': total_costs
                     })
                 )
-            logger.debug(f"💾 Logged to arbitrage_trades: {trade_id} [{token_symbol}]")
+            self.logger.debug(f"💾 Logged to arbitrage_trades: {trade_id} [{token_symbol}]")
+
+            # Send Telegram alert for successful trade
+            if self.telegram_alerts and self.telegram_alerts.enabled:
+                try:
+                    from arbitrage.arbitrage_alerts import ArbitrageTradeAlert, ArbitrageChain
+
+                    # Map chain name to ArbitrageChain enum
+                    chain_map = {
+                        'ethereum': ArbitrageChain.ETHEREUM,
+                        'arbitrum': ArbitrageChain.ARBITRUM,
+                        'base': ArbitrageChain.BASE,
+                    }
+                    chain = chain_map.get(self.chain_name, ArbitrageChain.ETHEREUM)
+
+                    alert = ArbitrageTradeAlert(
+                        chain=chain,
+                        token_symbol=token_symbol,
+                        buy_dex=buy_dex,
+                        sell_dex=sell_dex,
+                        amount=amount_eth,
+                        amount_usd=entry_usd,
+                        profit_pct=net_profit_pct * 100,
+                        profit_amount=net_profit_usd / eth_price if eth_price > 0 else 0,
+                        profit_usd=net_profit_usd,
+                        tx_hash=tx_hash,
+                        is_simulated=self.dry_run,
+                        gas_cost_usd=GAS_COST_USD,
+                        flash_loan_fee=flash_loan_cost,
+                    )
+                    await self.telegram_alerts.send_trade_alert(alert)
+                except Exception as tg_err:
+                    self.logger.debug(f"Telegram alert failed: {tg_err}")
+
         except Exception as e:
-            logger.error(f"Error logging arb trade: {e}")
+            self.logger.error(f"Error logging arb trade: {e}")
+
+    async def _send_error_alert(
+        self,
+        error_type: str,
+        details: str,
+        token_symbol: Optional[str] = None,
+        tx_hash: Optional[str] = None
+    ):
+        """Send Telegram error alert"""
+        if not self.telegram_alerts or not self.telegram_alerts.enabled:
+            return
+
+        try:
+            from arbitrage.arbitrage_alerts import ArbitrageErrorAlert, ArbitrageChain
+
+            # Map chain name to ArbitrageChain enum
+            chain_map = {
+                'ethereum': ArbitrageChain.ETHEREUM,
+                'arbitrum': ArbitrageChain.ARBITRUM,
+                'base': ArbitrageChain.BASE,
+            }
+            chain = chain_map.get(self.chain_name, ArbitrageChain.ETHEREUM)
+
+            alert = ArbitrageErrorAlert(
+                chain=chain,
+                error_type=error_type,
+                details=details,
+                token_symbol=token_symbol,
+                tx_hash=tx_hash
+            )
+            await self.telegram_alerts.send_error_alert(alert)
+        except Exception as e:
+            self.logger.debug(f"Failed to send error alert: {e}")
 
     async def stop(self):
         """Stop the engine"""
@@ -1364,4 +1721,43 @@ class ArbitrageEngine:
         if self.flashbots_executor:
             await self.flashbots_executor.close()
 
-        logger.info("🛑 Arbitrage Engine Stopped")
+        self.logger.info(f"🛑 {self.LOGGER_NAME} Stopped")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CHAIN-SPECIFIC ENGINE SUBCLASSES
+# Each has its own logger for dedicated log output
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class ETHArbitrageEngine(EVMArbitrageEngine):
+    """Ethereum Mainnet Arbitrage Engine"""
+    CHAIN_NAME = 'ethereum'
+    EXPECTED_CHAIN_ID = 1
+    RPC_PROVIDER_KEY = 'ETHEREUM_RPC'
+    RPC_ENV_KEY = 'ETHEREUM_RPC_URL'
+    RPC_ENV_FALLBACK = 'WEB3_PROVIDER_URL'
+    LOGGER_NAME = 'ETHArbitrageEngine'
+
+
+class ARBArbitrageEngine(EVMArbitrageEngine):
+    """Arbitrum One Arbitrage Engine"""
+    CHAIN_NAME = 'arbitrum'
+    EXPECTED_CHAIN_ID = 42161
+    RPC_PROVIDER_KEY = 'ARBITRUM_RPC'
+    RPC_ENV_KEY = 'ARBITRUM_RPC_URL'
+    RPC_ENV_FALLBACK = None
+    LOGGER_NAME = 'ARBArbitrageEngine'
+
+
+class BaseArbitrageEngine(EVMArbitrageEngine):
+    """Base L2 Arbitrage Engine"""
+    CHAIN_NAME = 'base'
+    EXPECTED_CHAIN_ID = 8453
+    RPC_PROVIDER_KEY = 'BASE_RPC'
+    RPC_ENV_KEY = 'BASE_RPC_URL'
+    RPC_ENV_FALLBACK = None
+    LOGGER_NAME = 'BaseArbitrageEngine'
+
+
+# Backwards compatibility alias
+ArbitrageEngine = ETHArbitrageEngine
