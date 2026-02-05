@@ -1114,9 +1114,10 @@ class SolanaArbitrageEngine:
                 self._stats['opportunities_found'] += 1
 
                 # SANITY CHECK: Reject obvious false positives
-                # Real arbitrage opportunities are typically 0.1-1%. Anything > 5% is almost
+                # Real arbitrage opportunities are typically 0.1-1%. Anything > 3% is almost
                 # certainly stale/manipulated price data from low-liquidity DEXs.
-                MAX_REALISTIC_PROFIT = 0.05  # 5% max realistic profit
+                # The 3.73% "opportunity" that caused partial execution was a false positive.
+                MAX_REALISTIC_PROFIT = 0.03  # 3% max realistic profit (was 5%)
                 if profit_pct > MAX_REALISTIC_PROFIT:
                     route_info = jupiter_quote.get('routePlan', [])
                     route_str = " → ".join([r.get('swapInfo', {}).get('label', 'DEX') for r in route_info[:3]])
@@ -1343,85 +1344,29 @@ class SolanaArbitrageEngine:
                         quote1.get('routePlan', [])
                     )
                 else:
-                    # FALLBACK: Jito failed, try direct RPC submission
-                    # CRITICAL: After Jito attempts (can take 10+ seconds with rate limits),
-                    # the original quotes/transactions are STALE and will fail with 0x1789.
-                    # We MUST refresh quotes before attempting RPC fallback.
-                    logger.warning("⚠️ Jito bundle failed - attempting RPC fallback with FRESH quotes")
-
-                    # Refresh quotes before RPC fallback with HIGHER slippage for volatile tokens
-                    # RPC execution is slower than Jito, so use 2x slippage to handle price movement
-                    rpc_slippage = min(self.arb_slippage_bps * 2, 500)  # Max 5% slippage
-                    fresh_quote1 = await self.jupiter.get_quote(
-                        token_in, token_out, amount, slippage_bps=rpc_slippage
-                    )
-                    if not fresh_quote1:
-                        logger.error(f"❌ [{in_symbol}/{out_symbol}] Failed to get fresh quote for RPC fallback")
-                        return
-
-                    fresh_out = int(fresh_quote1.get('outAmount', 0))
-                    fresh_quote2 = await self.jupiter.get_quote(
-                        token_out, token_in, fresh_out, slippage_bps=rpc_slippage
-                    )
-                    if not fresh_quote2:
-                        logger.error(f"❌ [{in_symbol}/{out_symbol}] Failed to get reverse quote for RPC fallback")
-                        return
-
-                    # Verify still profitable
-                    fresh_reverse_out = int(fresh_quote2.get('outAmount', 0))
-                    fresh_profit = (fresh_reverse_out - amount) / amount
-                    if fresh_profit < self.min_profit_threshold:
-                        logger.warning(f"⚠️ [{in_symbol}/{out_symbol}] No longer profitable for RPC fallback ({fresh_profit:.2%})")
-                        return
-
-                    logger.info(f"   📊 Fresh quotes for RPC: {fresh_profit:.2%} profit")
-
-                    # Create new swap transactions with fresh quotes
-                    fresh_swap1 = await self.jupiter.get_swap_transaction(fresh_quote1, self.wallet_address)
-                    fresh_swap2 = await self.jupiter.get_swap_transaction(fresh_quote2, self.wallet_address)
-                    if not fresh_swap1 or not fresh_swap2:
-                        logger.error("Failed to get fresh swap transactions for RPC fallback")
-                        return
-
-                    # Sign fresh transactions
-                    fresh_tx1 = await self._sign_transaction(fresh_swap1.get('swapTransaction'))
-                    fresh_tx2 = await self._sign_transaction(fresh_swap2.get('swapTransaction'))
-                    if not fresh_tx1 or not fresh_tx2:
-                        logger.error("Failed to sign fresh transactions for RPC fallback")
-                        return
-
-                    # Submit fresh transactions via RPC (front-run risk!)
-                    logger.warning("   ⚠️ Submitting via RPC (front-run risk!)")
-                    fallback_result = await self._submit_via_rpc(fresh_tx1, fresh_tx2)
-                    if fallback_result:
-                        logger.info(f"✅ Solana Arb executed via RPC fallback: {fallback_result}")
-                        await self._log_trade(
-                            in_symbol, out_symbol, token_in,
-                            amount, fresh_profit, fallback_result,
-                            fresh_quote1.get('routePlan', [])
-                        )
-                    else:
-                        logger.error("❌ RPC fallback also failed")
+                    # Jito bundle failed
+                    # CRITICAL: DO NOT use RPC fallback for arbitrage!
+                    # RPC execution is NOT ATOMIC - TX1 can succeed while TX2 fails,
+                    # leaving you holding intermediate tokens (like USDC when you wanted SOL).
+                    # This has caused real losses. Only Jito bundles are safe for arbitrage.
+                    logger.error("❌ Jito bundle failed - NOT attempting RPC fallback")
+                    logger.error("   ⚠️ RPC arbitrage is disabled: TX1+TX2 are not atomic without Jito")
+                    logger.error("   Risk: TX1 succeeds, TX2 fails = stuck with intermediate tokens")
+                    logger.error("   Solution: Wait for Jito rate limit to reset, or increase tip")
+                    return
             else:
-                # Direct RPC execution (Jito disabled OR rate limited)
-                # Use the quotes we already have since they're fresh (no Jito delay)
-                reason = "rate limited" if (self.use_jito and not jito_available) else "disabled"
-                logger.info(f"📡 Direct RPC execution (Jito {reason})")
-
-                tx1_unsigned = swap1.get('swapTransaction')
-                tx2_unsigned = swap2.get('swapTransaction')
-                tx1_signed = await self._sign_transaction(tx1_unsigned)
-                tx2_signed = await self._sign_transaction(tx2_unsigned)
-
-                if tx1_signed and tx2_signed:
-                    result = await self._submit_via_rpc(tx1_signed, tx2_signed)
-                    if result:
-                        logger.info(f"✅ Solana Arb executed via RPC: {result}")
-                        await self._log_trade(
-                            in_symbol, out_symbol, token_in,
-                            amount, profit_pct, result,
-                            quote1.get('routePlan', [])
-                        )
+                # Jito is disabled or rate limited
+                # CRITICAL: DO NOT execute arbitrage via RPC - it's not atomic!
+                if not self.use_jito:
+                    logger.error("❌ Arbitrage execution blocked - Jito is DISABLED in settings")
+                    logger.error("   ⚠️ Arbitrage REQUIRES Jito for atomic execution (TX1+TX2 together)")
+                    logger.error("   Without Jito: TX1 can succeed, TX2 can fail = stuck tokens")
+                    logger.error("   Solution: Enable Jito in Arbitrage Settings or disable Solana arbitrage")
+                else:
+                    logger.error(f"❌ Arbitrage execution blocked - Jito rate limited ({jito_wait:.0f}s)")
+                    logger.error("   ⚠️ Will not use RPC fallback - not atomic, causes stuck tokens")
+                    logger.error("   Opportunity will be skipped. Wait for Jito rate limit to reset.")
+                return
 
         except Exception as e:
             logger.error(f"Solana arb execution error: {e}")
@@ -1847,6 +1792,11 @@ class SolanaArbitrageEngine:
                             # 0x1789 = InvalidInputIndex - route structure changed
                             logger.error("   ⚠️ 0x1789 (InvalidInputIndex): Route is stale - pool state changed")
                             logger.error("   This often happens with volatile/low-liquidity pools")
+                        elif '0x1788' in error_str or '6024' in error_str:
+                            # 0x1788 = NotEnoughAccountKeys - route references missing accounts
+                            logger.error("   ⚠️ 0x1788 (NotEnoughAccountKeys): Route is stale - pool accounts changed")
+                            logger.error("   The swap route references accounts that no longer exist/match")
+                            logger.error("   Cause: Other bots executed trades that changed pool state")
                         elif '0x1771' in error_str or '6001' in error_str:
                             # 0x1771 = SlippageToleranceExceeded
                             logger.error("   ⚠️ 0x1771 (SlippageExceeded): Price moved beyond slippage tolerance")
