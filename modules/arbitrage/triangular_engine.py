@@ -449,7 +449,7 @@ class TriangularArbitrageEngine:
 
         # Initialize Telegram alerts for triangular arbitrage notifications
         try:
-            from arbitrage.arbitrage_alerts import ArbitrageTelegramAlerts
+            from .arbitrage_alerts import ArbitrageTelegramAlerts
             self.telegram_alerts = ArbitrageTelegramAlerts()
             if self.telegram_alerts.enabled:
                 logger.info(f"📱 Telegram alerts enabled for Triangular arbitrage")
@@ -1033,7 +1033,7 @@ class TriangularArbitrageEngine:
             # Send Telegram alert for successful triangular arb trade
             if self.telegram_alerts and self.telegram_alerts.enabled:
                 try:
-                    from arbitrage.arbitrage_alerts import ArbitrageTradeAlert, ArbitrageChain
+                    from .arbitrage_alerts import ArbitrageTradeAlert, ArbitrageChain
 
                     alert = ArbitrageTradeAlert(
                         chain=ArbitrageChain.TRIANGULAR,
@@ -1062,7 +1062,7 @@ class TriangularArbitrageEngine:
             return
 
         try:
-            from arbitrage.arbitrage_alerts import ArbitrageErrorAlert, ArbitrageChain
+            from .arbitrage_alerts import ArbitrageErrorAlert, ArbitrageChain
 
             alert = ArbitrageErrorAlert(
                 chain=ArbitrageChain.TRIANGULAR,

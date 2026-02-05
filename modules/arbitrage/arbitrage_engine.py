@@ -1017,17 +1017,19 @@ class EVMArbitrageEngine:
                         self.flash_loan_executor = None
                         self.use_flash_loans = False
 
-                    # Check wallet ETH balance for gas
+                    # Check wallet ETH balance for gas (use chain-specific minimum)
                     try:
                         balance_wei = self.w3.eth.get_balance(self.wallet_address)
                         balance_eth = balance_wei / 1e18
-                        if balance_eth < 0.01:
+                        # Use chain-specific minimum gas requirement with 2x safety buffer
+                        min_required = self._min_gas_eth * 2
+                        if balance_eth < min_required:
                             self.logger.error(f"❌ CRITICAL: Wallet has insufficient ETH for gas!")
                             self.logger.error(f"   Balance: {balance_eth:.6f} ETH")
-                            self.logger.error(f"   Required: At least 0.01 ETH for flash loan gas")
+                            self.logger.error(f"   Required: At least {min_required:.4f} ETH for {self.chain_name} flash loan gas")
                             self.logger.error(f"   Fund wallet: {self.wallet_address}")
                         else:
-                            self.logger.info(f"   Wallet balance: {balance_eth:.4f} ETH")
+                            self.logger.info(f"   Wallet balance: {balance_eth:.4f} ETH (min: {min_required:.4f} ETH)")
                     except Exception as e:
                         self.logger.warning(f"⚠️ Could not check wallet balance: {e}")
 
@@ -1053,7 +1055,7 @@ class EVMArbitrageEngine:
 
         # Initialize Telegram alerts for arbitrage notifications
         try:
-            from arbitrage.arbitrage_alerts import ArbitrageTelegramAlerts, ArbitrageChain
+            from .arbitrage_alerts import ArbitrageTelegramAlerts, ArbitrageChain
             self.telegram_alerts = ArbitrageTelegramAlerts()
             if self.telegram_alerts.enabled:
                 self.logger.info(f"📱 Telegram alerts enabled for {self.chain_name.upper()} arbitrage")
@@ -1648,7 +1650,7 @@ class EVMArbitrageEngine:
             # Send Telegram alert for successful trade
             if self.telegram_alerts and self.telegram_alerts.enabled:
                 try:
-                    from arbitrage.arbitrage_alerts import ArbitrageTradeAlert, ArbitrageChain
+                    from .arbitrage_alerts import ArbitrageTradeAlert, ArbitrageChain
 
                     # Map chain name to ArbitrageChain enum
                     chain_map = {
@@ -1692,7 +1694,7 @@ class EVMArbitrageEngine:
             return
 
         try:
-            from arbitrage.arbitrage_alerts import ArbitrageErrorAlert, ArbitrageChain
+            from .arbitrage_alerts import ArbitrageErrorAlert, ArbitrageChain
 
             # Map chain name to ArbitrageChain enum
             chain_map = {
