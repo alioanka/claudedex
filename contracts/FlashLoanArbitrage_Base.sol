@@ -6,15 +6,37 @@ pragma solidity ^0.8.20;
  * @notice Flash loan arbitrage contract for Aave V3 on Base (Coinbase L2)
  * @dev Deploy this contract, then set FLASH_LOAN_RECEIVER_CONTRACT_BASE in ClaudeDex .env
  *
- * Deployment on Remix:
- * 1. Open https://remix.ethereum.org
- * 2. Create new file, paste this entire code
- * 3. Compile with Solidity 0.8.20
- * 4. Switch MetaMask to Base network
- * 5. Deploy with constructor param: 0xe20fCBdBfFC4Dd138cE8b2E6FBb6CB49777ad64D
- * 6. Copy deployed contract address to .env as FLASH_LOAN_RECEIVER_CONTRACT_BASE
+ * ═══════════════════════════════════════════════════════════════════════════
+ * DEPLOYMENT ON REMIX
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * Gas cost: ~0.0003 ETH ($0.50) per flash loan execution
+ * 1. Open https://remix.ethereum.org
+ * 2. Create new file: FlashLoanArbitrage_Base.sol
+ * 3. Paste this entire code
+ * 4. Compile: Solidity 0.8.20, EVM version: paris, Optimization: 200 runs
+ * 5. Deploy tab → Environment: "Injected Provider - MetaMask"
+ * 6. Switch MetaMask to Base network
+ * 7. Constructor param: 0xe20fCBdBfFC4Dd138cE8b2E6FBb6CB49777ad64D
+ * 8. Set Gas Limit: 3000000 (in Remix deploy settings)
+ * 9. Click Deploy
+ * 10. Copy deployed address to .env as FLASH_LOAN_RECEIVER_CONTRACT_BASE
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * TROUBLESHOOTING DEPLOYMENT ERRORS
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ERROR: "invalid value for value.hash (value=null)"
+ * CAUSE: RPC endpoint returned null - rate limiting or network issue
+ * FIX:
+ *   1. Check you have at least 0.002 ETH on Base
+ *   2. Change MetaMask RPC to: https://mainnet.base.org
+ *   3. Or use Alchemy/Infura RPC (free tier available)
+ *   4. Wait 30 seconds and retry
+ *
+ * ERROR: "gas estimation failed" or "transaction underpriced"
+ * FIX: Increase gas limit to 5000000 in Remix deploy settings
+ *
+ * Deployment cost: ~0.0001-0.0003 ETH (~$0.30-0.80)
  */
 
 // ============ INTERFACES (Aave V3) ============

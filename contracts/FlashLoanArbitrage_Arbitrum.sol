@@ -6,15 +6,37 @@ pragma solidity ^0.8.20;
  * @notice Flash loan arbitrage contract for Aave V3 on Arbitrum One
  * @dev Deploy this contract, then set FLASH_LOAN_RECEIVER_CONTRACT_ARB in ClaudeDex .env
  *
- * Deployment on Remix:
- * 1. Open https://remix.ethereum.org
- * 2. Create new file, paste this entire code
- * 3. Compile with Solidity 0.8.20
- * 4. Switch MetaMask to Arbitrum One network
- * 5. Deploy with constructor param: 0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb
- * 6. Copy deployed contract address to .env as FLASH_LOAN_RECEIVER_CONTRACT_ARB
+ * ═══════════════════════════════════════════════════════════════════════════
+ * DEPLOYMENT ON REMIX
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * Gas cost: ~0.0005 ETH ($1) per flash loan execution
+ * 1. Open https://remix.ethereum.org
+ * 2. Create new file: FlashLoanArbitrage_Arbitrum.sol
+ * 3. Paste this entire code
+ * 4. Compile: Solidity 0.8.20, EVM version: paris, Optimization: 200 runs
+ * 5. Deploy tab → Environment: "Injected Provider - MetaMask"
+ * 6. Switch MetaMask to Arbitrum One network
+ * 7. Constructor param: 0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb
+ * 8. Set Gas Limit: 3000000 (in Remix deploy settings)
+ * 9. Click Deploy
+ * 10. Copy deployed address to .env as FLASH_LOAN_RECEIVER_CONTRACT_ARB
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * TROUBLESHOOTING DEPLOYMENT ERRORS
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ERROR: "invalid value for value.hash (value=null)"
+ * CAUSE: RPC endpoint returned null - rate limiting or network issue
+ * FIX:
+ *   1. Check you have at least 0.002 ETH on Arbitrum
+ *   2. Change MetaMask RPC to: https://arb1.arbitrum.io/rpc
+ *   3. Or use Alchemy/Infura RPC (free tier available)
+ *   4. Wait 30 seconds and retry
+ *
+ * ERROR: "gas estimation failed" or "transaction underpriced"
+ * FIX: Increase gas limit to 5000000 in Remix deploy settings
+ *
+ * Deployment cost: ~0.0002-0.0005 ETH (~$0.50-1.00)
  */
 
 // ============ INTERFACES (Aave V3) ============
