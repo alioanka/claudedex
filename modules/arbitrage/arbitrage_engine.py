@@ -536,15 +536,24 @@ class FlashLoanExecutor:
                 logger.warning(f"⚠️ Simulation shows no profit ({expected_profit}), skipping execution")
                 return None
 
-            # Get current gas price with buffer for faster inclusion
-            gas_price = self.w3.eth.gas_price
-            gas_price_with_buffer = int(gas_price * 1.2)  # 20% buffer for faster inclusion
+            # Get EIP-1559 gas pricing for better reliability
+            # Using EIP-1559 prevents stuck transactions when base fee rises
+            latest_block = self.w3.eth.get_block('latest')
+            base_fee = latest_block.get('baseFeePerGas', self.w3.eth.gas_price)
+
+            # Priority fee (tip) - 2 gwei is usually enough for normal inclusion
+            priority_fee = 2 * 10**9  # 2 gwei
+
+            # Max fee: base fee + 50% buffer + priority fee (handles fee spikes)
+            max_fee = int(base_fee * 1.5) + priority_fee
+
+            logger.info(f"   Gas pricing: base={base_fee/1e9:.2f} gwei, maxFee={max_fee/1e9:.2f} gwei, priority={priority_fee/1e9:.1f} gwei")
 
             # CRITICAL: Verify profit exceeds gas cost + safety buffer
             # Flash loan reverts are caused by profit being consumed by gas or price movement
             # Realistic gas for flash loan arbitrage: ~450K (not 800K)
             gas_limit = 450000
-            gas_cost_wei = gas_price_with_buffer * gas_limit
+            gas_cost_wei = max_fee * gas_limit
             # Require profit to be 30% higher than gas cost to account for:
             # - Price movement during block inclusion
             # - Slippage in actual execution vs simulation
@@ -558,8 +567,6 @@ class FlashLoanExecutor:
                 logger.warning(f"   Required: {min_profit_required/1e18:.6f} ETH (1.5x gas)")
                 return None
 
-            gas_price = gas_price_with_buffer
-
             # Rate limit: wait at least 12 seconds between transactions (1 block)
             if self._last_tx_time:
                 elapsed = (datetime.now() - self._last_tx_time).total_seconds()
@@ -569,6 +576,7 @@ class FlashLoanExecutor:
                     await asyncio.sleep(wait_time)
 
             # Build transaction to call contract's executeArbitrage function
+            # Use EIP-1559 gas parameters for better reliability
             tx = self.flash_loan_contract.functions.executeArbitrage(
                 Web3.to_checksum_address(asset),
                 amount,
@@ -578,7 +586,8 @@ class FlashLoanExecutor:
             ).build_transaction({
                 'from': Web3.to_checksum_address(self.wallet_address),
                 'gas': 800000,
-                'gasPrice': gas_price,
+                'maxFeePerGas': max_fee,
+                'maxPriorityFeePerGas': priority_fee,
                 'nonce': self._get_next_nonce(),
                 'chainId': self.w3.eth.chain_id
             })
@@ -1407,6 +1416,31 @@ class EVMArbitrageEngine:
                 token_symbol=token_symbol
             )
 
+    # Aave V3 supported flash loan assets (high liquidity pools)
+    # These are the tokens Aave allows for flash loans on each chain
+    AAVE_FLASHLOAN_ASSETS = {
+        'ethereum': {
+            '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',  # WETH
+            '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',  # USDC
+            '0xdAC17F958D2ee523a2206206994597C13D831ec7',  # USDT
+            '0x6B175474E89094C44Da98b954EeAdDcB80656c63',  # DAI
+            '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',  # WBTC
+        },
+        'arbitrum': {
+            '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',  # WETH
+            '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',  # USDC
+            '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',  # USDT
+            '0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1',  # DAI
+            '0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f',  # WBTC
+        },
+        'base': {
+            '0x4200000000000000000000000000000000000006',  # WETH
+            '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',  # USDC
+            '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA',  # USDbC
+            '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',  # DAI
+        },
+    }
+
     async def _execute_with_flash_loan(
         self,
         buy_dex: str,
@@ -1418,18 +1452,21 @@ class EVMArbitrageEngine:
         """
         Execute arbitrage via FlashLoanArbitrage contract.
 
+        IMPORTANT: Aave only supports flash loans for certain liquid assets (WETH, USDC, etc.)
+        For pairs like (GRT, WETH), we must borrow WETH and use GRT as intermediate.
+
         The contract's executeArbitrage() function will:
-        1. Call Aave's flashLoanSimple (with contract as initiator - passes check!)
-        2. Swap borrowed asset -> intermediate token on buyRouter
-        3. Swap intermediate token -> borrowed asset on sellRouter
+        1. Call Aave's flashLoanSimple to borrow WETH (or other supported asset)
+        2. Swap borrowed WETH -> TOKEN on buyRouter (buy cheap)
+        3. Swap TOKEN -> WETH on sellRouter (sell expensive)
         4. Repay loan + fee to Aave
         5. Keep profit in contract (withdraw later)
 
         Args:
-            buy_dex: DEX with lower price
-            sell_dex: DEX with higher price
-            token_in: Asset to borrow (e.g., WETH)
-            token_out: Intermediate token to swap through (e.g., USDC)
+            buy_dex: DEX with lower price for the token
+            sell_dex: DEX with higher price for the token
+            token_in: The token being arbitraged (e.g., GRT, SNX)
+            token_out: The base asset, usually WETH
             amount: Amount to borrow in wei
         """
         # Safety check: flash loan executor must be initialized with a contract address
@@ -1439,21 +1476,47 @@ class EVMArbitrageEngine:
             self.logger.error(f"   Set {flash_loan_env_key} in .env and restart")
             return None
 
+        # Get Aave-supported assets for this chain
+        supported_assets = self.AAVE_FLASHLOAN_ASSETS.get(self.chain_name.lower(), set())
+
+        # Determine which token to borrow (must be Aave-supported)
+        # For pairs like (GRT, WETH): borrow WETH, use GRT as intermediate
+        # For pairs like (WETH, USDC): borrow WETH, use USDC as intermediate
+        token_in_checksum = Web3.to_checksum_address(token_in)
+        token_out_checksum = Web3.to_checksum_address(token_out)
+
+        if token_out_checksum in supported_assets:
+            # token_out (e.g., WETH) is supported - borrow it, trade through token_in
+            borrow_asset = token_out_checksum
+            intermediate_token = token_in_checksum
+            self.logger.info(f"   Flash loan: Borrowing {token_out[:10]}... (supported by Aave)")
+        elif token_in_checksum in supported_assets:
+            # token_in is supported - borrow it (original logic)
+            borrow_asset = token_in_checksum
+            intermediate_token = token_out_checksum
+            self.logger.info(f"   Flash loan: Borrowing {token_in[:10]}... (supported by Aave)")
+        else:
+            # Neither token is supported for flash loans
+            self.logger.error(f"❌ Cannot flash loan - neither token is Aave-supported")
+            self.logger.error(f"   token_in: {token_in[:10]}... | token_out: {token_out[:10]}...")
+            self.logger.error(f"   Supported: WETH, USDC, USDT, DAI, WBTC")
+            return None
+
         # Get router addresses (use chain-specific routers)
         buy_router = self.routers.get(buy_dex, list(self.routers.values())[0])
         sell_router = self.routers.get(sell_dex, list(self.routers.values())[-1])
 
-        self.logger.info(f"   Flash loan params: borrow={token_in[:10]}..., intermediate={token_out[:10]}...")
+        self.logger.info(f"   Flash loan params: borrow={borrow_asset[:10]}..., intermediate={intermediate_token[:10]}...")
         self.logger.info(f"   Route: {buy_dex} ({buy_router[:10]}...) -> {sell_dex} ({sell_router[:10]}...)")
 
         # Execute via contract's executeArbitrage function
         # This ensures initiator == contract address (passes the check!)
         tx_hash = await self.flash_loan_executor.execute_arbitrage(
-            asset=token_in,
+            asset=borrow_asset,
             amount=amount,
             buy_router=buy_router,
             sell_router=sell_router,
-            intermediate_token=token_out
+            intermediate_token=intermediate_token
         )
 
         return tx_hash
@@ -1478,14 +1541,15 @@ class EVMArbitrageEngine:
 
             deadline = int(datetime.now().timestamp()) + 120
 
-            # Get current gas price
-            gas_price = self.w3.eth.gas_price
-            # Add 10% buffer for faster inclusion
-            gas_price = int(gas_price * 1.1)
+            # Get EIP-1559 gas pricing for better reliability
+            latest_block = self.w3.eth.get_block('latest')
+            base_fee = latest_block.get('baseFeePerGas', self.w3.eth.gas_price)
+            priority_fee = 2 * 10**9  # 2 gwei
+            max_fee = int(base_fee * 1.5) + priority_fee
 
             current_nonce = self.w3.eth.get_transaction_count(self.wallet_address)
 
-            # Build buy transaction
+            # Build buy transaction with EIP-1559
             buy_tx = buy_router.functions.swapExactTokensForTokens(
                 amount,
                 0,  # Min output
@@ -1495,7 +1559,8 @@ class EVMArbitrageEngine:
             ).build_transaction({
                 'from': Web3.to_checksum_address(self.wallet_address),
                 'gas': 300000,
-                'gasPrice': gas_price,
+                'maxFeePerGas': max_fee,
+                'maxPriorityFeePerGas': priority_fee,
                 'nonce': current_nonce,
                 'chainId': self.w3.eth.chain_id
             })
@@ -1503,7 +1568,7 @@ class EVMArbitrageEngine:
             # Sign buy transaction
             signed_buy = self.w3.eth.account.sign_transaction(buy_tx, self.private_key)
 
-            # Build sell transaction (nonce + 1)
+            # Build sell transaction (nonce + 1) with EIP-1559
             sell_tx = sell_router.functions.swapExactTokensForTokens(
                 amount,  # Simplified - should use output from buy
                 0,
@@ -1513,7 +1578,8 @@ class EVMArbitrageEngine:
             ).build_transaction({
                 'from': Web3.to_checksum_address(self.wallet_address),
                 'gas': 300000,
-                'gasPrice': gas_price,
+                'maxFeePerGas': max_fee,
+                'maxPriorityFeePerGas': priority_fee,
                 'nonce': current_nonce + 1,
                 'chainId': self.w3.eth.chain_id
             })
