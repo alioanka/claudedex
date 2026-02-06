@@ -16,6 +16,7 @@ Features:
 """
 
 import asyncio
+import json
 import logging
 import re
 from datetime import datetime, timedelta
@@ -36,30 +37,58 @@ class BlacklistEntry:
     metadata: Dict = field(default_factory=dict)
 
 
-# Known scam token name patterns
+# Known scam token name patterns - AGGRESSIVE matching
 SCAM_NAME_PATTERNS = [
-    # Common rug pull names
-    r'^(TRUMP|BIDEN|ELON|MUSK)\s*\d*$',  # Celebrity names used for rugs
+    # Celebrity names - match ANYWHERE in name (not just exact)
+    r'TRUMP',  # Any token with TRUMP in name
+    r'BIDEN',
+    r'ELON',
+    r'MUSK',
+    r'OBAMA',
+    r'MELANIA',
+    r'BARRON',
+    r'IVANKA',
+
+    # Common rug pull patterns
     r'SAFE\s*MOON',
-    r'BABY\s*(DOGE|SHIB)',
+    r'BABY\s*(DOGE|SHIB|PEPE)',
     r'MOON\s*SHOT',
     r'100X',
     r'1000X',
     r'GEM\s*FINDER',
-    r'RUG\s*PULL',  # Ironically used by rugs
+    r'RUG\s*PULL',
+    r'WOJAK',
 
     # Urgency patterns
     r'LAST\s*CHANCE',
     r'DONT\s*MISS',
     r'PRESALE\s*LIVE',
     r'BUY\s*NOW',
+    r'SEND\s*IT',
 
     # Suspicious patterns
-    r'^[A-Z]{1,3}\d+$',  # Very short name with numbers
+    r'^[A-Z]{1,2}\d+$',  # Very short name with numbers (A1, X99)
     r'FREE\s*MONEY',
     r'GUARANTEED',
     r'NO\s*TAX',
     r'STEALTH\s*LAUNCH',
+    r'AIRDROP',
+    r'GIVEAWAY',
+
+    # Animal + modifier scams
+    r'FLOKI',
+    r'SHIBA',
+    r'DOGE.*INU',
+
+    # Crypto celebrity scams
+    r'VITALIK',
+    r'CZ\s*BNB',
+    r'SBF',
+
+    # Unknown/suspicious tokens
+    r'^UNKNOWN$',  # Literal "UNKNOWN" name
+    r'^TEST',
+    r'^SCAM',
 ]
 
 # Compile patterns for efficiency
@@ -250,16 +279,17 @@ class ScamBlacklist:
         try:
             async with self.db_pool.acquire() as conn:
                 for entry in self._pending_writes:
+                    # Serialize metadata to JSON string for JSONB column
+                    metadata_json = json.dumps(entry.metadata if entry.metadata else {})
                     await conn.execute("""
                         INSERT INTO scam_token_blacklist (mint, symbol, reason, detected_at, loss_pct, metadata)
-                        VALUES ($1, $2, $3, $4, $5, $6)
+                        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
                         ON CONFLICT (mint) DO UPDATE SET
                             reason = EXCLUDED.reason,
                             loss_pct = EXCLUDED.loss_pct,
                             metadata = EXCLUDED.metadata
                     """, entry.mint, entry.symbol, entry.reason,
-                        entry.detected_at, entry.loss_pct,
-                        entry.metadata if entry.metadata else {})
+                        entry.detected_at, entry.loss_pct, metadata_json)
 
             logger.info(f"💾 Synced {len(self._pending_writes)} blacklist entries to database")
             self._pending_writes = []

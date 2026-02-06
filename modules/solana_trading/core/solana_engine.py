@@ -1037,6 +1037,9 @@ class SolanaTradingEngine:
         # Scam token blacklist - initialized in async initialize() method
         self.scam_blacklist = None
 
+        # Safety engine - initialized in async initialize() method
+        self.safety_engine = None
+
         # Log configuration
         mode_str = "DRY_RUN (SIMULATED)" if self.dry_run else "LIVE TRADING"
         logger.info(f"Solana engine initialized:")
@@ -1055,7 +1058,8 @@ class SolanaTradingEngine:
             await self._init_solana_client()
 
             # Initialize enabled strategies
-            if Strategy.JUPITER in self.strategies:
+            # NOTE: Jupiter client is needed for both Jupiter AND Pumpfun strategies (for swaps)
+            if Strategy.JUPITER in self.strategies or Strategy.PUMPFUN in self.strategies:
                 await self._init_jupiter()
 
             if Strategy.DRIFT in self.strategies:
@@ -1069,6 +1073,25 @@ class SolanaTradingEngine:
 
             # Load historical stats from database for accurate PnL tracking
             await self._load_historical_stats()
+
+            # Initialize SafetyEngine for all strategies (slippage, circuit breaker, etc.)
+            try:
+                from modules.solana_trading.core.safety_engine import SafetyEngine, SafetyConfig
+                pumpfun_slippage = self.config_manager.get('pumpfun_slippage', 500) if self.config_manager else 500
+                safety_config = SafetyConfig(
+                    default_slippage_bps=self.slippage_bps,
+                    pumpfun_slippage_bps=pumpfun_slippage,
+                    max_emergency_slippage_bps=2000,  # 20% max for emergency exits
+                    max_close_retries=5,
+                    retry_slippage_increment_bps=200,  # +2% each retry
+                    circuit_breaker_failures=3,
+                    circuit_breaker_cooldown_seconds=300
+                )
+                self.safety_engine = SafetyEngine(safety_config)
+                logger.info(f"✅ SafetyEngine initialized (pump.fun slippage: {pumpfun_slippage}bps)")
+            except Exception as e:
+                logger.warning(f"⚠️ SafetyEngine not available: {e}")
+                self.safety_engine = None
 
             # Initialize Telegram alerts with async credential loading
             try:
@@ -1287,28 +1310,8 @@ class SolanaTradingEngine:
                     logger.warning(f"⚠️ JupiterHelper not available for live swaps: {e}")
                     self.jupiter_helper = None
 
-            # Initialize SafetyEngine for honeypot detection and close retry logic
-            if SAFETY_ENGINE_AVAILABLE:
-                # Get pump.fun slippage from config or use safe default
-                pumpfun_slippage = 500  # 5% default for pump.fun
-                if self.config_manager:
-                    # Use higher slippage for pump.fun tokens
-                    pumpfun_slippage = max(500, self.slippage_bps * 10)
-
-                safety_config = SafetyConfig(
-                    default_slippage_bps=self.slippage_bps,
-                    pumpfun_slippage_bps=pumpfun_slippage,
-                    max_emergency_slippage_bps=2000,  # 20% max for emergency exits
-                    max_close_retries=5,
-                    retry_slippage_increment_bps=200,  # +2% each retry
-                    circuit_breaker_failures=3,
-                    circuit_breaker_cooldown_seconds=300
-                )
-                self.safety_engine = SafetyEngine(safety_config)
-                logger.info(f"🛡️ SafetyEngine initialized (pump.fun slippage: {pumpfun_slippage}bps)")
-            else:
-                self.safety_engine = None
-                logger.warning("⚠️ SafetyEngine not available - running without safety features")
+            # SafetyEngine is now initialized in common initialize() method
+            # for all strategies, not just Jupiter
 
             # Test with SOL price - uses multi-source price fetching
             sol_price = await self.jupiter_client.get_price(SOL_MINT)
@@ -2101,13 +2104,25 @@ class SolanaTradingEngine:
                 logger.error(f"   Triggering EMERGENCY EXIT")
 
                 # Auto-blacklist this token to prevent future trades
-                if self.scam_blacklist and position.strategy == 'pumpfun':
-                    await self.scam_blacklist.on_rapid_crash_detected(
-                        mint=position.token_mint,
-                        symbol=position.token_symbol,
-                        drop_pct=decline_pct,
-                        time_seconds=int((datetime.utcnow() - position.opened_at).total_seconds())
-                    )
+                try:
+                    if self.scam_blacklist and position.strategy == Strategy.PUMPFUN:
+                        logger.info(f"   🚫 Adding {position.token_symbol} to scam blacklist...")
+                        await self.scam_blacklist.on_rapid_crash_detected(
+                            mint=position.token_mint,
+                            symbol=position.token_symbol,
+                            drop_pct=decline_pct,
+                            time_seconds=int((datetime.utcnow() - position.opened_at).total_seconds())
+                        )
+                        # Force immediate database sync
+                        await self.scam_blacklist._sync_to_db()
+                        logger.info(f"   ✅ {position.token_symbol} blacklisted and synced to DB")
+                    else:
+                        if not self.scam_blacklist:
+                            logger.warning(f"   ⚠️ Blacklist not initialized")
+                        else:
+                            logger.info(f"   ℹ️ Non-pumpfun strategy ({position.strategy}), not blacklisting")
+                except Exception as e:
+                    logger.error(f"   ❌ Failed to blacklist {position.token_symbol}: {e}")
 
                 return "emergency_rapid_decline"
 
@@ -2116,13 +2131,25 @@ class SolanaTradingEngine:
                 logger.error(f"   Triggering EMERGENCY EXIT for new position rapid decline")
 
                 # Auto-blacklist this token to prevent future trades
-                if self.scam_blacklist and position.strategy == 'pumpfun':
-                    await self.scam_blacklist.on_rapid_crash_detected(
-                        mint=position.token_mint,
-                        symbol=position.token_symbol,
-                        drop_pct=decline_pct,
-                        time_seconds=int(time_held)
-                    )
+                try:
+                    if self.scam_blacklist and position.strategy == Strategy.PUMPFUN:
+                        logger.info(f"   🚫 Adding {position.token_symbol} to scam blacklist...")
+                        await self.scam_blacklist.on_rapid_crash_detected(
+                            mint=position.token_mint,
+                            symbol=position.token_symbol,
+                            drop_pct=decline_pct,
+                            time_seconds=int(time_held)
+                        )
+                        # Force immediate database sync
+                        await self.scam_blacklist._sync_to_db()
+                        logger.info(f"   ✅ {position.token_symbol} blacklisted and synced to DB")
+                    else:
+                        if not self.scam_blacklist:
+                            logger.warning(f"   ⚠️ Blacklist not initialized")
+                        else:
+                            logger.info(f"   ℹ️ Non-pumpfun strategy ({position.strategy}), not blacklisting")
+                except Exception as e:
+                    logger.error(f"   ❌ Failed to blacklist {position.token_symbol}: {e}")
 
                 return "emergency_rapid_decline"
 
@@ -2432,7 +2459,25 @@ class SolanaTradingEngine:
             # Get new tokens (already filtered in get_new_tokens)
             new_tokens = await self.pumpfun_monitor.get_new_tokens()
 
+            # Track positions opened this scan
+            positions_opened = 0
+            max_per_scan = 3  # Max positions to open per scan cycle (prevent overwhelming)
+
             for token in new_tokens:
+                # Check if we've hit limits
+                current_pumpfun = sum(1 for p in self.active_positions.values() if p.strategy == Strategy.PUMPFUN)
+                if current_pumpfun >= pumpfun_max:
+                    logger.debug(f"Pump.fun max positions reached ({current_pumpfun}/{pumpfun_max})")
+                    break
+
+                if len(self.active_positions) >= self.max_positions:
+                    logger.debug(f"Overall max positions reached ({len(self.active_positions)}/{self.max_positions})")
+                    break
+
+                if positions_opened >= max_per_scan:
+                    logger.debug(f"Max positions per scan reached ({positions_opened}/{max_per_scan})")
+                    break
+
                 token_mint = token.get('mint')
                 if not token_mint:
                     continue
@@ -2459,7 +2504,11 @@ class SolanaTradingEngine:
                 )
 
                 if success:
-                    break  # Only stop after successfully opening one position
+                    positions_opened += 1
+                    logger.info(f"   ✅ Position {positions_opened} opened successfully")
+
+            if positions_opened > 0:
+                logger.info(f"📊 Opened {positions_opened} new position(s) this scan")
 
         except Exception as e:
             logger.error(f"Error scanning Pump.fun: {e}")
@@ -2485,32 +2534,103 @@ class SolanaTradingEngine:
             True if position was successfully opened, False otherwise
         """
         try:
-            # SAFETY: Check if token is blacklisted (scam/rug detected previously)
+            # ============ PRE-BUY SAFETY CHECKS ============
+
+            # 1. Block UNKNOWN tokens - high scam probability
+            if not token_symbol or token_symbol.upper() == 'UNKNOWN':
+                logger.warning(f"🚫 BLOCKED: Token has no symbol/UNKNOWN - likely scam")
+                return False
+
+            # 2. Block tokens with very suspicious symbols (single char, only numbers)
+            if len(token_symbol) < 2 or token_symbol.isdigit():
+                logger.warning(f"🚫 BLOCKED: {token_symbol} has suspicious symbol format")
+                return False
+
+            # 3. Check if token is blacklisted (scam/rug detected previously)
             if self.scam_blacklist and self.scam_blacklist.is_blacklisted(token_mint):
                 reason = self.scam_blacklist.get_blacklist_reason(token_mint)
                 logger.warning(f"🚫 BLOCKED: {token_symbol} is blacklisted - {reason}")
                 return False
 
-            # SAFETY: Check token name for scam patterns
-            if self.scam_blacklist:
+            # 4. Check token name for scam patterns (TRUMP, BIDEN, etc.)
+            # Only check if scam detection is enabled in config
+            scam_detection_enabled = True  # Default to enabled for safety
+            if self.config_manager:
+                scam_detection_enabled = self.config_manager.pumpfun_scam_detection
+
+            if self.scam_blacklist and scam_detection_enabled:
                 is_scam_name, pattern = self.scam_blacklist.check_name_pattern(
                     token_symbol,
                     metadata.get('name') if metadata else None
                 )
                 if is_scam_name:
-                    logger.warning(f"🚫 BLOCKED: {token_symbol} matches scam name pattern")
+                    logger.warning(f"🚫 BLOCKED: {token_symbol} matches scam name pattern: {pattern}")
                     await self.scam_blacklist.add_to_blacklist(
                         mint=token_mint,
                         symbol=token_symbol,
                         reason=f"Scam name pattern: {pattern}",
                         metadata={'pattern': pattern, 'type': 'name_pattern'}
                     )
+                    # Force immediate database sync to persist blacklist
+                    await self.scam_blacklist._sync_to_db()
+                    logger.info(f"   ✅ {token_symbol} blacklisted and synced to DB")
                     return False
 
-            # Get token price
-            current_price = await self._get_token_price(token_mint)
-            if current_price is None:
-                logger.warning(f"Could not get price for {token_symbol}")
+            # 5. For pump.fun: Check holder count if available (require minimum holders)
+            # Get configurable thresholds from config manager
+            min_holders = 15  # Default
+            max_dev_holding = 10.0  # Default
+            if self.config_manager:
+                min_holders = self.config_manager.pumpfun_min_holders
+                max_dev_holding = self.config_manager.pumpfun_max_dev_holding
+
+            if strategy == Strategy.PUMPFUN and metadata:
+                holder_count = metadata.get('holder_count', metadata.get('holders', 0))
+                if holder_count and holder_count < min_holders:
+                    logger.warning(f"🚫 BLOCKED: {token_symbol} has only {holder_count} holders (min: {min_holders})")
+                    return False
+
+                # Check dev holding percentage
+                dev_holding = metadata.get('dev_holding_pct', metadata.get('creator_holdings', 0))
+                if dev_holding and dev_holding > max_dev_holding:
+                    logger.warning(f"🚫 BLOCKED: {token_symbol} dev holds {dev_holding:.1f}% (max: {max_dev_holding}%)")
+                    return False
+
+            # ============ END PRE-BUY SAFETY CHECKS ============
+
+            # Get token price - try multiple sources
+            current_price = None
+
+            # 1. First try to use price from metadata (already fetched from DexScreener/pump.fun)
+            if metadata:
+                current_price = metadata.get('price') or metadata.get('priceUsd') or metadata.get('price_usd')
+                if current_price:
+                    try:
+                        current_price = float(current_price)
+                        if current_price > 0:
+                            logger.debug(f"   Using price from metadata: ${current_price:.10f}")
+                    except (ValueError, TypeError):
+                        current_price = None
+
+            # 2. If no price from metadata, try DexScreener API
+            if not current_price:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        price_data = await self._get_token_price_data(session, token_mint)
+                        if price_data and price_data.get('price'):
+                            current_price = float(price_data['price'])
+                            logger.debug(f"   Using price from DexScreener: ${current_price:.10f}")
+                except Exception as e:
+                    logger.debug(f"   DexScreener price fetch failed: {e}")
+
+            # 3. Fall back to Jupiter for established tokens
+            if not current_price:
+                current_price = await self._get_token_price(token_mint)
+                if current_price:
+                    logger.debug(f"   Using price from Jupiter: ${current_price:.10f}")
+
+            if current_price is None or current_price <= 0:
+                logger.warning(f"Could not get price for {token_symbol} from any source")
                 return False
 
             # Calculate values
