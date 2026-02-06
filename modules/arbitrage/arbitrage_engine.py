@@ -1219,7 +1219,18 @@ class EVMArbitrageEngine:
                 self.logger.warning(f"⛔ [{pair_key}] Blacklisted for {self._blacklist_duration/60:.0f}min (no liquidity)")
 
     async def _check_arb_opportunity(self, token_in: str, token_out: str, token_symbol: str = "UNKNOWN") -> bool:
-        """Check price difference between two DEXs. Returns True if opportunity found."""
+        """
+        Check price difference between two DEXs for flash loan arbitrage.
+
+        CRITICAL: Scanning is done from the BORROW ASSET's perspective (WETH).
+        This aligns with how the flash loan contract executes:
+        1. Borrow WETH from Aave
+        2. buyRouter: WETH → token (buy the token)
+        3. sellRouter: token → WETH (sell the token)
+        4. Repay WETH + fee, keep profit
+
+        Returns True if opportunity found and execution attempted.
+        """
         try:
             pair_key = f"{token_symbol}_liquidity"
 
@@ -1228,33 +1239,36 @@ class EVMArbitrageEngine:
                 return False
 
             self._total_pairs_scanned += 1
-            amount_in = self.flash_loan_amount  # Use configured flash loan amount
+
+            # Flash loan amount is in WETH (the borrow asset)
+            borrow_amount = self.flash_loan_amount
 
             # Ensure addresses are checksummed for web3.py compatibility
-            token_in_checksum = Web3.to_checksum_address(token_in)
-            token_out_checksum = Web3.to_checksum_address(token_out)
+            token_checksum = Web3.to_checksum_address(token_in)  # The token being arbitraged
+            weth_checksum = Web3.to_checksum_address(token_out)  # WETH (borrow asset)
 
-            # Query BOTH directions on all DEXs to find real arbitrage opportunities
-            # Forward direction: token_in → token_out (first leg of arbitrage)
-            forward_prices = {}
-            forward_errors = {}
+            # ============================================================
+            # STEP 1: Query BUY direction - WETH → token (how much token can we buy?)
+            # This matches the contract's buyRouter (asset → intermediateToken)
+            # ============================================================
+            buy_prices = {}
+            buy_errors = {}
             for name, contract in self.router_contracts.items():
                 try:
-                    amounts = contract.functions.getAmountsOut(amount_in, [token_in_checksum, token_out_checksum]).call()
-                    forward_prices[name] = amounts[1]
+                    amounts = contract.functions.getAmountsOut(borrow_amount, [weth_checksum, token_checksum]).call()
+                    buy_prices[name] = amounts[1]  # How many tokens we get for our WETH
                 except Exception as e:
-                    # Track errors for diagnostic logging
-                    forward_errors[name] = str(e)[:50]
+                    buy_errors[name] = str(e)[:50]
 
             # Log diagnostic info periodically (every 60 scans = ~2 minutes)
             if self._total_pairs_scanned % 60 == 1:
-                if forward_prices:
-                    self.logger.debug(f"📊 [{token_symbol}] Forward prices: {len(forward_prices)} DEXs responded")
+                if buy_prices:
+                    self.logger.debug(f"📊 [{token_symbol}] Buy prices (WETH→token): {len(buy_prices)} DEXs responded")
                 else:
-                    self.logger.warning(f"⚠️ [{token_symbol}] No forward prices from any DEX. Errors: {forward_errors}")
+                    self.logger.warning(f"⚠️ [{token_symbol}] No buy prices from any DEX. Errors: {buy_errors}")
 
-            if len(forward_prices) < 2:
-                # Update blacklist on liquidity failure
+            if len(buy_prices) < 2:
+                # Need at least 2 DEXs for arbitrage
                 self._update_liquidity_blacklist(pair_key, has_liquidity=False)
                 return False
 
@@ -1262,51 +1276,54 @@ class EVMArbitrageEngine:
             self._update_liquidity_blacklist(pair_key, has_liquidity=True)
             self._pairs_with_liquidity += 1
 
-            # Find best forward DEX (gives most token_out for our token_in)
-            best_buy_dex = max(forward_prices, key=forward_prices.get)
-            forward_output = forward_prices[best_buy_dex]
+            # Find best BUY DEX (gives most tokens for our WETH = lowest token price)
+            best_buy_dex = max(buy_prices, key=buy_prices.get)
+            tokens_bought = buy_prices[best_buy_dex]
 
-            if forward_output == 0:
+            if tokens_bought == 0:
                 return False
 
-            # Now query reverse direction on OTHER DEXs: token_out → token_in
-            # This is the actual second leg of the arbitrage
-            reverse_outputs = {}
+            # ============================================================
+            # STEP 2: Query SELL direction - token → WETH (how much WETH can we get back?)
+            # This matches the contract's sellRouter (intermediateToken → asset)
+            # ============================================================
+            sell_prices = {}
             for name, contract in self.router_contracts.items():
                 if name == best_buy_dex:
                     continue  # Skip same DEX - no arbitrage within same DEX
                 try:
-                    amounts = contract.functions.getAmountsOut(forward_output, [token_out_checksum, token_in_checksum]).call()
-                    reverse_outputs[name] = amounts[1]
+                    amounts = contract.functions.getAmountsOut(tokens_bought, [token_checksum, weth_checksum]).call()
+                    sell_prices[name] = amounts[1]  # How much WETH we get back
                 except Exception:
                     pass
 
-            if not reverse_outputs:
+            if not sell_prices:
                 return False
 
-            # Find best reverse DEX (gives most token_in back for our token_out)
-            best_sell_dex = max(reverse_outputs, key=reverse_outputs.get)
-            final_output = reverse_outputs[best_sell_dex]
+            # Find best SELL DEX (gives most WETH for our tokens = highest token price)
+            best_sell_dex = max(sell_prices, key=sell_prices.get)
+            weth_returned = sell_prices[best_sell_dex]
 
-            # Calculate actual profit: final_output - (borrowed_amount + flash_loan_fee)
-            flash_loan_fee = amount_in * 5 // 10000  # 0.05% Aave fee
-            amount_owed = amount_in + flash_loan_fee
+            # ============================================================
+            # STEP 3: Calculate profit (in WETH terms)
+            # ============================================================
+            flash_loan_fee = borrow_amount * 5 // 10000  # 0.05% Aave fee
+            amount_owed = borrow_amount + flash_loan_fee
 
-            # Even if no profit, track the spread for visibility
-            if final_output > 0:
-                raw_spread = (final_output - amount_owed) / amount_in
-                pair_key = f"{token_symbol} ({best_buy_dex}→{best_sell_dex})"
+            # Track spread for visibility (even negative)
+            if weth_returned > 0:
+                raw_spread = (weth_returned - amount_owed) / borrow_amount
+                spread_pair_key = f"{token_symbol} ({best_buy_dex}→{best_sell_dex})"
 
-                # Track best spread seen (even negative ones)
                 if raw_spread > self._best_spread_seen:
                     self._best_spread_seen = raw_spread
-                    self._best_spread_pair = pair_key
+                    self._best_spread_pair = spread_pair_key
 
-            if final_output <= amount_owed:
+            if weth_returned <= amount_owed:
                 return False  # No profit possible
 
-            profit = final_output - amount_owed
-            raw_spread = profit / amount_in
+            profit = weth_returned - amount_owed
+            raw_spread = profit / borrow_amount
 
             # Estimated additional costs (slippage, gas)
             estimated_costs = 0.005  # 0.5% for slippage and gas
@@ -1329,15 +1346,13 @@ class EVMArbitrageEngine:
                 # Check daily execution limit per pair
                 current_count = self._pair_execution_count.get(opp_key, 0)
                 if current_count >= self._max_executions_per_pair_per_day:
-                    # Silently skip - already hit daily limit for this pair
-                    return True
+                    return True  # Silently skip - already hit daily limit
 
                 # Check cooldown - don't spam same opportunity
                 if self._last_opportunity_key == opp_key and self._last_opportunity_time:
                     elapsed = (now - self._last_opportunity_time).total_seconds()
                     if elapsed < self._opportunity_cooldown:
-                        # Same opportunity within cooldown, skip silently
-                        return True
+                        return True  # Same opportunity within cooldown
 
                 # New opportunity or cooldown expired - log and execute
                 self._last_opportunity_key = opp_key
@@ -1348,16 +1363,17 @@ class EVMArbitrageEngine:
                 remaining = self._max_executions_per_pair_per_day - (current_count + 1)
 
                 self.logger.info(f"🚨 [{self.chain_name.upper()}] ARBITRAGE OPPORTUNITY [{token_symbol}]: Buy on {best_buy_dex}, Sell on {best_sell_dex}. Raw: {raw_spread:.2%}, Net: {net_spread:.2%} (#{current_count + 1} today, {remaining} remaining)")
-                self.logger.info(f"   Path: {amount_in/1e18:.4f} {token_symbol} → {forward_output/1e18:.4f} intermediate → {final_output/1e18:.4f} {token_symbol} (profit: {profit/1e18:.4f})")
+                self.logger.info(f"   Path: {borrow_amount/1e18:.4f} WETH → {tokens_bought/1e18:.4f} {token_symbol} → {weth_returned/1e18:.4f} WETH (profit: {profit/1e18:.6f} WETH)")
                 self._stats['opportunities_executed'] += 1
 
-                # Execute arbitrage
+                # Execute arbitrage - now buy_dex and sell_dex match contract's expectations directly!
+                # No router swapping needed because we scanned from WETH's perspective
                 await self._execute_flash_swap(
-                    buy_dex=best_buy_dex,
-                    sell_dex=best_sell_dex,
-                    token_in=token_in,
-                    token_out=token_out,
-                    amount=amount_in,
+                    buy_dex=best_buy_dex,   # Best for WETH → token (contract's buyRouter)
+                    sell_dex=best_sell_dex, # Best for token → WETH (contract's sellRouter)
+                    token_in=token_in,      # The token being arbitraged
+                    token_out=token_out,    # WETH (borrow asset)
+                    amount=borrow_amount,
                     expected_profit=net_spread,
                     token_symbol=token_symbol
                 )
@@ -1534,26 +1550,22 @@ class EVMArbitrageEngine:
         """
         Execute arbitrage via FlashLoanArbitrage contract.
 
-        IMPORTANT: Aave only supports flash loans for certain liquid assets (WETH, USDC, etc.)
-        For pairs like (GRT, WETH), we must borrow WETH and use GRT as intermediate.
+        IMPORTANT: The scanning function now works from WETH's perspective, so:
+        - buy_dex = best for WETH → token (matches contract's buyRouter)
+        - sell_dex = best for token → WETH (matches contract's sellRouter)
 
         The contract's executeArbitrage() function will:
-        1. Call Aave's flashLoanSimple to borrow WETH (or other supported asset)
-        2. Swap borrowed WETH -> TOKEN on buyRouter (buy cheap)
-        3. Swap TOKEN -> WETH on sellRouter (sell expensive)
+        1. Call Aave's flashLoanSimple to borrow WETH
+        2. Swap borrowed WETH → TOKEN on buyRouter (buy cheap)
+        3. Swap TOKEN → WETH on sellRouter (sell expensive)
         4. Repay loan + fee to Aave
         5. Keep profit in contract (withdraw later)
 
-        CRITICAL: Router direction mapping
-        - Python detects: buy_dex is best for token_in → token_out (e.g., GRT→WETH)
-        - Contract swaps: buy_router for asset → intermediate (e.g., WETH→GRT after flip)
-        - When we flip the borrow asset, the routers must also be swapped!
-
         Args:
-            buy_dex: DEX with lower price for the token (best for token_in → token_out)
-            sell_dex: DEX with higher price for the token (best for token_out → token_in)
-            token_in: The token being arbitraged (e.g., GRT, SNX)
-            token_out: The base asset, usually WETH
+            buy_dex: DEX best for WETH → token (contract's buyRouter)
+            sell_dex: DEX best for token → WETH (contract's sellRouter)
+            token_in: The token being arbitraged (e.g., DEGEN, GRT)
+            token_out: The borrow asset (WETH)
             amount: Amount to borrow in wei
         """
         # Safety check: flash loan executor must be initialized with a contract address
@@ -1566,74 +1578,43 @@ class EVMArbitrageEngine:
         # Get Aave-supported assets for this chain
         supported_assets = self.AAVE_FLASHLOAN_ASSETS.get(self.chain_name.lower(), set())
 
-        # Determine which token to borrow (must be Aave-supported)
-        # For pairs like (GRT, WETH): borrow WETH, use GRT as intermediate
-        # For pairs like (WETH, USDC): borrow WETH, use USDC as intermediate
-        token_in_checksum = Web3.to_checksum_address(token_in)
-        token_out_checksum = Web3.to_checksum_address(token_out)
+        # token_in = the token being arbitraged (e.g., DEGEN)
+        # token_out = WETH (the borrow asset)
+        token_checksum = Web3.to_checksum_address(token_in)
+        weth_checksum = Web3.to_checksum_address(token_out)
 
-        # Get router addresses (use chain-specific routers)
+        # Get router addresses
         buy_router_addr = self.routers.get(buy_dex, list(self.routers.values())[0])
         sell_router_addr = self.routers.get(sell_dex, list(self.routers.values())[-1])
 
-        # Determine the preferred borrow asset (WETH has best Aave liquidity)
-        # Priority: WETH > other supported assets
+        # WETH addresses on supported chains
         weth_addresses = {
             '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',  # Ethereum
             '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',  # Arbitrum
             '0x4200000000000000000000000000000000000006',  # Base
         }
 
-        token_out_is_weth = token_out_checksum in weth_addresses
-        token_in_is_weth = token_in_checksum in weth_addresses
-
-        # Choose which token to borrow (prefer WETH for best liquidity)
-        if token_out_is_weth:
-            # token_out is WETH - borrow it (best case)
-            borrow_asset = token_out_checksum
-            intermediate_token = token_in_checksum
-
-            # CRITICAL FIX: When borrowing token_out instead of token_in, we need to SWAP the routers!
-            # Python found: buy_dex is best for GRT→WETH, sell_dex is best for WETH→GRT
-            # Contract does: buy_router for WETH→GRT (first swap), sell_router for GRT→WETH (second swap)
-            # So: Python's sell_dex (best for WETH→GRT) should be contract's buy_router
-            #     Python's buy_dex (best for GRT→WETH) should be contract's sell_router
-            contract_buy_router = sell_router_addr  # Python's sell_dex does WETH→GRT
-            contract_sell_router = buy_router_addr  # Python's buy_dex does GRT→WETH
-
-            self.logger.info(f"   Flash loan: Borrowing WETH (best liquidity)")
-            self.logger.info(f"   ⚠️ Router swap: Contract buy={sell_dex}, sell={buy_dex} (direction inverted)")
-        elif token_in_is_weth:
-            # token_in is WETH - borrow it (no router swap needed)
-            borrow_asset = token_in_checksum
-            intermediate_token = token_out_checksum
-            contract_buy_router = buy_router_addr
-            contract_sell_router = sell_router_addr
-            self.logger.info(f"   Flash loan: Borrowing WETH (best liquidity)")
-        elif token_out_checksum in supported_assets:
-            # token_out is supported (not WETH) - borrow it with router swap
-            borrow_asset = token_out_checksum
-            intermediate_token = token_in_checksum
-            contract_buy_router = sell_router_addr
-            contract_sell_router = buy_router_addr
-            self.logger.info(f"   Flash loan: Borrowing {token_out[:10]}... (Aave-supported)")
-            self.logger.info(f"   ⚠️ Router swap: Contract buy={sell_dex}, sell={buy_dex} (direction inverted)")
-        elif token_in_checksum in supported_assets:
-            # token_in is supported - borrow it (original logic, no router swap needed)
-            borrow_asset = token_in_checksum
-            intermediate_token = token_out_checksum
-            contract_buy_router = buy_router_addr
-            contract_sell_router = sell_router_addr
-            self.logger.info(f"   Flash loan: Borrowing {token_in[:10]}... (Aave-supported)")
-        else:
-            # Neither token is supported for flash loans
-            self.logger.error(f"❌ Cannot flash loan - neither token is Aave-supported")
-            self.logger.error(f"   token_in: {token_in[:10]}... | token_out: {token_out[:10]}...")
-            self.logger.error(f"   Supported: WETH, USDC, USDT, DAI, WBTC")
+        # Verify token_out is WETH (our borrow asset)
+        if weth_checksum not in weth_addresses:
+            self.logger.error(f"❌ Cannot flash loan - token_out is not WETH")
+            self.logger.error(f"   token_out: {token_out[:10]}...")
+            self.logger.error(f"   Only WETH-based pairs are supported for flash loans")
             return None
 
-        self.logger.info(f"   Flash loan params: borrow={borrow_asset[:10]}..., intermediate={intermediate_token[:10]}...")
-        self.logger.info(f"   Route: buy_router ({contract_buy_router[:10]}...) -> sell_router ({contract_sell_router[:10]}...)")
+        # Set up flash loan parameters
+        # Borrow WETH, use token as intermediate
+        borrow_asset = weth_checksum
+        intermediate_token = token_checksum
+
+        # Router mapping is now direct - no swapping needed!
+        # buy_dex was found to be best for WETH → token = contract's buyRouter
+        # sell_dex was found to be best for token → WETH = contract's sellRouter
+        contract_buy_router = buy_router_addr
+        contract_sell_router = sell_router_addr
+
+        self.logger.info(f"   Flash loan: Borrowing {amount/1e18:.4f} WETH")
+        self.logger.info(f"   Flash loan params: borrow=WETH, intermediate={token_in[:10]}...")
+        self.logger.info(f"   Route: {buy_dex} ({buy_router_addr[:10]}...) → {sell_dex} ({sell_router_addr[:10]}...)")
 
         # Execute via contract's executeArbitrage function
         # This ensures initiator == contract address (passes the check!)
