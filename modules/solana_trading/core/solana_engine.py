@@ -2096,7 +2096,7 @@ class SolanaTradingEngine:
 
                 # Auto-blacklist this token to prevent future trades
                 try:
-                    if self.scam_blacklist and position.strategy == 'pumpfun':
+                    if self.scam_blacklist and position.strategy == Strategy.PUMPFUN:
                         logger.info(f"   🚫 Adding {position.token_symbol} to scam blacklist...")
                         await self.scam_blacklist.on_rapid_crash_detected(
                             mint=position.token_mint,
@@ -2111,7 +2111,7 @@ class SolanaTradingEngine:
                         if not self.scam_blacklist:
                             logger.warning(f"   ⚠️ Blacklist not initialized")
                         else:
-                            logger.warning(f"   ⚠️ Non-pumpfun strategy, not blacklisting")
+                            logger.info(f"   ℹ️ Non-pumpfun strategy ({position.strategy}), not blacklisting")
                 except Exception as e:
                     logger.error(f"   ❌ Failed to blacklist {position.token_symbol}: {e}")
 
@@ -2123,7 +2123,7 @@ class SolanaTradingEngine:
 
                 # Auto-blacklist this token to prevent future trades
                 try:
-                    if self.scam_blacklist and position.strategy == 'pumpfun':
+                    if self.scam_blacklist and position.strategy == Strategy.PUMPFUN:
                         logger.info(f"   🚫 Adding {position.token_symbol} to scam blacklist...")
                         await self.scam_blacklist.on_rapid_crash_detected(
                             mint=position.token_mint,
@@ -2138,7 +2138,7 @@ class SolanaTradingEngine:
                         if not self.scam_blacklist:
                             logger.warning(f"   ⚠️ Blacklist not initialized")
                         else:
-                            logger.warning(f"   ⚠️ Non-pumpfun strategy, not blacklisting")
+                            logger.info(f"   ℹ️ Non-pumpfun strategy ({position.strategy}), not blacklisting")
                 except Exception as e:
                     logger.error(f"   ❌ Failed to blacklist {position.token_symbol}: {e}")
 
@@ -2540,6 +2540,9 @@ class SolanaTradingEngine:
                         reason=f"Scam name pattern: {pattern}",
                         metadata={'pattern': pattern, 'type': 'name_pattern'}
                     )
+                    # Force immediate database sync to persist blacklist
+                    await self.scam_blacklist._sync_to_db()
+                    logger.info(f"   ✅ {token_symbol} blacklisted and synced to DB")
                     return False
 
             # 5. For pump.fun: Check holder count if available (require minimum holders)
