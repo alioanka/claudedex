@@ -71,6 +71,7 @@ CONFIG_KEY_MAPPING = {
     'pumpfun_min_holders': ('solana_pumpfun', 'int'),  # Minimum holders before buying
     'pumpfun_max_dev_holding': ('solana_pumpfun', 'float'),  # Max dev holding %
     'pumpfun_scam_detection': ('solana_pumpfun', 'bool'),  # Enable scam pattern detection
+    'pumpfun_slippage': ('solana_pumpfun', 'int'),  # Buy slippage BPS for pump.fun (SafetyEngine)
 
     # Jupiter strategy-specific settings
     'jupiter_stop_loss': ('solana_jupiter', 'float'),
@@ -142,6 +143,7 @@ class SolanaConfigManager:
         'pumpfun_min_holders': 15,  # Minimum 15 holders (filter out rugs)
         'pumpfun_max_dev_holding': 10.0,  # Max 10% dev holding
         'pumpfun_scam_detection': True,  # Enable scam pattern detection
+        'pumpfun_slippage': 800,  # 8% buy slippage for pump.fun (SafetyEngine)
 
         # Jupiter strategy-specific (established tokens need tighter TP/SL)
         'jupiter_stop_loss': 5.0,  # Jupiter: tighter SL for established tokens
