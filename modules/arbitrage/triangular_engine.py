@@ -323,7 +323,7 @@ class TriangularArbitrageEngine:
 
         # Rate limiting - cooldown from config
         self._last_opportunity_time: Dict[str, datetime] = {}
-        self._opportunity_cooldown = config.get('tri_cooldown', 300)  # 5 min default
+        self._opportunity_cooldown = config.get('tri_cooldown', 45)  # 45s default (was 300s=5min, too aggressive)
         self._cycle_execution_count: Dict[str, int] = {}
         self._execution_date: str = ""
         self._max_executions_per_cycle_per_day = 5
@@ -747,6 +747,8 @@ class TriangularArbitrageEngine:
                 if last_time:
                     elapsed = (now - last_time).total_seconds()
                     if elapsed < self._opportunity_cooldown:
+                        remaining = self._opportunity_cooldown - elapsed
+                        logger.debug(f"⏳ Cooldown active for {cycle_key}: {remaining:.0f}s remaining (spread: {profit_pct:.2%})")
                         return True
 
                 # Execute

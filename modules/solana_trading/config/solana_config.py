@@ -71,7 +71,7 @@ class SolanaConfig:
         self.pumpfun_program_id = os.getenv('PUMPFUN_PROGRAM_ID', '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P')
         self.pumpfun_min_liquidity = float(os.getenv('PUMPFUN_MIN_LIQUIDITY', '10'))  # SOL
         self.pumpfun_max_age_seconds = int(os.getenv('PUMPFUN_MAX_AGE_SECONDS', '300'))
-        self.pumpfun_buy_amount_sol = float(os.getenv('PUMPFUN_BUY_AMOUNT_SOL', '0.1'))
+        self.pumpfun_buy_amount_sol = float(os.getenv('PUMPFUN_BUY_AMOUNT_SOL', '0.05'))
 
     def to_dict(self) -> Dict:
         """Convert config to dictionary"""

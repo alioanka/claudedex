@@ -410,7 +410,7 @@ class SolanaConfigManager:
     @property
     def pumpfun_buy_amount_sol(self) -> float:
         """Get Pump.fun buy amount in SOL"""
-        return self.get('pumpfun_buy_amount', 0.1)
+        return self.get('pumpfun_buy_amount', 0.05)
 
     @property
     def pumpfun_stop_loss_pct(self) -> float:
@@ -425,7 +425,7 @@ class SolanaConfigManager:
     @property
     def pumpfun_max_positions(self) -> int:
         """Get Pump.fun strategy-specific max positions limit"""
-        return self.get('pumpfun_max_positions', 3)
+        return self.get('pumpfun_max_positions', 2)
 
     @property
     def pumpfun_trailing_enabled(self) -> bool:

@@ -825,13 +825,19 @@ class JupiterHelper:
                                 status = value[0]
                                 confirmation_status = status.get('confirmationStatus')
 
+                                # CRITICAL: Check for on-chain errors FIRST before returning success!
+                                # A transaction can be confirmed/finalized but still FAIL with a program error
+                                # (e.g., 0x1771 = SlippageToleranceExceeded). The tx is included in a block
+                                # (so confirmationStatus = 'confirmed') but the program execution failed.
+                                if status.get('err'):
+                                    logger.error(f"❌ Transaction FAILED on-chain: {status['err']}")
+                                    logger.error(f"   Signature: {signature}")
+                                    logger.error(f"   Status was '{confirmation_status}' but had error - this is a FAILED tx")
+                                    return False
+
                                 if confirmation_status in ['confirmed', 'finalized']:
                                     logger.info(f"✅ Transaction confirmed ({confirmation_status}): {signature}")
                                     return True
-
-                                if status.get('err'):
-                                    logger.error(f"Transaction failed on-chain: {status['err']}")
-                                    return False
 
                                 # Transaction found but not yet confirmed
                                 if confirmation_status == 'processed':
