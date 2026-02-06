@@ -115,13 +115,28 @@ class ScamBlacklist:
                 # Load existing entries
                 rows = await conn.fetch("SELECT * FROM scam_token_blacklist")
                 for row in rows:
+                    # Safely parse metadata - JSONB should return dict, but handle edge cases
+                    raw_meta = row['metadata']
+                    if isinstance(raw_meta, dict):
+                        meta = raw_meta
+                    elif raw_meta is None:
+                        meta = {}
+                    else:
+                        # Handle string or other unexpected types
+                        try:
+                            import json
+                            meta = json.loads(str(raw_meta)) if raw_meta else {}
+                        except (json.JSONDecodeError, TypeError):
+                            logger.warning(f"Could not parse metadata for {row['mint'][:10]}..., using empty dict")
+                            meta = {}
+
                     entry = BlacklistEntry(
                         mint=row['mint'],
                         symbol=row['symbol'],
                         reason=row['reason'],
                         detected_at=row['detected_at'],
                         loss_pct=row['loss_pct'],
-                        metadata=dict(row['metadata']) if row['metadata'] else {}
+                        metadata=meta
                     )
                     self._blacklisted_mints.add(entry.mint)
                     self._blacklist_entries[entry.mint] = entry
