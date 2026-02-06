@@ -668,6 +668,26 @@ class PumpFunMonitor:
                             filtered_out['suspicious'] += 1
                             continue
 
+                        # ENHANCED FILTERS: Avoid scams and dumps
+                        # Reject tokens already in a dump (price dropping > 15%)
+                        price_change = token_info.get('price_change_24h', 0)
+                        if price_change < -15:
+                            filtered_out['suspicious'] = filtered_out.get('suspicious', 0) + 1
+                            continue
+
+                        # Require minimum liquidity-to-volume ratio (avoid fake volume)
+                        liq = token_info['liquidity_usd']
+                        vol = token_info['volume_24h']
+                        if liq > 0 and vol / liq > 50:
+                            # Volume 50x liquidity = likely wash trading
+                            filtered_out['suspicious'] = filtered_out.get('suspicious', 0) + 1
+                            continue
+
+                        # Require minimum $3000 liquidity for pump.fun (override if config is lower)
+                        if liq < 3000:
+                            filtered_out['liquidity'] += 1
+                            continue
+
                         # Token passes all filters!
                         new_tokens.append(token_info)
                         self._seen_tokens.add(token_address)
@@ -982,7 +1002,7 @@ class SolanaTradingEngine:
             self.stop_loss_pct = float(os.getenv('SOLANA_STOP_LOSS_PCT', '-10.0'))
             self.take_profit_pct = float(os.getenv('SOLANA_TAKE_PROFIT_PCT', '50.0'))
             self.max_daily_loss_sol = float(os.getenv('SOLANA_MAX_DAILY_LOSS_SOL', '5.0'))
-            self.slippage_bps = int(os.getenv('JUPITER_SLIPPAGE_BPS', '50'))
+            self.slippage_bps = int(os.getenv('JUPITER_SLIPPAGE_BPS', '200'))  # 2% default (was 50bps=0.5%)
 
         # Trading state
         self.active_positions: Dict[str, Position] = {}
@@ -2596,6 +2616,27 @@ class SolanaTradingEngine:
                     logger.warning(f"🚫 BLOCKED: {token_symbol} dev holds {dev_holding:.1f}% (max: {max_dev_holding}%)")
                     return False
 
+                # ENHANCED: Check market cap - avoid extremely low mcap (likely scam) or absurdly high
+                market_cap = metadata.get('market_cap', metadata.get('fdv', 0))
+                if market_cap and market_cap < 5000:
+                    logger.warning(f"🚫 BLOCKED: {token_symbol} market cap ${market_cap:.0f} too low (min: $5000)")
+                    return False
+                if market_cap and market_cap > 10_000_000:
+                    logger.warning(f"🚫 BLOCKED: {token_symbol} market cap ${market_cap:,.0f} too high for pump.fun entry")
+                    return False
+
+                # ENHANCED: Check liquidity depth - require at least $3000
+                liq_usd = metadata.get('liquidity_usd', metadata.get('liquidity', 0))
+                if liq_usd and liq_usd < 3000:
+                    logger.warning(f"🚫 BLOCKED: {token_symbol} liquidity ${liq_usd:.0f} too low (min: $3000)")
+                    return False
+
+                # ENHANCED: Reject tokens with negative price momentum
+                price_change = metadata.get('price_change_24h', metadata.get('priceChange', 0))
+                if price_change and price_change < -20:
+                    logger.warning(f"🚫 BLOCKED: {token_symbol} price already dropping {price_change:.1f}% - avoiding dump")
+                    return False
+
             # ============ END PRE-BUY SAFETY CHECKS ============
 
             # Get token price - try multiple sources
@@ -2746,9 +2787,12 @@ class SolanaTradingEngine:
                         )
                     else:
                         trade_slippage = self.slippage_bps
-                        # Fallback: use higher slippage for pump.fun
+                        # Fallback: use MUCH higher slippage for pump.fun
+                        # 50 bps is far too low - causes constant 0x1771 SlippageToleranceExceeded errors
                         if strategy == Strategy.PUMPFUN:
-                            trade_slippage = max(500, self.slippage_bps * 5)  # Min 5% for pump.fun
+                            trade_slippage = max(800, self.slippage_bps * 10)  # Min 8% for pump.fun buys
+                        else:
+                            trade_slippage = max(200, self.slippage_bps)  # Min 2% for other strategies
 
                     if self.jupiter_helper:
                         # Use JupiterHelper for full swap execution
@@ -2986,6 +3030,34 @@ class SolanaTradingEngine:
 
                             if close_tx_signature:
                                 logger.info(f"🟢 LIVE CLOSE executed: {close_tx_signature}")
+
+                                # CRITICAL: Verify tokens were actually sold by checking balance
+                                # A tx can appear "confirmed" but fail on-chain (e.g., 0x1771 slippage error)
+                                # The confirm_transaction fix catches most cases, but this is a safety net
+                                await asyncio.sleep(2.0)  # Wait for balance to update
+                                remaining_balance = await self._get_token_balance(token_mint, token_decimals)
+
+                                if is_partial:
+                                    # For partial close, check that balance decreased significantly
+                                    expected_remaining = actual_balance - sell_amount
+                                    if remaining_balance > actual_balance * 0.95:
+                                        logger.error(f"❌ POST-SELL VERIFICATION FAILED for {position.token_symbol}")
+                                        logger.error(f"   Balance unchanged: {remaining_balance:.2f} (was {actual_balance:.2f})")
+                                        logger.error(f"   TX {close_tx_signature} likely FAILED on-chain!")
+                                        close_tx_signature = None
+                                        last_error = "Post-sell balance verification failed - tokens not sold"
+                                        continue  # Retry with higher slippage
+                                else:
+                                    # For full close, tokens should be gone (or near-zero dust)
+                                    if remaining_balance > actual_balance * 0.05:
+                                        logger.error(f"❌ POST-SELL VERIFICATION FAILED for {position.token_symbol}")
+                                        logger.error(f"   Tokens still in wallet: {remaining_balance:.2f} (was {actual_balance:.2f})")
+                                        logger.error(f"   TX {close_tx_signature} likely FAILED on-chain!")
+                                        close_tx_signature = None
+                                        last_error = "Post-sell balance verification failed - tokens not sold"
+                                        continue  # Retry with higher slippage
+
+                                logger.info(f"✅ Post-sell verification OK: balance {remaining_balance:.2f} (was {actual_balance:.2f})")
                                 close_actually_executed = True
 
                                 # Record success with safety engine

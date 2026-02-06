@@ -912,7 +912,7 @@ class EVMArbitrageEngine:
         # Rate limiting for logging and execution
         self._last_opportunity_time = None
         self._last_opportunity_key = None
-        self._opportunity_cooldown = 300  # 5 min cooldown for same opportunity (was 1 hour - too long)
+        self._opportunity_cooldown = 45  # 45s cooldown for same opportunity (was 300s=5min, too aggressive)
 
         # Visibility logging - track spreads even when not executing
         self._last_spread_log_time = None
