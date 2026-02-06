@@ -2453,7 +2453,25 @@ class SolanaTradingEngine:
             # Get new tokens (already filtered in get_new_tokens)
             new_tokens = await self.pumpfun_monitor.get_new_tokens()
 
+            # Track positions opened this scan
+            positions_opened = 0
+            max_per_scan = 3  # Max positions to open per scan cycle (prevent overwhelming)
+
             for token in new_tokens:
+                # Check if we've hit limits
+                current_pumpfun = sum(1 for p in self.active_positions.values() if p.strategy == Strategy.PUMPFUN)
+                if current_pumpfun >= pumpfun_max:
+                    logger.debug(f"Pump.fun max positions reached ({current_pumpfun}/{pumpfun_max})")
+                    break
+
+                if len(self.active_positions) >= self.max_positions:
+                    logger.debug(f"Overall max positions reached ({len(self.active_positions)}/{self.max_positions})")
+                    break
+
+                if positions_opened >= max_per_scan:
+                    logger.debug(f"Max positions per scan reached ({positions_opened}/{max_per_scan})")
+                    break
+
                 token_mint = token.get('mint')
                 if not token_mint:
                     continue
@@ -2480,7 +2498,11 @@ class SolanaTradingEngine:
                 )
 
                 if success:
-                    break  # Only stop after successfully opening one position
+                    positions_opened += 1
+                    logger.info(f"   ✅ Position {positions_opened} opened successfully")
+
+            if positions_opened > 0:
+                logger.info(f"📊 Opened {positions_opened} new position(s) this scan")
 
         except Exception as e:
             logger.error(f"Error scanning Pump.fun: {e}")
