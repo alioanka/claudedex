@@ -1035,6 +1035,9 @@ class SolanaTradingEngine:
         # Scam token blacklist - initialized in async initialize() method
         self.scam_blacklist = None
 
+        # Safety engine - initialized in async initialize() method
+        self.safety_engine = None
+
         # Log configuration
         mode_str = "DRY_RUN (SIMULATED)" if self.dry_run else "LIVE TRADING"
         logger.info(f"Solana engine initialized:")
@@ -1067,6 +1070,25 @@ class SolanaTradingEngine:
 
             # Load historical stats from database for accurate PnL tracking
             await self._load_historical_stats()
+
+            # Initialize SafetyEngine for all strategies (slippage, circuit breaker, etc.)
+            try:
+                from modules.solana_trading.core.safety_engine import SafetyEngine, SafetyConfig
+                pumpfun_slippage = self.config_manager.get('pumpfun_slippage', 500) if self.config_manager else 500
+                safety_config = SafetyConfig(
+                    default_slippage_bps=self.slippage_bps,
+                    pumpfun_slippage_bps=pumpfun_slippage,
+                    max_emergency_slippage_bps=2000,  # 20% max for emergency exits
+                    max_close_retries=5,
+                    retry_slippage_increment_bps=200,  # +2% each retry
+                    circuit_breaker_failures=3,
+                    circuit_breaker_cooldown_seconds=300
+                )
+                self.safety_engine = SafetyEngine(safety_config)
+                logger.info(f"✅ SafetyEngine initialized (pump.fun slippage: {pumpfun_slippage}bps)")
+            except Exception as e:
+                logger.warning(f"⚠️ SafetyEngine not available: {e}")
+                self.safety_engine = None
 
             # Initialize Telegram alerts with async credential loading
             try:
@@ -1285,28 +1307,8 @@ class SolanaTradingEngine:
                     logger.warning(f"⚠️ JupiterHelper not available for live swaps: {e}")
                     self.jupiter_helper = None
 
-            # Initialize SafetyEngine for honeypot detection and close retry logic
-            if SAFETY_ENGINE_AVAILABLE:
-                # Get pump.fun slippage from config or use safe default
-                pumpfun_slippage = 500  # 5% default for pump.fun
-                if self.config_manager:
-                    # Use higher slippage for pump.fun tokens
-                    pumpfun_slippage = max(500, self.slippage_bps * 10)
-
-                safety_config = SafetyConfig(
-                    default_slippage_bps=self.slippage_bps,
-                    pumpfun_slippage_bps=pumpfun_slippage,
-                    max_emergency_slippage_bps=2000,  # 20% max for emergency exits
-                    max_close_retries=5,
-                    retry_slippage_increment_bps=200,  # +2% each retry
-                    circuit_breaker_failures=3,
-                    circuit_breaker_cooldown_seconds=300
-                )
-                self.safety_engine = SafetyEngine(safety_config)
-                logger.info(f"🛡️ SafetyEngine initialized (pump.fun slippage: {pumpfun_slippage}bps)")
-            else:
-                self.safety_engine = None
-                logger.warning("⚠️ SafetyEngine not available - running without safety features")
+            # SafetyEngine is now initialized in common initialize() method
+            # for all strategies, not just Jupiter
 
             # Test with SOL price - uses multi-source price fetching
             sol_price = await self.jupiter_client.get_price(SOL_MINT)
