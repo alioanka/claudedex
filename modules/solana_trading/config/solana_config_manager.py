@@ -67,6 +67,10 @@ CONFIG_KEY_MAPPING = {
     'pumpfun_trailing_enabled': ('solana_pumpfun', 'bool'),  # Enable/disable trailing stops
     'pumpfun_tier0_sl': ('solana_pumpfun', 'float'),  # Tier 0 stop loss % (default -12)
     'pumpfun_partial_exit_pct': ('solana_pumpfun', 'float'),  # % to exit per tier (default 20)
+    'pumpfun_cooldown': ('solana_pumpfun', 'int'),  # Cooldown between trades in seconds
+    'pumpfun_min_holders': ('solana_pumpfun', 'int'),  # Minimum holders before buying
+    'pumpfun_max_dev_holding': ('solana_pumpfun', 'float'),  # Max dev holding %
+    'pumpfun_scam_detection': ('solana_pumpfun', 'bool'),  # Enable scam pattern detection
 
     # Jupiter strategy-specific settings
     'jupiter_stop_loss': ('solana_jupiter', 'float'),
@@ -120,7 +124,7 @@ class SolanaConfigManager:
 
         # Pump.fun - IMPROVED trailing stop system for capturing 10x-100x gains
         'pumpfun_enabled': False,
-        'pumpfun_buy_amount': 0.1,
+        'pumpfun_buy_amount': 0.05,  # Reduced to 0.05 SOL per trade (limit scam losses)
         'pumpfun_min_liquidity': 10.0,  # Min liquidity in SOL
         'pumpfun_min_liquidity_usd': 1000.0,  # Min liquidity in USD
         'pumpfun_min_volume_24h': 5000.0,  # Min 24h volume in USD
@@ -128,12 +132,16 @@ class SolanaConfigManager:
         'pumpfun_auto_sell': 0,
         'pumpfun_jito': True,
         'pumpfun_jito_tip': 0.001,
-        'pumpfun_stop_loss': 12.0,  # Tighter initial SL for Pump.fun (was 20%)
-        'pumpfun_take_profit': 100.0,  # Pump.fun: higher TP for meme tokens
-        'pumpfun_max_positions': 3,  # Separate position limit for pump.fun snipes
+        'pumpfun_stop_loss': 25.0,  # Fixed SL when trailing disabled (wider for volatility)
+        'pumpfun_take_profit': 50.0,  # Fixed TP when trailing disabled (take profits earlier)
+        'pumpfun_max_positions': 2,  # Reduced to 2 to limit exposure
         'pumpfun_trailing_enabled': True,  # Enable trailing stops (recommended)
-        'pumpfun_tier0_sl': 12.0,  # Tier 0 stop loss % (tighter protection)
+        'pumpfun_tier0_sl': 20.0,  # Tier 0 stop loss % (wider for pump.fun volatility)
         'pumpfun_partial_exit_pct': 20.0,  # Exit 20% per tier to let winners run
+        'pumpfun_cooldown': 60,  # 60 second cooldown between trades
+        'pumpfun_min_holders': 15,  # Minimum 15 holders (filter out rugs)
+        'pumpfun_max_dev_holding': 10.0,  # Max 10% dev holding
+        'pumpfun_scam_detection': True,  # Enable scam pattern detection
 
         # Jupiter strategy-specific (established tokens need tighter TP/SL)
         'jupiter_stop_loss': 5.0,  # Jupiter: tighter SL for established tokens
@@ -433,6 +441,26 @@ class SolanaConfigManager:
     def pumpfun_partial_exit_pct(self) -> float:
         """Get Pump.fun partial exit percentage per tier"""
         return self.get('pumpfun_partial_exit_pct', 20.0)
+
+    @property
+    def pumpfun_cooldown(self) -> int:
+        """Get Pump.fun cooldown between trades in seconds"""
+        return self.get('pumpfun_cooldown', 60)
+
+    @property
+    def pumpfun_min_holders(self) -> int:
+        """Get minimum holder count required before buying"""
+        return self.get('pumpfun_min_holders', 15)
+
+    @property
+    def pumpfun_max_dev_holding(self) -> float:
+        """Get maximum allowed dev holding percentage"""
+        return self.get('pumpfun_max_dev_holding', 10.0)
+
+    @property
+    def pumpfun_scam_detection(self) -> bool:
+        """Check if scam pattern detection is enabled"""
+        return self.get('pumpfun_scam_detection', True)
 
     @property
     def jupiter_stop_loss_pct(self) -> float:

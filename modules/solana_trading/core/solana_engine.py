@@ -2522,7 +2522,12 @@ class SolanaTradingEngine:
                 return False
 
             # 4. Check token name for scam patterns (TRUMP, BIDEN, etc.)
-            if self.scam_blacklist:
+            # Only check if scam detection is enabled in config
+            scam_detection_enabled = True  # Default to enabled for safety
+            if self.config_manager:
+                scam_detection_enabled = self.config_manager.pumpfun_scam_detection
+
+            if self.scam_blacklist and scam_detection_enabled:
                 is_scam_name, pattern = self.scam_blacklist.check_name_pattern(
                     token_symbol,
                     metadata.get('name') if metadata else None
@@ -2538,16 +2543,23 @@ class SolanaTradingEngine:
                     return False
 
             # 5. For pump.fun: Check holder count if available (require minimum holders)
+            # Get configurable thresholds from config manager
+            min_holders = 15  # Default
+            max_dev_holding = 10.0  # Default
+            if self.config_manager:
+                min_holders = self.config_manager.pumpfun_min_holders
+                max_dev_holding = self.config_manager.pumpfun_max_dev_holding
+
             if strategy == Strategy.PUMPFUN and metadata:
                 holder_count = metadata.get('holder_count', metadata.get('holders', 0))
-                if holder_count and holder_count < 15:  # Minimum 15 holders
-                    logger.warning(f"🚫 BLOCKED: {token_symbol} has only {holder_count} holders (min: 15)")
+                if holder_count and holder_count < min_holders:
+                    logger.warning(f"🚫 BLOCKED: {token_symbol} has only {holder_count} holders (min: {min_holders})")
                     return False
 
                 # Check dev holding percentage
                 dev_holding = metadata.get('dev_holding_pct', metadata.get('creator_holdings', 0))
-                if dev_holding and dev_holding > 10:  # Max 10% dev holding
-                    logger.warning(f"🚫 BLOCKED: {token_symbol} dev holds {dev_holding:.1f}% (max: 10%)")
+                if dev_holding and dev_holding > max_dev_holding:
+                    logger.warning(f"🚫 BLOCKED: {token_symbol} dev holds {dev_holding:.1f}% (max: {max_dev_holding}%)")
                     return False
 
             # ============ END PRE-BUY SAFETY CHECKS ============
