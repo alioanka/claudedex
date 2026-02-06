@@ -16,6 +16,7 @@ Features:
 """
 
 import asyncio
+import json
 import logging
 import re
 from datetime import datetime, timedelta
@@ -263,16 +264,17 @@ class ScamBlacklist:
         try:
             async with self.db_pool.acquire() as conn:
                 for entry in self._pending_writes:
+                    # Serialize metadata to JSON string for JSONB column
+                    metadata_json = json.dumps(entry.metadata if entry.metadata else {})
                     await conn.execute("""
                         INSERT INTO scam_token_blacklist (mint, symbol, reason, detected_at, loss_pct, metadata)
-                        VALUES ($1, $2, $3, $4, $5, $6)
+                        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
                         ON CONFLICT (mint) DO UPDATE SET
                             reason = EXCLUDED.reason,
                             loss_pct = EXCLUDED.loss_pct,
                             metadata = EXCLUDED.metadata
                     """, entry.mint, entry.symbol, entry.reason,
-                        entry.detected_at, entry.loss_pct,
-                        entry.metadata if entry.metadata else {})
+                        entry.detected_at, entry.loss_pct, metadata_json)
 
             logger.info(f"💾 Synced {len(self._pending_writes)} blacklist entries to database")
             self._pending_writes = []
