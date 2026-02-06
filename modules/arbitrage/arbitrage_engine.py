@@ -453,9 +453,11 @@ TOKEN_DECIMALS = {
 
 # Scan amounts per token (approximate ~$25k USD equivalent for consistent spread comparison)
 # These are used for getAmountsOut queries, not for actual flash loan execution
-TOKEN_SCAN_AMOUNTS = {
-    'WETH': 10 * 10**18,          # 10 ETH
-    'WBTC': 40 * 10**6,           # 0.4 WBTC (8 decimals)
+# NOTE: These are BASE amounts at 10 ETH equivalent. They get scaled by the configured
+# flash_loan_amount in the engine (e.g., if flash_loan_amount=1 ETH, amounts scale to ~$2.5k)
+TOKEN_SCAN_AMOUNTS_BASE = {
+    'WETH': 10 * 10**18,          # 10 ETH (base reference amount)
+    'WBTC': 40 * 10**6,           # 0.4 WBTC (8 decimals) ≈ $25k
     'USDC': 25000 * 10**6,        # 25,000 USDC (6 decimals)
     'USDT': 25000 * 10**6,        # 25,000 USDT (6 decimals)
     'USDbC': 25000 * 10**6,       # 25,000 USDbC (6 decimals)
@@ -466,6 +468,8 @@ TOKEN_SCAN_AMOUNTS = {
     'cbETH': 10 * 10**18,         # 10 cbETH (~10 ETH equivalent)
     'rETH': 10 * 10**18,          # 10 rETH (~10 ETH equivalent)
 }
+# Base reference: these amounts assume flash_loan_amount = 10 ETH
+_BASE_FLASH_LOAN_ETH = 10
 
 # Flashbots Relay
 FLASHBOTS_RELAY_URL = 'https://relay.flashbots.net'
@@ -887,7 +891,20 @@ class EVMArbitrageEngine:
         self.min_profit_threshold = 0.003  # 0.3% minimum NET profit (after costs)
         self.use_flash_loans = True
         self.use_flashbots = True
-        self.flash_loan_amount = 10 * 10**18  # 10 ETH default
+
+        # Flash loan amount: read from config (in ETH units), convert to wei
+        # CRITICAL: 10 ETH ($25k) causes massive price impact on L2 V2 pools
+        # Arbitrum/Base V2 pools often have only $50-200k liquidity
+        flash_loan_eth = config.get('flash_loan_amount', 10)
+        self.flash_loan_amount = int(flash_loan_eth * 10**18)
+        self._flash_loan_eth = flash_loan_eth  # Store ETH units for scan amount scaling
+
+        # Pre-compute scaled scan amounts based on configured flash loan size
+        # Scale proportionally: if flash_loan=1 ETH (vs base 10), all amounts scale by 0.1x
+        scale = flash_loan_eth / _BASE_FLASH_LOAN_ETH
+        self._scan_amounts = {}
+        for token, base_amount in TOKEN_SCAN_AMOUNTS_BASE.items():
+            self._scan_amounts[token] = max(1, int(base_amount * scale))
 
         # Price fetcher for real-time prices
         self.price_fetcher = PriceFetcher()
@@ -1135,6 +1152,7 @@ class EVMArbitrageEngine:
                 self.logger.warning("⚠️ Failed to connect to Arbitrage RPC")
 
         self.logger.info(f"   Mode: {'DRY_RUN (Simulated)' if self.dry_run else 'LIVE TRADING'}")
+        self.logger.info(f"   Flash Loan Amount: {self._flash_loan_eth} ETH (scan scale: {self._flash_loan_eth/_BASE_FLASH_LOAN_ETH:.2f}x)")
         self.logger.info(f"   Flash Loans: {'Enabled' if self.flash_loan_executor else 'Disabled'}")
         self.logger.info(f"   Flashbots: {'Enabled' if self.flashbots_executor else 'Disabled'}")
 
@@ -1266,10 +1284,11 @@ class EVMArbitrageEngine:
 
             self._total_pairs_scanned += 1
 
-            # Use token-specific scan amount to handle different decimals correctly
+            # Use token-specific scan amount scaled to configured flash_loan_amount
             # CRITICAL: flash_loan_amount (10*10**18) only works for 18-decimal tokens
             # For USDC (6 dec), WBTC (8 dec), etc. we need decimal-appropriate amounts
-            amount_in = TOKEN_SCAN_AMOUNTS.get(token_symbol, self.flash_loan_amount)
+            # Amounts are pre-scaled in __init__ based on flash_loan_amount setting
+            amount_in = self._scan_amounts.get(token_symbol, self.flash_loan_amount)
             token_in_decimals = TOKEN_DECIMALS.get(token_symbol, 18)
 
             # Flash loan amount is in WETH (the borrow asset)
