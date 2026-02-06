@@ -555,7 +555,7 @@ class PumpFunMonitor:
         self.min_liquidity_sol = config.get('min_liquidity_sol', 10)
         self.min_liquidity_usd = config.get('min_liquidity_usd', 1000)  # Minimum $1000 liquidity
         self.max_age_seconds = config.get('max_age_seconds', 300)
-        self.buy_amount_sol = config.get('buy_amount_sol', 0.1)
+        self.buy_amount_sol = config.get('buy_amount_sol', 0.05)
         self.min_volume_24h = config.get('min_volume_24h', 5000)  # Minimum $5000 24h volume
         self._recent_tokens: Dict[str, Dict] = {}
         self._seen_tokens: set = set()  # Track already seen tokens
@@ -1401,7 +1401,7 @@ class SolanaTradingEngine:
                     'min_liquidity_usd': self.config_manager.get('pumpfun_min_liquidity_usd', 1000.0),
                     'min_volume_24h': self.config_manager.get('pumpfun_min_volume_24h', 5000.0),
                     'max_age_seconds': self.config_manager.get('pumpfun_max_age', 300),
-                    'buy_amount_sol': self.config_manager.get('pumpfun_buy_amount', 0.1),
+                    'buy_amount_sol': self.config_manager.get('pumpfun_buy_amount', 0.05),
                     'ws_url': os.getenv('PUMPFUN_WS_URL', 'wss://pumpportal.fun/api/data')
                 }
                 logger.info(f"   Config from DB: min_liq=${config['min_liquidity_usd']}, min_vol=${config['min_volume_24h']}")
@@ -1412,7 +1412,7 @@ class SolanaTradingEngine:
                     'min_liquidity_usd': float(os.getenv('PUMPFUN_MIN_LIQUIDITY_USD', '1000')),
                     'min_volume_24h': float(os.getenv('PUMPFUN_MIN_VOLUME_24H', '5000')),
                     'max_age_seconds': int(os.getenv('PUMPFUN_MAX_AGE_SECONDS', '300')),
-                    'buy_amount_sol': float(os.getenv('PUMPFUN_BUY_AMOUNT_SOL', '0.1')),
+                    'buy_amount_sol': float(os.getenv('PUMPFUN_BUY_AMOUNT_SOL', '0.05')),
                     'ws_url': os.getenv('PUMPFUN_WS_URL', 'wss://pumpportal.fun/api/data')
                 }
 
@@ -2457,7 +2457,7 @@ class SolanaTradingEngine:
         other_positions = len(self.active_positions) - pumpfun_positions
 
         # Pump.fun has its own limit from DB config (default 3 positions)
-        pumpfun_max = 3  # Default fallback
+        pumpfun_max = 2  # Default fallback (reduced to limit exposure)
         if self.config_manager:
             pumpfun_max = self.config_manager.pumpfun_max_positions
 

@@ -113,7 +113,7 @@ class SolanaConfigManager:
 
         # Pump.fun
         'pumpfun_enabled': False,
-        'pumpfun_buy_amount': 0.1,
+        'pumpfun_buy_amount': 0.05,  # Reduced to 0.05 SOL per trade (limit scam losses)
         'pumpfun_min_liquidity': 10.0,  # Min liquidity in SOL
         'pumpfun_min_liquidity_usd': 1000.0,  # Min liquidity in USD
         'pumpfun_min_volume_24h': 5000.0,  # Min 24h volume in USD
@@ -123,7 +123,7 @@ class SolanaConfigManager:
         'pumpfun_jito_tip': 0.001,
         'pumpfun_stop_loss': 20.0,  # Pump.fun: higher SL for volatile new tokens
         'pumpfun_take_profit': 100.0,  # Pump.fun: higher TP for meme tokens
-        'pumpfun_max_positions': 3,  # Separate position limit for pump.fun snipes
+        'pumpfun_max_positions': 2,  # Reduced to 2 to limit exposure
 
         # Jupiter strategy-specific (established tokens need tighter TP/SL)
         'jupiter_stop_loss': 5.0,  # Jupiter: tighter SL for established tokens
@@ -374,7 +374,7 @@ class SolanaConfigManager:
     @property
     def pumpfun_buy_amount_sol(self) -> float:
         """Get Pump.fun buy amount in SOL"""
-        return self.get('pumpfun_buy_amount', 0.1)
+        return self.get('pumpfun_buy_amount', 0.05)
 
     @property
     def pumpfun_stop_loss_pct(self) -> float:
@@ -389,7 +389,7 @@ class SolanaConfigManager:
     @property
     def pumpfun_max_positions(self) -> int:
         """Get Pump.fun strategy-specific max positions limit"""
-        return self.get('pumpfun_max_positions', 3)
+        return self.get('pumpfun_max_positions', 2)
 
     @property
     def jupiter_stop_loss_pct(self) -> float:
