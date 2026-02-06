@@ -366,7 +366,9 @@ class JupiterClient:
         self._session: Optional[aiohttp.ClientSession] = None
         self._price_cache: Dict[str, Dict] = {}
         self._price_cache_time: Dict[str, datetime] = {}
-        self._cache_ttl = timedelta(seconds=30)
+        # CRITICAL: Short cache for pump.fun tokens that can rug in seconds
+        # 30s was too long - missed -20% SL because price went from +18% to -47% between refreshes
+        self._cache_ttl = timedelta(seconds=5)
         self._price_source_failures: Dict[str, int] = {}  # Track API failures
 
     async def _get_session(self) -> aiohttp.ClientSession:
@@ -2062,9 +2064,13 @@ class SolanaTradingEngine:
 
         meta = position.metadata
         if 'trailing' not in meta:
+            # CRITICAL: Compute initial peak_gain_pct from current price vs entry
+            # Previously hardcoded to 0, which meant trailing tiers never activated
+            # when price was already above entry at first monitoring check
+            initial_peak_gain = ((current_price - entry_price) / entry_price) * 100 if entry_price > 0 else 0
             meta['trailing'] = {
                 'peak_price': current_price,
-                'peak_gain_pct': 0,
+                'peak_gain_pct': max(0, initial_peak_gain),
                 'tier_reached': 0,
                 'original_amount': position.amount,
                 'remaining_pct': 100.0,
@@ -2760,15 +2766,26 @@ class SolanaTradingEngine:
 
                             # Update position.amount with actual tokens received
                             # This ensures accurate tracking for closes/partial exits
+                            # CRITICAL: Retry with increasing delays - 1s was often too short
+                            # for RPC to reflect new balance, causing phantom balance tracking
                             try:
-                                await asyncio.sleep(1)  # Brief delay for balance to update
-                                actual_tokens = await self._get_token_balance(token_mint, 6)
+                                actual_tokens = 0
+                                for balance_retry in range(3):
+                                    delay = 1.5 + balance_retry * 1.0  # 1.5s, 2.5s, 3.5s
+                                    await asyncio.sleep(delay)
+                                    actual_tokens = await self._get_token_balance(token_mint, 6)
+                                    if actual_tokens > 0:
+                                        break
+                                    logger.debug(f"Balance check attempt {balance_retry+1}: 0 tokens, retrying...")
+
                                 if actual_tokens > 0:
                                     if position.amount > 0:
                                         diff_pct = abs(actual_tokens - position.amount) / position.amount * 100
                                         if diff_pct > 5:
                                             logger.info(f"📊 Token amount adjusted: estimated {position.amount:.2f} → actual {actual_tokens:.2f} ({diff_pct:.1f}% diff)")
                                     position.amount = actual_tokens
+                                else:
+                                    logger.warning(f"⚠️ Could not verify token balance after 3 attempts - using estimated amount {position.amount:.2f}")
                             except Exception as e:
                                 logger.debug(f"Could not verify token balance: {e}")
                         else:

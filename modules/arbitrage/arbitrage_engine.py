@@ -430,6 +430,43 @@ ARB_PAIRS = ARB_PAIRS_ETHEREUM
 ROUTERS = ROUTERS_ETHEREUM
 AAVE_V3_POOL = AAVE_POOLS['ethereum']
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# TOKEN DECIMALS - Required for correct amount scaling in spread calculations
+# ═══════════════════════════════════════════════════════════════════════════════
+TOKEN_DECIMALS = {
+    # 18 decimals (standard ERC20)
+    'WETH': 18, 'DAI': 18, 'FRAX': 18, 'LUSD': 18,
+    'LINK': 18, 'UNI': 18, 'AAVE': 18, 'CRV': 18, 'SUSHI': 18,
+    'SNX': 18, 'COMP': 18, 'MKR': 18, 'BAL': 18, 'YFI': 18,
+    'INCH': 18, 'GRT': 18, 'ENS': 18, 'LDO': 18,
+    'MATIC': 18, 'ARB': 18, 'OP': 18,
+    'SHIB': 18, 'PEPE': 18,
+    'GMX': 18, 'MAGIC': 18, 'RDNT': 18, 'PENDLE': 18,
+    'AERO': 18, 'BRETT': 18, 'DEGEN': 18, 'TOSHI': 18,
+    'cbETH': 18, 'rETH': 18,
+    'TUSD': 18,
+    # 8 decimals
+    'WBTC': 8,
+    # 6 decimals
+    'USDC': 6, 'USDT': 6, 'USDbC': 6, 'USDC_BRIDGED': 6,
+}
+
+# Scan amounts per token (approximate ~$25k USD equivalent for consistent spread comparison)
+# These are used for getAmountsOut queries, not for actual flash loan execution
+TOKEN_SCAN_AMOUNTS = {
+    'WETH': 10 * 10**18,          # 10 ETH
+    'WBTC': 40 * 10**6,           # 0.4 WBTC (8 decimals)
+    'USDC': 25000 * 10**6,        # 25,000 USDC (6 decimals)
+    'USDT': 25000 * 10**6,        # 25,000 USDT (6 decimals)
+    'USDbC': 25000 * 10**6,       # 25,000 USDbC (6 decimals)
+    'USDC_BRIDGED': 25000 * 10**6, # 25,000 USDC.e (6 decimals)
+    'DAI': 25000 * 10**18,        # 25,000 DAI (18 decimals)
+    'FRAX': 25000 * 10**18,       # 25,000 FRAX
+    'LUSD': 25000 * 10**18,       # 25,000 LUSD
+    'cbETH': 10 * 10**18,         # 10 cbETH (~10 ETH equivalent)
+    'rETH': 10 * 10**18,          # 10 rETH (~10 ETH equivalent)
+}
+
 # Flashbots Relay
 FLASHBOTS_RELAY_URL = 'https://relay.flashbots.net'
 FLASHBOTS_GOERLI_URL = 'https://relay-goerli.flashbots.net'
@@ -1132,7 +1169,7 @@ class EVMArbitrageEngine:
                 token_out = self.tokens.get(token_out_symbol)
 
                 if token_in and token_out:
-                    await self._check_arb_opportunity(token_in, token_out, token_in_symbol)
+                    await self._check_arb_opportunity(token_in, token_out, token_in_symbol, token_out_symbol)
 
                 # Move to next pair (round-robin)
                 pair_index = (pair_index + 1) % len(self.arb_pairs)
@@ -1218,19 +1255,8 @@ class EVMArbitrageEngine:
             if fail_count == self._blacklist_threshold:
                 self.logger.warning(f"⛔ [{pair_key}] Blacklisted for {self._blacklist_duration/60:.0f}min (no liquidity)")
 
-    async def _check_arb_opportunity(self, token_in: str, token_out: str, token_symbol: str = "UNKNOWN") -> bool:
-        """
-        Check price difference between two DEXs for flash loan arbitrage.
-
-        CRITICAL: Scanning is done from the BORROW ASSET's perspective (WETH).
-        This aligns with how the flash loan contract executes:
-        1. Borrow WETH from Aave
-        2. buyRouter: WETH → token (buy the token)
-        3. sellRouter: token → WETH (sell the token)
-        4. Repay WETH + fee, keep profit
-
-        Returns True if opportunity found and execution attempted.
-        """
+    async def _check_arb_opportunity(self, token_in: str, token_out: str, token_symbol: str = "UNKNOWN", token_out_symbol: str = "UNKNOWN") -> bool:
+        """Check price difference between two DEXs. Returns True if opportunity found."""
         try:
             pair_key = f"{token_symbol}_liquidity"
 
@@ -1239,6 +1265,12 @@ class EVMArbitrageEngine:
                 return False
 
             self._total_pairs_scanned += 1
+
+            # Use token-specific scan amount to handle different decimals correctly
+            # CRITICAL: flash_loan_amount (10*10**18) only works for 18-decimal tokens
+            # For USDC (6 dec), WBTC (8 dec), etc. we need decimal-appropriate amounts
+            amount_in = TOKEN_SCAN_AMOUNTS.get(token_symbol, self.flash_loan_amount)
+            token_in_decimals = TOKEN_DECIMALS.get(token_symbol, 18)
 
             # Flash loan amount is in WETH (the borrow asset)
             borrow_amount = self.flash_loan_amount
@@ -1362,8 +1394,13 @@ class EVMArbitrageEngine:
                 self._pair_execution_count[opp_key] = current_count + 1
                 remaining = self._max_executions_per_pair_per_day - (current_count + 1)
 
-                self.logger.info(f"🚨 [{self.chain_name.upper()}] ARBITRAGE OPPORTUNITY [{token_symbol}]: Buy on {best_buy_dex}, Sell on {best_sell_dex}. Raw: {raw_spread:.2%}, Net: {net_spread:.2%} (#{current_count + 1} today, {remaining} remaining)")
-                self.logger.info(f"   Path: {borrow_amount/1e18:.4f} WETH → {tokens_bought/1e18:.4f} {token_symbol} → {weth_returned/1e18:.4f} WETH (profit: {profit/1e18:.6f} WETH)")
+                # Use correct decimal divisor for logging
+                in_divisor = 10 ** token_in_decimals
+                out_decimals = TOKEN_DECIMALS.get(token_out_symbol, 18)
+                out_divisor = 10 ** out_decimals
+
+                self.logger.info(f"🚨 [{self.chain_name.upper()}] ARBITRAGE OPPORTUNITY [{token_symbol}/{token_out_symbol}]: Buy on {best_buy_dex}, Sell on {best_sell_dex}. Raw: {raw_spread:.2%}, Net: {net_spread:.2%} (#{current_count + 1} today, {remaining} remaining)")
+                self.logger.info(f"   Path: {amount_in/in_divisor:.4f} {token_symbol} → {forward_output/out_divisor:.4f} {token_out_symbol} → {final_output/in_divisor:.4f} {token_symbol} (profit: {profit/in_divisor:.4f})")
                 self._stats['opportunities_executed'] += 1
 
                 # Execute arbitrage - now buy_dex and sell_dex match contract's expectations directly!
@@ -1438,7 +1475,9 @@ class EVMArbitrageEngine:
         token_symbol: str = "UNKNOWN"
     ):
         """Execute the arbitrage trade using flash loans and Flashbots"""
-        self.logger.info(f"⚡ [{self.chain_name.upper()}] Executing Arbitrage [{token_symbol}]: {buy_dex} -> {sell_dex} | Amount: {amount/1e18:.4f} ETH | Expected: +{expected_profit:.2%}")
+        token_decimals = TOKEN_DECIMALS.get(token_symbol, 18)
+        token_divisor = 10 ** token_decimals
+        self.logger.info(f"⚡ [{self.chain_name.upper()}] Executing Arbitrage [{token_symbol}]: {buy_dex} -> {sell_dex} | Amount: {amount/token_divisor:.4f} {token_symbol} | Expected: +{expected_profit:.2%}")
 
         if self.dry_run:
             # Simulate execution
@@ -1501,7 +1540,7 @@ class EVMArbitrageEngine:
                 # Send Telegram error alert for failed execution
                 await self._send_error_alert(
                     error_type="Execution Failed",
-                    details=f"Flash swap failed for {token_symbol}\nBuy: {buy_dex} → Sell: {sell_dex}\nAmount: {amount/1e18:.4f} ETH",
+                    details=f"Flash swap failed for {token_symbol}\nBuy: {buy_dex} → Sell: {sell_dex}\nAmount: {amount/token_divisor:.4f} {token_symbol}",
                     token_symbol=token_symbol
                 )
 
