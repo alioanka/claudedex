@@ -2569,10 +2569,39 @@ class SolanaTradingEngine:
 
             # ============ END PRE-BUY SAFETY CHECKS ============
 
-            # Get token price
-            current_price = await self._get_token_price(token_mint)
-            if current_price is None:
-                logger.warning(f"Could not get price for {token_symbol}")
+            # Get token price - try multiple sources
+            current_price = None
+
+            # 1. First try to use price from metadata (already fetched from DexScreener/pump.fun)
+            if metadata:
+                current_price = metadata.get('price') or metadata.get('priceUsd') or metadata.get('price_usd')
+                if current_price:
+                    try:
+                        current_price = float(current_price)
+                        if current_price > 0:
+                            logger.debug(f"   Using price from metadata: ${current_price:.10f}")
+                    except (ValueError, TypeError):
+                        current_price = None
+
+            # 2. If no price from metadata, try DexScreener API
+            if not current_price:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        price_data = await self._get_token_price_data(session, token_mint)
+                        if price_data and price_data.get('price'):
+                            current_price = float(price_data['price'])
+                            logger.debug(f"   Using price from DexScreener: ${current_price:.10f}")
+                except Exception as e:
+                    logger.debug(f"   DexScreener price fetch failed: {e}")
+
+            # 3. Fall back to Jupiter for established tokens
+            if not current_price:
+                current_price = await self._get_token_price(token_mint)
+                if current_price:
+                    logger.debug(f"   Using price from Jupiter: ${current_price:.10f}")
+
+            if current_price is None or current_price <= 0:
+                logger.warning(f"Could not get price for {token_symbol} from any source")
                 return False
 
             # Calculate values
