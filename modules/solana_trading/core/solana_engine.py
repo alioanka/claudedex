@@ -1097,14 +1097,15 @@ class SolanaTradingEngine:
             # Initialize SafetyEngine for all strategies (slippage, circuit breaker, etc.)
             try:
                 from modules.solana_trading.core.safety_engine import SafetyEngine, SafetyConfig
-                pumpfun_slippage = self.config_manager.get('pumpfun_slippage', 500) if self.config_manager else 500
+                pumpfun_slippage = self.config_manager.get('pumpfun_slippage', 800) if self.config_manager else 800
                 safety_config = SafetyConfig(
-                    default_slippage_bps=self.slippage_bps,
+                    default_slippage_bps=max(self.slippage_bps, 100),  # At least 1%
                     pumpfun_slippage_bps=pumpfun_slippage,
-                    max_emergency_slippage_bps=2000,  # 20% max for emergency exits
-                    max_close_retries=5,
-                    retry_slippage_increment_bps=200,  # +2% each retry
-                    circuit_breaker_failures=3,
+                    pumpfun_close_slippage_bps=1200,  # 12% base for pump.fun sells
+                    max_emergency_slippage_bps=3500,  # 35% max for emergency exits
+                    max_close_retries=7,  # More retries for stuck positions
+                    retry_slippage_increment_bps=400,  # +4% each retry (was 2%)
+                    circuit_breaker_failures=5,  # More tolerance before circuit break
                     circuit_breaker_cooldown_seconds=300
                 )
                 self.safety_engine = SafetyEngine(safety_config)
