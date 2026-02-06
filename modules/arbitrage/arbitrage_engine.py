@@ -293,30 +293,40 @@ TOKENS_BASE = {
 # ARBITRAGE PAIRS PER CHAIN
 # ═══════════════════════════════════════════════════════════════════════════════
 ARB_PAIRS_ETHEREUM = [
+    # High liquidity pairs with verified V2 liquidity on Uniswap/SushiSwap
     ('WETH', 'USDC'),
     ('WETH', 'USDT'),
     ('WETH', 'DAI'),
     ('WBTC', 'WETH'),
+
+    # Major DeFi tokens with good V2 liquidity
     ('LINK', 'WETH'),
     ('UNI', 'WETH'),
     ('AAVE', 'WETH'),
-    ('MATIC', 'WETH'),
     ('SUSHI', 'WETH'),
     ('CRV', 'WETH'),
-    ('LDO', 'WETH'),
-    ('SNX', 'WETH'),
-    ('COMP', 'WETH'),
-    ('MKR', 'WETH'),
-    ('BAL', 'WETH'),
-    ('YFI', 'WETH'),
-    ('GRT', 'WETH'),
-    ('ENS', 'WETH'),
-    ('SHIB', 'WETH'),
-    ('PEPE', 'WETH'),
+
+    # Stablecoin pairs (low volatility but consistent)
+    ('USDC', 'USDT'),
+    ('USDC', 'DAI'),
+    ('DAI', 'USDT'),
+
+    # NOTE: Removed low-liquidity or problematic pairs:
+    # ('MATIC', 'WETH'),  # Most liquidity on Polygon now
+    # ('SNX', 'WETH'),    # Low V2 liquidity
+    # ('COMP', 'WETH'),   # Low V2 liquidity
+    # ('MKR', 'WETH'),    # Low V2 liquidity
+    # ('BAL', 'WETH'),    # Most liquidity on Balancer V2
+    # ('YFI', 'WETH'),    # Low V2 liquidity
+    # ('GRT', 'WETH'),    # Can have reverts on some DEXs
+    # ('ENS', 'WETH'),    # Low V2 liquidity
+    # ('SHIB', 'WETH'),   # High slippage, fee-on-transfer issues
+    # ('PEPE', 'WETH'),   # High slippage
+    # ('LDO', 'WETH'),    # Low V2 liquidity
 ]
 
 ARB_PAIRS_ARBITRUM = [
-    # High liquidity pairs
+    # High liquidity pairs (verified on SushiSwap, Camelot, Zyberswap)
     ('WETH', 'USDC'),
     ('WETH', 'USDT'),
     ('WETH', 'DAI'),
@@ -324,43 +334,48 @@ ARB_PAIRS_ARBITRUM = [
     ('ARB', 'WETH'),       # Native ARB token - high volume
     ('ARB', 'USDC'),       # ARB/stablecoin
 
-    # Native Arbitrum DeFi tokens
+    # Native Arbitrum DeFi tokens with verified V2 liquidity
     ('GMX', 'WETH'),       # GMX - major Arbitrum protocol
-    ('MAGIC', 'WETH'),     # TreasureDAO
-    ('RDNT', 'WETH'),      # Radiant Capital
-    ('PENDLE', 'WETH'),    # Pendle
 
-    # Bridged DeFi tokens
+    # NOTE: Some tokens removed due to liquidity issues on V2 routers:
+    # ('MAGIC', 'WETH'),   # Low V2 liquidity
+    # ('RDNT', 'WETH'),    # Low V2 liquidity
+    # ('PENDLE', 'WETH'),  # Low V2 liquidity
+
+    # Bridged DeFi tokens with liquidity
     ('LINK', 'WETH'),
-    ('UNI', 'WETH'),
-    ('AAVE', 'WETH'),
-    ('CRV', 'WETH'),
-    ('SUSHI', 'WETH'),
+
+    # NOTE: These have low V2 liquidity on Arbitrum:
+    # ('UNI', 'WETH'),
+    # ('AAVE', 'WETH'),
+    # ('CRV', 'WETH'),
+    # ('SUSHI', 'WETH'),
 
     # Stablecoin pairs (good for low-risk arb)
     ('USDC', 'USDT'),
     ('USDC', 'DAI'),
-    ('USDC', 'USDC_BRIDGED'),  # Native vs bridged USDC
 ]
 
 ARB_PAIRS_BASE = [
-    # High liquidity pairs
+    # High liquidity pairs (verified on SushiSwap, BaseSwap, SwapBased)
     ('WETH', 'USDC'),
     ('WETH', 'USDbC'),     # Bridged USDC
     ('WETH', 'DAI'),
-    ('cbETH', 'WETH'),     # Coinbase ETH
-    ('rETH', 'WETH'),      # Rocket Pool ETH
+    ('cbETH', 'WETH'),     # Coinbase ETH - good liquidity
 
-    # Native Base tokens
-    ('AERO', 'WETH'),      # Aerodrome - major Base DEX
+    # NOTE: rETH has very low liquidity on Base V2 DEXs - removed to avoid errors
+    # ('rETH', 'WETH'),    # Rocket Pool ETH - NO LIQUIDITY on Base V2 DEXs
+
+    # Native Base tokens with verified liquidity
+    ('AERO', 'WETH'),      # Aerodrome - major Base DEX token
     ('AERO', 'USDC'),
 
-    # Meme tokens (high volatility = potential arb)
-    ('BRETT', 'WETH'),
-    ('DEGEN', 'WETH'),
-    ('TOSHI', 'WETH'),
+    # Meme tokens - only include if they have DEX liquidity
+    # ('BRETT', 'WETH'),   # Check liquidity before enabling
+    ('DEGEN', 'WETH'),     # DEGEN has liquidity on some DEXs
+    # ('TOSHI', 'WETH'),   # Check liquidity before enabling
 
-    # Stablecoin pairs
+    # Stablecoin pairs (low volatility but consistent)
     ('USDC', 'USDbC'),     # Native vs bridged USDC - low risk arb
     ('USDC', 'DAI'),
 ]
@@ -868,6 +883,12 @@ class EVMArbitrageEngine:
         self._min_gas_eth: float = 0.015
         self._low_gas_warning_shown = False
 
+        # Dynamic liquidity blacklist - pairs that consistently fail
+        # Format: {pair_key: (fail_count, last_fail_time)}
+        self._liquidity_blacklist: Dict[str, Tuple[int, datetime]] = {}
+        self._blacklist_threshold = 5  # Blacklist after 5 consecutive failures
+        self._blacklist_duration = 3600  # Unblacklist after 1 hour (liquidity may return)
+
         self._stats = {
             'scans': 0,
             'opportunities_found': 0,
@@ -1161,9 +1182,51 @@ class EVMArbitrageEngine:
             self._total_pairs_scanned = 0
             self._pairs_with_liquidity = 0
 
+    def _is_pair_blacklisted(self, pair_key: str) -> bool:
+        """Check if a pair is currently blacklisted due to liquidity failures."""
+        if pair_key not in self._liquidity_blacklist:
+            return False
+
+        fail_count, last_fail_time = self._liquidity_blacklist[pair_key]
+
+        # Check if blacklist has expired
+        elapsed = (datetime.now() - last_fail_time).total_seconds()
+        if elapsed > self._blacklist_duration:
+            # Blacklist expired - remove and allow scanning
+            del self._liquidity_blacklist[pair_key]
+            self.logger.info(f"🔄 [{pair_key}] Removed from blacklist after {self._blacklist_duration/60:.0f}min")
+            return False
+
+        return fail_count >= self._blacklist_threshold
+
+    def _update_liquidity_blacklist(self, pair_key: str, has_liquidity: bool):
+        """Update blacklist based on liquidity check result."""
+        if has_liquidity:
+            # Reset fail count on success
+            if pair_key in self._liquidity_blacklist:
+                del self._liquidity_blacklist[pair_key]
+        else:
+            # Increment fail count
+            if pair_key in self._liquidity_blacklist:
+                fail_count, _ = self._liquidity_blacklist[pair_key]
+                self._liquidity_blacklist[pair_key] = (fail_count + 1, datetime.now())
+            else:
+                self._liquidity_blacklist[pair_key] = (1, datetime.now())
+
+            # Log when pair gets blacklisted
+            fail_count, _ = self._liquidity_blacklist[pair_key]
+            if fail_count == self._blacklist_threshold:
+                self.logger.warning(f"⛔ [{pair_key}] Blacklisted for {self._blacklist_duration/60:.0f}min (no liquidity)")
+
     async def _check_arb_opportunity(self, token_in: str, token_out: str, token_symbol: str = "UNKNOWN") -> bool:
         """Check price difference between two DEXs. Returns True if opportunity found."""
         try:
+            pair_key = f"{token_symbol}_liquidity"
+
+            # Skip blacklisted pairs to avoid wasting RPC calls
+            if self._is_pair_blacklisted(pair_key):
+                return False
+
             self._total_pairs_scanned += 1
             amount_in = self.flash_loan_amount  # Use configured flash loan amount
 
@@ -1191,8 +1254,12 @@ class EVMArbitrageEngine:
                     self.logger.warning(f"⚠️ [{token_symbol}] No forward prices from any DEX. Errors: {forward_errors}")
 
             if len(forward_prices) < 2:
+                # Update blacklist on liquidity failure
+                self._update_liquidity_blacklist(pair_key, has_liquidity=False)
                 return False
 
+            # Liquidity found - clear from blacklist if present
+            self._update_liquidity_blacklist(pair_key, has_liquidity=True)
             self._pairs_with_liquidity += 1
 
             # Find best forward DEX (gives most token_out for our token_in)
@@ -1477,9 +1544,14 @@ class EVMArbitrageEngine:
         4. Repay loan + fee to Aave
         5. Keep profit in contract (withdraw later)
 
+        CRITICAL: Router direction mapping
+        - Python detects: buy_dex is best for token_in → token_out (e.g., GRT→WETH)
+        - Contract swaps: buy_router for asset → intermediate (e.g., WETH→GRT after flip)
+        - When we flip the borrow asset, the routers must also be swapped!
+
         Args:
-            buy_dex: DEX with lower price for the token
-            sell_dex: DEX with higher price for the token
+            buy_dex: DEX with lower price for the token (best for token_in → token_out)
+            sell_dex: DEX with higher price for the token (best for token_out → token_in)
             token_in: The token being arbitraged (e.g., GRT, SNX)
             token_out: The base asset, usually WETH
             amount: Amount to borrow in wei
@@ -1500,16 +1572,59 @@ class EVMArbitrageEngine:
         token_in_checksum = Web3.to_checksum_address(token_in)
         token_out_checksum = Web3.to_checksum_address(token_out)
 
-        if token_out_checksum in supported_assets:
-            # token_out (e.g., WETH) is supported - borrow it, trade through token_in
+        # Get router addresses (use chain-specific routers)
+        buy_router_addr = self.routers.get(buy_dex, list(self.routers.values())[0])
+        sell_router_addr = self.routers.get(sell_dex, list(self.routers.values())[-1])
+
+        # Determine the preferred borrow asset (WETH has best Aave liquidity)
+        # Priority: WETH > other supported assets
+        weth_addresses = {
+            '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',  # Ethereum
+            '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',  # Arbitrum
+            '0x4200000000000000000000000000000000000006',  # Base
+        }
+
+        token_out_is_weth = token_out_checksum in weth_addresses
+        token_in_is_weth = token_in_checksum in weth_addresses
+
+        # Choose which token to borrow (prefer WETH for best liquidity)
+        if token_out_is_weth:
+            # token_out is WETH - borrow it (best case)
             borrow_asset = token_out_checksum
             intermediate_token = token_in_checksum
-            self.logger.info(f"   Flash loan: Borrowing {token_out[:10]}... (supported by Aave)")
-        elif token_in_checksum in supported_assets:
-            # token_in is supported - borrow it (original logic)
+
+            # CRITICAL FIX: When borrowing token_out instead of token_in, we need to SWAP the routers!
+            # Python found: buy_dex is best for GRT→WETH, sell_dex is best for WETH→GRT
+            # Contract does: buy_router for WETH→GRT (first swap), sell_router for GRT→WETH (second swap)
+            # So: Python's sell_dex (best for WETH→GRT) should be contract's buy_router
+            #     Python's buy_dex (best for GRT→WETH) should be contract's sell_router
+            contract_buy_router = sell_router_addr  # Python's sell_dex does WETH→GRT
+            contract_sell_router = buy_router_addr  # Python's buy_dex does GRT→WETH
+
+            self.logger.info(f"   Flash loan: Borrowing WETH (best liquidity)")
+            self.logger.info(f"   ⚠️ Router swap: Contract buy={sell_dex}, sell={buy_dex} (direction inverted)")
+        elif token_in_is_weth:
+            # token_in is WETH - borrow it (no router swap needed)
             borrow_asset = token_in_checksum
             intermediate_token = token_out_checksum
-            self.logger.info(f"   Flash loan: Borrowing {token_in[:10]}... (supported by Aave)")
+            contract_buy_router = buy_router_addr
+            contract_sell_router = sell_router_addr
+            self.logger.info(f"   Flash loan: Borrowing WETH (best liquidity)")
+        elif token_out_checksum in supported_assets:
+            # token_out is supported (not WETH) - borrow it with router swap
+            borrow_asset = token_out_checksum
+            intermediate_token = token_in_checksum
+            contract_buy_router = sell_router_addr
+            contract_sell_router = buy_router_addr
+            self.logger.info(f"   Flash loan: Borrowing {token_out[:10]}... (Aave-supported)")
+            self.logger.info(f"   ⚠️ Router swap: Contract buy={sell_dex}, sell={buy_dex} (direction inverted)")
+        elif token_in_checksum in supported_assets:
+            # token_in is supported - borrow it (original logic, no router swap needed)
+            borrow_asset = token_in_checksum
+            intermediate_token = token_out_checksum
+            contract_buy_router = buy_router_addr
+            contract_sell_router = sell_router_addr
+            self.logger.info(f"   Flash loan: Borrowing {token_in[:10]}... (Aave-supported)")
         else:
             # Neither token is supported for flash loans
             self.logger.error(f"❌ Cannot flash loan - neither token is Aave-supported")
@@ -1517,20 +1632,16 @@ class EVMArbitrageEngine:
             self.logger.error(f"   Supported: WETH, USDC, USDT, DAI, WBTC")
             return None
 
-        # Get router addresses (use chain-specific routers)
-        buy_router = self.routers.get(buy_dex, list(self.routers.values())[0])
-        sell_router = self.routers.get(sell_dex, list(self.routers.values())[-1])
-
         self.logger.info(f"   Flash loan params: borrow={borrow_asset[:10]}..., intermediate={intermediate_token[:10]}...")
-        self.logger.info(f"   Route: {buy_dex} ({buy_router[:10]}...) -> {sell_dex} ({sell_router[:10]}...)")
+        self.logger.info(f"   Route: buy_router ({contract_buy_router[:10]}...) -> sell_router ({contract_sell_router[:10]}...)")
 
         # Execute via contract's executeArbitrage function
         # This ensures initiator == contract address (passes the check!)
         tx_hash = await self.flash_loan_executor.execute_arbitrage(
             asset=borrow_asset,
             amount=amount,
-            buy_router=buy_router,
-            sell_router=sell_router,
+            buy_router=contract_buy_router,
+            sell_router=contract_sell_router,
             intermediate_token=intermediate_token
         )
 
