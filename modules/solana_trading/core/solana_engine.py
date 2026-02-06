@@ -192,14 +192,87 @@ class RiskMetrics:
     consecutive_losses: int = 0
     last_reset: datetime = field(default_factory=datetime.now)
 
+    # Time-based consecutive loss blocking
+    loss_block_start: Optional[datetime] = None  # When the block started
+    loss_block_count: int = 0  # Number of times blocked (for progressive blocking)
+    max_consecutive_losses: int = 5  # Threshold to trigger block
+    block_duration_hours: float = 2.0  # Base block duration
+    progressive_block: bool = True  # Increase block time after repeated blocks
+    max_block_hours: float = 6.0  # Maximum block duration
+
     @property
     def can_trade(self) -> bool:
         """Check if trading is allowed based on risk limits"""
         if self.daily_pnl_sol <= -self.daily_loss_limit_sol:
             return False
-        if self.consecutive_losses >= 5:
+
+        # Check consecutive losses with time-based reset
+        if self.consecutive_losses >= self.max_consecutive_losses:
+            # Check if we're in a timed block
+            if self.loss_block_start is not None:
+                block_duration = self._get_block_duration()
+                elapsed = datetime.now() - self.loss_block_start
+                if elapsed >= block_duration:
+                    # Block expired - will be reset by check_and_reset_loss_block()
+                    return True
+                return False
             return False
         return True
+
+    def _get_block_duration(self) -> timedelta:
+        """Calculate block duration based on block count"""
+        if not self.progressive_block or self.loss_block_count <= 1:
+            return timedelta(hours=self.block_duration_hours)
+
+        # Progressive: 2h -> 4h -> 6h (max)
+        multiplier = min(self.loss_block_count, 3)  # Cap at 3x
+        hours = min(self.block_duration_hours * multiplier, self.max_block_hours)
+        return timedelta(hours=hours)
+
+    def get_block_remaining_seconds(self) -> Optional[int]:
+        """Get remaining seconds until block expires, or None if not blocked"""
+        if self.consecutive_losses < self.max_consecutive_losses:
+            return None
+        if self.loss_block_start is None:
+            return None
+
+        block_duration = self._get_block_duration()
+        elapsed = datetime.now() - self.loss_block_start
+        remaining = block_duration - elapsed
+
+        if remaining.total_seconds() <= 0:
+            return 0
+        return int(remaining.total_seconds())
+
+    def trigger_loss_block(self):
+        """Trigger a consecutive loss block"""
+        if self.loss_block_start is None:
+            self.loss_block_start = datetime.now()
+            self.loss_block_count += 1
+            block_hours = self._get_block_duration().total_seconds() / 3600
+            logger.warning(f"🚫 CONSECUTIVE LOSS BLOCK TRIGGERED: {self.consecutive_losses} losses")
+            logger.warning(f"   Block #{self.loss_block_count} for {block_hours:.1f} hours")
+
+    def check_and_reset_loss_block(self) -> bool:
+        """
+        Check if loss block has expired and reset if so.
+
+        Returns:
+            True if block was reset, False otherwise
+        """
+        if self.loss_block_start is None:
+            return False
+
+        block_duration = self._get_block_duration()
+        elapsed = datetime.now() - self.loss_block_start
+
+        if elapsed >= block_duration:
+            logger.info(f"✅ CONSECUTIVE LOSS BLOCK EXPIRED after {elapsed.total_seconds()/3600:.1f}h")
+            logger.info(f"   Resetting consecutive losses from {self.consecutive_losses} to 0")
+            self.consecutive_losses = 0
+            self.loss_block_start = None
+            return True
+        return False
 
     @property
     def risk_level(self) -> str:
@@ -959,6 +1032,9 @@ class SolanaTradingEngine:
         # where we can properly load credentials from secrets manager
         self.telegram_alerts = None
 
+        # Scam token blacklist - initialized in async initialize() method
+        self.scam_blacklist = None
+
         # Log configuration
         mode_str = "DRY_RUN (SIMULATED)" if self.dry_run else "LIVE TRADING"
         logger.info(f"Solana engine initialized:")
@@ -1009,6 +1085,14 @@ class SolanaTradingEngine:
                     logger.info("✅ Telegram alerts enabled for Solana module")
             except Exception as e:
                 logger.warning(f"Solana Telegram alerts not available: {e}")
+
+            # Initialize scam token blacklist
+            try:
+                from .scam_blacklist import initialize_blacklist
+                self.scam_blacklist = await initialize_blacklist(self.db_pool)
+                logger.info("✅ Scam token blacklist initialized")
+            except Exception as e:
+                logger.warning(f"Scam blacklist not available: {e}")
 
             logger.info("✅ Solana connection and strategies initialized")
 
@@ -1642,14 +1726,28 @@ class SolanaTradingEngine:
             # This runs even when trading is paused to ensure we can exit positions
             await self._retry_stuck_positions()
 
+            # Check and reset time-based loss block (AUTO-RELEASE after block_duration_hours)
+            if self.risk_metrics.check_and_reset_loss_block():
+                logger.info("🔓 Trading resumed after time-based loss block expired")
+
             # Check risk limits for NEW trades only
             if not self.risk_metrics.can_trade:
                 # Provide detailed reason for pause
                 pause_reason = []
                 if self.risk_metrics.daily_pnl_sol <= -self.risk_metrics.daily_loss_limit_sol:
                     pause_reason.append(f"daily loss limit ({self.risk_metrics.daily_pnl_sol:.4f} <= -{self.risk_metrics.daily_loss_limit_sol:.2f} SOL)")
-                if self.risk_metrics.consecutive_losses >= 5:
-                    pause_reason.append(f"consecutive losses ({self.risk_metrics.consecutive_losses} >= 5)")
+
+                # Consecutive loss block with time remaining
+                if self.risk_metrics.consecutive_losses >= self.risk_metrics.max_consecutive_losses:
+                    remaining = self.risk_metrics.get_block_remaining_seconds()
+                    if remaining is not None and remaining > 0:
+                        hours = remaining // 3600
+                        mins = (remaining % 3600) // 60
+                        time_str = f"{hours}h {mins}m" if hours > 0 else f"{mins}m"
+                        pause_reason.append(f"consecutive losses ({self.risk_metrics.consecutive_losses} >= {self.risk_metrics.max_consecutive_losses}) - auto-reset in {time_str}")
+                    else:
+                        pause_reason.append(f"consecutive losses ({self.risk_metrics.consecutive_losses} >= {self.risk_metrics.max_consecutive_losses})")
+
                 reason_str = " and ".join(pause_reason) if pause_reason else "unknown"
 
                 # Log error only once every minute to avoid spam
@@ -1995,11 +2093,31 @@ class SolanaTradingEngine:
                 logger.error(f"🚨 RAPID CRASH DETECTED: {position.token_symbol} dropped {decline_pct:.1f}% since last check!")
                 logger.error(f"   Price: {last_price:.10f} → {current_price:.10f}")
                 logger.error(f"   Triggering EMERGENCY EXIT")
+
+                # Auto-blacklist this token to prevent future trades
+                if self.scam_blacklist and position.strategy == 'pumpfun':
+                    await self.scam_blacklist.on_rapid_crash_detected(
+                        mint=position.token_mint,
+                        symbol=position.token_symbol,
+                        drop_pct=decline_pct,
+                        time_seconds=int((datetime.utcnow() - position.opened_at).total_seconds())
+                    )
+
                 return "emergency_rapid_decline"
 
             if decline_pct >= 30 and time_held < 300:  # 5 minutes
                 logger.error(f"🚨 NEW POSITION CRASHING: {position.token_symbol} dropped {decline_pct:.1f}% in {time_held:.0f}s!")
                 logger.error(f"   Triggering EMERGENCY EXIT for new position rapid decline")
+
+                # Auto-blacklist this token to prevent future trades
+                if self.scam_blacklist and position.strategy == 'pumpfun':
+                    await self.scam_blacklist.on_rapid_crash_detected(
+                        mint=position.token_mint,
+                        symbol=position.token_symbol,
+                        drop_pct=decline_pct,
+                        time_seconds=int(time_held)
+                    )
+
                 return "emergency_rapid_decline"
 
             # Also check decline from peak (not just last check)
@@ -2026,16 +2144,26 @@ class SolanaTradingEngine:
         current_gain_pct = ((current_price - entry_price) / entry_price) * 100
         peak_gain_pct = trailing['peak_gain_pct']
 
-        # Get configurable tier 0 stop loss from config (default -12%)
-        tier0_sl_pct = 12.0
+        # Get configurable tier 0 stop loss from config (default -20% for pump.fun volatility)
+        # TUNED: Pump.fun tokens can swing 15-20% before recovering
+        tier0_sl_pct = 20.0  # Was 12%, increased to handle volatility
         if self.config_manager:
             tier0_sl_pct = self.config_manager.pumpfun_tier0_sl
 
-        # Calculate dynamic trailing stop level - TIGHTER for better risk management
+        # Time-based stop widening: In first 2 minutes, use wider SL to handle initial volatility
+        time_held = (datetime.utcnow() - position.opened_at).total_seconds()
+        early_volatility_window = 120  # 2 minutes
+        if time_held < early_volatility_window:
+            # Use slightly wider SL in early period (add 5% buffer)
+            effective_tier0_sl = tier0_sl_pct + 5.0
+        else:
+            effective_tier0_sl = tier0_sl_pct
+
+        # Calculate dynamic trailing stop level - TUNED for pump.fun volatility
         if peak_gain_pct < 20:
-            # Tier 0: Configurable initial protection (default -12%)
-            sl_price = entry_price * (1 - tier0_sl_pct / 100)
-            sl_gain_pct = -tier0_sl_pct
+            # Tier 0: Initial protection with time-based adjustment
+            sl_price = entry_price * (1 - effective_tier0_sl / 100)
+            sl_gain_pct = -effective_tier0_sl
         elif peak_gain_pct < 40:
             # Tier 0.5: Lock small profit early (+5%)
             sl_price = entry_price * 1.05
@@ -2351,6 +2479,28 @@ class SolanaTradingEngine:
             True if position was successfully opened, False otherwise
         """
         try:
+            # SAFETY: Check if token is blacklisted (scam/rug detected previously)
+            if self.scam_blacklist and self.scam_blacklist.is_blacklisted(token_mint):
+                reason = self.scam_blacklist.get_blacklist_reason(token_mint)
+                logger.warning(f"🚫 BLOCKED: {token_symbol} is blacklisted - {reason}")
+                return False
+
+            # SAFETY: Check token name for scam patterns
+            if self.scam_blacklist:
+                is_scam_name, pattern = self.scam_blacklist.check_name_pattern(
+                    token_symbol,
+                    metadata.get('name') if metadata else None
+                )
+                if is_scam_name:
+                    logger.warning(f"🚫 BLOCKED: {token_symbol} matches scam name pattern")
+                    await self.scam_blacklist.add_to_blacklist(
+                        mint=token_mint,
+                        symbol=token_symbol,
+                        reason=f"Scam name pattern: {pattern}",
+                        metadata={'pattern': pattern, 'type': 'name_pattern'}
+                    )
+                    return False
+
             # Get token price
             current_price = await self._get_token_price(token_mint)
             if current_price is None:
@@ -2783,9 +2933,15 @@ class SolanaTradingEngine:
             if pnl_sol > 0:
                 self.winning_trades += 1
                 self.risk_metrics.consecutive_losses = 0
+                # Reset block on winning trade (clear any pending block)
+                self.risk_metrics.loss_block_start = None
             else:
                 self.losing_trades += 1
                 self.risk_metrics.consecutive_losses += 1
+
+                # Trigger time-based loss block when threshold is reached
+                if self.risk_metrics.consecutive_losses >= self.risk_metrics.max_consecutive_losses:
+                    self.risk_metrics.trigger_loss_block()
 
             # Record trade in PnL tracker for Sharpe/Sortino calculations
             net_pnl = pnl_sol - (position.fees_paid * close_pct)

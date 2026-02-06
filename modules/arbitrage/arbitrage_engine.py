@@ -244,15 +244,18 @@ ROUTERS_ETHEREUM = {
 }
 
 ROUTERS_ARBITRUM = {
-    'sushiswap': '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',  # SushiSwap V2 Router
-    'camelot': '0xc873fEcbd354f5A56E00E710B90EF4201db2448d',    # Camelot DEX Router
-    'uniswap_v3': '0xE592427A0AEce92De3Edee1F18E0157C05861564', # Uniswap V3 (same address)
+    # Note: All V2-compatible routers for getAmountsOut/swapExactTokensForTokens interface
+    'sushiswap': '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',  # SushiSwap V2 Router (works!)
+    'camelot': '0xc873fEcbd354f5A56E00E710B90EF4201db2448d',    # Camelot DEX Router (V2 interface)
+    'zyberswap': '0x16e71B13fE6079B4312063F7E81F76d165Ad32Ad',  # Zyberswap V2 Router
 }
 
 ROUTERS_BASE = {
-    'uniswap_v3': '0x2626664c2603336E57B271c5C0b26F421741e481',  # Uniswap V3 SwapRouter02
-    'aerodrome': '0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43',   # Aerodrome Router
-    'baseswap': '0x327Df1E6de05895d2ab08513aaDD9313Fe505d86',    # BaseSwap Router
+    # Note: Using V2-compatible routers for getAmountsOut/swapExactTokensForTokens interface
+    # V3 routers require different interface (Quoter + SwapRouter)
+    'sushiswap': '0x6BDED42c6DA8FBf0d2bA55B2fa120C5e0c8D7891',   # SushiSwap V2 Router (works!)
+    'baseswap': '0x327Df1E6de05895d2ab08513aaDD9313Fe505d86',    # BaseSwap V2 Router
+    'swapbased': '0xaaa3b1F1bd7BCc97fD1917c18ADE665C5D31F066',   # SwapBased V2 Router
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -290,30 +293,40 @@ TOKENS_BASE = {
 # ARBITRAGE PAIRS PER CHAIN
 # ═══════════════════════════════════════════════════════════════════════════════
 ARB_PAIRS_ETHEREUM = [
+    # High liquidity pairs with verified V2 liquidity on Uniswap/SushiSwap
     ('WETH', 'USDC'),
     ('WETH', 'USDT'),
     ('WETH', 'DAI'),
     ('WBTC', 'WETH'),
+
+    # Major DeFi tokens with good V2 liquidity
     ('LINK', 'WETH'),
     ('UNI', 'WETH'),
     ('AAVE', 'WETH'),
-    ('MATIC', 'WETH'),
     ('SUSHI', 'WETH'),
     ('CRV', 'WETH'),
-    ('LDO', 'WETH'),
-    ('SNX', 'WETH'),
-    ('COMP', 'WETH'),
-    ('MKR', 'WETH'),
-    ('BAL', 'WETH'),
-    ('YFI', 'WETH'),
-    ('GRT', 'WETH'),
-    ('ENS', 'WETH'),
-    ('SHIB', 'WETH'),
-    ('PEPE', 'WETH'),
+
+    # Stablecoin pairs (low volatility but consistent)
+    ('USDC', 'USDT'),
+    ('USDC', 'DAI'),
+    ('DAI', 'USDT'),
+
+    # NOTE: Removed low-liquidity or problematic pairs:
+    # ('MATIC', 'WETH'),  # Most liquidity on Polygon now
+    # ('SNX', 'WETH'),    # Low V2 liquidity
+    # ('COMP', 'WETH'),   # Low V2 liquidity
+    # ('MKR', 'WETH'),    # Low V2 liquidity
+    # ('BAL', 'WETH'),    # Most liquidity on Balancer V2
+    # ('YFI', 'WETH'),    # Low V2 liquidity
+    # ('GRT', 'WETH'),    # Can have reverts on some DEXs
+    # ('ENS', 'WETH'),    # Low V2 liquidity
+    # ('SHIB', 'WETH'),   # High slippage, fee-on-transfer issues
+    # ('PEPE', 'WETH'),   # High slippage
+    # ('LDO', 'WETH'),    # Low V2 liquidity
 ]
 
 ARB_PAIRS_ARBITRUM = [
-    # High liquidity pairs
+    # High liquidity pairs (verified on SushiSwap, Camelot, Zyberswap)
     ('WETH', 'USDC'),
     ('WETH', 'USDT'),
     ('WETH', 'DAI'),
@@ -321,43 +334,48 @@ ARB_PAIRS_ARBITRUM = [
     ('ARB', 'WETH'),       # Native ARB token - high volume
     ('ARB', 'USDC'),       # ARB/stablecoin
 
-    # Native Arbitrum DeFi tokens
+    # Native Arbitrum DeFi tokens with verified V2 liquidity
     ('GMX', 'WETH'),       # GMX - major Arbitrum protocol
-    ('MAGIC', 'WETH'),     # TreasureDAO
-    ('RDNT', 'WETH'),      # Radiant Capital
-    ('PENDLE', 'WETH'),    # Pendle
 
-    # Bridged DeFi tokens
+    # NOTE: Some tokens removed due to liquidity issues on V2 routers:
+    # ('MAGIC', 'WETH'),   # Low V2 liquidity
+    # ('RDNT', 'WETH'),    # Low V2 liquidity
+    # ('PENDLE', 'WETH'),  # Low V2 liquidity
+
+    # Bridged DeFi tokens with liquidity
     ('LINK', 'WETH'),
-    ('UNI', 'WETH'),
-    ('AAVE', 'WETH'),
-    ('CRV', 'WETH'),
-    ('SUSHI', 'WETH'),
+
+    # NOTE: These have low V2 liquidity on Arbitrum:
+    # ('UNI', 'WETH'),
+    # ('AAVE', 'WETH'),
+    # ('CRV', 'WETH'),
+    # ('SUSHI', 'WETH'),
 
     # Stablecoin pairs (good for low-risk arb)
     ('USDC', 'USDT'),
     ('USDC', 'DAI'),
-    ('USDC', 'USDC_BRIDGED'),  # Native vs bridged USDC
 ]
 
 ARB_PAIRS_BASE = [
-    # High liquidity pairs
+    # High liquidity pairs (verified on SushiSwap, BaseSwap, SwapBased)
     ('WETH', 'USDC'),
     ('WETH', 'USDbC'),     # Bridged USDC
     ('WETH', 'DAI'),
-    ('cbETH', 'WETH'),     # Coinbase ETH
-    ('rETH', 'WETH'),      # Rocket Pool ETH
+    ('cbETH', 'WETH'),     # Coinbase ETH - good liquidity
 
-    # Native Base tokens
-    ('AERO', 'WETH'),      # Aerodrome - major Base DEX
+    # NOTE: rETH has very low liquidity on Base V2 DEXs - removed to avoid errors
+    # ('rETH', 'WETH'),    # Rocket Pool ETH - NO LIQUIDITY on Base V2 DEXs
+
+    # Native Base tokens with verified liquidity
+    ('AERO', 'WETH'),      # Aerodrome - major Base DEX token
     ('AERO', 'USDC'),
 
-    # Meme tokens (high volatility = potential arb)
-    ('BRETT', 'WETH'),
-    ('DEGEN', 'WETH'),
-    ('TOSHI', 'WETH'),
+    # Meme tokens - only include if they have DEX liquidity
+    # ('BRETT', 'WETH'),   # Check liquidity before enabling
+    ('DEGEN', 'WETH'),     # DEGEN has liquidity on some DEXs
+    # ('TOSHI', 'WETH'),   # Check liquidity before enabling
 
-    # Stablecoin pairs
+    # Stablecoin pairs (low volatility but consistent)
     ('USDC', 'USDbC'),     # Native vs bridged USDC - low risk arb
     ('USDC', 'DAI'),
 ]
@@ -431,7 +449,7 @@ class FlashLoanExecutor:
     4. Contract executes swaps and repays loan
     """
 
-    def __init__(self, w3: Web3, private_key: str, wallet_address: str, receiver_contract: str):
+    def __init__(self, w3: Web3, private_key: str, wallet_address: str, receiver_contract: str, logger_instance=None):
         self.w3 = w3
         self.private_key = private_key
         self.wallet_address = wallet_address  # EOA for signing/gas (must be contract owner)
@@ -439,6 +457,8 @@ class FlashLoanExecutor:
         self.flash_loan_contract = None
         self._pending_nonce = None  # Track nonce to avoid collisions
         self._last_tx_time = None
+        # Use passed logger or fall back to module logger
+        self.logger = logger_instance or logger
 
         if w3:
             self.flash_loan_contract = w3.eth.contract(
@@ -475,6 +495,7 @@ class FlashLoanExecutor:
 
         Returns:
             Expected profit in wei, or None if simulation fails
+            Contract returns -1 for no liquidity on buy DEX, -2 for no liquidity on sell DEX
         """
         if not self.flash_loan_contract:
             return None
@@ -487,9 +508,20 @@ class FlashLoanExecutor:
                 Web3.to_checksum_address(sell_router),
                 Web3.to_checksum_address(intermediate_token)
             ).call()
+
+            # Log detailed results for debugging
+            if profit == -1:
+                self.logger.warning(f"   ⚠️ Simulation: No liquidity on BUY router ({buy_router[:10]}...)")
+            elif profit == -2:
+                self.logger.warning(f"   ⚠️ Simulation: No liquidity on SELL router ({sell_router[:10]}...)")
+            elif profit <= 0:
+                self.logger.info(f"   📊 Simulation: Profit={profit/1e18:.6f} ETH (not profitable)")
+            else:
+                self.logger.info(f"   📊 Simulation: Profit={profit/1e18:.6f} ETH")
+
             return profit
         except Exception as e:
-            logger.debug(f"Arbitrage simulation failed: {e}")
+            self.logger.warning(f"   ⚠️ Simulation call failed: {str(e)[:100]}")
             return None
 
     async def execute_arbitrage(
@@ -520,7 +552,7 @@ class FlashLoanExecutor:
             Transaction hash if successful
         """
         if not self.flash_loan_contract:
-            logger.error("Flash loan contract not initialized")
+            self.logger.error("Flash loan contract not initialized")
             return None
 
         try:
@@ -530,18 +562,27 @@ class FlashLoanExecutor:
             )
 
             if expected_profit is not None and expected_profit <= 0:
-                logger.warning(f"⚠️ Simulation shows no profit ({expected_profit}), skipping execution")
+                self.logger.warning(f"⚠️ Simulation shows no profit ({expected_profit}), skipping execution")
                 return None
 
-            # Get current gas price with buffer for faster inclusion
-            gas_price = self.w3.eth.gas_price
-            gas_price_with_buffer = int(gas_price * 1.2)  # 20% buffer for faster inclusion
+            # Get EIP-1559 gas pricing for better reliability
+            # Using EIP-1559 prevents stuck transactions when base fee rises
+            latest_block = self.w3.eth.get_block('latest')
+            base_fee = latest_block.get('baseFeePerGas', self.w3.eth.gas_price)
+
+            # Priority fee (tip) - 2 gwei is usually enough for normal inclusion
+            priority_fee = 2 * 10**9  # 2 gwei
+
+            # Max fee: base fee + 50% buffer + priority fee (handles fee spikes)
+            max_fee = int(base_fee * 1.5) + priority_fee
+
+            self.logger.info(f"   Gas pricing: base={base_fee/1e9:.2f} gwei, maxFee={max_fee/1e9:.2f} gwei, priority={priority_fee/1e9:.1f} gwei")
 
             # CRITICAL: Verify profit exceeds gas cost + safety buffer
             # Flash loan reverts are caused by profit being consumed by gas or price movement
             # Realistic gas for flash loan arbitrage: ~450K (not 800K)
             gas_limit = 450000
-            gas_cost_wei = gas_price_with_buffer * gas_limit
+            gas_cost_wei = max_fee * gas_limit
             # Require profit to be 30% higher than gas cost to account for:
             # - Price movement during block inclusion
             # - Slippage in actual execution vs simulation
@@ -550,22 +591,21 @@ class FlashLoanExecutor:
             if expected_profit is not None and expected_profit < min_profit_required:
                 gas_cost_eth = gas_cost_wei / 1e18
                 profit_eth = expected_profit / 1e18
-                logger.warning(f"⚠️ Profit too low to cover gas + buffer, skipping execution")
-                logger.warning(f"   Expected profit: {profit_eth:.6f} ETH | Gas cost: {gas_cost_eth:.6f} ETH")
-                logger.warning(f"   Required: {min_profit_required/1e18:.6f} ETH (1.5x gas)")
+                self.logger.warning(f"⚠️ Profit too low to cover gas + buffer, skipping execution")
+                self.logger.warning(f"   Expected profit: {profit_eth:.6f} ETH | Gas cost: {gas_cost_eth:.6f} ETH")
+                self.logger.warning(f"   Required: {min_profit_required/1e18:.6f} ETH (1.3x gas)")
                 return None
-
-            gas_price = gas_price_with_buffer
 
             # Rate limit: wait at least 12 seconds between transactions (1 block)
             if self._last_tx_time:
                 elapsed = (datetime.now() - self._last_tx_time).total_seconds()
                 if elapsed < 12:
                     wait_time = 12 - elapsed
-                    logger.info(f"⏳ Waiting {wait_time:.1f}s for block confirmation...")
+                    self.logger.info(f"⏳ Waiting {wait_time:.1f}s for block confirmation...")
                     await asyncio.sleep(wait_time)
 
             # Build transaction to call contract's executeArbitrage function
+            # Use EIP-1559 gas parameters for better reliability
             tx = self.flash_loan_contract.functions.executeArbitrage(
                 Web3.to_checksum_address(asset),
                 amount,
@@ -575,7 +615,8 @@ class FlashLoanExecutor:
             ).build_transaction({
                 'from': Web3.to_checksum_address(self.wallet_address),
                 'gas': 800000,
-                'gasPrice': gas_price,
+                'maxFeePerGas': max_fee,
+                'maxPriorityFeePerGas': priority_fee,
                 'nonce': self._get_next_nonce(),
                 'chainId': self.w3.eth.chain_id
             })
@@ -586,17 +627,17 @@ class FlashLoanExecutor:
 
             self._last_tx_time = datetime.now()
 
-            logger.info(f"⚡ Flash loan TX sent: {tx_hash.hex()}")
+            self.logger.info(f"⚡ Flash loan TX sent: {tx_hash.hex()}")
             return tx_hash.hex()
 
         except Exception as e:
             error_msg = str(e)
             if 'replacement transaction underpriced' in error_msg:
-                logger.warning(f"⚠️ Nonce collision detected, resetting nonce tracker")
+                self.logger.warning(f"⚠️ Nonce collision detected, resetting nonce tracker")
                 self._pending_nonce = None  # Reset to force fresh nonce fetch
-            logger.error(f"Flash loan execution failed: {e}")
+            self.logger.error(f"Flash loan execution failed: {e}")
             import traceback
-            logger.error(f"   Traceback: {traceback.format_exc()}")
+            self.logger.error(f"   Traceback: {traceback.format_exc()}")
             return None
 
 
@@ -842,12 +883,21 @@ class EVMArbitrageEngine:
         self._min_gas_eth: float = 0.015
         self._low_gas_warning_shown = False
 
+        # Dynamic liquidity blacklist - pairs that consistently fail
+        # Format: {pair_key: (fail_count, last_fail_time)}
+        self._liquidity_blacklist: Dict[str, Tuple[int, datetime]] = {}
+        self._blacklist_threshold = 5  # Blacklist after 5 consecutive failures
+        self._blacklist_duration = 3600  # Unblacklist after 1 hour (liquidity may return)
+
         self._stats = {
             'scans': 0,
             'opportunities_found': 0,
             'opportunities_executed': 0,
             'last_stats_log': datetime.now()
         }
+
+        # Telegram alerts - initialized in initialize() method
+        self.telegram_alerts = None
 
     async def _get_decrypted_key(self, key_name: str) -> Optional[str]:
         """
@@ -992,7 +1042,8 @@ class EVMArbitrageEngine:
                             self.w3,
                             self.private_key,
                             self.wallet_address,  # EOA wallet - signs TX and pays gas
-                            flash_loan_contract   # Contract - receives flash loan callback
+                            flash_loan_contract,  # Contract - receives flash loan callback
+                            logger_instance=self.logger  # Use engine's logger for visibility
                         )
                         self.logger.info(f"⚡ Flash Loan executor initialized:")
                         self.logger.info(f"   Wallet (signer): {self.wallet_address[:10]}...")
@@ -1014,17 +1065,19 @@ class EVMArbitrageEngine:
                         self.flash_loan_executor = None
                         self.use_flash_loans = False
 
-                    # Check wallet ETH balance for gas
+                    # Check wallet ETH balance for gas (use chain-specific minimum)
                     try:
                         balance_wei = self.w3.eth.get_balance(self.wallet_address)
                         balance_eth = balance_wei / 1e18
-                        if balance_eth < 0.01:
+                        # Use chain-specific minimum gas requirement with 2x safety buffer
+                        min_required = self._min_gas_eth * 2
+                        if balance_eth < min_required:
                             self.logger.error(f"❌ CRITICAL: Wallet has insufficient ETH for gas!")
                             self.logger.error(f"   Balance: {balance_eth:.6f} ETH")
-                            self.logger.error(f"   Required: At least 0.01 ETH for flash loan gas")
+                            self.logger.error(f"   Required: At least {min_required:.4f} ETH for {self.chain_name} flash loan gas")
                             self.logger.error(f"   Fund wallet: {self.wallet_address}")
                         else:
-                            self.logger.info(f"   Wallet balance: {balance_eth:.4f} ETH")
+                            self.logger.info(f"   Wallet balance: {balance_eth:.4f} ETH (min: {min_required:.4f} ETH)")
                     except Exception as e:
                         self.logger.warning(f"⚠️ Could not check wallet balance: {e}")
 
@@ -1047,6 +1100,16 @@ class EVMArbitrageEngine:
         self.logger.info(f"   Mode: {'DRY_RUN (Simulated)' if self.dry_run else 'LIVE TRADING'}")
         self.logger.info(f"   Flash Loans: {'Enabled' if self.flash_loan_executor else 'Disabled'}")
         self.logger.info(f"   Flashbots: {'Enabled' if self.flashbots_executor else 'Disabled'}")
+
+        # Initialize Telegram alerts for arbitrage notifications
+        try:
+            from .arbitrage_alerts import ArbitrageTelegramAlerts, ArbitrageChain
+            self.telegram_alerts = ArbitrageTelegramAlerts()
+            if self.telegram_alerts.enabled:
+                self.logger.info(f"📱 Telegram alerts enabled for {self.chain_name.upper()} arbitrage")
+        except Exception as e:
+            self.logger.warning(f"Telegram alerts not available: {e}")
+            self.telegram_alerts = None
 
     async def run(self):
         self.is_running = True
@@ -1119,9 +1182,51 @@ class EVMArbitrageEngine:
             self._total_pairs_scanned = 0
             self._pairs_with_liquidity = 0
 
+    def _is_pair_blacklisted(self, pair_key: str) -> bool:
+        """Check if a pair is currently blacklisted due to liquidity failures."""
+        if pair_key not in self._liquidity_blacklist:
+            return False
+
+        fail_count, last_fail_time = self._liquidity_blacklist[pair_key]
+
+        # Check if blacklist has expired
+        elapsed = (datetime.now() - last_fail_time).total_seconds()
+        if elapsed > self._blacklist_duration:
+            # Blacklist expired - remove and allow scanning
+            del self._liquidity_blacklist[pair_key]
+            self.logger.info(f"🔄 [{pair_key}] Removed from blacklist after {self._blacklist_duration/60:.0f}min")
+            return False
+
+        return fail_count >= self._blacklist_threshold
+
+    def _update_liquidity_blacklist(self, pair_key: str, has_liquidity: bool):
+        """Update blacklist based on liquidity check result."""
+        if has_liquidity:
+            # Reset fail count on success
+            if pair_key in self._liquidity_blacklist:
+                del self._liquidity_blacklist[pair_key]
+        else:
+            # Increment fail count
+            if pair_key in self._liquidity_blacklist:
+                fail_count, _ = self._liquidity_blacklist[pair_key]
+                self._liquidity_blacklist[pair_key] = (fail_count + 1, datetime.now())
+            else:
+                self._liquidity_blacklist[pair_key] = (1, datetime.now())
+
+            # Log when pair gets blacklisted
+            fail_count, _ = self._liquidity_blacklist[pair_key]
+            if fail_count == self._blacklist_threshold:
+                self.logger.warning(f"⛔ [{pair_key}] Blacklisted for {self._blacklist_duration/60:.0f}min (no liquidity)")
+
     async def _check_arb_opportunity(self, token_in: str, token_out: str, token_symbol: str = "UNKNOWN") -> bool:
         """Check price difference between two DEXs. Returns True if opportunity found."""
         try:
+            pair_key = f"{token_symbol}_liquidity"
+
+            # Skip blacklisted pairs to avoid wasting RPC calls
+            if self._is_pair_blacklisted(pair_key):
+                return False
+
             self._total_pairs_scanned += 1
             amount_in = self.flash_loan_amount  # Use configured flash loan amount
 
@@ -1149,8 +1254,12 @@ class EVMArbitrageEngine:
                     self.logger.warning(f"⚠️ [{token_symbol}] No forward prices from any DEX. Errors: {forward_errors}")
 
             if len(forward_prices) < 2:
+                # Update blacklist on liquidity failure
+                self._update_liquidity_blacklist(pair_key, has_liquidity=False)
                 return False
 
+            # Liquidity found - clear from blacklist if present
+            self._update_liquidity_blacklist(pair_key, has_liquidity=True)
             self._pairs_with_liquidity += 1
 
             # Find best forward DEX (gives most token_out for our token_in)
@@ -1373,9 +1482,46 @@ class EVMArbitrageEngine:
                 await self._log_arb_trade(buy_dex, sell_dex, token_in, amount, expected_profit, tx_hash, token_symbol)
             else:
                 self.logger.error(f"❌ [{self.chain_name.upper()}] Arbitrage execution failed [{token_symbol}]")
+                # Send Telegram error alert for failed execution
+                await self._send_error_alert(
+                    error_type="Execution Failed",
+                    details=f"Flash swap failed for {token_symbol}\nBuy: {buy_dex} → Sell: {sell_dex}\nAmount: {amount/1e18:.4f} ETH",
+                    token_symbol=token_symbol
+                )
 
         except Exception as e:
             self.logger.error(f"Arbitrage execution error [{token_symbol}]: {e}")
+            # Send Telegram error alert for exception
+            await self._send_error_alert(
+                error_type="Execution Error",
+                details=f"Exception during arbitrage: {str(e)[:200]}",
+                token_symbol=token_symbol
+            )
+
+    # Aave V3 supported flash loan assets (high liquidity pools)
+    # These are the tokens Aave allows for flash loans on each chain
+    AAVE_FLASHLOAN_ASSETS = {
+        'ethereum': {
+            '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',  # WETH
+            '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',  # USDC
+            '0xdAC17F958D2ee523a2206206994597C13D831ec7',  # USDT
+            '0x6B175474E89094C44Da98b954EeAdDcB80656c63',  # DAI
+            '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',  # WBTC
+        },
+        'arbitrum': {
+            '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',  # WETH
+            '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',  # USDC
+            '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',  # USDT
+            '0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1',  # DAI
+            '0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f',  # WBTC
+        },
+        'base': {
+            '0x4200000000000000000000000000000000000006',  # WETH
+            '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',  # USDC
+            '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA',  # USDbC
+            '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',  # DAI
+        },
+    }
 
     async def _execute_with_flash_loan(
         self,
@@ -1388,18 +1534,26 @@ class EVMArbitrageEngine:
         """
         Execute arbitrage via FlashLoanArbitrage contract.
 
+        IMPORTANT: Aave only supports flash loans for certain liquid assets (WETH, USDC, etc.)
+        For pairs like (GRT, WETH), we must borrow WETH and use GRT as intermediate.
+
         The contract's executeArbitrage() function will:
-        1. Call Aave's flashLoanSimple (with contract as initiator - passes check!)
-        2. Swap borrowed asset -> intermediate token on buyRouter
-        3. Swap intermediate token -> borrowed asset on sellRouter
+        1. Call Aave's flashLoanSimple to borrow WETH (or other supported asset)
+        2. Swap borrowed WETH -> TOKEN on buyRouter (buy cheap)
+        3. Swap TOKEN -> WETH on sellRouter (sell expensive)
         4. Repay loan + fee to Aave
         5. Keep profit in contract (withdraw later)
 
+        CRITICAL: Router direction mapping
+        - Python detects: buy_dex is best for token_in → token_out (e.g., GRT→WETH)
+        - Contract swaps: buy_router for asset → intermediate (e.g., WETH→GRT after flip)
+        - When we flip the borrow asset, the routers must also be swapped!
+
         Args:
-            buy_dex: DEX with lower price
-            sell_dex: DEX with higher price
-            token_in: Asset to borrow (e.g., WETH)
-            token_out: Intermediate token to swap through (e.g., USDC)
+            buy_dex: DEX with lower price for the token (best for token_in → token_out)
+            sell_dex: DEX with higher price for the token (best for token_out → token_in)
+            token_in: The token being arbitraged (e.g., GRT, SNX)
+            token_out: The base asset, usually WETH
             amount: Amount to borrow in wei
         """
         # Safety check: flash loan executor must be initialized with a contract address
@@ -1409,21 +1563,86 @@ class EVMArbitrageEngine:
             self.logger.error(f"   Set {flash_loan_env_key} in .env and restart")
             return None
 
-        # Get router addresses (use chain-specific routers)
-        buy_router = self.routers.get(buy_dex, list(self.routers.values())[0])
-        sell_router = self.routers.get(sell_dex, list(self.routers.values())[-1])
+        # Get Aave-supported assets for this chain
+        supported_assets = self.AAVE_FLASHLOAN_ASSETS.get(self.chain_name.lower(), set())
 
-        self.logger.info(f"   Flash loan params: borrow={token_in[:10]}..., intermediate={token_out[:10]}...")
-        self.logger.info(f"   Route: {buy_dex} ({buy_router[:10]}...) -> {sell_dex} ({sell_router[:10]}...)")
+        # Determine which token to borrow (must be Aave-supported)
+        # For pairs like (GRT, WETH): borrow WETH, use GRT as intermediate
+        # For pairs like (WETH, USDC): borrow WETH, use USDC as intermediate
+        token_in_checksum = Web3.to_checksum_address(token_in)
+        token_out_checksum = Web3.to_checksum_address(token_out)
+
+        # Get router addresses (use chain-specific routers)
+        buy_router_addr = self.routers.get(buy_dex, list(self.routers.values())[0])
+        sell_router_addr = self.routers.get(sell_dex, list(self.routers.values())[-1])
+
+        # Determine the preferred borrow asset (WETH has best Aave liquidity)
+        # Priority: WETH > other supported assets
+        weth_addresses = {
+            '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',  # Ethereum
+            '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',  # Arbitrum
+            '0x4200000000000000000000000000000000000006',  # Base
+        }
+
+        token_out_is_weth = token_out_checksum in weth_addresses
+        token_in_is_weth = token_in_checksum in weth_addresses
+
+        # Choose which token to borrow (prefer WETH for best liquidity)
+        if token_out_is_weth:
+            # token_out is WETH - borrow it (best case)
+            borrow_asset = token_out_checksum
+            intermediate_token = token_in_checksum
+
+            # CRITICAL FIX: When borrowing token_out instead of token_in, we need to SWAP the routers!
+            # Python found: buy_dex is best for GRT→WETH, sell_dex is best for WETH→GRT
+            # Contract does: buy_router for WETH→GRT (first swap), sell_router for GRT→WETH (second swap)
+            # So: Python's sell_dex (best for WETH→GRT) should be contract's buy_router
+            #     Python's buy_dex (best for GRT→WETH) should be contract's sell_router
+            contract_buy_router = sell_router_addr  # Python's sell_dex does WETH→GRT
+            contract_sell_router = buy_router_addr  # Python's buy_dex does GRT→WETH
+
+            self.logger.info(f"   Flash loan: Borrowing WETH (best liquidity)")
+            self.logger.info(f"   ⚠️ Router swap: Contract buy={sell_dex}, sell={buy_dex} (direction inverted)")
+        elif token_in_is_weth:
+            # token_in is WETH - borrow it (no router swap needed)
+            borrow_asset = token_in_checksum
+            intermediate_token = token_out_checksum
+            contract_buy_router = buy_router_addr
+            contract_sell_router = sell_router_addr
+            self.logger.info(f"   Flash loan: Borrowing WETH (best liquidity)")
+        elif token_out_checksum in supported_assets:
+            # token_out is supported (not WETH) - borrow it with router swap
+            borrow_asset = token_out_checksum
+            intermediate_token = token_in_checksum
+            contract_buy_router = sell_router_addr
+            contract_sell_router = buy_router_addr
+            self.logger.info(f"   Flash loan: Borrowing {token_out[:10]}... (Aave-supported)")
+            self.logger.info(f"   ⚠️ Router swap: Contract buy={sell_dex}, sell={buy_dex} (direction inverted)")
+        elif token_in_checksum in supported_assets:
+            # token_in is supported - borrow it (original logic, no router swap needed)
+            borrow_asset = token_in_checksum
+            intermediate_token = token_out_checksum
+            contract_buy_router = buy_router_addr
+            contract_sell_router = sell_router_addr
+            self.logger.info(f"   Flash loan: Borrowing {token_in[:10]}... (Aave-supported)")
+        else:
+            # Neither token is supported for flash loans
+            self.logger.error(f"❌ Cannot flash loan - neither token is Aave-supported")
+            self.logger.error(f"   token_in: {token_in[:10]}... | token_out: {token_out[:10]}...")
+            self.logger.error(f"   Supported: WETH, USDC, USDT, DAI, WBTC")
+            return None
+
+        self.logger.info(f"   Flash loan params: borrow={borrow_asset[:10]}..., intermediate={intermediate_token[:10]}...")
+        self.logger.info(f"   Route: buy_router ({contract_buy_router[:10]}...) -> sell_router ({contract_sell_router[:10]}...)")
 
         # Execute via contract's executeArbitrage function
         # This ensures initiator == contract address (passes the check!)
         tx_hash = await self.flash_loan_executor.execute_arbitrage(
-            asset=token_in,
+            asset=borrow_asset,
             amount=amount,
-            buy_router=buy_router,
-            sell_router=sell_router,
-            intermediate_token=token_out
+            buy_router=contract_buy_router,
+            sell_router=contract_sell_router,
+            intermediate_token=intermediate_token
         )
 
         return tx_hash
@@ -1448,14 +1667,15 @@ class EVMArbitrageEngine:
 
             deadline = int(datetime.now().timestamp()) + 120
 
-            # Get current gas price
-            gas_price = self.w3.eth.gas_price
-            # Add 10% buffer for faster inclusion
-            gas_price = int(gas_price * 1.1)
+            # Get EIP-1559 gas pricing for better reliability
+            latest_block = self.w3.eth.get_block('latest')
+            base_fee = latest_block.get('baseFeePerGas', self.w3.eth.gas_price)
+            priority_fee = 2 * 10**9  # 2 gwei
+            max_fee = int(base_fee * 1.5) + priority_fee
 
             current_nonce = self.w3.eth.get_transaction_count(self.wallet_address)
 
-            # Build buy transaction
+            # Build buy transaction with EIP-1559
             buy_tx = buy_router.functions.swapExactTokensForTokens(
                 amount,
                 0,  # Min output
@@ -1465,7 +1685,8 @@ class EVMArbitrageEngine:
             ).build_transaction({
                 'from': Web3.to_checksum_address(self.wallet_address),
                 'gas': 300000,
-                'gasPrice': gas_price,
+                'maxFeePerGas': max_fee,
+                'maxPriorityFeePerGas': priority_fee,
                 'nonce': current_nonce,
                 'chainId': self.w3.eth.chain_id
             })
@@ -1473,7 +1694,7 @@ class EVMArbitrageEngine:
             # Sign buy transaction
             signed_buy = self.w3.eth.account.sign_transaction(buy_tx, self.private_key)
 
-            # Build sell transaction (nonce + 1)
+            # Build sell transaction (nonce + 1) with EIP-1559
             sell_tx = sell_router.functions.swapExactTokensForTokens(
                 amount,  # Simplified - should use output from buy
                 0,
@@ -1483,7 +1704,8 @@ class EVMArbitrageEngine:
             ).build_transaction({
                 'from': Web3.to_checksum_address(self.wallet_address),
                 'gas': 300000,
-                'gasPrice': gas_price,
+                'maxFeePerGas': max_fee,
+                'maxPriorityFeePerGas': priority_fee,
                 'nonce': current_nonce + 1,
                 'chainId': self.w3.eth.chain_id
             })
@@ -1619,8 +1841,74 @@ class EVMArbitrageEngine:
                     })
                 )
             self.logger.debug(f"💾 Logged to arbitrage_trades: {trade_id} [{token_symbol}]")
+
+            # Send Telegram alert for successful trade
+            if self.telegram_alerts and self.telegram_alerts.enabled:
+                try:
+                    from .arbitrage_alerts import ArbitrageTradeAlert, ArbitrageChain
+
+                    # Map chain name to ArbitrageChain enum
+                    chain_map = {
+                        'ethereum': ArbitrageChain.ETHEREUM,
+                        'arbitrum': ArbitrageChain.ARBITRUM,
+                        'base': ArbitrageChain.BASE,
+                    }
+                    chain = chain_map.get(self.chain_name, ArbitrageChain.ETHEREUM)
+
+                    alert = ArbitrageTradeAlert(
+                        chain=chain,
+                        token_symbol=token_symbol,
+                        buy_dex=buy_dex,
+                        sell_dex=sell_dex,
+                        amount=amount_eth,
+                        amount_usd=entry_usd,
+                        profit_pct=net_profit_pct * 100,
+                        profit_amount=net_profit_usd / eth_price if eth_price > 0 else 0,
+                        profit_usd=net_profit_usd,
+                        tx_hash=tx_hash,
+                        is_simulated=self.dry_run,
+                        gas_cost_usd=GAS_COST_USD,
+                        flash_loan_fee=flash_loan_cost,
+                    )
+                    await self.telegram_alerts.send_trade_alert(alert)
+                except Exception as tg_err:
+                    self.logger.debug(f"Telegram alert failed: {tg_err}")
+
         except Exception as e:
             self.logger.error(f"Error logging arb trade: {e}")
+
+    async def _send_error_alert(
+        self,
+        error_type: str,
+        details: str,
+        token_symbol: Optional[str] = None,
+        tx_hash: Optional[str] = None
+    ):
+        """Send Telegram error alert"""
+        if not self.telegram_alerts or not self.telegram_alerts.enabled:
+            return
+
+        try:
+            from .arbitrage_alerts import ArbitrageErrorAlert, ArbitrageChain
+
+            # Map chain name to ArbitrageChain enum
+            chain_map = {
+                'ethereum': ArbitrageChain.ETHEREUM,
+                'arbitrum': ArbitrageChain.ARBITRUM,
+                'base': ArbitrageChain.BASE,
+            }
+            chain = chain_map.get(self.chain_name, ArbitrageChain.ETHEREUM)
+
+            alert = ArbitrageErrorAlert(
+                chain=chain,
+                error_type=error_type,
+                details=details,
+                token_symbol=token_symbol,
+                tx_hash=tx_hash
+            )
+            await self.telegram_alerts.send_error_alert(alert)
+        except Exception as e:
+            self.logger.debug(f"Failed to send error alert: {e}")
 
     async def stop(self):
         """Stop the engine"""

@@ -143,7 +143,7 @@ CURVE_POOLS = {
     'steth': '0xDC24316b9AE028F1497c275EB9192a3Ea0f67022',  # ETH/stETH
 }
 
-# Uniswap V2 Router ABI
+# Uniswap V2 Router ABI (includes both read and swap functions)
 ROUTER_ABI = [
     {
         "inputs": [
@@ -153,6 +153,32 @@ ROUTER_ABI = [
         "name": "getAmountsOut",
         "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
         "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+            {"internalType": "uint256", "name": "amountOutMin", "type": "uint256"},
+            {"internalType": "address[]", "name": "path", "type": "address[]"},
+            {"internalType": "address", "name": "to", "type": "address"},
+            {"internalType": "uint256", "name": "deadline", "type": "uint256"}
+        ],
+        "name": "swapExactTokensForTokens",
+        "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+            {"internalType": "uint256", "name": "amountOutMin", "type": "uint256"},
+            {"internalType": "address[]", "name": "path", "type": "address[]"},
+            {"internalType": "address", "name": "to", "type": "address"},
+            {"internalType": "uint256", "name": "deadline", "type": "uint256"}
+        ],
+        "name": "swapExactTokensForTokensSupportingFeeOnTransferTokens",
+        "outputs": [],
+        "stateMutability": "nonpayable",
         "type": "function"
     }
 ]
@@ -313,6 +339,9 @@ class TriangularArbitrageEngine:
             'last_stats_log': datetime.now()
         }
 
+        # Telegram alerts - initialized in initialize() method
+        self.telegram_alerts = None
+
     async def _get_decrypted_key(self, key_name: str) -> Optional[str]:
         """
         Get decrypted private key from secrets manager or environment.
@@ -443,6 +472,16 @@ class TriangularArbitrageEngine:
         logger.info(f"   Curve: {len(self.curve_contracts)} pools")
         logger.info(f"   Threshold: {self.base_profit_threshold:.2%} base + gas buffer {self.gas_buffer_multiplier:.1f}x")
         logger.info(f"   Cooldown: {self._opportunity_cooldown}s | Verbose: {self.verbose_logging}")
+
+        # Initialize Telegram alerts for triangular arbitrage notifications
+        try:
+            from .arbitrage_alerts import ArbitrageTelegramAlerts
+            self.telegram_alerts = ArbitrageTelegramAlerts()
+            if self.telegram_alerts.enabled:
+                logger.info(f"📱 Telegram alerts enabled for Triangular arbitrage")
+        except Exception as e:
+            logger.warning(f"Telegram alerts not available: {e}")
+            self.telegram_alerts = None
 
     async def run(self):
         self.is_running = True
@@ -782,9 +821,21 @@ class TriangularArbitrageEngine:
                 )
             else:
                 logger.error(f"❌ Triangular Arb Failed: {cycle_key}")
+                # Send error alert for failed execution
+                await self._send_error_alert(
+                    error_type="Execution Failed",
+                    details=f"Triangular swap failed\nRoute: {route}\nAmount: {amount_in/1e18:.4f} ETH",
+                    cycle_key=cycle_key
+                )
 
         except Exception as e:
             logger.error(f"Triangular arb execution error: {e}")
+            # Send error alert for exception
+            await self._send_error_alert(
+                error_type="Execution Error",
+                details=f"Exception: {str(e)[:200]}",
+                cycle_key=cycle_key
+            )
 
     async def _execute_triangular_swap(
         self,
@@ -1005,8 +1056,49 @@ class TriangularArbitrageEngine:
                 )
             logger.debug(f"💾 Logged triangular arb: {trade_id}")
 
+            # Send Telegram alert for successful triangular arb trade
+            if self.telegram_alerts and self.telegram_alerts.enabled:
+                try:
+                    from .arbitrage_alerts import ArbitrageTradeAlert, ArbitrageChain
+
+                    alert = ArbitrageTradeAlert(
+                        chain=ArbitrageChain.TRIANGULAR,
+                        token_symbol=f"{symbol_a}→{symbol_b}→{symbol_c}",
+                        buy_dex=dexes[0],
+                        sell_dex=dexes[2],
+                        amount=amount_eth,
+                        amount_usd=entry_usd,
+                        profit_pct=profit_pct * 100,
+                        profit_amount=profit_usd / self._eth_price if self._eth_price > 0 else 0,
+                        profit_usd=profit_usd,
+                        tx_hash=tx_hash,
+                        is_simulated=self.dry_run,
+                        intermediate_token=symbol_b,
+                    )
+                    await self.telegram_alerts.send_trade_alert(alert)
+                except Exception as tg_err:
+                    logger.debug(f"Telegram alert failed: {tg_err}")
+
         except Exception as e:
             logger.error(f"Error logging triangular trade: {e}")
+
+    async def _send_error_alert(self, error_type: str, details: str, cycle_key: str = None):
+        """Send Telegram error alert for triangular arbitrage"""
+        if not self.telegram_alerts or not self.telegram_alerts.enabled:
+            return
+
+        try:
+            from .arbitrage_alerts import ArbitrageErrorAlert, ArbitrageChain
+
+            alert = ArbitrageErrorAlert(
+                chain=ArbitrageChain.TRIANGULAR,
+                error_type=error_type,
+                details=details,
+                token_symbol=cycle_key
+            )
+            await self.telegram_alerts.send_error_alert(alert)
+        except Exception as e:
+            logger.debug(f"Failed to send triangular error alert: {e}")
 
     async def stop(self):
         self.is_running = False
