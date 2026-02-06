@@ -168,6 +168,9 @@ class JupiterHelper:
             self.rate_limiter = RateLimiter(requests_per_second=rps)
             logger.warning(f"   ⚠️ Global rate limiter unavailable, using local limiter: {rps} RPS")
 
+        # Track last swap error for callers to detect specific failure types
+        self.last_swap_error = None  # e.g., "0x1788", "0x1771", etc.
+
     def _load_keypair_from_value(self, pk_str: str) -> Optional[Keypair]:
         """
         Load keypair from a string value (from secrets manager or env)
@@ -357,7 +360,8 @@ class JupiterHelper:
         amount: int,
         slippage_bps: int = 50,
         only_direct_routes: bool = False,
-        max_retries: int = 3
+        max_retries: int = 3,
+        restrict_intermediate_tokens: bool = False
     ) -> Optional[Dict]:
         """
         Get swap quote from Jupiter with rate limiting and retry logic.
@@ -369,6 +373,7 @@ class JupiterHelper:
             slippage_bps: Slippage tolerance in basis points (50 = 0.5%)
             only_direct_routes: Only use direct routes (no intermediate swaps)
             max_retries: Maximum retries for rate limit errors
+            restrict_intermediate_tokens: Restrict intermediate tokens to reduce route failures
 
         Returns:
             Optional[Dict]: Quote data or None if failed
@@ -383,6 +388,11 @@ class JupiterHelper:
             'slippageBps': str(slippage_bps),
             'onlyDirectRoutes': str(only_direct_routes).lower(),
         }
+
+        # Restrict intermediate tokens to avoid routing through low-liquidity pools
+        # that cause 0x1788 ProgramMismatch errors
+        if restrict_intermediate_tokens:
+            params['restrictIntermediateTokens'] = 'true'
 
         url = f"{self.api_url}/quote"
 
@@ -762,6 +772,12 @@ class JupiterHelper:
                                     tx_logger.error(f"   📋 Simulation logs: {logs[-3:]}")
                             else:
                                 tx_logger.error(f"   📋 Error data: {str(data)[:200]}")
+
+                        # Extract program error code for caller detection
+                        # e.g., "custom program error: 0x1788" → "0x1788"
+                        import re
+                        hex_match = re.search(r'custom program error: (0x[0-9a-fA-F]+)', error_msg)
+                        self.last_swap_error = hex_match.group(1) if hex_match else error_msg
                         return None
                 else:
                     error_text = await response.text()
@@ -893,7 +909,8 @@ class JupiterHelper:
         output_mint: str,
         amount: int,
         slippage_bps: int = 50,
-        user_public_key: str = None
+        user_public_key: str = None,
+        restrict_intermediate_tokens: bool = False
     ) -> Optional[str]:
         """
         Execute complete swap: quote → transaction → sign → send → confirm
@@ -913,6 +930,9 @@ class JupiterHelper:
         swap_logger = logging.getLogger("SolanaTradingEngine")
 
         try:
+            # Clear last error for this swap attempt
+            self.last_swap_error = None
+
             # Pre-check: Verify keypair is loaded before attempting swap
             if not self.keypair:
                 swap_logger.error("❌ Jupiter: No keypair loaded - cannot sign transactions")
@@ -934,7 +954,8 @@ class JupiterHelper:
 
             # 1. Get quote
             swap_logger.info(f"   📊 Jupiter: Getting quote for {input_mint[:8]}... → {output_mint[:8]}... amount={amount}")
-            quote = await self.get_quote(input_mint, output_mint, amount, slippage_bps)
+            quote = await self.get_quote(input_mint, output_mint, amount, slippage_bps,
+                                         restrict_intermediate_tokens=restrict_intermediate_tokens)
             if not quote:
                 swap_logger.error(f"❌ Jupiter: Failed to get quote - token may be pump.fun-only or have no Jupiter routes")
                 return None

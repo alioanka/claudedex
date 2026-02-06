@@ -2996,12 +2996,20 @@ class SolanaTradingEngine:
                     # RETRY LOOP with escalating slippage
                     max_retries = 7 if self.safety_engine else 4  # More retries for stuck positions
                     last_error = None
+                    program_mismatch_count = 0  # Track 0x1788 errors
 
                     # Detect emergency exits - use higher slippage immediately
                     is_emergency_exit = reason.startswith("emergency_")
 
                     for retry in range(max_retries):
                         try:
+                            # If we've seen 3+ ProgramMismatch errors, token is likely unsellable
+                            if program_mismatch_count >= 3:
+                                logger.error(f"🚨 {position.token_symbol}: 3x ProgramMismatch (0x1788) - token likely unsellable via Jupiter")
+                                logger.error(f"   Liquidity may have been removed (rug pull) or pool migrated")
+                                last_error = "ProgramMismatch (0x1788) - token unsellable"
+                                break
+
                             # Get slippage for this retry attempt
                             if self.safety_engine:
                                 close_slippage = self.safety_engine.get_slippage_for_strategy(
@@ -3018,14 +3026,20 @@ class SolanaTradingEngine:
                                 close_slippage = base_slippage + (retry * 400)
                                 close_slippage = min(close_slippage, 3500)  # Cap at 35%
 
+                            # After ProgramMismatch, use restricted intermediate tokens
+                            # to force Jupiter to pick a different, safer route
+                            use_restricted_routes = program_mismatch_count > 0
+
                             emoji = "🚨" if is_emergency_exit else "🔄"
-                            logger.info(f"{emoji} Close attempt {retry + 1}/{max_retries}: {position.token_symbol} → SOL (slippage: {close_slippage}bps)")
+                            route_tag = " [restricted routes]" if use_restricted_routes else ""
+                            logger.info(f"{emoji} Close attempt {retry + 1}/{max_retries}: {position.token_symbol} → SOL (slippage: {close_slippage}bps{route_tag})")
 
                             close_tx_signature = await self.jupiter_helper.execute_swap(
                                 input_mint=token_mint,
                                 output_mint=SOL_MINT,
                                 amount=token_amount_raw,
-                                slippage_bps=close_slippage
+                                slippage_bps=close_slippage,
+                                restrict_intermediate_tokens=use_restricted_routes
                             )
 
                             if close_tx_signature:
@@ -3034,28 +3048,39 @@ class SolanaTradingEngine:
                                 # CRITICAL: Verify tokens were actually sold by checking balance
                                 # A tx can appear "confirmed" but fail on-chain (e.g., 0x1771 slippage error)
                                 # The confirm_transaction fix catches most cases, but this is a safety net
-                                await asyncio.sleep(2.0)  # Wait for balance to update
-                                remaining_balance = await self._get_token_balance(token_mint, token_decimals)
+                                # Use multiple balance checks with increasing delays (RPC can be slow to reflect)
+                                sell_verified = False
+                                for verify_attempt in range(3):
+                                    wait = 2.0 + verify_attempt * 2.0  # 2s, 4s, 6s
+                                    await asyncio.sleep(wait)
+                                    remaining_balance = await self._get_token_balance(token_mint, token_decimals)
 
-                                if is_partial:
-                                    # For partial close, check that balance decreased significantly
-                                    expected_remaining = actual_balance - sell_amount
-                                    if remaining_balance > actual_balance * 0.95:
+                                    if is_partial:
+                                        # For partial close, check that balance decreased
+                                        if remaining_balance <= actual_balance * 0.95:
+                                            sell_verified = True
+                                            break
+                                    else:
+                                        # For full close, tokens should be gone
+                                        if remaining_balance <= actual_balance * 0.05:
+                                            sell_verified = True
+                                            break
+
+                                    if verify_attempt < 2:
+                                        logger.debug(f"Balance check {verify_attempt+1}: {remaining_balance:.2f} (was {actual_balance:.2f}), retrying...")
+
+                                if not sell_verified:
+                                    if is_partial:
                                         logger.error(f"❌ POST-SELL VERIFICATION FAILED for {position.token_symbol}")
                                         logger.error(f"   Balance unchanged: {remaining_balance:.2f} (was {actual_balance:.2f})")
                                         logger.error(f"   TX {close_tx_signature} likely FAILED on-chain!")
-                                        close_tx_signature = None
-                                        last_error = "Post-sell balance verification failed - tokens not sold"
-                                        continue  # Retry with higher slippage
-                                else:
-                                    # For full close, tokens should be gone (or near-zero dust)
-                                    if remaining_balance > actual_balance * 0.05:
+                                    else:
                                         logger.error(f"❌ POST-SELL VERIFICATION FAILED for {position.token_symbol}")
                                         logger.error(f"   Tokens still in wallet: {remaining_balance:.2f} (was {actual_balance:.2f})")
                                         logger.error(f"   TX {close_tx_signature} likely FAILED on-chain!")
-                                        close_tx_signature = None
-                                        last_error = "Post-sell balance verification failed - tokens not sold"
-                                        continue  # Retry with higher slippage
+                                    close_tx_signature = None
+                                    last_error = "Post-sell balance verification failed - tokens not sold"
+                                    continue  # Retry with higher slippage
 
                                 logger.info(f"✅ Post-sell verification OK: balance {remaining_balance:.2f} (was {actual_balance:.2f})")
                                 close_actually_executed = True
@@ -3067,10 +3092,19 @@ class SolanaTradingEngine:
                             else:
                                 last_error = "No transaction signature returned"
                                 logger.warning(f"⚠️ Close attempt {retry + 1} failed - no signature")
+                                # Detect ProgramMismatch (0x1788) from Jupiter's last error
+                                # This error means the route's DEX program is invalid/removed
+                                jup_error = getattr(self.jupiter_helper, 'last_swap_error', None)
+                                if jup_error and '0x1788' in str(jup_error):
+                                    program_mismatch_count += 1
+                                    last_error = f"ProgramMismatch (0x1788): {jup_error}"
+                                    logger.warning(f"   ⚠️ ProgramMismatch detected ({program_mismatch_count}x) - route/DEX invalid")
 
                         except Exception as e:
                             last_error = str(e)
                             logger.warning(f"⚠️ Close attempt {retry + 1} failed: {e}")
+                            if '0x1788' in str(e):
+                                program_mismatch_count += 1
 
                         # Wait before retry (exponential backoff)
                         if retry < max_retries - 1:
