@@ -2095,13 +2095,25 @@ class SolanaTradingEngine:
                 logger.error(f"   Triggering EMERGENCY EXIT")
 
                 # Auto-blacklist this token to prevent future trades
-                if self.scam_blacklist and position.strategy == 'pumpfun':
-                    await self.scam_blacklist.on_rapid_crash_detected(
-                        mint=position.token_mint,
-                        symbol=position.token_symbol,
-                        drop_pct=decline_pct,
-                        time_seconds=int((datetime.utcnow() - position.opened_at).total_seconds())
-                    )
+                try:
+                    if self.scam_blacklist and position.strategy == Strategy.PUMPFUN:
+                        logger.info(f"   🚫 Adding {position.token_symbol} to scam blacklist...")
+                        await self.scam_blacklist.on_rapid_crash_detected(
+                            mint=position.token_mint,
+                            symbol=position.token_symbol,
+                            drop_pct=decline_pct,
+                            time_seconds=int((datetime.utcnow() - position.opened_at).total_seconds())
+                        )
+                        # Force immediate database sync
+                        await self.scam_blacklist._sync_to_db()
+                        logger.info(f"   ✅ {position.token_symbol} blacklisted and synced to DB")
+                    else:
+                        if not self.scam_blacklist:
+                            logger.warning(f"   ⚠️ Blacklist not initialized")
+                        else:
+                            logger.info(f"   ℹ️ Non-pumpfun strategy ({position.strategy}), not blacklisting")
+                except Exception as e:
+                    logger.error(f"   ❌ Failed to blacklist {position.token_symbol}: {e}")
 
                 return "emergency_rapid_decline"
 
@@ -2110,13 +2122,25 @@ class SolanaTradingEngine:
                 logger.error(f"   Triggering EMERGENCY EXIT for new position rapid decline")
 
                 # Auto-blacklist this token to prevent future trades
-                if self.scam_blacklist and position.strategy == 'pumpfun':
-                    await self.scam_blacklist.on_rapid_crash_detected(
-                        mint=position.token_mint,
-                        symbol=position.token_symbol,
-                        drop_pct=decline_pct,
-                        time_seconds=int(time_held)
-                    )
+                try:
+                    if self.scam_blacklist and position.strategy == Strategy.PUMPFUN:
+                        logger.info(f"   🚫 Adding {position.token_symbol} to scam blacklist...")
+                        await self.scam_blacklist.on_rapid_crash_detected(
+                            mint=position.token_mint,
+                            symbol=position.token_symbol,
+                            drop_pct=decline_pct,
+                            time_seconds=int(time_held)
+                        )
+                        # Force immediate database sync
+                        await self.scam_blacklist._sync_to_db()
+                        logger.info(f"   ✅ {position.token_symbol} blacklisted and synced to DB")
+                    else:
+                        if not self.scam_blacklist:
+                            logger.warning(f"   ⚠️ Blacklist not initialized")
+                        else:
+                            logger.info(f"   ℹ️ Non-pumpfun strategy ({position.strategy}), not blacklisting")
+                except Exception as e:
+                    logger.error(f"   ❌ Failed to blacklist {position.token_symbol}: {e}")
 
                 return "emergency_rapid_decline"
 
@@ -2479,27 +2503,69 @@ class SolanaTradingEngine:
             True if position was successfully opened, False otherwise
         """
         try:
-            # SAFETY: Check if token is blacklisted (scam/rug detected previously)
+            # ============ PRE-BUY SAFETY CHECKS ============
+
+            # 1. Block UNKNOWN tokens - high scam probability
+            if not token_symbol or token_symbol.upper() == 'UNKNOWN':
+                logger.warning(f"🚫 BLOCKED: Token has no symbol/UNKNOWN - likely scam")
+                return False
+
+            # 2. Block tokens with very suspicious symbols (single char, only numbers)
+            if len(token_symbol) < 2 or token_symbol.isdigit():
+                logger.warning(f"🚫 BLOCKED: {token_symbol} has suspicious symbol format")
+                return False
+
+            # 3. Check if token is blacklisted (scam/rug detected previously)
             if self.scam_blacklist and self.scam_blacklist.is_blacklisted(token_mint):
                 reason = self.scam_blacklist.get_blacklist_reason(token_mint)
                 logger.warning(f"🚫 BLOCKED: {token_symbol} is blacklisted - {reason}")
                 return False
 
-            # SAFETY: Check token name for scam patterns
-            if self.scam_blacklist:
+            # 4. Check token name for scam patterns (TRUMP, BIDEN, etc.)
+            # Only check if scam detection is enabled in config
+            scam_detection_enabled = True  # Default to enabled for safety
+            if self.config_manager:
+                scam_detection_enabled = self.config_manager.pumpfun_scam_detection
+
+            if self.scam_blacklist and scam_detection_enabled:
                 is_scam_name, pattern = self.scam_blacklist.check_name_pattern(
                     token_symbol,
                     metadata.get('name') if metadata else None
                 )
                 if is_scam_name:
-                    logger.warning(f"🚫 BLOCKED: {token_symbol} matches scam name pattern")
+                    logger.warning(f"🚫 BLOCKED: {token_symbol} matches scam name pattern: {pattern}")
                     await self.scam_blacklist.add_to_blacklist(
                         mint=token_mint,
                         symbol=token_symbol,
                         reason=f"Scam name pattern: {pattern}",
                         metadata={'pattern': pattern, 'type': 'name_pattern'}
                     )
+                    # Force immediate database sync to persist blacklist
+                    await self.scam_blacklist._sync_to_db()
+                    logger.info(f"   ✅ {token_symbol} blacklisted and synced to DB")
                     return False
+
+            # 5. For pump.fun: Check holder count if available (require minimum holders)
+            # Get configurable thresholds from config manager
+            min_holders = 15  # Default
+            max_dev_holding = 10.0  # Default
+            if self.config_manager:
+                min_holders = self.config_manager.pumpfun_min_holders
+                max_dev_holding = self.config_manager.pumpfun_max_dev_holding
+
+            if strategy == Strategy.PUMPFUN and metadata:
+                holder_count = metadata.get('holder_count', metadata.get('holders', 0))
+                if holder_count and holder_count < min_holders:
+                    logger.warning(f"🚫 BLOCKED: {token_symbol} has only {holder_count} holders (min: {min_holders})")
+                    return False
+
+                # Check dev holding percentage
+                dev_holding = metadata.get('dev_holding_pct', metadata.get('creator_holdings', 0))
+                if dev_holding and dev_holding > max_dev_holding:
+                    logger.warning(f"🚫 BLOCKED: {token_symbol} dev holds {dev_holding:.1f}% (max: {max_dev_holding}%)")
+                    return False
+
+            # ============ END PRE-BUY SAFETY CHECKS ============
 
             # Get token price
             current_price = await self._get_token_price(token_mint)
