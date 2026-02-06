@@ -841,6 +841,15 @@
 
                     <div class="setting-item">
                         <label class="setting-label">
+                            <i class="fas fa-exchange-alt"></i>
+                            Buy Slippage (BPS)
+                        </label>
+                        <div class="setting-description">Slippage tolerance for pump.fun buys (800 = 8%). Too low causes 0x1771 errors. Recommended: 800-1200</div>
+                        <input type="number" class="setting-input" id="solana_pumpfun_slippage" name="solana_pumpfun_slippage" value="800" min="100" max="3000" step="100">
+                    </div>
+
+                    <div class="setting-item">
+                        <label class="setting-label">
                             <i class="fas fa-clock"></i>
                             Trade Cooldown (seconds)
                         </label>

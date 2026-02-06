@@ -63,6 +63,7 @@ CONFIG_KEY_MAPPING = {
     'pumpfun_stop_loss': ('solana_pumpfun', 'float'),
     'pumpfun_take_profit': ('solana_pumpfun', 'float'),
     'pumpfun_max_positions': ('solana_pumpfun', 'int'),  # Separate position limit for pump.fun
+    'pumpfun_slippage': ('solana_pumpfun', 'int'),  # Buy slippage BPS for pump.fun (SafetyEngine)
 
     # Jupiter strategy-specific settings
     'jupiter_stop_loss': ('solana_jupiter', 'float'),
