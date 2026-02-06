@@ -1056,7 +1056,8 @@ class SolanaTradingEngine:
             await self._init_solana_client()
 
             # Initialize enabled strategies
-            if Strategy.JUPITER in self.strategies:
+            # NOTE: Jupiter client is needed for both Jupiter AND Pumpfun strategies (for swaps)
+            if Strategy.JUPITER in self.strategies or Strategy.PUMPFUN in self.strategies:
                 await self._init_jupiter()
 
             if Strategy.DRIFT in self.strategies:
