@@ -812,6 +812,61 @@
                     </div>
                 </div>
             </div>
+
+            <!-- NEW: Safety & Scam Detection Settings -->
+            <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid #2d3548;">
+                <h4 style="color: #ef4444; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+                    <i class="fas fa-shield-virus"></i>
+                    Safety & Scam Detection
+                </h4>
+                <div class="info-box" style="background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3);">
+                    <i class="fas fa-shield-alt" style="color: #ef4444;"></i>
+                    <div style="color: #fca5a5;">
+                        <strong>Scam Protection:</strong> These settings help filter out scam tokens before buying.
+                        Tokens with suspicious names (TRUMP, ELON, etc.), too few holders, or high dev holdings are blocked.
+                    </div>
+                </div>
+                <div class="setting-grid">
+                    <div class="setting-item">
+                        <label class="setting-label">
+                            <i class="fas fa-toggle-on"></i>
+                            Enable Scam Detection
+                        </label>
+                        <div class="setting-description">Block tokens matching scam name patterns (TRUMP, ELON, etc.)</div>
+                        <div class="toggle-switch">
+                            <input type="checkbox" id="solana_pumpfun_scam_detection" name="solana_pumpfun_scam_detection" checked>
+                            <span>Enabled</span>
+                        </div>
+                    </div>
+
+                    <div class="setting-item">
+                        <label class="setting-label">
+                            <i class="fas fa-clock"></i>
+                            Trade Cooldown (seconds)
+                        </label>
+                        <div class="setting-description">Wait time between pump.fun trades (prevents rapid losses)</div>
+                        <input type="number" class="setting-input" id="solana_pumpfun_cooldown" name="solana_pumpfun_cooldown" value="60" min="0" max="600" step="10">
+                    </div>
+
+                    <div class="setting-item">
+                        <label class="setting-label">
+                            <i class="fas fa-users"></i>
+                            Minimum Holders
+                        </label>
+                        <div class="setting-description">Require minimum number of token holders (filters rugs)</div>
+                        <input type="number" class="setting-input" id="solana_pumpfun_min_holders" name="solana_pumpfun_min_holders" value="15" min="1" max="100" step="1">
+                    </div>
+
+                    <div class="setting-item">
+                        <label class="setting-label">
+                            <i class="fas fa-user-shield"></i>
+                            Max Dev Holding (%)
+                        </label>
+                        <div class="setting-description">Block tokens where dev holds more than this % (prevents dev dumps)</div>
+                        <input type="number" class="setting-input" id="solana_pumpfun_max_dev_holding" name="solana_pumpfun_max_dev_holding" value="10" min="1" max="50" step="1">
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -965,8 +1020,14 @@ function resetSettings() {
         document.getElementById('solana_pumpfun_take_profit').value = 100;
         // NEW: Advanced trailing stop settings
         document.getElementById('solana_pumpfun_trailing_enabled').checked = true;
-        document.getElementById('solana_pumpfun_tier0_sl').value = 12;
+        document.getElementById('solana_pumpfun_tier0_sl').value = 20;  // Wider for pump.fun volatility
         document.getElementById('solana_pumpfun_partial_exit_pct').value = 20;
+
+        // NEW: Safety & Scam Detection settings
+        document.getElementById('solana_pumpfun_scam_detection').checked = true;
+        document.getElementById('solana_pumpfun_cooldown').value = 60;
+        document.getElementById('solana_pumpfun_min_holders').value = 15;
+        document.getElementById('solana_pumpfun_max_dev_holding').value = 10;
 
         updateModuleStatus();
         updateStrategyCards();
