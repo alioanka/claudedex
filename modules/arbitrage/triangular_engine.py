@@ -621,15 +621,28 @@ class TriangularArbitrageEngine:
                 return False
 
             # Determine trade amount based on first token
+            # CRITICAL: Use realistic amounts that match what we'd actually trade.
+            # Using tiny amounts (1 token) on thin liquidity pools gives misleading
+            # spreads that don't exist at flash loan scale.
+            flash_loan_eth = self.config.get('flash_loan_amount', 10)
+            use_flash = self.config.get('use_flash_loans', False)
+            effective_eth = float(flash_loan_eth) if use_flash else self.trade_amount_eth
+
             if token_a_symbol in ['USDC', 'USDT', 'DAI', 'FRAX', 'LUSD']:
-                # Stablecoin - use $1000 equivalent
-                amount_in = int(1000 * 1e6) if token_a_symbol in ['USDC', 'USDT'] else int(1000 * 1e18)
+                # Stablecoin - use realistic USD equivalent of our flash loan
+                usd_amount = effective_eth * self._eth_price
+                amount_in = int(usd_amount * 1e6) if token_a_symbol in ['USDC', 'USDT'] else int(usd_amount * 1e18)
             elif token_a_symbol == 'WETH':
-                amount_in = int(self.trade_amount_eth * 1e18)
+                amount_in = int(effective_eth * 1e18)
             elif token_a_symbol == 'WBTC':
-                amount_in = int(0.05 * 1e8)  # 0.05 BTC
+                # Scale WBTC amount based on ETH trade size
+                btc_equiv = effective_eth * self._eth_price / 60000  # Approximate BTC price
+                amount_in = int(max(0.01, btc_equiv) * 1e8)
             else:
-                amount_in = int(1 * 1e18)  # 1 token
+                # For other tokens (CRV, UNI, LINK, etc.), convert ETH amount to token amount
+                # Use a realistic amount based on token price
+                # Default to ETH-equivalent value to avoid thin liquidity phantom spreads
+                amount_in = int(effective_eth * 1e18)
 
             # Find best route for each hop
             cycle_key = f"{token_a_symbol}→{token_b_symbol}→{token_c_symbol}"
@@ -715,6 +728,21 @@ class TriangularArbitrageEngine:
 
             # Calculate profit
             profit_pct = (best_hop3_out - amount_in) / amount_in
+
+            # SANITY CHECK: Reject unrealistically high spreads (>10%)
+            # Spreads this large typically indicate thin liquidity in V2 pools
+            # where getAmountsOut returns optimistic quotes that can't actually execute.
+            # Real triangular arb opportunities on major DEXs are typically <2%.
+            MAX_REALISTIC_SPREAD = 0.10  # 10%
+            if profit_pct > MAX_REALISTIC_SPREAD:
+                if self.verbose_logging:
+                    route = f"{token_a_symbol}→{token_b_symbol}→{token_c_symbol}"
+                    logger.debug(
+                        f"🔺 REJECTED phantom opportunity: {route} "
+                        f"spread {profit_pct:.2%} > {MAX_REALISTIC_SPREAD:.0%} max "
+                        f"(likely thin liquidity in V2 pool)"
+                    )
+                return False
 
             # Calculate dynamic threshold
             threshold = self._calculate_dynamic_threshold()
@@ -811,7 +839,7 @@ class TriangularArbitrageEngine:
 
             tx_hash = await self._execute_triangular_swap(
                 token_a, token_b, token_c,
-                amount_in, dexes
+                amount_in, dexes, profit_pct
             )
 
             if tx_hash:
@@ -845,7 +873,8 @@ class TriangularArbitrageEngine:
         token_b: str,
         token_c: str,
         amount_in: int,
-        dexes: List[str]
+        dexes: List[str],
+        profit_pct: float = 0.0
     ) -> Optional[str]:
         """
         Execute 3-hop triangular swap via Flashbots for atomic execution.
@@ -871,6 +900,24 @@ class TriangularArbitrageEngine:
             deadline = int(datetime.now().timestamp()) + 120
             base_nonce = self.w3.eth.get_transaction_count(wallet)
 
+            # Use EIP-1559 gas pricing to avoid "max fee per gas less than block base fee" errors
+            try:
+                latest_block = self.w3.eth.get_block('latest')
+                base_fee = latest_block.get('baseFeePerGas', self.w3.eth.gas_price)
+                # Set max fee to 2x base fee + priority fee for safety margin
+                priority_fee = self.w3.to_wei(3, 'gwei')  # 3 gwei priority
+                max_fee = base_fee * 2 + priority_fee
+            except Exception:
+                # Fallback to legacy gas pricing
+                max_fee = self.w3.eth.gas_price * 2
+                priority_fee = self.w3.to_wei(3, 'gwei')
+
+            gas_params = {
+                'maxFeePerGas': max_fee,
+                'maxPriorityFeePerGas': priority_fee,
+                'type': 2,  # EIP-1559
+            }
+
             # Build swap 1: A → B
             tx1 = router1.functions.swapExactTokensForTokens(
                 amount_in,
@@ -881,8 +928,9 @@ class TriangularArbitrageEngine:
             ).build_transaction({
                 'from': wallet,
                 'gas': 250000,
-                'gasPrice': self.w3.eth.gas_price,
-                'nonce': base_nonce
+                'nonce': base_nonce,
+                'chainId': self.w3.eth.chain_id,
+                **gas_params
             })
 
             # Build swap 2: B → C
@@ -895,8 +943,9 @@ class TriangularArbitrageEngine:
             ).build_transaction({
                 'from': wallet,
                 'gas': 250000,
-                'gasPrice': self.w3.eth.gas_price,
-                'nonce': base_nonce + 1
+                'nonce': base_nonce + 1,
+                'chainId': self.w3.eth.chain_id,
+                **gas_params
             })
 
             # Build swap 3: C → A
@@ -909,8 +958,9 @@ class TriangularArbitrageEngine:
             ).build_transaction({
                 'from': wallet,
                 'gas': 250000,
-                'gasPrice': self.w3.eth.gas_price,
-                'nonce': base_nonce + 2
+                'nonce': base_nonce + 2,
+                'chainId': self.w3.eth.chain_id,
+                **gas_params
             })
 
             # Sign all transactions
@@ -939,11 +989,53 @@ class TriangularArbitrageEngine:
                     bundle_result = await self.flashbots_executor.send_bundle(bundle, target_block)
 
                     if bundle_result:
-                        bundle_hash = bundle_result.get('bundleHash', 'bundle_sent')
+                        bundle_hash = bundle_result.get('bundleHash', '')
+
+                        if not bundle_hash:
+                            logger.warning("Flashbots bundle sent but no bundleHash returned - treating as unconfirmed")
+                            return None
+
                         logger.info(f"Flashbots bundle sent: {bundle_hash}")
-                        return bundle_hash
+
+                        # Wait for the target block and verify bundle inclusion
+                        # Check the first tx hash to confirm it was mined
+                        tx1_hash_bytes = self.w3.keccak(hexstr=signed_tx1.rawTransaction.hex())
+                        bundle_confirmed = False
+
+                        for wait_attempt in range(5):
+                            await asyncio.sleep(3)  # Wait for block to be mined
+                            try:
+                                current = self.w3.eth.block_number
+                                if current >= target_block:
+                                    # Check if our first transaction was included
+                                    try:
+                                        receipt = self.w3.eth.get_transaction_receipt(tx1_hash_bytes)
+                                        if receipt and receipt.status == 1:
+                                            bundle_confirmed = True
+                                            logger.info(f"✅ Bundle confirmed in block {receipt.blockNumber}")
+                                            # Return actual tx hash for verification
+                                            return receipt.transactionHash.hex()
+                                        elif receipt and receipt.status == 0:
+                                            logger.warning(f"❌ Bundle tx reverted in block {receipt.blockNumber}")
+                                            return None
+                                    except Exception:
+                                        # Transaction not found - bundle was not included
+                                        pass
+
+                                    if current >= target_block + 2:
+                                        # Bundle missed the window
+                                        break
+                            except Exception as e:
+                                logger.debug(f"Bundle check attempt {wait_attempt}: {e}")
+
+                        if not bundle_confirmed:
+                            logger.warning(
+                                f"⚠️ Bundle {bundle_hash[:16]}... NOT confirmed after "
+                                f"{target_block} - bundle was likely not included by builders"
+                            )
+                            return None
                     else:
-                        logger.warning("Flashbots bundle rejected")
+                        logger.warning("Flashbots bundle rejected by relay")
                 else:
                     logger.warning(f"Flashbots simulation failed: {sim_result}")
 

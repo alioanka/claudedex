@@ -240,7 +240,10 @@ TOKENS_ARBITRUM = {
 ROUTERS_ETHEREUM = {
     'uniswap_v2': '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',
     'sushiswap': '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F',
-    'uniswap_v3': '0xE592427A0AEce92De3Edee1F18E0157C05861564',
+    # NOTE: Uniswap V3 SwapRouter (0xE592427A...) does NOT support getAmountsOut (V2 interface).
+    # V3 requires the Quoter contract (0xb27308f9...) for price quotes.
+    # Removed to prevent constant 'execution reverted' errors.
+    # TODO: Add V3 Quoter integration for better price discovery.
 }
 
 ROUTERS_ARBITRUM = {
@@ -1222,6 +1225,25 @@ class EVMArbitrageEngine:
                 self.logger.info(f"   Best spread: {sign}{self._best_spread_seen:.4%} on {self._best_spread_pair} ({status} threshold {self.min_profit_threshold:.2%})")
                 if self._best_spread_seen < 0:
                     self.logger.info(f"   ⚠️ All spreads are NEGATIVE - arbitrage not profitable on current DEXs")
+
+                # Stale data detection: track if best spread hasn't changed
+                if not hasattr(self, '_prev_best_spread'):
+                    self._prev_best_spread = None
+                    self._stale_spread_count = 0
+
+                if self._prev_best_spread is not None:
+                    spread_diff = abs(self._best_spread_seen - self._prev_best_spread)
+                    if spread_diff < 0.0001:  # Less than 0.01% change
+                        self._stale_spread_count += 1
+                        if self._stale_spread_count >= 6:  # 30 minutes of identical spreads
+                            self.logger.warning(
+                                f"   ⚠️ STALE DATA: Best spread unchanged for {self._stale_spread_count * 5}min "
+                                f"- RPC may be returning cached data or pools have no activity"
+                            )
+                    else:
+                        self._stale_spread_count = 0
+
+                self._prev_best_spread = self._best_spread_seen
             else:
                 self.logger.info(f"   No spreads calculated - check RPC connection and DEX liquidity")
 
@@ -1770,7 +1792,35 @@ class EVMArbitrageEngine:
                         target_block
                     )
                     if bundle_result:
-                        return bundle_result.get('bundleHash', 'bundle_sent')
+                        bundle_hash = bundle_result.get('bundleHash', '')
+                        if not bundle_hash:
+                            self.logger.warning("Bundle sent but no bundleHash - treating as unconfirmed")
+                        else:
+                            self.logger.info(f"Bundle sent: {bundle_hash}")
+
+                            # Verify bundle inclusion by checking first tx receipt
+                            buy_tx_hash = self.w3.keccak(hexstr=signed_buy.rawTransaction.hex())
+                            for wait_attempt in range(5):
+                                await asyncio.sleep(3)
+                                try:
+                                    current = self.w3.eth.block_number
+                                    if current >= target_block:
+                                        try:
+                                            receipt = self.w3.eth.get_transaction_receipt(buy_tx_hash)
+                                            if receipt and receipt.status == 1:
+                                                self.logger.info(f"✅ Bundle confirmed in block {receipt.blockNumber}")
+                                                return receipt.transactionHash.hex()
+                                            elif receipt and receipt.status == 0:
+                                                self.logger.warning("Bundle tx reverted")
+                                                return None
+                                        except Exception:
+                                            pass
+                                        if current >= target_block + 2:
+                                            break
+                                except Exception:
+                                    pass
+
+                            self.logger.warning(f"Bundle {bundle_hash[:16]}... not confirmed - not included by builders")
                     else:
                         self.logger.warning("Flashbots bundle rejected, falling back to public mempool")
 
