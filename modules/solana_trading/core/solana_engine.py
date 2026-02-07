@@ -654,6 +654,11 @@ class PumpFunMonitor:
                             'sells_5m': price_data.get('sells_5m', 0),
                             'buys_1h': price_data.get('buys_1h', 0),
                             'sells_1h': price_data.get('sells_1h', 0),
+                            'fdv': price_data.get('fdv', 0),
+                            'market_cap': price_data.get('market_cap', 0),
+                            'pair_created_at': price_data.get('pair_created_at', 0),
+                            'makers_5m': price_data.get('makers_5m', 0),
+                            'makers_1h': price_data.get('makers_1h', 0),
                             'pair_address': price_data.get('pairAddress', ''),
                             'created_at': datetime.now(),
                             'dex': price_data.get('dex', 'unknown'),
@@ -739,6 +744,15 @@ class PumpFunMonitor:
 
                         # Require minimum buy activity (at least 3 buys in 5min = people are interested)
                         if buys_5m < 3:
+                            filtered_out['suspicious'] = filtered_out.get('suspicious', 0) + 1
+                            continue
+
+                        # Require minimum unique traders (proxy for holder diversity)
+                        # DexScreener doesn't provide holder count directly, but makers_1h
+                        # counts unique wallets that traded in the last hour
+                        makers_1h = token_info.get('makers_1h', 0)
+                        if makers_1h > 0 and makers_1h < 10:
+                            # Less than 10 unique wallets in 1 hour = very concentrated/risky
                             filtered_out['suspicious'] = filtered_out.get('suspicious', 0) + 1
                             continue
 
@@ -869,6 +883,17 @@ class PumpFunMonitor:
                     price_change_5m = float(best_pair.get('priceChange', {}).get('m5', 0) or 0)
                     price_change_1h = float(best_pair.get('priceChange', {}).get('h1', 0) or 0)
 
+                    # Extract market cap and FDV (used for safety checks)
+                    fdv = float(best_pair.get('fdv', 0) or 0)
+                    market_cap = float(best_pair.get('marketCap', 0) or 0)
+
+                    # Extract pair creation time (token age)
+                    pair_created_at = best_pair.get('pairCreatedAt', 0)
+
+                    # Extract maker counts (unique wallet addresses that traded)
+                    makers_5m = int(txns_m5.get('buyers', 0) or 0) + int(txns_m5.get('sellers', 0) or 0)
+                    makers_1h = int(txns_h1.get('buyers', 0) or 0) + int(txns_h1.get('sellers', 0) or 0)
+
                     return {
                         'price': price,
                         'liquidity': liquidity,
@@ -884,6 +909,11 @@ class PumpFunMonitor:
                         'sells_5m': sells_5m,
                         'buys_1h': buys_1h,
                         'sells_1h': sells_1h,
+                        'fdv': fdv,
+                        'market_cap': market_cap,
+                        'pair_created_at': pair_created_at,
+                        'makers_5m': makers_5m,
+                        'makers_1h': makers_1h,
                     }
 
                 elif resp.status == 404:
@@ -2829,6 +2859,14 @@ class SolanaTradingEngine:
                 if holder_count and holder_count < min_holders:
                     logger.warning(f"🚫 BLOCKED: {token_symbol} has only {holder_count} holders (min: {min_holders})")
                     return False
+
+                # Use unique traders (makers) as proxy for holder diversity when holder_count not available
+                # DexScreener's makers_1h = unique wallets that traded in last hour
+                if not holder_count:
+                    makers_1h = metadata.get('makers_1h', 0)
+                    if makers_1h and makers_1h < min_holders:
+                        logger.warning(f"🚫 BLOCKED: {token_symbol} only {makers_1h} unique traders in 1h (min: {min_holders})")
+                        return False
 
                 # Check dev holding percentage
                 dev_holding = metadata.get('dev_holding_pct', metadata.get('creator_holdings', 0))
