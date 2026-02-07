@@ -1556,39 +1556,66 @@ class SolanaTradingEngine:
         try:
             from solders.pubkey import Pubkey
             from solana.rpc.types import TokenAccountOpts
+            from solana.rpc.commitment import Confirmed
 
             owner_pubkey = Pubkey.from_string(self.wallet_pubkey)
             mint_pubkey = Pubkey.from_string(token_mint)
 
-            # Get token accounts for this mint
-            response = await self.client.get_token_accounts_by_owner(
-                owner_pubkey,
-                TokenAccountOpts(mint=mint_pubkey)
-            )
+            # Method 1: Get token accounts with Confirmed commitment (faster than Finalized)
+            # Finalized takes 6-12s on Solana, Confirmed takes ~0.5s
+            try:
+                response = await self.client.get_token_accounts_by_owner(
+                    owner_pubkey,
+                    TokenAccountOpts(mint=mint_pubkey),
+                    commitment=Confirmed
+                )
 
-            if response.value:
-                total_balance = 0
-                for account in response.value:
-                    # Parse the account data to get balance
-                    account_data = account.account.data
-                    if hasattr(account_data, 'parsed'):
-                        # JSON parsed format
-                        parsed = account_data.parsed
-                        if 'info' in parsed and 'tokenAmount' in parsed['info']:
-                            amount = int(parsed['info']['tokenAmount']['amount'])
-                            total_balance += amount
-                    else:
-                        # Raw format - token balance is at offset 64, 8 bytes little endian
-                        import base64
-                        if isinstance(account_data, str):
-                            data = base64.b64decode(account_data)
+                if response.value:
+                    total_balance = 0
+                    for account in response.value:
+                        account_data = account.account.data
+                        if hasattr(account_data, 'parsed'):
+                            parsed = account_data.parsed
+                            if 'info' in parsed and 'tokenAmount' in parsed['info']:
+                                amount = int(parsed['info']['tokenAmount']['amount'])
+                                total_balance += amount
                         else:
-                            data = bytes(account_data)
-                        if len(data) >= 72:
-                            amount = int.from_bytes(data[64:72], 'little')
-                            total_balance += amount
+                            import base64
+                            if isinstance(account_data, str):
+                                data = base64.b64decode(account_data)
+                            else:
+                                data = bytes(account_data)
+                            if len(data) >= 72:
+                                amount = int.from_bytes(data[64:72], 'little')
+                                total_balance += amount
 
-                return total_balance / (10 ** decimals)
+                    if total_balance > 0:
+                        return total_balance / (10 ** decimals)
+            except Exception as e:
+                logger.debug(f"Method 1 (get_token_accounts_by_owner) failed: {e}")
+
+            # Method 2: Compute ATA address directly and query balance
+            # This is more reliable for newly created token accounts
+            try:
+                from spl.token.constants import TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+
+                # Compute Associated Token Account (ATA) address
+                ata, _nonce = Pubkey.find_program_address(
+                    [bytes(owner_pubkey), bytes(TOKEN_PROGRAM_ID), bytes(mint_pubkey)],
+                    ASSOCIATED_TOKEN_PROGRAM_ID,
+                )
+
+                balance_resp = await self.client.get_token_account_balance(
+                    ata, commitment=Confirmed
+                )
+
+                if balance_resp.value:
+                    amount_str = balance_resp.value.amount
+                    actual_decimals = balance_resp.value.decimals
+                    if amount_str and int(amount_str) > 0:
+                        return int(amount_str) / (10 ** actual_decimals)
+            except Exception as e:
+                logger.debug(f"Method 2 (ATA direct query) failed: {e}")
 
             return 0.0
 
@@ -2468,6 +2495,16 @@ class SolanaTradingEngine:
         # Check for trailing stop hit
         if current_price <= sl_price:
             tier = trailing['tier_reached']
+
+            # Gap loss detection: log when price crashes past lock level between checks
+            # This happens when pump.fun tokens dump faster than 5s monitoring can catch
+            if sl_gain_pct > 0 and current_gain_pct < sl_gain_pct * 0.5:
+                gap_loss = sl_gain_pct - current_gain_pct
+                logger.warning(
+                    f"⚠️ GAP LOSS on {position.token_symbol}: SL lock was +{sl_gain_pct:.1f}% "
+                    f"but closing at {current_gain_pct:+.1f}% (gap: {gap_loss:.1f}%)"
+                )
+
             if tier == 0:
                 return "trailing_stop_tier0"
             elif tier == 1:
@@ -2488,21 +2525,24 @@ class SolanaTradingEngine:
         # Tier 0.5: Early partial exit at +20% to lock in some gains immediately
         # This prevents giving back ALL profits on tokens that reach +20-39% but then crash
         # (e.g., nip: peaked +33% → closed at +3%, BTC: peaked +29% → closed at -2%)
+        # INCREASED to 30% (was 25%) - pump.fun can crash past the +10% lock in one 5s interval
         if peak_gain_pct >= 20 and not trailing.get('tier05_triggered'):
             trailing['tier05_triggered'] = True
-            logger.info(f"📊 {position.token_symbol}: Tier 0.5 reached (+{peak_gain_pct:.0f}%), partial exit 25% to lock gains")
+            logger.info(f"📊 {position.token_symbol}: Tier 0.5 reached (+{peak_gain_pct:.0f}%), partial exit 30% to lock gains")
             return "partial_exit_tier05"
 
         # Tier 1: First partial at 40% (moved from 50%)
+        # INCREASED to 25% (was 20%) - more aggressive profit capture
+        # After T0.5 (30%) + T1 (25%) = 55% exited, only 45% remains exposed
         if peak_gain_pct >= 40 and tier_reached < 1:
             trailing['tier_reached'] = 1
-            logger.info(f"🎯 {position.token_symbol}: Tier 1 reached (+40%), partial exit 20%")
+            logger.info(f"🎯 {position.token_symbol}: Tier 1 reached (+40%), partial exit 25%")
             return "partial_exit_tier1"
 
         # Tier 2: Second partial at 80%
         if peak_gain_pct >= 80 and tier_reached < 2:
             trailing['tier_reached'] = 2
-            logger.info(f"🚀 {position.token_symbol}: Tier 2 reached (+80%), partial exit 20%")
+            logger.info(f"🚀 {position.token_symbol}: Tier 2 reached (+80%), partial exit 25%")
             return "partial_exit_tier2"
 
         # Tier 3: Third partial at 150%
@@ -3094,13 +3134,16 @@ class SolanaTradingEngine:
                             # for RPC to reflect new balance, causing phantom balance tracking
                             try:
                                 actual_tokens = 0
-                                for balance_retry in range(3):
-                                    delay = 1.5 + balance_retry * 1.0  # 1.5s, 2.5s, 3.5s
+                                # Increased delays: Solana Finalized commitment takes 6-12s
+                                # Now using Confirmed (~0.5s) but still need time for ATA creation
+                                balance_delays = [3.0, 5.0, 8.0, 12.0]  # 4 attempts, up to 28s total
+                                for balance_retry, delay in enumerate(balance_delays):
                                     await asyncio.sleep(delay)
                                     actual_tokens = await self._get_token_balance(token_mint, 6)
                                     if actual_tokens > 0:
+                                        logger.info(f"   Balance verified on attempt {balance_retry+1} (after {sum(balance_delays[:balance_retry+1]):.0f}s)")
                                         break
-                                    logger.debug(f"Balance check attempt {balance_retry+1}: 0 tokens, retrying...")
+                                    logger.debug(f"Balance check attempt {balance_retry+1}/{len(balance_delays)}: 0 tokens, retrying...")
 
                                 if actual_tokens > 0:
                                     if position.amount > 0:
@@ -3119,7 +3162,8 @@ class SolanaTradingEngine:
                                         position.entry_price = actual_entry_price
                                         position.current_price = actual_entry_price  # Start at breakeven
                                 else:
-                                    logger.warning(f"⚠️ Could not verify token balance after 3 attempts - using estimated amount {position.amount:.2f}")
+                                    logger.warning(f"⚠️ Could not verify token balance after {len(balance_delays)} attempts - using estimated amount {position.amount:.2f}")
+                                    logger.warning(f"   Token: {token_mint[:20]}... - entry price NOT recalculated (may be inaccurate)")
                             except Exception as e:
                                 logger.debug(f"Could not verify token balance: {e}")
                         else:
@@ -3217,10 +3261,14 @@ class SolanaTradingEngine:
                 partial_pct = 1.0  # Full remaining
                 is_partial = False  # Treat as full close
             elif reason == "partial_exit_tier05":
-                # Tier 0.5: Early profit-taking at +20% - sell 25%
+                # Tier 0.5: Early profit-taking at +20% - sell 30% (was 25%)
+                # More aggressive to reduce exposure before pump.fun crash
+                partial_pct = 0.30
+            elif reason in ("partial_exit_tier1", "partial_exit_tier2"):
+                # Tiers 1-2: 25% each (was 20%) - cumulative 55% + 25% = 80% by tier 2
                 partial_pct = 0.25
             elif is_partial:
-                # Tiers 1-4: 20% each
+                # Tiers 3-4: 20% each
                 partial_pct = 0.20
 
             # Calculate amounts based on partial or full exit
