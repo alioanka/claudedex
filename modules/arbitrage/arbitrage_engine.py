@@ -1198,8 +1198,13 @@ class EVMArbitrageEngine:
                 # Log stats every 5 minutes
                 await self._log_stats_if_needed()
 
-                # Sleep between scans (short delay to not overwhelm RPC)
-                await asyncio.sleep(2)
+                # Sleep between scans - adaptive delay based on spread activity
+                # In slow-scan mode (30min+ stale negative spreads), use longer delay
+                # to conserve RPC quota on chains with no V2 pool activity
+                scan_delay = 2
+                if hasattr(self, '_slow_scan_active') and self._slow_scan_active:
+                    scan_delay = 10  # 5x slower when spreads are static
+                await asyncio.sleep(scan_delay)
 
             except Exception as e:
                 self.logger.error(f"Arb loop error: {e}")
@@ -1235,20 +1240,36 @@ class EVMArbitrageEngine:
                     spread_diff = abs(self._best_spread_seen - self._prev_best_spread)
                     if spread_diff < 0.0001:  # Less than 0.01% change
                         self._stale_spread_count += 1
-                        if self._stale_spread_count >= 3:  # 15 minutes of identical spreads (was 30min)
+                        if self._stale_spread_count >= 3:  # 15 minutes of identical spreads
                             self.logger.warning(
                                 f"   ⚠️ STALE DATA: Best spread unchanged for {self._stale_spread_count * 5}min "
                                 f"- RPC may be returning cached data or pools have no activity"
                             )
-                            # After 20 minutes of stale data, try reconnecting RPC
+                            # After 20 minutes of stale data, check RPC liveness
                             if self._stale_spread_count >= 4 and self.w3:
                                 try:
                                     block = self.w3.eth.block_number
                                     self.logger.info(f"   ℹ️ RPC is alive (block #{block}) - spreads are genuinely static on these DEXs")
                                 except Exception as e:
                                     self.logger.error(f"   ❌ RPC connection may be dead: {e}")
+
+                            # After 30 minutes of stale + negative spreads, switch to slow-scan mode
+                            # Reduce RPC calls since pools clearly have no activity
+                            if self._stale_spread_count >= 6 and self._best_spread_seen < 0:
+                                self.logger.warning(
+                                    f"   💤 SLOW-SCAN MODE: 30min+ stale negative spreads on {self.chain} "
+                                    f"- reducing scan frequency to conserve RPC quota"
+                                )
+                                # Double the scan interval (tracked via attribute)
+                                if not hasattr(self, '_slow_scan_active'):
+                                    self._slow_scan_active = False
+                                self._slow_scan_active = True
                     else:
                         self._stale_spread_count = 0
+                        # Reset slow scan when spreads start moving again
+                        if hasattr(self, '_slow_scan_active') and self._slow_scan_active:
+                            self.logger.info(f"   ✅ Spreads moving again - resuming normal scan frequency")
+                            self._slow_scan_active = False
 
                 self._prev_best_spread = self._best_spread_seen
             else:
