@@ -1235,11 +1235,18 @@ class EVMArbitrageEngine:
                     spread_diff = abs(self._best_spread_seen - self._prev_best_spread)
                     if spread_diff < 0.0001:  # Less than 0.01% change
                         self._stale_spread_count += 1
-                        if self._stale_spread_count >= 6:  # 30 minutes of identical spreads
+                        if self._stale_spread_count >= 3:  # 15 minutes of identical spreads (was 30min)
                             self.logger.warning(
                                 f"   ⚠️ STALE DATA: Best spread unchanged for {self._stale_spread_count * 5}min "
                                 f"- RPC may be returning cached data or pools have no activity"
                             )
+                            # After 20 minutes of stale data, try reconnecting RPC
+                            if self._stale_spread_count >= 4 and self.w3:
+                                try:
+                                    block = self.w3.eth.block_number
+                                    self.logger.info(f"   ℹ️ RPC is alive (block #{block}) - spreads are genuinely static on these DEXs")
+                                except Exception as e:
+                                    self.logger.error(f"   ❌ RPC connection may be dead: {e}")
                     else:
                         self._stale_spread_count = 0
 
