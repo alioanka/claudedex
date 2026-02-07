@@ -668,16 +668,18 @@ class PumpFunMonitor:
                             filtered_out['suspicious'] += 1
                             continue
 
-                        # ENHANCED FILTERS: Avoid scams and dumps
-                        # Reject tokens already in a dump (price dropping > 15%)
+                        # ENHANCED FILTERS: Avoid scams, dumps, and dead tokens
                         price_change = token_info.get('price_change_24h', 0)
-                        if price_change < -15:
+                        liq = token_info['liquidity_usd']
+                        vol = token_info['volume_24h']
+
+                        # Reject tokens already in a dump (price dropping > 10%)
+                        # Tightened from -15% to -10%: entering during a decline is high risk
+                        if price_change < -10:
                             filtered_out['suspicious'] = filtered_out.get('suspicious', 0) + 1
                             continue
 
                         # Require minimum liquidity-to-volume ratio (avoid fake volume)
-                        liq = token_info['liquidity_usd']
-                        vol = token_info['volume_24h']
                         if liq > 0 and vol / liq > 50:
                             # Volume 50x liquidity = likely wash trading
                             filtered_out['suspicious'] = filtered_out.get('suspicious', 0) + 1
@@ -686,6 +688,20 @@ class PumpFunMonitor:
                         # Require minimum $3000 liquidity for pump.fun (override if config is lower)
                         if liq < 3000:
                             filtered_out['liquidity'] += 1
+                            continue
+
+                        # Reject tokens with very low volume relative to liquidity
+                        # (indicates the token is dying / no active trading)
+                        if liq > 0 and vol / liq < 0.5:
+                            filtered_out['suspicious'] = filtered_out.get('suspicious', 0) + 1
+                            continue
+
+                        # Reject tokens with very low liquidity-to-volume that suggests
+                        # the token has already peaked and is winding down
+                        # Tokens like GAS, THRT had high initial volume but declining interest
+                        if vol < 10000 and liq < 20000:
+                            # Low volume AND low liquidity = dead/dying token
+                            filtered_out['suspicious'] = filtered_out.get('suspicious', 0) + 1
                             continue
 
                         # Token passes all filters!
@@ -2058,6 +2074,65 @@ class SolanaTradingEngine:
             if auto_sell_delay > 0 and time_held >= auto_sell_delay:
                 return "auto_sell_timeout"
 
+        # ============ STALE POSITION / MAX HOLD TIME PROTECTION ============
+        # Force-close positions that have been held too long or have stale prices.
+        # This prevents positions from blocking new trades indefinitely.
+
+        # 1. Hard maximum hold time for pump.fun (2 hours default)
+        if position.strategy == Strategy.PUMPFUN:
+            max_hold_seconds = 7200  # 2 hours
+            if self.config_manager:
+                max_hold_seconds = self.config_manager.get('pumpfun_max_hold_seconds', 7200)
+            if time_held >= max_hold_seconds:
+                logger.warning(
+                    f"⏰ MAX HOLD TIME: {position.token_symbol} held for "
+                    f"{time_held/3600:.1f}h (max: {max_hold_seconds/3600:.1f}h) - force closing"
+                )
+                return "max_hold_time"
+
+        # 2. Stale price detection: if price hasn't moved >1% in 30 minutes, force close
+        if position.metadata and 'trailing' in position.metadata:
+            trailing_meta = position.metadata['trailing']
+            last_price = trailing_meta.get('last_price', 0)
+            last_check_time = trailing_meta.get('last_check_time', 0)
+
+            # Track price staleness
+            if 'stale_since' not in trailing_meta:
+                trailing_meta['stale_since'] = None
+                trailing_meta['stale_ref_price'] = None
+
+            if last_price and last_price > 0 and position.current_price > 0:
+                price_change_pct = abs((position.current_price - last_price) / last_price) * 100
+
+                # Consider price "stale" if it hasn't moved more than 1%
+                if price_change_pct < 1.0:
+                    if trailing_meta['stale_since'] is None:
+                        trailing_meta['stale_since'] = time.time()
+                        trailing_meta['stale_ref_price'] = position.current_price
+                    else:
+                        # Check if stale for too long (30 minutes default)
+                        stale_timeout = 1800  # 30 minutes
+                        if self.config_manager:
+                            stale_timeout = self.config_manager.get('pumpfun_stale_timeout', 1800)
+
+                        stale_duration = time.time() - trailing_meta['stale_since']
+                        # Also check against reference price (not just last 5s)
+                        ref_price = trailing_meta.get('stale_ref_price', position.current_price)
+                        ref_change = abs((position.current_price - ref_price) / ref_price) * 100 if ref_price > 0 else 0
+
+                        if stale_duration >= stale_timeout and ref_change < 2.0:
+                            logger.warning(
+                                f"💤 STALE POSITION: {position.token_symbol} price unchanged "
+                                f"(~{ref_change:.2f}%) for {stale_duration/60:.0f}min - force closing "
+                                f"(PnL: {pnl_pct:+.2f}%)"
+                            )
+                            return "stale_price_timeout"
+                else:
+                    # Price moved - reset staleness tracker
+                    trailing_meta['stale_since'] = None
+                    trailing_meta['stale_ref_price'] = None
+        # ============ END STALE POSITION PROTECTION ============
+
         return None
 
     async def _check_pumpfun_trailing_exit(self, position: Position) -> Optional[str]:
@@ -2078,6 +2153,22 @@ class SolanaTradingEngine:
 
         if not entry_price or entry_price <= 0:
             return None
+
+        # ============ MAX HOLD TIME CHECK (before trailing logic) ============
+        # Force-close pump.fun positions held beyond max time regardless of trailing state
+        time_held = (datetime.utcnow() - position.opened_at).total_seconds()
+        max_hold_seconds = 7200  # 2 hours default
+        if self.config_manager:
+            max_hold_seconds = self.config_manager.get('pumpfun_max_hold_seconds', 7200)
+        if time_held >= max_hold_seconds:
+            pnl_pct = ((current_price - entry_price) / entry_price) * 100 if entry_price > 0 else 0
+            logger.warning(
+                f"⏰ MAX HOLD TIME: {position.token_symbol} held for "
+                f"{time_held/3600:.1f}h (max: {max_hold_seconds/3600:.1f}h), "
+                f"PnL: {pnl_pct:+.2f}% - force closing"
+            )
+            return "max_hold_time"
+        # ============ END MAX HOLD TIME CHECK ============
 
         # Initialize or get metadata
         if not position.metadata:
@@ -2188,6 +2279,42 @@ class SolanaTradingEngine:
         trailing['last_price'] = current_price
         trailing['last_check_time'] = time.time()
         # ============ END RAPID DECLINE DETECTION ============
+
+        # ============ STALE PRICE DETECTION (for trailing-enabled positions) ============
+        # If price hasn't moved significantly in 30+ minutes, the token is likely dead/abandoned.
+        # Force close to free up position slots for new opportunities.
+        if 'stale_since' not in trailing:
+            trailing['stale_since'] = None
+            trailing['stale_ref_price'] = None
+
+        if last_price and last_price > 0 and current_price > 0:
+            price_change_pct = abs((current_price - last_price) / last_price) * 100
+
+            if price_change_pct < 1.0:
+                if trailing['stale_since'] is None:
+                    trailing['stale_since'] = time.time()
+                    trailing['stale_ref_price'] = current_price
+                else:
+                    stale_timeout = 1800  # 30 minutes default
+                    if self.config_manager:
+                        stale_timeout = self.config_manager.get('pumpfun_stale_timeout', 1800)
+
+                    stale_duration = time.time() - trailing['stale_since']
+                    ref_price = trailing.get('stale_ref_price', current_price)
+                    ref_change = abs((current_price - ref_price) / ref_price) * 100 if ref_price > 0 else 0
+
+                    if stale_duration >= stale_timeout and ref_change < 2.0:
+                        pnl_pct = ((current_price - entry_price) / entry_price) * 100
+                        logger.warning(
+                            f"💤 STALE POSITION: {position.token_symbol} price unchanged "
+                            f"(~{ref_change:.2f}%) for {stale_duration/60:.0f}min - force closing "
+                            f"(PnL: {pnl_pct:+.2f}%)"
+                        )
+                        return "stale_price_timeout"
+            else:
+                trailing['stale_since'] = None
+                trailing['stale_ref_price'] = None
+        # ============ END STALE PRICE DETECTION ============
 
         # Update peak price
         if current_price > trailing['peak_price']:
@@ -2633,9 +2760,17 @@ class SolanaTradingEngine:
                     return False
 
                 # ENHANCED: Reject tokens with negative price momentum
+                # Tightened from -20% to -10%: if price is already declining, avoid entry
                 price_change = metadata.get('price_change_24h', metadata.get('priceChange', 0))
-                if price_change and price_change < -20:
-                    logger.warning(f"🚫 BLOCKED: {token_symbol} price already dropping {price_change:.1f}% - avoiding dump")
+                if price_change and price_change < -10:
+                    logger.warning(f"🚫 BLOCKED: {token_symbol} price already dropping {price_change:.1f}% - avoiding downtrend")
+                    return False
+
+                # ENHANCED: Check volume relative to liquidity - require active trading
+                vol = metadata.get('volume_24h', metadata.get('volume', 0))
+                liq = metadata.get('liquidity_usd', metadata.get('liquidity', 0))
+                if vol and liq and liq > 0 and vol / liq < 0.5:
+                    logger.warning(f"🚫 BLOCKED: {token_symbol} vol/liq ratio {vol/liq:.2f} too low - token may be dying")
                     return False
 
             # ============ END PRE-BUY SAFETY CHECKS ============
