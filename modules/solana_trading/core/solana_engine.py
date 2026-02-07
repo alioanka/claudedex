@@ -648,6 +648,17 @@ class PumpFunMonitor:
                             'liquidity_sol': 0,
                             'volume_24h': price_data.get('volume', 0),
                             'price_change_24h': price_data.get('priceChange', 0),
+                            'price_change_5m': price_data.get('priceChange5m', 0),
+                            'price_change_1h': price_data.get('priceChange1h', 0),
+                            'buys_5m': price_data.get('buys_5m', 0),
+                            'sells_5m': price_data.get('sells_5m', 0),
+                            'buys_1h': price_data.get('buys_1h', 0),
+                            'sells_1h': price_data.get('sells_1h', 0),
+                            'fdv': price_data.get('fdv', 0),
+                            'market_cap': price_data.get('market_cap', 0),
+                            'pair_created_at': price_data.get('pair_created_at', 0),
+                            'makers_5m': price_data.get('makers_5m', 0),
+                            'makers_1h': price_data.get('makers_1h', 0),
                             'pair_address': price_data.get('pairAddress', ''),
                             'created_at': datetime.now(),
                             'dex': price_data.get('dex', 'unknown'),
@@ -704,6 +715,47 @@ class PumpFunMonitor:
                             filtered_out['suspicious'] = filtered_out.get('suspicious', 0) + 1
                             continue
 
+                        # ============ REAL-TIME MOMENTUM FILTERS ============
+                        # These use DexScreener's 5-minute and 1-hour transaction data
+                        # to detect tokens that are actively dumping RIGHT NOW
+
+                        # Reject tokens with sharp recent price drop (>5% in last 5 minutes)
+                        price_change_5m = token_info.get('price_change_5m', 0)
+                        if price_change_5m < -5:
+                            filtered_out['suspicious'] = filtered_out.get('suspicious', 0) + 1
+                            continue
+
+                        # Reject tokens with heavy sell pressure in last 5 minutes
+                        # If sells > 2x buys, token is being dumped
+                        buys_5m = token_info.get('buys_5m', 0)
+                        sells_5m = token_info.get('sells_5m', 0)
+                        if sells_5m > 0 and buys_5m > 0:
+                            if sells_5m > buys_5m * 2:
+                                filtered_out['suspicious'] = filtered_out.get('suspicious', 0) + 1
+                                continue
+
+                        # Reject tokens with heavy sell pressure in last 1 hour
+                        buys_1h = token_info.get('buys_1h', 0)
+                        sells_1h = token_info.get('sells_1h', 0)
+                        if sells_1h > 0 and buys_1h > 0:
+                            if sells_1h > buys_1h * 1.5:
+                                filtered_out['suspicious'] = filtered_out.get('suspicious', 0) + 1
+                                continue
+
+                        # Require minimum buy activity (at least 3 buys in 5min = people are interested)
+                        if buys_5m < 3:
+                            filtered_out['suspicious'] = filtered_out.get('suspicious', 0) + 1
+                            continue
+
+                        # Require minimum unique traders (proxy for holder diversity)
+                        # DexScreener doesn't provide holder count directly, but makers_1h
+                        # counts unique wallets that traded in the last hour
+                        makers_1h = token_info.get('makers_1h', 0)
+                        if makers_1h > 0 and makers_1h < 10:
+                            # Less than 10 unique wallets in 1 hour = very concentrated/risky
+                            filtered_out['suspicious'] = filtered_out.get('suspicious', 0) + 1
+                            continue
+
                         # Token passes all filters!
                         new_tokens.append(token_info)
                         self._seen_tokens.add(token_address)
@@ -712,7 +764,9 @@ class PumpFunMonitor:
                             f"🎯 New token found: {token_info['symbol']} "
                             f"(${token_info['price_usd']:.8f}, "
                             f"liq=${token_info['liquidity_usd']:.0f}, "
-                            f"vol=${token_info['volume_24h']:.0f})"
+                            f"vol=${token_info['volume_24h']:.0f}, "
+                            f"5m:{token_info.get('price_change_5m', 0):+.1f}%, "
+                            f"buys/sells:{token_info.get('buys_5m', 0)}/{token_info.get('sells_5m', 0)})"
                         )
 
                     # Log scanning summary
@@ -816,15 +870,50 @@ class PumpFunMonitor:
                     symbol = base_token.get('symbol', '')
                     name = base_token.get('name', '')
 
+                    # Extract buy/sell transaction counts for momentum analysis
+                    txns = best_pair.get('txns', {})
+                    txns_m5 = txns.get('m5', {})
+                    txns_h1 = txns.get('h1', {})
+                    buys_5m = int(txns_m5.get('buys', 0) or 0)
+                    sells_5m = int(txns_m5.get('sells', 0) or 0)
+                    buys_1h = int(txns_h1.get('buys', 0) or 0)
+                    sells_1h = int(txns_h1.get('sells', 0) or 0)
+
+                    # Extract short-term price changes for real-time momentum
+                    price_change_5m = float(best_pair.get('priceChange', {}).get('m5', 0) or 0)
+                    price_change_1h = float(best_pair.get('priceChange', {}).get('h1', 0) or 0)
+
+                    # Extract market cap and FDV (used for safety checks)
+                    fdv = float(best_pair.get('fdv', 0) or 0)
+                    market_cap = float(best_pair.get('marketCap', 0) or 0)
+
+                    # Extract pair creation time (token age)
+                    pair_created_at = best_pair.get('pairCreatedAt', 0)
+
+                    # Extract maker counts (unique wallet addresses that traded)
+                    makers_5m = int(txns_m5.get('buyers', 0) or 0) + int(txns_m5.get('sellers', 0) or 0)
+                    makers_1h = int(txns_h1.get('buyers', 0) or 0) + int(txns_h1.get('sellers', 0) or 0)
+
                     return {
                         'price': price,
                         'liquidity': liquidity,
                         'volume': volume_24h,
                         'priceChange': price_change,
+                        'priceChange5m': price_change_5m,
+                        'priceChange1h': price_change_1h,
                         'pairAddress': pair_address,
                         'dex': dex_id,
                         'symbol': symbol,
-                        'name': name
+                        'name': name,
+                        'buys_5m': buys_5m,
+                        'sells_5m': sells_5m,
+                        'buys_1h': buys_1h,
+                        'sells_1h': sells_1h,
+                        'fdv': fdv,
+                        'market_cap': market_cap,
+                        'pair_created_at': pair_created_at,
+                        'makers_5m': makers_5m,
+                        'makers_1h': makers_1h,
                     }
 
                 elif resp.status == 404:
@@ -2140,8 +2229,8 @@ class SolanaTradingEngine:
         Enhanced Pump.fun trailing stop strategy for capturing 10x-100x gains.
 
         IMPROVED Trailing Tiers (tighter stops, earlier profit-taking):
-        - Tier 0 (0-20% gain): SL at -12% (tighter capital protection)
-        - Tier 0.5 (20-40% gain): SL at +5% (lock small profit)
+        - Tier 0 (0-20% gain): SL at -20% (capital protection)
+        - Tier 0.5 (20-40% gain): SL at +10% (lock profit) + 25% partial exit at +20%
         - Tier 1 (40-80% gain): SL at +20%, partial exit 20%
         - Tier 2 (80-150% gain): SL at +40%, partial exit 20%
         - Tier 3 (150-400% gain): SL at 65% of peak, partial exit 20%
@@ -2346,9 +2435,11 @@ class SolanaTradingEngine:
             sl_price = entry_price * (1 - effective_tier0_sl / 100)
             sl_gain_pct = -effective_tier0_sl
         elif peak_gain_pct < 40:
-            # Tier 0.5: Lock small profit early (+5%)
-            sl_price = entry_price * 1.05
-            sl_gain_pct = 5.0
+            # Tier 0.5: Lock profit when peak reaches +20%
+            # Raised from +5% to +10% to account for 5-second monitoring gap
+            # (price can crash past +5% between checks, but +10% gives more buffer)
+            sl_price = entry_price * 1.10
+            sl_gain_pct = 10.0
         elif peak_gain_pct < 80:
             # Tier 1: Lock +20% (moved up from breakeven)
             sl_price = entry_price * 1.20
@@ -2393,6 +2484,14 @@ class SolanaTradingEngine:
         # Check for partial exit triggers (only trigger once per tier)
         # IMPROVED: Earlier and more granular partial exits to capture gains
         tier_reached = trailing['tier_reached']
+
+        # Tier 0.5: Early partial exit at +20% to lock in some gains immediately
+        # This prevents giving back ALL profits on tokens that reach +20-39% but then crash
+        # (e.g., nip: peaked +33% → closed at +3%, BTC: peaked +29% → closed at -2%)
+        if peak_gain_pct >= 20 and not trailing.get('tier05_triggered'):
+            trailing['tier05_triggered'] = True
+            logger.info(f"📊 {position.token_symbol}: Tier 0.5 reached (+{peak_gain_pct:.0f}%), partial exit 25% to lock gains")
+            return "partial_exit_tier05"
 
         # Tier 1: First partial at 40% (moved from 50%)
         if peak_gain_pct >= 40 and tier_reached < 1:
@@ -2694,6 +2793,29 @@ class SolanaTradingEngine:
                 logger.warning(f"🚫 BLOCKED: {token_symbol} has suspicious symbol format")
                 return False
 
+            # 2b. Block tokens with obvious scam/joke names
+            symbol_upper = token_symbol.upper()
+            SCAM_NAMES = {
+                'SHITCOIN', 'RUGPULL', 'SCAM', 'HONEYPOT', 'PONZI', 'EXIT',
+                'RUGME', 'FAKETOKEN', 'TESTTOKEN', 'SHIT', 'RUG', 'FRAUD',
+            }
+            if symbol_upper in SCAM_NAMES:
+                logger.warning(f"🚫 BLOCKED: {token_symbol} has obvious scam/joke name")
+                return False
+
+            # 2c. Block tokens impersonating major cryptocurrencies on pump.fun
+            # Real BTC/ETH/SOL don't launch on pump.fun
+            IMPERSONATION_NAMES = {
+                'BTC', 'ETH', 'SOL', 'USDC', 'USDT', 'BNB', 'XRP', 'ADA',
+                'DOGE', 'AVAX', 'DOT', 'LINK', 'MATIC', 'UNI', 'AAVE',
+                'SHIB', 'PEPE', 'WIF', 'BONK', 'JUP', 'JTO', 'PYTH',
+                'RAY', 'ORCA', 'MNGO', 'SRM', 'FIDA', 'STEP',
+                'BITCOIN', 'ETHEREUM', 'SOLANA', 'CARDANO', 'RIPPLE',
+            }
+            if strategy == Strategy.PUMPFUN and symbol_upper in IMPERSONATION_NAMES:
+                logger.warning(f"🚫 BLOCKED: {token_symbol} impersonates major token on pump.fun")
+                return False
+
             # 3. Check if token is blacklisted (scam/rug detected previously)
             if self.scam_blacklist and self.scam_blacklist.is_blacklisted(token_mint):
                 reason = self.scam_blacklist.get_blacklist_reason(token_mint)
@@ -2738,6 +2860,14 @@ class SolanaTradingEngine:
                     logger.warning(f"🚫 BLOCKED: {token_symbol} has only {holder_count} holders (min: {min_holders})")
                     return False
 
+                # Use unique traders (makers) as proxy for holder diversity when holder_count not available
+                # DexScreener's makers_1h = unique wallets that traded in last hour
+                if not holder_count:
+                    makers_1h = metadata.get('makers_1h', 0)
+                    if makers_1h and makers_1h < min_holders:
+                        logger.warning(f"🚫 BLOCKED: {token_symbol} only {makers_1h} unique traders in 1h (min: {min_holders})")
+                        return False
+
                 # Check dev holding percentage
                 dev_holding = metadata.get('dev_holding_pct', metadata.get('creator_holdings', 0))
                 if dev_holding and dev_holding > max_dev_holding:
@@ -2771,6 +2901,20 @@ class SolanaTradingEngine:
                 liq = metadata.get('liquidity_usd', metadata.get('liquidity', 0))
                 if vol and liq and liq > 0 and vol / liq < 0.5:
                     logger.warning(f"🚫 BLOCKED: {token_symbol} vol/liq ratio {vol/liq:.2f} too low - token may be dying")
+                    return False
+
+                # CRITICAL: Real-time momentum check using DexScreener 5-minute data
+                # Tokens can start dumping between our scan and buy execution
+                price_change_5m = metadata.get('price_change_5m', 0)
+                if price_change_5m and price_change_5m < -8:
+                    logger.warning(f"🚫 BLOCKED: {token_symbol} dropping {price_change_5m:.1f}% in 5min - active dump")
+                    return False
+
+                # Check real-time buy/sell pressure from DexScreener
+                buys_5m = metadata.get('buys_5m', 0)
+                sells_5m = metadata.get('sells_5m', 0)
+                if buys_5m and sells_5m and sells_5m > buys_5m * 2:
+                    logger.warning(f"🚫 BLOCKED: {token_symbol} heavy sell pressure ({sells_5m} sells vs {buys_5m} buys in 5min)")
                     return False
 
             # ============ END PRE-BUY SAFETY CHECKS ============
@@ -2964,6 +3108,16 @@ class SolanaTradingEngine:
                                         if diff_pct > 5:
                                             logger.info(f"📊 Token amount adjusted: estimated {position.amount:.2f} → actual {actual_tokens:.2f} ({diff_pct:.1f}% diff)")
                                     position.amount = actual_tokens
+
+                                    # CRITICAL: Recalculate entry_price from actual execution
+                                    # DexScreener price can be stale - actual cost per token = SOL spent / tokens received
+                                    actual_entry_price = (amount_sol * self.sol_price_usd) / actual_tokens
+                                    if actual_entry_price > 0 and position.entry_price > 0:
+                                        entry_diff_pct = abs(actual_entry_price - position.entry_price) / position.entry_price * 100
+                                        if entry_diff_pct > 3:
+                                            logger.info(f"📊 Entry price adjusted: ${position.entry_price:.10f} → ${actual_entry_price:.10f} (actual execution, {entry_diff_pct:.1f}% diff)")
+                                        position.entry_price = actual_entry_price
+                                        position.current_price = actual_entry_price  # Start at breakeven
                                 else:
                                     logger.warning(f"⚠️ Could not verify token balance after 3 attempts - using estimated amount {position.amount:.2f}")
                             except Exception as e:
@@ -3062,6 +3216,9 @@ class SolanaTradingEngine:
                 # Final tier - exit remaining position
                 partial_pct = 1.0  # Full remaining
                 is_partial = False  # Treat as full close
+            elif reason == "partial_exit_tier05":
+                # Tier 0.5: Early profit-taking at +20% - sell 25%
+                partial_pct = 0.25
             elif is_partial:
                 # Tiers 1-4: 20% each
                 partial_pct = 0.20
