@@ -43,10 +43,12 @@ class AITradeExecutor:
     Supports both DEX (for crypto) and CEX (for futures) execution.
     """
 
-    def __init__(self, config: Dict, dry_run: bool = True):
+    def __init__(self, config: Dict, dry_run: bool = True, risk_manager=None):
         self.config = config
         self.dry_run = dry_run
         self.session: Optional[aiohttp.ClientSession] = None
+        # P2#5: scaffolded — consulted by AI->Futures routing follow-up
+        self.risk_manager = risk_manager
 
         # MB-20: defensive leverage cap on every order. Hardcoded; operators
         # who want different must explicitly plumb config (no silent override).
@@ -272,10 +274,13 @@ class SentimentEngine:
     - Position tracking
     """
 
-    def __init__(self, config: Dict, db_pool):
+    def __init__(self, config: Dict, db_pool, risk_manager=None):
         self.config = config
         self.db_pool = db_pool
         self.is_running = False
+        # P2#5: scaffolded — threaded into AITradeExecutor below; consulted by
+        # AI->Futures routing follow-up. No validate_trade call sites yet.
+        self.risk_manager = risk_manager
 
         # NEW: AI Provider Manager for enterprise-grade LLM integration
         self.ai_provider_manager = None
@@ -337,7 +342,7 @@ class SentimentEngine:
             self.ai_provider_manager = None
 
         # Initialize trade executor
-        self.executor = AITradeExecutor(self.config, self.dry_run)
+        self.executor = AITradeExecutor(self.config, self.dry_run, risk_manager=self.risk_manager)
         await self.executor.initialize()
 
         # Load active positions from DB

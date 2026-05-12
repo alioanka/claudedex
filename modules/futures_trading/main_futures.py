@@ -600,6 +600,27 @@ class FuturesTradingApplication:
 
             await self.engine.initialize()
 
+            # Phase 2 #5: inject FuturesRiskManager so MB-17's entry validator is live.
+            # FuturesTradingEngine.set_risk_manager (commit c53b73b) had no caller until now.
+            try:
+                from modules.futures_trading.futures_risk_manager import FuturesRiskManager
+                risk_cfg: dict = {}
+                if self.config_manager is not None:
+                    # FuturesConfigManager exposes get_risk() returning a Pydantic model.
+                    if hasattr(self.config_manager, 'get_risk'):
+                        risk_obj = self.config_manager.get_risk()
+                        if hasattr(risk_obj, 'model_dump'):
+                            risk_cfg = risk_obj.model_dump()
+                        elif hasattr(risk_obj, 'dict'):
+                            risk_cfg = risk_obj.dict()
+                        elif isinstance(risk_obj, dict):
+                            risk_cfg = risk_obj
+                self.risk_manager = FuturesRiskManager(risk_cfg)
+                self.engine.set_risk_manager(self.risk_manager)
+                self.logger.info("✅ FuturesRiskManager injected — MB-17 entry validator is active")
+            except Exception as e:
+                self.logger.warning(f"FuturesRiskManager wiring failed: {e}; engine will run without validator (legacy behaviour)")
+
             self.logger.info("✅ Futures trading engine initialized")
             self.logger.info("=" * 80)
 

@@ -133,7 +133,15 @@ async def main():
         'openai_api_key': openai_key,
         'anthropic_api_key': anthropic_key
     }
-    engine = SentimentEngine(config, db_pool)
+    # P2#5: construct core.risk_manager scaffold and thread through to executor.
+    # validate_trade call sites land in the AI->Futures routing follow-up.
+    risk_manager = None
+    try:
+        from core.risk_manager import RiskManager
+        risk_manager = RiskManager(config={}, portfolio_manager=None, config_manager=None)
+    except Exception as e:
+        logger.warning(f"core.risk_manager wiring failed: {e}; AI will run without it")
+    engine = SentimentEngine(config, db_pool, risk_manager=risk_manager)
 
     try:
         await engine.initialize()

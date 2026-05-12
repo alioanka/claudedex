@@ -861,6 +861,13 @@ class SolanaArbitrageEngine:
             'last_stats_log': datetime.now()
         }
 
+        # P2#5: injected by orchestrator; consulted by P1-06 follow-up (validate_trade calls)
+        self.risk_manager = None
+
+    def set_risk_manager(self, risk_manager) -> None:
+        """Inject a core.risk_manager.RiskManager. P1-06 will add validate_trade calls."""
+        self.risk_manager = risk_manager
+
     async def _get_decrypted_key(self, key_name: str) -> Optional[str]:
         """
         Get decrypted private key from secrets manager or environment.
