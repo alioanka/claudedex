@@ -30,6 +30,7 @@ except ImportError:
     VersionedTransaction = None
     TransactionMessage = None
 
+from core.dry_run import should_skip_live
 from trading.executors.base_executor import BaseExecutor
 
 logger = logging.getLogger(__name__)
@@ -207,11 +208,10 @@ class JupiterExecutor(BaseExecutor):
         if not self.session:
             await self.initialize()
 
-            # ✅ CRITICAL: DRY_RUN CHECK AT TOP LEVEL
-            if self.dry_run:
-                logger.info(f"🔶 DRY RUN: Simulating Jupiter trade for {getattr(order, 'symbol', 'unknown')}")
-                return await self._simulate_jupiter_trade(order)
-        
+        if should_skip_live(self.dry_run, module='solana', account=getattr(order, 'wallet_address', None)):
+            logger.info(f"🔶 DRY RUN: Simulating Jupiter trade for {getattr(order, 'symbol', 'unknown')}")
+            return await self._simulate_jupiter_trade(order)
+
         try:
             logger.info(f"🟣 Executing Solana trade for {getattr(order, 'symbol', 'unknown')}")
             
