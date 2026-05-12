@@ -375,6 +375,10 @@ class FuturesTradingEngine:
         self.exchange_client = None
         self.price_client = None  # Mainnet client for accurate prices in DRY_RUN mode
 
+        # MB-17: optional cross-module risk validator (orchestrator wiring).
+        # When None, no validation is performed (legacy/backward-compatible).
+        self.risk_manager: Optional[Any] = None
+
         # Risk metrics
         self.risk_metrics = RiskMetrics(
             daily_loss_limit=self.max_daily_loss,
@@ -421,6 +425,11 @@ class FuturesTradingEngine:
         logger.info(f"    RSI Weak Overbought (SELL): > {self.rsi_weak_overbought}")
         logger.info(f"    Min Signal Score: {self.min_signal_score} (4=STRONG only, 2=BUY/SELL)")
         logger.info(f"    Verbose Signals: {self.verbose_signals}")
+
+    def set_risk_manager(self, risk_manager: Any) -> None:
+        """Inject a FuturesRiskManager. Entry path will call validate_new_position
+        before opening a position; rejection logs the reason and aborts entry."""
+        self.risk_manager = risk_manager
 
     async def initialize(self):
         """Initialize exchange connections and components"""
@@ -1653,6 +1662,31 @@ class FuturesTradingEngine:
             else:
                 tp_str = f"${take_profit_price:.2f}"
 
+            # MB-17: cross-module risk gate — refuse to open if validator rejects.
+            if self.risk_manager is not None:
+                try:
+                    current_positions = [
+                        {'notional_value': p.notional_value}
+                        for p in self.active_positions.values()
+                    ]
+                    validation = self.risk_manager.validate_new_position(
+                        symbol=symbol,
+                        side=side.value.upper() if hasattr(side, 'value') else str(side),
+                        size_usd=notional,
+                        leverage=self.leverage,
+                        current_positions=current_positions,
+                        available_capital=self.capital_allocation,
+                    )
+                except Exception as e:
+                    logger.warning(f"Risk validator raised: {e}; refusing entry")
+                    return
+                if not validation.get('allowed', True):
+                    logger.warning(
+                        f"Risk manager rejected entry for {symbol}: "
+                        f"{validation.get('reason', 'no reason given')}"
+                    )
+                    return
+
             # Create position object
             position = Position(
                 position_id=str(uuid.uuid4()),
@@ -1686,17 +1720,35 @@ class FuturesTradingEngine:
                 logger.info(f"   Entry: ${current_price:.2f}, Size: {size:.6f}, Notional: ${notional:.2f}")
                 logger.info(f"   SL: ${stop_loss_price:.2f}, TP: ${take_profit_price:.2f}")
             else:
-                # Execute real order
-                order_side = 'buy' if side == TradeSide.LONG else 'sell'
+                # Execute real order via the ISOLATED-margin + leverage-set helpers
                 try:
-                    order = await self.exchange_client.create_market_order(
-                        symbol=symbol,
-                        side=order_side,
-                        amount=size,
-                        params={'leverage': self.leverage}
-                    )
+                    if self.exchange == 'binance':
+                        if side == TradeSide.LONG:
+                            order = await self.exchange_client.open_long(
+                                symbol=symbol,
+                                quantity=size,
+                                leverage=self.leverage,
+                            )
+                        else:
+                            order = await self.exchange_client.open_short(
+                                symbol=symbol,
+                                quantity=size,
+                                leverage=self.leverage,
+                            )
+                    else:
+                        # TODO MB-17b: Bybit client lacks ISOLATED-margin helpers
+                        order_side = 'buy' if side == TradeSide.LONG else 'sell'
+                        order = await self.exchange_client.create_market_order(
+                            symbol=symbol,
+                            side=order_side,
+                            amount=size,
+                            params={'leverage': self.leverage}
+                        )
+                    if not order:
+                        logger.error(f"❌ Order execution returned empty result for {symbol}")
+                        return
                     logger.info(f"🟢 EXECUTED {side.value.upper()} {symbol}")
-                    logger.info(f"   Order ID: {order['id']}")
+                    logger.info(f"   Order ID: {order.get('id', order.get('orderId', 'unknown'))}")
                     logger.info(f"   Entry: ${current_price:.2f}, Size: {size:.6f}")
 
                     # Update entry price from actual fill
