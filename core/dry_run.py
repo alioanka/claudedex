@@ -22,6 +22,45 @@ _POLLER_PATH: Optional[Path] = None  # Track current path for idempotency check
 _TRUTHY = {"true", "1", "yes", "on"}
 _FALSY = {"false", "0", "no", "off"}
 
+_PAUSE_FLAG_DIR = Path("logs")
+
+
+def is_module_paused(module: str) -> bool:
+    """Returns True iff the dashboard has paused this module via the flag-file
+    at logs/.pause_<module>. Per-process check; no caching. Cheap enough to call
+    from each module's loop body (one stat() per iteration).
+
+    Mirrors the killswitch flag-file pattern so per-module pause works across
+    subprocesses — the in-process BaseModule.pause() never reached spawned
+    trading-module subprocesses (MB-30).
+    """
+    if not module:
+        return False
+    try:
+        flag = _PAUSE_FLAG_DIR / f".pause_{module}"
+        return flag.exists()
+    except Exception:
+        return False
+
+
+def set_module_pause(module: str, paused: bool) -> bool:
+    """Write/delete the logs/.pause_<module> flag file. Returns True on success.
+    Called from the dashboard process; the modules read the flag via
+    is_module_paused()."""
+    if not module:
+        return False
+    try:
+        _PAUSE_FLAG_DIR.mkdir(parents=True, exist_ok=True)
+        flag = _PAUSE_FLAG_DIR / f".pause_{module}"
+        if paused:
+            flag.write_text("")
+        elif flag.exists():
+            flag.unlink()
+        return True
+    except Exception as e:
+        _logger.error("set_module_pause(%s, %s) failed: %s", module, paused, e)
+        return False
+
 
 def set_global_kill_switch(value: bool) -> None:
     global _GLOBAL_KILL_SWITCH
@@ -53,8 +92,11 @@ def should_skip_live(
     account: Optional[str] = None,
 ) -> bool:
     """Returns True if this call must NOT hit live exchanges/chains.
-    True iff: global kill-switch ON, OR module_dry_run=True."""
+    True iff: global kill-switch ON, OR module is paused (MB-30 flag file),
+    OR module_dry_run=True."""
     if _GLOBAL_KILL_SWITCH:
+        return True
+    if module and is_module_paused(module):
         return True
     return bool(module_dry_run)
 

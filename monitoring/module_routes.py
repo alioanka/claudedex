@@ -85,8 +85,13 @@ class ModuleRoutes:
         app.router.add_post('/api/modules/{module_name}/start', self.start_module)
         app.router.add_post('/api/modules/{module_name}/enable', self.enable_module)
         app.router.add_post('/api/modules/{module_name}/disable', self.disable_module)
-        app.router.add_post('/api/modules/{module_name}/pause', self.pause_module)
-        app.router.add_post('/api/modules/{module_name}/resume', self.resume_module)
+        # MB-30: admin-gated; handlers also write logs/.pause_<module> flag
+        # so subprocess loops actually see the pause (in-process flip alone
+        # never reached spawned trading-module subprocesses).
+        app.router.add_post('/api/modules/{module_name}/pause',
+                            require_auth(require_admin(self.pause_module)))
+        app.router.add_post('/api/modules/{module_name}/resume',
+                            require_auth(require_admin(self.resume_module)))
         app.router.add_get('/api/modules/{module_name}/metrics', self.get_module_metrics)
         app.router.add_get('/api/modules/{module_name}/positions', self.get_module_positions)
         app.router.add_post('/api/modules/reallocate', self.reallocate_capital)
@@ -483,12 +488,18 @@ class ModuleRoutes:
         try:
             module_name = request.match_info['module_name']
 
+            # MB-30: flip cross-process flag FIRST so subprocesses halt new live
+            # writes via should_skip_live() even if the in-process call fails.
+            from core.dry_run import set_module_pause
+            flag_ok = set_module_pause(module_name, True)
+
             success = await self.module_manager.pause_module(module_name)
 
-            if success:
+            if success or flag_ok:
                 return web.json_response({
                     'success': True,
-                    'message': f'Module {module_name} paused'
+                    'message': f'Module {module_name} paused',
+                    'cross_process': flag_ok,
                 })
             else:
                 return web.json_response({
@@ -516,12 +527,18 @@ class ModuleRoutes:
         try:
             module_name = request.match_info['module_name']
 
+            # MB-30: delete the cross-process pause flag so subprocesses
+            # resume honoring their own dry_run / kill-switch state.
+            from core.dry_run import set_module_pause
+            flag_ok = set_module_pause(module_name, False)
+
             success = await self.module_manager.resume_module(module_name)
 
-            if success:
+            if success or flag_ok:
                 return web.json_response({
                     'success': True,
-                    'message': f'Module {module_name} resumed'
+                    'message': f'Module {module_name} resumed',
+                    'cross_process': flag_ok,
                 })
             else:
                 return web.json_response({

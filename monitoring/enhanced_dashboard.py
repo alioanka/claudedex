@@ -1419,11 +1419,18 @@ class DashboardEndpoints:
             return web.json_response({'error': 'Failed to set env flag'}, status=500)
 
     async def _api_module_pause(self, request):
-        """Pause a module (sets to paused state)"""
+        """Pause a module — MB-30: writes the cross-process flag file so
+        subprocess loops actually halt new live writes via should_skip_live().
+        """
         module = request.match_info.get('module', '')
-        # For now, pause acts like disable - in a full implementation this would set a PAUSED state
-        logger.info(f"Module {module} paused via API")
-        return web.json_response({'success': True, 'message': f'{module} paused'})
+        from core.dry_run import set_module_pause
+        ok = set_module_pause(module, True)
+        logger.info(f"Module {module} paused via API (flag_file={ok})")
+        return web.json_response({
+            'success': bool(ok),
+            'message': f'{module} paused' if ok else f'failed to pause {module}',
+            'cross_process': ok,
+        }, status=200 if ok else 500)
 
     async def _api_module_start(self, request):
         """Start/resume a module"""

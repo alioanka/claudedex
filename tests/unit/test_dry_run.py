@@ -9,8 +9,10 @@ import pytest
 from core import dry_run
 from core.dry_run import (
     is_global_kill_switch,
+    is_module_paused,
     resolve_dry_run_env,
     set_global_kill_switch,
+    set_module_pause,
     should_skip_live,
     start_killswitch_poller,
     stop_killswitch_poller,
@@ -137,6 +139,45 @@ async def test_poller_survives_read_errors(tmp_path, _reset_poller):
     await asyncio.sleep(0.2)
     assert is_global_kill_switch() is True
     assert not task.done()
+
+
+@pytest.mark.unit
+def test_is_module_paused_no_flag(tmp_path, monkeypatch):
+    """No flag file => not paused."""
+    monkeypatch.setattr(dry_run, "_PAUSE_FLAG_DIR", tmp_path)
+    assert is_module_paused("dex_trading") is False
+    assert is_module_paused("") is False
+
+
+@pytest.mark.unit
+def test_is_module_paused_with_flag(tmp_path, monkeypatch):
+    """Flag file present => paused."""
+    monkeypatch.setattr(dry_run, "_PAUSE_FLAG_DIR", tmp_path)
+    (tmp_path / ".pause_solana_strategies").write_text("")
+    assert is_module_paused("solana_strategies") is True
+    assert is_module_paused("dex_trading") is False  # unrelated module
+
+
+@pytest.mark.unit
+def test_set_module_pause_writes_and_deletes(tmp_path, monkeypatch):
+    monkeypatch.setattr(dry_run, "_PAUSE_FLAG_DIR", tmp_path)
+    assert set_module_pause("futures_trading", True) is True
+    assert (tmp_path / ".pause_futures_trading").exists()
+    assert is_module_paused("futures_trading") is True
+    assert set_module_pause("futures_trading", False) is True
+    assert not (tmp_path / ".pause_futures_trading").exists()
+    assert is_module_paused("futures_trading") is False
+
+
+@pytest.mark.unit
+def test_should_skip_live_honors_module_pause(tmp_path, monkeypatch):
+    """MB-30: should_skip_live returns True when paused even if module_dry_run=False."""
+    monkeypatch.setattr(dry_run, "_PAUSE_FLAG_DIR", tmp_path)
+    assert should_skip_live(False, module="dex_trading") is False
+    (tmp_path / ".pause_dex_trading").write_text("")
+    assert should_skip_live(False, module="dex_trading") is True
+    # Unrelated modules unaffected
+    assert should_skip_live(False, module="solana_strategies") is False
 
 
 @pytest.mark.unit
