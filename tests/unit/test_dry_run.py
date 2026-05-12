@@ -137,3 +137,28 @@ async def test_poller_survives_read_errors(tmp_path, _reset_poller):
     await asyncio.sleep(0.2)
     assert is_global_kill_switch() is True
     assert not task.done()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_base_module_start_wires_poller(_reset_poller):
+    """Concrete BaseModule subclasses get the killswitch poller for free."""
+    from modules.base_module import BaseModule, ModuleConfig, ModuleType
+
+    class _TestModule(BaseModule):
+        async def initialize(self): return True
+        async def start(self):
+            self.started_flag = True
+            return True
+        async def stop(self): return True
+        async def process_opportunity(self, opp): return None
+        async def get_positions(self): return []
+        async def get_metrics(self): return self.metrics
+
+    cfg = ModuleConfig(name="test_wiring", module_type=ModuleType.CUSTOM)
+    inst = _TestModule(cfg)
+    assert await inst.start() is True
+    assert inst.started_flag is True
+    # The poller task should now be live on this loop.
+    assert dry_run._POLLER_TASK is not None
+    assert not dry_run._POLLER_TASK.done()

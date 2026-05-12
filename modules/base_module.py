@@ -6,6 +6,7 @@ and implements its own trading logic while sharing common infrastructure.
 """
 
 import asyncio
+import functools
 import logging
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Any
@@ -125,6 +126,32 @@ class BaseModule(ABC):
     - get_positions(): Return current positions
     - get_metrics(): Return performance metrics
     """
+
+    def __init_subclass__(cls, **kwargs):
+        """Auto-wrap concrete start() so every module starts the killswitch poller.
+
+        Idempotent — start_killswitch_poller() is a per-process singleton, so
+        multiple subclasses sharing one process (e.g., dashboard + orchestrator)
+        cooperate cleanly.
+        """
+        super().__init_subclass__(**kwargs)
+        original_start = cls.__dict__.get("start")
+        if original_start is None or getattr(original_start, "__isabstractmethod__", False):
+            return  # Subclass didn't override start; nothing to wrap yet.
+        if getattr(original_start, "_killswitch_wrapped", False):
+            return  # Already wrapped (defensive against rewrapping).
+
+        @functools.wraps(original_start)
+        async def wrapped_start(self, *args, **kwargs):
+            try:
+                from core.dry_run import start_killswitch_poller
+                start_killswitch_poller()
+            except Exception as e:
+                self.logger.warning(f"failed to start killswitch poller: {e}")
+            return await original_start(self, *args, **kwargs)
+
+        wrapped_start._killswitch_wrapped = True
+        cls.start = wrapped_start
 
     def __init__(
         self,
