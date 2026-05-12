@@ -1357,6 +1357,94 @@ class CopyTradingEngine:
         except Exception as e:
             logger.debug(f"Error updating wallet stats: {e}")
 
+    async def get_positions(self) -> List[Dict]:
+        """Return open copy-trade positions from the DB.
+
+        Each row is the operator-facing view, NOT a full BaseModule.Position
+        object - that conversion lives in the eventual BaseModule wrapper.
+        """
+        if not self.db_pool:
+            return []
+        try:
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT trade_id, chain, source_wallet, token_address,
+                           entry_price, entry_usd, amount, entry_timestamp
+                    FROM copytrading_trades
+                    WHERE status = 'open' AND side = 'buy'
+                """)
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"COPY.get_positions failed: {e}")
+            return []
+
+    async def _get_evm_token_balance(self, token_address: str, chain: str) -> int:
+        """Return raw on-chain ERC-20 balance of self.executor.evm_wallet on chain."""
+        if not self.executor or not self.executor.evm_wallet:
+            return 0
+        routing = EVM_DEX_ROUTING.get(chain)
+        if not routing:
+            return 0
+        from config.pool_engine import PoolEngine
+        pool = await PoolEngine.get_instance()
+        rpc_url = await pool.get_endpoint(routing['rpc_key'])
+        if not rpc_url:
+            return 0
+        from web3 import Web3
+        w3 = Web3(Web3.HTTPProvider(rpc_url))
+        erc20_abi = [{
+            "constant": True, "inputs": [{"name": "_owner", "type": "address"}],
+            "name": "balanceOf", "outputs": [{"name": "balance", "type": "uint256"}],
+            "type": "function",
+        }]
+        contract = w3.eth.contract(
+            address=Web3.to_checksum_address(token_address), abi=erc20_abi
+        )
+        return contract.functions.balanceOf(
+            Web3.to_checksum_address(self.executor.evm_wallet)
+        ).call()
+
+    async def close_position(self, position) -> Dict:
+        """Best-effort close. Routes via the executor based on position['chain'].
+
+        Caller is responsible for any audit-trail / _log_copy_trade accounting -
+        the dashboard emergency-exit handler wants to record its own outcome,
+        so this method stays pure (no DB writes).
+        """
+        if not self.executor:
+            return {'success': False, 'error': 'executor not initialised'}
+        chain = position.get('chain')
+        token = position.get('token_address')
+        if not chain or not token:
+            return {'success': False, 'error': 'position missing chain or token_address'}
+
+        if chain == 'solana':
+            # Reuse the MB-22 SELL path: actual on-chain balance via Jupiter.
+            balance_raw, _decimals = await self._get_solana_token_balance(token)
+            if balance_raw <= 0:
+                return {'success': True, 'tx_hash': None, 'note': 'no on-chain balance to close'}
+            return await self.executor.copy_solana_swap(
+                input_mint=token,
+                output_mint=WSOL_MINT,
+                amount_lamports=balance_raw,
+                slippage_bps=300,  # memecoin-tolerant exit, matches MB-22
+            )
+
+        # EVM: prefer actual on-chain balance; fall back to DB `amount` if the
+        # RPC read fails so a panic-exit isn't blocked by a flaky endpoint.
+        try:
+            amount_wei = await self._get_evm_token_balance(token, chain)
+        except Exception:
+            amount_wei = int(position.get('amount') or 0)
+        if amount_wei <= 0:
+            return {'success': True, 'tx_hash': None, 'note': 'no on-chain balance to close'}
+        return await self.executor.copy_evm_swap(
+            token_address=token,
+            amount_wei=amount_wei,
+            is_buy=False,
+            chain=chain,
+        )
+
     async def stop(self):
         """Stop the engine"""
         self.is_running = False
