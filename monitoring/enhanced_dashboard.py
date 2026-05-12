@@ -472,12 +472,12 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/simulator/data', self.api_simulator_data)
         self.app.router.add_get('/api/simulator/export', self.api_simulator_export)
 
-        # API - Bot control
-        self.app.router.add_post('/api/bot/start', self.api_bot_start)
-        self.app.router.add_post('/api/bot/stop', self.api_bot_stop)
-        self.app.router.add_post('/api/bot/restart', self.api_bot_restart)
-        self.app.router.add_post('/api/bot/emergency_exit', self.api_emergency_exit)
-        self.app.router.add_get('/api/bot/status', self.api_bot_status)
+        # API - Bot control (MB-28: admin-gate state-changing routes; status is read-only)
+        self.app.router.add_post('/api/bot/start', require_auth(require_admin(self.api_bot_start)))
+        self.app.router.add_post('/api/bot/stop', require_auth(require_admin(self.api_bot_stop)))
+        self.app.router.add_post('/api/bot/restart', require_auth(require_admin(self.api_bot_restart)))
+        self.app.router.add_post('/api/bot/emergency_exit', require_auth(require_admin(self.api_emergency_exit)))
+        self.app.router.add_get('/api/bot/status', require_auth(self.api_bot_status))
 
         # API - DEX Trading cleanup/reconciliation
         self.app.router.add_post('/api/dex/reconcile', self.api_reconcile_dex_positions)

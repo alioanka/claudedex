@@ -2,6 +2,7 @@
 Authentication Routes for Dashboard
 Handles login, logout, user management, and session validation
 """
+import os
 from aiohttp import web
 import logging
 from auth.middleware import get_client_ip, get_user_agent, require_auth, require_admin
@@ -102,11 +103,12 @@ class AuthRoutes:
                 'user': user.to_dict()
             })
 
+            # MB-28: default-secure; opt-out for local dev via DASHBOARD_HTTPS=false
             response.set_cookie(
                 'session_id',
                 session_id,
                 httponly=True,
-                secure=False,  # Set to True in production with HTTPS
+                secure=os.getenv('DASHBOARD_HTTPS', 'true').lower() not in ('false', '0', 'no'),
                 samesite='Lax',
                 max_age=3600  # 1 hour
             )

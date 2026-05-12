@@ -8,6 +8,8 @@ import logging
 from aiohttp import web
 from typing import Dict, Optional
 
+from auth.middleware import require_auth, require_admin
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,13 +71,13 @@ class ModuleRoutes:
         # Module Control Page
         app.router.add_get('/module-control', self.module_control_page)
 
-        # Bot Control API endpoints
-        app.router.add_post('/api/bot/start', self.bot_start)
-        app.router.add_post('/api/bot/stop', self.bot_stop)
-        app.router.add_post('/api/bot/restart', self.bot_restart)
-        app.router.add_post('/api/bot/emergency-exit', self.bot_emergency_exit)
+        # Bot Control API endpoints (MB-28: admin-gate all state-changing bot ops)
+        app.router.add_post('/api/bot/start', require_auth(require_admin(self.bot_start)))
+        app.router.add_post('/api/bot/stop', require_auth(require_admin(self.bot_stop)))
+        app.router.add_post('/api/bot/restart', require_auth(require_admin(self.bot_restart)))
+        app.router.add_post('/api/bot/emergency-exit', require_auth(require_admin(self.bot_emergency_exit)))
         # MB-31: backwards-compat alias - underscore form used by older JS/templates
-        app.router.add_post('/api/bot/emergency_exit', self.bot_emergency_exit)
+        app.router.add_post('/api/bot/emergency_exit', require_auth(require_admin(self.bot_emergency_exit)))
 
         # API endpoints
         app.router.add_get('/api/modules', self.get_modules_status)
