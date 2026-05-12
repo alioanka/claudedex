@@ -129,7 +129,16 @@ class DashboardEndpoints:
 
         # Web application
         self.app = web.Application()
-        self.sio = socketio.AsyncServer(async_mode='aiohttp', cors_allowed_origins='*')
+        # MB-26: tighten Socket.IO CORS — was '*' (any origin); now env-gated allowlist
+        _ws_allowed = [
+            o.strip()
+            for o in os.getenv('DASHBOARD_CORS_ORIGINS', 'http://localhost:8080').split(',')
+            if o.strip()
+        ]
+        self.sio = socketio.AsyncServer(
+            async_mode='aiohttp',
+            cors_allowed_origins=_ws_allowed,
+        )
         self.sio.attach(self.app)
 
         # Template engine
@@ -1441,13 +1450,39 @@ class DashboardEndpoints:
 
     def _setup_socketio(self):
         """Setup Socket.IO handlers"""
-        
+
         @self.sio.event
-        async def connect(sid, environ):
-            logger.info(f"Client connected: {sid}")
-            # Send initial data
+        async def connect(sid, environ, auth=None):
+            # MB-26: gate WS connects on a valid session cookie. Previously any
+            # client (any origin, any auth) connected and was streamed live data.
+            cookie_header = environ.get('HTTP_COOKIE', '')
+            session_id = None
+            for kv in cookie_header.split(';'):
+                if '=' in kv:
+                    k, v = kv.strip().split('=', 1)
+                    if k == 'session_id':
+                        session_id = v
+                        break
+            if not session_id:
+                logger.warning(f"WS connect rejected (no session_id): sid={sid}")
+                return False
+            auth_svc = getattr(self, 'auth_service', None)
+            if not auth_svc:
+                logger.warning(f"WS connect rejected (auth_service unavailable): sid={sid}")
+                return False
+            try:
+                user = await auth_svc.validate_session(session_id)
+            except Exception as e:
+                logger.warning(f"WS connect rejected (session validation error): {e}")
+                return False
+            if not user:
+                logger.warning(f"WS connect rejected (invalid session): sid={sid}")
+                return False
+            logger.info(
+                f"WS client connected: sid={sid} user={getattr(user, 'username', user)}"
+            )
             await self._send_initial_data(sid)
-        
+
         @self.sio.event
         async def disconnect(sid):
             logger.info(f"Client disconnected: {sid}")
