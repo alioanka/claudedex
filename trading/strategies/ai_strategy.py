@@ -24,6 +24,7 @@ from .base_strategy import (
 from ml.models.ensemble_model import EnsembleModel
 from ml.models.pump_predictor import PumpPredictor
 from ml.models.rug_classifier import RugClassifier
+from ml.feature_store import write_feature_row
 from core.pattern_analyzer import PatternAnalyzer
 from utils.helpers import calculate_moving_average, calculate_ema
 
@@ -31,15 +32,17 @@ from utils.helpers import calculate_moving_average, calculate_ema
 class AIStrategy(BaseStrategy):
     """AI-powered trading strategy using ensemble machine learning"""
     
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], db_pool=None):
         """
         Initialize AI strategy
-        
+
         Args:
             config: Strategy configuration
+            db_pool: Optional asyncpg pool for feature-store writes (best-effort).
         """
         super().__init__(config)
-        
+        self.db_pool = db_pool
+
         # ML Models
         self.ensemble_model: Optional[EnsembleModel] = None
         self.pump_predictor: Optional[PumpPredictor] = None
@@ -334,7 +337,25 @@ class AIStrategy(BaseStrategy):
                     f"{len(self.scaler.mean_)}; returning no features"
                 )
                 return None
-            return self.scaler.transform(feature_array)
+            scaled = self.scaler.transform(feature_array)
+            # Best-effort feature-store write; never blocks signal generation.
+            try:
+                await write_feature_row(
+                    self.db_pool,
+                    token_address=market_data.get("token_address"),
+                    chain=market_data.get("chain", "unknown"),
+                    feature_vector={
+                        "scaler_v1": scaled[0].tolist(),
+                        "raw_v1": feature_array[0].tolist(),
+                    },
+                    metadata={
+                        "strategy": self.__class__.__name__,
+                        "feature_window": self.feature_window,
+                    },
+                )
+            except Exception:
+                pass
+            return scaled
             
         except Exception as e:
             logger.error(f"Feature extraction failed: {e}")
