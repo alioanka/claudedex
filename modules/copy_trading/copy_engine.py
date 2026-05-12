@@ -23,6 +23,7 @@ from modules.base_module import (
     ModuleStatus,
     ModuleType,
 )
+from core.dry_run import should_skip_live
 
 logger = logging.getLogger("CopyTradingEngine")
 
@@ -259,7 +260,7 @@ class CopyTradeExecutor:
         slippage_bps: int = 100
     ) -> Dict:
         """Copy a Solana swap via Jupiter"""
-        if self.dry_run:
+        if should_skip_live(self.dry_run, module='copy_trading', account=getattr(self, 'solana_wallet', None)):
             return await self._simulate_solana_swap(input_mint, output_mint, amount_lamports)
 
         if not self.solana_wallet or not self.solana_private_key:
@@ -312,7 +313,7 @@ class CopyTradeExecutor:
                 'error': f"Chain '{chain}' not supported by EVM copy executor (V2-API only).",
             }
 
-        if self.dry_run:
+        if should_skip_live(self.dry_run, module='copy_trading', account=getattr(self, 'evm_wallet', None)):
             return await self._simulate_evm_swap(token_address, amount_wei, is_buy)
 
         if not self.evm_wallet or not self.evm_private_key:
