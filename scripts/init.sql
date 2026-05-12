@@ -560,11 +560,9 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_resource ON audit_logs(resource_type, resource_id);
 
--- Create default admin user (password: admin123 - CHANGE IMMEDIATELY!)
--- Password hash for 'admin123' - bcrypt with cost factor 12
-INSERT INTO users (username, password_hash, role, email, is_active, require_2fa)
-VALUES ('admin', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/Lfw99hhm1qJYT8sFm', 'admin', NULL, TRUE, FALSE)
-ON CONFLICT (username) DO NOTHING;
+-- Admin user is seeded by scripts/init_auth.py with a randomly-generated
+-- password printed ONCE to stdout. Do NOT seed a default admin here --
+-- shipped credentials are a leak (see MB-29 / MB-29b).
 
 -- Clean up expired sessions (run periodically)
 -- DELETE FROM sessions WHERE expires_at < NOW();
