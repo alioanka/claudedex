@@ -527,6 +527,11 @@ class CopyTradingEngine:
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
         # Copy trading settings
+        # MB-23: this is the per-copy cap in USD. The EVM path historically
+        # (incorrectly) treated it as ETH and multiplied by 1e18 - at $2000 ETH
+        # that was a 2000x overrun of operator intent. EVM path now uses the
+        # live ETH price (see _execute_evm_copy_trade) to convert USD -> wei,
+        # matching the Solana path's USD/sol_price -> lamports convention.
         self.max_copy_amount = 100.0  # Max USD per copy
         self.copy_ratio = 10  # Copy 10% of original
 
@@ -900,10 +905,21 @@ class CopyTradingEngine:
             is_buy = 'ForTokens' in method_name
             side = 'buy' if is_buy else 'sell'
 
-            # Calculate copy amount (ratio of original)
+            # Calculate copy amount (ratio of original).
+            # MB-23 fix: the cap is in USD - convert to wei via live ETH price.
+            # Previously `int(self.max_copy_amount * 1e18)` treated USD as ETH:
+            # at ~$2000 ETH the cap was ~$200,000 (2000x operator intent).
+            eth_price = (
+                await self.executor.price_fetcher.get_price('eth')
+                if self.executor else 3000
+            )
+            if not eth_price or eth_price <= 0:
+                logger.error("Invalid ETH price - skipping copy to avoid bad sizing")
+                return
+            max_copy_wei = int((self.max_copy_amount / eth_price) * 1e18)
             copy_amount = min(
                 original_value * self.copy_ratio // 100,
-                int(self.max_copy_amount * 1e18)  # Max in wei
+                max_copy_wei,
             )
 
             if copy_amount <= 0:

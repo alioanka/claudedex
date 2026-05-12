@@ -351,6 +351,8 @@ These decisions belong to the operator, not the team:
 | MB-32 | DASHBOARD | backend | S | DASHBOARD_analyst | No DRY_RUN/LIVE indicator |
 | MB-33 | DASHBOARD | backend | M | DASHBOARD_backend | `_update_env_file` doesn't reach subprocesses |
 
+> Note (2026-05-12): MB-23 fixed via Option B — `max_copy_amount` remains USD-denominated (matches Solana path :1088 semantics); EVM `_execute_evm_copy_trade` now converts USD → wei via `self.executor.price_fetcher.get_price('eth')`, the same price source already used in the trade-recording block at :1139.
+
 *P1 items (P1-01 .. P1-50) follow the same structure in the P1 table above.*
 
 ---
