@@ -141,7 +141,7 @@ async def main():
                 telegram_controller.register_module(
                     name='copy_trading',
                     engine=engine,
-                    start_method='run',
+                    start_method='start',
                     stop_method='stop',
                     positions_attr='active_copies'
                 )
@@ -153,7 +153,7 @@ async def main():
 
     try:
         logger.info("✅ Copy Trading Engine initialized successfully")
-        await engine.run()
+        await engine.start()
     except KeyboardInterrupt:
         if telegram_controller:
             await telegram_controller.notify("Copy Trading module shutting down...", priority="high")

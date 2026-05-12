@@ -22,6 +22,7 @@ class ModuleType(Enum):
     ARBITRAGE = "arbitrage"
     LIQUIDITY_PROVISION = "liquidity_provision"
     SOLANA_STRATEGIES = "solana_strategies"
+    COPY_TRADING = "copy_trading"
     CUSTOM = "custom"
 
 

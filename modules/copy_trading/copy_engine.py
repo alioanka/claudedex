@@ -16,6 +16,14 @@ import os
 import ast
 from datetime import datetime
 
+from modules.base_module import (
+    BaseModule,
+    ModuleConfig,
+    ModuleMetrics,
+    ModuleStatus,
+    ModuleType,
+)
+
 logger = logging.getLogger("CopyTradingEngine")
 
 # Jupiter API (using lite-api.jup.ag/swap/v1)
@@ -537,7 +545,7 @@ class CopyTradeExecutor:
         }
 
 
-class CopyTradingEngine:
+class CopyTradingEngine(BaseModule):
     """
     Copy Trading Engine for tracking and copying wallet trades.
 
@@ -546,12 +554,24 @@ class CopyTradingEngine:
     - Solana wallet monitoring via RPC
     - Real trade execution with Jupiter/Uniswap
     - Configurable copy amount and ratio
+
+    BaseModule-compliant: killswitch poller auto-starts via
+    __init_subclass__ wrap (2b4c61f). Per-module pause via
+    logs/.pause_copy_trading will be honored through should_skip_live
+    once executor copy_evm_swap/copy_solana_swap migrate to use it
+    (MB-COPY-DRY follow-up; still gated by self.dry_run today).
     """
 
     def __init__(self, config: Dict, db_pool):
-        self.config = config
+        module_config = ModuleConfig(
+            name="copy_trading",
+            module_type=ModuleType.COPY_TRADING,
+            enabled=bool(config.get('copy_trading_enabled', True)),
+            custom_settings=config,
+        )
+        super().__init__(module_config)
         self.db_pool = db_pool
-        self.is_running = False
+        self.config_dict = config  # raw dict retained for legacy reads
         self.targets = []  # Initialize empty, load from DB
 
         # Use Pool Engine with secrets manager fallback (NOT os.getenv directly)
@@ -596,8 +616,29 @@ class CopyTradingEngine:
             'last_stats_log': datetime.now()
         }
 
-    async def run(self):
-        self.is_running = True
+    async def initialize(self) -> bool:
+        """Initialize executor and load settings. Idempotent."""
+        try:
+            self.status = ModuleStatus.INITIALIZING
+            # Initialize executor with db_pool for secrets manager access
+            self.executor = CopyTradeExecutor(self.dry_run, db_pool=self.db_pool)
+            await self.executor.initialize()
+            await self._load_settings()
+            return True
+        except Exception as e:
+            self.logger.error(f"Copy Trading initialize failed: {e}")
+            self.error_message = str(e)
+            self.status = ModuleStatus.ERROR
+            return False
+
+    async def start(self) -> bool:
+        """Run the copy-trading monitor loop. Returns True on clean exit."""
+        if self.executor is None:
+            if not await self.initialize():
+                return False
+        self._running = True
+        self.status = ModuleStatus.RUNNING
+        self.start_time = datetime.now()
         logger.info("👯 Copy Trading Engine Started")
         logger.info(f"   Mode: {'DRY_RUN (Simulated)' if self.dry_run else 'LIVE TRADING'}")
         if self.etherscan_api_key:
@@ -609,14 +650,7 @@ class CopyTradingEngine:
             logger.info(f"   EVM monitoring: Disabled (no ETHERSCAN_API_KEY)")
         logger.info(f"   Solana monitoring: {'Enabled' if self.solana_rpc_url else 'Disabled (no SOLANA_RPC_URL)'}")
 
-        # Initialize executor with db_pool for secrets manager access
-        self.executor = CopyTradeExecutor(self.dry_run, db_pool=self.db_pool)
-        await self.executor.initialize()
-
-        # Initial load of settings
-        await self._load_settings()
-
-        while self.is_running:
+        while self._running:
             try:
                 self._stats['cycles'] += 1
 
@@ -639,6 +673,19 @@ class CopyTradingEngine:
             except Exception as e:
                 logger.error(f"Copy loop error: {e}")
                 await asyncio.sleep(15)
+        return True
+
+    async def process_opportunity(self, opportunity: Dict) -> Optional[Dict]:
+        """COPY discovers opportunities internally via wallet monitoring."""
+        return None
+
+    async def get_metrics(self) -> ModuleMetrics:
+        """Return current ModuleMetrics snapshot (filled by update_metrics)."""
+        try:
+            await self.update_metrics()
+        except Exception as e:
+            self.logger.debug(f"update_metrics failed: {e}")
+        return self.metrics
 
     async def _log_stats_if_needed(self):
         """Log statistics every 5 minutes"""
@@ -1445,12 +1492,19 @@ class CopyTradingEngine:
             chain=chain,
         )
 
-    async def stop(self):
-        """Stop the engine"""
-        self.is_running = False
+    async def stop(self) -> bool:
+        """Stop the engine. Returns True on clean shutdown."""
+        self._running = False
+        self.status = ModuleStatus.STOPPING
 
         # Close executor
-        if self.executor:
-            await self.executor.close()
+        try:
+            if self.executor:
+                await self.executor.close()
+        except Exception as e:
+            self.logger.warning(f"executor.close() failed: {e}")
 
+        self.status = ModuleStatus.STOPPED
+        self.stop_time = datetime.now()
         logger.info("🛑 Copy Trading Engine Stopped")
+        return True
