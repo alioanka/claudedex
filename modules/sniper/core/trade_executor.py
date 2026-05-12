@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from datetime import datetime
 
+from core.dry_run import should_skip_live
 from core.units import to_raw_evm
 
 # Import RPCProvider for centralized RPC management
@@ -199,7 +200,7 @@ class TradeExecutor:
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
         # Initialize Web3 if EVM credentials available
-        if self.evm_private_key and not self.dry_run:
+        if self.evm_private_key and not should_skip_live(self.dry_run, module='sniper', account=getattr(self, 'evm_wallet', None)):
             try:
                 from web3 import Web3
                 # Get RPC from Pool Engine with fallback
@@ -251,7 +252,8 @@ class TradeExecutor:
         logger.info(f"🛒 Executing BUY: {token_address} on {chain}")
         logger.info(f"   Amount: {amount_in} | Slippage: {slippage}% | Priority: {priority_fee}")
 
-        if self.dry_run:
+        _account = getattr(self, 'solana_wallet', None) if chain == 'solana' else getattr(self, 'evm_wallet', None)
+        if should_skip_live(self.dry_run, module='sniper', account=_account):
             return await self._simulate_buy(token_address, chain, amount_in)
 
         if chain == 'solana':
@@ -283,7 +285,8 @@ class TradeExecutor:
         logger.info(f"💰 Executing SELL: {token_address} on {chain}")
         logger.info(f"   Amount: {amount_in} | Slippage: {slippage}% | Priority: {priority_fee}")
 
-        if self.dry_run:
+        _account = getattr(self, 'solana_wallet', None) if chain == 'solana' else getattr(self, 'evm_wallet', None)
+        if should_skip_live(self.dry_run, module='sniper', account=_account):
             return await self._simulate_sell(token_address, chain, amount_in)
 
         if chain == 'solana':
