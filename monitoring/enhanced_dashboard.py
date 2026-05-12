@@ -1332,63 +1332,40 @@ class DashboardEndpoints:
         return env_path
 
     def _update_env_file(self, key: str, value: str) -> bool:
-        """Update a key in the .env file"""
+        """DEPRECATED (MB-33): writing .env at runtime does not reach already-
+        spawned trading-module subprocesses, which read .env once at startup.
+        Dashboard writes here looked successful but silently failed to take
+        effect — operators flipped enabled=true and modules stayed off.
+
+        Use config_manager.set_sensitive_config() or the DB-backed
+        ConfigManager surface that trading modules actually read from.
+        """
+        raise NotImplementedError(
+            f"_update_env_file is deprecated (MB-33). "
+            f"Setting '{key}'={value!r} must go through the DB-backed "
+            f"ConfigManager so trading-module subprocesses see the change."
+        )
+
+    def _set_module_enable_flag(self, env_key: str, value: str) -> bool:
+        """Best-effort, in-process toggle of a module-enable env var.
+
+        MB-33: persistent dashboard writes to .env are deprecated because
+        they do not reach already-spawned subprocesses. This helper updates
+        os.environ for the current process (so the orchestrator's own view
+        flips immediately) but does NOT mutate .env on disk. To actually
+        start/stop a subprocess, use the orchestrator's module-manager
+        start/stop primitives, not env-file edits.
+        """
         try:
-            env_path = self._get_env_file_path()
-            logger.info(f"Updating .env file at: {env_path}, setting {key}={value}")
-
-            # Read existing content or create default if file doesn't exist
-            lines = []
-            key_found = False
-
-            if os.path.exists(env_path):
-                with open(env_path, 'r') as f:
-                    for line in f:
-                        if line.strip().startswith(f'{key}='):
-                            lines.append(f'{key}={value}\n')
-                            key_found = True
-                        else:
-                            lines.append(line)
-            else:
-                # Create default .env with all module settings
-                logger.info(f"Creating new .env file at: {env_path}")
-                lines = [
-                    "# Trading Module Configuration\n",
-                    "DEX_MODULE_ENABLED=true\n",
-                    "FUTURES_MODULE_ENABLED=false\n",
-                    "SOLANA_MODULE_ENABLED=false\n",
-                    "\n",
-                    "# Environment\n",
-                    "ENVIRONMENT=development\n",
-                    "DEBUG=false\n",
-                ]
-                # Check if the key we're setting is in the defaults
-                for i, line in enumerate(lines):
-                    if line.strip().startswith(f'{key}='):
-                        lines[i] = f'{key}={value}\n'
-                        key_found = True
-                        break
-
-            # If key wasn't found, add it
-            if not key_found:
-                lines.append(f'{key}={value}\n')
-
-            # Write back
-            with open(env_path, 'w') as f:
-                f.writelines(lines)
-
-            logger.info(f"Successfully wrote .env file with {key}={value}")
-
-            # Reload environment variables
-            load_dotenv(env_path, override=True)
-
-            # Also update os.environ directly for immediate effect
-            os.environ[key] = value
-            logger.info(f"Environment variable {key} set to: {os.environ.get(key)}")
-
+            os.environ[env_key] = value
+            logger.info(
+                f"MB-33: os.environ[{env_key}]={value} set in-process; "
+                f".env file not modified (subprocesses unaffected — use "
+                f"orchestrator start/stop to actually change runtime state)."
+            )
             return True
         except Exception as e:
-            logger.error(f"Error updating .env file: {e}", exc_info=True)
+            logger.error(f"Failed to set os.environ[{env_key}]: {e}")
             return False
 
     async def _api_module_enable(self, request):
@@ -1405,14 +1382,19 @@ class DashboardEndpoints:
             return web.json_response({'error': f'Unknown module: {module}'}, status=400)
 
         env_key = module_env_map[module]
-        if self._update_env_file(env_key, 'true'):
-            logger.info(f"Module {module} enabled via API")
-            return web.json_response({'success': True, 'message': f'{module} enabled'})
+        if self._set_module_enable_flag(env_key, 'true'):
+            logger.info(f"Module {module} enabled via API (in-process only; MB-33)")
+            return web.json_response({
+                'success': True,
+                'message': f'{module} enabled in-process',
+                'note': 'MB-33: .env not modified; subprocesses unaffected. '
+                        'Use orchestrator start/stop to change runtime state.',
+            })
         else:
-            return web.json_response({'error': 'Failed to update .env file'}, status=500)
+            return web.json_response({'error': 'Failed to set env flag'}, status=500)
 
     async def _api_module_disable(self, request):
-        """Disable a module by updating .env"""
+        """Disable a module by updating in-process env flag (MB-33: not .env)."""
         module = request.match_info.get('module', '')
 
         module_env_map = {
@@ -1425,11 +1407,16 @@ class DashboardEndpoints:
             return web.json_response({'error': f'Unknown module: {module}'}, status=400)
 
         env_key = module_env_map[module]
-        if self._update_env_file(env_key, 'false'):
-            logger.info(f"Module {module} disabled via API")
-            return web.json_response({'success': True, 'message': f'{module} disabled'})
+        if self._set_module_enable_flag(env_key, 'false'):
+            logger.info(f"Module {module} disabled via API (in-process only; MB-33)")
+            return web.json_response({
+                'success': True,
+                'message': f'{module} disabled in-process',
+                'note': 'MB-33: .env not modified; subprocesses unaffected. '
+                        'Use orchestrator start/stop to change runtime state.',
+            })
         else:
-            return web.json_response({'error': 'Failed to update .env file'}, status=500)
+            return web.json_response({'error': 'Failed to set env flag'}, status=500)
 
     async def _api_module_pause(self, request):
         """Pause a module (sets to paused state)"""
@@ -1452,11 +1439,16 @@ class DashboardEndpoints:
             return web.json_response({'error': f'Unknown module: {module}'}, status=400)
 
         env_key = module_env_map[module]
-        if self._update_env_file(env_key, 'true'):
-            logger.info(f"Module {module} started via API")
-            return web.json_response({'success': True, 'message': f'{module} started'})
+        if self._set_module_enable_flag(env_key, 'true'):
+            logger.info(f"Module {module} started via API (in-process only; MB-33)")
+            return web.json_response({
+                'success': True,
+                'message': f'{module} started in-process',
+                'note': 'MB-33: .env not modified; subprocesses unaffected. '
+                        'Use orchestrator start/stop to change runtime state.',
+            })
         else:
-            return web.json_response({'error': 'Failed to update .env file'}, status=500)
+            return web.json_response({'error': 'Failed to set env flag'}, status=500)
 
     def _setup_socketio(self):
         """Setup Socket.IO handlers"""
