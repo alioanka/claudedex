@@ -79,7 +79,15 @@ class AIStrategy(BaseStrategy):
         # Performance tracking for learning
         self.prediction_history: List[Dict[str, Any]] = []
         self.feature_importance: Dict[str, float] = {}
-        
+
+        # Per-token feature_store row id, latched at first extract; cleared at close.
+        # Stores the row id of the FIRST feature vector seen for each token — that's
+        # the snapshot closest to position-open. Later monitoring extracts don't
+        # overwrite (FIRST-wins). Cleared by clear_last_feature_row_id() at close.
+        # TODO: explicit latch-at-trade-open would be more precise; this MVP
+        # approximates by relying on the open-triggering extract being first.
+        self._feature_row_ids: Dict[str, int] = {}
+
         logger.info(f"Initialized AI Strategy: {self.name}")
     
     async def initialize(self) -> None:
@@ -339,28 +347,37 @@ class AIStrategy(BaseStrategy):
                 return None
             scaled = self.scaler.transform(feature_array)
             # Best-effort feature-store write; never blocks signal generation.
-            try:
-                await write_feature_row(
-                    self.db_pool,
-                    token_address=market_data.get("token_address"),
-                    chain=market_data.get("chain", "unknown"),
-                    feature_vector={
-                        "scaler_v1": scaled[0].tolist(),
-                        "raw_v1": feature_array[0].tolist(),
-                    },
-                    metadata={
-                        "strategy": self.__class__.__name__,
-                        "feature_window": self.feature_window,
-                    },
-                )
-            except Exception:
-                pass
+            row_id = await write_feature_row(
+                self.db_pool,
+                token_address=market_data.get("token_address"),
+                chain=market_data.get("chain", "unknown"),
+                feature_vector={
+                    "scaler_v1": scaled[0].tolist(),
+                    "raw_v1": feature_array[0].tolist(),
+                },
+                metadata={
+                    "strategy": self.__class__.__name__,
+                    "feature_window": self.feature_window,
+                },
+            )
+            token_addr = market_data.get("token_address")
+            if row_id is not None and token_addr and token_addr not in self._feature_row_ids:
+                self._feature_row_ids[token_addr] = row_id
             return scaled
             
         except Exception as e:
             logger.error(f"Feature extraction failed: {e}")
             return None
-    
+
+    def get_last_feature_row_id(self, token_address: str) -> Optional[int]:
+        """Return the row id of the first feature vector seen for this token
+        since the last clear. None if no extract has run for it."""
+        return self._feature_row_ids.get(token_address)
+
+    def clear_last_feature_row_id(self, token_address: str) -> None:
+        """Called by the position-close path after update_outcome. Frees memory."""
+        self._feature_row_ids.pop(token_address, None)
+
     async def _check_rug_probability(
         self,
         features: np.ndarray,

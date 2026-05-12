@@ -2055,6 +2055,28 @@ class TradingBotEngine:
                     import traceback
                     logger.error(traceback.format_exc())
 
+                # Feature-store outcome backfill (best-effort; never blocks close).
+                # Threads back to the row written by AIStrategy._extract_features.
+                try:
+                    ai_strategy = self.strategy_manager.strategies.get('ai') if hasattr(self, 'strategy_manager') else None
+                    if ai_strategy is not None and hasattr(ai_strategy, 'get_last_feature_row_id'):
+                        feature_row_id = ai_strategy.get_last_feature_row_id(token_address)
+                        if feature_row_id is not None:
+                            from ml.feature_store import update_outcome
+                            await update_outcome(
+                                self.db.pool,
+                                row_id=feature_row_id,
+                                outcome={
+                                    'pnl_pct': float(pnl_percentage),
+                                    'won': bool(float(final_pnl) > 0),
+                                    'exit_reason': reason,
+                                    'token_symbol': token_symbol,
+                                },
+                            )
+                            ai_strategy.clear_last_feature_row_id(token_address)
+                except Exception as e:
+                    logger.debug(f"feature-store outcome backfill failed (non-fatal): {e}")
+
                 # ✅ Update circuit breaker metrics ONCE at the end
                 self.risk_manager.update_trade_metrics({
                     'success': True,
