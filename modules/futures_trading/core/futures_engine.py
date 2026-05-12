@@ -845,12 +845,9 @@ class FuturesTradingEngine:
 
         for symbol, position in list(self.active_positions.items()):
             try:
-                # Get current price
-                ticker = await self._get_ticker(symbol)
-                if not ticker or 'last' not in ticker:
+                current_price = await self._get_decision_price(symbol)
+                if current_price is None:
                     continue
-
-                current_price = float(ticker['last'])
                 position.current_price = current_price
 
                 # Update high/low tracking for trailing stop
@@ -1942,6 +1939,21 @@ class FuturesTradingEngine:
         """Process pending orders"""
         # Currently not implementing limit orders - using market orders only
         pass
+
+    async def _get_decision_price(self, symbol: str) -> Optional[float]:
+        """Return the exchange's mark price if available; fall back to ticker last.
+        Mark price is what drives liquidation — use it for SL/TP/liq checks."""
+        if hasattr(self.exchange_client, 'get_mark_price'):
+            try:
+                mp = await self.exchange_client.get_mark_price(symbol)
+                if mp is not None and mp > 0:
+                    return float(mp)
+            except Exception as e:
+                logger.debug(f"get_mark_price failed for {symbol}: {e}")
+        ticker = await self._get_ticker(symbol)
+        if ticker and 'last' in ticker:
+            return float(ticker['last'])
+        return None
 
     async def _get_ticker(self, symbol: str) -> Optional[Dict]:
         """Get current ticker for symbol - uses mainnet price client when available"""
