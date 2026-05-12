@@ -1429,7 +1429,11 @@ class SolanaTradingEngine:
                     if private_key:
                         self.jupiter_helper = JupiterHelper(
                             solana_rpc_url=self.primary_rpc,
-                            private_key=private_key
+                            private_key=private_key,
+                            priority_fee_lamports=(
+                                self.config_manager.priority_fee_lamports
+                                if self.config_manager else None
+                            ),
                         )
                         await self.jupiter_helper.initialize()
                         logger.info("✅ JupiterHelper initialized for LIVE swap execution")

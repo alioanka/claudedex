@@ -76,13 +76,19 @@ class JupiterHelper:
     - Swap execution
     """
 
-    def __init__(self, solana_rpc_url: str = None, private_key: str = None):
+    def __init__(
+        self,
+        solana_rpc_url: str = None,
+        private_key: str = None,
+        priority_fee_lamports: Optional[int] = None,
+    ):
         """
         Initialize Jupiter helper
 
         Args:
             solana_rpc_url: Solana RPC URL
             private_key: Base58-encoded private key for transaction signing
+            priority_fee_lamports: Raw int lamports to use as Jupiter priority fee. If None, get_swap_transaction falls back to its structured-dict default (maxLamports=1_000_000, priorityLevel=high).
         """
         # Jupiter API URL - supports different plans:
         # - Lite (Free): https://lite-api.jup.ag/swap/v1 (1 RPS) - DEFAULT
@@ -170,6 +176,10 @@ class JupiterHelper:
 
         # Track last swap error for callers to detect specific failure types
         self.last_swap_error = None  # e.g., "0x1788", "0x1771", etc.
+
+        # Optional raw-lamports priority fee override (wired from SolanaConfigManager).
+        # None => get_swap_transaction uses its structured-dict default.
+        self.priority_fee_lamports = priority_fee_lamports
 
     def _load_keypair_from_value(self, pk_str: str) -> Optional[Keypair]:
         """
