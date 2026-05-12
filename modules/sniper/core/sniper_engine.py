@@ -11,6 +11,7 @@ import os
 import aiohttp
 
 from config.config_manager import ConfigManager
+from core.dry_run import should_skip_live
 from data.storage.database import DatabaseManager
 from monitoring.alerts import AlertManager
 
@@ -561,7 +562,7 @@ class SniperEngine:
                         safety_report.get('sell_tax'),
                         safety_report.get('liquidity_usd'),
                         'open' if result.success else 'failed',
-                        True,  # is_simulated - update based on dry_run mode
+                        should_skip_live(self.dry_run, module='sniper'),
                         result.timestamp,
                         result.tx_hash,
                         json.dumps({
