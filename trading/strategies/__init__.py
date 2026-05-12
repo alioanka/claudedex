@@ -10,14 +10,17 @@ logger = logging.getLogger(__name__)
 class StrategyManager:
     """Manages and coordinates trading strategies"""
     
-    def __init__(self, config: Dict):
+    def __init__(self, config: Dict, db_pool=None):
         """
         Initialize strategy manager
 
         Args:
             config: Strategy configuration dictionary
+            db_pool: Optional asyncpg pool (or DatabaseManager duck-typing
+                via .acquire()) threaded into AIStrategy for feature-store writes.
         """
         self.config = config
+        self.db_pool = db_pool
         self.strategies = {}
         self.parameters = {}
         self.active_strategies = set()
@@ -47,7 +50,7 @@ class StrategyManager:
             ai_config = self.config.get('ai', {})
             ai_config.setdefault('ml_confidence_threshold', 0.65)  # Lowered from 0.75
             ai_config.setdefault('min_pump_probability', 0.50)      # Lowered from 0.60
-            self.strategies['ai'] = AIStrategy(ai_config)
+            self.strategies['ai'] = AIStrategy(ai_config, db_pool=self.db_pool)
             
         # Initialize active strategies (only if they have initialize method)
         for name, strategy in self.strategies.items():
