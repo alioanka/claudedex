@@ -21,4 +21,5 @@ Centralized-exchange perp trading on Binance Futures and Bybit V5. Multi-strateg
 ## Live-trade readiness
 AMBER. MB-16 (init order), MB-17 (margin mode + validate_new_position wiring), MB-18 (mark vs last price) closed. Bybit V5 helpers landed in MB-17b.
 ## See also
-Phase 1 audit reports: `docs/agents/reports/FUTURES_*.md` (quant / analyst / backend).
+- Phase 1 audit reports: `docs/agents/reports/FUTURES_*.md` (quant / analyst / backend).
+- Canonical engine API: `docs/engines.md`.

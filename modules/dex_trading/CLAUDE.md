@@ -20,4 +20,5 @@ Spot trading on EVM DEXes (Uniswap V2/V3, SushiSwap, PancakeSwap) across Ethereu
 ## Live-trade readiness
 AMBER. MB-01 (decimals) and MB-02 (Flashbots EIP-191) closed. Outstanding: P1-04 `pool_engine` integration for unified RPC selection.
 ## See also
-Phase 1 audit reports: `docs/agents/reports/DEX_*.md` (smartcontract / quant / analyst).
+- Phase 1 audit reports: `docs/agents/reports/DEX_*.md` (smartcontract / quant / analyst).
+- Canonical engine API: `docs/engines.md`.

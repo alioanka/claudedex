@@ -20,4 +20,5 @@ Per-module local risk: `max_copy_amount` cap + per-leader cooldown enforced inli
 ## Live-trade readiness
 AMBER. MB-22 (fake Solana SELL), MB-23 (`* 1e18` unit-bug), MB-24 (per-chain DEX routing), MB-25 (emergency-stop integration) closed; BaseModule conversion done.
 ## See also
-Phase 1 audit reports: `docs/agents/reports/COPY_TRADING_*.md` (quant / analyst / backend).
+- Phase 1 audit reports: `docs/agents/reports/COPY_TRADING_*.md` (quant / analyst / backend).
+- Canonical engine API: `docs/engines.md`.

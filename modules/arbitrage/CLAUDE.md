@@ -20,4 +20,5 @@ Spatial (cross-DEX) and triangular EVM arbitrage with flash-loan funding (Aave V
 ## Live-trade readiness
 AMBER. MB-03 (DAI typo), MB-04 (one-legged broadcast), MB-05 (placeholder amountIn) closed; triangular still entry-disabled by atomic-receiver guard pending contract deploy.
 ## See also
-Phase 1 audit reports: `docs/agents/reports/ARBITRAGE_*.md` (smartcontract / quant / analyst).
+- Phase 1 audit reports: `docs/agents/reports/ARBITRAGE_*.md` (smartcontract / quant / analyst).
+- Canonical engine API: `docs/engines.md`.

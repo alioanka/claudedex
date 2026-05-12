@@ -19,4 +19,5 @@ None — the dashboard does not execute trades. State-changing endpoints are pro
 ## Live-trade readiness
 AMBER. Security cluster (MB-26..29, MB-29b) and operational cluster (MB-30, MB-31, MB-32, MB-33) all closed. Pre-prod: enable HTTPS at reverse proxy and set `DASHBOARD_HTTPS=true`; rotate the admin password printed once by `scripts/init_auth.py`.
 ## See also
-Phase 1 audit reports: `docs/agents/reports/DASHBOARD_*.md` (quant / analyst / backend).
+- Phase 1 audit reports: `docs/agents/reports/DASHBOARD_*.md` (quant / analyst / backend).
+- Canonical engine API: `docs/engines.md`.

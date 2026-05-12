@@ -22,4 +22,5 @@ Per-module local risk: `TokenSafetyChecker` (`modules/sniper/core/token_safety.p
 ## Live-trade readiness
 AMBER. MB-11..MB-14 closed (amount_out_min, hardcoded TP/SL, `is_simulated` flag, deprecated price feed). Structural detection latency (15-120s vs competitors' 50-400ms) remains as P1.
 ## See also
-Phase 1 audit reports: `docs/agents/reports/SNIPER_*.md` (smartcontract / quant / analyst).
+- Phase 1 audit reports: `docs/agents/reports/SNIPER_*.md` (smartcontract / quant / analyst).
+- Canonical engine API: `docs/engines.md`.

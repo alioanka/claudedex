@@ -22,4 +22,5 @@ LLM-driven sentiment + news analysis pipeline. Produces directional signals from
 ## Live-trade readiness
 AMBER. MB-20 (executor delegation through canonical futures path) and MB-21 (headline sanitisation) closed. MB-19 (StandardScaler live `fit_transform`) remains in `trading/strategies/ai_strategy.py:289-295` pending offline-fit pipeline.
 ## See also
-Phase 1 audit reports: `docs/agents/reports/AI_*.md` (quant / analyst / backend).
+- Phase 1 audit reports: `docs/agents/reports/AI_*.md` (quant / analyst / backend).
+- Canonical engine API: `docs/engines.md`.
