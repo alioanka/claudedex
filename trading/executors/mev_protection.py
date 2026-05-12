@@ -19,6 +19,7 @@ import logging
 from web3 import Web3
 from eth_account import Account
 from eth_account.datastructures import SignedTransaction
+from eth_account.messages import encode_defunct
 import aiohttp
 
 from trading.orders.order_manager import Order
@@ -386,11 +387,12 @@ class MEVProtectionLayer(BaseExecutor):
             return ""
             
     def _sign_flashbots_bundle(self, bundle: Dict) -> str:
-        """Sign Flashbots bundle"""
-        message = json.dumps(bundle, separators=(',', ':'))
-        message_hash = hashlib.sha256(message.encode()).digest()
-        signature = self.flashbots_signer.signHash(message_hash)
-        return signature.signature.hex()
+        """Sign Flashbots bundle per Flashbots auth spec: EIP-191 of keccak256(body) hex."""
+        body = json.dumps(bundle, separators=(',', ':'))
+        body_hash_hex = Web3.keccak(text=body).hex()
+        signable = encode_defunct(text=body_hash_hex)
+        signed = self.flashbots_signer.sign_message(signable)
+        return signed.signature.hex()
         
     async def _route_private_mempool(self, transaction: Dict) -> Dict:
         """Route through private mempool"""
