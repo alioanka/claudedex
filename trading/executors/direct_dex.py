@@ -557,10 +557,16 @@ class DirectDEXExecutor(BaseExecutor):
             w3 = self.w3_connections[order.chain]
             contract = self.dex_contracts[order.chain][quote.dex.value]
 
-            # Calculate minimum output with slippage
-            min_amount_out = int(
-                quote.amount_out * (1 - float(order.slippage or self.max_slippage)) * 10**18
-            )
+            # Calculate minimum output with slippage.
+            # MB-01 fix: previously *10**18 hardcoded - wrong for USDC/USDT (6),
+            # WBTC (8), etc. Use the actual output-token decimals via core.units.
+            from core.units import to_raw_evm
+            output_token = order.token_out or (quote.path[-1] if quote.path else None)
+            if not output_token:
+                raise ValueError("Cannot determine output token for min_amount_out")
+            slippage = float(order.slippage or self.max_slippage)
+            human_min_out = Decimal(str(quote.amount_out)) * (Decimal(1) - Decimal(str(slippage)))
+            min_amount_out = await to_raw_evm(order.chain, output_token, human_min_out)
 
             # Deadline (20 minutes from now)
             deadline = int((datetime.now() + timedelta(minutes=20)).timestamp())
