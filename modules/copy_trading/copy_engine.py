@@ -1037,6 +1037,37 @@ class CopyTradingEngine:
             logger.error(f"Error analyzing Solana tx: {e}")
             return False
 
+    async def _get_solana_token_balance(self, mint: str) -> tuple:
+        """
+        Fetch our Solana wallet's raw SPL balance for `mint`.
+        Returns (raw_amount, decimals). (0, 0) on any failure / no account.
+        """
+        wallet = getattr(self.executor, 'solana_wallet', None) if self.executor else None
+        rpc_url = self.solana_rpc_url
+        if not wallet or not rpc_url:
+            return (0, 0)
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTokenAccountsByOwner",
+            "params": [wallet, {"mint": mint}, {"encoding": "jsonParsed"}],
+        }
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(rpc_url, json=payload) as resp:
+                    if resp.status != 200:
+                        return (0, 0)
+                    data = await resp.json()
+            accounts = (data.get('result') or {}).get('value') or []
+            if not accounts:
+                return (0, 0)
+            info = accounts[0]['account']['data']['parsed']['info']['tokenAmount']
+            return (int(info.get('amount', 0)), int(info.get('decimals', 0)))
+        except Exception as e:
+            logger.error(f"Error fetching SPL balance for {mint[:8]}...: {e}")
+            return (0, 0)
+
     async def _execute_solana_copy_trade(self, wallet: str, signature: str, tx_data: dict):
         """Execute the same trade on Solana - handles both BUY and SELL"""
         logger.info(f"🚀 Analyzing Solana trade {signature[:20]}...")
@@ -1111,15 +1142,21 @@ class CopyTradingEngine:
                     amount_lamports=copy_lamports
                 )
             else:
-                # For SELL, we don't actually execute a sell (we might not have the position)
-                # But we DO record the source wallet's sell to close their position
-                result = {
-                    'success': True,
-                    'tx_hash': f"SELL_TRACKED_{signature[:16]}",
-                    'output_mint': token_mint,
-                    'amount': copy_lamports,
-                    'is_sell_tracking': True
-                }
+                # SELL: actually unload our copy bag via Jupiter. Never fabricate
+                # a synthetic tx hash - if we hold nothing, just log and return.
+                raw_balance, _decimals = await self._get_solana_token_balance(token_mint)
+                if raw_balance <= 0:
+                    logger.warning(
+                        f"⚠️ Leader SELL detected for {token_mint[:8]}... "
+                        f"but we hold no position to close (skipping)"
+                    )
+                    return
+                result = await self.executor.copy_solana_swap(
+                    input_mint=token_mint,
+                    output_mint=WSOL_MINT,
+                    amount_lamports=raw_balance,
+                    slippage_bps=300,  # memecoin-tolerant exit
+                )
 
             if result.get('success'):
                 action = 'Tracked' if result.get('is_sell_tracking') else ('Executed' if not self.dry_run else 'Simulated')
