@@ -22,11 +22,10 @@ main.py (TradingBotOrchestrator)
 
 `main.py:460 TradingBotOrchestrator` starts the dashboard first (so
 it stays reachable even if trading modules fail), then spawns each
-enabled module as `subprocess.Popen`, restarting crashed children
+enabled module as `subprocess.Popen` and restarts crashed children
 with backoff (`psutil` for liveness). Each subprocess reads config
 from the DB via `ConfigManager`, logs to `logs/<module>/`, and polls
-`logs/.killswitch` and `logs/.pause_<module>` (BaseModule wires this
-in automatically).
+`logs/.killswitch` + `logs/.pause_<module>` (BaseModule auto-wires).
 
 Module-enable flags live in `.env` ONLY — every other knob is in DB:
 
@@ -76,11 +75,9 @@ Do NOT run `docker compose down -v` — it wipes `postgres-data` and
 `redis-data` (admin user, encrypted credentials, trade history all
 vanish).
 
-Variant Dockerfiles: **`Dockerfile`** (default, full deps);
-**`Dockerfile.light`** (minimal, for per-module containers);
-**`Dockerfile.redis`** (Redis with tuned eviction).
-`docker-compose copy.yml.example` is a reference variant; do not
-apply directly.
+Variants: **`Dockerfile`** (full deps), **`Dockerfile.light`**
+(minimal, for per-module containers), **`Dockerfile.redis`** (tuned
+eviction). `docker-compose copy.yml.example` is reference only.
 
 ## 3. Kubernetes
 
@@ -95,10 +92,10 @@ Manifests in `kubernetes/`:
 
 **Missing — operator must create:** `kubernetes/secret.yaml`. The
 `Deployment` references a `Secret` named `trading-secrets` with keys
-`database-url`, `redis-url`, and `api-keys` (`deployment.yaml`
-lines 31-45). Intentionally NOT shipped — secrets do not belong in
-source control. This is the **MB-BE-03 / DASH-BE-03 audit-flagged
-gap**; flag it at deploy time. Bootstrap:
+`database-url`, `redis-url`, `api-keys` (`deployment.yaml` lines
+31-45). Intentionally NOT shipped — secrets do not belong in source
+control. This is the **MB-BE-03 / DASH-BE-03 audit-flagged gap**.
+Bootstrap:
 
 ```bash
 kubectl create namespace trading
@@ -108,14 +105,12 @@ kubectl -n trading create secret generic trading-secrets \
   --from-literal=api-keys='{"etherscan":"...","alchemy":"..."}'
 ```
 
-`ENCRYPTION_KEY` and `JWT_SECRET` are NOT in the shipped Secret —
-they ride on a mounted `.encryption_key` volume or are loaded from
-the encrypted `config_sensitive` table after credentials migration.
-Extend the Secret if org policy requires.
+`ENCRYPTION_KEY` is NOT in the shipped Secret — it rides on a mounted
+`.encryption_key` volume; `JWT_SECRET` loads from `config_sensitive`
+after credentials migration. Extend the Secret if org policy requires.
 
 Apply order: `configmap.yaml` -> create `trading-secrets` ->
-`service.yaml` -> `deployment.yaml` -> `ingress.yaml` (after TLS
-cert is provisioned).
+`service.yaml` -> `deployment.yaml` -> `ingress.yaml` (after TLS).
 
 ## 4. Secrets bootstrap
 
@@ -158,14 +153,10 @@ Apply migrations from `migrations/` in numerical order:
 013_add_solana_positions_table.sql    # MB-09
 ```
 
-Legacy `V0XX__*.sql` files (`V001__create_config_tables.sql`,
-`V002__create_sniper_tables.sql`, `V003__create_sentiment_tables.sql`,
-`V004__create_extra_modules_tables.sql`) are predecessor versions
+Legacy `V0XX__*.sql` files (V001..V004) are predecessor versions
 kept for reference. Do NOT apply them — the numbered series is
-authoritative.
-
-For local dev: `python scripts/migrate_database.py` runs the numbered
-series in order.
+authoritative. `python scripts/migrate_database.py` runs the
+numbered series in order.
 
 ## 6. Reverse-proxy / TLS termination
 
