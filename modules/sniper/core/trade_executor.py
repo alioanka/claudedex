@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from datetime import datetime
 
+from core.units import to_raw_evm
+
 # Import RPCProvider for centralized RPC management
 try:
     from config.rpc_provider import RPCProvider
@@ -69,6 +71,16 @@ ROUTER_ABI = [
         "name": "swapExactTokensForETH",
         "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
         "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+            {"internalType": "address[]", "name": "path", "type": "address[]"}
+        ],
+        "name": "getAmountsOut",
+        "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
+        "stateMutability": "view",
         "type": "function"
     }
 ]
@@ -616,9 +628,21 @@ class TradeExecutor:
                 Web3.to_checksum_address(token_address)
             ]
 
-            # Calculate minimum output with slippage
-            # Note: In production, you'd get expected output from router.getAmountsOut
-            amount_out_min = 0  # Accept any amount (risky, but for speed)
+            # MB-11: quote expected output and apply slippage haircut so we
+            # never broadcast amount_out_min=0 (guaranteed-sandwich).
+            try:
+                amounts_out = router.functions.getAmountsOut(amount_wei, path).call()
+                expected_out = int(amounts_out[-1])
+            except Exception as quote_err:
+                logger.error(f"getAmountsOut failed; aborting buy to avoid 0-min: {quote_err}")
+                return TradeResult(
+                    success=False, chain=chain, token_address=token_address,
+                    amount_in=amount_in, amount_out=0, tx_hash=None, gas_used=None,
+                    error=f"Quote failed: {quote_err}", timestamp=datetime.now()
+                )
+            slippage_frac = max(float(slippage), 0.0) / 100.0 if slippage is not None else 0.03
+            # TODO(config): plumb slippage_tolerance through ConfigManager.
+            amount_out_min = int(expected_out * (1 - slippage_frac))
 
             # Deadline: 2 minutes from now
             deadline = int(datetime.now().timestamp()) + 120
@@ -702,11 +726,23 @@ class TradeExecutor:
                 Web3.to_checksum_address(WETH_ADDRESS)
             ]
 
-            # Convert amount (assuming 18 decimals)
-            amount_tokens = int(amount_in * 1e18)
+            # MB-11: convert input using on-chain decimals, not hardcoded 1e18.
+            amount_tokens = await to_raw_evm(chain or 'ethereum', token_address, Decimal(str(amount_in)))
 
-            # Minimum output with slippage
-            amount_out_min = 0
+            # MB-11: quote expected ETH out and apply slippage haircut.
+            try:
+                amounts_out = router.functions.getAmountsOut(amount_tokens, path).call()
+                expected_out = int(amounts_out[-1])
+            except Exception as quote_err:
+                logger.error(f"getAmountsOut failed; aborting sell to avoid 0-min: {quote_err}")
+                return TradeResult(
+                    success=False, chain=chain, token_address=token_address,
+                    amount_in=amount_in, amount_out=0, tx_hash=None, gas_used=None,
+                    error=f"Quote failed: {quote_err}", timestamp=datetime.now()
+                )
+            slippage_frac = max(float(slippage), 0.0) / 100.0 if slippage is not None else 0.03
+            # TODO(config): plumb slippage_tolerance through ConfigManager.
+            amount_out_min = int(expected_out * (1 - slippage_frac))
 
             # Deadline
             deadline = int(datetime.now().timestamp()) + 120
