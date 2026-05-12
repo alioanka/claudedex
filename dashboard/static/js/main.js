@@ -224,7 +224,10 @@ async function handleBotControl(action) {
     try {
         showToast('info', config.message);
         
-        const response = await fetch(config.url, { method: 'POST' });
+        const response = await fetch(config.url, {
+            method: 'POST',
+            headers: withCsrfHeaders('POST'),
+        });
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -259,7 +262,10 @@ async function handleEmergencyExit() {
     try {
         showToast('warning', 'Executing emergency exit...');
         
-        const response = await fetch('/api/bot/emergency_exit', { method: 'POST' });
+        const response = await fetch('/api/bot/emergency_exit', {
+            method: 'POST',
+            headers: withCsrfHeaders('POST'),
+        });
         const data = await response.json();
         
         if (data.success) {
@@ -667,17 +673,30 @@ function timeAgo(timestamp) {
     return 'just now';
 }
 
+// MB-27: read csrf_token cookie set by the server's CSRF middleware so we
+// can echo it back in X-CSRF-Token on every state-changing request.
+function getCsrfToken() {
+    const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+    return match ? decodeURIComponent(match[1]) : '';
+}
+
+function withCsrfHeaders(method, headers) {
+    const out = { 'Content-Type': 'application/json', ...(headers || {}) };
+    const m = (method || 'GET').toUpperCase();
+    if (m === 'POST' || m === 'PUT' || m === 'DELETE' || m === 'PATCH') {
+        out['X-CSRF-Token'] = getCsrfToken();
+    }
+    return out;
+}
+
 // API helpers
 async function apiRequest(url, options = {}) {
     try {
         const response = await fetch(url, {
             ...options,
-            headers: {
-                'Content-Type': 'application/json',
-                ...options.headers
-            }
+            headers: withCsrfHeaders(options.method, options.headers),
         });
-        
+
         const data = await response.json();
         return data;
     } catch (error) {

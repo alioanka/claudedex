@@ -31,6 +31,7 @@ from pydantic.types import SecretStr
 try:
     from auth.auth_service import AuthService
     from auth.middleware import auth_middleware_factory, require_auth, require_admin
+    from auth.csrf import csrf_middleware_factory
     from monitoring.auth_routes import AuthRoutes
     AUTH_AVAILABLE = True
 except ImportError as e:
@@ -321,6 +322,15 @@ class DashboardEndpoints:
                 logger.info("   ✅ Auth middleware registered")
             else:
                 logger.info("   ⚠️  Auth middleware already registered")
+
+            # MB-27: CSRF runs after auth (auth establishes the session; CSRF
+            # then validates that mutating requests carry a matching token).
+            csrf_names = [
+                getattr(m, '__name__', str(m)) for m in self.app.middlewares
+            ]
+            if 'csrf_middleware_factory' not in csrf_names:
+                self.app.middlewares.append(csrf_middleware_factory)
+                logger.info("   ✅ CSRF middleware registered")
 
             self.auth_enabled = True
 
