@@ -4389,8 +4389,37 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_emergency_exit(self, request):
-        """Emergency exit - close all positions"""
+        """Emergency exit - close all positions.
+
+        MB-31 NOTE: this is a legacy duplicate of ModuleRoutes.bot_emergency_exit.
+        Kept (Option B) because it operates on self.engine.active_positions —
+        a code path module_routes' module-walker cannot reach. Kill-switch +
+        flag-file wiring added so this handler behaves like the canonical one.
+        TODO: collapse onto module_routes' handler once engine positions are
+        exposed via the module manager.
+        """
         try:
+            # MB-31: flip kill switch + write flag file BEFORE any close work.
+            try:
+                from core.dry_run import set_global_kill_switch
+                set_global_kill_switch(True)
+                logger.warning("EMERGENCY EXIT (legacy): global kill switch SET")
+            except Exception as e:
+                logger.error(f"Failed to set global kill switch: {e}")
+            try:
+                from pathlib import Path
+                import json as _json, os as _os
+                from datetime import datetime as _dt, timezone as _tz
+                _flag = Path("logs/.killswitch")
+                _flag.parent.mkdir(parents=True, exist_ok=True)
+                _flag.write_text(_json.dumps({
+                    "reason": "/api/bot/emergency_exit HTTP (legacy)",
+                    "ts": _dt.now(_tz.utc).isoformat(),
+                    "pid": _os.getpid(),
+                }))
+            except Exception as e:
+                logger.error(f"Failed to write killswitch flag file: {e}")
+
             closed = []
             failed = []
             

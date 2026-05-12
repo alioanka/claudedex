@@ -74,6 +74,8 @@ class ModuleRoutes:
         app.router.add_post('/api/bot/stop', self.bot_stop)
         app.router.add_post('/api/bot/restart', self.bot_restart)
         app.router.add_post('/api/bot/emergency-exit', self.bot_emergency_exit)
+        # MB-31: backwards-compat alias - underscore form used by older JS/templates
+        app.router.add_post('/api/bot/emergency_exit', self.bot_emergency_exit)
 
         # API endpoints
         app.router.add_get('/api/modules', self.get_modules_status)
@@ -853,6 +855,32 @@ class ModuleRoutes:
         """Emergency: Close all positions and stop all modules"""
         try:
             self.logger.warning("EMERGENCY EXIT requested!")
+
+            # MB-31: flip kill switch FIRST so even if downstream steps fail,
+            # new live-write attempts will be blocked process-wide.
+            try:
+                from core.dry_run import set_global_kill_switch
+                set_global_kill_switch(True)
+                self.logger.warning("EMERGENCY EXIT: global kill switch SET")
+            except Exception as e:
+                self.logger.error(f"Failed to set global kill switch: {e}")
+
+            # MB-31: write flag file so other processes polling logs/.killswitch
+            # also halt (cross-process effect).
+            try:
+                from pathlib import Path
+                import json, os
+                from datetime import datetime, timezone
+                flag = Path("logs/.killswitch")
+                flag.parent.mkdir(parents=True, exist_ok=True)
+                flag.write_text(json.dumps({
+                    "reason": "/api/bot/emergency-exit HTTP",
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "pid": os.getpid(),
+                }))
+            except Exception as e:
+                self.logger.error(f"Failed to write killswitch flag file: {e}")
+
             closed_positions = []
             
             # Close all positions in all modules
