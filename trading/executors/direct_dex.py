@@ -19,6 +19,7 @@ from web3.middleware import geth_poa_middleware
 from eth_account import Account
 from eth_abi import encode_abi
 
+from core.dry_run import should_skip_live
 from trading.orders.order_manager import Order, OrderType, OrderStatus
 from trading.executors.base_executor import BaseExecutor
 from utils.helpers import retry_async, measure_time, wei_to_ether, ether_to_wei
@@ -60,7 +61,7 @@ class DirectDEXExecutor(BaseExecutor):
 
         # ✅ CRITICAL: DRY_RUN mode check
         self.dry_run = config.get('DRY_RUN', True)
-        if self.dry_run:
+        if should_skip_live(self.dry_run, module='dex', account=getattr(self, 'wallet_address', None)):
             logger.warning("🔶 DIRECT DEX IN DRY RUN MODE - NO REAL TRANSACTIONS 🔶")
         else:
             logger.critical("🔥 DIRECT DEX IN LIVE MODE - REAL MONEY AT RISK 🔥")
@@ -272,7 +273,7 @@ class DirectDEXExecutor(BaseExecutor):
         """Execute trade directly on DEX"""
         try:
             # ✅ CRITICAL: DRY_RUN CHECK
-            if self.dry_run:
+            if should_skip_live(self.dry_run, module='dex', account=getattr(order, 'wallet_address', None) or getattr(self, 'wallet_address', None)):
                 logger.info(f"🔶 DRY RUN: Simulating DEX trade for {order.token_in} -> {order.token_out}")
                 return await self._simulate_dex_trade(order)
             
@@ -1009,7 +1010,7 @@ class DirectDEXExecutor(BaseExecutor):
                 return False
             
             # Check wallet balance (only if not dry run)
-            if not self.dry_run:
+            if not should_skip_live(self.dry_run, module='dex', account=getattr(order, 'wallet_address', None) or getattr(self, 'wallet_address', None)):
                 w3 = self.w3_connections[order.chain]
                 from eth_account import Account
                 account = Account.from_key(self.config.get('private_key'))

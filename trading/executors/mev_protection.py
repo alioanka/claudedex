@@ -22,6 +22,7 @@ from eth_account.datastructures import SignedTransaction
 from eth_account.messages import encode_defunct
 import aiohttp
 
+from core.dry_run import should_skip_live
 from trading.orders.order_manager import Order
 from trading.executors.base_executor import BaseExecutor
 from utils.helpers import retry_async, measure_time
@@ -661,7 +662,7 @@ class MEVProtectionLayer(BaseExecutor):
         """Execute trade with MEV protection"""
         try:
             # ✅ CRITICAL: Respect dry run mode
-            if self.dry_run:
+            if should_skip_live(self.dry_run, module='dex', account=getattr(order, 'wallet_address', None) or getattr(self, 'wallet_address', None)):
                 logger.info(f"🔒 MEV Protection - DRY RUN MODE for {order.token_out}")
                 return {
                     'success': True,
