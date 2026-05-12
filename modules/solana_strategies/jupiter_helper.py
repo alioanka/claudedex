@@ -6,7 +6,7 @@ import os
 import asyncio
 import logging
 import time
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Union
 import aiohttp
 import base58
 from solders.keypair import Keypair
@@ -456,7 +456,10 @@ class JupiterHelper:
         user_public_key: str,
         wrap_unwrap_sol: bool = True,
         as_legacy_transaction: bool = False,
-        max_retries: int = 3
+        max_retries: int = 3,
+        priority_fee_lamports: Optional[Union[int, str, Dict]] = None,
+        dynamic_compute_unit_limit: bool = True,
+        dynamic_slippage: Optional[Union[bool, Dict]] = None,
     ) -> Optional[Dict]:
         """
         Get swap transaction from quote with rate limiting.
@@ -467,6 +470,12 @@ class JupiterHelper:
             wrap_unwrap_sol: Auto wrap/unwrap SOL
             as_legacy_transaction: Use legacy transaction format
             max_retries: Maximum retries for rate limit errors
+            priority_fee_lamports: int (raw lamports), "auto", a Jupiter
+                prioritization-fee dict, or None to use the built-in
+                congestion-tolerant default
+            dynamic_compute_unit_limit: let Jupiter compute the CU limit
+            dynamic_slippage: True / dict to opt in; None preserves the
+                quote-driven slippage
 
         Returns:
             Optional[Dict]: Transaction data or None
@@ -482,6 +491,24 @@ class JupiterHelper:
             'wrapAndUnwrapSol': wrap_unwrap_sol,
             'asLegacyTransaction': as_legacy_transaction,
         }
+
+        if priority_fee_lamports is None:
+            # Cap at 0.001 SOL/tx with "high" priority (Jupiter-recommended
+            # modern form) — survives memecoin / Pump.fun congestion bursts.
+            payload['prioritizationFeeLamports'] = {
+                'priorityLevelWithMaxLamports': {
+                    'maxLamports': 1_000_000,
+                    'priorityLevel': 'high',
+                }
+            }
+        else:
+            payload['prioritizationFeeLamports'] = priority_fee_lamports
+
+        if dynamic_compute_unit_limit:
+            payload['dynamicComputeUnitLimit'] = True
+
+        if dynamic_slippage is not None:
+            payload['dynamicSlippage'] = dynamic_slippage
 
         for attempt in range(max_retries + 1):
             try:
@@ -964,7 +991,10 @@ class JupiterHelper:
 
             # 2. Get swap transaction
             swap_logger.info(f"   📝 Jupiter: Creating swap transaction...")
-            swap_data = await self.get_swap_transaction(quote, user_public_key)
+            swap_data = await self.get_swap_transaction(
+                quote, user_public_key,
+                priority_fee_lamports=getattr(self, 'priority_fee_lamports', None) or None,
+            )
             if not swap_data:
                 swap_logger.error("❌ Jupiter: Failed to get swap transaction")
                 return None
