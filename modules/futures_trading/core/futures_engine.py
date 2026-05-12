@@ -614,7 +614,7 @@ class FuturesTradingEngine:
 
             # Create mainnet price client for accurate prices (especially in DRY_RUN mode)
             # This ensures we always get live prices from mainnet, regardless of testnet setting
-            if self.dry_run or self.testnet:
+            if should_skip_live(self.dry_run, module='futures', account=self.exchange) or self.testnet:
                 try:
                     # Use mainnet credentials if available (via secrets manager), otherwise create public client
                     # Use get_async() since we're in async context
@@ -727,7 +727,7 @@ class FuturesTradingEngine:
                     continue
 
                 # Set leverage (only in non-dry-run mode or testnet)
-                if not self.dry_run or self.testnet:
+                if not should_skip_live(self.dry_run, module='futures', account=self.exchange) or self.testnet:
                     try:
                         await self.exchange_client.set_leverage(self.leverage, symbol)
                         logger.info(f"✅ Set {symbol} leverage to {self.leverage}x")
@@ -740,7 +740,7 @@ class FuturesTradingEngine:
 
     async def _sync_positions(self):
         """Sync positions from exchange"""
-        if self.dry_run:
+        if should_skip_live(self.dry_run, module='futures', account=self.exchange):
             logger.info("DRY_RUN mode: Skipping position sync from exchange")
             return
 
@@ -1512,7 +1512,7 @@ class FuturesTradingEngine:
             net_pnl = pnl_usd - exit_fee
 
             # Execute partial close (or simulate)
-            if self.dry_run:
+            if should_skip_live(self.dry_run, module='futures', account=self.exchange):
                 logger.info(f"🔵 [DRY_RUN] Partial close {symbol} ({reason})")
                 logger.info(f"   Closed: {close_size:.6f} ({close_pct:.1f}%), PnL: ${net_pnl:.2f}")
             else:
@@ -1681,7 +1681,7 @@ class FuturesTradingEngine:
             )
 
             # Execute order (or simulate)
-            if self.dry_run:
+            if should_skip_live(self.dry_run, module='futures', account=self.exchange):
                 logger.info(f"🔵 [DRY_RUN] SIMULATED {side.value.upper()} {symbol}")
                 logger.info(f"   Entry: ${current_price:.2f}, Size: {size:.6f}, Notional: ${notional:.2f}")
                 logger.info(f"   SL: ${stop_loss_price:.2f}, TP: ${take_profit_price:.2f}")
@@ -1768,7 +1768,7 @@ class FuturesTradingEngine:
             net_pnl = pnl_usd - total_fees
 
             # Execute close order (or simulate)
-            if self.dry_run:
+            if should_skip_live(self.dry_run, module='futures', account=self.exchange):
                 logger.info(f"🔵 [DRY_RUN] SIMULATED CLOSE {symbol} ({reason})")
             else:
                 # Execute real close order
