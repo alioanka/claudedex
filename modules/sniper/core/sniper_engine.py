@@ -629,15 +629,19 @@ class SniperEngine:
         try:
             import aiohttp
 
+            # Jupiter Price API v2: returns USD-derived price. Unit cancels in
+            # the (current - entry) / entry ratio at the call site, so caller
+            # need not care about USD vs SOL.
             if chain == 'solana':
-                # Use Jupiter for price (SOL per token)
-                url = f"https://price.jup.ag/v4/price?ids={token_address}"
+                url = f"https://api.jup.ag/price/v2?ids={token_address}"
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url, timeout=5) as response:
                         if response.status == 200:
                             data = await response.json()
-                            price_info = data.get('data', {}).get(token_address, {})
-                            return float(price_info.get('price', 0))
+                            price_info = data.get('data', {}).get(token_address)
+                            if not price_info:
+                                return 0
+                            return float(price_info.get('price') or 0)
             else:
                 # For EVM, use DexScreener or similar
                 url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
