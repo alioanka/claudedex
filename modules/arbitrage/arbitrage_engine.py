@@ -1596,6 +1596,17 @@ class EVMArbitrageEngine:
             except Exception as e:
                 self.logger.debug(f"Gas estimation failed: {e}")
 
+        # P1-06: pre-execute risk gate. DRY_RUN trades are NOT validated above (return at :1563).
+        if self.risk_manager is not None:
+            try:
+                allowed, reason = await self.risk_manager.validate_trade(token_in, amount)
+            except Exception as e:
+                self.logger.warning(f"validate_trade raised: {e}; refusing execute")
+                return
+            if not allowed:
+                self.logger.warning(f"⛔ Risk manager rejected EVM arb {token_in[:10]}: {reason}")
+                return
+
         try:
             if self.use_flash_loans and self.flash_loan_executor:
                 # Use flash loan for capital efficiency

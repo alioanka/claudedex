@@ -842,6 +842,17 @@ class TriangularArbitrageEngine:
             )
             return
 
+        # P1-06: pre-execute risk gate (live path only).
+        if self.risk_manager is not None:
+            try:
+                allowed, reason = await self.risk_manager.validate_trade(token_a, amount_in)
+            except Exception as e:
+                logger.warning(f"validate_trade raised: {e}; refusing execute")
+                return
+            if not allowed:
+                logger.warning(f"⛔ Risk manager rejected triangular arb {symbol_a}->{symbol_b}->{symbol_c}: {reason}")
+                return
+
         # Live execution of triangular arbitrage
         try:
             if not self.private_key or not self.wallet_address:

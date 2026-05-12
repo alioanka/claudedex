@@ -1267,6 +1267,17 @@ class SolanaArbitrageEngine:
             )
             return
 
+        # P1-06: pre-execute risk gate (live path only).
+        if self.risk_manager is not None:
+            try:
+                allowed, reason = await self.risk_manager.validate_trade(token_in, amount)
+            except Exception as e:
+                logger.warning(f"validate_trade raised: {e}; refusing execute")
+                return
+            if not allowed:
+                logger.warning(f"⛔ Risk manager rejected Solana arb {in_symbol}/{out_symbol}: {reason}")
+                return
+
         try:
             if not self.wallet_address:
                 logger.error("No Solana wallet configured")
