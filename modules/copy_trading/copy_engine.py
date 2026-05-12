@@ -558,9 +558,8 @@ class CopyTradingEngine(BaseModule):
 
     BaseModule-compliant: killswitch poller auto-starts via
     __init_subclass__ wrap (2b4c61f). Per-module pause via
-    logs/.pause_copy_trading will be honored through should_skip_live
-    once executor copy_evm_swap/copy_solana_swap migrate to use it
-    (MB-COPY-DRY follow-up; still gated by self.dry_run today).
+    logs/.pause_copy_trading honored through should_skip_live
+    (CopyTradeExecutor migrated in 2b82404).
     """
 
     def __init__(self, config: Dict, db_pool):

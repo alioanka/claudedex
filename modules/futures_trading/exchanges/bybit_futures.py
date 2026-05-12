@@ -73,15 +73,6 @@ class BybitFuturesExecutor:
         if self.session:
             await self.session.close()
 
-    def _generate_signature(self, params: str) -> str:
-        """Generate HMAC SHA256 signature (legacy helper, unused on V5 path)."""
-        signature = hmac.new(
-            self.api_secret.encode(),
-            params.encode(),
-            hashlib.sha256
-        ).hexdigest()
-        return signature
-
     async def _request(
         self,
         method: str,
