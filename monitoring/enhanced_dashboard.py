@@ -318,7 +318,6 @@ class DashboardEndpoints:
             logger.info("=" * 80)
             logger.info("✅ AUTHENTICATION SYSTEM ACTIVE")
             logger.info(f"   Login URL: http://{self.host}:{self.port}/login")
-            logger.info("   Default credentials: admin / admin123")
             logger.info("   ⚠️  CHANGE PASSWORD IMMEDIATELY AFTER FIRST LOGIN!")
             logger.info("=" * 80)
 
