@@ -62,7 +62,7 @@ class JupiterExecutor(BaseExecutor):
 
         # ✅ CRITICAL: DRY_RUN mode check (standardize key name)
         self.dry_run = config.get('DRY_RUN', True) or config.get('dry_run', True)
-        if self.dry_run:
+        if should_skip_live(self.dry_run, module='solana', account=getattr(self, 'wallet_address', None)):
             logger.warning("🔶 JUPITER EXECUTOR IN DRY RUN MODE - NO REAL TRANSACTIONS 🔶")
         else:
             logger.critical("🔥 JUPITER EXECUTOR IN LIVE MODE - REAL MONEY AT RISK 🔥")
@@ -498,7 +498,7 @@ class JupiterExecutor(BaseExecutor):
                 return False
             
             # ✅ NEW: Check if we have sufficient balance (only if not dry run)
-            if not self.dry_run and self.wallet_address:
+            if not should_skip_live(self.dry_run, module='solana', account=self.wallet_address) and self.wallet_address:
                 balance = await self.get_token_balance(order.token_in)
                 # Convert to smallest units for comparison
                 if int(balance * 1_000_000_000) < amount_in:
@@ -639,7 +639,7 @@ class JupiterExecutor(BaseExecutor):
                 }
 
             # Check if we're in dry run mode
-            if self.dry_run:  # Use instance variable instead of config
+            if should_skip_live(self.dry_run, module='solana', account=getattr(self, 'wallet_address', None)):
                 logger.info("🔸 DRY RUN MODE - Simulating swap execution")
                 return {
                     'success': True,
