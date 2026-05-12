@@ -1719,27 +1719,17 @@ class FuturesTradingEngine:
             else:
                 # Execute real order via the ISOLATED-margin + leverage-set helpers
                 try:
-                    if self.exchange == 'binance':
-                        if side == TradeSide.LONG:
-                            order = await self.exchange_client.open_long(
-                                symbol=symbol,
-                                quantity=size,
-                                leverage=self.leverage,
-                            )
-                        else:
-                            order = await self.exchange_client.open_short(
-                                symbol=symbol,
-                                quantity=size,
-                                leverage=self.leverage,
-                            )
-                    else:
-                        # TODO MB-17b: Bybit client lacks ISOLATED-margin helpers
-                        order_side = 'buy' if side == TradeSide.LONG else 'sell'
-                        order = await self.exchange_client.create_market_order(
+                    if side == TradeSide.LONG:
+                        order = await self.exchange_client.open_long(
                             symbol=symbol,
-                            side=order_side,
-                            amount=size,
-                            params={'leverage': self.leverage}
+                            quantity=size,
+                            leverage=self.leverage,
+                        )
+                    else:
+                        order = await self.exchange_client.open_short(
+                            symbol=symbol,
+                            quantity=size,
+                            leverage=self.leverage,
                         )
                     if not order:
                         logger.error(f"❌ Order execution returned empty result for {symbol}")
