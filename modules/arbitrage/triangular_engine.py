@@ -13,6 +13,10 @@ Features:
 - Curve Finance integration for stablecoin swaps
 - Balancer integration for multi-token pools
 """
+# NOTE: triangular execution is currently disabled at the entry guard
+# pending an atomic-receiver contract (see MB-05 in
+# docs/agents/MASTER_BACKLOG.md). The pre-signed 3-tx scaffolding below is
+# kept as a reference implementation but does not run.
 import asyncio
 import logging
 import os
@@ -882,6 +886,19 @@ class TriangularArbitrageEngine:
         Path: A → B → C → A
         Uses Flashbots bundle to ensure atomicity (all succeed or all fail).
         """
+        # MB-05: pre-signed sequential txs use placeholder amountIn=1 for tx2/tx3
+        # (see lines below) - they cannot reference the previous leg's actual
+        # output. Even the Flashbots-bundle path therefore reverts in simulation.
+        # A proper fix requires an on-chain atomic receiver contract similar to
+        # the spot-arb flash-loan receiver (FLASH_LOAN_RECEIVER_CONTRACT_*).
+        # Until that contract is wired, refuse to execute.
+        logger.warning(
+            "Triangular arbitrage execution path is disabled (MB-05): pre-signed "
+            "tx2/tx3 use placeholder amountIn=1 and cannot atomically chain leg "
+            "outputs. Requires an atomic-receiver contract to ship."
+        )
+        return None
+
         try:
             if len(dexes) != 3:
                 logger.error("Triangular arb requires exactly 3 DEXes")
