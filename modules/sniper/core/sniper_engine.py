@@ -577,9 +577,10 @@ class SniperEngine:
 
     async def _monitor_active_snipes(self):
         """Monitor active snipes for auto-sell targets (take profit / stop loss)"""
-        # Exit settings
-        take_profit_pct = 50.0  # +50% profit target
-        stop_loss_pct = -20.0   # -20% stop loss
+        # Use DB-configured thresholds. stop_loss_pct is stored as a positive
+        # "loss threshold"; negate at use because pnl_pct is signed.
+        take_profit_pct = self.take_profit_pct
+        stop_loss_pct = -abs(self.stop_loss_pct)
 
         check_count = 0
         while self.is_running:
@@ -778,7 +779,7 @@ class SniperEngine:
                             native_price,
                             'closed' if result.success else 'failed',
                             reason,
-                            True,
+                            should_skip_live(self.dry_run, module='sniper'),
                             result.timestamp,
                             result.tx_hash
                         )
