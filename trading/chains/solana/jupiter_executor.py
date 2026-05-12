@@ -23,12 +23,14 @@ try:
     from solders.pubkey import Pubkey
     from solders.transaction import VersionedTransaction
     from solders.message import Message as TransactionMessage
+    from solders.signature import Signature
 except ImportError:
     # Fallback if solders not available
     Keypair = None
     Pubkey = None
     VersionedTransaction = None
     TransactionMessage = None
+    Signature = None
 
 from core.dry_run import should_skip_live
 from trading.executors.base_executor import BaseExecutor
@@ -707,10 +709,37 @@ class JupiterExecutor(BaseExecutor):
                         'error': f'Pubkey mismatch: expected {fee_payer}'
                     }
 
-            # Sign transaction using correct VersionedTransaction.populate() pattern
-            # The .sign() method doesn't work with solders VersionedTransaction
-            signature = self.keypair.sign_message(bytes(message))
-            signed_transaction = VersionedTransaction.populate(message, [signature])
+            # Preserve any pre-existing co-signer slots (Jupiter setup/ATA/advanced routes).
+            num_required = message.header.num_required_signatures
+            account_keys = message.account_keys
+            existing_sigs = list(transaction.signatures)
+            our_index = None
+            for i in range(num_required):
+                if str(account_keys[i]) == str(our_pubkey):
+                    our_index = i
+                    break
+            if our_index is None:
+                logger.error(f"❌ Our pubkey {our_pubkey} not in required signers")
+                return {
+                    'success': False,
+                    'error': 'our pubkey not in required signers'
+                }
+
+            our_sig = self.keypair.sign_message(bytes(message))
+            zero_sig = Signature.default()
+            final_sigs = []
+            for i in range(num_required):
+                if i == our_index:
+                    final_sigs.append(our_sig)
+                elif i < len(existing_sigs) and existing_sigs[i] != zero_sig:
+                    final_sigs.append(existing_sigs[i])
+                else:
+                    logger.error(f"❌ Missing co-signer for slot {i} ({account_keys[i]})")
+                    return {
+                        'success': False,
+                        'error': f'missing co-signer at slot {i}'
+                    }
+            signed_transaction = VersionedTransaction.populate(message, final_sigs)
 
             # Send transaction to Solana network (with retry)
             serialized_tx = base64.b64encode(bytes(signed_transaction)).decode('utf-8')

@@ -513,6 +513,7 @@ class TradeExecutor:
             # Import Solana libraries
             from solders.keypair import Keypair
             from solders.transaction import VersionedTransaction
+            from solders.signature import Signature
             from solana.rpc.async_api import AsyncClient
             import base64
             import base58
@@ -572,9 +573,31 @@ class TradeExecutor:
                     logger.error(f"❌ PUBKEY MISMATCH! TX expects: {fee_payer}, we have: {our_pubkey}")
                     return None
 
-            # Sign transaction
-            signature = keypair.sign_message(bytes(message))
-            signed_tx = VersionedTransaction.populate(message, [signature])
+            # Preserve any pre-existing co-signer slots (Jupiter setup/ATA/advanced routes).
+            num_required = message.header.num_required_signatures
+            account_keys = message.account_keys
+            existing_sigs = list(tx.signatures)
+            our_index = None
+            for i in range(num_required):
+                if str(account_keys[i]) == str(our_pubkey):
+                    our_index = i
+                    break
+            if our_index is None:
+                logger.error(f"❌ Our pubkey {our_pubkey} not in required signers")
+                return None
+
+            our_sig = keypair.sign_message(bytes(message))
+            zero_sig = Signature.default()
+            final_sigs = []
+            for i in range(num_required):
+                if i == our_index:
+                    final_sigs.append(our_sig)
+                elif i < len(existing_sigs) and existing_sigs[i] != zero_sig:
+                    final_sigs.append(existing_sigs[i])
+                else:
+                    logger.error(f"❌ Missing co-signer for slot {i} ({account_keys[i]})")
+                    return None
+            signed_tx = VersionedTransaction.populate(message, final_sigs)
 
             # Send transaction - use Pool Engine for RPC
             if RPCProvider:
