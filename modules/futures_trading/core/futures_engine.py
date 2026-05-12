@@ -30,6 +30,7 @@ from pathlib import Path
 # Add project root for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from core.dry_run import resolve_dry_run_env, should_skip_live
 from core.pnl_tracker import PnLTracker, TradeRecord
 
 logger = logging.getLogger("FuturesTradingEngine")
@@ -234,6 +235,10 @@ class FuturesTradingEngine:
         self.is_running = False
         self.db_pool = db_pool  # Database connection pool for trade persistence
 
+        # MB-16: resolve DRY_RUN BEFORE testnet-safety branch reads self.dry_run.
+        # Safe default True so a missing/typo DRY_RUN env var never goes live.
+        self.dry_run = resolve_dry_run_env('DRY_RUN', default=True)
+
         # Load configuration from config manager (database)
         if config_manager:
             general_config = config_manager.get_general()
@@ -356,9 +361,7 @@ class FuturesTradingEngine:
             self.verbose_signals = True
             self.cooldown_duration = timedelta(minutes=5)
 
-        # DRY_RUN mode - CRITICAL: Check environment variable (global safety setting)
-        dry_run_env = os.getenv('DRY_RUN', 'true').strip().lower()
-        self.dry_run = dry_run_env in ('true', '1', 'yes')
+        # DRY_RUN already resolved at top of __init__ via core.dry_run.resolve_dry_run_env
 
         # Trading state
         self.active_positions: Dict[str, Position] = {}
