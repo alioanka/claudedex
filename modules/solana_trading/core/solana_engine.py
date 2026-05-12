@@ -3305,7 +3305,15 @@ class SolanaTradingEngine:
                     return  # Don't record failed close
 
                 # CRITICAL: Use ACTUAL wallet balance, not estimated position.amount!
-                token_decimals = 6  # Default for most SPL tokens
+                # MB-06 fix: previously hardcoded decimals=6 on the close path
+                # while buy path at :3086 correctly reads metadata.get('decimals', 9).
+                # BONK is 5; most modern launches are 9 - hardcode caused 10x/1000x errors.
+                from core.units import get_spl_decimals, UnitsError
+                try:
+                    token_decimals = await get_spl_decimals(token_mint)
+                except UnitsError as exc:
+                    logger.error(f"❌ Could not fetch decimals for {token_mint}: {exc}")
+                    return  # Don't trade blind
                 actual_balance = await self._get_token_balance(token_mint, token_decimals)
 
                 if actual_balance <= 0:
