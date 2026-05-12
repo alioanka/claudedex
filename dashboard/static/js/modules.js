@@ -2,6 +2,7 @@
  * Module Management JavaScript
  * Handles loading and controlling trading modules from the dashboard
  */
+// MB-27b: this file appears unloaded — confirm before further edits
 
 // Load modules when the Modules tab is clicked
 async function loadModules() {
@@ -86,7 +87,10 @@ async function enableModule(moduleName) {
     if (!confirm(`Enable module: ${moduleName}?`)) return;
 
     try {
-        const response = await fetch(`/api/modules/${moduleName}/enable`, { method: 'POST' });
+        const response = await fetch(`/api/modules/${moduleName}/enable`, {
+            method: 'POST',
+            headers: withCsrfHeaders('POST'),
+        });
         const data = await response.json();
 
         if (data.success) {
@@ -104,7 +108,10 @@ async function disableModule(moduleName) {
     if (!confirm(`Disable module: ${moduleName}? All positions will be closed.`)) return;
 
     try {
-        const response = await fetch(`/api/modules/${moduleName}/disable`, { method: 'POST' });
+        const response = await fetch(`/api/modules/${moduleName}/disable`, {
+            method: 'POST',
+            headers: withCsrfHeaders('POST'),
+        });
         const data = await response.json();
 
         if (data.success) {
@@ -120,7 +127,10 @@ async function disableModule(moduleName) {
 
 async function pauseModule(moduleName) {
     try {
-        const response = await fetch(`/api/modules/${moduleName}/pause`, { method: 'POST' });
+        const response = await fetch(`/api/modules/${moduleName}/pause`, {
+            method: 'POST',
+            headers: withCsrfHeaders('POST'),
+        });
         const data = await response.json();
 
         if (data.success) {

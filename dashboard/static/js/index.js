@@ -1,4 +1,5 @@
 // dashboard/static/js/index.js
+// MB-27b: this file appears unloaded — confirm before further edits
 
 // Initialize dashboard
 document.addEventListener('DOMContentLoaded', function() {
@@ -176,7 +177,10 @@ async function emergencyExit() {
 async function botControl(action) {
     showLoading(`${action}...`);
     try {
-        const response = await fetch(`/api/bot/${action}`, { method: 'POST' });
+        const response = await fetch(`/api/bot/${action}`, {
+            method: 'POST',
+            headers: withCsrfHeaders('POST'),
+        });
         const data = await response.json();
 
         if (data.success) {
