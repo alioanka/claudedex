@@ -1852,9 +1852,14 @@ class EVMArbitrageEngine:
                     else:
                         self.logger.warning("Flashbots bundle rejected, falling back to public mempool")
 
-            # Fallback: Send to public mempool
-            tx_hash = self.w3.eth.send_raw_transaction(signed_buy.rawTransaction)
-            return tx_hash.hex()
+            # MB-04: refuse one-legged fallback. Sending only the BUY leg to the
+            # public mempool would acquire token_out with no atomic SELL - guaranteed
+            # inventory leak. If Flashbots is unavailable, skip the opportunity.
+            self.logger.warning(
+                "Atomic execution unavailable (Flashbots failed/rejected/unconfirmed); "
+                "refusing one-legged broadcast to avoid inventory leak"
+            )
+            return None
 
         except Exception as e:
             self.logger.error(f"Direct swap execution error: {e}")

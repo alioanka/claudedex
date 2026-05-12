@@ -1039,40 +1039,15 @@ class TriangularArbitrageEngine:
                 else:
                     logger.warning(f"Flashbots simulation failed: {sim_result}")
 
-            # Fallback: Sequential execution (RISKY - not atomic!)
-            logger.warning("⚠️ Flashbots not available - executing sequentially (not atomic!)")
-
-            # Only proceed if we have enough profit margin for gas
-            gas_estimate = 250000 * 3 * self.w3.eth.gas_price
-            if profit_pct < 0.01:  # Less than 1%
-                logger.warning("Profit too low for non-atomic execution")
-                return None
-
-            # Execute sequentially
-            tx1_hash = self.w3.eth.send_raw_transaction(signed_tx1.rawTransaction)
-            logger.info(f"Swap 1 sent: {tx1_hash.hex()}")
-
-            # Wait for tx1
-            receipt1 = self.w3.eth.wait_for_transaction_receipt(tx1_hash, timeout=60)
-            if receipt1.status != 1:
-                logger.error("Swap 1 failed!")
-                return None
-
-            # Continue with tx2
-            tx2_hash = self.w3.eth.send_raw_transaction(signed_tx2.rawTransaction)
-            receipt2 = self.w3.eth.wait_for_transaction_receipt(tx2_hash, timeout=60)
-            if receipt2.status != 1:
-                logger.error("Swap 2 failed!")
-                return None
-
-            # Complete with tx3
-            tx3_hash = self.w3.eth.send_raw_transaction(signed_tx3.rawTransaction)
-            receipt3 = self.w3.eth.wait_for_transaction_receipt(tx3_hash, timeout=60)
-            if receipt3.status != 1:
-                logger.error("Swap 3 failed!")
-                return None
-
-            return tx3_hash.hex()
+            # MB-04: refuse non-atomic sequential fallback. Three sequential
+            # tx broadcasts have no atomicity guarantee - any intermediate revert
+            # strands token_b or token_c in the wallet. If Flashbots bundling is
+            # unavailable, skip the opportunity.
+            logger.warning(
+                "Triangular Flashbots path unavailable - refusing sequential fallback "
+                "to avoid inventory stranding"
+            )
+            return None
 
         except Exception as e:
             logger.error(f"Triangular swap execution error: {e}")
