@@ -43,6 +43,32 @@ EVM_CHAINS = {
 # Default chain for EVM wallets without chain suffix
 DEFAULT_EVM_CHAIN = 'ethereum'
 
+# MB-24: per-chain DEX routing. Only V2-API-compatible AMMs are supported in
+# this commit. Arbitrum/Optimism (Uniswap V3 only) and Avalanche (TraderJoe
+# v2 - different API) raise unsupported errors; tracked as follow-ups.
+EVM_DEX_ROUTING = {
+    'ethereum': {
+        'router': '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',  # Uniswap V2
+        'wrapped_native': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',  # WETH
+        'rpc_key': 'ETHEREUM_RPC',
+    },
+    'bsc': {
+        'router': '0x10ED43C718714eb63d5aA57B78B54704E256024E',  # PancakeSwap V2
+        'wrapped_native': '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',  # WBNB
+        'rpc_key': 'BSC_RPC',
+    },
+    'polygon': {
+        'router': '0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff',  # QuickSwap V2
+        'wrapped_native': '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',  # WMATIC
+        'rpc_key': 'POLYGON_RPC',
+    },
+    'base': {
+        'router': '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24',  # Uniswap V2 on Base
+        'wrapped_native': '0x4200000000000000000000000000000000000006',  # WETH on Base
+        'rpc_key': 'BASE_RPC',
+    },
+}
+
 
 class PriceFetcher:
     """Fetch real-time prices from CoinGecko"""
@@ -264,9 +290,20 @@ class CopyTradeExecutor:
         token_address: str,
         amount_wei: int,
         is_buy: bool = True,
-        slippage: float = 10.0
+        slippage: float = 10.0,
+        chain: str = 'ethereum',
     ) -> Dict:
-        """Copy an EVM swap via Uniswap"""
+        """Copy an EVM swap via a V2-API DEX router on `chain`."""
+        # MB-24: route per source-tx chain. Previously hardcoded to Uniswap V2
+        # mainnet + WETH mainnet + self.web3_provider (ETHEREUM_RPC) - every
+        # non-ETH copy reverted or hit a wrong-token address collision.
+        routing = EVM_DEX_ROUTING.get(chain)
+        if not routing:
+            return {
+                'success': False,
+                'error': f"Chain '{chain}' not supported by EVM copy executor (V2-API only).",
+            }
+
         if self.dry_run:
             return await self._simulate_evm_swap(token_address, amount_wei, is_buy)
 
@@ -275,14 +312,19 @@ class CopyTradeExecutor:
 
         try:
             from web3 import Web3
+            from config.pool_engine import PoolEngine
 
-            w3 = Web3(Web3.HTTPProvider(self.web3_provider))
+            pool = await PoolEngine.get_instance()
+            rpc_url = await pool.get_endpoint(routing['rpc_key'])
+            if not rpc_url:
+                return {'success': False, 'error': f"No RPC endpoint available for {chain}"}
+
+            w3 = Web3(Web3.HTTPProvider(rpc_url))
             if not w3.is_connected():
-                return {'success': False, 'error': 'Failed to connect to Web3'}
+                return {'success': False, 'error': f'Failed to connect to Web3 on {chain}'}
 
-            # Uniswap V2 Router
-            ROUTER = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"
-            WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+            ROUTER = routing['router']
+            WRAPPED_NATIVE = routing['wrapped_native']
 
             ROUTER_ABI = [{
                 "inputs": [
@@ -300,9 +342,9 @@ class CopyTradeExecutor:
             router = w3.eth.contract(address=Web3.to_checksum_address(ROUTER), abi=ROUTER_ABI)
 
             if is_buy:
-                path = [Web3.to_checksum_address(WETH), Web3.to_checksum_address(token_address)]
+                path = [Web3.to_checksum_address(WRAPPED_NATIVE), Web3.to_checksum_address(token_address)]
             else:
-                path = [Web3.to_checksum_address(token_address), Web3.to_checksum_address(WETH)]
+                path = [Web3.to_checksum_address(token_address), Web3.to_checksum_address(WRAPPED_NATIVE)]
 
             deadline = int(datetime.now().timestamp()) + 120
 
@@ -893,6 +935,22 @@ class CopyTradingEngine:
         tx_hash = source_tx.get('hash', 'unknown')
         logger.info(f"🚀 Copying EVM trade {tx_hash} ({method_name})")
 
+        # MB-24: derive chain from monitor-stamped source_tx['_chain_id']; bail
+        # out cleanly for chains where we have no V2-API router configured
+        # (Arbitrum/Optimism = V3 only, Avalanche = TraderJoe v2 different API).
+        chain_id = source_tx.get('_chain_id')
+        chain_name = None
+        for name, info in EVM_CHAINS.items():
+            if info['chain_id'] == chain_id:
+                chain_name = name
+                break
+        if not chain_name:
+            logger.warning(f"Unknown chain_id {chain_id} on source tx {tx_hash} - skipping")
+            return
+        if chain_name not in EVM_DEX_ROUTING:
+            logger.info(f"Skip copy on {chain_name}: no V2-API router configured (tx {tx_hash})")
+            return
+
         try:
             # Parse token from transaction
             # For swapExactETHForTokens, the token is in the path (input data)
@@ -947,15 +1005,16 @@ class CopyTradingEngine:
             result = await self.executor.copy_evm_swap(
                 token_address=token_address,
                 amount_wei=copy_amount,
-                is_buy=is_buy
+                is_buy=is_buy,
+                chain=chain_name,
             )
 
             if result.get('success'):
-                logger.info(f"✅ EVM Copy Trade {'Executed' if not self.dry_run else 'Simulated'}: {result.get('tx_hash')}")
+                logger.info(f"✅ EVM Copy Trade {'Executed' if not self.dry_run else 'Simulated'} on {chain_name}: {result.get('tx_hash')}")
 
                 # Log to database with source wallet and proper side
                 source_wallet = source_tx.get('from', '')
-                await self._log_copy_trade('ethereum', tx_hash, result, source_wallet, side=side, token_address=token_address)
+                await self._log_copy_trade(chain_name, tx_hash, result, source_wallet, side=side, token_address=token_address)
             else:
                 logger.error(f"❌ EVM Copy Trade Failed: {result.get('error')}")
 
