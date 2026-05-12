@@ -9,12 +9,17 @@ Features:
 """
 
 import asyncio
+import hashlib
+import hmac
 import logging
+import time
 from typing import Dict, List, Optional
 import json
 from datetime import datetime, timedelta
 import aiohttp
 import os
+
+from core.dry_run import should_skip_live
 
 logger = logging.getLogger("SentimentEngine")
 openai_logger = logging.getLogger("OpenAI_API")
@@ -31,6 +36,11 @@ class AITradeExecutor:
         self.config = config
         self.dry_run = dry_run
         self.session: Optional[aiohttp.ClientSession] = None
+
+        # MB-20: defensive leverage cap on every order. Hardcoded; operators
+        # who want different must explicitly plumb config (no silent override).
+        self.max_leverage = int(config.get('max_leverage', 3)) if isinstance(config, dict) else 3
+        self.binance_account = config.get('binance_account') if isinstance(config, dict) else None
 
         # Binance API for futures trading - use secrets manager
         try:
@@ -59,7 +69,8 @@ class AITradeExecutor:
         symbol: str,
         side: str,  # 'buy' or 'sell'
         amount_usd: float,
-        price: float = 0
+        price: float = 0,
+        reduce_only: bool = False,
     ) -> Dict:
         """
         Execute a trade.
@@ -67,12 +78,13 @@ class AITradeExecutor:
         Returns:
             Dict with trade result
         """
-        if self.dry_run:
-            return await self._simulate_trade(symbol, side, amount_usd, price)
+        # MB-20: use centralized kill-switch-aware gate instead of bare self.dry_run.
+        if should_skip_live(self.dry_run, module='ai', account=self.binance_account):
+            return await self._simulate_trade(symbol, side, amount_usd, price, reduce_only=reduce_only)
 
         # Real execution - Binance Futures
         if self.binance_api_key and self.binance_secret:
-            return await self._execute_binance_futures(symbol, side, amount_usd)
+            return await self._execute_binance_futures(symbol, side, amount_usd, reduce_only=reduce_only)
 
         logger.error("No exchange credentials configured for live trading")
         return {'success': False, 'error': 'No exchange configured'}
@@ -82,7 +94,8 @@ class AITradeExecutor:
         symbol: str,
         side: str,
         amount_usd: float,
-        price: float
+        price: float,
+        reduce_only: bool = False,
     ) -> Dict:
         """Simulate a trade for DRY RUN mode"""
         # Fetch current price if not provided
@@ -110,18 +123,54 @@ class AITradeExecutor:
             'timestamp': datetime.now()
         }
 
+    def _sign(self, params: dict) -> str:
+        """HMAC-SHA256 sign Binance query string. DRY across order/margin/leverage."""
+        qs = '&'.join([f"{k}={v}" for k, v in params.items()])
+        return hmac.new(self.binance_secret.encode(), qs.encode(), hashlib.sha256).hexdigest()
+
+    async def _ensure_isolated_margin(self, binance_symbol: str) -> None:
+        """MB-20: force ISOLATED margin so a liquidation drains only the position margin,
+        not the whole wallet. Idempotent; -4046 'no need to change' is success."""
+        try:
+            ts = int(time.time() * 1000)
+            params = {'symbol': binance_symbol, 'marginType': 'ISOLATED', 'timestamp': ts}
+            params['signature'] = self._sign(params)
+            async with self.session.post(
+                "https://fapi.binance.com/fapi/v1/marginType",
+                params=params,
+                headers={'X-MBX-APIKEY': self.binance_api_key},
+            ) as r:
+                data = await r.json()
+                if r.status != 200 and data.get('code') != -4046:
+                    logger.warning(f"ISOLATED margin set failed: {data}")
+        except Exception as e:
+            logger.warning(f"_ensure_isolated_margin error: {e}")
+
+    async def _set_leverage(self, binance_symbol: str, leverage: int) -> None:
+        """MB-20: cap leverage. Idempotent for the symbol; does not affect existing positions."""
+        try:
+            ts = int(time.time() * 1000)
+            params = {'symbol': binance_symbol, 'leverage': int(leverage), 'timestamp': ts}
+            params['signature'] = self._sign(params)
+            async with self.session.post(
+                "https://fapi.binance.com/fapi/v1/leverage",
+                params=params,
+                headers={'X-MBX-APIKEY': self.binance_api_key},
+            ) as r:
+                if r.status != 200:
+                    logger.warning(f"Leverage set failed: {await r.text()}")
+        except Exception as e:
+            logger.warning(f"_set_leverage error: {e}")
+
     async def _execute_binance_futures(
         self,
         symbol: str,
         side: str,
-        amount_usd: float
+        amount_usd: float,
+        reduce_only: bool = False,
     ) -> Dict:
         """Execute trade on Binance Futures"""
         try:
-            import hmac
-            import hashlib
-            import time
-
             # Get current price
             price = await self._get_current_price(symbol)
             if price <= 0:
@@ -134,29 +183,28 @@ class AITradeExecutor:
             base_url = "https://fapi.binance.com"
             endpoint = "/fapi/v1/order"
 
-            timestamp = int(time.time() * 1000)
-
             # Map symbol to Binance format
             binance_symbol = f"{symbol}USDT"
 
+            # MB-20: enforce ISOLATED margin + leverage cap BEFORE the order.
+            # Both helpers are idempotent and never raise.
+            await self._ensure_isolated_margin(binance_symbol)
+            await self._set_leverage(binance_symbol, leverage=self.max_leverage)
+
+            timestamp = int(time.time() * 1000)
             params = {
                 'symbol': binance_symbol,
                 'side': 'BUY' if side == 'buy' else 'SELL',
                 'type': 'MARKET',
                 'quantity': quantity,
-                'timestamp': timestamp
+                # MB-20: client-side idempotency key — duplicate POSTs collapse.
+                'newClientOrderId': f"ai-{timestamp}-{symbol[:6]}",
+                'timestamp': timestamp,
             }
+            if reduce_only:
+                params['reduceOnly'] = 'true'
 
-            # Create signature
-            query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
-            signature = hmac.new(
-                self.binance_secret.encode(),
-                query_string.encode(),
-                hashlib.sha256
-            ).hexdigest()
-
-            params['signature'] = signature
-
+            params['signature'] = self._sign(params)
             headers = {'X-MBX-APIKEY': self.binance_api_key}
 
             async with self.session.post(
@@ -944,7 +992,8 @@ class SentimentEngine:
                 symbol=symbol,
                 side=close_side,
                 amount_usd=amount * exit_price,
-                price=exit_price
+                price=exit_price,
+                reduce_only=True,  # MB-20: closes must not flip direction
             )
 
             if result.get('success'):
