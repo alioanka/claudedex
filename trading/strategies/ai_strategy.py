@@ -360,9 +360,18 @@ class AIStrategy(BaseStrategy):
                 "developer_history": market_data.get("developer_history", {})
             }
             
-            # Get rug probability
-            rug_prob, risk_factors = self.rug_classifier.predict(rug_features)
-            
+            # Get rug probability. predict() returns None if no model is
+            # loaded — same load-or-refuse pattern as the MB-19 scaler fix.
+            result = self.rug_classifier.predict(rug_features)
+            if result is None:
+                logger.debug(
+                    "AIStrategy: rug_classifier not trained; treating as "
+                    "high-risk (rug_prob=1.0) until "
+                    "scripts/train_rug_classifier.py is run."
+                )
+                return 1.0
+            rug_prob, risk_factors = result
+
             # Log if high risk
             if rug_prob > 0.5:
                 logger.warning(

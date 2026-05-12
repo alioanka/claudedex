@@ -34,6 +34,7 @@ class PumpPredictor:
         self.config = config
         self.models = {}
         self.scalers = {}
+        self._loaded = False
         self.sequence_length = 20  # Look back period for LSTM
         
         # Model weights for ensemble
@@ -68,10 +69,34 @@ class PumpPredictor:
         
         # Initialize models
         self._initialize_models()
-        
-        # Model paths
-        self.model_dir = Path(config.get('MODEL_DIR', './models/pump_predictor'))
+
+        # MODEL_DIR is the *parent*; load_model resolves to
+        # MODEL_DIR / f"pump_predictor_{version}". Default ./models keeps the
+        # layout consistent with scripts/train_pump_predictor.py.
+        self.model_dir = Path(config.get('MODEL_DIR', './models'))
         self.model_dir.mkdir(parents=True, exist_ok=True)
+
+        # Try to load a persisted model on init (MB-19-sibling load-or-refuse).
+        version = config.get('model_version', 'v1')
+        try:
+            self.load_model(version)
+            self._loaded = self.is_loaded()
+            if self._loaded:
+                logger.info(
+                    f"PumpPredictor: loaded version '{version}' from {self.model_dir}"
+                )
+        except FileNotFoundError:
+            logger.warning(
+                f"PumpPredictor: no trained model at "
+                f"{self.model_dir}/pump_predictor_{version}/. "
+                f"predict_pump_probability() will refuse until you run "
+                f"scripts/train_pump_predictor.py."
+            )
+        except Exception as e:
+            logger.warning(
+                f"PumpPredictor: failed to load version '{version}': {e}. "
+                f"predict_pump_probability() will refuse."
+            )
     
     def _initialize_models(self):
         """Initialize ensemble of prediction models."""
@@ -410,6 +435,7 @@ class PumpPredictor:
             }
         
         logger.info("Training complete")
+        self._loaded = True
         return results
     
     # ============================================
@@ -420,19 +446,34 @@ class PumpPredictor:
 
     # Add both methods to support both signatures:
 
+    def is_loaded(self) -> bool:
+        """True iff models AND the 'features' scaler are fitted."""
+        if not self.models or not self.scalers:
+            return False
+        feat_scaler = self.scalers.get('features')
+        if feat_scaler is None:
+            return False
+        # An unfit StandardScaler lacks `mean_`. After load_model() the
+        # persisted, fitted scaler has it.
+        if not hasattr(feat_scaler, 'mean_') or feat_scaler.mean_ is None:
+            return False
+        return self._loaded
+
     def predict_pump_probability(
         self,
         features: np.ndarray
-    ) -> float:
+    ) -> Optional[float]:
         """
-        Predict pump probability from features (API-compliant signature)
-        
-        Args:
-            features: Feature array
-            
-        Returns:
-            Pump probability (0-1)
+        Predict pump probability from features (API-compliant signature).
+
+        Returns the pump probability (0-1), or None if no trained model is
+        loaded — refuse-to-predict pattern mirroring the MB-19 scaler fix in
+        trading/strategies/ai_strategy.py.
         """
+        if not self.is_loaded():
+            logger.debug("PumpPredictor: not loaded; refusing to predict")
+            return None
+
         predictions = {}
         
         # LSTM prediction if we have sequence data
@@ -773,6 +814,7 @@ class PumpPredictor:
             self.market_features = metadata['market_features']
         
         logger.info(f"Pump predictor loaded from {model_path}")
+        self._loaded = True
 
     # Add these methods to the PumpPredictor class:
 
