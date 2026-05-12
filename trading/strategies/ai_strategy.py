@@ -47,7 +47,9 @@ class AIStrategy(BaseStrategy):
         self.pattern_analyzer: Optional[PatternAnalyzer] = None
         
         # Feature engineering
-        self.scaler = StandardScaler()
+        self.scaler = self._load_scaler(
+            config.get("scaler_path", "models/ai_strategy_scaler.pkl")
+        )
         self.feature_window = config.get("feature_window", 50)
         self.feature_columns = [
             "price", "volume", "market_cap", "liquidity",
@@ -244,6 +246,39 @@ class AIStrategy(BaseStrategy):
         
         return True
     
+    def _load_scaler(self, path: str) -> Optional[StandardScaler]:
+        try:
+            import joblib
+            scaler = joblib.load(path)
+            if not isinstance(scaler, StandardScaler):
+                logger.warning(
+                    f"AI strategy: loaded object at {path} is not a StandardScaler; "
+                    f"refusing to use"
+                )
+                return None
+            if not hasattr(scaler, "mean_") or scaler.mean_ is None:
+                logger.warning(
+                    f"AI strategy: scaler at {path} is unfitted; refusing to use"
+                )
+                return None
+            logger.info(
+                f"AI strategy: loaded scaler from {path} "
+                f"(n_features={len(scaler.mean_)})"
+            )
+            return scaler
+        except FileNotFoundError:
+            logger.warning(
+                f"AI strategy: scaler file {path} not found. Strategy will return "
+                f"no signals until a trained scaler is provided. Train via the "
+                f"(forthcoming) scripts/train_ai_strategy_scaler.py utility."
+            )
+            return None
+        except Exception as e:
+            logger.warning(
+                f"AI strategy: failed to load scaler from {path}: {e}; refusing to use"
+            )
+            return None
+
     async def _extract_features(
         self,
         market_data: Dict[str, Any]
@@ -285,16 +320,21 @@ class AIStrategy(BaseStrategy):
             features.append(market_data.get("social_score", 0.5))
             features.append(market_data.get("sentiment_score", 0.5))
             
-            # Convert to numpy array
             feature_array = np.array(features).reshape(1, -1)
-            
-            # Scale features
-            if len(self.scaler.mean_) > 0:
-                feature_array = self.scaler.transform(feature_array)
-            else:
-                feature_array = self.scaler.fit_transform(feature_array)
-            
-            return feature_array
+
+            # Refuse to predict without a trained scaler; fitting on a single
+            # live row would yield NaN/inf and poison every downstream ML call.
+            if self.scaler is None:
+                logger.debug("AI strategy: scaler not loaded; returning no features")
+                return None
+            if feature_array.shape[1] != len(self.scaler.mean_):
+                logger.warning(
+                    f"AI strategy: feature count mismatch - got "
+                    f"{feature_array.shape[1]}, scaler expects "
+                    f"{len(self.scaler.mean_)}; returning no features"
+                )
+                return None
+            return self.scaler.transform(feature_array)
             
         except Exception as e:
             logger.error(f"Feature extraction failed: {e}")
