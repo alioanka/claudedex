@@ -771,11 +771,43 @@ async function exportData(format, endpoint) {
     }
 }
 
+async function refreshBotModeBadge() {
+    const el = document.getElementById('bot-mode-badge');
+    const txt = document.getElementById('bot-mode-text');
+    if (!el || !txt) return;
+    try {
+        const r = await fetch('/api/bot/status');
+        if (!r.ok) throw new Error('status ' + r.status);
+        const data = await r.json();
+        el.classList.remove('bot-mode-live', 'bot-mode-dry', 'bot-mode-unknown');
+        if (data.dry_run === undefined || data.dry_run === null) {
+            el.classList.add('bot-mode-unknown');
+            txt.textContent = 'UNKNOWN';
+        } else if (data.dry_run === false) {
+            el.classList.add('bot-mode-live');
+            txt.textContent = '🔴 LIVE TRADING';
+        } else {
+            el.classList.add('bot-mode-dry');
+            txt.textContent = '🔵 DRY-RUN';
+        }
+    } catch (e) {
+        const el2 = document.getElementById('bot-mode-badge');
+        if (el2) {
+            el2.classList.remove('bot-mode-live', 'bot-mode-dry');
+            el2.classList.add('bot-mode-unknown');
+            const t = document.getElementById('bot-mode-text');
+            if (t) t.textContent = 'STATUS UNAVAILABLE';
+        }
+    }
+}
+
 // Initialize on load
 document.addEventListener('DOMContentLoaded', function() {
     loadTheme();
     initDashboard();
     initWebSocket(); // Initialize WebSocket connection
+    refreshBotModeBadge();
+    setInterval(refreshBotModeBadge, 5000);
 
     // The following functions are called within initDashboard, so they are redundant here.
     // updateBotStatus();
