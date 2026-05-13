@@ -9,9 +9,10 @@ instrumentation.
 10 commits, all on `claude/create-expert-agents-JFSF5`. Branch tip at
 session end: `afbc2c5`.
 
-(Updated `2026-05-13` to include 3 additional commits that landed
-after the initial wrap: `813c32a`, `1a8010b`, `93899c2`. Branch tip
-now `93899c2`. Total: 13 commits since `f53b999`.)
+(Updated `2026-05-13` to include 6 additional commits that landed
+after the initial wrap: `813c32a`, `1a8010b`, `93899c2`, `c8debf6`,
+`d0890e3`, `d1e6108`, plus this final wrap-doc update. Branch tip
+now `d1e6108` (pre-wrap-update). Total: 17 commits since `f53b999`.)
 
 ## Commits in order
 
@@ -30,12 +31,15 @@ now `93899c2`. Total: 13 commits since `f53b999`.)
 | `813c32a` | pm | Session wrap doc (this file's initial snapshot). |
 | `1a8010b` | market | SNIPER timing deltas persisted to `sniper_trades.metadata` JSONB via new `SnipeTimingContext.to_metadata_dict()`. Future SQL: `metadata->'timing'->>'total_ms'` for P50/P95 dashboards. Phase 2 A/B has a measurement substrate beyond log scraping. |
 | `93899c2` | market | SNIPER Phase 1 first commit — Solana WSS listener skeleton behind `SNIPER_LISTENER_MODE=wss` env gate (default `polling` preserves behavior). Connects to `programSubscribe` for Raydium V4, capped exponential reconnect, logs notifications. Does NOT yet emit to `new_pools_queue` (Phase 1.5). Deprecated `SNIPER_USE_WEBSOCKET` flag now warns. |
+| `c8debf6` | market | SNIPER Phase 1.5 — Solana WSS notifications wired into `new_pools_queue`. Subscription swapped `programSubscribe` → `logsSubscribe` with `mentions=[RAYDIUM_V4]`; `INIT_KEYWORDS` pre-filter cuts ~90% of `getTransaction` RPC calls; reuses existing `_check_pool_transaction` parser; emits dict with `detection_path: 'wss'` matching polling-path shape (polling now tags `detection_path: 'polling'` for parity). Polling backstop preserved until Phase 2. |
+| `d0890e3` | backend | SNIPER detection-latency dashboard panel. New `GET /api/sniper/timing` endpoint runs `percentile_cont` over `sniper_trades.metadata->'timing'`, grouped by `detection_path`, windowed via `?days=` (default 7, clamped 1-90). New panel in `performance_sniper.html` renders one color-coded card per path (WSS green, polling orange) showing P50/P95 total + per-stage P50. Polls every 60s. Unblocks Phase 2 A/B without ad-hoc SQL. |
+| `d1e6108` | market | SNIPER EVM Phase 1 mirror — same skeleton+queue-wire-up pattern on `evm_listener.py`. New `SNIPER_EVM_LISTENER_MODE` env (separate from Solana so per-chain A/B works); `eth_subscribe('logs')` with PairCreated topic filter; HexBytes conversion so `_parse_log` is reused unchanged; `detection_path` tag on both paths so EVM rows surface in the same dashboard panel automatically. Plus latent bug fix: `known_pairs.add(dict)` was unhashable → uses `pair_address['pair']` now (polling-path dedup was effectively dead code before). |
 
 ## State at session end
 
 **Module verdicts** (root `CLAUDE.md`):
 - DEX, ARB, SOLANA, FUTURES, AI, COPY, DASHBOARD: AMBER → **GREEN candidate**
-- SNIPER: AMBER (Phase 0 instrumentation shipped; awaits Phase 1 WSS + Phase 2 A/B confirmation per the latency plan)
+- SNIPER: AMBER (latency plan + Phase 0 instrumentation + Phase 1 + Phase 1.5 + EVM Phase 1 all shipped; awaits Phase 2 operational A/B confirmation per the latency plan)
 
 **Test suite**: 59 cases passing across 7 classes in
 `tests/integration/test_secrets_migration.py`. Runs cleanly without
@@ -56,23 +60,29 @@ skipped in environments without.
 
 ## Open threads at session end
 
-1. **SNIPER Phase 1.5** — parse `programNotification` payload from
-   the WSS listener (skeleton landed in `93899c2`) and emit pool
-   events to `self.new_pools_queue`. The actual latency-reduction
-   payoff. Then Phase 2 = A/B compare polling vs WSS using the
-   `metadata.timing` data persisted in `1a8010b`. Spec in
-   `docs/agents/reports/SNIPER_LATENCY_PLAN.md`.
+1. **SNIPER Phase 2 — operational A/B validation** (NOT a code task).
+   Enable `SNIPER_LISTENER_MODE=wss` + `SNIPER_EVM_LISTENER_MODE=wss`
+   in testnet; let snipes accumulate for ~week; watch the
+   `/api/sniper/timing` dashboard panel. When WSS card's `p50_total_ms`
+   drops to the 100-500ms range (Solana) / 50-200ms (EVM) with
+   meaningful `sample_count` AND parity with polling on success rate,
+   bump `modules/sniper/CLAUDE.md` verdict AMBER → GREEN candidate
+   and retire the polling backstop in a separate commit.
 2. **Production verification harness** — needed to graduate the 7
-   GREEN candidates to unconditional GREEN. Concept: per-module
-   `scripts/smoke_<module>.py` running each in DRY_RUN against
-   testnet, asserting init + 1 signal/broadcast + reconcile fires.
-3. **SNIPER timing dashboard surface** — `1a8010b` persists deltas
-   to `sniper_trades.metadata.timing`. Next: surface P50/P95 in a
-   dashboard panel (currently log-only).
+   existing GREEN candidates to unconditional GREEN. Concept:
+   per-module `scripts/smoke_<module>.py` running each in DRY_RUN
+   against testnet, asserting init + 1 signal/broadcast + reconcile
+   fires. Different workstream from SNIPER; could ship as a focused
+   next session.
+3. **Phase 3 mempool watching** — `eth_subscribe('newPendingTransactions')`
+   for EVM, deferred per the latency plan until Phase 1.5/EVM-1 are
+   validated in Phase 2. Sub-100ms detection, high false-positive
+   rate. Architecturally separate; future session.
 
 ## Pickup instructions for the next operator
 
-- Branch: `claude/create-expert-agents-JFSF5`; tip `93899c2`.
+- Branch: `claude/create-expert-agents-JFSF5`; tip `d1e6108` (this
+  wrap-doc update lands on top).
 - Read root `CLAUDE.md` for current verdicts + module map.
 - Read `docs/agents/reports/SNIPER_LATENCY_PLAN.md` before
   considering Phase 1 work — the plan is the contract.
