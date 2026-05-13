@@ -230,8 +230,16 @@ class SecureSecretsManager:
         # Check cache first (but not if value is encrypted)
         if key in self._cache:
             cached = self._cache[key]
-            # Don't return encrypted values from cache
-            if not (cached and cached.startswith('gAAAAAB')):
+            # Don't return encrypted values from cache. L290 guards writes,
+            # so this branch should never trigger via normal flow — log loudly
+            # if it does so any future regression surfaces.
+            if cached and cached.startswith('gAAAAAB'):
+                logger.warning(
+                    "Cache invariant violation: encrypted value found in "
+                    "_cache for key=%s — re-fetching. This should never "
+                    "happen via normal flow; investigate the writer.", key
+                )
+            else:
                 return cached
 
         value = None
@@ -405,7 +413,16 @@ class SecureSecretsManager:
         # Check cache (but not if value is encrypted)
         if key in self._cache:
             cached = self._cache[key]
-            if not (cached and cached.startswith('gAAAAAB')):
+            # Don't return encrypted values from cache. L466 guards writes,
+            # so this branch should never trigger via normal flow — log loudly
+            # if it does so any future regression surfaces.
+            if cached and cached.startswith('gAAAAAB'):
+                logger.warning(
+                    "Cache invariant violation: encrypted value found in "
+                    "_cache for key=%s — re-fetching. This should never "
+                    "happen via normal flow; investigate the writer.", key
+                )
+            else:
                 return cached
 
         value = None

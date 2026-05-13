@@ -201,6 +201,41 @@ class TestSecretsManagerContract:
         assert result == secret_value
         assert secret_value not in caplog.text
 
+    def test_cache_encrypted_value_triggers_refetch_with_warning(
+        self, caplog, monkeypatch
+    ):
+        """If encrypted ciphertext ever leaks into _cache (bug, test
+        pollution), get() must NOT return it — it must skip the cache,
+        re-fetch, and emit a warning so the violation is noisy."""
+        try:
+            from cryptography.fernet import Fernet
+        except ImportError:
+            pytest.skip("cryptography package not installed")
+        from security.secrets_manager import SecureSecretsManager
+        fernet_key = Fernet.generate_key()
+        fernet = Fernet(fernet_key)
+        ciphertext = fernet.encrypt(b"the-real-secret").decode()
+        key = f"POLLUTED_KEY_{uuid.uuid4().hex[:8]}"
+        # Populate env with the SAME ciphertext so the re-fetch path
+        # finds a valid encrypted value that fernet can decrypt.
+        monkeypatch.setenv(key, ciphertext)
+        mgr = SecureSecretsManager.get_instance()
+        mgr.initialize()
+        mgr._fernet = fernet
+        # Pollute the cache directly with ciphertext — simulates the bug
+        # the safety net is defending against.
+        mgr._cache[key] = ciphertext
+        with caplog.at_level(logging.WARNING):
+            result = mgr.get(key)
+        # Re-fetch path resolved from env, decrypted, and returned plaintext
+        assert result == "the-real-secret", (
+            f"get() returned ciphertext or wrong value: {result!r}"
+        )
+        # Warning surfaced so a real future regression would be noisy
+        assert "Cache invariant violation" in caplog.text or \
+               any("encrypted value found" in r.message for r in caplog.records), \
+            f"Expected cache-invariant warning, got: {caplog.text}"
+
     def test_fernet_encrypted_value_decrypts_on_read(self, monkeypatch):
         try:
             from cryptography.fernet import Fernet
