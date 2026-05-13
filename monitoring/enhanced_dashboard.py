@@ -448,6 +448,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/sniper/stats', self.api_get_sniper_stats)
         self.app.router.add_get('/api/sniper/positions', self.api_get_sniper_positions)
         self.app.router.add_get('/api/sniper/trades', self.api_get_sniper_trades)
+        self.app.router.add_get('/api/sniper/timing', self.api_get_sniper_timing)
         self.app.router.add_get('/api/sniper/settings', self.api_get_sniper_settings)
         self.app.router.add_post('/api/sniper/settings', self.api_save_sniper_settings)
         self.app.router.add_get('/api/sniper/trading/status', self.api_sniper_trading_status)
@@ -7619,6 +7620,71 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Error getting sniper stats: {e}")
             return web.json_response({'success': False, 'error': str(e), **stats})
+
+    async def api_get_sniper_timing(self, request):
+        """Return P50/P95 detection latency split by detection_path
+        for the SNIPER Phase 2 A/B comparison. Reads sniper_trades.metadata
+        JSONB populated by commits 1a8010b + c8debf6."""
+        result = {
+            'paths': {},
+            'window_days': 7,
+            'has_data': False,
+        }
+        try:
+            days = int(request.query.get('days', '7'))
+            days = max(1, min(days, 90))
+            result['window_days'] = days
+        except (TypeError, ValueError):
+            days = 7
+
+        try:
+            if not self.db:
+                return web.json_response({'success': True, 'data': result})
+
+            query = """
+                SELECT
+                    COALESCE(metadata->>'detection_path', 'unknown') AS path,
+                    COUNT(*) AS sample_count,
+                    percentile_cont(0.5) WITHIN GROUP (
+                        ORDER BY (metadata->'timing'->>'total_ms')::float
+                    ) AS p50_total_ms,
+                    percentile_cont(0.95) WITHIN GROUP (
+                        ORDER BY (metadata->'timing'->>'total_ms')::float
+                    ) AS p95_total_ms,
+                    percentile_cont(0.5) WITHIN GROUP (
+                        ORDER BY (metadata->'timing'->>'safety_ms')::float
+                    ) AS p50_safety_ms,
+                    percentile_cont(0.5) WITHIN GROUP (
+                        ORDER BY (metadata->'timing'->>'broadcast_ms')::float
+                    ) AS p50_broadcast_ms
+                FROM sniper_trades
+                WHERE metadata->'timing' IS NOT NULL
+                  AND (metadata->'timing'->>'total_ms') IS NOT NULL
+                  AND entry_timestamp > NOW() - ($1::int * INTERVAL '1 day')
+                GROUP BY COALESCE(metadata->>'detection_path', 'unknown')
+            """
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(query, days)
+
+            for row in rows:
+                path = row['path'] or 'unknown'
+                result['paths'][path] = {
+                    'sample_count': int(row['sample_count'] or 0),
+                    'p50_total_ms': float(row['p50_total_ms']) if row['p50_total_ms'] is not None else None,
+                    'p95_total_ms': float(row['p95_total_ms']) if row['p95_total_ms'] is not None else None,
+                    'p50_safety_ms': float(row['p50_safety_ms']) if row['p50_safety_ms'] is not None else None,
+                    'p50_broadcast_ms': float(row['p50_broadcast_ms']) if row['p50_broadcast_ms'] is not None else None,
+                }
+            result['has_data'] = len(result['paths']) > 0
+
+            return web.json_response({'success': True, 'data': result})
+
+        except Exception as e:
+            logger.error(f"api_get_sniper_timing failed: {e}", exc_info=True)
+            return web.json_response(
+                {'success': False, 'error': str(e), 'data': result},
+                status=500,
+            )
 
     async def api_get_sniper_positions(self, request):
         """Get Sniper open positions from sniper_trades table"""
