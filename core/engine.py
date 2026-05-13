@@ -2214,7 +2214,83 @@ class TradingBotEngine:
                     reason=reason,
                     pnl=float(final_pnl)
                 )
-                
+
+                # Backfill DB + ML outcome on real-execution close (mirrors dry-run branch)
+                holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
+                try:
+                    trade_id = position.get('trade_id')
+                    if not trade_id:
+                        query = """
+                        SELECT id FROM trades
+                        WHERE token_address = $1
+                        AND status = 'open'
+                        ORDER BY entry_timestamp DESC
+                        LIMIT 1
+                        """
+                        trade_id = await self.db.pool.fetchval(query, token_address)
+
+                    if trade_id:
+                        updated_metadata = {
+                            **position.get('metadata', {}),
+                            'close_reason': reason,
+                            'holding_time_minutes': holding_time,
+                            'close_details': {
+                                'entry_price': float(position['entry_price']),
+                                'exit_price': float(exit_price),
+                                'amount': float(position['amount']),
+                                'final_pnl': float(final_pnl),
+                                'pnl_percentage': float(pnl_percentage)
+                            }
+                        }
+                        await self.db.update_trade(trade_id, {
+                            'exit_price': float(exit_price),
+                            'exit_timestamp': datetime.now(),
+                            'profit_loss': float(final_pnl),
+                            'profit_loss_percentage': float(pnl_percentage),
+                            'status': 'closed',
+                            'metadata': updated_metadata
+                        })
+                        logger.info(f"✅ Trade {trade_id} closed in database")
+
+                        try:
+                            log_trade_exit(
+                                chain=position.get('chain', 'unknown'),
+                                symbol=token_symbol,
+                                trade_id=str(trade_id),
+                                entry_price=float(position['entry_price']),
+                                exit_price=float(exit_price),
+                                profit_loss=float(final_pnl),
+                                pnl_pct=float(pnl_percentage),
+                                reason=reason,
+                                hold_time_minutes=int(holding_time)
+                            )
+                        except Exception as log_err:
+                            logger.warning(f"Failed to log trade exit: {log_err}")
+                    else:
+                        logger.warning(f"⚠️  Could not find open trade_id for {token_symbol}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to update trade in database: {e}")
+
+                try:
+                    ai_strategy = self.strategy_manager.strategies.get('ai') if hasattr(self, 'strategy_manager') else None
+                    if ai_strategy is not None and hasattr(ai_strategy, 'get_last_feature_row_id'):
+                        feature_row_id = ai_strategy.get_last_feature_row_id(token_address)
+                        if feature_row_id is not None:
+                            from ml.feature_store import update_outcome
+                            await update_outcome(
+                                self.db.pool,
+                                row_id=feature_row_id,
+                                outcome={
+                                    'pnl_pct': float(pnl_percentage),
+                                    'won': bool(float(final_pnl) > 0),
+                                    'exit_reason': reason,
+                                    'token_symbol': token_symbol,
+                                },
+                            )
+                            ai_strategy.clear_last_feature_row_id(token_address)
+                except Exception as e:
+                    logger.debug(f"feature-store outcome backfill failed (non-fatal): {e}")
+
                 if hasattr(self, 'position_tracker') and position.get('tracker_id'):
                     await self.position_tracker.close_position(position['tracker_id'])
 
