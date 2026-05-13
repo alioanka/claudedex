@@ -95,21 +95,35 @@ Manifests in `kubernetes/`:
 `database-url`, `redis-url`, `api-keys` (`deployment.yaml` lines
 31-45). Intentionally NOT shipped — secrets do not belong in source
 control. This is the **MB-BE-03 / DASH-BE-03 audit-flagged gap**.
-Bootstrap:
+
+Bootstrap — **preferred**: copy the shipped template:
 
 ```bash
-kubectl create namespace trading
+cp kubernetes/secret.yaml.template kubernetes/secret.yaml
+# edit secret.yaml, replace every REPLACE_ME with real values
+kubectl -n trading apply -f kubernetes/secret.yaml
+```
+
+**Production / GitOps**: use the sealed-secrets variant in
+`kubernetes/secret.sealedsecrets.yaml.template`; sealed values are
+asymmetric-encrypted to the cluster pubkey and safe to commit.
+
+**Quick path (no template)**: kubectl create from literals:
+
+```bash
 kubectl -n trading create secret generic trading-secrets \
   --from-literal=database-url='postgresql://user:pass@host:5432/tradingbot' \
   --from-literal=redis-url='redis://:pass@host:6379/0' \
-  --from-literal=api-keys='{"etherscan":"...","alchemy":"..."}'
+  --from-literal=encryption-key="$(cat .encryption_key)" \
+  # ... plus the rest of the per-module keys; see secret.yaml.template
 ```
 
-`ENCRYPTION_KEY` is NOT in the shipped Secret — it rides on a mounted
-`.encryption_key` volume; `JWT_SECRET` loads from `config_sensitive`
-after credentials migration. Extend the Secret if org policy requires.
+`ENCRYPTION_KEY` is mounted from the Secret's `encryption-key` field
+into `/secure/encryption.key` (read-only, mode 0400) — matching the
+`secrets_manager._external_key_path` default. The previous host-volume
+approach is deprecated for K8s deployments.
 
-Apply order: `configmap.yaml` -> create `trading-secrets` ->
+Apply order: `configmap.yaml` -> `secret.yaml` (from template) ->
 `service.yaml` -> `deployment.yaml` -> `ingress.yaml` (after TLS).
 
 ## 4. Secrets bootstrap
