@@ -3,7 +3,7 @@ Multi-strategy crypto trading bot. Each strategy runs as an independent subproce
 ## Modules
 | Module | Dir | Entry | Verdict |
 |---|---|---|---|
-| DEX | `modules/dex_trading/` | `main_dex.py` | AMBER (P1-04 pool_engine integration outstanding) |
+| DEX | `modules/dex_trading/` | `main_dex.py` | AMBER → GREEN candidate (P1-04 pool_engine sweep closed in a21ec41) |
 | ARBITRAGE | `modules/arbitrage/` | `main_arbitrage.py` | AMBER (triangular entry-disabled by MB-05 guard) |
 | SOLANA | `modules/solana_trading/` | `main_solana.py` | AMBER (MB-15 Drift hardening deferred) |
 | SNIPER | `modules/sniper/` | `main_sniper.py` | AMBER (structural latency remains, P1) |

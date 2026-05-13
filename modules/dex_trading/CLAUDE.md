@@ -18,7 +18,7 @@ Spot trading on EVM DEXes (Uniswap V2/V3, SushiSwap, PancakeSwap) across Ethereu
 ## Primary risk-policy gate
 `core.risk_manager.RiskManager.validate_trade(token, amount)` — wired through the shared `trading/trading_engine.py` order-execution path. Per-executor caps (`max_slippage_bps`, `max_gas_price`) enforced inline at `trading/executors/direct_dex.py:88,567`.
 ## Live-trade readiness
-AMBER. MB-01 (decimals) and MB-02 (Flashbots EIP-191) closed. Outstanding: P1-04 `pool_engine` integration for unified RPC selection.
+AMBER → GREEN candidate (pending production verification). MB-01 (decimals), MB-02 (Flashbots EIP-191) and P1-04 (`pool_engine` RPC unification via the cross-module sweep in `a21ec41`) all closed.
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/DEX_*.md` (smartcontract / quant / analyst).
 - Canonical engine API: `docs/engines.md`.
