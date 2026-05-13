@@ -32,31 +32,80 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from ml.feature_store import load_labeled_features  # noqa: E402
 from ml.models.pump_predictor import PumpPredictor  # noqa: E402
+from trading.strategies.ai_strategy import (  # noqa: E402
+    PUMP_FEATURE_NAMES,
+    EXPECTED_PUMP_FEATURE_COUNT,
+)
 
-EXPECTED_TREE_FEATURE_COUNT = 27  # extract_features L217-230
+EXPECTED_TREE_FEATURE_COUNT = EXPECTED_PUMP_FEATURE_COUNT  # canonical layout
 
 
 def _generate_synthetic_features(n, rng):
-    """27-feature matrix + binary pump labels via deterministic rule."""
-    buy_p = rng.uniform(0, 1, n)
-    sell_p = (1 - buy_p + rng.normal(0, 0.05, n)).clip(0, 1)
-    volume_spike = rng.exponential(1.5, n).clip(0, 10)
-    momentum = rng.normal(0, 0.1, n)
-    technical = np.column_stack([
-        rng.uniform(0, 100, n), rng.normal(0, 0.01, n),
-        rng.normal(0, 0.01, n), rng.normal(0, 0.005, n),
-        rng.lognormal(0, 0.05, (n, 3)), rng.exponential(0.05, n),
-        rng.lognormal(0, 0.05, (n, 4)), rng.normal(0, 1e6, n),
-        rng.uniform(0, 100, (n, 3)),
+    """Generate 27 columns matching PUMP_FEATURE_NAMES canonical layout.
+
+    Each column is drawn from a plausible distribution for that feature's
+    semantic meaning. The synthetic-trained model thus has semantic
+    continuity with live-inference rows once feature-store backfill kicks
+    in via --from-feature-store.
+    """
+    assert EXPECTED_PUMP_FEATURE_COUNT == 27, "feature count drift"
+
+    # [0] vol_acceleration   log-normal centred on 1.0
+    vol_acc      = rng.lognormal(mean=0.0, sigma=0.3, size=n)
+    # [1] price_momentum     log-normal centred on 1.0
+    price_mom    = rng.lognormal(mean=0.0, sigma=0.05, size=n)
+    # [2] social_volume_24h  exponential (heavy right tail)
+    social_vol   = rng.exponential(500.0, n)
+    # [3] social_engagement  uniform [0, 1]
+    social_eng   = rng.uniform(0, 1, n)
+    # [4] unique_buyers_1h   log-uniform [1, 10_000]
+    unique_buy   = np.exp(rng.uniform(np.log(1), np.log(10_000), n))
+    # [5] buy_sell_ratio     log-normal around 1
+    buy_sell_r   = rng.lognormal(0.0, 0.5, n)
+    # [6] txn_count_1h       log-uniform [1, 10_000]
+    txn_count    = np.exp(rng.uniform(np.log(1), np.log(10_000), n))
+    # [7] last_txn_age_s     exponential (heavy right tail of stale tokens)
+    last_txn_age = rng.exponential(60.0, n)
+    # [8-11] price_change windows — std scales with window size
+    pc_5m        = rng.normal(0.0, 0.02, n)
+    pc_1h        = rng.normal(0.0, 0.05, n)
+    pc_4h        = rng.normal(0.0, 0.10, n)
+    pc_24h       = rng.normal(0.0, 0.20, n)
+    # [12] liquidity_usd     log-uniform [1e3, 1e8]
+    liquidity    = np.exp(rng.uniform(np.log(1e3),  np.log(1e8),  n))
+    # [13] market_cap        log-uniform [1e5, 1e10]
+    mcap         = np.exp(rng.uniform(np.log(1e5),  np.log(1e10), n))
+    # [14] holders_count     log-uniform [10, 1e6]
+    holders      = np.exp(rng.uniform(np.log(10),   np.log(1e6),  n))
+    # [15] top10_holder_pct  uniform [0, 1]
+    top10_pct    = rng.uniform(0, 1, n)
+    # [16] dev_holder_pct    uniform [0, 0.5]  (dev rarely > 50%)
+    dev_pct      = rng.uniform(0, 0.5, n)
+    # [17-26] scaled tail    normal(0, 1) — post-StandardScaler output
+    scaled_tail  = rng.normal(0.0, 1.0, (n, 10))
+
+    X = np.column_stack([
+        vol_acc, price_mom, social_vol, social_eng,
+        unique_buy, buy_sell_r, txn_count, last_txn_age,
+        pc_5m, pc_1h, pc_4h, pc_24h,
+        liquidity, mcap, holders, top10_pct, dev_pct,
+        scaled_tail,
     ])
-    market = np.column_stack([buy_p, sell_p, buy_p - sell_p,
-                              rng.uniform(0, 1, (n, 5))])
-    patterns = np.column_stack([volume_spike, momentum,
-                                rng.uniform(0, 1, (n, 2))])
-    X = np.hstack([technical, market, patterns])
-    score = (np.clip(volume_spike / 5, 0, 1) * 0.4
-             + np.clip(momentum * 5 + 0.5, 0, 1) * 0.3 + buy_p * 0.3)
-    labels = (score > float(np.median(score))).astype(float)
+    assert X.shape == (n, EXPECTED_PUMP_FEATURE_COUNT), \
+        f"shape drift: got {X.shape}, expected (n, {EXPECTED_PUMP_FEATURE_COUNT})"
+
+    # Deterministic-rule label: combine "trend up" + "active" + "not concentrated".
+    # log(x) for the multiplicative ratios so they centre around 0.
+    score = (
+        np.log(price_mom).clip(-1, 1) * 0.30      # strong up-momentum positive
+        + np.log(vol_acc).clip(-1, 1) * 0.20      # volume acceleration positive
+        + pc_24h.clip(-1, 1) * 0.20               # 24h price change positive
+        + (1.0 - top10_pct) * 0.15                # less whale-concentration positive
+        + np.tanh(social_vol / 1000.0) * 0.15     # social signal positive (bounded)
+    )
+    # ~30% positive rate via the 70th percentile threshold.
+    threshold = float(np.quantile(score, 0.70))
+    labels = (score > threshold).astype(float)
     return X, labels
 
 
@@ -132,6 +181,9 @@ def main():
         print("ERROR: roundtrip failed (is_loaded()=False)", file=sys.stderr)
         return 2
     print(f"Roundtrip OK: is_loaded()=True after load_model('{a.output_version}').")
+    print(f"  Trained on {EXPECTED_PUMP_FEATURE_COUNT} features in canonical order:")
+    print(f"    {', '.join(PUMP_FEATURE_NAMES[:8])}...")
+    print(f"    ...{', '.join(PUMP_FEATURE_NAMES[-4:])}")
     return 0
 
 
