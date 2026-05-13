@@ -36,8 +36,17 @@ Position Management:
 This module operates INDEPENDENTLY from DEX module!
 """
 
-from .futures_module import FuturesTradingModule
-
 __all__ = ['FuturesTradingModule']
 
 __version__ = "2.0.0"
+
+
+def __getattr__(name: str):
+    # Lazy-load FuturesTradingModule (PEP 562) so importing sibling
+    # submodules (e.g. modules.futures_trading.exchanges for the
+    # normalizers) does not transitively pull in aiohttp / web3 / ccxt
+    # at package-load time.
+    if name == 'FuturesTradingModule':
+        from .futures_module import FuturesTradingModule
+        return FuturesTradingModule
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
