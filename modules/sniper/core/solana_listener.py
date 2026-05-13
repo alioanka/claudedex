@@ -61,6 +61,13 @@ USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
 
 FILTERED_MINTS = {WSOL_MINT, USDC_MINT, USDT_MINT}
 
+# Phase 1: Raydium V4 program ID (mainnet). Public constant.
+RAYDIUM_V4_PROGRAM_ID = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
+
+# Phase 1: WSS reconnect backoff (seconds). Capped exponential.
+WSS_BACKOFF_INITIAL_SECONDS = 1.0
+WSS_BACKOFF_MAX_SECONDS = 60.0
+
 
 @dataclass
 class DetectedPool:
@@ -93,7 +100,21 @@ class SolanaListener:
 
         # Polling configuration
         self.poll_interval = int(os.getenv('SNIPER_POLL_INTERVAL', '15'))  # Faster polling
-        self.use_websocket = os.getenv('SNIPER_USE_WEBSOCKET', 'false').lower() == 'true'
+        # Phase 1: SNIPER_LISTENER_MODE = 'polling' (default) | 'wss'
+        # WSS mode opens a programSubscribe connection to Raydium V4 for
+        # sub-second pool detection. Currently logs notifications only; pool
+        # events are still emitted by the polling path (Phase 1.5 will wire
+        # WSS into the downstream queue).
+        self.listener_mode = os.getenv('SNIPER_LISTENER_MODE', 'polling').strip().lower()
+        self.wss_url = os.getenv('SNIPER_SOLANA_WSS_URL', '').strip() or self._infer_wss_url()
+        # Deprecated: SNIPER_USE_WEBSOCKET was unused. Kept readable for
+        # back-compat detection so we can warn operators who set it.
+        if os.getenv('SNIPER_USE_WEBSOCKET'):
+            logger.warning(
+                "SNIPER_USE_WEBSOCKET is deprecated; use "
+                "SNIPER_LISTENER_MODE=wss instead. Currently ignored."
+            )
+        self.use_websocket = self.listener_mode == 'wss'
 
         # Which AMMs to monitor (configurable)
         self.enabled_sources = self._get_enabled_sources()
@@ -105,6 +126,7 @@ class SolanaListener:
         self.new_pools_queue: asyncio.Queue = asyncio.Queue()
         self.is_running = False
         self.poll_task: Optional[asyncio.Task] = None
+        self.wss_task: Optional[asyncio.Task] = None
 
         # Stats
         self._stats = {
@@ -114,7 +136,9 @@ class SolanaListener:
             'api_calls': 0,
             'errors': 0,
             'last_log_time': datetime.now(),
-            'by_source': {source.value: 0 for source in PoolSource}
+            'by_source': {source.value: 0 for source in PoolSource},
+            'wss_connects': 0,
+            'wss_notifications': 0,
         }
         self._log_interval = timedelta(minutes=5)
         self._max_signatures = 500  # Per source
@@ -129,6 +153,18 @@ class SolanaListener:
             or RPCProvider.get_rpc_sync('SOLANA_RPC')
             or os.getenv('SOLANA_RPC_URL')
         )
+
+    def _infer_wss_url(self) -> Optional[str]:
+        """Derive a WSS URL from the HTTP RPC URL by swapping the scheme.
+        Helius / QuickNode / Triton all serve WSS on the same hostname.
+        Returns None if rpc_url is unset or non-derivable."""
+        if not self.rpc_url:
+            return None
+        if self.rpc_url.startswith('https://'):
+            return 'wss://' + self.rpc_url[len('https://'):]
+        if self.rpc_url.startswith('http://'):
+            return 'ws://' + self.rpc_url[len('http://'):]
+        return None
 
     def _get_helius_key(self) -> Optional[str]:
         """Get Helius API key"""
@@ -174,6 +210,9 @@ class SolanaListener:
         logger.info(f"   RPC: {self.rpc_url[:50] if self.rpc_url else 'NOT CONFIGURED'}...")
         logger.info(f"   Poll Interval: {self.poll_interval}s")
         logger.info(f"   Enabled AMMs: {[s.value for s in self.enabled_sources]}")
+        logger.info(f"   Listener Mode: {self.listener_mode.upper()}")
+        if self.listener_mode == 'wss':
+            logger.info(f"   WSS URL: {(self.wss_url or 'NONE')[:60]}...")
 
         if not self.rpc_url:
             logger.error("❌ No RPC URL provided - Solana detection DISABLED")
@@ -193,7 +232,24 @@ class SolanaListener:
         )
 
         # Start polling
-        self.poll_task = asyncio.create_task(self._run_polling_listener())
+        if self.listener_mode == 'wss':
+            if not self.wss_url:
+                logger.warning(
+                    "SNIPER_LISTENER_MODE=wss but no WSS URL available "
+                    "(set SNIPER_SOLANA_WSS_URL or use an https:// RPC); "
+                    "falling back to polling"
+                )
+                self.listener_mode = 'polling'
+                self.use_websocket = False
+                self.poll_task = asyncio.create_task(self._run_polling_listener())
+            else:
+                logger.info(f"📡 Starting WSS listener: {self.wss_url[:60]}...")
+                self.wss_task = asyncio.create_task(self._run_wss_listener())
+                # Still run polling as a backstop until Phase 1.5 wires WSS
+                # into the downstream queue.
+                self.poll_task = asyncio.create_task(self._run_polling_listener())
+        else:
+            self.poll_task = asyncio.create_task(self._run_polling_listener())
         logger.info("✅ Solana Listener initialized successfully")
 
     async def _verify_rpc(self) -> bool:
@@ -259,6 +315,81 @@ class SolanaListener:
                 self._stats['errors'] += 1
 
             await asyncio.sleep(self.poll_interval)
+
+    async def _run_wss_listener(self) -> None:
+        """Phase 1 SNIPER WSS listener — connects to a Solana WSS endpoint,
+        sends programSubscribe for Raydium V4, and logs incoming
+        notifications. Does NOT yet emit to self.new_pools_queue (Phase 1.5
+        will parse the notification payload and extract pool data). Reconnects
+        on disconnect with exponential backoff capped at 60s."""
+        try:
+            import websockets
+        except ImportError:
+            logger.error(
+                "websockets package not installed — WSS listener disabled. "
+                "pip install websockets>=12.0"
+            )
+            return
+
+        backoff = WSS_BACKOFF_INITIAL_SECONDS
+        sub_id_counter = 0
+
+        while self.is_running:
+            try:
+                async with websockets.connect(self.wss_url, ping_interval=20, ping_timeout=10) as ws:
+                    self._stats['wss_connects'] += 1
+                    backoff = WSS_BACKOFF_INITIAL_SECONDS  # reset on successful connect
+                    logger.info(
+                        f"🔌 WSS connected (connect #{self._stats['wss_connects']}); "
+                        f"subscribing to Raydium V4 program logs"
+                    )
+
+                    sub_id_counter += 1
+                    subscribe_msg = {
+                        "jsonrpc": "2.0",
+                        "id": sub_id_counter,
+                        "method": "programSubscribe",
+                        "params": [
+                            RAYDIUM_V4_PROGRAM_ID,
+                            {
+                                "encoding": "jsonParsed",
+                                "commitment": "processed",
+                            },
+                        ],
+                    }
+                    await ws.send(json.dumps(subscribe_msg))
+
+                    async for raw in ws:
+                        if not self.is_running:
+                            break
+                        try:
+                            msg = json.loads(raw)
+                        except Exception:
+                            continue
+                        if msg.get('method') == 'programNotification':
+                            self._stats['wss_notifications'] += 1
+                            # Skeleton: log only every 50th notification to avoid
+                            # log spam during initial validation. Phase 1.5 will
+                            # parse the payload and emit to self.new_pools_queue.
+                            if self._stats['wss_notifications'] % 50 == 1:
+                                logger.info(
+                                    f"📡 WSS notification #{self._stats['wss_notifications']} "
+                                    f"received (skeleton — not yet emitted to queue)"
+                                )
+
+            except asyncio.CancelledError:
+                logger.info("WSS listener cancelled")
+                return
+            except Exception as e:
+                logger.warning(
+                    f"WSS disconnect: {type(e).__name__}: {e}; "
+                    f"reconnecting in {backoff:.1f}s"
+                )
+                try:
+                    await asyncio.sleep(backoff)
+                except asyncio.CancelledError:
+                    return
+                backoff = min(backoff * 2, WSS_BACKOFF_MAX_SECONDS)
 
     async def _poll_source(self, source: PoolSource):
         """Poll a specific AMM source for new pools"""
@@ -602,7 +733,7 @@ class SolanaListener:
             if detected == 0:
                 logger.warning("   ⚠️ No pools detected - verify RPC is working and AMMs are active")
 
-            # Reset stats
+            # Reset stats (WSS counters preserved across windows for lifecycle visibility)
             self._stats = {
                 'polls': 0,
                 'pools_detected': 0,
@@ -610,7 +741,9 @@ class SolanaListener:
                 'api_calls': 0,
                 'errors': 0,
                 'last_log_time': now,
-                'by_source': {source.value: 0 for source in PoolSource}
+                'by_source': {source.value: 0 for source in PoolSource},
+                'wss_connects': self._stats.get('wss_connects', 0),
+                'wss_notifications': self._stats.get('wss_notifications', 0),
             }
 
     async def close(self):
@@ -621,6 +754,13 @@ class SolanaListener:
             self.poll_task.cancel()
             try:
                 await self.poll_task
+            except asyncio.CancelledError:
+                pass
+
+        if self.wss_task and not self.wss_task.done():
+            self.wss_task.cancel()
+            try:
+                await self.wss_task
             except asyncio.CancelledError:
                 pass
 
