@@ -346,18 +346,67 @@ class AIStrategy(BaseStrategy):
                 )
                 return None
             scaled = self.scaler.transform(feature_array)
+
+            # Build rug-shaped (34-dim) vector for feature-store training.
+            # Done independent of whether the classifier itself is trained, so
+            # the feature_store accumulates rows even before scripts/train_rug_classifier.py runs.
+            rug_v1 = None
+            if self.rug_classifier is not None:
+                try:
+                    rug_dict = {
+                        "liquidity_locked": market_data.get("liquidity_locked", False),
+                        "contract_verified": market_data.get("contract_verified", False),
+                        "owner_percentage": market_data.get("owner_percentage", 0),
+                        "holder_distribution": market_data.get("holder_distribution", {}),
+                        "contract_age_hours": market_data.get("contract_age_hours", 0),
+                        "developer_history": market_data.get("developer_history", {}),
+                    }
+                    rug_arr = self.rug_classifier.extract_features(rug_dict)
+                    rug_v1 = rug_arr.flatten().tolist() if hasattr(rug_arr, "flatten") else list(rug_arr)
+                except Exception as e:
+                    logger.debug(f"feature-store: rug_v1 build failed: {e}")
+
+            # Build pump-shaped vector via _prepare_pump_features, passing SCALED
+            # features (matches what the predictor consumes at inference time at :444).
+            pump_v1 = None
+            if self.pump_predictor is not None:
+                try:
+                    pump_arr = self._prepare_pump_features(scaled, market_data)
+                    if hasattr(pump_arr, "flatten"):
+                        pump_v1 = pump_arr.flatten().tolist()
+                    elif isinstance(pump_arr, (list, tuple)):
+                        pump_v1 = list(pump_arr)
+                    if pump_v1 is not None and len(pump_v1) != 27:
+                        logger.warning(
+                            f"feature-store: pump_v1 length={len(pump_v1)} (expected 27); "
+                            f"training script width-guard will skip this row."
+                        )
+                except Exception as e:
+                    logger.debug(f"feature-store: pump_v1 build failed: {e}")
+
+            feature_vector = {
+                "scaler_v1": scaled[0].tolist(),
+                "raw_v1": feature_array[0].tolist(),
+            }
+            if rug_v1 is not None:
+                feature_vector["rug_v1"] = rug_v1
+            if pump_v1 is not None:
+                feature_vector["pump_v1"] = pump_v1
+
             # Best-effort feature-store write; never blocks signal generation.
             row_id = await write_feature_row(
                 self.db_pool,
                 token_address=market_data.get("token_address"),
                 chain=market_data.get("chain", "unknown"),
-                feature_vector={
-                    "scaler_v1": scaled[0].tolist(),
-                    "raw_v1": feature_array[0].tolist(),
-                },
+                feature_vector=feature_vector,
                 metadata={
                     "strategy": self.__class__.__name__,
                     "feature_window": self.feature_window,
+                    "shapes": {
+                        "scaler_v1": len(feature_vector["scaler_v1"]),
+                        "rug_v1": len(rug_v1) if rug_v1 is not None else 0,
+                        "pump_v1": len(pump_v1) if pump_v1 is not None else 0,
+                    },
                 },
             )
             token_addr = market_data.get("token_address")
