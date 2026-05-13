@@ -24,22 +24,68 @@ from .base_strategy import (
 from ml.models.ensemble_model import EnsembleModel
 from ml.models.pump_predictor import PumpPredictor
 from ml.models.rug_classifier import RugClassifier
+from ml.feature_store import write_feature_row
 from core.pattern_analyzer import PatternAnalyzer
 from utils.helpers import calculate_moving_average, calculate_ema
+
+
+# Bound the per-token feature-row cache so a long-lived strategy that re-enters
+# the same token many times can't grow this map without limit. 32 rows per
+# token is far more than the worst-case open positions per token in practice.
+_MAX_FEATURE_ROWS_PER_TOKEN = 32
+
+
+# Canonical pump-feature layout. The training script
+# (scripts/train_pump_predictor.py) MUST treat features in this order;
+# rows persisted to ai_feature_store under feature_vector.pump_v1 always
+# have exactly this shape. Reordering here is a breaking change — bump
+# pump_v2 and emit BOTH keys during a deprecation window.
+PUMP_FEATURE_NAMES: List[str] = [
+    # Historical (2) — neutral 1.0 when history is insufficient.
+    "vol_acceleration",          # 0: mean(vol[-5:]) / mean(vol[-10:-5])
+    "price_momentum",            # 1: mean(price[-5:]) / mean(price[-20:])
+    # Social (2)
+    "social_volume_24h",         # 2
+    "social_engagement_rate",    # 3
+    # Market microstructure (4)
+    "unique_buyers_1h",          # 4
+    "buy_sell_ratio",            # 5
+    "txn_count_1h",              # 6
+    "last_txn_age_seconds",      # 7
+    # Price-change windows (4)
+    "price_change_5m",           # 8
+    "price_change_1h",           # 9
+    "price_change_4h",           # 10
+    "price_change_24h",          # 11
+    # Liquidity / cap / holders (5)
+    "liquidity_usd",             # 12
+    "market_cap",                # 13
+    "holders_count",             # 14
+    "top10_holder_pct",          # 15
+    "dev_holder_pct",            # 16
+    # Tail features from the scaled vector (10) — zero-padded if features is
+    # shorter than 10 or None.
+    "scaled_0", "scaled_1", "scaled_2", "scaled_3", "scaled_4",
+    "scaled_5", "scaled_6", "scaled_7", "scaled_8", "scaled_9",
+]
+EXPECTED_PUMP_FEATURE_COUNT: int = 27
+assert len(PUMP_FEATURE_NAMES) == EXPECTED_PUMP_FEATURE_COUNT
 
 
 class AIStrategy(BaseStrategy):
     """AI-powered trading strategy using ensemble machine learning"""
     
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], db_pool=None):
         """
         Initialize AI strategy
-        
+
         Args:
             config: Strategy configuration
+            db_pool: Optional asyncpg pool for feature-store writes (best-effort).
         """
         super().__init__(config)
-        
+        self.db_pool = db_pool
+
         # ML Models
         self.ensemble_model: Optional[EnsembleModel] = None
         self.pump_predictor: Optional[PumpPredictor] = None
@@ -47,7 +93,9 @@ class AIStrategy(BaseStrategy):
         self.pattern_analyzer: Optional[PatternAnalyzer] = None
         
         # Feature engineering
-        self.scaler = StandardScaler()
+        self.scaler = self._load_scaler(
+            config.get("scaler_path", "models/ai_strategy_scaler.pkl")
+        )
         self.feature_window = config.get("feature_window", 50)
         self.feature_columns = [
             "price", "volume", "market_cap", "liquidity",
@@ -74,7 +122,14 @@ class AIStrategy(BaseStrategy):
         # Performance tracking for learning
         self.prediction_history: List[Dict[str, Any]] = []
         self.feature_importance: Dict[str, float] = {}
-        
+
+        # Per-token feature_store row-id history, append-only with bounded length.
+        # Each extract appends (row_id, written_at). On close, the engine passes
+        # the position's entry_time and we pick the row whose written_at is the
+        # latest <= entry_time — disambiguating re-entries so the new close
+        # backfills the row that opened the new position, not a prior one.
+        self._feature_row_ids: Dict[str, List[Tuple[int, datetime]]] = {}
+
         logger.info(f"Initialized AI Strategy: {self.name}")
     
     async def initialize(self) -> None:
@@ -244,6 +299,39 @@ class AIStrategy(BaseStrategy):
         
         return True
     
+    def _load_scaler(self, path: str) -> Optional[StandardScaler]:
+        try:
+            import joblib
+            scaler = joblib.load(path)
+            if not isinstance(scaler, StandardScaler):
+                logger.warning(
+                    f"AI strategy: loaded object at {path} is not a StandardScaler; "
+                    f"refusing to use"
+                )
+                return None
+            if not hasattr(scaler, "mean_") or scaler.mean_ is None:
+                logger.warning(
+                    f"AI strategy: scaler at {path} is unfitted; refusing to use"
+                )
+                return None
+            logger.info(
+                f"AI strategy: loaded scaler from {path} "
+                f"(n_features={len(scaler.mean_)})"
+            )
+            return scaler
+        except FileNotFoundError:
+            logger.warning(
+                f"AI strategy: scaler file {path} not found. Strategy will return "
+                f"no signals until a trained scaler is provided. Train via the "
+                f"(forthcoming) scripts/train_ai_strategy_scaler.py utility."
+            )
+            return None
+        except Exception as e:
+            logger.warning(
+                f"AI strategy: failed to load scaler from {path}: {e}; refusing to use"
+            )
+            return None
+
     async def _extract_features(
         self,
         market_data: Dict[str, Any]
@@ -285,21 +373,146 @@ class AIStrategy(BaseStrategy):
             features.append(market_data.get("social_score", 0.5))
             features.append(market_data.get("sentiment_score", 0.5))
             
-            # Convert to numpy array
             feature_array = np.array(features).reshape(1, -1)
-            
-            # Scale features
-            if len(self.scaler.mean_) > 0:
-                feature_array = self.scaler.transform(feature_array)
-            else:
-                feature_array = self.scaler.fit_transform(feature_array)
-            
-            return feature_array
+
+            # Refuse to predict without a trained scaler; fitting on a single
+            # live row would yield NaN/inf and poison every downstream ML call.
+            if self.scaler is None:
+                logger.debug("AI strategy: scaler not loaded; returning no features")
+                return None
+            if feature_array.shape[1] != len(self.scaler.mean_):
+                logger.warning(
+                    f"AI strategy: feature count mismatch - got "
+                    f"{feature_array.shape[1]}, scaler expects "
+                    f"{len(self.scaler.mean_)}; returning no features"
+                )
+                return None
+            scaled = self.scaler.transform(feature_array)
+
+            # Build rug-shaped (34-dim) vector for feature-store training.
+            # Done independent of whether the classifier itself is trained, so
+            # the feature_store accumulates rows even before scripts/train_rug_classifier.py runs.
+            rug_v1 = None
+            if self.rug_classifier is not None:
+                try:
+                    rug_dict = {
+                        "liquidity_locked": market_data.get("liquidity_locked", False),
+                        "contract_verified": market_data.get("contract_verified", False),
+                        "owner_percentage": market_data.get("owner_percentage", 0),
+                        "holder_distribution": market_data.get("holder_distribution", {}),
+                        "contract_age_hours": market_data.get("contract_age_hours", 0),
+                        "developer_history": market_data.get("developer_history", {}),
+                    }
+                    rug_arr = self.rug_classifier.extract_features(rug_dict)
+                    rug_v1 = rug_arr.flatten().tolist() if hasattr(rug_arr, "flatten") else list(rug_arr)
+                except Exception as e:
+                    logger.debug(f"feature-store: rug_v1 build failed: {e}")
+
+            # Build pump-shaped vector via _prepare_pump_features, passing SCALED
+            # features (matches what the predictor consumes at inference time at :444).
+            pump_v1 = None
+            if self.pump_predictor is not None:
+                try:
+                    pump_arr = self._prepare_pump_features(scaled, market_data)
+                    if hasattr(pump_arr, "flatten"):
+                        pump_v1 = pump_arr.flatten().tolist()
+                    elif isinstance(pump_arr, (list, tuple)):
+                        pump_v1 = list(pump_arr)
+                    if pump_v1 is not None and len(pump_v1) != 27:
+                        logger.warning(
+                            f"feature-store: pump_v1 length={len(pump_v1)} (expected 27); "
+                            f"training script width-guard will skip this row."
+                        )
+                except Exception as e:
+                    logger.debug(f"feature-store: pump_v1 build failed: {e}")
+
+            feature_vector = {
+                "scaler_v1": scaled[0].tolist(),
+                "raw_v1": feature_array[0].tolist(),
+            }
+            if rug_v1 is not None:
+                feature_vector["rug_v1"] = rug_v1
+            if pump_v1 is not None:
+                feature_vector["pump_v1"] = pump_v1
+
+            # Best-effort feature-store write; never blocks signal generation.
+            row_id = await write_feature_row(
+                self.db_pool,
+                token_address=market_data.get("token_address"),
+                chain=market_data.get("chain", "unknown"),
+                feature_vector=feature_vector,
+                metadata={
+                    "strategy": self.__class__.__name__,
+                    "feature_window": self.feature_window,
+                    "shapes": {
+                        "scaler_v1": len(feature_vector["scaler_v1"]),
+                        "rug_v1": len(rug_v1) if rug_v1 is not None else 0,
+                        "pump_v1": len(pump_v1) if pump_v1 is not None else 0,
+                    },
+                },
+            )
+            token_addr = market_data.get("token_address")
+            if row_id is not None and token_addr:
+                entries = self._feature_row_ids.setdefault(token_addr, [])
+                entries.append((row_id, datetime.utcnow()))
+                if len(entries) > _MAX_FEATURE_ROWS_PER_TOKEN:
+                    entries.pop(0)
+            return scaled
             
         except Exception as e:
             logger.error(f"Feature extraction failed: {e}")
             return None
-    
+
+    def get_last_feature_row_id(
+        self,
+        token_address: str,
+        entry_time: Optional[datetime] = None,
+    ) -> Optional[int]:
+        """Look up the feature-store row id to backfill at position close.
+
+        - entry_time=None: LAST-wins (most recent append). Back-compat.
+        - entry_time set: pick the entry whose written_at is the latest
+          <= entry_time. If no entry qualifies (extract clock skewed past
+          entry_time), fall back to the earliest entry as best-effort.
+        Returns None if no extract has run for this token.
+        """
+        entries = self._feature_row_ids.get(token_address)
+        if not entries:
+            return None
+        if entry_time is None:
+            return entries[-1][0]
+        eligible = [e for e in entries if e[1] <= entry_time]
+        if eligible:
+            return max(eligible, key=lambda e: e[1])[0]
+        return min(entries, key=lambda e: e[1])[0]
+
+    def clear_last_feature_row_id(
+        self,
+        token_address: str,
+        entry_time: Optional[datetime] = None,
+    ) -> None:
+        """Remove the row matched by get_last_feature_row_id(token, entry_time).
+
+        - entry_time=None: drop all rows for the token (back-compat full clear).
+        - entry_time set: remove only the matched row, leaving other open
+          positions' rows untouched. Pops the token entry if list goes empty.
+        """
+        entries = self._feature_row_ids.get(token_address)
+        if not entries:
+            return
+        if entry_time is None:
+            self._feature_row_ids.pop(token_address, None)
+            return
+        target = self.get_last_feature_row_id(token_address, entry_time=entry_time)
+        if target is None:
+            return
+        for i, (rid, _) in enumerate(entries):
+            if rid == target:
+                entries.pop(i)
+                break
+        if not entries:
+            self._feature_row_ids.pop(token_address, None)
+
     async def _check_rug_probability(
         self,
         features: np.ndarray,
@@ -320,9 +533,18 @@ class AIStrategy(BaseStrategy):
                 "developer_history": market_data.get("developer_history", {})
             }
             
-            # Get rug probability
-            rug_prob, risk_factors = self.rug_classifier.predict(rug_features)
-            
+            # Get rug probability. predict() returns None if no model is
+            # loaded — same load-or-refuse pattern as the MB-19 scaler fix.
+            result = self.rug_classifier.predict(rug_features)
+            if result is None:
+                logger.debug(
+                    "AIStrategy: rug_classifier not trained; treating as "
+                    "high-risk (rug_prob=1.0) until "
+                    "scripts/train_rug_classifier.py is run."
+                )
+                return 1.0
+            rug_prob, risk_factors = result
+
             # Log if high risk
             if rug_prob > 0.5:
                 logger.warning(
@@ -505,41 +727,65 @@ class AIStrategy(BaseStrategy):
     def _prepare_pump_features(
         self,
         features: np.ndarray,
-        market_data: Dict[str, Any]
+        market_data: Dict[str, Any],
     ) -> np.ndarray:
-        """Prepare features specifically for pump prediction"""
-        # Extract pump-relevant features
-        pump_features = []
-        
-        # Volume acceleration
-        volume_history = market_data.get("volume_history", [])
+        """Build a fixed 27-dim feature vector in PUMP_FEATURE_NAMES order.
+
+        Conditional branches are eliminated — missing history zero-pads the
+        historical features (with a neutral 1.0 ratio default); missing
+        market_data keys zero-pad themselves; a short `features` array
+        zero-pads the scaled-tail slice. The result is always (1, 27).
+        """
+        out: List[float] = [0.0] * EXPECTED_PUMP_FEATURE_COUNT
+
+        # 0: vol_acceleration
+        volume_history = market_data.get("volume_history") or []
         if len(volume_history) >= 10:
-            recent_vol = np.mean(volume_history[-5:])
-            older_vol = np.mean(volume_history[-10:-5])
-            vol_acceleration = recent_vol / older_vol if older_vol > 0 else 1
-            pump_features.append(vol_acceleration)
-        
-        # Price momentum
-        price_history = market_data.get("price_history", [])
+            recent_vol = float(np.mean(volume_history[-5:]))
+            older_vol = float(np.mean(volume_history[-10:-5]))
+            out[0] = recent_vol / older_vol if older_vol > 0 else 1.0
+        else:
+            out[0] = 1.0  # neutral when no history
+
+        # 1: price_momentum
+        price_history = market_data.get("price_history") or []
         if len(price_history) >= 20:
-            short_ma = np.mean(price_history[-5:])
-            long_ma = np.mean(price_history[-20:])
-            momentum = short_ma / long_ma if long_ma > 0 else 1
-            pump_features.append(momentum)
-        
-        # Social metrics
-        pump_features.append(market_data.get("social_volume_24h", 0))
-        pump_features.append(market_data.get("social_engagement_rate", 0))
-        
-        # Market metrics
-        pump_features.append(market_data.get("unique_buyers_1h", 0))
-        pump_features.append(market_data.get("buy_sell_ratio", 0.5))
-        
-        # Add original features
-        if features is not None and features.size > 0:
-            pump_features.extend(features.flatten()[:10])  # First 10 features
-        
-        return np.array(pump_features).reshape(1, -1)
+            short_ma = float(np.mean(price_history[-5:]))
+            long_ma = float(np.mean(price_history[-20:]))
+            out[1] = short_ma / long_ma if long_ma > 0 else 1.0
+        else:
+            out[1] = 1.0
+
+        # 2-3: social
+        out[2] = float(market_data.get("social_volume_24h", 0) or 0)
+        out[3] = float(market_data.get("social_engagement_rate", 0) or 0)
+
+        # 4-7: market microstructure
+        out[4] = float(market_data.get("unique_buyers_1h", 0) or 0)
+        out[5] = float(market_data.get("buy_sell_ratio", 0.5) or 0.5)
+        out[6] = float(market_data.get("txn_count_1h", 0) or 0)
+        out[7] = float(market_data.get("last_txn_age_seconds", 0) or 0)
+
+        # 8-11: price-change windows
+        out[8]  = float(market_data.get("price_change_5m", 0) or 0)
+        out[9]  = float(market_data.get("price_change_1h", 0) or 0)
+        out[10] = float(market_data.get("price_change_4h", 0) or 0)
+        out[11] = float(market_data.get("price_change_24h", 0) or 0)
+
+        # 12-16: liquidity / cap / holders
+        out[12] = float(market_data.get("liquidity_usd", market_data.get("liquidity", 0)) or 0)
+        out[13] = float(market_data.get("market_cap", 0) or 0)
+        out[14] = float(market_data.get("holders_count", 0) or 0)
+        out[15] = float(market_data.get("top10_holder_pct", 0) or 0)
+        out[16] = float(market_data.get("dev_holder_pct", market_data.get("dev_wallet_percentage", 0)) or 0)
+
+        # 17-26: tail of the scaled feature vector, zero-padded.
+        if features is not None and hasattr(features, "flatten"):
+            flat = features.flatten()
+            for i in range(min(10, flat.size)):
+                out[17 + i] = float(flat[i])
+
+        return np.asarray(out, dtype=float).reshape(1, -1)
     
     async def _calculate_technical_score(
         self,

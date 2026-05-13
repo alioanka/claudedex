@@ -1,5 +1,21 @@
 /* DexScreener Trading Bot - Main Styles */
 
+.bot-mode-badge {
+    position: fixed;
+    top: 8px;
+    right: 8px;
+    z-index: 9999;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font: bold 12px/1 monospace, sans-serif;
+    letter-spacing: 0.5px;
+    border: 1px solid;
+    cursor: default;
+}
+.bot-mode-live    { background: #ffe5e5; color: #b00020; border-color: #b00020; }
+.bot-mode-dry     { background: #e5f3ff; color: #0050a0; border-color: #0050a0; }
+.bot-mode-unknown { background: #f0f0f0; color: #666;    border-color: #aaa; }
+
 :root {
     /* Dark Theme Colors */
     --bg-primary: #0f1419;

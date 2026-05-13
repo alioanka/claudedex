@@ -18,11 +18,29 @@ Features:
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from collections import defaultdict
 
 from modules.base_module import BaseModule, ModuleType, ModuleStatus, ModuleConfig
+
+
+# Canonical mapping: subprocess module name -> log directory.
+# Used by ModuleManager._discover_subprocess_modules to surface modules that
+# run as their own subprocess (see main.py) but aren't registered in
+# self.modules. Keep keys aligned with logs/.pause_<key> flag-files.
+SUBPROCESS_MODULE_DIRS: Dict[str, str] = {
+    'dex': 'logs/dex_trading',
+    'futures': 'logs/futures_trading',
+    'solana': 'logs/solana_trading',
+    'sniper': 'logs/sniper',
+    'arbitrage': 'logs/arbitrage',
+    'copy_trading': 'logs/copy_trading',
+    'ai': 'logs/ai_analysis',
+    'dashboard': 'logs/dashboard',
+}
+SUBPROCESS_LIVENESS_THRESHOLD_SECONDS = 300  # 5 min log mtime → "running"
 
 
 class ModuleManager:
@@ -528,22 +546,103 @@ class ModuleManager:
             self.logger.error(f"Error loading module configs: {e}")
 
     def get_status_summary(self) -> Dict:
-        """
-        Get status summary of all modules
-
-        Returns:
-            Dict: Status summary
-        """
+        """Get status summary of all modules — both in-process and
+        subprocess-discovered. Subprocess entries appear when a module
+        runs in its own process and isn't registered with this manager."""
+        in_process = {
+            name: {**module.get_status(), 'source': 'in_process'}
+            for name, module in self.modules.items()
+        }
+        subprocess_modules = self._discover_subprocess_modules()
+        # Union — in_process keys override subprocess discovery
+        all_modules = {**subprocess_modules, **in_process}
         return {
             'manager_running': self._running,
-            'total_modules': len(self.modules),
-            'enabled_modules': len([m for m in self.modules.values() if m.is_enabled]),
-            'running_modules': len(self.get_active_modules()),
+            'total_modules': len(all_modules),
+            'enabled_modules': sum(
+                1 for m in all_modules.values() if m.get('enabled')
+            ),
+            'running_modules': sum(
+                1 for m in all_modules.values() if m.get('running')
+            ),
+            'in_process_count': len(in_process),
+            'subprocess_count': len(subprocess_modules),
             'total_capital': self.total_capital,
             'allocated_capital': self.allocated_capital,
             'available_capital': self.available_capital,
-            'modules': {
-                name: module.get_status()
-                for name, module in self.modules.items()
-            }
+            'modules': all_modules,
         }
+
+    def _discover_subprocess_modules(self) -> Dict[str, Dict]:
+        """Discover modules running as subprocesses by scanning logs/<module>/
+        for recent log activity. Each returned entry mirrors the SHAPE of
+        BaseModule.get_status() so the dashboard can render it uniformly,
+        but with source='subprocess' tagged so the UI can show the
+        distinction. Never raises — failures degrade to status='unknown'."""
+        try:
+            from core.dry_run import is_module_paused
+        except Exception:
+            is_module_paused = lambda _: False  # noqa: E731
+
+        discovered: Dict[str, Dict] = {}
+        now = datetime.now()
+        for name, log_dir in SUBPROCESS_MODULE_DIRS.items():
+            # Skip modules that are ALSO registered in-process — in-process wins
+            if name in self.modules:
+                continue
+            try:
+                log_path = Path(log_dir)
+                most_recent_mtime = None
+                if log_path.exists() and log_path.is_dir():
+                    for entry in log_path.iterdir():
+                        if entry.is_file() and entry.suffix in ('.log', '.txt'):
+                            m = entry.stat().st_mtime
+                            if most_recent_mtime is None or m > most_recent_mtime:
+                                most_recent_mtime = m
+
+                paused = bool(is_module_paused(name))
+                if most_recent_mtime is None:
+                    status = 'unknown'
+                    last_seen = None
+                    is_running = False
+                else:
+                    age_seconds = (now - datetime.fromtimestamp(most_recent_mtime)).total_seconds()
+                    is_running = age_seconds <= SUBPROCESS_LIVENESS_THRESHOLD_SECONDS
+                    status = 'paused' if paused else ('running' if is_running else 'stale')
+                    last_seen = datetime.fromtimestamp(most_recent_mtime).isoformat()
+
+                discovered[name] = {
+                    'name': name,
+                    'module_type': name,
+                    'status': status,
+                    'enabled': True,  # presence of log dir implies enabled
+                    'running': is_running,
+                    'paused': paused,
+                    'last_seen': last_seen,
+                    'log_dir': log_dir,
+                    'source': 'subprocess',
+                    # Empty placeholders for fields the in-process status uses —
+                    # avoids template KeyErrors when modules.html iterates.
+                    'metrics': {
+                        'capital_allocated': 0,
+                        'capital_used': 0,
+                        'active_positions': 0,
+                        'total_trades': 0,
+                        'winning_trades': 0,
+                        'win_rate': 0.0,
+                        'total_pnl': 0.0,
+                        'unrealized_pnl': 0.0,
+                        'realized_pnl': 0.0,
+                        'uptime_seconds': 0,
+                    },
+                    'config': {
+                        'max_positions': 0,
+                        'capital_allocation': 0,
+                    },
+                    'last_reconcile_at': None,
+                    'last_reconcile_count': 0,
+                    'last_restart_alert': None,
+                }
+            except Exception as e:
+                self.logger.debug(f"subprocess discovery for {name} failed (non-fatal): {e}")
+        return discovered

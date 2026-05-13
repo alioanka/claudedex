@@ -30,6 +30,7 @@ from pathlib import Path
 # Add project root for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from core.dry_run import resolve_dry_run_env, should_skip_live
 from core.pnl_tracker import PnLTracker, TradeRecord
 
 logger = logging.getLogger("FuturesTradingEngine")
@@ -234,6 +235,10 @@ class FuturesTradingEngine:
         self.is_running = False
         self.db_pool = db_pool  # Database connection pool for trade persistence
 
+        # MB-16: resolve DRY_RUN BEFORE testnet-safety branch reads self.dry_run.
+        # Safe default True so a missing/typo DRY_RUN env var never goes live.
+        self.dry_run = resolve_dry_run_env('DRY_RUN', default=True)
+
         # Load configuration from config manager (database)
         if config_manager:
             general_config = config_manager.get_general()
@@ -356,14 +361,16 @@ class FuturesTradingEngine:
             self.verbose_signals = True
             self.cooldown_duration = timedelta(minutes=5)
 
-        # DRY_RUN mode - CRITICAL: Check environment variable (global safety setting)
-        dry_run_env = os.getenv('DRY_RUN', 'true').strip().lower()
-        self.dry_run = dry_run_env in ('true', '1', 'yes')
+        # DRY_RUN already resolved at top of __init__ via core.dry_run.resolve_dry_run_env
 
         # Trading state
         self.active_positions: Dict[str, Position] = {}
         self.pending_orders: Dict[str, Dict] = {}
         self.trade_history: List[Trade] = []
+
+        # Reconcile observability (set by _sync_positions on startup)
+        self.last_reconcile_at: Optional[datetime] = None
+        self.last_reconcile_count: int = 0
 
         # Cooldowns (symbol -> next_trade_time)
         self.symbol_cooldowns: Dict[str, datetime] = {}
@@ -371,6 +378,10 @@ class FuturesTradingEngine:
         # Exchange client
         self.exchange_client = None
         self.price_client = None  # Mainnet client for accurate prices in DRY_RUN mode
+
+        # MB-17: optional cross-module risk validator (orchestrator wiring).
+        # When None, no validation is performed (legacy/backward-compatible).
+        self.risk_manager: Optional[Any] = None
 
         # Risk metrics
         self.risk_metrics = RiskMetrics(
@@ -418,6 +429,11 @@ class FuturesTradingEngine:
         logger.info(f"    RSI Weak Overbought (SELL): > {self.rsi_weak_overbought}")
         logger.info(f"    Min Signal Score: {self.min_signal_score} (4=STRONG only, 2=BUY/SELL)")
         logger.info(f"    Verbose Signals: {self.verbose_signals}")
+
+    def set_risk_manager(self, risk_manager: Any) -> None:
+        """Inject a FuturesRiskManager. Entry path will call validate_new_position
+        before opening a position; rejection logs the reason and aborts entry."""
+        self.risk_manager = risk_manager
 
     async def initialize(self):
         """Initialize exchange connections and components"""
@@ -611,7 +627,7 @@ class FuturesTradingEngine:
 
             # Create mainnet price client for accurate prices (especially in DRY_RUN mode)
             # This ensures we always get live prices from mainnet, regardless of testnet setting
-            if self.dry_run or self.testnet:
+            if should_skip_live(self.dry_run, module='futures', account=self.exchange) or self.testnet:
                 try:
                     # Use mainnet credentials if available (via secrets manager), otherwise create public client
                     # Use get_async() since we're in async context
@@ -724,7 +740,7 @@ class FuturesTradingEngine:
                     continue
 
                 # Set leverage (only in non-dry-run mode or testnet)
-                if not self.dry_run or self.testnet:
+                if not should_skip_live(self.dry_run, module='futures', account=self.exchange) or self.testnet:
                     try:
                         await self.exchange_client.set_leverage(self.leverage, symbol)
                         logger.info(f"✅ Set {symbol} leverage to {self.leverage}x")
@@ -737,14 +753,21 @@ class FuturesTradingEngine:
 
     async def _sync_positions(self):
         """Sync positions from exchange"""
-        if self.dry_run:
-            logger.info("DRY_RUN mode: Skipping position sync from exchange")
+        if should_skip_live(self.dry_run, module='futures', account=self.exchange):
+            self.last_reconcile_at = datetime.now()
+            self.last_reconcile_count = 0
+            logger.info("DRY_RUN mode: position reconcile skipped (last_reconcile_at set; active_positions left empty)")
             return
 
+        seeded = 0
+        filtered_zero = 0
         try:
             positions = await self.exchange_client.fetch_positions()
             for pos in positions:
-                if pos['contracts'] and float(pos['contracts']) > 0:
+                try:
+                    if not pos.get('contracts') or float(pos['contracts']) <= 0:
+                        filtered_zero += 1
+                        continue
                     symbol = pos['symbol']
                     side = TradeSide.LONG if pos['side'] == 'long' else TradeSide.SHORT
 
@@ -762,10 +785,44 @@ class FuturesTradingEngine:
                         is_simulated=False
                     )
                     self.active_positions[symbol] = position
+                    seeded += 1
                     logger.info(f"📊 Synced position: {symbol} {side.value} @ {position.entry_price}")
+                except Exception as per_entry_err:
+                    logger.warning(f"Skipping malformed position entry during reconcile: {per_entry_err}")
+                    continue
+
+            self.last_reconcile_at = datetime.now()
+            self.last_reconcile_count = seeded
+            logger.info(
+                f"📊 Position reconcile: {seeded} seeded, {filtered_zero} flat-filtered, "
+                f"last_reconcile_at={self.last_reconcile_at.isoformat()}"
+            )
 
         except Exception as e:
             logger.error(f"Error syncing positions: {e}")
+            return
+
+        # Restart-time over-cap detection (fail-soft).
+        if self.risk_manager is not None and seeded > 0:
+            try:
+                current_positions_list = [
+                    {'notional_value': p.notional_value, 'symbol': p.symbol}
+                    for p in self.active_positions.values()
+                ]
+                capacity = self.risk_manager.check_reconciled_capacity(current_positions_list)
+                if capacity.get('over_cap'):
+                    logger.error(
+                        f"🚨 RESTART OVER-CAP: reconciled {capacity['count']} positions but "
+                        f"max_positions={capacity['max_positions']}. Engine will refuse new entries "
+                        f"until count drops."
+                    )
+                elif capacity.get('at_cap'):
+                    logger.warning(
+                        f"⚠️ RESTART AT-CAP: reconciled {capacity['count']}/{capacity['max_positions']} "
+                        f"positions. No room for new entries."
+                    )
+            except Exception as e:
+                logger.warning(f"check_reconciled_capacity failed (non-fatal): {e}")
 
     async def run(self):
         """Main trading loop"""
@@ -833,12 +890,9 @@ class FuturesTradingEngine:
 
         for symbol, position in list(self.active_positions.items()):
             try:
-                # Get current price
-                ticker = await self._get_ticker(symbol)
-                if not ticker or 'last' not in ticker:
+                current_price = await self._get_decision_price(symbol)
+                if current_price is None:
                     continue
-
-                current_price = float(ticker['last'])
                 position.current_price = current_price
 
                 # Update high/low tracking for trailing stop
@@ -1509,7 +1563,7 @@ class FuturesTradingEngine:
             net_pnl = pnl_usd - exit_fee
 
             # Execute partial close (or simulate)
-            if self.dry_run:
+            if should_skip_live(self.dry_run, module='futures', account=self.exchange):
                 logger.info(f"🔵 [DRY_RUN] Partial close {symbol} ({reason})")
                 logger.info(f"   Closed: {close_size:.6f} ({close_pct:.1f}%), PnL: ${net_pnl:.2f}")
             else:
@@ -1650,6 +1704,31 @@ class FuturesTradingEngine:
             else:
                 tp_str = f"${take_profit_price:.2f}"
 
+            # MB-17: cross-module risk gate — refuse to open if validator rejects.
+            if self.risk_manager is not None:
+                try:
+                    current_positions = [
+                        {'notional_value': p.notional_value}
+                        for p in self.active_positions.values()
+                    ]
+                    validation = self.risk_manager.validate_new_position(
+                        symbol=symbol,
+                        side=side.value.upper() if hasattr(side, 'value') else str(side),
+                        size_usd=notional,
+                        leverage=self.leverage,
+                        current_positions=current_positions,
+                        available_capital=self.capital_allocation,
+                    )
+                except Exception as e:
+                    logger.warning(f"Risk validator raised: {e}; refusing entry")
+                    return
+                if not validation.get('allowed', True):
+                    logger.warning(
+                        f"Risk manager rejected entry for {symbol}: "
+                        f"{validation.get('reason', 'no reason given')}"
+                    )
+                    return
+
             # Create position object
             position = Position(
                 position_id=str(uuid.uuid4()),
@@ -1678,22 +1757,30 @@ class FuturesTradingEngine:
             )
 
             # Execute order (or simulate)
-            if self.dry_run:
+            if should_skip_live(self.dry_run, module='futures', account=self.exchange):
                 logger.info(f"🔵 [DRY_RUN] SIMULATED {side.value.upper()} {symbol}")
                 logger.info(f"   Entry: ${current_price:.2f}, Size: {size:.6f}, Notional: ${notional:.2f}")
                 logger.info(f"   SL: ${stop_loss_price:.2f}, TP: ${take_profit_price:.2f}")
             else:
-                # Execute real order
-                order_side = 'buy' if side == TradeSide.LONG else 'sell'
+                # Execute real order via the ISOLATED-margin + leverage-set helpers
                 try:
-                    order = await self.exchange_client.create_market_order(
-                        symbol=symbol,
-                        side=order_side,
-                        amount=size,
-                        params={'leverage': self.leverage}
-                    )
+                    if side == TradeSide.LONG:
+                        order = await self.exchange_client.open_long(
+                            symbol=symbol,
+                            quantity=size,
+                            leverage=self.leverage,
+                        )
+                    else:
+                        order = await self.exchange_client.open_short(
+                            symbol=symbol,
+                            quantity=size,
+                            leverage=self.leverage,
+                        )
+                    if not order:
+                        logger.error(f"❌ Order execution returned empty result for {symbol}")
+                        return
                     logger.info(f"🟢 EXECUTED {side.value.upper()} {symbol}")
-                    logger.info(f"   Order ID: {order['id']}")
+                    logger.info(f"   Order ID: {order.get('id', order.get('orderId', 'unknown'))}")
                     logger.info(f"   Entry: ${current_price:.2f}, Size: {size:.6f}")
 
                     # Update entry price from actual fill
@@ -1765,7 +1852,7 @@ class FuturesTradingEngine:
             net_pnl = pnl_usd - total_fees
 
             # Execute close order (or simulate)
-            if self.dry_run:
+            if should_skip_live(self.dry_run, module='futures', account=self.exchange):
                 logger.info(f"🔵 [DRY_RUN] SIMULATED CLOSE {symbol} ({reason})")
             else:
                 # Execute real close order
@@ -1887,6 +1974,21 @@ class FuturesTradingEngine:
         """Process pending orders"""
         # Currently not implementing limit orders - using market orders only
         pass
+
+    async def _get_decision_price(self, symbol: str) -> Optional[float]:
+        """Return the exchange's mark price if available; fall back to ticker last.
+        Mark price is what drives liquidation — use it for SL/TP/liq checks."""
+        if hasattr(self.exchange_client, 'get_mark_price'):
+            try:
+                mp = await self.exchange_client.get_mark_price(symbol)
+                if mp is not None and mp > 0:
+                    return float(mp)
+            except Exception as e:
+                logger.debug(f"get_mark_price failed for {symbol}: {e}")
+        ticker = await self._get_ticker(symbol)
+        if ticker and 'last' in ticker:
+            return float(ticker['last'])
+        return None
 
     async def _get_ticker(self, symbol: str) -> Optional[Dict]:
         """Get current ticker for symbol - uses mainnet price client when available"""

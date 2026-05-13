@@ -30,6 +30,8 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 from aiohttp import web
 
+from auth.middleware import require_auth, require_admin
+
 logger = logging.getLogger(__name__)
 
 # Trade tables configuration per module (matches clear_trade_records.py)
@@ -179,21 +181,21 @@ class CredentialsRoutes:
         # Page route
         self.app.router.add_get('/credentials', self.credentials_page)
 
-        # API routes
-        self.app.router.add_get('/api/credentials', self.api_list_credentials)
-        self.app.router.add_post('/api/credentials', self.api_add_credential)
-        self.app.router.add_get('/api/credentials/stats', self.api_get_stats)
-        self.app.router.add_get('/api/credentials/categories', self.api_get_categories)
-        self.app.router.add_post('/api/credentials/import-env', self.api_import_from_env)
-        self.app.router.add_post('/api/credentials/validate', self.api_validate_credentials)
-        self.app.router.add_get('/api/credentials/{key}', self.api_get_credential)
-        self.app.router.add_put('/api/credentials/{key}', self.api_update_credential)
-        self.app.router.add_delete('/api/credentials/{key}', self.api_delete_credential)
+        # API routes (MB-28: admin-gate all credential management endpoints)
+        self.app.router.add_get('/api/credentials', require_auth(require_admin(self.api_list_credentials)))
+        self.app.router.add_post('/api/credentials', require_auth(require_admin(self.api_add_credential)))
+        self.app.router.add_get('/api/credentials/stats', require_auth(require_admin(self.api_get_stats)))
+        self.app.router.add_get('/api/credentials/categories', require_auth(require_admin(self.api_get_categories)))
+        self.app.router.add_post('/api/credentials/import-env', require_auth(require_admin(self.api_import_from_env)))
+        self.app.router.add_post('/api/credentials/validate', require_auth(require_admin(self.api_validate_credentials)))
+        self.app.router.add_get('/api/credentials/{key}', require_auth(require_admin(self.api_get_credential)))
+        self.app.router.add_put('/api/credentials/{key}', require_auth(require_admin(self.api_update_credential)))
+        self.app.router.add_delete('/api/credentials/{key}', require_auth(require_admin(self.api_delete_credential)))
 
-        # Trade Records Management routes
-        self.app.router.add_get('/api/trades/stats', self.api_get_trade_stats)
-        self.app.router.add_post('/api/trades/clear/{module}', self.api_clear_trades_module)
-        self.app.router.add_post('/api/trades/clear-all', self.api_clear_all_trades)
+        # Trade Records Management routes (MB-28: admin-gate destructive ops)
+        self.app.router.add_get('/api/trades/stats', require_auth(require_admin(self.api_get_trade_stats)))
+        self.app.router.add_post('/api/trades/clear/{module}', require_auth(require_admin(self.api_clear_trades_module)))
+        self.app.router.add_post('/api/trades/clear-all', require_auth(require_admin(self.api_clear_all_trades)))
 
         logger.info("Credentials Management routes configured")
 

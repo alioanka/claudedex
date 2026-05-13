@@ -9,7 +9,7 @@ Architecture:
 - Hot-reload support for live configuration changes
 """
 from __future__ import annotations
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, ClassVar, Set
 import os
 import logging
 from datetime import datetime
@@ -178,6 +178,21 @@ class FuturesConfigManager:
     - Hot-reload support
     """
 
+    # Sensitive env keys that should consult the encrypted secrets_manager
+    # before falling back to .env. O(1) membership test. Mirrors SOLANA pattern.
+    SENSITIVE_KEYS: ClassVar[Set[str]] = {
+        # Binance
+        'BINANCE_API_KEY',
+        'BINANCE_API_SECRET',
+        'BINANCE_TESTNET_API_KEY',
+        'BINANCE_TESTNET_API_SECRET',
+        # Bybit
+        'BYBIT_API_KEY',
+        'BYBIT_API_SECRET',
+        'BYBIT_TESTNET_API_KEY',
+        'BYBIT_TESTNET_API_SECRET',
+    }
+
     def __init__(self, db_pool=None):
         """
         Initialize Futures configuration manager
@@ -222,36 +237,20 @@ class FuturesConfigManager:
             Dict: Environment configuration (sensitive data only)
         """
         env_config = {}
+        _placeholders = ('null', 'None', '', 'your_testnet_api_key', 'your_mainnet_api_key', 'PLACEHOLDER')
 
-        # ONLY sensitive keys - API credentials
-        sensitive_keys = [
-            # Binance
-            'BINANCE_API_KEY',
-            'BINANCE_API_SECRET',
-            'BINANCE_TESTNET_API_KEY',
-            'BINANCE_TESTNET_API_SECRET',
-            # Bybit
-            'BYBIT_API_KEY',
-            'BYBIT_API_SECRET',
-            'BYBIT_TESTNET_API_KEY',
-            'BYBIT_TESTNET_API_SECRET',
-        ]
-
-        # Try secrets manager first
-        try:
-            from security.secrets_manager import secrets
-            for var in sensitive_keys:
-                value = secrets.get(var, log_access=False)
-                if value and value not in ('null', 'None', '', 'your_testnet_api_key', 'your_mainnet_api_key', 'PLACEHOLDER'):
-                    env_config[var] = value
-                    logger.debug(f"Loaded {var} from secrets manager")
-        except Exception as e:
-            logger.debug(f"Secrets manager not available, using environment: {e}")
-            # Fallback to environment
-            for var in sensitive_keys:
+        for var in self.SENSITIVE_KEYS:
+            value = None
+            try:
+                from security.secrets_manager import secrets
+                # log_access=True only for *_API_SECRET (the truly sensitive half of the pair)
+                value = secrets.get(var, log_access=var.endswith('_API_SECRET'))
+            except Exception:
+                pass
+            if not value:
                 value = os.getenv(var)
-                if value and value not in ('null', 'None', '', 'your_testnet_api_key', 'your_mainnet_api_key'):
-                    env_config[var] = value
+            if value and value not in _placeholders:
+                env_config[var] = value
 
         return env_config
 

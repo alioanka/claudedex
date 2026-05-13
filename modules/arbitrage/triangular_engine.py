@@ -13,6 +13,10 @@ Features:
 - Curve Finance integration for stablecoin swaps
 - Balancer integration for multi-token pools
 """
+# NOTE: triangular execution is currently disabled at the entry guard
+# pending an atomic-receiver contract (see MB-05 in
+# docs/agents/MASTER_BACKLOG.md). The pre-signed 3-tx scaffolding below is
+# kept as a reference implementation but does not run.
 import asyncio
 import logging
 import os
@@ -22,6 +26,9 @@ from web3 import Web3
 from typing import Dict, List, Optional, Tuple, Set
 from datetime import datetime, timedelta
 from itertools import permutations
+
+from security.secrets_manager import secrets
+from config.rpc_provider import RPCProvider
 
 logger = logging.getLogger("TriangularArbitrageEngine")
 
@@ -71,7 +78,7 @@ TOKENS = {
     'WBTC': '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
     'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
     'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-    'DAI': '0x6B175474E89094C44Da98b954EeAdDcB80656c63',
+    'DAI': '0x6B175474E89094C44Da98b954EedeAC495271d0F',
 
     # DeFi
     'LINK': '0x514910771AF9Ca656af840dff83E8264EcF986CA',
@@ -226,12 +233,8 @@ class GasOracle:
                 return self.current_gas_gwei
 
         try:
-            # Get API key from secrets manager (database/Docker secrets)
-            try:
-                from security.secrets_manager import secrets
-                api_key = secrets.get('ETHERSCAN_API_KEY', '', log_access=False) or ''
-            except Exception:
-                api_key = os.getenv('ETHERSCAN_API_KEY', '')
+            # Get API key from secrets manager (database/Docker secrets), .env fallback
+            api_key = secrets.get('ETHERSCAN_API_KEY', log_access=False) or os.getenv('ETHERSCAN_API_KEY', '')
             async with aiohttp.ClientSession() as session:
                 params = {
                     'module': 'gastracker',
@@ -275,24 +278,18 @@ class TriangularArbitrageEngine:
         self.is_running = False
         self.w3 = None
 
-        # Get RPC URL from config, Pool Engine, or env fallback
-        self.rpc_url = config.get('rpc_url')
-        if not self.rpc_url:
-            try:
-                from config.rpc_provider import RPCProvider
-                self.rpc_url = RPCProvider.get_rpc_sync('ETHEREUM_RPC')
-            except Exception:
-                pass
-        if not self.rpc_url:
-            self.rpc_url = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
+        # Get RPC URL from config, PoolEngine, then .env fallback (sync ctor: get_rpc_sync)
+        self.rpc_url = (
+            config.get('rpc_url')
+            or RPCProvider.get_rpc_sync('ETHEREUM_RPC')
+            or os.getenv('ETHEREUM_RPC_URL')
+            or os.getenv('WEB3_PROVIDER_URL')
+        )
 
         self.private_key = None  # Loaded in initialize() from secrets manager
-        # Get wallet address from secrets manager (database/Docker secrets)
-        try:
-            from security.secrets_manager import secrets
-            self.wallet_address = secrets.get('WALLET_ADDRESS', log_access=False)
-        except Exception:
-            self.wallet_address = os.getenv('WALLET_ADDRESS')
+        # Get wallet address from secrets manager (database/Docker secrets), .env fallback
+        # log_access=True: operator-visible identity is audit-worthy
+        self.wallet_address = secrets.get('WALLET_ADDRESS', log_access=True) or os.getenv('WALLET_ADDRESS')
 
         # dry_run: Priority is database config > environment variable
         # This allows dashboard settings to override .env
@@ -341,6 +338,13 @@ class TriangularArbitrageEngine:
 
         # Telegram alerts - initialized in initialize() method
         self.telegram_alerts = None
+
+        # P2#5: injected by orchestrator; consulted by P1-06 follow-up (validate_trade calls)
+        self.risk_manager = None
+
+    def set_risk_manager(self, risk_manager) -> None:
+        """Inject a core.risk_manager.RiskManager. P1-06 will add validate_trade calls."""
+        self.risk_manager = risk_manager
 
     async def _get_decrypted_key(self, key_name: str) -> Optional[str]:
         """
@@ -831,6 +835,17 @@ class TriangularArbitrageEngine:
             )
             return
 
+        # P1-06: pre-execute risk gate (live path only).
+        if self.risk_manager is not None:
+            try:
+                allowed, reason = await self.risk_manager.validate_trade(token_a, amount_in)
+            except Exception as e:
+                logger.warning(f"validate_trade raised: {e}; refusing execute")
+                return
+            if not allowed:
+                logger.warning(f"⛔ Risk manager rejected triangular arb {symbol_a}->{symbol_b}->{symbol_c}: {reason}")
+                return
+
         # Live execution of triangular arbitrage
         try:
             if not self.private_key or not self.wallet_address:
@@ -882,6 +897,19 @@ class TriangularArbitrageEngine:
         Path: A → B → C → A
         Uses Flashbots bundle to ensure atomicity (all succeed or all fail).
         """
+        # MB-05: pre-signed sequential txs use placeholder amountIn=1 for tx2/tx3
+        # (see lines below) - they cannot reference the previous leg's actual
+        # output. Even the Flashbots-bundle path therefore reverts in simulation.
+        # A proper fix requires an on-chain atomic receiver contract similar to
+        # the spot-arb flash-loan receiver (FLASH_LOAN_RECEIVER_CONTRACT_*).
+        # Until that contract is wired, refuse to execute.
+        logger.warning(
+            "Triangular arbitrage execution path is disabled (MB-05): pre-signed "
+            "tx2/tx3 use placeholder amountIn=1 and cannot atomically chain leg "
+            "outputs. Requires an atomic-receiver contract to ship."
+        )
+        return None
+
         try:
             if len(dexes) != 3:
                 logger.error("Triangular arb requires exactly 3 DEXes")
@@ -1039,40 +1067,15 @@ class TriangularArbitrageEngine:
                 else:
                     logger.warning(f"Flashbots simulation failed: {sim_result}")
 
-            # Fallback: Sequential execution (RISKY - not atomic!)
-            logger.warning("⚠️ Flashbots not available - executing sequentially (not atomic!)")
-
-            # Only proceed if we have enough profit margin for gas
-            gas_estimate = 250000 * 3 * self.w3.eth.gas_price
-            if profit_pct < 0.01:  # Less than 1%
-                logger.warning("Profit too low for non-atomic execution")
-                return None
-
-            # Execute sequentially
-            tx1_hash = self.w3.eth.send_raw_transaction(signed_tx1.rawTransaction)
-            logger.info(f"Swap 1 sent: {tx1_hash.hex()}")
-
-            # Wait for tx1
-            receipt1 = self.w3.eth.wait_for_transaction_receipt(tx1_hash, timeout=60)
-            if receipt1.status != 1:
-                logger.error("Swap 1 failed!")
-                return None
-
-            # Continue with tx2
-            tx2_hash = self.w3.eth.send_raw_transaction(signed_tx2.rawTransaction)
-            receipt2 = self.w3.eth.wait_for_transaction_receipt(tx2_hash, timeout=60)
-            if receipt2.status != 1:
-                logger.error("Swap 2 failed!")
-                return None
-
-            # Complete with tx3
-            tx3_hash = self.w3.eth.send_raw_transaction(signed_tx3.rawTransaction)
-            receipt3 = self.w3.eth.wait_for_transaction_receipt(tx3_hash, timeout=60)
-            if receipt3.status != 1:
-                logger.error("Swap 3 failed!")
-                return None
-
-            return tx3_hash.hex()
+            # MB-04: refuse non-atomic sequential fallback. Three sequential
+            # tx broadcasts have no atomicity guarantee - any intermediate revert
+            # strands token_b or token_c in the wallet. If Flashbots bundling is
+            # unavailable, skip the opportunity.
+            logger.warning(
+                "Triangular Flashbots path unavailable - refusing sequential fallback "
+                "to avoid inventory stranding"
+            )
+            return None
 
         except Exception as e:
             logger.error(f"Triangular swap execution error: {e}")

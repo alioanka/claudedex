@@ -18,6 +18,9 @@ from dataclasses import dataclass
 from decimal import Decimal
 from datetime import datetime
 
+from core.dry_run import should_skip_live
+from core.units import to_raw_evm
+
 # Import RPCProvider for centralized RPC management
 try:
     from config.rpc_provider import RPCProvider
@@ -27,15 +30,41 @@ except ImportError:
 logger = logging.getLogger("TradeExecutor")
 
 # Jupiter API endpoints - use lite-api.jup.ag/swap/v1 (proven to work)
-# Can be overridden via JUPITER_API_URL environment variable
-_jupiter_base = os.getenv('JUPITER_API_URL', 'https://lite-api.jup.ag/swap/v1')
-# Normalize URL
-if 'lite-api.jup.ag' in _jupiter_base and not _jupiter_base.endswith('/swap/v1'):
-    _jupiter_base = _jupiter_base.rstrip('/') + '/swap/v1'
-elif 'quote-api.jup.ag' in _jupiter_base and not _jupiter_base.endswith('/v6'):
-    _jupiter_base = _jupiter_base.rstrip('/') + '/v6'
-JUPITER_QUOTE_API = f"{_jupiter_base}/quote"
-JUPITER_SWAP_API = f"{_jupiter_base}/swap"
+# Resolved lazily via secrets_manager (DB-encrypted) with .env fallback so
+# that secrets.initialize(db_pool) can engage before first use.
+_JUPITER_DEFAULT = 'https://lite-api.jup.ag/swap/v1'
+_jupiter_base_cache: Optional[str] = None
+
+
+def _resolve_jupiter_base() -> str:
+    """Lazily resolve Jupiter base URL via secrets_manager
+    (DB-encrypted) with .env fallback. Cached after first call."""
+    global _jupiter_base_cache
+    if _jupiter_base_cache is not None:
+        return _jupiter_base_cache
+    val = None
+    try:
+        from security.secrets_manager import secrets
+        val = secrets.get('JUPITER_API_URL', default=None,
+                          log_access=False)
+    except Exception:
+        val = None
+    base = val or os.getenv('JUPITER_API_URL', _JUPITER_DEFAULT)
+    # Normalize URL
+    if 'lite-api.jup.ag' in base and not base.endswith('/swap/v1'):
+        base = base.rstrip('/') + '/swap/v1'
+    elif 'quote-api.jup.ag' in base and not base.endswith('/v6'):
+        base = base.rstrip('/') + '/v6'
+    _jupiter_base_cache = base
+    return _jupiter_base_cache
+
+
+def _quote_api() -> str:
+    return f"{_resolve_jupiter_base()}/quote"
+
+
+def _swap_api() -> str:
+    return f"{_resolve_jupiter_base()}/swap"
 
 # Common token addresses
 WSOL_ADDRESS = "So11111111111111111111111111111111111111112"
@@ -69,6 +98,16 @@ ROUTER_ABI = [
         "name": "swapExactTokensForETH",
         "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
         "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+            {"internalType": "address[]", "name": "path", "type": "address[]"}
+        ],
+        "name": "getAmountsOut",
+        "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
+        "stateMutability": "view",
         "type": "function"
     }
 ]
@@ -187,18 +226,15 @@ class TradeExecutor:
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
         # Initialize Web3 if EVM credentials available
-        if self.evm_private_key and not self.dry_run:
+        if self.evm_private_key and not should_skip_live(self.dry_run, module='sniper', account=getattr(self, 'evm_wallet', None)):
             try:
                 from web3 import Web3
-                # Get RPC from Pool Engine with fallback
-                rpc_url = None
-                try:
-                    from config.rpc_provider import RPCProvider
-                    rpc_url = RPCProvider.get_rpc_sync('ETHEREUM_RPC')
-                except Exception:
-                    pass
-                if not rpc_url:
-                    rpc_url = os.getenv('WEB3_PROVIDER_URL') or os.getenv('ETHEREUM_RPC_URL')
+                # PoolEngine first (sync ctor), .env preserved as ultimate fallback
+                rpc_url = (
+                    (RPCProvider.get_rpc_sync('ETHEREUM_RPC') if RPCProvider else None)
+                    or os.getenv('ETHEREUM_RPC_URL')
+                    or os.getenv('WEB3_PROVIDER_URL')
+                )
                 if rpc_url:
                     self.w3 = Web3(Web3.HTTPProvider(rpc_url))
                     if self.w3.is_connected():
@@ -239,7 +275,8 @@ class TradeExecutor:
         logger.info(f"🛒 Executing BUY: {token_address} on {chain}")
         logger.info(f"   Amount: {amount_in} | Slippage: {slippage}% | Priority: {priority_fee}")
 
-        if self.dry_run:
+        _account = getattr(self, 'solana_wallet', None) if chain == 'solana' else getattr(self, 'evm_wallet', None)
+        if should_skip_live(self.dry_run, module='sniper', account=_account):
             return await self._simulate_buy(token_address, chain, amount_in)
 
         if chain == 'solana':
@@ -271,7 +308,8 @@ class TradeExecutor:
         logger.info(f"💰 Executing SELL: {token_address} on {chain}")
         logger.info(f"   Amount: {amount_in} | Slippage: {slippage}% | Priority: {priority_fee}")
 
-        if self.dry_run:
+        _account = getattr(self, 'solana_wallet', None) if chain == 'solana' else getattr(self, 'evm_wallet', None)
+        if should_skip_live(self.dry_run, module='sniper', account=_account):
             return await self._simulate_sell(token_address, chain, amount_in)
 
         if chain == 'solana':
@@ -451,7 +489,7 @@ class TradeExecutor:
                 'asLegacyTransaction': 'false'
             }
 
-            async with self.session.get(JUPITER_QUOTE_API, params=params) as response:
+            async with self.session.get(_quote_api(), params=params) as response:
                 if response.status == 200:
                     return await response.json()
                 else:
@@ -479,7 +517,7 @@ class TradeExecutor:
                 'dynamicComputeUnitLimit': True
             }
 
-            async with self.session.post(JUPITER_SWAP_API, json=payload) as response:
+            async with self.session.post(_swap_api(), json=payload) as response:
                 if response.status == 200:
                     data = await response.json()
                     return data.get('swapTransaction')
@@ -498,6 +536,7 @@ class TradeExecutor:
             # Import Solana libraries
             from solders.keypair import Keypair
             from solders.transaction import VersionedTransaction
+            from solders.signature import Signature
             from solana.rpc.async_api import AsyncClient
             import base64
             import base58
@@ -557,15 +596,37 @@ class TradeExecutor:
                     logger.error(f"❌ PUBKEY MISMATCH! TX expects: {fee_payer}, we have: {our_pubkey}")
                     return None
 
-            # Sign transaction
-            signature = keypair.sign_message(bytes(message))
-            signed_tx = VersionedTransaction.populate(message, [signature])
+            # Preserve any pre-existing co-signer slots (Jupiter setup/ATA/advanced routes).
+            num_required = message.header.num_required_signatures
+            account_keys = message.account_keys
+            existing_sigs = list(tx.signatures)
+            our_index = None
+            for i in range(num_required):
+                if str(account_keys[i]) == str(our_pubkey):
+                    our_index = i
+                    break
+            if our_index is None:
+                logger.error(f"❌ Our pubkey {our_pubkey} not in required signers")
+                return None
 
-            # Send transaction - use Pool Engine for RPC
-            if RPCProvider:
-                rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC')
-            else:
-                rpc_url = os.getenv('SOLANA_RPC_URL')
+            our_sig = keypair.sign_message(bytes(message))
+            zero_sig = Signature.default()
+            final_sigs = []
+            for i in range(num_required):
+                if i == our_index:
+                    final_sigs.append(our_sig)
+                elif i < len(existing_sigs) and existing_sigs[i] != zero_sig:
+                    final_sigs.append(existing_sigs[i])
+                else:
+                    logger.error(f"❌ Missing co-signer for slot {i} ({account_keys[i]})")
+                    return None
+            signed_tx = VersionedTransaction.populate(message, final_sigs)
+
+            # Send transaction - PoolEngine first (async ctx), .env preserved as fallback
+            rpc_url = (
+                (await RPCProvider.get_rpc('SOLANA_RPC') if RPCProvider else None)
+                or os.getenv('SOLANA_RPC_URL')
+            )
             async with AsyncClient(rpc_url) as client:
                 result = await client.send_transaction(signed_tx)
                 tx_hash = str(result.value)
@@ -616,9 +677,21 @@ class TradeExecutor:
                 Web3.to_checksum_address(token_address)
             ]
 
-            # Calculate minimum output with slippage
-            # Note: In production, you'd get expected output from router.getAmountsOut
-            amount_out_min = 0  # Accept any amount (risky, but for speed)
+            # MB-11: quote expected output and apply slippage haircut so we
+            # never broadcast amount_out_min=0 (guaranteed-sandwich).
+            try:
+                amounts_out = router.functions.getAmountsOut(amount_wei, path).call()
+                expected_out = int(amounts_out[-1])
+            except Exception as quote_err:
+                logger.error(f"getAmountsOut failed; aborting buy to avoid 0-min: {quote_err}")
+                return TradeResult(
+                    success=False, chain=chain, token_address=token_address,
+                    amount_in=amount_in, amount_out=0, tx_hash=None, gas_used=None,
+                    error=f"Quote failed: {quote_err}", timestamp=datetime.now()
+                )
+            slippage_frac = max(float(slippage), 0.0) / 100.0 if slippage is not None else 0.03
+            # TODO(config): plumb slippage_tolerance through ConfigManager.
+            amount_out_min = int(expected_out * (1 - slippage_frac))
 
             # Deadline: 2 minutes from now
             deadline = int(datetime.now().timestamp()) + 120
@@ -702,11 +775,23 @@ class TradeExecutor:
                 Web3.to_checksum_address(WETH_ADDRESS)
             ]
 
-            # Convert amount (assuming 18 decimals)
-            amount_tokens = int(amount_in * 1e18)
+            # MB-11: convert input using on-chain decimals, not hardcoded 1e18.
+            amount_tokens = await to_raw_evm(chain or 'ethereum', token_address, Decimal(str(amount_in)))
 
-            # Minimum output with slippage
-            amount_out_min = 0
+            # MB-11: quote expected ETH out and apply slippage haircut.
+            try:
+                amounts_out = router.functions.getAmountsOut(amount_tokens, path).call()
+                expected_out = int(amounts_out[-1])
+            except Exception as quote_err:
+                logger.error(f"getAmountsOut failed; aborting sell to avoid 0-min: {quote_err}")
+                return TradeResult(
+                    success=False, chain=chain, token_address=token_address,
+                    amount_in=amount_in, amount_out=0, tx_hash=None, gas_used=None,
+                    error=f"Quote failed: {quote_err}", timestamp=datetime.now()
+                )
+            slippage_frac = max(float(slippage), 0.0) / 100.0 if slippage is not None else 0.03
+            # TODO(config): plumb slippage_tolerance through ConfigManager.
+            amount_out_min = int(expected_out * (1 - slippage_frac))
 
             # Deadline
             deadline = int(datetime.now().timestamp()) + 120

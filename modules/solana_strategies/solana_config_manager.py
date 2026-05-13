@@ -96,7 +96,7 @@ class SolanaConfigManager:
         'stop_loss': 10.0,
         'take_profit': 50.0,
         'daily_loss_limit': 5.0,
-        'priority_fee': 10000,
+        'priority_fee': 1_000_000,
 
         # Jupiter
         'jupiter_enabled': True,
@@ -420,7 +420,7 @@ class SolanaConfigManager:
     @property
     def priority_fee_lamports(self) -> int:
         """Get priority fee in lamports"""
-        return self.get('priority_fee', 10000)
+        return self.get('priority_fee', 1_000_000)
 
     @property
     def rpc_url(self) -> str:

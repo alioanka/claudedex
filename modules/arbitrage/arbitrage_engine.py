@@ -166,7 +166,7 @@ TOKENS_ETHEREUM = {
     'WETH': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
     'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-    'DAI': '0x6B175474E89094C44Da98b954EeAdDcB80656c63',
+    'DAI': '0x6B175474E89094C44Da98b954EedeAC495271d0F',
     'WBTC': '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
 
     # DeFi tokens
@@ -956,6 +956,13 @@ class EVMArbitrageEngine:
         # Telegram alerts - initialized in initialize() method
         self.telegram_alerts = None
 
+        # P2#5: injected by orchestrator; consulted by P1-06 follow-up (validate_trade calls)
+        self.risk_manager = None
+
+    def set_risk_manager(self, risk_manager) -> None:
+        """Inject a core.risk_manager.RiskManager. P1-06 will add validate_trade calls."""
+        self.risk_manager = risk_manager
+
     async def _get_decrypted_key(self, key_name: str) -> Optional[str]:
         """
         Get decrypted private key from secrets manager or environment.
@@ -1589,6 +1596,17 @@ class EVMArbitrageEngine:
             except Exception as e:
                 self.logger.debug(f"Gas estimation failed: {e}")
 
+        # P1-06: pre-execute risk gate. DRY_RUN trades are NOT validated above (return at :1563).
+        if self.risk_manager is not None:
+            try:
+                allowed, reason = await self.risk_manager.validate_trade(token_in, amount)
+            except Exception as e:
+                self.logger.warning(f"validate_trade raised: {e}; refusing execute")
+                return
+            if not allowed:
+                self.logger.warning(f"⛔ Risk manager rejected EVM arb {token_in[:10]}: {reason}")
+                return
+
         try:
             if self.use_flash_loans and self.flash_loan_executor:
                 # Use flash loan for capital efficiency
@@ -1629,7 +1647,7 @@ class EVMArbitrageEngine:
             '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',  # WETH
             '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',  # USDC
             '0xdAC17F958D2ee523a2206206994597C13D831ec7',  # USDT
-            '0x6B175474E89094C44Da98b954EeAdDcB80656c63',  # DAI
+            '0x6B175474E89094C44Da98b954EedeAC495271d0F',  # DAI
             '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',  # WBTC
         },
         'arbitrum': {
@@ -1852,9 +1870,14 @@ class EVMArbitrageEngine:
                     else:
                         self.logger.warning("Flashbots bundle rejected, falling back to public mempool")
 
-            # Fallback: Send to public mempool
-            tx_hash = self.w3.eth.send_raw_transaction(signed_buy.rawTransaction)
-            return tx_hash.hex()
+            # MB-04: refuse one-legged fallback. Sending only the BUY leg to the
+            # public mempool would acquire token_out with no atomic SELL - guaranteed
+            # inventory leak. If Flashbots is unavailable, skip the opportunity.
+            self.logger.warning(
+                "Atomic execution unavailable (Flashbots failed/rejected/unconfirmed); "
+                "refusing one-legged broadcast to avoid inventory leak"
+            )
+            return None
 
         except Exception as e:
             self.logger.error(f"Direct swap execution error: {e}")

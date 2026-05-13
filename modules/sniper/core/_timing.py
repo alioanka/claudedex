@@ -1,0 +1,120 @@
+"""Per-opportunity timing instrumentation for SNIPER latency tracking.
+
+Stamps monotonic markers (time.perf_counter, not wall-clock so NTP
+jumps don't poison deltas) at each lifecycle stage. Emits one
+structured log line per executed snipe so latency budget is
+observable end-to-end.
+
+Phase-0 deliverable from docs/agents/reports/SNIPER_LATENCY_PLAN.md.
+Always-on; pure observability; no behavior change."""
+
+from dataclasses import dataclass, field
+from typing import Optional
+import time
+import logging
+
+logger = logging.getLogger("SniperTiming")
+
+
+@dataclass
+class SnipeTimingContext:
+    """Latency markers for a single snipe opportunity. All times are
+    time.perf_counter() floats; subtract to get monotonic deltas."""
+    token_address: str = ""
+    chain: str = ""
+    # Stage 1: detection — when listener emitted the event. May be
+    # parsed from target['timestamp'] (ISO wall-clock) if available;
+    # otherwise stamped at evaluate-start.
+    t_detect: Optional[float] = None
+    # Stage 2: evaluate start — sniper_engine._evaluate_target entry
+    t_eval_start: float = field(default_factory=time.perf_counter)
+    # Stage 3: safety check entry / exit
+    t_safety_start: Optional[float] = None
+    t_safety_done: Optional[float] = None
+    # Stage 4: broadcast (execute_buy) entry / exit
+    t_broadcast_start: Optional[float] = None
+    t_broadcast_done: Optional[float] = None
+    # Outcome: 'success', 'failed', 'rejected_filter', 'rejected_safety'
+    outcome: str = "pending"
+    # Idempotency guard so we never double-log a single opportunity.
+    _emitted: bool = False
+
+    def stamp(self, marker: str) -> None:
+        """Stamp the given marker name with the current monotonic time."""
+        if hasattr(self, marker):
+            setattr(self, marker, time.perf_counter())
+
+    def emit(self) -> None:
+        """Emit one structured log line. Safe to call multiple times
+        (idempotent); typically called from _execute_snipe at the end
+        of the lifecycle."""
+        if self._emitted:
+            return
+        self._emitted = True
+        try:
+            def _ms(start: Optional[float], end: Optional[float]) -> str:
+                if start is None or end is None:
+                    return "—"
+                return f"{(end - start) * 1000:.1f}ms"
+
+            detect_to_eval = _ms(self.t_detect, self.t_eval_start)
+            eval_to_safety = _ms(self.t_eval_start, self.t_safety_start)
+            safety_dur = _ms(self.t_safety_start, self.t_safety_done)
+            safety_to_broadcast = _ms(self.t_safety_done, self.t_broadcast_start)
+            broadcast_dur = _ms(self.t_broadcast_start, self.t_broadcast_done)
+            total = _ms(self.t_detect or self.t_eval_start,
+                        self.t_broadcast_done)
+
+            token_disp = (self.token_address[:16] + "...") if self.token_address else "—"
+            logger.info(
+                "⏱️ SNIPE TIMING %s %s outcome=%s | "
+                "detect→eval=%s eval→safety=%s safety=%s "
+                "safety→broadcast=%s broadcast=%s | total=%s",
+                self.chain, token_disp, self.outcome,
+                detect_to_eval, eval_to_safety, safety_dur,
+                safety_to_broadcast, broadcast_dur, total,
+            )
+        except Exception as e:
+            # Never let instrumentation break trading.
+            logger.debug(f"timing emit failed (non-fatal): {e}")
+
+    def to_metadata_dict(self) -> dict:
+        """Return timing deltas (in milliseconds) as a JSON-friendly dict
+        for persistence in sniper_trades.metadata. None for unstamped stages.
+        Enables historical P50/P95 dashboards beyond the per-event log line."""
+        def _delta_ms(start: Optional[float], end: Optional[float]):
+            if start is None or end is None:
+                return None
+            return round((end - start) * 1000.0, 2)
+
+        return {
+            'outcome': self.outcome,
+            'detect_to_eval_ms': _delta_ms(self.t_detect, self.t_eval_start),
+            'eval_to_safety_ms': _delta_ms(self.t_eval_start, self.t_safety_start),
+            'safety_ms': _delta_ms(self.t_safety_start, self.t_safety_done),
+            'safety_to_broadcast_ms': _delta_ms(self.t_safety_done, self.t_broadcast_start),
+            'broadcast_ms': _delta_ms(self.t_broadcast_start, self.t_broadcast_done),
+            'total_ms': _delta_ms(self.t_detect or self.t_eval_start, self.t_broadcast_done),
+        }
+
+
+def parse_iso_to_perf_counter(iso_ts: str) -> Optional[float]:
+    """Convert an ISO wall-clock timestamp to an approximate
+    perf_counter value. We anchor on 'now' so the delta from
+    detect→eval is approximately (now_perf - (now_wall - iso_wall)).
+
+    Only meaningful for sub-second resolution; do not trust beyond ~5s
+    accuracy because perf_counter and wall-clock drift differently."""
+    if not iso_ts:
+        return None
+    try:
+        from datetime import datetime, timezone
+        iso_dt = datetime.fromisoformat(iso_ts.replace('Z', '+00:00'))
+        if iso_dt.tzinfo is not None:
+            now_wall = datetime.now(timezone.utc)
+        else:
+            now_wall = datetime.utcnow()
+        delta_seconds = (now_wall - iso_dt).total_seconds()
+        return time.perf_counter() - delta_seconds
+    except Exception:
+        return None

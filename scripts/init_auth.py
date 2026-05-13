@@ -1,16 +1,86 @@
 #!/usr/bin/env python3
 """
 Initialize Authentication System
-Creates auth tables and default admin user
+Creates auth tables and seeds-or-rotates the admin user with a
+randomly-generated password printed ONCE to stdout.
 """
 import asyncio
 import asyncpg
+import bcrypt
 import os
+import secrets
 import sys
 from pathlib import Path
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+
+# bcrypt hash of the historical leaked default "admin123" that shipped in
+# scripts/init.sql and migrations/001_add_auth_tables.sql before MB-29b.
+KNOWN_BAD_HASH = b"$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/Lfw99hhm1qJYT8sFm"
+
+
+def _gen_password() -> str:
+    """Return a ~32-char URL-safe random password."""
+    return secrets.token_urlsafe(24)
+
+
+def _print_once_block(title: str, password: str) -> None:
+    # Use bare print(), NOT logger - logs may ship to Loki/CloudWatch.
+    print()
+    print("=" * 72)
+    print(f"⚠️  {title}")
+    print("=" * 72)
+    print("Username: admin")
+    print(f"Password: {password}")
+    print()
+    print("🔴 RECORD THIS NOW — it will NOT be shown again and is NOT logged.")
+    print("   Rotate it via the dashboard after first login.")
+    print("=" * 72)
+    print()
+
+
+async def _ensure_admin(conn) -> None:
+    """Seed admin on fresh install; rotate if still on the leaked default."""
+    row = await conn.fetchrow(
+        "SELECT id, password_hash FROM users WHERE username='admin'"
+    )
+    if row is None:
+        pw = _gen_password()
+        h = bcrypt.hashpw(pw.encode(), bcrypt.gensalt(rounds=12)).decode()
+        await conn.execute(
+            "INSERT INTO users (username, password_hash, role, email, "
+            "is_active, require_2fa) "
+            "VALUES ('admin', $1, 'admin', NULL, TRUE, FALSE)",
+            h,
+        )
+        _print_once_block("Default admin user CREATED", pw)
+        return
+
+    stored_raw = row['password_hash']
+    stored = stored_raw.encode() if isinstance(stored_raw, str) else stored_raw
+    is_leaked_default = stored == KNOWN_BAD_HASH
+    if not is_leaked_default:
+        try:
+            is_leaked_default = bcrypt.checkpw(b"admin123", stored)
+        except ValueError:
+            is_leaked_default = False
+
+    if is_leaked_default:
+        pw = _gen_password()
+        h = bcrypt.hashpw(pw.encode(), bcrypt.gensalt(rounds=12)).decode()
+        await conn.execute(
+            "UPDATE users SET password_hash=$1, updated_at=NOW() WHERE id=$2",
+            h, row['id'],
+        )
+        _print_once_block(
+            "Default admin password ROTATED (was leaked default)", pw,
+        )
+        return
+
+    print("ℹ️  Admin user already exists with non-default password "
+          "(no rotation needed)")
 
 
 async def init_auth(database_url: str):
@@ -35,25 +105,7 @@ async def init_auth(database_url: str):
 
         print("✅ Auth tables created successfully")
 
-        # Check if admin user exists
-        admin_exists = await conn.fetchval("""
-            SELECT EXISTS(SELECT 1 FROM users WHERE username = 'admin')
-        """)
-
-        if admin_exists:
-            print("ℹ️  Admin user already exists")
-        else:
-            print("✅ Default admin user created")
-            print()
-            print("=" * 60)
-            print("⚠️  IMPORTANT: Default Credentials")
-            print("=" * 60)
-            print("Username: admin")
-            print("Password: admin123")
-            print()
-            print("🔴 SECURITY WARNING:")
-            print("Please change the default password immediately after first login!")
-            print("=" * 60)
+        await _ensure_admin(conn)
 
         await conn.close()
         print("\n✅ Authentication system initialized successfully!")

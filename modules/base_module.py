@@ -6,6 +6,7 @@ and implements its own trading logic while sharing common infrastructure.
 """
 
 import asyncio
+import functools
 import logging
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Any
@@ -21,6 +22,7 @@ class ModuleType(Enum):
     ARBITRAGE = "arbitrage"
     LIQUIDITY_PROVISION = "liquidity_provision"
     SOLANA_STRATEGIES = "solana_strategies"
+    COPY_TRADING = "copy_trading"
     CUSTOM = "custom"
 
 
@@ -126,6 +128,39 @@ class BaseModule(ABC):
     - get_metrics(): Return performance metrics
     """
 
+    def __init_subclass__(cls, **kwargs):
+        """Auto-wrap concrete start() so every module starts the killswitch poller.
+
+        Idempotent — start_killswitch_poller() is a per-process singleton, so
+        multiple subclasses sharing one process (e.g., dashboard + orchestrator)
+        cooperate cleanly.
+        """
+        super().__init_subclass__(**kwargs)
+        original_start = cls.__dict__.get("start")
+        if original_start is None or getattr(original_start, "__isabstractmethod__", False):
+            return  # Subclass didn't override start; nothing to wrap yet.
+        if getattr(original_start, "_killswitch_wrapped", False):
+            return  # Already wrapped (defensive against rewrapping).
+
+        @functools.wraps(original_start)
+        async def wrapped_start(self, *args, **kwargs):
+            try:
+                from core.dry_run import start_killswitch_poller
+                start_killswitch_poller()
+            except Exception as e:
+                self.logger.warning(f"failed to start killswitch poller: {e}")
+            result = await original_start(self, *args, **kwargs)
+            try:
+                await self.reconcile_open_positions()
+            except Exception as e:
+                self.logger.warning(
+                    f"reconcile_open_positions on start failed (non-fatal): {e}"
+                )
+            return result
+
+        wrapped_start._killswitch_wrapped = True
+        cls.start = wrapped_start
+
     def __init__(
         self,
         config: ModuleConfig,
@@ -154,6 +189,10 @@ class BaseModule(ABC):
         self.start_time: Optional[datetime] = None
         self.stop_time: Optional[datetime] = None
         self.error_message: Optional[str] = None
+
+        self.last_reconcile_at: Optional[datetime] = None
+        self.last_reconcile_count: int = 0
+        self.last_restart_alert: Optional[Dict] = None
 
         self._running = False
         self._tasks: List[asyncio.Task] = []
@@ -242,6 +281,83 @@ class BaseModule(ABC):
         """
         pass
 
+    def _evaluate_restart_alert(self, count: int) -> None:
+        """Evaluate restart-time position count vs max_positions cap and
+        stamp self.last_restart_alert with a warning (at-cap) or error
+        (over-cap) payload. Cleared (None) when count is below cap."""
+        try:
+            max_pos = getattr(self.config, 'max_positions', None)
+            if max_pos is None or max_pos <= 0:
+                return
+            ts_iso = (self.last_reconcile_at.isoformat()
+                      if self.last_reconcile_at else None)
+            if count > max_pos:
+                self.last_restart_alert = {
+                    'level': 'error',
+                    'message': (f'RESTART OVER-CAP: {count} positions '
+                                f'reconciled but max_positions={max_pos}. '
+                                f'New entries refused until count drops.'),
+                    'count': count,
+                    'max_positions': max_pos,
+                    'timestamp': ts_iso,
+                }
+                self.logger.error(
+                    f"🚨 RESTART OVER-CAP on {self.name}: "
+                    f"{count}/{max_pos}"
+                )
+            elif count == max_pos:
+                self.last_restart_alert = {
+                    'level': 'warning',
+                    'message': (f'RESTART AT-CAP: {count}/{max_pos} '
+                                f'positions reconciled; no room for new '
+                                f'entries.'),
+                    'count': count,
+                    'max_positions': max_pos,
+                    'timestamp': ts_iso,
+                }
+                self.logger.warning(
+                    f"⚠️ RESTART AT-CAP on {self.name}: "
+                    f"{count}/{max_pos}"
+                )
+            else:
+                self.last_restart_alert = None
+        except Exception as e:
+            self.logger.debug(f"Cap detection failed (non-fatal): {e}")
+
+    async def reconcile_open_positions(self) -> Dict[str, Any]:
+        """Restart-time reconcile hook. Modules may override to fetch
+        positions from exchange/chain. Default impl derives count from
+        self.get_positions() — purely in-memory and trusts whatever the
+        module's internal tracker says. Stamps self.last_reconcile_at and
+        self.last_reconcile_count for observability."""
+        try:
+            positions = await self.get_positions()
+            count = len(positions) if positions else 0
+            self.last_reconcile_at = datetime.now()
+            self.last_reconcile_count = count
+            self._evaluate_restart_alert(count)
+            self.logger.info(
+                f"📊 {self.name} reconcile: {count} positions "
+                f"(source=in_memory, status=derived_from_get_positions)"
+            )
+            return {
+                'count': count,
+                'last_reconcile_at': self.last_reconcile_at.isoformat(),
+                'status': 'ok',
+                'source': 'in_memory',
+            }
+        except Exception as e:
+            self.logger.error(f"reconcile_open_positions default failed: {e}")
+            self.last_reconcile_at = datetime.now()
+            self.last_reconcile_count = 0
+            return {
+                'count': 0,
+                'last_reconcile_at': self.last_reconcile_at.isoformat(),
+                'status': 'error',
+                'error': str(e),
+                'source': 'in_memory',
+            }
+
     async def update_metrics(self):
         """Update module metrics (called periodically)"""
         try:
@@ -314,7 +430,10 @@ class BaseModule(ABC):
             'stop_time': self.stop_time.isoformat() if self.stop_time else None,
             'error_message': self.error_message,
             'metrics': self.metrics.to_dict(),
-            'config': self.config.to_dict()
+            'config': self.config.to_dict(),
+            'last_reconcile_at': self.last_reconcile_at.isoformat() if self.last_reconcile_at else None,
+            'last_reconcile_count': self.last_reconcile_count,
+            'last_restart_alert': self.last_restart_alert,
         }
 
     async def health_check(self) -> bool:

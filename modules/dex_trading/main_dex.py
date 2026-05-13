@@ -90,7 +90,20 @@ async def test_web3_connection():
     _logger = logging.getLogger(__name__)
 
     try:
-        provider_url = os.getenv('WEB3_PROVIDER_URL')
+        provider_url = None
+        try:
+            from config.rpc_provider import RPCProvider
+            provider_url = RPCProvider.get_rpc_sync('ETHEREUM_RPC')
+        except Exception:
+            pass
+        if not provider_url:
+            try:
+                from security.secrets_manager import secrets
+                provider_url = secrets.get('WEB3_PROVIDER_URL', log_access=False)
+            except Exception:
+                pass
+        if not provider_url:
+            provider_url = os.getenv('WEB3_PROVIDER_URL')
         if not provider_url:
             _logger.warning("No WEB3_PROVIDER_URL configured")
             return True
@@ -453,6 +466,7 @@ class TradingBotApplication:
 
     async def initialize(self):
         """Initialize all components"""
+        from security.secrets_manager import secrets
         try:
             self.logger.info("=" * 80)
             self.logger.info("🚀 DexScreener Trading Bot Starting...")
@@ -479,12 +493,40 @@ class TradingBotApplication:
             self.portfolio_manager = PortfolioManager(nested_config)
             self.order_manager = OrderManager(nested_config)
 
-            # Extract all chain-specific RPC URLs from environment variables
+            # Extract all chain-specific RPC URLs.
+            # Prefer PoolEngine (health-weighted pool) for the canonical
+            # EVM/Solana chain set; fall back to *_RPC_URLS env vars for
+            # any chain not represented in PoolEngine.
             chain_rpc_urls = {}
+            KNOWN_CHAINS = [
+                ('ethereum', 'ETHEREUM_RPC'),
+                ('bsc', 'BSC_RPC'),
+                ('polygon', 'POLYGON_RPC'),
+                ('arbitrum', 'ARBITRUM_RPC'),
+                ('base', 'BASE_RPC'),
+                ('optimism', 'OPTIMISM_RPC'),
+                ('avalanche', 'AVALANCHE_RPC'),
+                ('solana', 'SOLANA_RPC'),
+            ]
+            try:
+                from config.rpc_provider import RPCProvider
+                for chain_name, provider_type in KNOWN_CHAINS:
+                    urls = RPCProvider.get_rpcs_sync(provider_type, max_count=3) or []
+                    if urls:
+                        chain_rpc_urls[chain_name] = urls
+            except Exception as e:
+                self.logger.debug(f"PoolEngine chain scan failed (non-fatal): {e}")
+            # Fallback / override: pick up *_RPC_URLS env vars for chains
+            # not covered by KNOWN_CHAINS or where PoolEngine has no entries
             for env_var, value in os.environ.items():
                 if env_var.endswith('_RPC_URLS'):
                     chain_name = env_var.replace('_RPC_URLS', '').lower()
-                    chain_rpc_urls[chain_name] = [url.strip() for url in value.split(',')]
+                    if chain_name not in chain_rpc_urls:
+                        chain_rpc_urls[chain_name] = [url.strip() for url in value.split(',')]
+
+            # Cache so the engine init below reuses this dict instead of
+            # re-scanning os.environ (and silently bypassing PoolEngine).
+            self.chain_rpc_urls = chain_rpc_urls
 
             self.risk_manager = RiskManager(nested_config,
                                             config_manager=self.config_manager,
@@ -500,7 +542,6 @@ class TradingBotApplication:
 
             # Initialize secrets manager with database pool FIRST (before any config managers)
             try:
-                from security.secrets_manager import secrets
                 secrets.initialize(self.db_manager.pool)
                 self.logger.info("✅ Secrets manager initialized with database")
             except Exception as e:
@@ -533,7 +574,8 @@ class TradingBotApplication:
 
 
             # Decrypt private key if encrypted
-            encrypted_key = os.getenv('PRIVATE_KEY')
+            encrypted_key = await secrets.get_async('PRIVATE_KEY', log_access=True) or os.getenv('PRIVATE_KEY')
+            # ENCRYPTION_KEY is bootstrap — must come from env/file directly
             encryption_key = os.getenv('ENCRYPTION_KEY')
             decrypted_key = encrypted_key
             if encrypted_key and encrypted_key.startswith('gAAAAAB') and encryption_key:
@@ -553,22 +595,28 @@ class TradingBotApplication:
             nested_config['security']['encryption_key'] = encryption_key
 
             # Manually construct the web3 config for now
+            # RPC URLs often embed API keys (Alchemy/Infura) so source from secrets first
+            web3_provider = await secrets.get_async('WEB3_PROVIDER_URL', log_access=False) or os.getenv('WEB3_PROVIDER_URL')
+            web3_backup_1 = await secrets.get_async('WEB3_BACKUP_PROVIDER_1', log_access=False) or os.getenv('WEB3_BACKUP_PROVIDER_1')
+            web3_backup_2 = await secrets.get_async('WEB3_BACKUP_PROVIDER_2', log_access=False) or os.getenv('WEB3_BACKUP_PROVIDER_2')
             if 'web3' not in nested_config:
                 nested_config['web3'] = {
-                    'provider_url': os.getenv('WEB3_PROVIDER_URL'),
+                    'provider_url': web3_provider,
                     'backup_providers': [
-                        os.getenv('WEB3_BACKUP_PROVIDER_1'),
-                        os.getenv('WEB3_BACKUP_PROVIDER_2')
+                        web3_backup_1,
+                        web3_backup_2
                     ],
                     'chain_id': int(os.getenv('CHAIN_ID', '1')),
                     'gas_multiplier': float(self.config.get_config(ConfigType.GAS_PRICE).priority_gas_multiplier),
                     'max_gas_price': int(self.config.get_config(ConfigType.GAS_PRICE).max_gas_price)
                 }
 
+            twitter_api_key = await secrets.get_async('TWITTER_API_KEY', log_access=False) or os.getenv('TWITTER_API_KEY', '')
+            twitter_api_secret = await secrets.get_async('TWITTER_API_SECRET', log_access=False) or os.getenv('TWITTER_API_SECRET', '')
             if 'data_sources' not in nested_config:
                 nested_config['data_sources'] = {
                     'dexscreener': {
-                        'api_key': os.getenv('DEXSCREENER_API_KEY', ''),
+                        'api_key': await secrets.get_async('DEXSCREENER_API_KEY', log_access=False) or os.getenv('DEXSCREENER_API_KEY', ''),
                         'base_url': 'https://api.dexscreener.com',
                         'rate_limit': 300,
                         'chains': self.config.get_config(ConfigType.CHAIN).enabled_chains.split(','),
@@ -578,9 +626,9 @@ class TradingBotApplication:
                         'cache_duration': 60
                     },
                     'social': {
-                        'twitter_api_key': os.getenv('TWITTER_API_KEY', ''),
-                        'twitter_api_secret': os.getenv('TWITTER_API_SECRET', ''),
-                        'enabled': bool(os.getenv('TWITTER_API_KEY'))
+                        'twitter_api_key': twitter_api_key,
+                        'twitter_api_secret': twitter_api_secret,
+                        'enabled': bool(twitter_api_key)
                     }
                 }
 
@@ -589,7 +637,6 @@ class TradingBotApplication:
 
                 # Get Telegram credentials from secrets manager (database) or env
                 # Use get_async() since we're in async context
-                from security.secrets_manager import secrets
                 telegram_token = await secrets.get_async('TELEGRAM_BOT_TOKEN', log_access=False) or os.getenv('TELEGRAM_BOT_TOKEN', '')
                 telegram_chat = await secrets.get_async('TELEGRAM_CHAT_ID', log_access=False) or os.getenv('TELEGRAM_CHAT_ID', '')
                 discord_webhook = await secrets.get_async('DISCORD_WEBHOOK_URL', log_access=False) or os.getenv('DISCORD_WEBHOOK_URL', '')
@@ -628,8 +675,6 @@ class TradingBotApplication:
             # Pre-load credentials asynchronously (before engine creation)
             # This is needed because TradeExecutor.__init__ is synchronous but we're in async context
             try:
-                from security.secrets_manager import secrets
-
                 if 'security' not in nested_config:
                     nested_config['security'] = {}
 
@@ -660,18 +705,13 @@ class TradingBotApplication:
             except Exception as e:
                 self.logger.warning(f"Could not pre-load credentials: {e}")
 
-            # --- FIX STARTS HERE: Pass ConfigManager and RPC URLs to the engine ---
-            # Extract all chain-specific RPC URLs from environment variables
-            chain_rpc_urls = {}
-            for env_var, value in os.environ.items():
-                if env_var.endswith('_RPC_URLS'):
-                    chain_name = env_var.replace('_RPC_URLS', '').lower()
-                    chain_rpc_urls[chain_name] = [url.strip() for url in value.split(',')]
-
+            # --- Pass ConfigManager and RPC URLs to the engine ---
+            # Reuse the PoolEngine-first chain_rpc_urls dict built earlier
+            # (around L500-525) rather than re-scanning os.environ here.
             self.engine = TradingBotEngine(
                 config=nested_config,
                 config_manager=self.config_manager,
-                chain_rpc_urls=chain_rpc_urls,
+                chain_rpc_urls=getattr(self, 'chain_rpc_urls', {}),
                 mode=self.mode
             )
             await self.engine.initialize()

@@ -121,13 +121,31 @@ class FuturesRiskManager:
                 'reason': f'Validation error: {str(e)}'
             }
 
+    def check_reconciled_capacity(self, current_positions: List[Dict]) -> Dict:
+        """Restart-time sanity check: returns whether the reconciled position
+        count already meets or exceeds max_positions. Caller logs/alerts on
+        over_cap=True and should refuse to open new positions until count drops."""
+        try:
+            count = len(current_positions)
+            return {
+                'at_cap': count >= self.max_positions,
+                'over_cap': count > self.max_positions,
+                'count': count,
+                'max_positions': self.max_positions,
+            }
+        except Exception as e:
+            self.logger.error(f"check_reconciled_capacity error: {e}")
+            return {'at_cap': False, 'over_cap': False, 'count': 0,
+                    'max_positions': self.max_positions}
+
     def check_liquidation_risk(
         self,
         position: Dict,
         current_price: float
     ) -> Dict:
         """
-        Check if position is at risk of liquidation
+        Check if position is at risk of liquidation. Accepts either
+        Binance or Bybit position shape (auto-normalized).
 
         Args:
             position: Position info with liquidation_price
@@ -137,6 +155,19 @@ class FuturesRiskManager:
             Dict: Risk assessment
         """
         try:
+            # Auto-normalize so this method works regardless of source executor.
+            # If 'liquidation_price' is missing but 'raw' contains Bybit-style
+            # liqPrice, the normalizer recovers it.
+            if 'liquidation_price' not in position or position.get('liquidation_price') is None:
+                try:
+                    from modules.futures_trading.exchanges import normalize_position
+                    src = position.get('source') or ('bybit' if 'size' in position else 'binance')
+                    normalized = normalize_position(position, src)
+                    if normalized:
+                        position = normalized
+                except Exception:
+                    pass
+
             liq_price = position.get('liquidation_price', 0)
             if liq_price == 0:
                 return {'risk_level': 'unknown'}

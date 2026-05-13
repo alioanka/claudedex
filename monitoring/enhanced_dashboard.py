@@ -31,6 +31,7 @@ from pydantic.types import SecretStr
 try:
     from auth.auth_service import AuthService
     from auth.middleware import auth_middleware_factory, require_auth, require_admin
+    from auth.csrf import csrf_middleware_factory
     from monitoring.auth_routes import AuthRoutes
     AUTH_AVAILABLE = True
 except ImportError as e:
@@ -129,7 +130,16 @@ class DashboardEndpoints:
 
         # Web application
         self.app = web.Application()
-        self.sio = socketio.AsyncServer(async_mode='aiohttp', cors_allowed_origins='*')
+        # MB-26: tighten Socket.IO CORS — was '*' (any origin); now env-gated allowlist
+        _ws_allowed = [
+            o.strip()
+            for o in os.getenv('DASHBOARD_CORS_ORIGINS', 'http://localhost:8080').split(',')
+            if o.strip()
+        ]
+        self.sio = socketio.AsyncServer(
+            async_mode='aiohttp',
+            cors_allowed_origins=_ws_allowed,
+        )
         self.sio.attach(self.app)
 
         # Template engine
@@ -313,12 +323,20 @@ class DashboardEndpoints:
             else:
                 logger.info("   ⚠️  Auth middleware already registered")
 
+            # MB-27: CSRF runs after auth (auth establishes the session; CSRF
+            # then validates that mutating requests carry a matching token).
+            csrf_names = [
+                getattr(m, '__name__', str(m)) for m in self.app.middlewares
+            ]
+            if 'csrf_middleware_factory' not in csrf_names:
+                self.app.middlewares.append(csrf_middleware_factory)
+                logger.info("   ✅ CSRF middleware registered")
+
             self.auth_enabled = True
 
             logger.info("=" * 80)
             logger.info("✅ AUTHENTICATION SYSTEM ACTIVE")
             logger.info(f"   Login URL: http://{self.host}:{self.port}/login")
-            logger.info("   Default credentials: admin / admin123")
             logger.info("   ⚠️  CHANGE PASSWORD IMMEDIATELY AFTER FIRST LOGIN!")
             logger.info("=" * 80)
 
@@ -430,6 +448,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/sniper/stats', self.api_get_sniper_stats)
         self.app.router.add_get('/api/sniper/positions', self.api_get_sniper_positions)
         self.app.router.add_get('/api/sniper/trades', self.api_get_sniper_trades)
+        self.app.router.add_get('/api/sniper/timing', self.api_get_sniper_timing)
         self.app.router.add_get('/api/sniper/settings', self.api_get_sniper_settings)
         self.app.router.add_post('/api/sniper/settings', self.api_save_sniper_settings)
         self.app.router.add_get('/api/sniper/trading/status', self.api_sniper_trading_status)
@@ -473,12 +492,12 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/simulator/data', self.api_simulator_data)
         self.app.router.add_get('/api/simulator/export', self.api_simulator_export)
 
-        # API - Bot control
-        self.app.router.add_post('/api/bot/start', self.api_bot_start)
-        self.app.router.add_post('/api/bot/stop', self.api_bot_stop)
-        self.app.router.add_post('/api/bot/restart', self.api_bot_restart)
-        self.app.router.add_post('/api/bot/emergency_exit', self.api_emergency_exit)
-        self.app.router.add_get('/api/bot/status', self.api_bot_status)
+        # API - Bot control (MB-28: admin-gate state-changing routes; status is read-only)
+        self.app.router.add_post('/api/bot/start', require_auth(require_admin(self.api_bot_start)))
+        self.app.router.add_post('/api/bot/stop', require_auth(require_admin(self.api_bot_stop)))
+        self.app.router.add_post('/api/bot/restart', require_auth(require_admin(self.api_bot_restart)))
+        self.app.router.add_post('/api/bot/emergency_exit', require_auth(require_admin(self.api_emergency_exit)))
+        self.app.router.add_get('/api/bot/status', require_auth(self.api_bot_status))
 
         # API - DEX Trading cleanup/reconciliation
         self.app.router.add_post('/api/dex/reconcile', self.api_reconcile_dex_positions)
@@ -1314,63 +1333,40 @@ class DashboardEndpoints:
         return env_path
 
     def _update_env_file(self, key: str, value: str) -> bool:
-        """Update a key in the .env file"""
+        """DEPRECATED (MB-33): writing .env at runtime does not reach already-
+        spawned trading-module subprocesses, which read .env once at startup.
+        Dashboard writes here looked successful but silently failed to take
+        effect — operators flipped enabled=true and modules stayed off.
+
+        Use config_manager.set_sensitive_config() or the DB-backed
+        ConfigManager surface that trading modules actually read from.
+        """
+        raise NotImplementedError(
+            f"_update_env_file is deprecated (MB-33). "
+            f"Setting '{key}'={value!r} must go through the DB-backed "
+            f"ConfigManager so trading-module subprocesses see the change."
+        )
+
+    def _set_module_enable_flag(self, env_key: str, value: str) -> bool:
+        """Best-effort, in-process toggle of a module-enable env var.
+
+        MB-33: persistent dashboard writes to .env are deprecated because
+        they do not reach already-spawned subprocesses. This helper updates
+        os.environ for the current process (so the orchestrator's own view
+        flips immediately) but does NOT mutate .env on disk. To actually
+        start/stop a subprocess, use the orchestrator's module-manager
+        start/stop primitives, not env-file edits.
+        """
         try:
-            env_path = self._get_env_file_path()
-            logger.info(f"Updating .env file at: {env_path}, setting {key}={value}")
-
-            # Read existing content or create default if file doesn't exist
-            lines = []
-            key_found = False
-
-            if os.path.exists(env_path):
-                with open(env_path, 'r') as f:
-                    for line in f:
-                        if line.strip().startswith(f'{key}='):
-                            lines.append(f'{key}={value}\n')
-                            key_found = True
-                        else:
-                            lines.append(line)
-            else:
-                # Create default .env with all module settings
-                logger.info(f"Creating new .env file at: {env_path}")
-                lines = [
-                    "# Trading Module Configuration\n",
-                    "DEX_MODULE_ENABLED=true\n",
-                    "FUTURES_MODULE_ENABLED=false\n",
-                    "SOLANA_MODULE_ENABLED=false\n",
-                    "\n",
-                    "# Environment\n",
-                    "ENVIRONMENT=development\n",
-                    "DEBUG=false\n",
-                ]
-                # Check if the key we're setting is in the defaults
-                for i, line in enumerate(lines):
-                    if line.strip().startswith(f'{key}='):
-                        lines[i] = f'{key}={value}\n'
-                        key_found = True
-                        break
-
-            # If key wasn't found, add it
-            if not key_found:
-                lines.append(f'{key}={value}\n')
-
-            # Write back
-            with open(env_path, 'w') as f:
-                f.writelines(lines)
-
-            logger.info(f"Successfully wrote .env file with {key}={value}")
-
-            # Reload environment variables
-            load_dotenv(env_path, override=True)
-
-            # Also update os.environ directly for immediate effect
-            os.environ[key] = value
-            logger.info(f"Environment variable {key} set to: {os.environ.get(key)}")
-
+            os.environ[env_key] = value
+            logger.info(
+                f"MB-33: os.environ[{env_key}]={value} set in-process; "
+                f".env file not modified (subprocesses unaffected — use "
+                f"orchestrator start/stop to actually change runtime state)."
+            )
             return True
         except Exception as e:
-            logger.error(f"Error updating .env file: {e}", exc_info=True)
+            logger.error(f"Failed to set os.environ[{env_key}]: {e}")
             return False
 
     async def _api_module_enable(self, request):
@@ -1387,14 +1383,19 @@ class DashboardEndpoints:
             return web.json_response({'error': f'Unknown module: {module}'}, status=400)
 
         env_key = module_env_map[module]
-        if self._update_env_file(env_key, 'true'):
-            logger.info(f"Module {module} enabled via API")
-            return web.json_response({'success': True, 'message': f'{module} enabled'})
+        if self._set_module_enable_flag(env_key, 'true'):
+            logger.info(f"Module {module} enabled via API (in-process only; MB-33)")
+            return web.json_response({
+                'success': True,
+                'message': f'{module} enabled in-process',
+                'note': 'MB-33: .env not modified; subprocesses unaffected. '
+                        'Use orchestrator start/stop to change runtime state.',
+            })
         else:
-            return web.json_response({'error': 'Failed to update .env file'}, status=500)
+            return web.json_response({'error': 'Failed to set env flag'}, status=500)
 
     async def _api_module_disable(self, request):
-        """Disable a module by updating .env"""
+        """Disable a module by updating in-process env flag (MB-33: not .env)."""
         module = request.match_info.get('module', '')
 
         module_env_map = {
@@ -1407,18 +1408,30 @@ class DashboardEndpoints:
             return web.json_response({'error': f'Unknown module: {module}'}, status=400)
 
         env_key = module_env_map[module]
-        if self._update_env_file(env_key, 'false'):
-            logger.info(f"Module {module} disabled via API")
-            return web.json_response({'success': True, 'message': f'{module} disabled'})
+        if self._set_module_enable_flag(env_key, 'false'):
+            logger.info(f"Module {module} disabled via API (in-process only; MB-33)")
+            return web.json_response({
+                'success': True,
+                'message': f'{module} disabled in-process',
+                'note': 'MB-33: .env not modified; subprocesses unaffected. '
+                        'Use orchestrator start/stop to change runtime state.',
+            })
         else:
-            return web.json_response({'error': 'Failed to update .env file'}, status=500)
+            return web.json_response({'error': 'Failed to set env flag'}, status=500)
 
     async def _api_module_pause(self, request):
-        """Pause a module (sets to paused state)"""
+        """Pause a module — MB-30: writes the cross-process flag file so
+        subprocess loops actually halt new live writes via should_skip_live().
+        """
         module = request.match_info.get('module', '')
-        # For now, pause acts like disable - in a full implementation this would set a PAUSED state
-        logger.info(f"Module {module} paused via API")
-        return web.json_response({'success': True, 'message': f'{module} paused'})
+        from core.dry_run import set_module_pause
+        ok = set_module_pause(module, True)
+        logger.info(f"Module {module} paused via API (flag_file={ok})")
+        return web.json_response({
+            'success': bool(ok),
+            'message': f'{module} paused' if ok else f'failed to pause {module}',
+            'cross_process': ok,
+        }, status=200 if ok else 500)
 
     async def _api_module_start(self, request):
         """Start/resume a module"""
@@ -1434,21 +1447,52 @@ class DashboardEndpoints:
             return web.json_response({'error': f'Unknown module: {module}'}, status=400)
 
         env_key = module_env_map[module]
-        if self._update_env_file(env_key, 'true'):
-            logger.info(f"Module {module} started via API")
-            return web.json_response({'success': True, 'message': f'{module} started'})
+        if self._set_module_enable_flag(env_key, 'true'):
+            logger.info(f"Module {module} started via API (in-process only; MB-33)")
+            return web.json_response({
+                'success': True,
+                'message': f'{module} started in-process',
+                'note': 'MB-33: .env not modified; subprocesses unaffected. '
+                        'Use orchestrator start/stop to change runtime state.',
+            })
         else:
-            return web.json_response({'error': 'Failed to update .env file'}, status=500)
+            return web.json_response({'error': 'Failed to set env flag'}, status=500)
 
     def _setup_socketio(self):
         """Setup Socket.IO handlers"""
-        
+
         @self.sio.event
-        async def connect(sid, environ):
-            logger.info(f"Client connected: {sid}")
-            # Send initial data
+        async def connect(sid, environ, auth=None):
+            # MB-26: gate WS connects on a valid session cookie. Previously any
+            # client (any origin, any auth) connected and was streamed live data.
+            cookie_header = environ.get('HTTP_COOKIE', '')
+            session_id = None
+            for kv in cookie_header.split(';'):
+                if '=' in kv:
+                    k, v = kv.strip().split('=', 1)
+                    if k == 'session_id':
+                        session_id = v
+                        break
+            if not session_id:
+                logger.warning(f"WS connect rejected (no session_id): sid={sid}")
+                return False
+            auth_svc = getattr(self, 'auth_service', None)
+            if not auth_svc:
+                logger.warning(f"WS connect rejected (auth_service unavailable): sid={sid}")
+                return False
+            try:
+                user = await auth_svc.validate_session(session_id)
+            except Exception as e:
+                logger.warning(f"WS connect rejected (session validation error): {e}")
+                return False
+            if not user:
+                logger.warning(f"WS connect rejected (invalid session): sid={sid}")
+                return False
+            logger.info(
+                f"WS client connected: sid={sid} user={getattr(user, 'username', user)}"
+            )
             await self._send_initial_data(sid)
-        
+
         @self.sio.event
         async def disconnect(sid):
             logger.info(f"Client disconnected: {sid}")
@@ -4389,8 +4433,37 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_emergency_exit(self, request):
-        """Emergency exit - close all positions"""
+        """Emergency exit - close all positions.
+
+        MB-31 NOTE: this is a legacy duplicate of ModuleRoutes.bot_emergency_exit.
+        Kept (Option B) because it operates on self.engine.active_positions —
+        a code path module_routes' module-walker cannot reach. Kill-switch +
+        flag-file wiring added so this handler behaves like the canonical one.
+        TODO: collapse onto module_routes' handler once engine positions are
+        exposed via the module manager.
+        """
         try:
+            # MB-31: flip kill switch + write flag file BEFORE any close work.
+            try:
+                from core.dry_run import set_global_kill_switch
+                set_global_kill_switch(True)
+                logger.warning("EMERGENCY EXIT (legacy): global kill switch SET")
+            except Exception as e:
+                logger.error(f"Failed to set global kill switch: {e}")
+            try:
+                from pathlib import Path
+                import json as _json, os as _os
+                from datetime import datetime as _dt, timezone as _tz
+                _flag = Path("logs/.killswitch")
+                _flag.parent.mkdir(parents=True, exist_ok=True)
+                _flag.write_text(_json.dumps({
+                    "reason": "/api/bot/emergency_exit HTTP (legacy)",
+                    "ts": _dt.now(_tz.utc).isoformat(),
+                    "pid": _os.getpid(),
+                }))
+            except Exception as e:
+                logger.error(f"Failed to write killswitch flag file: {e}")
+
             closed = []
             failed = []
             
@@ -7547,6 +7620,71 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Error getting sniper stats: {e}")
             return web.json_response({'success': False, 'error': str(e), **stats})
+
+    async def api_get_sniper_timing(self, request):
+        """Return P50/P95 detection latency split by detection_path
+        for the SNIPER Phase 2 A/B comparison. Reads sniper_trades.metadata
+        JSONB populated by commits 1a8010b + c8debf6."""
+        result = {
+            'paths': {},
+            'window_days': 7,
+            'has_data': False,
+        }
+        try:
+            days = int(request.query.get('days', '7'))
+            days = max(1, min(days, 90))
+            result['window_days'] = days
+        except (TypeError, ValueError):
+            days = 7
+
+        try:
+            if not self.db:
+                return web.json_response({'success': True, 'data': result})
+
+            query = """
+                SELECT
+                    COALESCE(metadata->>'detection_path', 'unknown') AS path,
+                    COUNT(*) AS sample_count,
+                    percentile_cont(0.5) WITHIN GROUP (
+                        ORDER BY (metadata->'timing'->>'total_ms')::float
+                    ) AS p50_total_ms,
+                    percentile_cont(0.95) WITHIN GROUP (
+                        ORDER BY (metadata->'timing'->>'total_ms')::float
+                    ) AS p95_total_ms,
+                    percentile_cont(0.5) WITHIN GROUP (
+                        ORDER BY (metadata->'timing'->>'safety_ms')::float
+                    ) AS p50_safety_ms,
+                    percentile_cont(0.5) WITHIN GROUP (
+                        ORDER BY (metadata->'timing'->>'broadcast_ms')::float
+                    ) AS p50_broadcast_ms
+                FROM sniper_trades
+                WHERE metadata->'timing' IS NOT NULL
+                  AND (metadata->'timing'->>'total_ms') IS NOT NULL
+                  AND entry_timestamp > NOW() - ($1::int * INTERVAL '1 day')
+                GROUP BY COALESCE(metadata->>'detection_path', 'unknown')
+            """
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(query, days)
+
+            for row in rows:
+                path = row['path'] or 'unknown'
+                result['paths'][path] = {
+                    'sample_count': int(row['sample_count'] or 0),
+                    'p50_total_ms': float(row['p50_total_ms']) if row['p50_total_ms'] is not None else None,
+                    'p95_total_ms': float(row['p95_total_ms']) if row['p95_total_ms'] is not None else None,
+                    'p50_safety_ms': float(row['p50_safety_ms']) if row['p50_safety_ms'] is not None else None,
+                    'p50_broadcast_ms': float(row['p50_broadcast_ms']) if row['p50_broadcast_ms'] is not None else None,
+                }
+            result['has_data'] = len(result['paths']) > 0
+
+            return web.json_response({'success': True, 'data': result})
+
+        except Exception as e:
+            logger.error(f"api_get_sniper_timing failed: {e}", exc_info=True)
+            return web.json_response(
+                {'success': False, 'error': str(e), 'data': result},
+                status=500,
+            )
 
     async def api_get_sniper_positions(self, request):
         """Get Sniper open positions from sniper_trades table"""

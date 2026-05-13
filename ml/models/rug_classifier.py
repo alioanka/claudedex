@@ -36,6 +36,7 @@ class RugClassifier:
         self.models = {}
         self.scalers = {}
         self.feature_importance = {}
+        self._loaded = False
         self.model_weights = {
             'xgboost': 0.35,
             'lightgbm': 0.30,
@@ -96,10 +97,35 @@ class RugClassifier:
         
         # Initialize models
         self._initialize_models()
-        
-        # Model paths
-        self.model_dir = Path(config.get('MODEL_DIR', './models/rug_classifier'))
+
+        # Model paths. MODEL_DIR is the *parent* dir; load_model resolves
+        # MODEL_DIR / f"rug_classifier_{version}". Default to ./models so a
+        # version of 'v1' yields ./models/rug_classifier_v1/, matching
+        # scripts/train_rug_classifier.py.
+        self.model_dir = Path(config.get('MODEL_DIR', './models'))
         self.model_dir.mkdir(parents=True, exist_ok=True)
+
+        # Try to load a persisted model on init. Same load-or-refuse pattern
+        # as the MB-19 scaler fix in trading/strategies/ai_strategy.py.
+        version = config.get('model_version', 'v1')
+        try:
+            self.load_model(version)
+            self._loaded = self.is_loaded()
+            if self._loaded:
+                logger.info(
+                    f"RugClassifier: loaded version '{version}' from {self.model_dir}"
+                )
+        except FileNotFoundError:
+            logger.warning(
+                f"RugClassifier: no trained model at "
+                f"{self.model_dir}/rug_classifier_{version}/. predict() will "
+                f"refuse until you run scripts/train_rug_classifier.py."
+            )
+        except Exception as e:
+            logger.warning(
+                f"RugClassifier: failed to load version '{version}': {e}. "
+                f"predict() will refuse until a valid model is available."
+            )
     
     def _initialize_models(self):
         """Initialize ensemble of classifiers."""
@@ -340,14 +366,36 @@ class RugClassifier:
         results['feature_importance'] = self._calculate_ensemble_importance()
         
         logger.info(f"Training complete. Ensemble ROC-AUC: {results['ensemble_metrics']['roc_auc']:.4f}")
-        
+
+        self._loaded = True
         return results
     
-    def predict(self, token_features: Dict[str, Any]) -> Tuple[float, Dict[str, float]]:
+    def is_loaded(self) -> bool:
+        """True iff models AND scalers are fitted (load_model succeeded)."""
+        if not self.models or not self.scalers:
+            return False
+        # _initialize_models populates self.models/self.scalers with unfit
+        # instances; check that at least one scaler has been fit (has mean_)
+        # — that's the proxy for "load_model() actually ran".
+        for scaler in self.scalers.values():
+            if not hasattr(scaler, 'center_') and not hasattr(scaler, 'mean_'):
+                return False
+        return self._loaded
+
+    def predict(
+        self,
+        token_features: Dict[str, Any]
+    ) -> Optional[Tuple[float, Dict[str, float]]]:
         """
         Predict rug probability for a token.
-        Returns probability and individual model predictions.
+        Returns (probability, individual_model_predictions) — or None if
+        no trained model is loaded (refuse-to-predict pattern, mirrors the
+        MB-19 scaler fix in trading/strategies/ai_strategy.py).
         """
+        if not self.is_loaded():
+            logger.debug("RugClassifier: not loaded; refusing to predict")
+            return None
+
         # Extract features
         features = self.extract_features(token_features)
         
@@ -582,7 +630,8 @@ class RugClassifier:
             self.feature_columns = metadata['feature_columns']
         
         logger.info(f"Model loaded from {model_path}")
-    
+        self._loaded = True
+
     def update_model(self, new_data: pd.DataFrame, new_labels: np.ndarray) -> Dict[str, Any]:
         """Update model with new labeled data (online learning)."""
         # Implement incremental learning for models that support it

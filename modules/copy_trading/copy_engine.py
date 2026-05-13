@@ -16,6 +16,16 @@ import os
 import ast
 from datetime import datetime
 
+from modules.base_module import (
+    BaseModule,
+    ModuleConfig,
+    ModuleMetrics,
+    ModuleStatus,
+    ModuleType,
+)
+from core.dry_run import should_skip_live
+from config.rpc_provider import RPCProvider
+
 logger = logging.getLogger("CopyTradingEngine")
 
 # Jupiter API (using lite-api.jup.ag/swap/v1)
@@ -42,6 +52,32 @@ EVM_CHAINS = {
 
 # Default chain for EVM wallets without chain suffix
 DEFAULT_EVM_CHAIN = 'ethereum'
+
+# MB-24: per-chain DEX routing. Only V2-API-compatible AMMs are supported in
+# this commit. Arbitrum/Optimism (Uniswap V3 only) and Avalanche (TraderJoe
+# v2 - different API) raise unsupported errors; tracked as follow-ups.
+EVM_DEX_ROUTING = {
+    'ethereum': {
+        'router': '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',  # Uniswap V2
+        'wrapped_native': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',  # WETH
+        'rpc_key': 'ETHEREUM_RPC',
+    },
+    'bsc': {
+        'router': '0x10ED43C718714eb63d5aA57B78B54704E256024E',  # PancakeSwap V2
+        'wrapped_native': '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',  # WBNB
+        'rpc_key': 'BSC_RPC',
+    },
+    'polygon': {
+        'router': '0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff',  # QuickSwap V2
+        'wrapped_native': '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',  # WMATIC
+        'rpc_key': 'POLYGON_RPC',
+    },
+    'base': {
+        'router': '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24',  # Uniswap V2 on Base
+        'wrapped_native': '0x4200000000000000000000000000000000000006',  # WETH on Base
+        'rpc_key': 'BASE_RPC',
+    },
+}
 
 
 class PriceFetcher:
@@ -168,14 +204,11 @@ class CopyTradeExecutor:
         timeout = aiohttp.ClientTimeout(total=30)
         self.session = aiohttp.ClientSession(timeout=timeout)
 
-        # Load Solana RPC URL
-        try:
-            from config.rpc_provider import RPCProvider
-            self.solana_rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC')
-        except Exception:
-            pass
-        if not self.solana_rpc_url:
-            self.solana_rpc_url = os.getenv('SOLANA_RPC_URL')
+        # Load Solana RPC - PoolEngine first (async ctx), .env preserved as ultimate fallback
+        self.solana_rpc_url = (
+            await RPCProvider.get_rpc('SOLANA_RPC')
+            or os.getenv('SOLANA_RPC_URL')
+        )
 
         # Load all credentials from secrets manager (database/Docker secrets)
         from security.secrets_manager import secrets
@@ -225,7 +258,7 @@ class CopyTradeExecutor:
         slippage_bps: int = 100
     ) -> Dict:
         """Copy a Solana swap via Jupiter"""
-        if self.dry_run:
+        if should_skip_live(self.dry_run, module='copy_trading', account=getattr(self, 'solana_wallet', None)):
             return await self._simulate_solana_swap(input_mint, output_mint, amount_lamports)
 
         if not self.solana_wallet or not self.solana_private_key:
@@ -264,10 +297,21 @@ class CopyTradeExecutor:
         token_address: str,
         amount_wei: int,
         is_buy: bool = True,
-        slippage: float = 10.0
+        slippage: float = 10.0,
+        chain: str = 'ethereum',
     ) -> Dict:
-        """Copy an EVM swap via Uniswap"""
-        if self.dry_run:
+        """Copy an EVM swap via a V2-API DEX router on `chain`."""
+        # MB-24: route per source-tx chain. Previously hardcoded to Uniswap V2
+        # mainnet + WETH mainnet + self.web3_provider (ETHEREUM_RPC) - every
+        # non-ETH copy reverted or hit a wrong-token address collision.
+        routing = EVM_DEX_ROUTING.get(chain)
+        if not routing:
+            return {
+                'success': False,
+                'error': f"Chain '{chain}' not supported by EVM copy executor (V2-API only).",
+            }
+
+        if should_skip_live(self.dry_run, module='copy_trading', account=getattr(self, 'evm_wallet', None)):
             return await self._simulate_evm_swap(token_address, amount_wei, is_buy)
 
         if not self.evm_wallet or not self.evm_private_key:
@@ -275,14 +319,19 @@ class CopyTradeExecutor:
 
         try:
             from web3 import Web3
+            from config.pool_engine import PoolEngine
 
-            w3 = Web3(Web3.HTTPProvider(self.web3_provider))
+            pool = await PoolEngine.get_instance()
+            rpc_url = await pool.get_endpoint(routing['rpc_key'])
+            if not rpc_url:
+                return {'success': False, 'error': f"No RPC endpoint available for {chain}"}
+
+            w3 = Web3(Web3.HTTPProvider(rpc_url))
             if not w3.is_connected():
-                return {'success': False, 'error': 'Failed to connect to Web3'}
+                return {'success': False, 'error': f'Failed to connect to Web3 on {chain}'}
 
-            # Uniswap V2 Router
-            ROUTER = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"
-            WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+            ROUTER = routing['router']
+            WRAPPED_NATIVE = routing['wrapped_native']
 
             ROUTER_ABI = [{
                 "inputs": [
@@ -300,9 +349,9 @@ class CopyTradeExecutor:
             router = w3.eth.contract(address=Web3.to_checksum_address(ROUTER), abi=ROUTER_ABI)
 
             if is_buy:
-                path = [Web3.to_checksum_address(WETH), Web3.to_checksum_address(token_address)]
+                path = [Web3.to_checksum_address(WRAPPED_NATIVE), Web3.to_checksum_address(token_address)]
             else:
-                path = [Web3.to_checksum_address(token_address), Web3.to_checksum_address(WETH)]
+                path = [Web3.to_checksum_address(token_address), Web3.to_checksum_address(WRAPPED_NATIVE)]
 
             deadline = int(datetime.now().timestamp()) + 120
 
@@ -495,7 +544,7 @@ class CopyTradeExecutor:
         }
 
 
-class CopyTradingEngine:
+class CopyTradingEngine(BaseModule):
     """
     Copy Trading Engine for tracking and copying wallet trades.
 
@@ -504,12 +553,23 @@ class CopyTradingEngine:
     - Solana wallet monitoring via RPC
     - Real trade execution with Jupiter/Uniswap
     - Configurable copy amount and ratio
+
+    BaseModule-compliant: killswitch poller auto-starts via
+    __init_subclass__ wrap (2b4c61f). Per-module pause via
+    logs/.pause_copy_trading honored through should_skip_live
+    (CopyTradeExecutor migrated in 2b82404).
     """
 
     def __init__(self, config: Dict, db_pool):
-        self.config = config
+        module_config = ModuleConfig(
+            name="copy_trading",
+            module_type=ModuleType.COPY_TRADING,
+            enabled=bool(config.get('copy_trading_enabled', True)),
+            custom_settings=config,
+        )
+        super().__init__(module_config)
         self.db_pool = db_pool
-        self.is_running = False
+        self.config_dict = config  # raw dict retained for legacy reads
         self.targets = []  # Initialize empty, load from DB
 
         # Use Pool Engine with secrets manager fallback (NOT os.getenv directly)
@@ -527,6 +587,11 @@ class CopyTradingEngine:
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
         # Copy trading settings
+        # MB-23: this is the per-copy cap in USD. The EVM path historically
+        # (incorrectly) treated it as ETH and multiplied by 1e18 - at $2000 ETH
+        # that was a 2000x overrun of operator intent. EVM path now uses the
+        # live ETH price (see _execute_evm_copy_trade) to convert USD -> wei,
+        # matching the Solana path's USD/sol_price -> lamports convention.
         self.max_copy_amount = 100.0  # Max USD per copy
         self.copy_ratio = 10  # Copy 10% of original
 
@@ -549,8 +614,29 @@ class CopyTradingEngine:
             'last_stats_log': datetime.now()
         }
 
-    async def run(self):
-        self.is_running = True
+    async def initialize(self) -> bool:
+        """Initialize executor and load settings. Idempotent."""
+        try:
+            self.status = ModuleStatus.INITIALIZING
+            # Initialize executor with db_pool for secrets manager access
+            self.executor = CopyTradeExecutor(self.dry_run, db_pool=self.db_pool)
+            await self.executor.initialize()
+            await self._load_settings()
+            return True
+        except Exception as e:
+            self.logger.error(f"Copy Trading initialize failed: {e}")
+            self.error_message = str(e)
+            self.status = ModuleStatus.ERROR
+            return False
+
+    async def start(self) -> bool:
+        """Run the copy-trading monitor loop. Returns True on clean exit."""
+        if self.executor is None:
+            if not await self.initialize():
+                return False
+        self._running = True
+        self.status = ModuleStatus.RUNNING
+        self.start_time = datetime.now()
         logger.info("👯 Copy Trading Engine Started")
         logger.info(f"   Mode: {'DRY_RUN (Simulated)' if self.dry_run else 'LIVE TRADING'}")
         if self.etherscan_api_key:
@@ -562,14 +648,7 @@ class CopyTradingEngine:
             logger.info(f"   EVM monitoring: Disabled (no ETHERSCAN_API_KEY)")
         logger.info(f"   Solana monitoring: {'Enabled' if self.solana_rpc_url else 'Disabled (no SOLANA_RPC_URL)'}")
 
-        # Initialize executor with db_pool for secrets manager access
-        self.executor = CopyTradeExecutor(self.dry_run, db_pool=self.db_pool)
-        await self.executor.initialize()
-
-        # Initial load of settings
-        await self._load_settings()
-
-        while self.is_running:
+        while self._running:
             try:
                 self._stats['cycles'] += 1
 
@@ -592,6 +671,19 @@ class CopyTradingEngine:
             except Exception as e:
                 logger.error(f"Copy loop error: {e}")
                 await asyncio.sleep(15)
+        return True
+
+    async def process_opportunity(self, opportunity: Dict) -> Optional[Dict]:
+        """COPY discovers opportunities internally via wallet monitoring."""
+        return None
+
+    async def get_metrics(self) -> ModuleMetrics:
+        """Return current ModuleMetrics snapshot (filled by update_metrics)."""
+        try:
+            await self.update_metrics()
+        except Exception as e:
+            self.logger.debug(f"update_metrics failed: {e}")
+        return self.metrics
 
     async def _log_stats_if_needed(self):
         """Log statistics every 5 minutes"""
@@ -888,6 +980,22 @@ class CopyTradingEngine:
         tx_hash = source_tx.get('hash', 'unknown')
         logger.info(f"🚀 Copying EVM trade {tx_hash} ({method_name})")
 
+        # MB-24: derive chain from monitor-stamped source_tx['_chain_id']; bail
+        # out cleanly for chains where we have no V2-API router configured
+        # (Arbitrum/Optimism = V3 only, Avalanche = TraderJoe v2 different API).
+        chain_id = source_tx.get('_chain_id')
+        chain_name = None
+        for name, info in EVM_CHAINS.items():
+            if info['chain_id'] == chain_id:
+                chain_name = name
+                break
+        if not chain_name:
+            logger.warning(f"Unknown chain_id {chain_id} on source tx {tx_hash} - skipping")
+            return
+        if chain_name not in EVM_DEX_ROUTING:
+            logger.info(f"Skip copy on {chain_name}: no V2-API router configured (tx {tx_hash})")
+            return
+
         try:
             # Parse token from transaction
             # For swapExactETHForTokens, the token is in the path (input data)
@@ -900,10 +1008,21 @@ class CopyTradingEngine:
             is_buy = 'ForTokens' in method_name
             side = 'buy' if is_buy else 'sell'
 
-            # Calculate copy amount (ratio of original)
+            # Calculate copy amount (ratio of original).
+            # MB-23 fix: the cap is in USD - convert to wei via live ETH price.
+            # Previously `int(self.max_copy_amount * 1e18)` treated USD as ETH:
+            # at ~$2000 ETH the cap was ~$200,000 (2000x operator intent).
+            eth_price = (
+                await self.executor.price_fetcher.get_price('eth')
+                if self.executor else 3000
+            )
+            if not eth_price or eth_price <= 0:
+                logger.error("Invalid ETH price - skipping copy to avoid bad sizing")
+                return
+            max_copy_wei = int((self.max_copy_amount / eth_price) * 1e18)
             copy_amount = min(
                 original_value * self.copy_ratio // 100,
-                int(self.max_copy_amount * 1e18)  # Max in wei
+                max_copy_wei,
             )
 
             if copy_amount <= 0:
@@ -931,15 +1050,16 @@ class CopyTradingEngine:
             result = await self.executor.copy_evm_swap(
                 token_address=token_address,
                 amount_wei=copy_amount,
-                is_buy=is_buy
+                is_buy=is_buy,
+                chain=chain_name,
             )
 
             if result.get('success'):
-                logger.info(f"✅ EVM Copy Trade {'Executed' if not self.dry_run else 'Simulated'}: {result.get('tx_hash')}")
+                logger.info(f"✅ EVM Copy Trade {'Executed' if not self.dry_run else 'Simulated'} on {chain_name}: {result.get('tx_hash')}")
 
                 # Log to database with source wallet and proper side
                 source_wallet = source_tx.get('from', '')
-                await self._log_copy_trade('ethereum', tx_hash, result, source_wallet, side=side, token_address=token_address)
+                await self._log_copy_trade(chain_name, tx_hash, result, source_wallet, side=side, token_address=token_address)
             else:
                 logger.error(f"❌ EVM Copy Trade Failed: {result.get('error')}")
 
@@ -1021,6 +1141,37 @@ class CopyTradingEngine:
             logger.error(f"Error analyzing Solana tx: {e}")
             return False
 
+    async def _get_solana_token_balance(self, mint: str) -> tuple:
+        """
+        Fetch our Solana wallet's raw SPL balance for `mint`.
+        Returns (raw_amount, decimals). (0, 0) on any failure / no account.
+        """
+        wallet = getattr(self.executor, 'solana_wallet', None) if self.executor else None
+        rpc_url = self.solana_rpc_url
+        if not wallet or not rpc_url:
+            return (0, 0)
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTokenAccountsByOwner",
+            "params": [wallet, {"mint": mint}, {"encoding": "jsonParsed"}],
+        }
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(rpc_url, json=payload) as resp:
+                    if resp.status != 200:
+                        return (0, 0)
+                    data = await resp.json()
+            accounts = (data.get('result') or {}).get('value') or []
+            if not accounts:
+                return (0, 0)
+            info = accounts[0]['account']['data']['parsed']['info']['tokenAmount']
+            return (int(info.get('amount', 0)), int(info.get('decimals', 0)))
+        except Exception as e:
+            logger.error(f"Error fetching SPL balance for {mint[:8]}...: {e}")
+            return (0, 0)
+
     async def _execute_solana_copy_trade(self, wallet: str, signature: str, tx_data: dict):
         """Execute the same trade on Solana - handles both BUY and SELL"""
         logger.info(f"🚀 Analyzing Solana trade {signature[:20]}...")
@@ -1095,15 +1246,21 @@ class CopyTradingEngine:
                     amount_lamports=copy_lamports
                 )
             else:
-                # For SELL, we don't actually execute a sell (we might not have the position)
-                # But we DO record the source wallet's sell to close their position
-                result = {
-                    'success': True,
-                    'tx_hash': f"SELL_TRACKED_{signature[:16]}",
-                    'output_mint': token_mint,
-                    'amount': copy_lamports,
-                    'is_sell_tracking': True
-                }
+                # SELL: actually unload our copy bag via Jupiter. Never fabricate
+                # a synthetic tx hash - if we hold nothing, just log and return.
+                raw_balance, _decimals = await self._get_solana_token_balance(token_mint)
+                if raw_balance <= 0:
+                    logger.warning(
+                        f"⚠️ Leader SELL detected for {token_mint[:8]}... "
+                        f"but we hold no position to close (skipping)"
+                    )
+                    return
+                result = await self.executor.copy_solana_swap(
+                    input_mint=token_mint,
+                    output_mint=WSOL_MINT,
+                    amount_lamports=raw_balance,
+                    slippage_bps=300,  # memecoin-tolerant exit
+                )
 
             if result.get('success'):
                 action = 'Tracked' if result.get('is_sell_tracking') else ('Executed' if not self.dry_run else 'Simulated')
@@ -1245,12 +1402,107 @@ class CopyTradingEngine:
         except Exception as e:
             logger.debug(f"Error updating wallet stats: {e}")
 
-    async def stop(self):
-        """Stop the engine"""
-        self.is_running = False
+    async def get_positions(self) -> List[Dict]:
+        """Return open copy-trade positions from the DB.
+
+        Each row is the operator-facing view, NOT a full BaseModule.Position
+        object - that conversion lives in the eventual BaseModule wrapper.
+        """
+        if not self.db_pool:
+            return []
+        try:
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT trade_id, chain, source_wallet, token_address,
+                           entry_price, entry_usd, amount, entry_timestamp
+                    FROM copytrading_trades
+                    WHERE status = 'open' AND side = 'buy'
+                """)
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"COPY.get_positions failed: {e}")
+            return []
+
+    async def _get_evm_token_balance(self, token_address: str, chain: str) -> int:
+        """Return raw on-chain ERC-20 balance of self.executor.evm_wallet on chain."""
+        if not self.executor or not self.executor.evm_wallet:
+            return 0
+        routing = EVM_DEX_ROUTING.get(chain)
+        if not routing:
+            return 0
+        from config.pool_engine import PoolEngine
+        pool = await PoolEngine.get_instance()
+        rpc_url = await pool.get_endpoint(routing['rpc_key'])
+        if not rpc_url:
+            return 0
+        from web3 import Web3
+        w3 = Web3(Web3.HTTPProvider(rpc_url))
+        erc20_abi = [{
+            "constant": True, "inputs": [{"name": "_owner", "type": "address"}],
+            "name": "balanceOf", "outputs": [{"name": "balance", "type": "uint256"}],
+            "type": "function",
+        }]
+        contract = w3.eth.contract(
+            address=Web3.to_checksum_address(token_address), abi=erc20_abi
+        )
+        return contract.functions.balanceOf(
+            Web3.to_checksum_address(self.executor.evm_wallet)
+        ).call()
+
+    async def close_position(self, position) -> Dict:
+        """Best-effort close. Routes via the executor based on position['chain'].
+
+        Caller is responsible for any audit-trail / _log_copy_trade accounting -
+        the dashboard emergency-exit handler wants to record its own outcome,
+        so this method stays pure (no DB writes).
+        """
+        if not self.executor:
+            return {'success': False, 'error': 'executor not initialised'}
+        chain = position.get('chain')
+        token = position.get('token_address')
+        if not chain or not token:
+            return {'success': False, 'error': 'position missing chain or token_address'}
+
+        if chain == 'solana':
+            # Reuse the MB-22 SELL path: actual on-chain balance via Jupiter.
+            balance_raw, _decimals = await self._get_solana_token_balance(token)
+            if balance_raw <= 0:
+                return {'success': True, 'tx_hash': None, 'note': 'no on-chain balance to close'}
+            return await self.executor.copy_solana_swap(
+                input_mint=token,
+                output_mint=WSOL_MINT,
+                amount_lamports=balance_raw,
+                slippage_bps=300,  # memecoin-tolerant exit, matches MB-22
+            )
+
+        # EVM: prefer actual on-chain balance; fall back to DB `amount` if the
+        # RPC read fails so a panic-exit isn't blocked by a flaky endpoint.
+        try:
+            amount_wei = await self._get_evm_token_balance(token, chain)
+        except Exception:
+            amount_wei = int(position.get('amount') or 0)
+        if amount_wei <= 0:
+            return {'success': True, 'tx_hash': None, 'note': 'no on-chain balance to close'}
+        return await self.executor.copy_evm_swap(
+            token_address=token,
+            amount_wei=amount_wei,
+            is_buy=False,
+            chain=chain,
+        )
+
+    async def stop(self) -> bool:
+        """Stop the engine. Returns True on clean shutdown."""
+        self._running = False
+        self.status = ModuleStatus.STOPPING
 
         # Close executor
-        if self.executor:
-            await self.executor.close()
+        try:
+            if self.executor:
+                await self.executor.close()
+        except Exception as e:
+            self.logger.warning(f"executor.close() failed: {e}")
 
+        self.status = ModuleStatus.STOPPED
+        self.stop_time = datetime.now()
         logger.info("🛑 Copy Trading Engine Stopped")
+        return True

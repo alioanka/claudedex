@@ -11,7 +11,9 @@ import os
 import aiohttp
 
 from config.config_manager import ConfigManager
+from core.dry_run import should_skip_live
 from data.storage.database import DatabaseManager
+from modules.sniper.core._timing import SnipeTimingContext, parse_iso_to_perf_counter
 from monitoring.alerts import AlertManager
 
 logger = logging.getLogger("SniperEngine")
@@ -283,11 +285,25 @@ class SniperEngine:
 
     async def _evaluate_target(self, target: Dict, chain_type: str):
         """Evaluate if a new token meets sniping criteria"""
+        token_address = target.get('token_address', '')
+        timing = SnipeTimingContext(
+            token_address=token_address or '',
+            chain=chain_type,
+            t_detect=parse_iso_to_perf_counter(target.get('timestamp', '')),
+        )
+        target['_timing'] = timing
         try:
-            token_address = target.get('token_address')
-
             # 1. Check Filters (Liquidity, Tax, Honeypot, Safety)
             if not await self._check_filters(target, chain_type):
+                # _check_filters sets timing.outcome (rejected_filter
+                # or rejected_safety) before returning False. Emit
+                # here so the rejection's safety-stage cost is logged.
+                if timing.outcome == 'pending':
+                    timing.outcome = 'rejected_filter'
+                try:
+                    timing.emit()
+                except Exception:
+                    pass
                 return
 
             # 2. Add to pending targets
@@ -346,11 +362,16 @@ class SniperEngine:
             allow_caution = False
 
         # Perform comprehensive safety check
+        timing = target.get('_timing')
         try:
             if self.token_safety:
                 from modules.sniper.core.token_safety import SafetyRating
 
+                if timing:
+                    timing.stamp('t_safety_start')
                 report = await self.token_safety.check_token(token_address, chain_type)
+                if timing:
+                    timing.stamp('t_safety_done')
 
                 # Log the safety report
                 target['safety_report'] = {
@@ -368,6 +389,8 @@ class SniperEngine:
                     self._stats['honeypots_detected'] += 1
                     self._rejected_cache[token_address] = datetime.now()  # Add to cooldown
                     logger.debug(f"🍯 HONEYPOT: {token_address[:16]}...")
+                    if timing:
+                        timing.outcome = 'rejected_safety'
                     return False
 
                 if report.rating == SafetyRating.DANGER:
@@ -378,6 +401,8 @@ class SniperEngine:
                     else:
                         self._rejected_cache[token_address] = datetime.now()  # Add to cooldown
                         logger.debug(f"🚨 DANGER: {token_address[:16]}... (Score: {report.score})")
+                        if timing:
+                            timing.outcome = 'rejected_safety'
                         return False
 
                 if report.rating == SafetyRating.CAUTION and not allow_caution and not self.test_mode:
@@ -388,6 +413,8 @@ class SniperEngine:
                     self._stats['high_tax_rejected'] += 1
                     self._rejected_cache[token_address] = datetime.now()  # Add to cooldown
                     logger.debug(f"⚠️ High tax: {token_address[:16]}... (Buy: {report.buy_tax:.1f}%, Sell: {report.sell_tax:.1f}%)")
+                    if timing:
+                        timing.outcome = 'rejected_safety'
                     return False
 
                 # Skip liquidity check if min_liquidity is 0 (useful for devnet testing)
@@ -395,6 +422,8 @@ class SniperEngine:
                     self._stats['low_liquidity_rejected'] += 1
                     self._rejected_cache[token_address] = datetime.now()  # Add to cooldown
                     logger.debug(f"⚠️ Low liquidity: {token_address[:16]}... (${report.liquidity_usd:,.0f} < ${min_liquidity:,.0f})")
+                    if timing:
+                        timing.outcome = 'rejected_safety'
                     return False
 
                 # Token passed all checks - log this at INFO level
@@ -462,6 +491,9 @@ class SniperEngine:
         """Execute the buy transaction with high priority"""
         token_address = data['target'].get('token_address')
         chain = data['chain_type']
+        timing = data.get('target', {}).get('_timing')
+        if timing:
+            timing.stamp('t_broadcast_start')
 
         logger.info(f"🔫 EXECUTING SNIPE: {token_address} on {chain}")
         data['status'] = 'buying'
@@ -470,6 +502,9 @@ class SniperEngine:
             if not self.executor:
                 logger.error("Trade executor not initialized")
                 data['status'] = 'failed'
+                if timing:
+                    timing.stamp('t_broadcast_done')
+                    timing.outcome = 'failed'
                 return
 
             # Execute buy using the trade executor
@@ -482,6 +517,9 @@ class SniperEngine:
             )
 
             if result.success:
+                if timing:
+                    timing.stamp('t_broadcast_done')
+                    timing.outcome = 'success'
                 logger.info(f"✅ SNIPE SUCCESS: {token_address}")
                 logger.info(f"   TX: {result.tx_hash} | Amount: {result.amount_out}")
 
@@ -506,14 +544,28 @@ class SniperEngine:
                 # Log to database
                 await self._log_snipe_to_db(data, result)
             else:
+                if timing:
+                    timing.stamp('t_broadcast_done')
+                    timing.outcome = 'failed'
                 logger.error(f"❌ SNIPE FAILED: {result.error}")
                 data['status'] = 'failed'
                 data['error'] = result.error
 
         except Exception as e:
+            if timing:
+                timing.stamp('t_broadcast_done')
+                timing.outcome = 'failed'
             logger.error(f"❌ SNIPE FAILED: {e}")
             data['status'] = 'failed'
             data['error'] = str(e)
+        finally:
+            # Always emit one timing line per snipe attempt. Wrapped
+            # fail-soft so an instrumentation bug never breaks trading.
+            if timing:
+                try:
+                    timing.emit()
+                except Exception:
+                    pass
 
     async def _log_snipe_to_db(self, data: Dict, result):
         """Log snipe trade to dedicated sniper_trades table with real USD values"""
@@ -561,11 +613,14 @@ class SniperEngine:
                         safety_report.get('sell_tax'),
                         safety_report.get('liquidity_usd'),
                         'open' if result.success else 'failed',
-                        True,  # is_simulated - update based on dry_run mode
+                        should_skip_live(self.dry_run, module='sniper'),
                         result.timestamp,
                         result.tx_hash,
                         json.dumps({
-                            'warnings': safety_report.get('warnings', [])
+                            'warnings': safety_report.get('warnings', []),
+                            'timing': (data.get('target', {}).get('_timing').to_metadata_dict()
+                                       if data.get('target', {}).get('_timing') is not None
+                                       else None),
                         })
                     )
                 # Store trade_id in data for linking exit trade
@@ -576,9 +631,10 @@ class SniperEngine:
 
     async def _monitor_active_snipes(self):
         """Monitor active snipes for auto-sell targets (take profit / stop loss)"""
-        # Exit settings
-        take_profit_pct = 50.0  # +50% profit target
-        stop_loss_pct = -20.0   # -20% stop loss
+        # Use DB-configured thresholds. stop_loss_pct is stored as a positive
+        # "loss threshold"; negate at use because pnl_pct is signed.
+        take_profit_pct = self.take_profit_pct
+        stop_loss_pct = -abs(self.stop_loss_pct)
 
         check_count = 0
         while self.is_running:
@@ -629,15 +685,19 @@ class SniperEngine:
         try:
             import aiohttp
 
+            # Jupiter Price API v2: returns USD-derived price. Unit cancels in
+            # the (current - entry) / entry ratio at the call site, so caller
+            # need not care about USD vs SOL.
             if chain == 'solana':
-                # Use Jupiter for price (SOL per token)
-                url = f"https://price.jup.ag/v4/price?ids={token_address}"
+                url = f"https://api.jup.ag/price/v2?ids={token_address}"
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url, timeout=5) as response:
                         if response.status == 200:
                             data = await response.json()
-                            price_info = data.get('data', {}).get(token_address, {})
-                            return float(price_info.get('price', 0))
+                            price_info = data.get('data', {}).get(token_address)
+                            if not price_info:
+                                return 0
+                            return float(price_info.get('price') or 0)
             else:
                 # For EVM, use DexScreener or similar
                 url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
@@ -773,7 +833,7 @@ class SniperEngine:
                             native_price,
                             'closed' if result.success else 'failed',
                             reason,
-                            True,
+                            should_skip_live(self.dry_run, module='sniper'),
                             result.timestamp,
                             result.tx_hash
                         )

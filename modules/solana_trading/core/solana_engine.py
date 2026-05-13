@@ -77,6 +77,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from core.pnl_tracker import PnLTracker, TradeRecord
+from core.units import get_spl_decimals
 
 # Import JupiterHelper for live swap execution
 try:
@@ -1199,6 +1200,9 @@ class SolanaTradingEngine:
             # Load historical stats from database for accurate PnL tracking
             await self._load_historical_stats()
 
+            # Reconcile open positions against on-chain SPL balances (MB-09)
+            await self._reconcile_positions_on_startup()
+
             # Initialize SafetyEngine for all strategies (slippage, circuit breaker, etc.)
             try:
                 from modules.solana_trading.core.safety_engine import SafetyEngine, SafetyConfig
@@ -1425,7 +1429,11 @@ class SolanaTradingEngine:
                     if private_key:
                         self.jupiter_helper = JupiterHelper(
                             solana_rpc_url=self.primary_rpc,
-                            private_key=private_key
+                            private_key=private_key,
+                            priority_fee_lamports=(
+                                self.config_manager.priority_fee_lamports
+                                if self.config_manager else None
+                            ),
                         )
                         await self.jupiter_helper.initialize()
                         logger.info("✅ JupiterHelper initialized for LIVE swap execution")
@@ -1755,6 +1763,161 @@ class SolanaTradingEngine:
             logger.warning(f"Could not load historical stats from DB: {e}")
             # Continue with zeroed stats - will accumulate from new trades
 
+    async def _save_position_to_db(self, position: Position) -> None:
+        """Persist an open position so it survives restarts.
+
+        Swallows all exceptions: DB failure must never block the open path.
+        """
+        if not self.db_pool:
+            return
+        try:
+            async with self.db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO solana_positions
+                      (position_id, token_mint, token_symbol, strategy, entry_price,
+                       amount, value_sol, stop_loss, take_profit, is_simulated,
+                       tx_signature, opened_at, metadata)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                    ON CONFLICT (token_mint) DO UPDATE SET
+                      entry_price = EXCLUDED.entry_price,
+                      amount = EXCLUDED.amount,
+                      value_sol = EXCLUDED.value_sol,
+                      stop_loss = EXCLUDED.stop_loss,
+                      take_profit = EXCLUDED.take_profit,
+                      is_simulated = EXCLUDED.is_simulated,
+                      metadata = EXCLUDED.metadata
+                    """,
+                    position.position_id, position.token_mint, position.token_symbol,
+                    position.strategy.value if hasattr(position.strategy, 'value') else str(position.strategy),
+                    position.entry_price, position.amount, position.value_sol,
+                    position.stop_loss, position.take_profit, position.is_simulated,
+                    position.tx_signature, position.opened_at,
+                    json.dumps(position.metadata) if position.metadata else None,
+                )
+        except Exception as e:
+            logger.warning(f"Failed to persist position {position.token_symbol}: {e}")
+
+    async def _remove_position_from_db(self, token_mint: str) -> None:
+        """Remove an open-position row on close. DB delete runs BEFORE the
+        in-memory dict delete at call sites so a crash between the two leaves
+        only dict-state (recoverable), not a stale DB row (phantom)."""
+        if not self.db_pool:
+            return
+        try:
+            async with self.db_pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM solana_positions WHERE token_mint = $1",
+                    token_mint,
+                )
+        except Exception as e:
+            logger.warning(f"Failed to remove position {token_mint}: {e}")
+
+    async def _reconcile_positions_on_startup(self) -> None:
+        """Cross-reference DB open positions with on-chain SPL balances.
+
+        For each DB row:
+          - on-chain balance > 0 -> rebuild Position, add to active_positions
+            (so SL/TP monitoring resumes)
+          - on-chain balance == 0 -> phantom: DELETE from DB and log loudly
+
+        TODO: orphan detection (on-chain SPL tokens NOT in any DB row) is out
+        of scope for MB-09; follow-up commit.
+
+        Tolerates every failure without raising — startup must not be blocked.
+        """
+        if not self.db_pool:
+            logger.warning("⚠️ No db_pool — skipping position reconciliation")
+            return
+
+        try:
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch("SELECT * FROM solana_positions")
+        except Exception as e:
+            logger.error(f"Failed to query solana_positions for reconcile: {e}")
+            return
+
+        if not rows:
+            logger.info("📍 No open positions in DB to reconcile")
+            return
+
+        logger.info(f"📍 Reconciling {len(rows)} DB position(s) against on-chain balances")
+        restored = 0
+        phantom = 0
+
+        for row in rows:
+            mint = row['token_mint']
+            try:
+                decimals = await get_spl_decimals(mint)
+            except Exception:
+                decimals = 6  # safe fallback for the balance call only
+
+            try:
+                balance = await self._get_token_balance(mint, decimals)
+            except Exception as e:
+                logger.warning(
+                    f"Reconcile: balance fetch failed for {mint[:8]}: {e} — leaving row, skipping restore"
+                )
+                continue
+
+            if balance <= 0:
+                await self._remove_position_from_db(mint)
+                phantom += 1
+                logger.warning(
+                    f"👻 Phantom position dropped: {row.get('token_symbol') or mint[:8]} (on-chain balance 0)"
+                )
+                continue
+
+            strategy_name = row['strategy'] or 'jupiter'
+            try:
+                strat = Strategy(strategy_name)
+            except Exception:
+                strat = Strategy.JUPITER
+
+            raw_meta = row['metadata']
+            if isinstance(raw_meta, dict):
+                metadata = raw_meta
+            elif raw_meta:
+                try:
+                    metadata = json.loads(raw_meta)
+                except Exception:
+                    metadata = {}
+            else:
+                metadata = {}
+
+            entry_price = float(row['entry_price'] or 0.0)
+            value_sol = float(row['value_sol'] or 0.0)
+
+            try:
+                position = Position(
+                    position_id=row['position_id'],
+                    token_mint=mint,
+                    token_symbol=row['token_symbol'] or mint[:8],
+                    strategy=strat,
+                    side=TradeSide.BUY,
+                    entry_price=entry_price,
+                    current_price=entry_price,  # refreshed on first monitor cycle
+                    amount=float(row['amount'] or balance),
+                    value_sol=value_sol,
+                    value_usd=value_sol * float(self.sol_price_usd or 0.0),
+                    stop_loss=row['stop_loss'],
+                    take_profit=row['take_profit'],
+                    is_simulated=bool(row['is_simulated']),
+                    tx_signature=row['tx_signature'],
+                    opened_at=row['opened_at'] or datetime.utcnow(),
+                    metadata=metadata,
+                )
+            except Exception as e:
+                logger.warning(f"Reconcile: failed to rebuild Position for {mint[:8]}: {e}")
+                continue
+
+            self.active_positions[mint] = position
+            self.risk_metrics.current_exposure_sol += position.value_sol
+            restored += 1
+            logger.info(f"♻️ Restored position: {position.token_symbol} ({balance:.4f} tokens)")
+
+        logger.info(f"📍 Reconciliation done: {restored} restored, {phantom} phantom dropped")
+
     async def _save_trade_to_db(self, trade: Trade):
         """
         Save a closed trade to the database for persistence across restarts.
@@ -2046,6 +2209,7 @@ class SolanaTradingEngine:
 
                     # Also remove from active positions if present
                     if token_mint in self.active_positions:
+                        await self._remove_position_from_db(token_mint)
                         del self.active_positions[token_mint]
                     continue
 
@@ -2102,6 +2266,7 @@ class SolanaTradingEngine:
                         self.total_pnl_sol += pnl_sol
                         self.losing_trades += 1
 
+                        await self._remove_position_from_db(token_mint)
                         del self.active_positions[token_mint]
                 else:
                     logger.warning(f"❌ Emergency close failed for {stuck.token_symbol}")
@@ -3198,6 +3363,7 @@ class SolanaTradingEngine:
 
             # Add to positions
             self.active_positions[token_mint] = position
+            await self._save_position_to_db(position)
             self.risk_metrics.current_exposure_sol += amount_sol
 
             logger.info(f"✅ Position opened: {token_symbol} ({strategy.value})")
@@ -3305,7 +3471,15 @@ class SolanaTradingEngine:
                     return  # Don't record failed close
 
                 # CRITICAL: Use ACTUAL wallet balance, not estimated position.amount!
-                token_decimals = 6  # Default for most SPL tokens
+                # MB-06 fix: previously hardcoded decimals=6 on the close path
+                # while buy path at :3086 correctly reads metadata.get('decimals', 9).
+                # BONK is 5; most modern launches are 9 - hardcode caused 10x/1000x errors.
+                from core.units import get_spl_decimals, UnitsError
+                try:
+                    token_decimals = await get_spl_decimals(token_mint)
+                except UnitsError as exc:
+                    logger.error(f"❌ Could not fetch decimals for {token_mint}: {exc}")
+                    return  # Don't trade blind
                 actual_balance = await self._get_token_balance(token_mint, token_decimals)
 
                 if actual_balance <= 0:
@@ -3582,7 +3756,8 @@ class SolanaTradingEngine:
 
                 logger.info(f"📊 Partial exit recorded: {close_pct*100:.0f}% sold, {trailing.get('remaining_pct', 0):.0f}% remaining")
             else:
-                # Full close: Remove position
+                # Full close: Remove position (DB first, then in-memory dict)
+                await self._remove_position_from_db(token_mint)
                 del self.active_positions[token_mint]
 
                 # Set cooldown

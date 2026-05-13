@@ -22,6 +22,8 @@ import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from core.dry_run import should_skip_live
+
 # ✅ FIXED: Setup proper logging instead of print statements
 logger = logging.getLogger(__name__)
 
@@ -190,7 +192,7 @@ class TradeExecutor(BaseExecutor):
         
         # ✅ FIXED: Check DRY_RUN mode
         self.dry_run = config.get('DRY_RUN', True)  # Default to safe mode
-        if self.dry_run:
+        if should_skip_live(self.dry_run, module='dex', account=getattr(self, 'wallet_address', None)):
             logger.warning("🔶 EXECUTOR IN DRY RUN MODE - NO REAL TRANSACTIONS 🔶")
         else:
             logger.critical("🔥 EXECUTOR IN LIVE MODE - REAL MONEY AT RISK 🔥")
@@ -368,7 +370,7 @@ class TradeExecutor(BaseExecutor):
         start_time = time.time()
         
         # ✅ FIXED: DRY RUN CHECK - MOST CRITICAL FIX
-        if self.dry_run:
+        if should_skip_live(self.dry_run, module='dex', account=getattr(order, 'wallet_address', None) or getattr(self, 'wallet_address', None)):
             logger.info(f"🔶 DRY RUN: Simulating {order.side} {order.amount} {self.native_token} for {order.token_address}")
             return await self._simulate_execution(order, start_time)
         

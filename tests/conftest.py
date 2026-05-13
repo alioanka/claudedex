@@ -4,8 +4,6 @@ Global pytest configuration and fixtures
 """
 import asyncio
 import pytest
-import aioredis
-import asyncpg
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Dict, List, Any, AsyncGenerator
@@ -18,13 +16,12 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.engine import TradingBotEngine
-from core.risk_manager import RiskManager
-from data.storage.database import DatabaseManager
-from data.storage.cache import CacheManager
-from config.config_manager import ConfigManager
-from security.wallet_security import WalletSecurityManager
-from security.audit_logger import AuditLogger
+# Heavyweight production imports (TradingBotEngine, RiskManager,
+# DatabaseManager, CacheManager, ConfigManager, WalletSecurityManager,
+# AuditLogger, asyncpg) are intentionally NOT imported at module load.
+# They are loaded lazily inside the fixtures that actually use them so
+# that a missing transitive dep (aiohttp, numpy, web3, etc.) does not
+# break test collection for the entire suite.
 
 # Test configuration
 TEST_CONFIG = {
@@ -57,6 +54,7 @@ def event_loop():
 @pytest.fixture
 async def db_manager():
     """Database manager fixture"""
+    from data.storage.database import DatabaseManager
     manager = DatabaseManager(TEST_CONFIG["database"])
     await manager.connect()
     
@@ -70,6 +68,7 @@ async def db_manager():
 @pytest.fixture
 async def cache_manager():
     """Cache manager fixture"""
+    from data.storage.cache import CacheManager
     manager = CacheManager(TEST_CONFIG["redis"])
     await manager.connect()
     
@@ -83,9 +82,10 @@ async def cache_manager():
 @pytest.fixture
 async def config_manager(tmp_path):
     """Configuration manager fixture"""
+    from config.config_manager import ConfigManager
     config_path = tmp_path / "configs"
     config_path.mkdir()
-    
+
     manager = ConfigManager(config_dir=str(config_path))
     # Initialize with encryption key as a separate call
     await manager.initialize(encryption_key="test_key_32_bytes_long_for_test!")
@@ -95,12 +95,14 @@ async def config_manager(tmp_path):
 @pytest.fixture
 def risk_manager():
     """Risk manager fixture"""
+    from core.risk_manager import RiskManager
     return RiskManager(TEST_CONFIG["trading"])
 
 # Replace lines 99-103 with:
 @pytest.fixture
 async def wallet_security(config_manager):
     """Wallet security manager fixture"""
+    from security.wallet_security import WalletSecurityManager
     # Pass config object, not empty call
     config = await config_manager.get_security_config()
     manager = WalletSecurityManager(config)
@@ -112,6 +114,7 @@ async def wallet_security(config_manager):
 @pytest.fixture
 async def audit_logger(tmp_path, config_manager):
     """Audit logger fixture"""
+    from security.audit_logger import AuditLogger
     # Create config dict with required parameters
     config = {
         "log_dir": str(tmp_path / "audit"),
@@ -119,7 +122,7 @@ async def audit_logger(tmp_path, config_manager):
         "buffer_size": 100,
         "compress_old_logs": False
     }
-    
+
     logger = AuditLogger(config)
     await logger.initialize()
     yield logger
@@ -297,7 +300,7 @@ def create_mock_trade(**kwargs) -> Dict:
     default.update(kwargs)
     return default
 
-async def populate_test_database(db_manager: DatabaseManager, num_records: int = 100):
+async def populate_test_database(db_manager: "DatabaseManager", num_records: int = 100):
     """Populate database with test data"""
     for i in range(num_records):
         await db_manager.save_trade(create_mock_trade(id=f"trade_{i}"))

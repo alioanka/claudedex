@@ -124,6 +124,14 @@ async def main():
         logger.error(f"❌ Database connection failed: {e}")
         return
 
+    # Initialize secrets manager with database pool (before any config managers)
+    try:
+        from security.secrets_manager import secrets
+        secrets.initialize(db_pool)
+        logger.info("✅ Secrets manager initialized with database")
+    except Exception as e:
+        logger.warning(f"Could not initialize secrets manager: {e}")
+
     # Init Config
     config_manager = ConfigManager()
     await config_manager.initialize()
@@ -141,7 +149,7 @@ async def main():
                 telegram_controller.register_module(
                     name='copy_trading',
                     engine=engine,
-                    start_method='run',
+                    start_method='start',
                     stop_method='stop',
                     positions_attr='active_copies'
                 )
@@ -153,7 +161,7 @@ async def main():
 
     try:
         logger.info("✅ Copy Trading Engine initialized successfully")
-        await engine.run()
+        await engine.start()
     except KeyboardInterrupt:
         if telegram_controller:
             await telegram_controller.notify("Copy Trading module shutting down...", priority="high")

@@ -86,8 +86,6 @@ aiohttp-sse-client
 
 aiohttp-sse
 
-aioredis
-
 eth_abi
 
 eth_utils

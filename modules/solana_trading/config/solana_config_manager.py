@@ -5,7 +5,7 @@ Database-backed configuration with .env integration for sensitive data
 Uses the config_settings table (same as dashboard) for consistency.
 """
 from __future__ import annotations
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, ClassVar, Set
 import os
 import logging
 from datetime import datetime
@@ -89,6 +89,26 @@ class SolanaConfigManager:
     Provides centralized access to all Solana configuration.
     """
 
+    # Sensitive env keys that should consult the encrypted secrets_manager
+    # before falling back to .env. O(1) membership test.
+    SENSITIVE_KEYS: ClassVar[Set[str]] = {
+        'SOLANA_MODULE_PRIVATE_KEY',
+        'SOLANA_MODULE_WALLET',
+        'SOLANA_PRIVATE_KEY',
+        'SOLANA_WALLET',
+        'SOLANA_RPC_URL',
+        'SOLANA_RPC_URLS',
+        'SOLANA_BACKUP_RPCS',
+        'SOLANA_WS_URL',
+        'HELIUS_API_KEY',
+        'JUPITER_API_KEY',
+        'JUPITER_API_URL',
+        'DRIFT_API_KEY',
+        'JITO_TIP_ACCOUNT',
+        'JITO_BLOCK_ENGINE_URL',
+        'DRY_RUN',
+    }
+
     # Default values matching the dashboard defaults
     DEFAULTS = {
         # General
@@ -105,7 +125,7 @@ class SolanaConfigManager:
         'stop_loss': 10.0,
         'take_profit': 50.0,
         'daily_loss_limit': 5.0,
-        'priority_fee': 10000,
+        'priority_fee': 1_000_000,
 
         # Jupiter
         'jupiter_enabled': True,
@@ -172,25 +192,7 @@ class SolanaConfigManager:
         """Load sensitive configuration from .env"""
         env_config = {}
 
-        sensitive_keys = [
-            'SOLANA_MODULE_PRIVATE_KEY',
-            'SOLANA_MODULE_WALLET',
-            'SOLANA_PRIVATE_KEY',
-            'SOLANA_WALLET',
-            'SOLANA_RPC_URL',
-            'SOLANA_RPC_URLS',
-            'SOLANA_BACKUP_RPCS',
-            'SOLANA_WS_URL',
-            'HELIUS_API_KEY',
-            'JUPITER_API_KEY',
-            'JUPITER_API_URL',
-            'DRIFT_API_KEY',
-            'JITO_TIP_ACCOUNT',
-            'JITO_BLOCK_ENGINE_URL',
-            'DRY_RUN',
-        ]
-
-        for var in sensitive_keys:
+        for var in self.SENSITIVE_KEYS:
             value = os.getenv(var)
             if value and value not in ('null', 'None', ''):
                 env_config[var] = value
@@ -293,7 +295,22 @@ class SolanaConfigManager:
         return self.DEFAULTS.get(key, default)
 
     def get_env(self, key: str, default: str = '') -> str:
-        """Get environment variable value"""
+        """Get environment variable value. Sensitive keys check the
+        encrypted secrets_manager first; everything else uses env."""
+        if key in self.SENSITIVE_KEYS:
+            try:
+                from security.secrets_manager import secrets
+                # secrets.get() is sync; returns cached or .env-fallback value
+                val = secrets.get(
+                    key, default=None,
+                    log_access=(key in (
+                        'SOLANA_PRIVATE_KEY', 'SOLANA_MODULE_PRIVATE_KEY'
+                    )),
+                )
+                if val:
+                    return val
+            except Exception:
+                pass
         return self._env_config.get(key, os.getenv(key, default))
 
     @property
@@ -492,7 +509,7 @@ class SolanaConfigManager:
     @property
     def priority_fee_lamports(self) -> int:
         """Get priority fee in lamports"""
-        return self.get('priority_fee', 10000)
+        return self.get('priority_fee', 1_000_000)
 
     @property
     def rpc_url(self) -> str:

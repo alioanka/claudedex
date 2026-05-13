@@ -19,6 +19,7 @@ from web3.middleware import geth_poa_middleware
 from eth_account import Account
 from eth_abi import encode_abi
 
+from core.dry_run import should_skip_live
 from trading.orders.order_manager import Order, OrderType, OrderStatus
 from trading.executors.base_executor import BaseExecutor
 from utils.helpers import retry_async, measure_time, wei_to_ether, ether_to_wei
@@ -60,7 +61,7 @@ class DirectDEXExecutor(BaseExecutor):
 
         # ✅ CRITICAL: DRY_RUN mode check
         self.dry_run = config.get('DRY_RUN', True)
-        if self.dry_run:
+        if should_skip_live(self.dry_run, module='dex', account=getattr(self, 'wallet_address', None)):
             logger.warning("🔶 DIRECT DEX IN DRY RUN MODE - NO REAL TRANSACTIONS 🔶")
         else:
             logger.critical("🔥 DIRECT DEX IN LIVE MODE - REAL MONEY AT RISK 🔥")
@@ -272,7 +273,7 @@ class DirectDEXExecutor(BaseExecutor):
         """Execute trade directly on DEX"""
         try:
             # ✅ CRITICAL: DRY_RUN CHECK
-            if self.dry_run:
+            if should_skip_live(self.dry_run, module='dex', account=getattr(order, 'wallet_address', None) or getattr(self, 'wallet_address', None)):
                 logger.info(f"🔶 DRY RUN: Simulating DEX trade for {order.token_in} -> {order.token_out}")
                 return await self._simulate_dex_trade(order)
             
@@ -557,10 +558,16 @@ class DirectDEXExecutor(BaseExecutor):
             w3 = self.w3_connections[order.chain]
             contract = self.dex_contracts[order.chain][quote.dex.value]
 
-            # Calculate minimum output with slippage
-            min_amount_out = int(
-                quote.amount_out * (1 - float(order.slippage or self.max_slippage)) * 10**18
-            )
+            # Calculate minimum output with slippage.
+            # MB-01 fix: previously *10**18 hardcoded - wrong for USDC/USDT (6),
+            # WBTC (8), etc. Use the actual output-token decimals via core.units.
+            from core.units import to_raw_evm
+            output_token = order.token_out or (quote.path[-1] if quote.path else None)
+            if not output_token:
+                raise ValueError("Cannot determine output token for min_amount_out")
+            slippage = float(order.slippage or self.max_slippage)
+            human_min_out = Decimal(str(quote.amount_out)) * (Decimal(1) - Decimal(str(slippage)))
+            min_amount_out = await to_raw_evm(order.chain, output_token, human_min_out)
 
             # Deadline (20 minutes from now)
             deadline = int((datetime.now() + timedelta(minutes=20)).timestamp())
@@ -1003,7 +1010,7 @@ class DirectDEXExecutor(BaseExecutor):
                 return False
             
             # Check wallet balance (only if not dry run)
-            if not self.dry_run:
+            if not should_skip_live(self.dry_run, module='dex', account=getattr(order, 'wallet_address', None) or getattr(self, 'wallet_address', None)):
                 w3 = self.w3_connections[order.chain]
                 from eth_account import Account
                 account = Account.from_key(self.config.get('private_key'))

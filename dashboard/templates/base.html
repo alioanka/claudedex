@@ -537,6 +537,43 @@
     {% block extra_head %}{% endblock %}
 </head>
 <body class="theme-dark">
+    <div id="restart-alert-banner" style="display:none; position:sticky; top:0; z-index:9999;
+         background:#d32f2f; color:#fff; padding:8px 16px; text-align:center; font-weight:600;
+         box-shadow:0 2px 4px rgba(0,0,0,0.3);">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span id="restart-alert-banner-text"></span>
+        <a href="/modules" style="color:#fff; text-decoration:underline; margin-left:12px;">View modules</a>
+    </div>
+    <script>
+    (function(){
+        async function checkRestartAlerts() {
+            try {
+                const r = await fetch('/api/modules');
+                if (!r.ok) return;
+                const data = await r.json();
+                const modules = (data.data && data.data.modules) ? data.data.modules : (data.data || []);
+                const overCap = (Array.isArray(modules) ? modules : Object.values(modules))
+                    .filter(m => m && m.last_restart_alert && m.last_restart_alert.level === 'error');
+                const banner = document.getElementById('restart-alert-banner');
+                const text = document.getElementById('restart-alert-banner-text');
+                if (overCap.length > 0) {
+                    text.textContent = ' RESTART OVER-CAP on: ' + overCap.map(m => m.name).join(', ');
+                    banner.style.display = 'block';
+                } else {
+                    banner.style.display = 'none';
+                }
+            } catch (e) { /* silent — banner stays hidden */ }
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            checkRestartAlerts();
+            setInterval(checkRestartAlerts, 30000);
+        });
+    })();
+    </script>
+    <div id="bot-mode-badge" class="bot-mode-badge bot-mode-unknown"
+         title="Bot operating mode. Updates every 5 seconds.">
+        <span id="bot-mode-text">checking…</span>
+    </div>
     <!-- Top Navigation Bar -->
     <nav class="top-nav">
         <div class="nav-left">

@@ -19,8 +19,10 @@ import logging
 from web3 import Web3
 from eth_account import Account
 from eth_account.datastructures import SignedTransaction
+from eth_account.messages import encode_defunct
 import aiohttp
 
+from core.dry_run import should_skip_live
 from trading.orders.order_manager import Order
 from trading.executors.base_executor import BaseExecutor
 from utils.helpers import retry_async, measure_time
@@ -386,11 +388,12 @@ class MEVProtectionLayer(BaseExecutor):
             return ""
             
     def _sign_flashbots_bundle(self, bundle: Dict) -> str:
-        """Sign Flashbots bundle"""
-        message = json.dumps(bundle, separators=(',', ':'))
-        message_hash = hashlib.sha256(message.encode()).digest()
-        signature = self.flashbots_signer.signHash(message_hash)
-        return signature.signature.hex()
+        """Sign Flashbots bundle per Flashbots auth spec: EIP-191 of keccak256(body) hex."""
+        body = json.dumps(bundle, separators=(',', ':'))
+        body_hash_hex = Web3.keccak(text=body).hex()
+        signable = encode_defunct(text=body_hash_hex)
+        signed = self.flashbots_signer.sign_message(signable)
+        return signed.signature.hex()
         
     async def _route_private_mempool(self, transaction: Dict) -> Dict:
         """Route through private mempool"""
@@ -659,7 +662,7 @@ class MEVProtectionLayer(BaseExecutor):
         """Execute trade with MEV protection"""
         try:
             # ✅ CRITICAL: Respect dry run mode
-            if self.dry_run:
+            if should_skip_live(self.dry_run, module='dex', account=getattr(order, 'wallet_address', None) or getattr(self, 'wallet_address', None)):
                 logger.info(f"🔒 MEV Protection - DRY RUN MODE for {order.token_out}")
                 return {
                     'success': True,

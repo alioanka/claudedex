@@ -23,6 +23,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 # Load env
 load_dotenv()
 
+from config.rpc_provider import RPCProvider  # noqa: E402  -- after sys.path bootstrap
+
 # Setup Logging
 log_dir = Path("logs/arbitrage")
 log_dir.mkdir(parents=True, exist_ok=True)
@@ -100,6 +102,9 @@ class MultiChainArbitrageManager:
         self.engines = []
         self.tasks = []
         self.settings = {}
+        # P2#5: core.risk_manager scaffold — constructed in initialize() and injected
+        # into every spawned engine. validate_trade() call sites land in P1-06.
+        self.risk_manager = None
 
     async def _load_settings_from_db(self):
         """Load arbitrage settings from database config_settings table"""
@@ -139,15 +144,18 @@ class MultiChainArbitrageManager:
         self.settings = await self._load_settings_from_db()
         logger.info(f"   Settings: {self.settings}")
 
-        # Check for Ethereum RPC - use Pool Engine with fallback
-        eth_rpc = None
+        # P2#5: construct shared core.risk_manager once; inject into each engine
+        # after init. Empty config is fine — RiskManager stays dormant until a
+        # validate_trade() caller is added in P1-06.
         try:
-            from config.rpc_provider import RPCProvider
-            eth_rpc = RPCProvider.get_rpc_sync('ETHEREUM_RPC')
-        except Exception:
-            pass
-        if not eth_rpc:
-            eth_rpc = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
+            from core.risk_manager import RiskManager
+            self.risk_manager = RiskManager(config={}, portfolio_manager=None, config_manager=None)
+        except Exception as e:
+            logger.warning(f"core.risk_manager wiring failed: {e}; engines will run without it")
+            self.risk_manager = None
+
+        # Check for Ethereum RPC - PoolEngine first, .env preserved as ultimate fallback
+        eth_rpc = await RPCProvider.get_rpc('ETHEREUM_RPC') or os.getenv('ETHEREUM_RPC_URL') or os.getenv('WEB3_PROVIDER_URL')
 
         # ═══════════════════════════════════════════════════════════════════════════
         # ETHEREUM ARBITRAGE ENGINE
@@ -157,6 +165,8 @@ class MultiChainArbitrageManager:
                 config = {'arbitrage_enabled': True, 'rpc_url': eth_rpc, **self.settings}
                 eth_engine = ETHArbitrageEngine(config, self.db_pool)
                 await eth_engine.initialize()
+                if self.risk_manager is not None:
+                    eth_engine.set_risk_manager(self.risk_manager)
                 self.engines.append(('ethereum', eth_engine))
                 logger.info("✅ ETHArbitrageEngine initialized")
             except Exception as e:
@@ -170,19 +180,15 @@ class MultiChainArbitrageManager:
         # ═══════════════════════════════════════════════════════════════════════════
         # ARBITRUM ARBITRAGE ENGINE
         # ═══════════════════════════════════════════════════════════════════════════
-        arb_rpc = None
-        try:
-            arb_rpc = RPCProvider.get_rpc_sync('ARBITRUM_RPC')
-        except Exception:
-            pass
-        if not arb_rpc:
-            arb_rpc = os.getenv('ARBITRUM_RPC_URL')
+        arb_rpc = await RPCProvider.get_rpc('ARBITRUM_RPC') or os.getenv('ARBITRUM_RPC_URL')
 
         if arb_rpc and self.settings.get('arbitrum_enabled', False):
             try:
                 config = {'arbitrage_enabled': True, 'rpc_url': arb_rpc, **self.settings}
                 arb_engine = ARBArbitrageEngine(config, self.db_pool)
                 await arb_engine.initialize()
+                if self.risk_manager is not None:
+                    arb_engine.set_risk_manager(self.risk_manager)
                 self.engines.append(('arbitrum', arb_engine))
                 logger.info("✅ ARBArbitrageEngine initialized")
                 logger.info("   💡 Arbitrum has ~95% lower gas costs than Ethereum mainnet")
@@ -197,19 +203,15 @@ class MultiChainArbitrageManager:
         # ═══════════════════════════════════════════════════════════════════════════
         # BASE ARBITRAGE ENGINE
         # ═══════════════════════════════════════════════════════════════════════════
-        base_rpc = None
-        try:
-            base_rpc = RPCProvider.get_rpc_sync('BASE_RPC')
-        except Exception:
-            pass
-        if not base_rpc:
-            base_rpc = os.getenv('BASE_RPC_URL')
+        base_rpc = await RPCProvider.get_rpc('BASE_RPC') or os.getenv('BASE_RPC_URL')
 
         if base_rpc and self.settings.get('base_enabled', False):
             try:
                 config = {'arbitrage_enabled': True, 'rpc_url': base_rpc, **self.settings}
                 base_engine = BaseArbitrageEngine(config, self.db_pool)
                 await base_engine.initialize()
+                if self.risk_manager is not None:
+                    base_engine.set_risk_manager(self.risk_manager)
                 self.engines.append(('base', base_engine))
                 logger.info("✅ BaseArbitrageEngine initialized")
                 logger.info("   💡 Base has ~97% lower gas costs than Ethereum mainnet")
@@ -224,13 +226,7 @@ class MultiChainArbitrageManager:
         # ═══════════════════════════════════════════════════════════════════════════
         # SOLANA ARBITRAGE ENGINE
         # ═══════════════════════════════════════════════════════════════════════════
-        sol_rpc = None
-        try:
-            sol_rpc = RPCProvider.get_rpc_sync('SOLANA_RPC')
-        except Exception:
-            pass
-        if not sol_rpc:
-            sol_rpc = os.getenv('SOLANA_RPC_URL')
+        sol_rpc = await RPCProvider.get_rpc('SOLANA_RPC') or os.getenv('SOLANA_RPC_URL')
 
         if sol_rpc and self.settings.get('solana_enabled', False):
             try:
@@ -238,6 +234,8 @@ class MultiChainArbitrageManager:
                 config = {'arbitrage_enabled': True, **self.settings}
                 sol_engine = SolanaArbitrageEngine(config, self.db_pool)
                 await sol_engine.initialize()
+                if self.risk_manager is not None:
+                    sol_engine.set_risk_manager(self.risk_manager)
                 self.engines.append(('solana', sol_engine))
                 logger.info("✅ SolanaArbitrageEngine initialized")
             except Exception as e:
@@ -257,6 +255,8 @@ class MultiChainArbitrageManager:
                 config = {'arbitrage_enabled': True, **self.settings}
                 tri_engine = TriangularArbitrageEngine(config, self.db_pool)
                 await tri_engine.initialize()
+                if self.risk_manager is not None:
+                    tri_engine.set_risk_manager(self.risk_manager)
                 self.engines.append(('triangular', tri_engine))
                 logger.info("✅ TriangularArbitrageEngine initialized")
             except Exception as e:
@@ -347,6 +347,14 @@ async def main():
     except Exception as e:
         logger.error(f"❌ Database connection failed: {e}")
         return
+
+    # Initialize secrets manager with database pool (before any config managers)
+    try:
+        from security.secrets_manager import secrets
+        secrets.initialize(db_pool)
+        logger.info("✅ Secrets manager initialized with database")
+    except Exception as e:
+        logger.warning(f"Could not initialize secrets manager: {e}")
 
     # Initialize Pool Engine BEFORE using RPCProvider
     try:

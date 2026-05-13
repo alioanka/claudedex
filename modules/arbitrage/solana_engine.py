@@ -18,6 +18,9 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 from decimal import Decimal
 
+from security.secrets_manager import secrets
+from config.rpc_provider import RPCProvider
+
 logger = logging.getLogger("SolanaArbitrageEngine")
 
 # Solana Token Addresses (Mint addresses)
@@ -332,8 +335,8 @@ class JitoClient:
     def __init__(self):
         self.session: Optional[aiohttp.ClientSession] = None
         self.keypair = None  # Set during initialization
-        # Use env var if set, otherwise use default
-        self.primary_endpoint = os.getenv('JITO_BLOCK_ENGINE_URL', self.JITO_ENDPOINTS[0])
+        # Use secrets manager (DB-encrypted) first, then env var, then default
+        self.primary_endpoint = secrets.get('JITO_BLOCK_ENGINE_URL', log_access=False) or os.getenv('JITO_BLOCK_ENGINE_URL', self.JITO_ENDPOINTS[0])
         self.current_endpoint_idx = 0
         self._last_429_time = 0
         self._backoff_seconds = 0
@@ -603,9 +606,9 @@ class JitoClient:
         return False
 
     def get_random_tip_account(self) -> str:
-        """Get a random Jito tip account (or from env)"""
+        """Get a random Jito tip account (secrets manager > env > random)"""
         import random
-        env_tip = os.getenv('JITO_TIP_ACCOUNT')
+        env_tip = secrets.get('JITO_TIP_ACCOUNT', log_access=False) or os.getenv('JITO_TIP_ACCOUNT')
         if env_tip:
             return env_tip
         return random.choice(self.JITO_TIP_ACCOUNTS)
@@ -656,13 +659,12 @@ class JitoClient:
             # Fetch recent blockhash if not provided
             if not recent_blockhash:
                 import aiohttp
-                # Get RPC URL from environment
-                rpc_url = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
-                try:
-                    from config.rpc_provider import RPCProvider
-                    rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC') or rpc_url
-                except Exception:
-                    pass
+                # PoolEngine first (async ctx), .env then mainnet-beta as ultimate fallback
+                rpc_url = (
+                    await RPCProvider.get_rpc('SOLANA_RPC')
+                    or os.getenv('SOLANA_RPC_URL')
+                    or 'https://api.mainnet-beta.solana.com'
+                )
 
                 async with aiohttp.ClientSession() as session:
                     async with session.post(
@@ -803,16 +805,13 @@ class SolanaArbitrageEngine:
         self.db_pool = db_pool
         self.is_running = False
 
-        # Solana RPC - use Pool Engine with fallback
-        self.rpc_url = config.get('rpc_url')
-        if not self.rpc_url:
-            try:
-                from config.rpc_provider import RPCProvider
-                self.rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC')
-            except Exception:
-                pass
-        if not self.rpc_url:
-            self.rpc_url = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
+        # Solana RPC - PoolEngine first (sync ctor), .env then mainnet-beta as ultimate fallback
+        self.rpc_url = (
+            config.get('rpc_url')
+            or RPCProvider.get_rpc_sync('SOLANA_RPC')
+            or os.getenv('SOLANA_RPC_URL')
+            or 'https://api.mainnet-beta.solana.com'
+        )
 
         self.private_key = None  # Loaded in initialize() from secrets manager
         self.wallet_address = config.get('wallet_address')  # Will be loaded from DB in initialize()
@@ -860,6 +859,13 @@ class SolanaArbitrageEngine:
             'opportunities_executed': 0,
             'last_stats_log': datetime.now()
         }
+
+        # P2#5: injected by orchestrator; consulted by P1-06 follow-up (validate_trade calls)
+        self.risk_manager = None
+
+    def set_risk_manager(self, risk_manager) -> None:
+        """Inject a core.risk_manager.RiskManager. P1-06 will add validate_trade calls."""
+        self.risk_manager = risk_manager
 
     async def _get_decrypted_key(self, key_name: str) -> Optional[str]:
         """
@@ -1259,6 +1265,17 @@ class SolanaArbitrageEngine:
                 quote1.get('routePlan', [])
             )
             return
+
+        # P1-06: pre-execute risk gate (live path only).
+        if self.risk_manager is not None:
+            try:
+                allowed, reason = await self.risk_manager.validate_trade(token_in, amount)
+            except Exception as e:
+                logger.warning(f"validate_trade raised: {e}; refusing execute")
+                return
+            if not allowed:
+                logger.warning(f"⛔ Risk manager rejected Solana arb {in_symbol}/{out_symbol}: {reason}")
+                return
 
         try:
             if not self.wallet_address:

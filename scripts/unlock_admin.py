@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
-"""Unlock admin account and reset password"""
+"""Unlock admin account and reset password.
+
+By default generates a random URL-safe password and prints it ONCE
+to stdout. Pass --password to supply your own value.
+"""
+import argparse
 import asyncio
 import asyncpg
 import bcrypt
 import os
+import secrets
 from pathlib import Path
 
-async def unlock_admin():
-    """Unlock admin account and reset password to admin123"""
+async def unlock_admin(new_password: str, generated: bool):
+    """Unlock admin account and reset password to the supplied value."""
 
     # Database connection using Docker secrets or environment
     try:
@@ -38,13 +44,10 @@ async def unlock_admin():
             )
 
     try:
-        # Generate new password hash for "admin123"
-        password = "admin123"
-        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt(rounds=12)).decode('utf-8')
-
-        print(f"Generated new password hash for: {password}")
-        print(f"Hash: {password_hash}")
-        print()
+        password_hash = bcrypt.hashpw(
+            new_password.encode('utf-8'),
+            bcrypt.gensalt(rounds=12),
+        ).decode('utf-8')
 
         # Update admin user - reset failed attempts and update password
         result = await conn.execute("""
@@ -57,8 +60,16 @@ async def unlock_admin():
         """, password_hash)
 
         print(f"✅ Admin account unlocked!")
-        print(f"✅ Password reset to: {password}")
         print(f"✅ Failed login attempts reset to 0")
+        if generated:
+            # Bare print(), NOT logger - must not land in log shippers.
+            print()
+            print("=" * 72)
+            print(f"New admin password: {new_password}")
+            print("RECORD THIS NOW. It is not logged and will not be shown again.")
+            print("=" * 72)
+        else:
+            print("✅ Password updated to operator-supplied value")
         print()
 
         # Verify the user exists
@@ -78,4 +89,17 @@ async def unlock_admin():
         await conn.close()
 
 if __name__ == "__main__":
-    asyncio.run(unlock_admin())
+    parser = argparse.ArgumentParser(
+        description="Unlock admin account and reset password.",
+    )
+    parser.add_argument(
+        "--password",
+        help=(
+            "New password. If omitted, a random URL-safe password is "
+            "generated and printed once to stdout."
+        ),
+    )
+    args = parser.parse_args()
+    generated = args.password is None
+    pw = args.password or secrets.token_urlsafe(24)
+    asyncio.run(unlock_admin(pw, generated))

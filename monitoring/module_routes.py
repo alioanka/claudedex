@@ -8,6 +8,8 @@ import logging
 from aiohttp import web
 from typing import Dict, Optional
 
+from auth.middleware import require_auth, require_admin
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,11 +71,13 @@ class ModuleRoutes:
         # Module Control Page
         app.router.add_get('/module-control', self.module_control_page)
 
-        # Bot Control API endpoints
-        app.router.add_post('/api/bot/start', self.bot_start)
-        app.router.add_post('/api/bot/stop', self.bot_stop)
-        app.router.add_post('/api/bot/restart', self.bot_restart)
-        app.router.add_post('/api/bot/emergency-exit', self.bot_emergency_exit)
+        # Bot Control API endpoints (MB-28: admin-gate all state-changing bot ops)
+        app.router.add_post('/api/bot/start', require_auth(require_admin(self.bot_start)))
+        app.router.add_post('/api/bot/stop', require_auth(require_admin(self.bot_stop)))
+        app.router.add_post('/api/bot/restart', require_auth(require_admin(self.bot_restart)))
+        app.router.add_post('/api/bot/emergency-exit', require_auth(require_admin(self.bot_emergency_exit)))
+        # MB-31: backwards-compat alias - underscore form used by older JS/templates
+        app.router.add_post('/api/bot/emergency_exit', require_auth(require_admin(self.bot_emergency_exit)))
 
         # API endpoints
         app.router.add_get('/api/modules', self.get_modules_status)
@@ -81,8 +85,13 @@ class ModuleRoutes:
         app.router.add_post('/api/modules/{module_name}/start', self.start_module)
         app.router.add_post('/api/modules/{module_name}/enable', self.enable_module)
         app.router.add_post('/api/modules/{module_name}/disable', self.disable_module)
-        app.router.add_post('/api/modules/{module_name}/pause', self.pause_module)
-        app.router.add_post('/api/modules/{module_name}/resume', self.resume_module)
+        # MB-30: admin-gated; handlers also write logs/.pause_<module> flag
+        # so subprocess loops actually see the pause (in-process flip alone
+        # never reached spawned trading-module subprocesses).
+        app.router.add_post('/api/modules/{module_name}/pause',
+                            require_auth(require_admin(self.pause_module)))
+        app.router.add_post('/api/modules/{module_name}/resume',
+                            require_auth(require_admin(self.resume_module)))
         app.router.add_get('/api/modules/{module_name}/metrics', self.get_module_metrics)
         app.router.add_get('/api/modules/{module_name}/positions', self.get_module_positions)
         app.router.add_post('/api/modules/reallocate', self.reallocate_capital)
@@ -479,12 +488,18 @@ class ModuleRoutes:
         try:
             module_name = request.match_info['module_name']
 
+            # MB-30: flip cross-process flag FIRST so subprocesses halt new live
+            # writes via should_skip_live() even if the in-process call fails.
+            from core.dry_run import set_module_pause
+            flag_ok = set_module_pause(module_name, True)
+
             success = await self.module_manager.pause_module(module_name)
 
-            if success:
+            if success or flag_ok:
                 return web.json_response({
                     'success': True,
-                    'message': f'Module {module_name} paused'
+                    'message': f'Module {module_name} paused',
+                    'cross_process': flag_ok,
                 })
             else:
                 return web.json_response({
@@ -512,12 +527,18 @@ class ModuleRoutes:
         try:
             module_name = request.match_info['module_name']
 
+            # MB-30: delete the cross-process pause flag so subprocesses
+            # resume honoring their own dry_run / kill-switch state.
+            from core.dry_run import set_module_pause
+            flag_ok = set_module_pause(module_name, False)
+
             success = await self.module_manager.resume_module(module_name)
 
-            if success:
+            if success or flag_ok:
                 return web.json_response({
                     'success': True,
-                    'message': f'Module {module_name} resumed'
+                    'message': f'Module {module_name} resumed',
+                    'cross_process': flag_ok,
                 })
             else:
                 return web.json_response({
@@ -853,6 +874,32 @@ class ModuleRoutes:
         """Emergency: Close all positions and stop all modules"""
         try:
             self.logger.warning("EMERGENCY EXIT requested!")
+
+            # MB-31: flip kill switch FIRST so even if downstream steps fail,
+            # new live-write attempts will be blocked process-wide.
+            try:
+                from core.dry_run import set_global_kill_switch
+                set_global_kill_switch(True)
+                self.logger.warning("EMERGENCY EXIT: global kill switch SET")
+            except Exception as e:
+                self.logger.error(f"Failed to set global kill switch: {e}")
+
+            # MB-31: write flag file so other processes polling logs/.killswitch
+            # also halt (cross-process effect).
+            try:
+                from pathlib import Path
+                import json, os
+                from datetime import datetime, timezone
+                flag = Path("logs/.killswitch")
+                flag.parent.mkdir(parents=True, exist_ok=True)
+                flag.write_text(json.dumps({
+                    "reason": "/api/bot/emergency-exit HTTP",
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "pid": os.getpid(),
+                }))
+            except Exception as e:
+                self.logger.error(f"Failed to write killswitch flag file: {e}")
+
             closed_positions = []
             
             # Close all positions in all modules
