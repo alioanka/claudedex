@@ -252,6 +252,34 @@ class FuturesTradingModule(BaseModule):
             self.logger.error(f"❌ Error stopping futures module: {e}")
             return False
 
+    async def reconcile_open_positions(self) -> Dict[str, Any]:
+        """FUTURES: delegate to FuturesTradingEngine._sync_positions which
+        already pulls from exchange via ccxt and stamps last_reconcile_at /
+        last_reconcile_count. Returns engine's snapshot."""
+        try:
+            engine = getattr(self, 'engine', None)
+            if engine is None or not hasattr(engine, '_sync_positions'):
+                return await super().reconcile_open_positions()
+            await engine._sync_positions()
+            ts = getattr(engine, 'last_reconcile_at', None)
+            cnt = getattr(engine, 'last_reconcile_count', 0)
+            self.last_reconcile_at = ts
+            self.last_reconcile_count = cnt
+            return {
+                'count': cnt,
+                'last_reconcile_at': ts.isoformat() if ts else None,
+                'status': 'ok',
+                'source': 'exchange',
+            }
+        except Exception as e:
+            self.logger.error(f"FUTURES reconcile failed: {e}")
+            return {
+                'count': 0,
+                'status': 'error',
+                'error': str(e),
+                'source': 'exchange',
+            }
+
     async def process_opportunity(self, opportunity: Dict) -> Optional[Dict]:
         """
         Process trading opportunity (independent analysis)

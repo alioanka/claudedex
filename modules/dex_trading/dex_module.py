@@ -158,6 +158,52 @@ class DexTradingModule(BaseModule):
             self.logger.error(f"DEX Trading Module stop failed: {e}", exc_info=True)
             return False
 
+    async def reconcile_open_positions(self) -> Dict[str, Any]:
+        """DEX: reload open positions from DB via PositionTracker. EVM/Solana
+        DEX swaps don't leave a clean per-account position on-chain — DB is
+        source of truth. Falls back to BaseModule default if tracker is
+        missing or has no reload method."""
+        try:
+            tracker = getattr(self, 'position_tracker', None)
+            if tracker is None:
+                return await super().reconcile_open_positions()
+            # Best-effort: prefer an explicit reload, fall back to get_positions
+            for method_name in ('load_open_positions', 'reload_from_db',
+                                'refresh', 'sync'):
+                method = getattr(tracker, method_name, None)
+                if method is not None and callable(method):
+                    try:
+                        res = method()
+                        if hasattr(res, '__await__'):
+                            await res
+                        break
+                    except Exception as e:
+                        self.logger.debug(
+                            f"DEX reconcile: {method_name} failed: {e}"
+                        )
+                        continue
+            positions = await self.get_positions()
+            count = len(positions) if positions else 0
+            self.last_reconcile_at = datetime.now()
+            self.last_reconcile_count = count
+            self.logger.info(
+                f"📊 DEX reconcile: {count} positions (source=db)"
+            )
+            return {
+                'count': count,
+                'last_reconcile_at': self.last_reconcile_at.isoformat(),
+                'status': 'ok',
+                'source': 'db',
+            }
+        except Exception as e:
+            self.logger.error(f"DEX reconcile failed: {e}")
+            return {
+                'count': 0,
+                'status': 'error',
+                'error': str(e),
+                'source': 'db',
+            }
+
     async def process_opportunity(self, opportunity: Dict) -> Optional[Dict]:
         """
         Process a DEX trading opportunity

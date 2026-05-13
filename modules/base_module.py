@@ -149,7 +149,14 @@ class BaseModule(ABC):
                 start_killswitch_poller()
             except Exception as e:
                 self.logger.warning(f"failed to start killswitch poller: {e}")
-            return await original_start(self, *args, **kwargs)
+            result = await original_start(self, *args, **kwargs)
+            try:
+                await self.reconcile_open_positions()
+            except Exception as e:
+                self.logger.warning(
+                    f"reconcile_open_positions on start failed (non-fatal): {e}"
+                )
+            return result
 
         wrapped_start._killswitch_wrapped = True
         cls.start = wrapped_start
@@ -182,6 +189,9 @@ class BaseModule(ABC):
         self.start_time: Optional[datetime] = None
         self.stop_time: Optional[datetime] = None
         self.error_message: Optional[str] = None
+
+        self.last_reconcile_at: Optional[datetime] = None
+        self.last_reconcile_count: int = 0
 
         self._running = False
         self._tasks: List[asyncio.Task] = []
@@ -269,6 +279,39 @@ class BaseModule(ABC):
             ModuleMetrics: Current metrics
         """
         pass
+
+    async def reconcile_open_positions(self) -> Dict[str, Any]:
+        """Restart-time reconcile hook. Modules may override to fetch
+        positions from exchange/chain. Default impl derives count from
+        self.get_positions() — purely in-memory and trusts whatever the
+        module's internal tracker says. Stamps self.last_reconcile_at and
+        self.last_reconcile_count for observability."""
+        try:
+            positions = await self.get_positions()
+            count = len(positions) if positions else 0
+            self.last_reconcile_at = datetime.now()
+            self.last_reconcile_count = count
+            self.logger.info(
+                f"📊 {self.name} reconcile: {count} positions "
+                f"(source=in_memory, status=derived_from_get_positions)"
+            )
+            return {
+                'count': count,
+                'last_reconcile_at': self.last_reconcile_at.isoformat(),
+                'status': 'ok',
+                'source': 'in_memory',
+            }
+        except Exception as e:
+            self.logger.error(f"reconcile_open_positions default failed: {e}")
+            self.last_reconcile_at = datetime.now()
+            self.last_reconcile_count = 0
+            return {
+                'count': 0,
+                'last_reconcile_at': self.last_reconcile_at.isoformat(),
+                'status': 'error',
+                'error': str(e),
+                'source': 'in_memory',
+            }
 
     async def update_metrics(self):
         """Update module metrics (called periodically)"""
