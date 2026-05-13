@@ -40,6 +40,30 @@ FACTORIES = {
     # Add Base/Arbitrum factories here as needed
 }
 
+# Well-known QUOTE tokens (mainnet). New pairs are almost always
+# NEW_TOKEN / QUOTE. PairCreated emits token0/token1 sorted by address;
+# token0 is often the quote (e.g. WETH=0xc02a...), token1 is the new
+# token we actually want to snipe. _select_target_token picks the
+# non-quote side; falls back to token0 if both/neither are well-known.
+EVM_QUOTE_TOKENS_LOWER = frozenset([
+    '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',  # WETH mainnet
+    '0xdac17f958d2ee523a2206206994597c13d831ec7',  # USDT mainnet
+    '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',  # USDC mainnet
+    '0x6b175474e89094c44da98b954eedeac495271d0f',  # DAI mainnet
+])
+
+
+def _select_target_token(token0: str, token1: str) -> str:
+    """Return the non-quote side of a PairCreated event; the new token
+    we want to snipe rather than the WETH/USDC/USDT/DAI it pairs against."""
+    t0 = (token0 or '').lower()
+    t1 = (token1 or '').lower()
+    if t0 in EVM_QUOTE_TOKENS_LOWER and t1 not in EVM_QUOTE_TOKENS_LOWER:
+        return token1
+    if t1 in EVM_QUOTE_TOKENS_LOWER and t0 not in EVM_QUOTE_TOKENS_LOWER:
+        return token0
+    return token0  # fallback — both or neither are quote tokens
+
 class EVMListener:
     def __init__(self, config: Dict):
         self.config = config
@@ -223,7 +247,7 @@ class EVMListener:
                         bn_raw = log.get('blockNumber')
                         block_number = int(bn_raw, 16) if isinstance(bn_raw, str) else bn_raw
                         target = {
-                            'token_address': parsed['token0'],
+                            'token_address': _select_target_token(parsed['token0'], parsed['token1']),
                             'pair_address': pair_addr,
                             'chain': 'ethereum',
                             'block_number': block_number,
@@ -285,7 +309,7 @@ class EVMListener:
                     self.known_pairs.add(pair_address['pair'])
 
                     target = {
-                        'token_address': pair_address['token0'],
+                        'token_address': _select_target_token(pair_address['token0'], pair_address['token1']),
                         'pair_address': pair_address['pair'],
                         'chain': 'ethereum',
                         'block_number': log['blockNumber'],

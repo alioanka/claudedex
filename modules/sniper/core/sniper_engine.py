@@ -618,6 +618,7 @@ class SniperEngine:
                         result.tx_hash,
                         json.dumps({
                             'warnings': safety_report.get('warnings', []),
+                            'detection_path': data.get('target', {}).get('detection_path'),
                             'timing': (data.get('target', {}).get('_timing').to_metadata_dict()
                                        if data.get('target', {}).get('_timing') is not None
                                        else None),
