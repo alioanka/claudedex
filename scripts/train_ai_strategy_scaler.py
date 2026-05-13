@@ -24,12 +24,17 @@ Usage
 """
 
 import argparse
+import asyncio
+import os
 import sys
 from pathlib import Path
 
 import numpy as np
 import joblib
 from sklearn.preprocessing import StandardScaler
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from ml.feature_store import load_labeled_features  # noqa: E402
 
 
 # Feature shape MUST stay in sync with
@@ -118,6 +123,14 @@ def main() -> int:
                         help="Output path for the fitted scaler")
     parser.add_argument("--seed", type=int, default=42,
                         help="RNG seed for reproducibility")
+    parser.add_argument("--from-feature-store", action="store_true",
+                        help="Pull labeled rows from ai_feature_store instead of synthetic")
+    parser.add_argument("--feature-store-limit", type=int, default=5000)
+    parser.add_argument("--feature-store-threshold", type=int, default=200,
+                        help="Min real rows required; below this, fall back to synthetic")
+    parser.add_argument("--database-url", type=str,
+                        default=os.getenv("DATABASE_URL",
+                                          "postgresql://bot_user:bot_password@localhost:5432/tradingbot"))
     args = parser.parse_args()
 
     if args.samples < 100:
@@ -125,11 +138,26 @@ def main() -> int:
         return 1
 
     rng = np.random.default_rng(args.seed)
-    matrix = _generate_synthetic(args.samples, rng)
+    matrix = None
+    if args.from_feature_store:
+        result = asyncio.run(load_labeled_features(
+            args.database_url, feature_key="scaler_v1",
+            limit=args.feature_store_limit))
+        if result is not None and result[0].shape[0] >= args.feature_store_threshold:
+            matrix = result[0]
+            print(f"✓ Fitting on {matrix.shape[0]} REAL rows from ai_feature_store (key='scaler_v1')")
+        else:
+            n = 0 if result is None else result[0].shape[0]
+            print(f"⚠ Only {n} real rows in feature store (< {args.feature_store_threshold}); "
+                  "falling back to synthetic")
+    if matrix is None:
+        if not args.from_feature_store:
+            print(f"ℹ Fitting on {args.samples} SYNTHETIC rows "
+                  "(pass --from-feature-store to use real data when available)")
+        matrix = _generate_synthetic(args.samples, rng)
     if matrix.shape[1] != EXPECTED_FEATURE_COUNT:
-        print(f"ERROR: generated matrix has {matrix.shape[1]} features, "
-              f"expected {EXPECTED_FEATURE_COUNT}. Update _generate_synthetic.",
-              file=sys.stderr)
+        print(f"ERROR: matrix has {matrix.shape[1]} features, "
+              f"expected {EXPECTED_FEATURE_COUNT}.", file=sys.stderr)
         return 2
 
     scaler = StandardScaler()

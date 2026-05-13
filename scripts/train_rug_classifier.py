@@ -16,6 +16,8 @@ Usage: python scripts/train_rug_classifier.py [--samples N]
 """
 
 import argparse
+import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -23,6 +25,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from ml.feature_store import load_labeled_features  # noqa: E402
 from ml.models.rug_classifier import RugClassifier  # noqa: E402
 
 
@@ -48,6 +51,12 @@ def main():
     p.add_argument("--samples", type=int, default=10000)
     p.add_argument("--output-version", type=str, default="v1")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--from-feature-store", action="store_true")
+    p.add_argument("--feature-store-limit", type=int, default=5000)
+    p.add_argument("--feature-store-threshold", type=int, default=200)
+    p.add_argument("--database-url", type=str,
+                   default=os.getenv("DATABASE_URL",
+                                     "postgresql://bot_user:bot_password@localhost:5432/tradingbot"))
     a = p.parse_args()
     if a.samples < 200:
         print("ERROR: --samples must be >= 200", file=sys.stderr)
@@ -57,7 +66,30 @@ def main():
     # Bootstrap version doesn't exist on disk → init warns but does not raise.
     cfg = {"MODEL_DIR": "./models", "model_version": f"__bootstrap_{a.seed}"}
     clf = RugClassifier(cfg)
-    df, labels = _generate_synthetic(a.samples, clf.feature_columns, rng)
+    df, labels = None, None
+    if a.from_feature_store:
+        result = asyncio.run(load_labeled_features(
+            a.database_url, feature_key="rug_v1", limit=a.feature_store_limit))
+        if result is not None and result[0].shape[0] >= a.feature_store_threshold:
+            X, pnl, _won = result
+            if X.shape[1] == len(clf.feature_columns):
+                df = pd.DataFrame(X, columns=clf.feature_columns)
+                # Heuristic label: catastrophic loss flags a rug. A real label
+                # would come from on-chain rug detection.
+                labels = (pnl < -0.5).astype(int)
+                print(f"✓ Fitting on {len(df)} REAL rows from ai_feature_store (key='rug_v1')")
+            else:
+                print(f"⚠ rug_v1 width {X.shape[1]} != expected {len(clf.feature_columns)}; "
+                      "falling back to synthetic")
+        else:
+            n = 0 if result is None else result[0].shape[0]
+            print(f"⚠ Only {n} real rug_v1 rows (< {a.feature_store_threshold}); "
+                  "falling back to synthetic")
+    if df is None:
+        if not a.from_feature_store:
+            print(f"ℹ Fitting on {a.samples} SYNTHETIC rows "
+                  "(pass --from-feature-store to use real data when available)")
+        df, labels = _generate_synthetic(a.samples, clf.feature_columns, rng)
     print(f"Generated {len(df)} samples, {int(labels.sum())} rug / "
           f"{len(labels) - int(labels.sum())} safe.")
     results = clf.train(df, labels)

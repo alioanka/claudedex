@@ -22,12 +22,15 @@ Usage: python scripts/train_pump_predictor.py [--samples N]
 """
 
 import argparse
+import asyncio
+import os
 import sys
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from ml.feature_store import load_labeled_features  # noqa: E402
 from ml.models.pump_predictor import PumpPredictor  # noqa: E402
 
 EXPECTED_TREE_FEATURE_COUNT = 27  # extract_features L217-230
@@ -62,6 +65,12 @@ def main():
     p.add_argument("--samples", type=int, default=10000)
     p.add_argument("--output-version", type=str, default="v1")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--from-feature-store", action="store_true")
+    p.add_argument("--feature-store-limit", type=int, default=5000)
+    p.add_argument("--feature-store-threshold", type=int, default=200)
+    p.add_argument("--database-url", type=str,
+                   default=os.getenv("DATABASE_URL",
+                                     "postgresql://bot_user:bot_password@localhost:5432/tradingbot"))
     a = p.parse_args()
     if a.samples < 200:
         print("ERROR: --samples must be >= 200", file=sys.stderr)
@@ -71,7 +80,29 @@ def main():
     cfg = {"MODEL_DIR": "./models", "model_version": f"__bootstrap_{a.seed}"}
     pp = PumpPredictor(cfg)
 
-    X, y = _generate_synthetic_features(a.samples, rng)
+    X, y = None, None
+    if a.from_feature_store:
+        result = asyncio.run(load_labeled_features(
+            a.database_url, feature_key="pump_v1", limit=a.feature_store_limit))
+        if result is not None and result[0].shape[0] >= a.feature_store_threshold:
+            Xr, pnl, _won = result
+            if Xr.shape[1] == EXPECTED_TREE_FEATURE_COUNT:
+                X = Xr
+                # Heuristic label: significant gain flags a pump.
+                y = (pnl > 0.20).astype(float)
+                print(f"✓ Fitting on {X.shape[0]} REAL rows from ai_feature_store (key='pump_v1')")
+            else:
+                print(f"⚠ pump_v1 width {Xr.shape[1]} != expected {EXPECTED_TREE_FEATURE_COUNT}; "
+                      "falling back to synthetic")
+        else:
+            n = 0 if result is None else result[0].shape[0]
+            print(f"⚠ Only {n} real pump_v1 rows (< {a.feature_store_threshold}); "
+                  "falling back to synthetic")
+    if X is None:
+        if not a.from_feature_store:
+            print(f"ℹ Fitting on {a.samples} SYNTHETIC rows "
+                  "(pass --from-feature-store to use real data when available)")
+        X, y = _generate_synthetic_features(a.samples, rng)
     assert X.shape[1] == EXPECTED_TREE_FEATURE_COUNT, X.shape
     pp.scalers["features"].fit(X)
     Xs = pp.scalers["features"].transform(X)
