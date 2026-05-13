@@ -113,6 +113,47 @@ class TestSecretsMigrationStatic:
 
 
 @pytest.mark.integration
+class TestDexSecretsHotPath:
+    """Regression checks for the DEX module hot-path PoolEngine routing
+    introduced after the secrets sweep (follow-up to a21ec41)."""
+
+    DEX_MAIN = REPO_ROOT / 'modules/dex_trading/main_dex.py'
+
+    @pytest.mark.parametrize("needle", [
+        pytest.param(
+            "RPCProvider.get_rpc_sync('ETHEREUM_RPC')",
+            id="test_web3_connection_consults_rpc_provider_first",
+        ),
+    ])
+    def test_test_web3_connection_consults_rpc_provider_first(self, needle: str):
+        contents = self.DEX_MAIN.read_text()
+        assert needle in contents, (
+            f"main_dex.py no longer routes test_web3_connection through "
+            f"RPCProvider; missing substring: {needle!r}"
+        )
+
+    def test_validate_environment_falls_through_secrets_then_env(self):
+        contents = self.DEX_MAIN.read_text()
+        for needle in (
+            "RPCProvider.get_rpc_sync",
+            "secrets.get('WEB3_PROVIDER_URL'",
+            "os.getenv('WEB3_PROVIDER_URL')",
+        ):
+            assert needle in contents, (
+                f"main_dex.py is missing 3-tier WEB3_PROVIDER_URL resolution "
+                f"substring: {needle!r}"
+            )
+
+    def test_rpc_urls_scan_consults_pool_engine_first(self):
+        contents = self.DEX_MAIN.read_text()
+        for needle in ("KNOWN_CHAINS", "get_rpcs_sync", "endswith('_RPC_URLS')"):
+            assert needle in contents, (
+                f"main_dex.py _RPC_URLS scan no longer prefers PoolEngine; "
+                f"missing substring: {needle!r}"
+            )
+
+
+@pytest.mark.integration
 class TestSecretsManagerContract:
 
     @pytest.fixture(autouse=True)

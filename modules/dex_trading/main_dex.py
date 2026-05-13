@@ -90,7 +90,20 @@ async def test_web3_connection():
     _logger = logging.getLogger(__name__)
 
     try:
-        provider_url = os.getenv('WEB3_PROVIDER_URL')
+        provider_url = None
+        try:
+            from config.rpc_provider import RPCProvider
+            provider_url = RPCProvider.get_rpc_sync('ETHEREUM_RPC')
+        except Exception:
+            pass
+        if not provider_url:
+            try:
+                from security.secrets_manager import secrets
+                provider_url = secrets.get('WEB3_PROVIDER_URL', log_access=False)
+            except Exception:
+                pass
+        if not provider_url:
+            provider_url = os.getenv('WEB3_PROVIDER_URL')
         if not provider_url:
             _logger.warning("No WEB3_PROVIDER_URL configured")
             return True
@@ -480,12 +493,36 @@ class TradingBotApplication:
             self.portfolio_manager = PortfolioManager(nested_config)
             self.order_manager = OrderManager(nested_config)
 
-            # Extract all chain-specific RPC URLs from environment variables
+            # Extract all chain-specific RPC URLs.
+            # Prefer PoolEngine (health-weighted pool) for the canonical
+            # EVM/Solana chain set; fall back to *_RPC_URLS env vars for
+            # any chain not represented in PoolEngine.
             chain_rpc_urls = {}
+            KNOWN_CHAINS = [
+                ('ethereum', 'ETHEREUM_RPC'),
+                ('bsc', 'BSC_RPC'),
+                ('polygon', 'POLYGON_RPC'),
+                ('arbitrum', 'ARBITRUM_RPC'),
+                ('base', 'BASE_RPC'),
+                ('optimism', 'OPTIMISM_RPC'),
+                ('avalanche', 'AVALANCHE_RPC'),
+                ('solana', 'SOLANA_RPC'),
+            ]
+            try:
+                from config.rpc_provider import RPCProvider
+                for chain_name, provider_type in KNOWN_CHAINS:
+                    urls = RPCProvider.get_rpcs_sync(provider_type, max_count=3) or []
+                    if urls:
+                        chain_rpc_urls[chain_name] = urls
+            except Exception as e:
+                self.logger.debug(f"PoolEngine chain scan failed (non-fatal): {e}")
+            # Fallback / override: pick up *_RPC_URLS env vars for chains
+            # not covered by KNOWN_CHAINS or where PoolEngine has no entries
             for env_var, value in os.environ.items():
                 if env_var.endswith('_RPC_URLS'):
                     chain_name = env_var.replace('_RPC_URLS', '').lower()
-                    chain_rpc_urls[chain_name] = [url.strip() for url in value.split(',')]
+                    if chain_name not in chain_rpc_urls:
+                        chain_rpc_urls[chain_name] = [url.strip() for url in value.split(',')]
 
             self.risk_manager = RiskManager(nested_config,
                                             config_manager=self.config_manager,
