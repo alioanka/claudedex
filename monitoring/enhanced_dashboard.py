@@ -7935,7 +7935,7 @@ class DashboardEndpoints:
 
                     # Get recent closed positions (sold)
                     closed_trades = await conn.fetch("""
-                        SELECT token_address, chain, entry_price, exit_price, profit_loss, exit_timestamp, close_reason
+                        SELECT token_address, chain, entry_price, exit_price, profit_loss, exit_timestamp, exit_reason
                         FROM sniper_trades
                         WHERE status = 'closed'
                         ORDER BY exit_timestamp DESC
@@ -7946,7 +7946,7 @@ class DashboardEndpoints:
                         activity.append({
                             'type': 'sold',
                             'icon': 'sold',
-                            'title': f"Position Closed ({row['close_reason'] or 'manual'})",
+                            'title': f"Position Closed ({row['exit_reason'] or 'manual'})",
                             'details': f"{row['token_address'][:12]}... | P&L: ${pnl:+.2f}",
                             'subdetails': f"Exit: ${float(row['exit_price'] or 0):.6f}",
                             'timestamp': row['exit_timestamp'].isoformat() if row['exit_timestamp'] else None,
