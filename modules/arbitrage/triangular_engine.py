@@ -27,6 +27,8 @@ from typing import Dict, List, Optional, Tuple, Set
 from datetime import datetime, timedelta
 from itertools import permutations
 
+from security.secrets_manager import secrets
+
 logger = logging.getLogger("TriangularArbitrageEngine")
 
 
@@ -230,12 +232,8 @@ class GasOracle:
                 return self.current_gas_gwei
 
         try:
-            # Get API key from secrets manager (database/Docker secrets)
-            try:
-                from security.secrets_manager import secrets
-                api_key = secrets.get('ETHERSCAN_API_KEY', '', log_access=False) or ''
-            except Exception:
-                api_key = os.getenv('ETHERSCAN_API_KEY', '')
+            # Get API key from secrets manager (database/Docker secrets), .env fallback
+            api_key = secrets.get('ETHERSCAN_API_KEY', log_access=False) or os.getenv('ETHERSCAN_API_KEY', '')
             async with aiohttp.ClientSession() as session:
                 params = {
                     'module': 'gastracker',
@@ -291,12 +289,9 @@ class TriangularArbitrageEngine:
             self.rpc_url = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
 
         self.private_key = None  # Loaded in initialize() from secrets manager
-        # Get wallet address from secrets manager (database/Docker secrets)
-        try:
-            from security.secrets_manager import secrets
-            self.wallet_address = secrets.get('WALLET_ADDRESS', log_access=False)
-        except Exception:
-            self.wallet_address = os.getenv('WALLET_ADDRESS')
+        # Get wallet address from secrets manager (database/Docker secrets), .env fallback
+        # log_access=True: operator-visible identity is audit-worthy
+        self.wallet_address = secrets.get('WALLET_ADDRESS', log_access=True) or os.getenv('WALLET_ADDRESS')
 
         # dry_run: Priority is database config > environment variable
         # This allows dashboard settings to override .env

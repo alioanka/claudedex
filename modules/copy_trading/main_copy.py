@@ -124,6 +124,14 @@ async def main():
         logger.error(f"❌ Database connection failed: {e}")
         return
 
+    # Initialize secrets manager with database pool (before any config managers)
+    try:
+        from security.secrets_manager import secrets
+        secrets.initialize(db_pool)
+        logger.info("✅ Secrets manager initialized with database")
+    except Exception as e:
+        logger.warning(f"Could not initialize secrets manager: {e}")
+
     # Init Config
     config_manager = ConfigManager()
     await config_manager.initialize()

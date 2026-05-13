@@ -18,6 +18,8 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 from decimal import Decimal
 
+from security.secrets_manager import secrets
+
 logger = logging.getLogger("SolanaArbitrageEngine")
 
 # Solana Token Addresses (Mint addresses)
@@ -332,8 +334,8 @@ class JitoClient:
     def __init__(self):
         self.session: Optional[aiohttp.ClientSession] = None
         self.keypair = None  # Set during initialization
-        # Use env var if set, otherwise use default
-        self.primary_endpoint = os.getenv('JITO_BLOCK_ENGINE_URL', self.JITO_ENDPOINTS[0])
+        # Use secrets manager (DB-encrypted) first, then env var, then default
+        self.primary_endpoint = secrets.get('JITO_BLOCK_ENGINE_URL', log_access=False) or os.getenv('JITO_BLOCK_ENGINE_URL', self.JITO_ENDPOINTS[0])
         self.current_endpoint_idx = 0
         self._last_429_time = 0
         self._backoff_seconds = 0
@@ -603,9 +605,9 @@ class JitoClient:
         return False
 
     def get_random_tip_account(self) -> str:
-        """Get a random Jito tip account (or from env)"""
+        """Get a random Jito tip account (secrets manager > env > random)"""
         import random
-        env_tip = os.getenv('JITO_TIP_ACCOUNT')
+        env_tip = secrets.get('JITO_TIP_ACCOUNT', log_access=False) or os.getenv('JITO_TIP_ACCOUNT')
         if env_tip:
             return env_tip
         return random.choice(self.JITO_TIP_ACCOUNTS)
