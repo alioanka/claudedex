@@ -2060,7 +2060,9 @@ class TradingBotEngine:
                 try:
                     ai_strategy = self.strategy_manager.strategies.get('ai') if hasattr(self, 'strategy_manager') else None
                     if ai_strategy is not None and hasattr(ai_strategy, 'get_last_feature_row_id'):
-                        feature_row_id = ai_strategy.get_last_feature_row_id(token_address)
+                        feature_row_id = ai_strategy.get_last_feature_row_id(
+                            token_address, entry_time=position.get('entry_time')
+                        )
                         if feature_row_id is not None:
                             from ml.feature_store import update_outcome
                             await update_outcome(
@@ -2073,7 +2075,9 @@ class TradingBotEngine:
                                     'token_symbol': token_symbol,
                                 },
                             )
-                            ai_strategy.clear_last_feature_row_id(token_address)
+                            ai_strategy.clear_last_feature_row_id(
+                                token_address, entry_time=position.get('entry_time')
+                            )
                 except Exception as e:
                     logger.debug(f"feature-store outcome backfill failed (non-fatal): {e}")
 
@@ -2274,7 +2278,9 @@ class TradingBotEngine:
                 try:
                     ai_strategy = self.strategy_manager.strategies.get('ai') if hasattr(self, 'strategy_manager') else None
                     if ai_strategy is not None and hasattr(ai_strategy, 'get_last_feature_row_id'):
-                        feature_row_id = ai_strategy.get_last_feature_row_id(token_address)
+                        feature_row_id = ai_strategy.get_last_feature_row_id(
+                            token_address, entry_time=position.get('entry_time')
+                        )
                         if feature_row_id is not None:
                             from ml.feature_store import update_outcome
                             await update_outcome(
@@ -2287,7 +2293,9 @@ class TradingBotEngine:
                                     'token_symbol': token_symbol,
                                 },
                             )
-                            ai_strategy.clear_last_feature_row_id(token_address)
+                            ai_strategy.clear_last_feature_row_id(
+                                token_address, entry_time=position.get('entry_time')
+                            )
                 except Exception as e:
                     logger.debug(f"feature-store outcome backfill failed (non-fatal): {e}")
 

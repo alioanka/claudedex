@@ -29,6 +29,12 @@ from core.pattern_analyzer import PatternAnalyzer
 from utils.helpers import calculate_moving_average, calculate_ema
 
 
+# Bound the per-token feature-row cache so a long-lived strategy that re-enters
+# the same token many times can't grow this map without limit. 32 rows per
+# token is far more than the worst-case open positions per token in practice.
+_MAX_FEATURE_ROWS_PER_TOKEN = 32
+
+
 # Canonical pump-feature layout. The training script
 # (scripts/train_pump_predictor.py) MUST treat features in this order;
 # rows persisted to ai_feature_store under feature_vector.pump_v1 always
@@ -117,13 +123,12 @@ class AIStrategy(BaseStrategy):
         self.prediction_history: List[Dict[str, Any]] = []
         self.feature_importance: Dict[str, float] = {}
 
-        # Per-token feature_store row id, latched at first extract; cleared at close.
-        # Stores the row id of the FIRST feature vector seen for each token — that's
-        # the snapshot closest to position-open. Later monitoring extracts don't
-        # overwrite (FIRST-wins). Cleared by clear_last_feature_row_id() at close.
-        # TODO: explicit latch-at-trade-open would be more precise; this MVP
-        # approximates by relying on the open-triggering extract being first.
-        self._feature_row_ids: Dict[str, int] = {}
+        # Per-token feature_store row-id history, append-only with bounded length.
+        # Each extract appends (row_id, written_at). On close, the engine passes
+        # the position's entry_time and we pick the row whose written_at is the
+        # latest <= entry_time — disambiguating re-entries so the new close
+        # backfills the row that opened the new position, not a prior one.
+        self._feature_row_ids: Dict[str, List[Tuple[int, datetime]]] = {}
 
         logger.info(f"Initialized AI Strategy: {self.name}")
     
@@ -447,22 +452,66 @@ class AIStrategy(BaseStrategy):
                 },
             )
             token_addr = market_data.get("token_address")
-            if row_id is not None and token_addr and token_addr not in self._feature_row_ids:
-                self._feature_row_ids[token_addr] = row_id
+            if row_id is not None and token_addr:
+                entries = self._feature_row_ids.setdefault(token_addr, [])
+                entries.append((row_id, datetime.utcnow()))
+                if len(entries) > _MAX_FEATURE_ROWS_PER_TOKEN:
+                    entries.pop(0)
             return scaled
             
         except Exception as e:
             logger.error(f"Feature extraction failed: {e}")
             return None
 
-    def get_last_feature_row_id(self, token_address: str) -> Optional[int]:
-        """Return the row id of the first feature vector seen for this token
-        since the last clear. None if no extract has run for it."""
-        return self._feature_row_ids.get(token_address)
+    def get_last_feature_row_id(
+        self,
+        token_address: str,
+        entry_time: Optional[datetime] = None,
+    ) -> Optional[int]:
+        """Look up the feature-store row id to backfill at position close.
 
-    def clear_last_feature_row_id(self, token_address: str) -> None:
-        """Called by the position-close path after update_outcome. Frees memory."""
-        self._feature_row_ids.pop(token_address, None)
+        - entry_time=None: LAST-wins (most recent append). Back-compat.
+        - entry_time set: pick the entry whose written_at is the latest
+          <= entry_time. If no entry qualifies (extract clock skewed past
+          entry_time), fall back to the earliest entry as best-effort.
+        Returns None if no extract has run for this token.
+        """
+        entries = self._feature_row_ids.get(token_address)
+        if not entries:
+            return None
+        if entry_time is None:
+            return entries[-1][0]
+        eligible = [e for e in entries if e[1] <= entry_time]
+        if eligible:
+            return max(eligible, key=lambda e: e[1])[0]
+        return min(entries, key=lambda e: e[1])[0]
+
+    def clear_last_feature_row_id(
+        self,
+        token_address: str,
+        entry_time: Optional[datetime] = None,
+    ) -> None:
+        """Remove the row matched by get_last_feature_row_id(token, entry_time).
+
+        - entry_time=None: drop all rows for the token (back-compat full clear).
+        - entry_time set: remove only the matched row, leaving other open
+          positions' rows untouched. Pops the token entry if list goes empty.
+        """
+        entries = self._feature_row_ids.get(token_address)
+        if not entries:
+            return
+        if entry_time is None:
+            self._feature_row_ids.pop(token_address, None)
+            return
+        target = self.get_last_feature_row_id(token_address, entry_time=entry_time)
+        if target is None:
+            return
+        for i, (rid, _) in enumerate(entries):
+            if rid == target:
+                entries.pop(i)
+                break
+        if not entries:
+            self._feature_row_ids.pop(token_address, None)
 
     async def _check_rug_probability(
         self,
