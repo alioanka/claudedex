@@ -20,7 +20,19 @@ New-pool / new-token sniper across EVM chains and Solana. Watches for liquidity 
 ## Primary risk-policy gate
 Per-module local risk: `TokenSafetyChecker` (`modules/sniper/core/token_safety.py`) gates each candidate on tax / liquidity / honeypot heuristics before submission; no cross-module `RiskManager.validate_trade` call yet (P1 follow-up).
 ## Live-trade readiness
-AMBER. MB-11..MB-14 closed (amount_out_min, hardcoded TP/SL, `is_simulated` flag, deprecated price feed). Structural detection latency (15-120s vs competitors' 50-400ms) remains as P1.
+AMBER (Phase 1 code-complete; Phase 2 operational validation pending).
+MB-11..MB-14 closed (amount_out_min, hardcoded TP/SL, `is_simulated` flag, deprecated price feed).
+Latency-reduction plan (`docs/agents/reports/SNIPER_LATENCY_PLAN.md`) shipped end-to-end:
+Phase 0 instrumentation (`afbc2c5`) + DB persistence (`1a8010b`) +
+Solana WSS skeleton (`93899c2`) + queue wire-up (`c8debf6`) +
+EVM WSS mirror (`d1e6108`) + dashboard P50/P95 panel (`d0890e3`).
+To validate Phase 2: set `SNIPER_LISTENER_MODE=wss` and
+`SNIPER_EVM_LISTENER_MODE=wss` in testnet, let snipes accumulate
+for ~1 week, watch `/api/sniper/timing` panel. Target: WSS P50 total
+in 100-500ms range (Solana) / 50-200ms (EVM) with meaningful
+`sample_count` and parity with polling on success rate. When met,
+bump to GREEN candidate and retire the polling backstop.
+Phase 3 (mempool watching) deferred per the plan.
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/SNIPER_*.md` (smartcontract / quant / analyst).
 - Canonical engine API: `docs/engines.md`.
