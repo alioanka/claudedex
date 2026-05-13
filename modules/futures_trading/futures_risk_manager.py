@@ -144,7 +144,8 @@ class FuturesRiskManager:
         current_price: float
     ) -> Dict:
         """
-        Check if position is at risk of liquidation
+        Check if position is at risk of liquidation. Accepts either
+        Binance or Bybit position shape (auto-normalized).
 
         Args:
             position: Position info with liquidation_price
@@ -154,6 +155,19 @@ class FuturesRiskManager:
             Dict: Risk assessment
         """
         try:
+            # Auto-normalize so this method works regardless of source executor.
+            # If 'liquidation_price' is missing but 'raw' contains Bybit-style
+            # liqPrice, the normalizer recovers it.
+            if 'liquidation_price' not in position or position.get('liquidation_price') is None:
+                try:
+                    from modules.futures_trading.exchanges import normalize_position
+                    src = position.get('source') or ('bybit' if 'size' in position else 'binance')
+                    normalized = normalize_position(position, src)
+                    if normalized:
+                        position = normalized
+                except Exception:
+                    pass
+
             liq_price = position.get('liquidation_price', 0)
             if liq_price == 0:
                 return {'risk_level': 'unknown'}

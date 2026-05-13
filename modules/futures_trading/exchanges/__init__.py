@@ -9,8 +9,11 @@ Supported exchanges:
 
 from .binance_futures import BinanceFuturesExecutor
 from .bybit_futures import BybitFuturesExecutor
+from ._normalizers import normalize_position, normalize_balance
 
 __all__ = [
     'BinanceFuturesExecutor',
-    'BybitFuturesExecutor'
+    'BybitFuturesExecutor',
+    'normalize_position',
+    'normalize_balance',
 ]

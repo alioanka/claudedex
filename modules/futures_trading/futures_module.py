@@ -853,6 +853,14 @@ class FuturesTradingModule(BaseModule):
                     continue
 
                 positions = await executor.get_all_positions()
+                # Normalize so downstream code is exchange-agnostic
+                try:
+                    from modules.futures_trading.exchanges import normalize_position
+                    src = getattr(self, 'active_exchange', '') or ''
+                    positions = [normalize_position(p, src) for p in positions if p]
+                    positions = [p for p in positions if p is not None]
+                except Exception as e:
+                    self.logger.debug(f"position normalize failed (non-fatal): {e}")
 
                 for pos in positions:
                     risk = self.risk_manager.check_liquidation_risk(
@@ -898,6 +906,14 @@ class FuturesTradingModule(BaseModule):
                 return []
 
             positions = await executor.get_all_positions()
+            # Normalize so downstream code is exchange-agnostic
+            try:
+                from modules.futures_trading.exchanges import normalize_position
+                src = getattr(self, 'active_exchange', '') or ''
+                positions = [normalize_position(p, src) for p in positions if p]
+                positions = [p for p in positions if p is not None]
+            except Exception as e:
+                self.logger.debug(f"position normalize failed (non-fatal): {e}")
             return positions
 
         except Exception as e:
