@@ -464,7 +464,8 @@ class TestPositionNormalizer:
 
 @pytest.mark.integration
 class TestPoolEngineSweep:
-    """Locks pool_engine enforcement across the 7 migrated files (a21ec41)."""
+    """Locks pool_engine enforcement across the 10 migrated files
+    (a21ec41 main sweep + helper-module follow-ups)."""
 
     @pytest.mark.parametrize("file_path", [
         pytest.param(p, id=p) for p in [
@@ -475,6 +476,9 @@ class TestPoolEngineSweep:
             'modules/sniper/core/evm_listener.py',
             'modules/sniper/core/solana_listener.py',
             'modules/copy_trading/copy_engine.py',
+            'modules/solana_trading/config/solana_config.py',
+            'modules/solana_strategies/jupiter_helper.py',
+            'modules/solana_strategies/drift_helper.py',
         ]
     ])
     def test_file_uses_rpc_provider(self, file_path: str):
