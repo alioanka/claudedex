@@ -368,6 +368,10 @@ class FuturesTradingEngine:
         self.pending_orders: Dict[str, Dict] = {}
         self.trade_history: List[Trade] = []
 
+        # Reconcile observability (set by _sync_positions on startup)
+        self.last_reconcile_at: Optional[datetime] = None
+        self.last_reconcile_count: int = 0
+
         # Cooldowns (symbol -> next_trade_time)
         self.symbol_cooldowns: Dict[str, datetime] = {}
 
@@ -750,13 +754,20 @@ class FuturesTradingEngine:
     async def _sync_positions(self):
         """Sync positions from exchange"""
         if should_skip_live(self.dry_run, module='futures', account=self.exchange):
-            logger.info("DRY_RUN mode: Skipping position sync from exchange")
+            self.last_reconcile_at = datetime.now()
+            self.last_reconcile_count = 0
+            logger.info("DRY_RUN mode: position reconcile skipped (last_reconcile_at set; active_positions left empty)")
             return
 
+        seeded = 0
+        filtered_zero = 0
         try:
             positions = await self.exchange_client.fetch_positions()
             for pos in positions:
-                if pos['contracts'] and float(pos['contracts']) > 0:
+                try:
+                    if not pos.get('contracts') or float(pos['contracts']) <= 0:
+                        filtered_zero += 1
+                        continue
                     symbol = pos['symbol']
                     side = TradeSide.LONG if pos['side'] == 'long' else TradeSide.SHORT
 
@@ -774,10 +785,44 @@ class FuturesTradingEngine:
                         is_simulated=False
                     )
                     self.active_positions[symbol] = position
+                    seeded += 1
                     logger.info(f"📊 Synced position: {symbol} {side.value} @ {position.entry_price}")
+                except Exception as per_entry_err:
+                    logger.warning(f"Skipping malformed position entry during reconcile: {per_entry_err}")
+                    continue
+
+            self.last_reconcile_at = datetime.now()
+            self.last_reconcile_count = seeded
+            logger.info(
+                f"📊 Position reconcile: {seeded} seeded, {filtered_zero} flat-filtered, "
+                f"last_reconcile_at={self.last_reconcile_at.isoformat()}"
+            )
 
         except Exception as e:
             logger.error(f"Error syncing positions: {e}")
+            return
+
+        # Restart-time over-cap detection (fail-soft).
+        if self.risk_manager is not None and seeded > 0:
+            try:
+                current_positions_list = [
+                    {'notional_value': p.notional_value, 'symbol': p.symbol}
+                    for p in self.active_positions.values()
+                ]
+                capacity = self.risk_manager.check_reconciled_capacity(current_positions_list)
+                if capacity.get('over_cap'):
+                    logger.error(
+                        f"🚨 RESTART OVER-CAP: reconciled {capacity['count']} positions but "
+                        f"max_positions={capacity['max_positions']}. Engine will refuse new entries "
+                        f"until count drops."
+                    )
+                elif capacity.get('at_cap'):
+                    logger.warning(
+                        f"⚠️ RESTART AT-CAP: reconciled {capacity['count']}/{capacity['max_positions']} "
+                        f"positions. No room for new entries."
+                    )
+            except Exception as e:
+                logger.warning(f"check_reconciled_capacity failed (non-fatal): {e}")
 
     async def run(self):
         """Main trading loop"""

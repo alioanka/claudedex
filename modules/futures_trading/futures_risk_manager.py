@@ -121,6 +121,23 @@ class FuturesRiskManager:
                 'reason': f'Validation error: {str(e)}'
             }
 
+    def check_reconciled_capacity(self, current_positions: List[Dict]) -> Dict:
+        """Restart-time sanity check: returns whether the reconciled position
+        count already meets or exceeds max_positions. Caller logs/alerts on
+        over_cap=True and should refuse to open new positions until count drops."""
+        try:
+            count = len(current_positions)
+            return {
+                'at_cap': count >= self.max_positions,
+                'over_cap': count > self.max_positions,
+                'count': count,
+                'max_positions': self.max_positions,
+            }
+        except Exception as e:
+            self.logger.error(f"check_reconciled_capacity error: {e}")
+            return {'at_cap': False, 'over_cap': False, 'count': 0,
+                    'max_positions': self.max_positions}
+
     def check_liquidation_risk(
         self,
         position: Dict,
