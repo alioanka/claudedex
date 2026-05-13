@@ -140,6 +140,16 @@ class SolanaListener:
             'wss_connects': 0,
             'wss_notifications': 0,
             'wss_pools_queued': 0,
+            # _check_pool_transaction rejection-reason counters (cumulative,
+            # never reset by the 5-min window — operator queries these via
+            # sniper_runtime_stats to see the rejection profile over time).
+            'rejected_rpc_error': 0,        # response.status != 200 or exception
+            'rejected_no_result': 0,        # getTransaction returned null
+            'rejected_tx_failed': 0,        # meta.err is not None
+            'rejected_not_init': 0,         # _is_pool_init returned False
+            'rejected_no_mint': 0,          # _parse_pool_transaction returned empty mint
+            'rejected_filtered_mint': 0,    # mint in FILTERED_MINTS
+            'rejected_bad_mint_format': 0,  # mint length not in [32, 44]
         }
         self._log_interval = timedelta(minutes=5)
         self._max_signatures = 500  # Per source
@@ -621,23 +631,40 @@ class SolanaListener:
             ) as response:
 
                 if response.status != 200:
+                    self._stats['rejected_rpc_error'] += 1
                     return None
 
                 data = await response.json()
                 result = data.get('result')
 
                 if not result:
+                    self._stats['rejected_no_result'] += 1
                     return None
 
                 # Skip failed transactions
                 meta = result.get('meta', {})
                 if meta.get('err') is not None:
+                    self._stats['rejected_tx_failed'] += 1
                     return None
 
                 # Check logs for pool init
                 log_messages = meta.get('logMessages', [])
 
                 if not self._is_pool_init(log_messages, source):
+                    # Sample the first 10 'not_init' rejections so the operator
+                    # can paste an example of logMessages that the keyword
+                    # pre-filter accepted but _is_pool_init rejected. Bump the
+                    # counter AFTER reading the pre-bump value so the sample
+                    # condition fires at #50, #100, ... #500 inclusive.
+                    rej = self._stats.get('rejected_not_init', 0)
+                    next_rej = rej + 1
+                    if next_rej % 50 == 0 and next_rej <= 500:
+                        sample = (log_messages[:5] if log_messages else ['<empty>'])
+                        logger.info(
+                            f"🔍 Rejection sample (not_init #{next_rej}): "
+                            f"sig={signature[:16]}... logs={sample}"
+                        )
+                    self._stats['rejected_not_init'] = next_rej
                     return None
 
                 # Extract token info
@@ -646,11 +673,16 @@ class SolanaListener:
                 )
 
                 # Filter out known mints and invalid tokens
-                if not token_mint or token_mint in FILTERED_MINTS:
+                if not token_mint:
+                    self._stats['rejected_no_mint'] += 1
+                    return None
+                if token_mint in FILTERED_MINTS:
+                    self._stats['rejected_filtered_mint'] += 1
                     return None
 
                 # Validate token address format (base58, 32-44 chars)
                 if len(token_mint) < 32 or len(token_mint) > 44:
+                    self._stats['rejected_bad_mint_format'] += 1
                     return None
 
                 return DetectedPool(
@@ -668,8 +700,10 @@ class SolanaListener:
                 )
 
         except asyncio.TimeoutError:
+            self._stats['rejected_rpc_error'] += 1
             logger.debug(f"Timeout fetching transaction: {signature[:16]}...")
         except Exception as e:
+            self._stats['rejected_rpc_error'] += 1
             logger.debug(f"Error checking pool: {e}")
 
         return None
@@ -814,13 +848,22 @@ class SolanaListener:
                 f"📊 Solana Listener Stats (Last 5 min):\n"
                 f"   Polls: {polls} | API Calls: {api_calls} | Errors: {errors}\n"
                 f"   Pools Detected: {detected} | Queued: {queued}\n"
+                f"   WSS Rejections — "
+                f"Init: {self._stats.get('rejected_not_init', 0)} | "
+                f"NoMint: {self._stats.get('rejected_no_mint', 0)} | "
+                f"FilteredMint: {self._stats.get('rejected_filtered_mint', 0)} | "
+                f"BadMint: {self._stats.get('rejected_bad_mint_format', 0)} | "
+                f"TxFailed: {self._stats.get('rejected_tx_failed', 0)} | "
+                f"NoResult: {self._stats.get('rejected_no_result', 0)} | "
+                f"RPCErr: {self._stats.get('rejected_rpc_error', 0)}\n"
                 f"   By Source: {source_stats}"
             )
 
             if detected == 0:
                 logger.warning("   ⚠️ No pools detected - verify RPC is working and AMMs are active")
 
-            # Reset stats (WSS counters preserved across windows for lifecycle visibility)
+            # Reset stats (WSS counters + rejection counters preserved across
+            # windows so cumulative profile is queryable from sniper_runtime_stats)
             self._stats = {
                 'polls': 0,
                 'pools_detected': 0,
@@ -831,6 +874,14 @@ class SolanaListener:
                 'by_source': {source.value: 0 for source in PoolSource},
                 'wss_connects': self._stats.get('wss_connects', 0),
                 'wss_notifications': self._stats.get('wss_notifications', 0),
+                'wss_pools_queued': self._stats.get('wss_pools_queued', 0),
+                'rejected_rpc_error': self._stats.get('rejected_rpc_error', 0),
+                'rejected_no_result': self._stats.get('rejected_no_result', 0),
+                'rejected_tx_failed': self._stats.get('rejected_tx_failed', 0),
+                'rejected_not_init': self._stats.get('rejected_not_init', 0),
+                'rejected_no_mint': self._stats.get('rejected_no_mint', 0),
+                'rejected_filtered_mint': self._stats.get('rejected_filtered_mint', 0),
+                'rejected_bad_mint_format': self._stats.get('rejected_bad_mint_format', 0),
             }
 
     async def close(self):
