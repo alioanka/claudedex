@@ -139,6 +139,7 @@ class SolanaListener:
             'by_source': {source.value: 0 for source in PoolSource},
             'wss_connects': 0,
             'wss_notifications': 0,
+            'wss_pools_queued': 0,
         }
         self._log_interval = timedelta(minutes=5)
         self._max_signatures = 500  # Per source
@@ -348,13 +349,10 @@ class SolanaListener:
                     subscribe_msg = {
                         "jsonrpc": "2.0",
                         "id": sub_id_counter,
-                        "method": "programSubscribe",
+                        "method": "logsSubscribe",
                         "params": [
-                            RAYDIUM_V4_PROGRAM_ID,
-                            {
-                                "encoding": "jsonParsed",
-                                "commitment": "processed",
-                            },
+                            {"mentions": [RAYDIUM_V4_PROGRAM_ID]},
+                            {"commitment": "processed"},
                         ],
                     }
                     await ws.send(json.dumps(subscribe_msg))
@@ -366,16 +364,105 @@ class SolanaListener:
                             msg = json.loads(raw)
                         except Exception:
                             continue
-                        if msg.get('method') == 'programNotification':
+                        if 'result' in msg and msg.get('id') == sub_id_counter and 'method' not in msg:
+                            logger.info(f"✅ WSS subscription ack: subscription_id={msg.get('result')}")
+                            continue
+
+                        if msg.get('method') == 'logsNotification':
                             self._stats['wss_notifications'] += 1
-                            # Skeleton: log only every 50th notification to avoid
-                            # log spam during initial validation. Phase 1.5 will
-                            # parse the payload and emit to self.new_pools_queue.
-                            if self._stats['wss_notifications'] % 50 == 1:
-                                logger.info(
-                                    f"📡 WSS notification #{self._stats['wss_notifications']} "
-                                    f"received (skeleton — not yet emitted to queue)"
+                            try:
+                                value = (msg.get('params') or {}).get('result', {}).get('value', {})
+                            except Exception:
+                                continue
+                            if not isinstance(value, dict):
+                                continue
+
+                            # Skip failed transactions
+                            if value.get('err') is not None:
+                                continue
+
+                            signature = value.get('signature')
+                            logs = value.get('logs') or []
+                            if not signature or not isinstance(logs, list):
+                                continue
+
+                            # Dedup against polling-path known_signatures (shared
+                            # state means we never re-process if both paths
+                            # happen to see the same tx)
+                            sig_set = self.known_signatures.get(PoolSource.RAYDIUM_V4)
+                            if sig_set is None or signature in sig_set:
+                                continue
+
+                            # Keyword filter: avoid getTransaction round-trips
+                            # for non-init txs
+                            init_keywords = INIT_KEYWORDS.get(PoolSource.RAYDIUM_V4, [])
+                            log_blob = " ".join(str(line).lower() for line in logs)
+                            if not any(kw in log_blob for kw in init_keywords):
+                                continue
+
+                            # Throttle log spam: one INFO per detected-candidate signature
+                            logger.info(
+                                f"⚡ WSS init-candidate: sig={signature[:16]}... "
+                                f"({len(logs)} log lines)"
+                            )
+
+                            # Mark seen BEFORE the RPC call so concurrent
+                            # retries don't double-fire if the call is slow.
+                            # Cap memory at _max_signatures.
+                            sig_set.add(signature)
+                            if len(sig_set) > self._max_signatures:
+                                # Drop oldest by rebuilding from the tail; Set
+                                # has no order so this is best-effort — keep
+                                # most-recently-added by converting to list,
+                                # slicing the tail, restoring. Same caveat as
+                                # polling path; keep behavior consistent.
+                                keep = list(sig_set)[-self._max_signatures:]
+                                self.known_signatures[PoolSource.RAYDIUM_V4] = set(keep)
+
+                            # Reuse the polling-path parser to extract
+                            # pool/mint addresses via getTransaction. This may
+                            # take 100-500ms but only fires on already-filtered
+                            # candidates.
+                            try:
+                                pool_info = await self._check_pool_transaction(
+                                    signature, PoolSource.RAYDIUM_V4
                                 )
+                            except Exception as e:
+                                logger.debug(f"WSS pool-check failed for {signature[:16]}: {e}")
+                                continue
+
+                            if pool_info is None:
+                                continue
+
+                            # Build the same dict shape as the polling path so
+                            # downstream _evaluate_target / _check_filters
+                            # don't need a separate code path.
+                            pool_dict = {
+                                'token_address': pool_info.token_address,
+                                'pair_address': pool_info.pair_address,
+                                'chain': 'solana',
+                                'source': PoolSource.RAYDIUM_V4.value,
+                                # Wall-clock UTC ISO at emit-time — Phase 0
+                                # timing's parse_iso_to_perf_counter reads
+                                # this to anchor t_detect.
+                                'timestamp': datetime.utcnow().isoformat(),
+                                'signature': signature,
+                                'base_liquidity': pool_info.base_liquidity,
+                                'metadata': dict(pool_info.metadata or {}, **{'detection_path': 'wss'}),
+                            }
+
+                            self._stats['pools_detected'] += 1
+                            self._stats['pools_queued'] += 1
+                            self._stats['by_source'][PoolSource.RAYDIUM_V4.value] += 1
+                            # Phase 1.5 counter so operators can A/B WSS vs polling
+                            self._stats['wss_pools_queued'] = self._stats.get('wss_pools_queued', 0) + 1
+
+                            await self.new_pools_queue.put(pool_dict)
+                            logger.info(
+                                f"🆕 [WSS RAYDIUM_V4] New pool: "
+                                f"{pool_info.token_address[:12]}... "
+                                f"(pair: {(pool_info.pair_address or 'N/A')[:12]}...)"
+                            )
 
             except asyncio.CancelledError:
                 logger.info("WSS listener cancelled")
@@ -436,7 +523,7 @@ class SolanaListener:
                         'timestamp': pool_info.timestamp.isoformat(),
                         'signature': signature,
                         'base_liquidity': pool_info.base_liquidity,
-                        'metadata': pool_info.metadata
+                        'metadata': dict(pool_info.metadata or {}, **{'detection_path': 'polling'}),
                     }
 
                     await self.new_pools_queue.put(pool_dict)
