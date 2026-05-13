@@ -617,7 +617,10 @@ class SniperEngine:
                         result.timestamp,
                         result.tx_hash,
                         json.dumps({
-                            'warnings': safety_report.get('warnings', [])
+                            'warnings': safety_report.get('warnings', []),
+                            'timing': (data.get('target', {}).get('_timing').to_metadata_dict()
+                                       if data.get('target', {}).get('_timing') is not None
+                                       else None),
                         })
                     )
                 # Store trade_id in data for linking exit trade

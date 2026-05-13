@@ -78,6 +78,25 @@ class SnipeTimingContext:
             # Never let instrumentation break trading.
             logger.debug(f"timing emit failed (non-fatal): {e}")
 
+    def to_metadata_dict(self) -> dict:
+        """Return timing deltas (in milliseconds) as a JSON-friendly dict
+        for persistence in sniper_trades.metadata. None for unstamped stages.
+        Enables historical P50/P95 dashboards beyond the per-event log line."""
+        def _delta_ms(start: Optional[float], end: Optional[float]):
+            if start is None or end is None:
+                return None
+            return round((end - start) * 1000.0, 2)
+
+        return {
+            'outcome': self.outcome,
+            'detect_to_eval_ms': _delta_ms(self.t_detect, self.t_eval_start),
+            'eval_to_safety_ms': _delta_ms(self.t_eval_start, self.t_safety_start),
+            'safety_ms': _delta_ms(self.t_safety_start, self.t_safety_done),
+            'safety_to_broadcast_ms': _delta_ms(self.t_safety_done, self.t_broadcast_start),
+            'broadcast_ms': _delta_ms(self.t_broadcast_start, self.t_broadcast_done),
+            'total_ms': _delta_ms(self.t_detect or self.t_eval_start, self.t_broadcast_done),
+        }
+
 
 def parse_iso_to_perf_counter(iso_ts: str) -> Optional[float]:
     """Convert an ISO wall-clock timestamp to an approximate
