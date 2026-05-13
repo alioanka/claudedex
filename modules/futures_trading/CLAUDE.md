@@ -19,7 +19,7 @@ Centralized-exchange perp trading on Binance Futures and Bybit V5. Multi-strateg
 ## Primary risk-policy gate
 `FuturesRiskManager.validate_new_position(...)` — wired on the live path post-MB-17. Defined in `modules/futures_trading/futures_risk_manager.py`; called from `core/futures_engine.py` open-position path.
 ## Live-trade readiness
-AMBER. MB-16 (init order), MB-17 (margin mode + validate_new_position wiring), MB-18 (mark vs last price) closed. Bybit V5 helpers landed in MB-17b.
+AMBER → GREEN candidate (pending production verification). MB-16 (init order), MB-17 (margin mode + validate_new_position wiring), MB-17b (Bybit V5 helpers), MB-18 (mark vs last price) closed. Reconcile observability hardened with `last_reconcile_at` + RESTART OVER-CAP detection (`24241e3`); BaseModule reconcile hook (`3981ffd`); Binance↔Bybit position-shape normalizer (`ed350d0`) re-enables liquidation-risk grading for Bybit positions.
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/FUTURES_*.md` (quant / analyst / backend).
 - Canonical engine API: `docs/engines.md`.

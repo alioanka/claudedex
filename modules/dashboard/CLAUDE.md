@@ -17,7 +17,7 @@ Operator-facing web UI + REST/WebSocket API for monitoring and controlling every
 ## Primary risk-policy gate
 None — the dashboard does not execute trades. State-changing endpoints are protected by `auth.middleware.require_auth(require_admin(...))` on `/api/bot/*` and `/api/credentials/*` (MB-28), CSRF middleware in `auth/csrf.py` (MB-27) on every POST/PUT/DELETE/PATCH outside `/api/auth/{login,logout}`, and Socket.IO `connect` validates the session cookie before streaming (MB-26).
 ## Live-trade readiness
-AMBER. Security cluster (MB-26..29, MB-29b) and operational cluster (MB-30, MB-31, MB-32, MB-33) all closed. Pre-prod: enable HTTPS at reverse proxy and set `DASHBOARD_HTTPS=true`; rotate the admin password printed once by `scripts/init_auth.py`.
+AMBER → GREEN candidate (pending production verification). Security cluster (MB-26..29, MB-29b) and operational cluster (MB-30, MB-31, MB-32, MB-33) all closed; subprocess discovery bridge (`7808ed0`) makes deployed-bot modules visible; `last_reconcile_at` per-module surface + sticky RESTART OVER-CAP banner (`592cb1b`). Pre-prod: enable HTTPS at reverse proxy and set `DASHBOARD_HTTPS=true`; rotate the admin password printed once by `scripts/init_auth.py`.
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/DASHBOARD_*.md` (quant / analyst / backend).
 - Canonical engine API: `docs/engines.md`.

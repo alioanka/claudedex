@@ -4,13 +4,13 @@ Multi-strategy crypto trading bot. Each strategy runs as an independent subproce
 | Module | Dir | Entry | Verdict |
 |---|---|---|---|
 | DEX | `modules/dex_trading/` | `main_dex.py` | AMBER → GREEN candidate (P1-04 pool_engine sweep closed in a21ec41) |
-| ARBITRAGE | `modules/arbitrage/` | `main_arbitrage.py` | AMBER (triangular entry-disabled by MB-05 guard) |
-| SOLANA | `modules/solana_trading/` | `main_solana.py` | AMBER (MB-15 Drift hardening deferred) |
-| SNIPER | `modules/sniper/` | `main_sniper.py` | AMBER (structural latency remains, P1) |
-| FUTURES | `modules/futures_trading/` | `main_futures.py` | AMBER (Bybit V5 helpers landed in MB-17b) |
-| AI | `modules/ai_analysis/` | `main_ai.py` | AMBER (executor delegates through BinanceFuturesExecutor) |
-| COPY_TRADING | `modules/copy_trading/` | `main_copy.py` | AMBER (BaseModule conversion + per-chain DEX routing done) |
-| DASHBOARD | `modules/dashboard/` | `main_dashboard.py` | AMBER (security + operational P0 clusters closed) |
+| ARBITRAGE | `modules/arbitrage/` | `main_arbitrage.py` | AMBER → GREEN candidate (spatial; triangular path explicitly gated by atomic-receiver contract — scope cut, not defect) |
+| SOLANA | `modules/solana_trading/` | `main_solana.py` | AMBER → GREEN candidate (Jupiter spot; MB-15 Drift is a toggleable feature, not a blocker) |
+| SNIPER | `modules/sniper/` | `main_sniper.py` | AMBER (structural detection latency 15-120s vs competitors' 50-400ms remains as P1 blocker) |
+| FUTURES | `modules/futures_trading/` | `main_futures.py` | AMBER → GREEN candidate (Bybit V5 surface complete; reconcile + position normalizer + restart-cap detection shipped) |
+| AI | `modules/ai_analysis/` | `main_ai.py` | AMBER → GREEN candidate (executor delegation + secrets + prompt-injection sanitization closed) |
+| COPY_TRADING | `modules/copy_trading/` | `main_copy.py` | AMBER → GREEN candidate (MB-22..MB-25, BaseModule conversion, pool_engine + secrets all closed) |
+| DASHBOARD | `modules/dashboard/` | `main_dashboard.py` | AMBER → GREEN candidate (security + operational P0s + reconcile-state surface + RESTART OVER-CAP banner) |
 
 Each module has its own `CLAUDE.md` with entry point, config keys, kill-switch paths, log location, and risk-gate hooks.
 ## Run flows

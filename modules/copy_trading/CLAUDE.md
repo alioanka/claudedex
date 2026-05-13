@@ -18,7 +18,7 @@ Mirrors on-chain trades from configured leader wallets across EVM chains and Sol
 ## Primary risk-policy gate
 Per-module local risk: `max_copy_amount` cap + per-leader cooldown enforced inline in `copy_engine.py`. Engine now exposes `get_positions()` / `close_position()` so emergency-stop reaches COPY positions (MB-25). No cross-module `RiskManager.validate_trade` call yet (P1 follow-up).
 ## Live-trade readiness
-AMBER. MB-22 (fake Solana SELL), MB-23 (`* 1e18` unit-bug), MB-24 (per-chain DEX routing), MB-25 (emergency-stop integration) closed; BaseModule conversion done.
+AMBER → GREEN candidate (pending production verification). MB-22 (fake Solana SELL), MB-23 (`* 1e18` unit-bug), MB-24 (per-chain DEX routing), MB-25 (emergency-stop integration) closed; BaseModule conversion done; secrets_manager wiring (`b20f56a`) and pool_engine sweep (`a21ec41`) landed.
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/COPY_TRADING_*.md` (quant / analyst / backend).
 - Canonical engine API: `docs/engines.md`.
