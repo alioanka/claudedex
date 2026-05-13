@@ -9,6 +9,10 @@ instrumentation.
 10 commits, all on `claude/create-expert-agents-JFSF5`. Branch tip at
 session end: `afbc2c5`.
 
+(Updated `2026-05-13` to include 3 additional commits that landed
+after the initial wrap: `813c32a`, `1a8010b`, `93899c2`. Branch tip
+now `93899c2`. Total: 13 commits since `f53b999`.)
+
 ## Commits in order
 
 | SHA | Type | What closed |
@@ -23,6 +27,9 @@ session end: `afbc2c5`.
 | `222c5bd` | quant | AI sentiment-engine LLM-method dedup. Two ~75-line methods (`_analyze_with_llm` OpenAI, `_analyze_with_claude` Anthropic) collapsed into a single `_call_llm_provider(provider, texts)` helper plus 2 thin wrappers; same for `_store_*_log` → `_store_ai_log`. Net -51 LoC. Drift impossible — prompt body, MB-21 sanitization, sentiment coercion, DB-log schema single-sourced. |
 | `00ebcd1` | market | SNIPER latency-reduction design doc at `docs/agents/reports/SNIPER_LATENCY_PLAN.md`. Three ROI-ordered reductions (Solana `programSubscribe` WSS, EVM `eth_subscribe('logs')` WSS, mempool watching) with phase rollout + acceptance criteria. Recon found dead `SNIPER_USE_WEBSOCKET` flag at `solana_listener.py:96` + `websockets==12.0` already in requirements. No code change. |
 | `afbc2c5` | market | SNIPER Phase 0 instrumentation. New `modules/sniper/core/_timing.py` with `SnipeTimingContext` dataclass + `parse_iso_to_perf_counter`. `sniper_engine.py` instrumented at 4 sites covering detect/eval/safety/broadcast lifecycle. Emits one `⏱️ SNIPE TIMING ...` log line per opportunity, fail-soft. Always-on; zero behavior change. |
+| `813c32a` | pm | Session wrap doc (this file's initial snapshot). |
+| `1a8010b` | market | SNIPER timing deltas persisted to `sniper_trades.metadata` JSONB via new `SnipeTimingContext.to_metadata_dict()`. Future SQL: `metadata->'timing'->>'total_ms'` for P50/P95 dashboards. Phase 2 A/B has a measurement substrate beyond log scraping. |
+| `93899c2` | market | SNIPER Phase 1 first commit — Solana WSS listener skeleton behind `SNIPER_LISTENER_MODE=wss` env gate (default `polling` preserves behavior). Connects to `programSubscribe` for Raydium V4, capped exponential reconnect, logs notifications. Does NOT yet emit to `new_pools_queue` (Phase 1.5). Deprecated `SNIPER_USE_WEBSOCKET` flag now warns. |
 
 ## State at session end
 
@@ -49,21 +56,23 @@ skipped in environments without.
 
 ## Open threads at session end
 
-1. **SNIPER Phase 1** — Solana `programSubscribe` WSS listener
-   implementation. Multi-commit. Spec in
+1. **SNIPER Phase 1.5** — parse `programNotification` payload from
+   the WSS listener (skeleton landed in `93899c2`) and emit pool
+   events to `self.new_pools_queue`. The actual latency-reduction
+   payoff. Then Phase 2 = A/B compare polling vs WSS using the
+   `metadata.timing` data persisted in `1a8010b`. Spec in
    `docs/agents/reports/SNIPER_LATENCY_PLAN.md`.
 2. **Production verification harness** — needed to graduate the 7
    GREEN candidates to unconditional GREEN. Concept: per-module
    `scripts/smoke_<module>.py` running each in DRY_RUN against
    testnet, asserting init + 1 signal/broadcast + reconcile fires.
-3. **SNIPER timing data persistence** — agent flagged that
-   `_timing.SnipeTimingContext` data is log-only today; future
-   commit could persist deltas to `sniper_trades.metadata` JSONB
-   for historical P50/P95 dashboards.
+3. **SNIPER timing dashboard surface** — `1a8010b` persists deltas
+   to `sniper_trades.metadata.timing`. Next: surface P50/P95 in a
+   dashboard panel (currently log-only).
 
 ## Pickup instructions for the next operator
 
-- Branch: `claude/create-expert-agents-JFSF5`; tip `afbc2c5`.
+- Branch: `claude/create-expert-agents-JFSF5`; tip `93899c2`.
 - Read root `CLAUDE.md` for current verdicts + module map.
 - Read `docs/agents/reports/SNIPER_LATENCY_PLAN.md` before
   considering Phase 1 work — the plan is the contract.
