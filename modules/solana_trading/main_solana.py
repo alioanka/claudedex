@@ -430,6 +430,14 @@ class SolanaTradingApplication:
             self.db_pool = await asyncpg.create_pool(db_url, min_size=2, max_size=10)
             self.logger.info("✅ Database pool initialized")
 
+            # Initialize secrets manager with database pool (before any config managers)
+            try:
+                from security.secrets_manager import secrets
+                secrets.initialize(self.db_pool)
+                self.logger.info("✅ Secrets manager initialized with database")
+            except Exception as e:
+                self.logger.warning(f"Could not initialize secrets manager: {e}")
+
             # Verify solana_trades table exists
             async with self.db_pool.acquire() as conn:
                 exists = await conn.fetchval("""

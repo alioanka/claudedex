@@ -30,15 +30,41 @@ except ImportError:
 logger = logging.getLogger("TradeExecutor")
 
 # Jupiter API endpoints - use lite-api.jup.ag/swap/v1 (proven to work)
-# Can be overridden via JUPITER_API_URL environment variable
-_jupiter_base = os.getenv('JUPITER_API_URL', 'https://lite-api.jup.ag/swap/v1')
-# Normalize URL
-if 'lite-api.jup.ag' in _jupiter_base and not _jupiter_base.endswith('/swap/v1'):
-    _jupiter_base = _jupiter_base.rstrip('/') + '/swap/v1'
-elif 'quote-api.jup.ag' in _jupiter_base and not _jupiter_base.endswith('/v6'):
-    _jupiter_base = _jupiter_base.rstrip('/') + '/v6'
-JUPITER_QUOTE_API = f"{_jupiter_base}/quote"
-JUPITER_SWAP_API = f"{_jupiter_base}/swap"
+# Resolved lazily via secrets_manager (DB-encrypted) with .env fallback so
+# that secrets.initialize(db_pool) can engage before first use.
+_JUPITER_DEFAULT = 'https://lite-api.jup.ag/swap/v1'
+_jupiter_base_cache: Optional[str] = None
+
+
+def _resolve_jupiter_base() -> str:
+    """Lazily resolve Jupiter base URL via secrets_manager
+    (DB-encrypted) with .env fallback. Cached after first call."""
+    global _jupiter_base_cache
+    if _jupiter_base_cache is not None:
+        return _jupiter_base_cache
+    val = None
+    try:
+        from security.secrets_manager import secrets
+        val = secrets.get('JUPITER_API_URL', default=None,
+                          log_access=False)
+    except Exception:
+        val = None
+    base = val or os.getenv('JUPITER_API_URL', _JUPITER_DEFAULT)
+    # Normalize URL
+    if 'lite-api.jup.ag' in base and not base.endswith('/swap/v1'):
+        base = base.rstrip('/') + '/swap/v1'
+    elif 'quote-api.jup.ag' in base and not base.endswith('/v6'):
+        base = base.rstrip('/') + '/v6'
+    _jupiter_base_cache = base
+    return _jupiter_base_cache
+
+
+def _quote_api() -> str:
+    return f"{_resolve_jupiter_base()}/quote"
+
+
+def _swap_api() -> str:
+    return f"{_resolve_jupiter_base()}/swap"
 
 # Common token addresses
 WSOL_ADDRESS = "So11111111111111111111111111111111111111112"
@@ -466,7 +492,7 @@ class TradeExecutor:
                 'asLegacyTransaction': 'false'
             }
 
-            async with self.session.get(JUPITER_QUOTE_API, params=params) as response:
+            async with self.session.get(_quote_api(), params=params) as response:
                 if response.status == 200:
                     return await response.json()
                 else:
@@ -494,7 +520,7 @@ class TradeExecutor:
                 'dynamicComputeUnitLimit': True
             }
 
-            async with self.session.post(JUPITER_SWAP_API, json=payload) as response:
+            async with self.session.post(_swap_api(), json=payload) as response:
                 if response.status == 200:
                     data = await response.json()
                     return data.get('swapTransaction')

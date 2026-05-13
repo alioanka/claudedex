@@ -187,6 +187,14 @@ async def main():
         logger.error(f"❌ Database connection failed: {e}")
         return
 
+    # Initialize secrets manager with database pool (before any config managers)
+    try:
+        from security.secrets_manager import secrets
+        secrets.initialize(db_pool)
+        logger.info("✅ Secrets manager initialized with database")
+    except Exception as e:
+        logger.warning(f"Could not initialize secrets manager: {e}")
+
     # Initialize Pool Engine BEFORE using RPCProvider
     try:
         from config.pool_engine import PoolEngine
