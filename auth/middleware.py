@@ -126,10 +126,18 @@ async def auth_middleware_factory(app: web.Application, handler: Callable) -> Ca
             '/api/auth/logout',
         ]
 
+        # Public path prefixes. /socket.io/ is gated by the Socket.IO
+        # library's own session/origin checks; piggybacking aiohttp auth
+        # on top breaks the protocol (XHR doesn't follow CORS 302 redirects).
+        public_prefixes = (
+            '/static/',
+            '/socket.io/',
+        )
+
         # Check if this is a public route
         is_public = (
             request.path in public_routes or
-            request.path.startswith('/static/')
+            any(request.path.startswith(p) for p in public_prefixes)
         )
 
         if is_public:
