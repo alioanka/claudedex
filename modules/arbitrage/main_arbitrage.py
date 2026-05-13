@@ -23,6 +23,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 # Load env
 load_dotenv()
 
+from config.rpc_provider import RPCProvider  # noqa: E402  -- after sys.path bootstrap
+
 # Setup Logging
 log_dir = Path("logs/arbitrage")
 log_dir.mkdir(parents=True, exist_ok=True)
@@ -152,15 +154,8 @@ class MultiChainArbitrageManager:
             logger.warning(f"core.risk_manager wiring failed: {e}; engines will run without it")
             self.risk_manager = None
 
-        # Check for Ethereum RPC - use Pool Engine with fallback
-        eth_rpc = None
-        try:
-            from config.rpc_provider import RPCProvider
-            eth_rpc = RPCProvider.get_rpc_sync('ETHEREUM_RPC')
-        except Exception:
-            pass
-        if not eth_rpc:
-            eth_rpc = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
+        # Check for Ethereum RPC - PoolEngine first, .env preserved as ultimate fallback
+        eth_rpc = await RPCProvider.get_rpc('ETHEREUM_RPC') or os.getenv('ETHEREUM_RPC_URL') or os.getenv('WEB3_PROVIDER_URL')
 
         # ═══════════════════════════════════════════════════════════════════════════
         # ETHEREUM ARBITRAGE ENGINE
@@ -185,13 +180,7 @@ class MultiChainArbitrageManager:
         # ═══════════════════════════════════════════════════════════════════════════
         # ARBITRUM ARBITRAGE ENGINE
         # ═══════════════════════════════════════════════════════════════════════════
-        arb_rpc = None
-        try:
-            arb_rpc = RPCProvider.get_rpc_sync('ARBITRUM_RPC')
-        except Exception:
-            pass
-        if not arb_rpc:
-            arb_rpc = os.getenv('ARBITRUM_RPC_URL')
+        arb_rpc = await RPCProvider.get_rpc('ARBITRUM_RPC') or os.getenv('ARBITRUM_RPC_URL')
 
         if arb_rpc and self.settings.get('arbitrum_enabled', False):
             try:
@@ -214,13 +203,7 @@ class MultiChainArbitrageManager:
         # ═══════════════════════════════════════════════════════════════════════════
         # BASE ARBITRAGE ENGINE
         # ═══════════════════════════════════════════════════════════════════════════
-        base_rpc = None
-        try:
-            base_rpc = RPCProvider.get_rpc_sync('BASE_RPC')
-        except Exception:
-            pass
-        if not base_rpc:
-            base_rpc = os.getenv('BASE_RPC_URL')
+        base_rpc = await RPCProvider.get_rpc('BASE_RPC') or os.getenv('BASE_RPC_URL')
 
         if base_rpc and self.settings.get('base_enabled', False):
             try:
@@ -243,13 +226,7 @@ class MultiChainArbitrageManager:
         # ═══════════════════════════════════════════════════════════════════════════
         # SOLANA ARBITRAGE ENGINE
         # ═══════════════════════════════════════════════════════════════════════════
-        sol_rpc = None
-        try:
-            sol_rpc = RPCProvider.get_rpc_sync('SOLANA_RPC')
-        except Exception:
-            pass
-        if not sol_rpc:
-            sol_rpc = os.getenv('SOLANA_RPC_URL')
+        sol_rpc = await RPCProvider.get_rpc('SOLANA_RPC') or os.getenv('SOLANA_RPC_URL')
 
         if sol_rpc and self.settings.get('solana_enabled', False):
             try:

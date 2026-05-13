@@ -28,6 +28,7 @@ from datetime import datetime, timedelta
 from itertools import permutations
 
 from security.secrets_manager import secrets
+from config.rpc_provider import RPCProvider
 
 logger = logging.getLogger("TriangularArbitrageEngine")
 
@@ -277,16 +278,13 @@ class TriangularArbitrageEngine:
         self.is_running = False
         self.w3 = None
 
-        # Get RPC URL from config, Pool Engine, or env fallback
-        self.rpc_url = config.get('rpc_url')
-        if not self.rpc_url:
-            try:
-                from config.rpc_provider import RPCProvider
-                self.rpc_url = RPCProvider.get_rpc_sync('ETHEREUM_RPC')
-            except Exception:
-                pass
-        if not self.rpc_url:
-            self.rpc_url = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
+        # Get RPC URL from config, PoolEngine, then .env fallback (sync ctor: get_rpc_sync)
+        self.rpc_url = (
+            config.get('rpc_url')
+            or RPCProvider.get_rpc_sync('ETHEREUM_RPC')
+            or os.getenv('ETHEREUM_RPC_URL')
+            or os.getenv('WEB3_PROVIDER_URL')
+        )
 
         self.private_key = None  # Loaded in initialize() from secrets manager
         # Get wallet address from secrets manager (database/Docker secrets), .env fallback

@@ -229,15 +229,12 @@ class TradeExecutor:
         if self.evm_private_key and not should_skip_live(self.dry_run, module='sniper', account=getattr(self, 'evm_wallet', None)):
             try:
                 from web3 import Web3
-                # Get RPC from Pool Engine with fallback
-                rpc_url = None
-                try:
-                    from config.rpc_provider import RPCProvider
-                    rpc_url = RPCProvider.get_rpc_sync('ETHEREUM_RPC')
-                except Exception:
-                    pass
-                if not rpc_url:
-                    rpc_url = os.getenv('WEB3_PROVIDER_URL') or os.getenv('ETHEREUM_RPC_URL')
+                # PoolEngine first (sync ctor), .env preserved as ultimate fallback
+                rpc_url = (
+                    (RPCProvider.get_rpc_sync('ETHEREUM_RPC') if RPCProvider else None)
+                    or os.getenv('ETHEREUM_RPC_URL')
+                    or os.getenv('WEB3_PROVIDER_URL')
+                )
                 if rpc_url:
                     self.w3 = Web3(Web3.HTTPProvider(rpc_url))
                     if self.w3.is_connected():
@@ -625,11 +622,11 @@ class TradeExecutor:
                     return None
             signed_tx = VersionedTransaction.populate(message, final_sigs)
 
-            # Send transaction - use Pool Engine for RPC
-            if RPCProvider:
-                rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC')
-            else:
-                rpc_url = os.getenv('SOLANA_RPC_URL')
+            # Send transaction - PoolEngine first (async ctx), .env preserved as fallback
+            rpc_url = (
+                (await RPCProvider.get_rpc('SOLANA_RPC') if RPCProvider else None)
+                or os.getenv('SOLANA_RPC_URL')
+            )
             async with AsyncClient(rpc_url) as client:
                 result = await client.send_transaction(signed_tx)
                 tx_hash = str(result.value)

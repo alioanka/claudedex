@@ -24,6 +24,7 @@ from modules.base_module import (
     ModuleType,
 )
 from core.dry_run import should_skip_live
+from config.rpc_provider import RPCProvider
 
 logger = logging.getLogger("CopyTradingEngine")
 
@@ -203,14 +204,11 @@ class CopyTradeExecutor:
         timeout = aiohttp.ClientTimeout(total=30)
         self.session = aiohttp.ClientSession(timeout=timeout)
 
-        # Load Solana RPC URL
-        try:
-            from config.rpc_provider import RPCProvider
-            self.solana_rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC')
-        except Exception:
-            pass
-        if not self.solana_rpc_url:
-            self.solana_rpc_url = os.getenv('SOLANA_RPC_URL')
+        # Load Solana RPC - PoolEngine first (async ctx), .env preserved as ultimate fallback
+        self.solana_rpc_url = (
+            await RPCProvider.get_rpc('SOLANA_RPC')
+            or os.getenv('SOLANA_RPC_URL')
+        )
 
         # Load all credentials from secrets manager (database/Docker secrets)
         from security.secrets_manager import secrets

@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 from security.secrets_manager import secrets
+from config.rpc_provider import RPCProvider
 
 logger = logging.getLogger("SolanaArbitrageEngine")
 
@@ -658,13 +659,12 @@ class JitoClient:
             # Fetch recent blockhash if not provided
             if not recent_blockhash:
                 import aiohttp
-                # Get RPC URL from environment
-                rpc_url = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
-                try:
-                    from config.rpc_provider import RPCProvider
-                    rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC') or rpc_url
-                except Exception:
-                    pass
+                # PoolEngine first (async ctx), .env then mainnet-beta as ultimate fallback
+                rpc_url = (
+                    await RPCProvider.get_rpc('SOLANA_RPC')
+                    or os.getenv('SOLANA_RPC_URL')
+                    or 'https://api.mainnet-beta.solana.com'
+                )
 
                 async with aiohttp.ClientSession() as session:
                     async with session.post(
@@ -805,16 +805,13 @@ class SolanaArbitrageEngine:
         self.db_pool = db_pool
         self.is_running = False
 
-        # Solana RPC - use Pool Engine with fallback
-        self.rpc_url = config.get('rpc_url')
-        if not self.rpc_url:
-            try:
-                from config.rpc_provider import RPCProvider
-                self.rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC')
-            except Exception:
-                pass
-        if not self.rpc_url:
-            self.rpc_url = os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com')
+        # Solana RPC - PoolEngine first (sync ctor), .env then mainnet-beta as ultimate fallback
+        self.rpc_url = (
+            config.get('rpc_url')
+            or RPCProvider.get_rpc_sync('SOLANA_RPC')
+            or os.getenv('SOLANA_RPC_URL')
+            or 'https://api.mainnet-beta.solana.com'
+        )
 
         self.private_key = None  # Loaded in initialize() from secrets manager
         self.wallet_address = config.get('wallet_address')  # Will be loaded from DB in initialize()

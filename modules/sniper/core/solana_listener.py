@@ -21,6 +21,8 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 from enum import Enum
 
+from config.rpc_provider import RPCProvider
+
 logger = logging.getLogger("SolanaListener")
 
 
@@ -121,20 +123,12 @@ class SolanaListener:
         self._session: Optional[aiohttp.ClientSession] = None
 
     def _get_rpc_url(self, config: Dict) -> Optional[str]:
-        """Get RPC URL from config, Pool Engine, or env"""
-        rpc = config.get('solana', {}).get('rpc_url')
-        if rpc:
-            return rpc
-
-        try:
-            from config.rpc_provider import RPCProvider
-            rpc = RPCProvider.get_rpc_sync('SOLANA_RPC')
-            if rpc:
-                return rpc
-        except Exception:
-            pass
-
-        return os.getenv('SOLANA_RPC_URL')
+        """Get RPC URL from config, PoolEngine (sync), .env preserved as ultimate fallback"""
+        return (
+            config.get('solana', {}).get('rpc_url')
+            or RPCProvider.get_rpc_sync('SOLANA_RPC')
+            or os.getenv('SOLANA_RPC_URL')
+        )
 
     def _get_helius_key(self) -> Optional[str]:
         """Get Helius API key"""
