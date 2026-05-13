@@ -216,3 +216,239 @@ class TestSecretsManagerContract:
         mgr.initialize()
         mgr._fernet = fernet
         assert mgr.get(env_key) == "plain-secret"
+
+
+@pytest.mark.integration
+class TestReconcileContract:
+    """Locks the BaseModule reconcile contract and its FUTURES/DEX overrides
+    plus the dashboard alert surface (3981ffd, 24241e3, 592cb1b)."""
+
+    BASE_MODULE = REPO_ROOT / 'modules/base_module.py'
+    FUTURES_MODULE = REPO_ROOT / 'modules/futures_trading/futures_module.py'
+    DEX_MODULE = REPO_ROOT / 'modules/dex_trading/dex_module.py'
+    FUTURES_ENGINE = REPO_ROOT / 'modules/futures_trading/core/futures_engine.py'
+    FUTURES_RISK_MGR = REPO_ROOT / 'modules/futures_trading/futures_risk_manager.py'
+
+    def test_base_module_defines_reconcile_hook(self):
+        contents = self.BASE_MODULE.read_text()
+        for needle in (
+            "async def reconcile_open_positions",
+            "_evaluate_restart_alert",
+            "self.last_reconcile_at",
+            "self.last_reconcile_count",
+            "self.last_restart_alert",
+        ):
+            assert needle in contents, (
+                f"base_module.py missing reconcile contract marker: {needle!r}"
+            )
+
+    def test_start_wrap_auto_calls_reconcile(self):
+        contents = self.BASE_MODULE.read_text()
+        # The __init_subclass__ wrap should call reconcile after start succeeds
+        assert "await self.reconcile_open_positions()" in contents, (
+            "base_module.py __init_subclass__ no longer auto-calls "
+            "reconcile_open_positions after start()"
+        )
+
+    def test_futures_module_overrides_reconcile(self):
+        contents = self.FUTURES_MODULE.read_text()
+        for needle in (
+            "async def reconcile_open_positions",
+            "_sync_positions",
+            "_evaluate_restart_alert",
+        ):
+            assert needle in contents, (
+                f"futures_module.py reconcile override missing: {needle!r}"
+            )
+
+    def test_dex_module_overrides_reconcile(self):
+        contents = self.DEX_MODULE.read_text()
+        for needle in (
+            "async def reconcile_open_positions",
+            "position_tracker",
+            "_evaluate_restart_alert",
+        ):
+            assert needle in contents, (
+                f"dex_module.py reconcile override missing: {needle!r}"
+            )
+
+    def test_futures_engine_stamps_reconcile_observability(self):
+        contents = self.FUTURES_ENGINE.read_text()
+        for needle in (
+            "self.last_reconcile_at",
+            "self.last_reconcile_count",
+            "RESTART OVER-CAP",
+            "check_reconciled_capacity",
+        ):
+            assert needle in contents, (
+                f"futures_engine.py reconcile observability missing: {needle!r}"
+            )
+
+    def test_futures_risk_manager_exposes_capacity_check(self):
+        contents = self.FUTURES_RISK_MGR.read_text()
+        assert "def check_reconciled_capacity" in contents, (
+            "futures_risk_manager.py no longer exposes check_reconciled_capacity"
+        )
+
+
+@pytest.mark.integration
+class TestSubprocessDiscovery:
+    """Locks ModuleManager subprocess-discovery surface (7808ed0)."""
+
+    MODULE_MGR = REPO_ROOT / 'core/module_manager.py'
+
+    def test_subprocess_constants_present(self):
+        contents = self.MODULE_MGR.read_text()
+        for needle in (
+            "SUBPROCESS_MODULE_DIRS",
+            "SUBPROCESS_LIVENESS_THRESHOLD_SECONDS",
+            "_discover_subprocess_modules",
+        ):
+            assert needle in contents, (
+                f"module_manager.py subprocess discovery surface missing: {needle!r}"
+            )
+
+    def test_status_summary_unions_both_sources(self):
+        contents = self.MODULE_MGR.read_text()
+        for needle in (
+            "'source': 'in_process'",
+            "'source': 'subprocess'",
+            "in_process_count",
+            "subprocess_count",
+        ):
+            assert needle in contents, (
+                f"module_manager.py get_status_summary not unioning sources: {needle!r}"
+            )
+
+
+@pytest.mark.integration
+class TestDashboardReconcileSurface:
+    """Locks dashboard last_reconcile_at + RESTART OVER-CAP banner (592cb1b)."""
+
+    MODULES_TEMPLATE = REPO_ROOT / 'dashboard/templates/modules.html'
+    BASE_TEMPLATE = REPO_ROOT / 'dashboard/templates/base.html'
+
+    def test_modules_template_renders_reconcile_tile(self):
+        contents = self.MODULES_TEMPLATE.read_text()
+        for needle in (
+            "Last Reconcile",
+            "last_reconcile_at",
+            "last_restart_alert",
+            "restart-alert-badge",
+        ):
+            assert needle in contents, (
+                f"modules.html missing reconcile-surface element: {needle!r}"
+            )
+
+    def test_base_template_has_restart_alert_banner(self):
+        contents = self.BASE_TEMPLATE.read_text()
+        for needle in (
+            "restart-alert-banner",
+            "last_restart_alert",
+            "/api/modules",
+        ):
+            assert needle in contents, (
+                f"base.html missing restart-alert banner element: {needle!r}"
+            )
+
+
+@pytest.mark.integration
+class TestPositionNormalizer:
+    """Locks the Binance/Bybit position/balance normalizer (ed350d0)."""
+
+    NORMALIZERS = REPO_ROOT / 'modules/futures_trading/exchanges/_normalizers.py'
+    RISK_MGR = REPO_ROOT / 'modules/futures_trading/futures_risk_manager.py'
+
+    def test_normalizer_module_exists(self):
+        assert self.NORMALIZERS.exists(), (
+            "modules/futures_trading/exchanges/_normalizers.py missing"
+        )
+        contents = self.NORMALIZERS.read_text()
+        for needle in (
+            "def normalize_position",
+            "def normalize_balance",
+            "CANONICAL_POSITION_KEYS",
+        ):
+            assert needle in contents, (
+                f"_normalizers.py missing surface: {needle!r}"
+            )
+
+    def test_risk_manager_auto_normalizes_when_liq_price_missing(self):
+        contents = self.RISK_MGR.read_text()
+        assert "normalize_position" in contents, (
+            "futures_risk_manager.py no longer auto-normalizes position dicts"
+        )
+
+    def test_bybit_shape_canonicalizes_with_liq_price_recovery(self):
+        try:
+            from modules.futures_trading.exchanges import normalize_position
+        except ImportError as e:
+            pytest.skip(f"normalize_position not importable: {e}")
+        raw = {
+            'symbol': 'BTCUSDT', 'side': 'LONG', 'size': '0.5',
+            'entry_price': '50000', 'mark_price': '50100',
+            'unrealised_pnl': '5', 'leverage': '10',
+            'position_value': '25050',
+            'raw': {'liqPrice': '45000', 'tradeMode': 1},
+        }
+        result = normalize_position(raw, 'bybit')
+        assert result is not None
+        assert result['liquidation_price'] == 45000.0, result
+        assert result['margin_type'] == 'ISOLATED', result
+        assert result['unrealized_pnl'] == 5.0, result
+        assert result['size'] == 0.5, result
+        assert result['notional_value'] == 25050.0, result
+
+    def test_binance_shape_canonicalizes(self):
+        try:
+            from modules.futures_trading.exchanges import normalize_position
+        except ImportError as e:
+            pytest.skip(f"normalize_position not importable: {e}")
+        raw = {
+            'symbol': 'BTCUSDT', 'side': 'LONG', 'position_amt': 0.5,
+            'entry_price': 50000, 'mark_price': 50100,
+            'unrealized_pnl': 5, 'leverage': 10,
+            'notional_value': 25050, 'liquidation_price': 45000,
+            'margin_type': 'ISOLATED',
+        }
+        result = normalize_position(raw, 'binance')
+        assert result is not None
+        assert result['liquidation_price'] == 45000.0
+        assert result['size'] == 0.5
+        assert result['unrealized_pnl'] == 5.0
+        assert result['notional_value'] == 25050.0
+
+    def test_normalize_position_handles_none(self):
+        try:
+            from modules.futures_trading.exchanges import normalize_position
+        except ImportError as e:
+            pytest.skip(f"normalize_position not importable: {e}")
+        assert normalize_position(None, 'bybit') is None
+        assert normalize_position({}, 'binance') is None
+
+
+@pytest.mark.integration
+class TestPoolEngineSweep:
+    """Locks pool_engine enforcement across the 7 migrated files (a21ec41)."""
+
+    @pytest.mark.parametrize("file_path", [
+        pytest.param(p, id=p) for p in [
+            'modules/arbitrage/main_arbitrage.py',
+            'modules/arbitrage/triangular_engine.py',
+            'modules/arbitrage/solana_engine.py',
+            'modules/sniper/core/trade_executor.py',
+            'modules/sniper/core/evm_listener.py',
+            'modules/sniper/core/solana_listener.py',
+            'modules/copy_trading/copy_engine.py',
+        ]
+    ])
+    def test_file_uses_rpc_provider(self, file_path: str):
+        contents = (REPO_ROOT / file_path).read_text()
+        # At least one of get_rpc / get_rpc_sync / get_rpcs / get_rpcs_sync
+        assert any(needle in contents for needle in (
+            "RPCProvider.get_rpc",
+            "RPCProvider.get_rpcs",
+        )), (
+            f"{file_path} no longer routes RPC reads through RPCProvider — "
+            f"pool_engine enforcement sweep (a21ec41) regressed"
+        )
