@@ -524,6 +524,10 @@ class TradingBotApplication:
                     if chain_name not in chain_rpc_urls:
                         chain_rpc_urls[chain_name] = [url.strip() for url in value.split(',')]
 
+            # Cache so the engine init below reuses this dict instead of
+            # re-scanning os.environ (and silently bypassing PoolEngine).
+            self.chain_rpc_urls = chain_rpc_urls
+
             self.risk_manager = RiskManager(nested_config,
                                             config_manager=self.config_manager,
                                             chain_rpc_urls=chain_rpc_urls)
@@ -701,18 +705,13 @@ class TradingBotApplication:
             except Exception as e:
                 self.logger.warning(f"Could not pre-load credentials: {e}")
 
-            # --- FIX STARTS HERE: Pass ConfigManager and RPC URLs to the engine ---
-            # Extract all chain-specific RPC URLs from environment variables
-            chain_rpc_urls = {}
-            for env_var, value in os.environ.items():
-                if env_var.endswith('_RPC_URLS'):
-                    chain_name = env_var.replace('_RPC_URLS', '').lower()
-                    chain_rpc_urls[chain_name] = [url.strip() for url in value.split(',')]
-
+            # --- Pass ConfigManager and RPC URLs to the engine ---
+            # Reuse the PoolEngine-first chain_rpc_urls dict built earlier
+            # (around L500-525) rather than re-scanning os.environ here.
             self.engine = TradingBotEngine(
                 config=nested_config,
                 config_manager=self.config_manager,
-                chain_rpc_urls=chain_rpc_urls,
+                chain_rpc_urls=getattr(self, 'chain_rpc_urls', {}),
                 mode=self.mode
             )
             await self.engine.initialize()
