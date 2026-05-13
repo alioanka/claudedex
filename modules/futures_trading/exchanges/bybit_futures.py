@@ -16,6 +16,7 @@ import hashlib
 import time
 from typing import Dict, List, Optional
 from datetime import datetime
+from urllib.parse import urlencode
 import aiohttp
 
 
@@ -78,17 +79,21 @@ class BybitFuturesExecutor:
         method: str,
         endpoint: str,
         body: Optional[Dict] = None,
+        params: Optional[Dict] = None,
     ) -> Optional[Dict]:
         """V5 authenticated request. Returns parsed result dict on success, None on failure."""
         if not self.session:
             self.logger.error("Bybit session not initialised")
             return None
+        is_get = method.upper() == "GET"
         body = body or {}
-        # Bybit V5 signs the exact raw JSON body bytes — must match what we send on the wire.
-        raw_body = json.dumps(body, separators=(',', ':')) if body else ""
+        params = params or {}
+        # V5 signs raw JSON body on POST and the literal urlencoded query string on GET.
+        raw_body = "" if is_get else (json.dumps(body, separators=(',', ':')) if body else "")
+        query_str = urlencode(params) if is_get else ""
         ts = str(int(time.time() * 1000))
         recv_window = "5000"
-        pre_sign = f"{ts}{self.api_key}{recv_window}{raw_body}"
+        pre_sign = f"{ts}{self.api_key}{recv_window}{query_str if is_get else raw_body}"
         signature = hmac.new(
             self.api_secret.encode(), pre_sign.encode(), hashlib.sha256
         ).hexdigest()
@@ -101,9 +106,13 @@ class BybitFuturesExecutor:
         }
         url = f"{self.base_url}{endpoint}"
         try:
-            async with self.session.request(
-                method, url, data=raw_body or None, headers=headers
-            ) as resp:
+            kwargs: Dict = {"headers": headers}
+            if is_get:
+                # Pass pre-serialized string so aiohttp sends the exact bytes we signed.
+                kwargs["params"] = query_str
+            else:
+                kwargs["data"] = raw_body or None
+            async with self.session.request(method, url, **kwargs) as resp:
                 data = await resp.json()
                 ret_code = data.get("retCode")
                 if ret_code == 0:
@@ -121,6 +130,30 @@ class BybitFuturesExecutor:
         except Exception as e:
             self.logger.error(f"Bybit {method} {endpoint} exception: {e}")
             return None
+
+    @staticmethod
+    def _safe_float(value, default: float = 0.0) -> float:
+        """Defensive float() — Bybit returns '' for unset numeric fields."""
+        try:
+            if value is None or value == "":
+                return default
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _parse_position(self, entry: Dict, symbol_hint: Optional[str] = None) -> Dict:
+        """Normalize a V5 position entry to ClaudeDex shape."""
+        return {
+            "symbol": entry.get("symbol") or symbol_hint,
+            "side": entry.get("side"),
+            "size": self._safe_float(entry.get("size")),
+            "entry_price": self._safe_float(entry.get("avgPrice")),
+            "mark_price": self._safe_float(entry.get("markPrice")),
+            "unrealised_pnl": self._safe_float(entry.get("unrealisedPnl")),
+            "leverage": self._safe_float(entry.get("leverage")),
+            "position_value": self._safe_float(entry.get("positionValue")),
+            "raw": entry,
+        }
 
     async def set_leverage(self, symbol: str, leverage: int) -> bool:
         """Set buy/sell leverage for a linear (USDT perp) symbol."""
@@ -160,12 +193,43 @@ class BybitFuturesExecutor:
         return False
 
     async def get_balance(self) -> Optional[Dict]:
-        """Get USDT balance (placeholder — separate ticket)."""
-        self.logger.info("Bybit balance check (placeholder)")
-        return {'balance': 0.0, 'available': 0.0}
+        """Get USDT wallet balance from the V5 UNIFIED account (falls back to CONTRACT)."""
+        result = await self._request(
+            "GET", "/v5/account/wallet-balance", params={"accountType": "UNIFIED"}
+        )
+        if result is None:
+            result = await self._request(
+                "GET", "/v5/account/wallet-balance", params={"accountType": "CONTRACT"}
+            )
+        if result is None:
+            return None
+        accounts = result.get("list") or []
+        if not accounts:
+            return {"balance": 0.0, "available": 0.0, "unrealised_pnl": 0.0, "raw": {}}
+        coins = accounts[0].get("coin") or []
+        usdt = next((c for c in coins if c.get("coin") == "USDT"), None)
+        if not usdt:
+            return {"balance": 0.0, "available": 0.0, "unrealised_pnl": 0.0, "raw": {}}
+        available = usdt.get("availableToWithdraw") or usdt.get("equity")
+        return {
+            "balance": self._safe_float(usdt.get("walletBalance")),
+            "available": self._safe_float(available),
+            "unrealised_pnl": self._safe_float(usdt.get("unrealisedPnl")),
+            "raw": usdt,
+        }
 
     async def get_position(self, symbol: str) -> Optional[Dict]:
-        """Get current position (placeholder — separate ticket)."""
+        """Get current linear-perp position for `symbol` (None if flat)."""
+        result = await self._request(
+            "GET",
+            "/v5/position/list",
+            params={"category": "linear", "symbol": symbol},
+        )
+        if result is None:
+            return None
+        for entry in result.get("list") or []:
+            if self._safe_float(entry.get("size")) > 0:
+                return self._parse_position(entry, symbol_hint=symbol)
         return None
 
     async def open_long(
@@ -233,10 +297,38 @@ class BybitFuturesExecutor:
             return None
 
     async def close_position(self, symbol: str) -> Optional[Dict]:
-        """Close position (placeholder — separate ticket)."""
-        self.logger.info(f"Bybit close {symbol} (placeholder)")
-        return None
+        """Reduce-only market close of any open linear-perp position on `symbol`."""
+        position = await self.get_position(symbol)
+        if not position or position.get("size", 0.0) <= 0:
+            self.logger.info(f"Bybit no open position to close for {symbol}")
+            return None
+        opposite = "Sell" if position.get("side") == "Buy" else "Buy"
+        body = {
+            "category": "linear",
+            "symbol": symbol,
+            "side": opposite,
+            "orderType": "Market",
+            "qty": str(position["size"]),
+            "reduceOnly": True,
+            "orderLinkId": f"cd-close-{int(time.time()*1000)}-{symbol[:6]}",
+        }
+        result = await self._request("POST", "/v5/order/create", body)
+        if result:
+            self.logger.info(f"✅ Closed Bybit {symbol} via {opposite} {position['size']}")
+        return result
 
     async def get_all_positions(self) -> List[Dict]:
-        """Get all positions (placeholder — separate ticket)."""
-        return []
+        """Get all open USDT-settled linear-perp positions."""
+        result = await self._request(
+            "GET",
+            "/v5/position/list",
+            params={"category": "linear", "settleCoin": "USDT"},
+        )
+        if result is None:
+            self.logger.error("Bybit get_all_positions request failed")
+            return []
+        return [
+            self._parse_position(entry)
+            for entry in (result.get("list") or [])
+            if self._safe_float(entry.get("size")) > 0
+        ]
