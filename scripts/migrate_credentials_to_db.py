@@ -108,6 +108,15 @@ CREDENTIAL_MAPPINGS = {
         'is_required': True,
         'module': 'dex'
     },
+    'EVM_WALLET_ADDRESS': {
+        'category': 'wallet',
+        'subcategory': 'evm',
+        'display_name': 'EVM Wallet Address (alias)',
+        'description': 'Alternate env name for the EVM wallet address; SNIPER trade_executor falls back to this if WALLET_ADDRESS is absent',
+        'is_sensitive': False,
+        'is_required': False,
+        'module': 'sniper'
+    },
     'SOLANA_PRIVATE_KEY': {
         'category': 'wallet',
         'subcategory': 'solana',
@@ -147,6 +156,15 @@ CREDENTIAL_MAPPINGS = {
         'description': 'Private key for signing Flashbots bundles',
         'is_sensitive': True,
         'module': 'dex'
+    },
+    'JITO_TIP_ACCOUNT': {
+        'category': 'wallet',
+        'subcategory': 'solana',
+        'display_name': 'Jito Tip Account',
+        'description': 'Solana pubkey used as the Jito MEV tip recipient (rotating it matters even though it is a public address)',
+        'is_sensitive': True,
+        'is_required': False,
+        'module': 'arbitrage'
     },
 
     # Exchange API Keys
@@ -274,6 +292,93 @@ CREDENTIAL_MAPPINGS = {
         'description': 'API key for Etherscan',
         'is_sensitive': True,
         'module': 'copytrading'
+    },
+    'DEXSCREENER_API_KEY': {
+        'category': 'api',
+        'subcategory': 'data',
+        'display_name': 'DexScreener API Key',
+        'description': 'API key for DexScreener data feed (DEX module pool/token metadata)',
+        'is_sensitive': True,
+        'is_required': False,
+        'module': 'dex'
+    },
+
+    # Solana RPC & MEV (URLs frequently embed API tokens — treat as sensitive)
+    'SOLANA_RPC_URL': {
+        'category': 'api',
+        'subcategory': 'solana_rpc',
+        'display_name': 'Solana RPC URL',
+        'description': 'Fallback Solana RPC endpoint when PoolEngine returns no providers; URL may embed an API token',
+        'is_sensitive': True,
+        'is_required': False,
+        'module': 'solana'
+    },
+    'JUPITER_API_URL': {
+        'category': 'api',
+        'subcategory': 'solana',
+        'display_name': 'Jupiter Aggregator API URL',
+        'description': 'Base URL for the Jupiter swap aggregator (SNIPER + SOLANA spot); may embed a paid-tier token',
+        'is_sensitive': True,
+        'is_required': False,
+        'module': 'sniper'
+    },
+    'JITO_BLOCK_ENGINE_URL': {
+        'category': 'api',
+        'subcategory': 'solana_mev',
+        'display_name': 'Jito Block Engine URL',
+        'description': 'Jito block-engine endpoint for Solana MEV bundle submission (ARB triangular)',
+        'is_sensitive': True,
+        'is_required': False,
+        'module': 'arbitrage'
+    },
+
+    # EVM RPC URLs (Infura / Alchemy / etc — URLs embed API tokens)
+    'WEB3_PROVIDER_URL': {
+        'category': 'api',
+        'subcategory': 'evm_rpc',
+        'display_name': 'Primary EVM RPC URL',
+        'description': 'Primary EVM Web3 provider URL; fallback when PoolEngine is empty. URL typically embeds an API token (Infura/Alchemy)',
+        'is_sensitive': True,
+        'is_required': False,
+        'module': 'dex'
+    },
+    'WEB3_BACKUP_PROVIDER_1': {
+        'category': 'api',
+        'subcategory': 'evm_rpc',
+        'display_name': 'EVM Backup RPC #1',
+        'description': 'First backup EVM RPC provider URL (may embed API token)',
+        'is_sensitive': True,
+        'is_required': False,
+        'module': 'dex'
+    },
+    'WEB3_BACKUP_PROVIDER_2': {
+        'category': 'api',
+        'subcategory': 'evm_rpc',
+        'display_name': 'EVM Backup RPC #2',
+        'description': 'Second backup EVM RPC provider URL (may embed API token)',
+        'is_sensitive': True,
+        'is_required': False,
+        'module': 'dex'
+    },
+
+    # AI / LLM Provider Keys (sentiment_engine.py fallback chain)
+    'ANTHROPIC_API_KEY': {
+        'category': 'api',
+        'subcategory': 'ai',
+        'display_name': 'Anthropic Claude API Key',
+        'description': 'Anthropic Claude API key for AI sentiment analysis',
+        'is_sensitive': True,
+        'is_required': False,
+        'module': 'ai'
+    },
+    'OPENAI_API_KEY': {
+        'category': 'api',
+        'subcategory': 'ai',
+        'display_name': 'OpenAI API Key',
+        'description': 'OpenAI API key used as fallback LLM in the AI sentiment engine',
+        'is_sensitive': True,
+        'is_required': False,
+        'module': 'ai'
     },
 
     # Notification Credentials

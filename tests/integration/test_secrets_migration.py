@@ -487,3 +487,64 @@ class TestPoolEngineSweep:
             f"{file_path} no longer routes RPC reads through RPCProvider — "
             f"pool_engine enforcement sweep (a21ec41) regressed"
         )
+
+
+@pytest.mark.integration
+class TestMigrationScriptCoverage:
+    """Locks parity between secrets_manager.get()-requested keys
+    (across all modules) and the migration script's CREDENTIAL_MAPPINGS.
+    If a module starts asking for a new key, this test fails — operator
+    runs the migration script and the new key gets seeded too.
+
+    Allow-list: keys that modules request but are intentionally
+    bootstrap-only (ENCRYPTION_KEY) or have a known migration alias."""
+
+    MIGRATE_SCRIPT = REPO_ROOT / 'scripts/migrate_credentials_to_db.py'
+    EXCLUDED_KEYS = {
+        # Bootstrap-only — must come from .env / .encryption_key file
+        'ENCRYPTION_KEY',
+        # Add other allow-listed keys here with a comment explaining why
+    }
+
+    def _migration_script_keys(self) -> set:
+        """Parse the script's CREDENTIAL_MAPPINGS keys via regex.
+        AST-level parse avoids executing the script (which imports DB)."""
+        import re
+        src = self.MIGRATE_SCRIPT.read_text()
+        # Match top-level keys inside CREDENTIAL_MAPPINGS dict literal
+        block_match = re.search(
+            r"CREDENTIAL_MAPPINGS\s*=\s*\{(.*?)\n\}",
+            src, re.DOTALL,
+        )
+        if not block_match:
+            return set()
+        body = block_match.group(1)
+        return set(re.findall(r"^\s*'([A-Z_0-9]+)'\s*:\s*\{", body, re.MULTILINE))
+
+    def _module_requested_keys(self) -> set:
+        """Grep all module sources for secrets.get(...) / get_async(...)
+        and extract the key names."""
+        import re
+        keys = set()
+        modules_dir = REPO_ROOT / 'modules'
+        for py in modules_dir.rglob('*.py'):
+            try:
+                src = py.read_text()
+            except Exception:
+                continue
+            for m in re.finditer(
+                r"secrets\.(?:get|get_async)\(\s*['\"]([A-Z_0-9]+)['\"]",
+                src,
+            ):
+                keys.add(m.group(1))
+        return keys
+
+    def test_every_requested_key_is_migrated(self):
+        requested = self._module_requested_keys()
+        migrated = self._migration_script_keys()
+        missing = requested - migrated - self.EXCLUDED_KEYS
+        assert not missing, (
+            f"Modules request {len(missing)} keys that the migration "
+            f"script doesn't seed — operators would silently fall back "
+            f"to .env for these: {sorted(missing)}"
+        )
