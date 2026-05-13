@@ -29,6 +29,43 @@ from core.pattern_analyzer import PatternAnalyzer
 from utils.helpers import calculate_moving_average, calculate_ema
 
 
+# Canonical pump-feature layout. The training script
+# (scripts/train_pump_predictor.py) MUST treat features in this order;
+# rows persisted to ai_feature_store under feature_vector.pump_v1 always
+# have exactly this shape. Reordering here is a breaking change — bump
+# pump_v2 and emit BOTH keys during a deprecation window.
+PUMP_FEATURE_NAMES: List[str] = [
+    # Historical (2) — neutral 1.0 when history is insufficient.
+    "vol_acceleration",          # 0: mean(vol[-5:]) / mean(vol[-10:-5])
+    "price_momentum",            # 1: mean(price[-5:]) / mean(price[-20:])
+    # Social (2)
+    "social_volume_24h",         # 2
+    "social_engagement_rate",    # 3
+    # Market microstructure (4)
+    "unique_buyers_1h",          # 4
+    "buy_sell_ratio",            # 5
+    "txn_count_1h",              # 6
+    "last_txn_age_seconds",      # 7
+    # Price-change windows (4)
+    "price_change_5m",           # 8
+    "price_change_1h",           # 9
+    "price_change_4h",           # 10
+    "price_change_24h",          # 11
+    # Liquidity / cap / holders (5)
+    "liquidity_usd",             # 12
+    "market_cap",                # 13
+    "holders_count",             # 14
+    "top10_holder_pct",          # 15
+    "dev_holder_pct",            # 16
+    # Tail features from the scaled vector (10) — zero-padded if features is
+    # shorter than 10 or None.
+    "scaled_0", "scaled_1", "scaled_2", "scaled_3", "scaled_4",
+    "scaled_5", "scaled_6", "scaled_7", "scaled_8", "scaled_9",
+]
+EXPECTED_PUMP_FEATURE_COUNT: int = 27
+assert len(PUMP_FEATURE_NAMES) == EXPECTED_PUMP_FEATURE_COUNT
+
+
 class AIStrategy(BaseStrategy):
     """AI-powered trading strategy using ensemble machine learning"""
     
@@ -641,41 +678,65 @@ class AIStrategy(BaseStrategy):
     def _prepare_pump_features(
         self,
         features: np.ndarray,
-        market_data: Dict[str, Any]
+        market_data: Dict[str, Any],
     ) -> np.ndarray:
-        """Prepare features specifically for pump prediction"""
-        # Extract pump-relevant features
-        pump_features = []
-        
-        # Volume acceleration
-        volume_history = market_data.get("volume_history", [])
+        """Build a fixed 27-dim feature vector in PUMP_FEATURE_NAMES order.
+
+        Conditional branches are eliminated — missing history zero-pads the
+        historical features (with a neutral 1.0 ratio default); missing
+        market_data keys zero-pad themselves; a short `features` array
+        zero-pads the scaled-tail slice. The result is always (1, 27).
+        """
+        out: List[float] = [0.0] * EXPECTED_PUMP_FEATURE_COUNT
+
+        # 0: vol_acceleration
+        volume_history = market_data.get("volume_history") or []
         if len(volume_history) >= 10:
-            recent_vol = np.mean(volume_history[-5:])
-            older_vol = np.mean(volume_history[-10:-5])
-            vol_acceleration = recent_vol / older_vol if older_vol > 0 else 1
-            pump_features.append(vol_acceleration)
-        
-        # Price momentum
-        price_history = market_data.get("price_history", [])
+            recent_vol = float(np.mean(volume_history[-5:]))
+            older_vol = float(np.mean(volume_history[-10:-5]))
+            out[0] = recent_vol / older_vol if older_vol > 0 else 1.0
+        else:
+            out[0] = 1.0  # neutral when no history
+
+        # 1: price_momentum
+        price_history = market_data.get("price_history") or []
         if len(price_history) >= 20:
-            short_ma = np.mean(price_history[-5:])
-            long_ma = np.mean(price_history[-20:])
-            momentum = short_ma / long_ma if long_ma > 0 else 1
-            pump_features.append(momentum)
-        
-        # Social metrics
-        pump_features.append(market_data.get("social_volume_24h", 0))
-        pump_features.append(market_data.get("social_engagement_rate", 0))
-        
-        # Market metrics
-        pump_features.append(market_data.get("unique_buyers_1h", 0))
-        pump_features.append(market_data.get("buy_sell_ratio", 0.5))
-        
-        # Add original features
-        if features is not None and features.size > 0:
-            pump_features.extend(features.flatten()[:10])  # First 10 features
-        
-        return np.array(pump_features).reshape(1, -1)
+            short_ma = float(np.mean(price_history[-5:]))
+            long_ma = float(np.mean(price_history[-20:]))
+            out[1] = short_ma / long_ma if long_ma > 0 else 1.0
+        else:
+            out[1] = 1.0
+
+        # 2-3: social
+        out[2] = float(market_data.get("social_volume_24h", 0) or 0)
+        out[3] = float(market_data.get("social_engagement_rate", 0) or 0)
+
+        # 4-7: market microstructure
+        out[4] = float(market_data.get("unique_buyers_1h", 0) or 0)
+        out[5] = float(market_data.get("buy_sell_ratio", 0.5) or 0.5)
+        out[6] = float(market_data.get("txn_count_1h", 0) or 0)
+        out[7] = float(market_data.get("last_txn_age_seconds", 0) or 0)
+
+        # 8-11: price-change windows
+        out[8]  = float(market_data.get("price_change_5m", 0) or 0)
+        out[9]  = float(market_data.get("price_change_1h", 0) or 0)
+        out[10] = float(market_data.get("price_change_4h", 0) or 0)
+        out[11] = float(market_data.get("price_change_24h", 0) or 0)
+
+        # 12-16: liquidity / cap / holders
+        out[12] = float(market_data.get("liquidity_usd", market_data.get("liquidity", 0)) or 0)
+        out[13] = float(market_data.get("market_cap", 0) or 0)
+        out[14] = float(market_data.get("holders_count", 0) or 0)
+        out[15] = float(market_data.get("top10_holder_pct", 0) or 0)
+        out[16] = float(market_data.get("dev_holder_pct", market_data.get("dev_wallet_percentage", 0)) or 0)
+
+        # 17-26: tail of the scaled feature vector, zero-padded.
+        if features is not None and hasattr(features, "flatten"):
+            flat = features.flatten()
+            for i in range(min(10, flat.size)):
+                out[17 + i] = float(flat[i])
+
+        return np.asarray(out, dtype=float).reshape(1, -1)
     
     async def _calculate_technical_score(
         self,
