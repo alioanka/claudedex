@@ -7614,6 +7614,30 @@ class DashboardEndpoints:
                         elif key == 'slippage':
                             stats['slippage'] = float(val) if val else 10.0
 
+                    # Read live in-process counters from sniper_runtime_stats
+                    # (the sniper subprocess snapshots its _stats here every
+                    # ~5 minutes; if it hasn't run yet, all 4 stay at 0)
+                    try:
+                        runtime_row = await conn.fetchrow("""
+                            SELECT stats, updated_at
+                            FROM sniper_runtime_stats
+                            WHERE id = 1
+                        """)
+                        if runtime_row and runtime_row['stats']:
+                            rt = runtime_row['stats']
+                            if isinstance(rt, str):
+                                import json as _json
+                                rt = _json.loads(rt)
+                            stats['pools_detected'] = int(rt.get('pools_detected', 0) or 0)
+                            stats['pools_evaluated'] = int(rt.get('pools_evaluated', 0) or 0)
+                            stats['pools_passed'] = int(rt.get('pools_passed', 0) or 0)
+                            stats['pools_rejected'] = int(rt.get('pools_rejected', 0) or 0)
+                            stats['runtime_stats_age_seconds'] = int(
+                                (datetime.now() - runtime_row['updated_at']).total_seconds()
+                            ) if runtime_row['updated_at'] else None
+                    except Exception as rt_err:
+                        logger.debug(f"sniper_runtime_stats read failed (non-fatal): {rt_err}")
+
                     stats['status'] = 'Online' if os.getenv('SNIPER_MODULE_ENABLED', 'false').lower() == 'true' else 'Offline'
 
             return web.json_response({'success': True, **stats})

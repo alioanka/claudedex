@@ -242,6 +242,14 @@ class SniperEngine:
         self.is_running = True
         logger.info("🔫 Sniper Engine Started")
 
+        # Seed the runtime-stats snapshot so the standalone dashboard
+        # has data immediately instead of waiting ~5 min for the first
+        # periodic emission. Fail-soft.
+        try:
+            await self._persist_runtime_stats()
+        except Exception as e:
+            logger.debug(f"initial _persist_runtime_stats failed (non-fatal): {e}")
+
         self.tasks = [
             asyncio.create_task(self._monitor_new_pairs()),
             asyncio.create_task(self._process_targets()),
@@ -457,6 +465,10 @@ class SniperEngine:
                        f"High Tax: {self._stats['high_tax_rejected']} | "
                        f"Low Liq: {self._stats['low_liquidity_rejected']}")
 
+            # Persist a snapshot for the standalone dashboard before
+            # resetting the rolling window. Fail-soft.
+            await self._persist_runtime_stats()
+
             # Reset stats
             self._stats = {
                 'tokens_analyzed': 0,
@@ -467,6 +479,63 @@ class SniperEngine:
                 'passed_safety': 0,
                 'last_stats_log': now
             }
+
+    async def _persist_runtime_stats(self) -> None:
+        """Snapshot current in-process stats to sniper_runtime_stats so the
+        standalone dashboard can read counters that otherwise only exist
+        in this subprocess. Fail-soft; never breaks the trading loop."""
+        if not self.db_pool:
+            return
+        try:
+            # Merge engine + listener stats into a single dict
+            snapshot = dict(self._stats) if hasattr(self, '_stats') else {}
+            # Pull listener stats if available
+            if hasattr(self, 'solana_listener') and self.solana_listener is not None:
+                try:
+                    sl_stats = getattr(self.solana_listener, '_stats', {}) or {}
+                    snapshot['solana_listener'] = dict(sl_stats)
+                except Exception:
+                    pass
+            if hasattr(self, 'evm_listener') and self.evm_listener is not None:
+                try:
+                    el_stats = getattr(self.evm_listener, '_stats', {}) or {}
+                    snapshot['evm_listener'] = dict(el_stats)
+                    # known_pairs is a set — surface its size as a counter
+                    kp = getattr(self.evm_listener, 'known_pairs', None)
+                    if kp is not None:
+                        try:
+                            snapshot['evm_listener']['known_pairs_total'] = len(kp)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            # Derive the 4 dashboard counters from merged snapshot
+            snapshot['pools_detected'] = (
+                (snapshot.get('solana_listener', {}).get('pools_detected') or 0)
+                + (snapshot.get('evm_listener', {}).get('known_pairs_total') or 0)
+            )
+            snapshot['pools_evaluated'] = snapshot.get('tokens_analyzed', 0)
+            snapshot['pools_rejected'] = (
+                snapshot.get('honeypots_detected', 0)
+                + snapshot.get('danger_ratings', 0)
+            )
+            # Passed safety = total evaluated - rejected
+            snapshot['pools_passed'] = max(
+                0,
+                snapshot['pools_evaluated'] - snapshot['pools_rejected']
+            )
+
+            import json as _json
+            async with self.db_pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO sniper_runtime_stats (id, updated_at, stats)
+                    VALUES (1, NOW(), $1::jsonb)
+                    ON CONFLICT (id) DO UPDATE
+                    SET updated_at = NOW(), stats = EXCLUDED.stats
+                """, _json.dumps(snapshot, default=str))
+        except Exception as e:
+            # Pure observability — never block trading
+            logger.debug(f"_persist_runtime_stats failed (non-fatal): {e}")
 
     async def _process_targets(self):
         """Execute buy orders for pending targets"""
