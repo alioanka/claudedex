@@ -186,6 +186,7 @@ class DexTradingModule(BaseModule):
             count = len(positions) if positions else 0
             self.last_reconcile_at = datetime.now()
             self.last_reconcile_count = count
+            self._evaluate_restart_alert(count)
             self.logger.info(
                 f"📊 DEX reconcile: {count} positions (source=db)"
             )

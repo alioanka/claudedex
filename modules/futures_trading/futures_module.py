@@ -265,6 +265,7 @@ class FuturesTradingModule(BaseModule):
             cnt = getattr(engine, 'last_reconcile_count', 0)
             self.last_reconcile_at = ts
             self.last_reconcile_count = cnt
+            self._evaluate_restart_alert(cnt)
             return {
                 'count': cnt,
                 'last_reconcile_at': ts.isoformat() if ts else None,
