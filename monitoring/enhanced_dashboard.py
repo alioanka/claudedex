@@ -7711,29 +7711,35 @@ class DashboardEndpoints:
             )
 
     async def api_get_sniper_positions(self, request):
-        """Get Sniper open positions from sniper_trades table"""
+        """Get Sniper open positions from sniper_trades table.
+
+        Supports pagination via ?limit=&offset= (default 50, max 500).
+        Returns {positions, total, limit, offset, has_more, count} so a
+        dashboard with 1000s of open positions does not melt the browser
+        by rendering every row.
+        """
         positions = []
+        total = 0
         try:
+            limit = max(1, min(int(request.query.get('limit', 50)), 500))
+            offset = max(0, int(request.query.get('offset', 0)))
             if self.db:
                 async with self.db.pool.acquire() as conn:
+                    total = int(await conn.fetchval(
+                        "SELECT COUNT(*) FROM sniper_trades WHERE status = 'open'"
+                    ) or 0)
                     rows = await conn.fetch("""
                         SELECT
                             trade_id, token_address, chain, side, entry_price, amount,
                             entry_usd, native_token, native_price_at_entry,
                             safety_score, safety_rating, status, entry_timestamp,
-                            entry_tx_hash, metadata
+                            entry_tx_hash
                         FROM sniper_trades
                         WHERE status = 'open'
                         ORDER BY entry_timestamp DESC
-                    """)
+                        LIMIT $1 OFFSET $2
+                    """, limit, offset)
                     for row in rows:
-                        metadata = row['metadata'] or {}
-                        if isinstance(metadata, str):
-                            try:
-                                import json as json_module
-                                metadata = json_module.loads(metadata)
-                            except:
-                                metadata = {}
                         positions.append({
                             'trade_id': row['trade_id'],
                             'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
@@ -7743,48 +7749,53 @@ class DashboardEndpoints:
                             'entry_price': float(row['entry_price'] or 0),
                             'size': float(row['amount'] or 0),
                             'entry_usd': float(row['entry_usd'] or 0),
-                            'safety_score': row['safety_score'],
+                            'safety_score': int(row['safety_score']) if row['safety_score'] is not None else None,
                             'safety_rating': row['safety_rating'],
                             'status': row['status'],
                             'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
                             'entry_tx_hash': row['entry_tx_hash'] or ''
                         })
-            return web.json_response({'success': True, 'positions': positions, 'count': len(positions)})
+            return web.json_response({
+                'success': True,
+                'positions': positions,
+                'count': len(positions),
+                'total': total,
+                'limit': limit,
+                'offset': offset,
+                'has_more': (offset + len(positions)) < total,
+            })
         except Exception as e:
             logger.error(f"Error getting sniper positions: {e}")
-            return web.json_response({'success': False, 'error': str(e), 'positions': []})
+            return web.json_response({'success': False, 'error': str(e), 'positions': [], 'total': 0})
 
     async def api_get_sniper_trades(self, request):
-        """Get Sniper trade history from dedicated sniper_trades table"""
+        """Get Sniper trade history from dedicated sniper_trades table.
+
+        Returns ALL rows in sniper_trades by default (no status filter) so the
+        /sniper/trades page can client-side filter by Result (All/Winning/Losing).
+        Numeric/Decimal fields are explicitly cast to JSON-safe primitives so a
+        single Decimal column does not blow up json_response for the whole batch
+        (which previously surfaced as "0 of 0" on /sniper/trades).
+        """
         trades = []
         try:
-            limit = int(request.query.get('limit', 100))
+            # Cap limit to 5000 so a misbehaving client cannot OOM the dashboard.
+            limit = max(1, min(int(request.query.get('limit', 100)), 5000))
             if self.db:
                 async with self.db.pool.acquire() as conn:
                     rows = await conn.fetch("""
                         SELECT
                             trade_id, token_address, chain, side, entry_price, exit_price,
                             amount, entry_usd, exit_usd, profit_loss, profit_loss_pct,
-                            native_token, native_price_at_entry, native_price_at_exit,
-                            safety_score, safety_rating, is_honeypot, buy_tax, sell_tax,
-                            liquidity_usd, status, exit_reason, is_simulated,
-                            entry_timestamp, exit_timestamp, entry_tx_hash, exit_tx_hash, metadata
+                            safety_score, safety_rating, status, exit_reason, is_simulated,
+                            entry_timestamp, exit_timestamp, entry_tx_hash, exit_tx_hash
                         FROM sniper_trades
                         ORDER BY entry_timestamp DESC
                         LIMIT $1
                     """, limit)
                     for row in rows:
-                        pnl = float(row['profit_loss'] or 0)
                         entry = float(row['entry_price'] or 0)
                         exit_p = float(row['exit_price'] or entry)
-                        pnl_pct = float(row['profit_loss_pct'] or 0)
-                        metadata = row['metadata'] or {}
-                        if isinstance(metadata, str):
-                            try:
-                                import json as json_module
-                                metadata = json_module.loads(metadata)
-                            except:
-                                metadata = {}
                         trades.append({
                             'trade_id': row['trade_id'],
                             'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
@@ -7796,13 +7807,13 @@ class DashboardEndpoints:
                             'size': float(row['amount'] or 0),
                             'entry_usd': float(row['entry_usd'] or 0),
                             'exit_usd': float(row['exit_usd'] or 0),
-                            'pnl': pnl,
-                            'pnl_pct': pnl_pct,
-                            'safety_score': row['safety_score'],
+                            'pnl': float(row['profit_loss'] or 0),
+                            'pnl_pct': float(row['profit_loss_pct'] or 0),
+                            'safety_score': int(row['safety_score']) if row['safety_score'] is not None else None,
                             'safety_rating': row['safety_rating'],
                             'status': row['status'],
                             'close_reason': row['exit_reason'] or '-',
-                            'is_simulated': row['is_simulated'],
+                            'is_simulated': bool(row['is_simulated']) if row['is_simulated'] is not None else None,
                             'closed_at': row['exit_timestamp'].isoformat() if row['exit_timestamp'] else row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
                             'entry_tx_hash': row['entry_tx_hash'] or '',
                             'exit_tx_hash': row['exit_tx_hash'] or ''

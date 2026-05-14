@@ -458,6 +458,14 @@
                 <tbody id="positionsTableBody">
                 </tbody>
             </table>
+            <div id="positions-footer" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 4px; color: var(--text-secondary); font-size: 0.85rem;">
+                <span id="positions-footer-info">Showing 0 of 0</span>
+                <span>
+                    <button class="btn btn-sm" id="positions-prev" onclick="changePositionsPage(-1)" disabled>Prev</button>
+                    <button class="btn btn-sm" id="positions-next" onclick="changePositionsPage(1)" disabled>Next</button>
+                    <a href="/sniper/trades" style="margin-left: 12px;">Open full trade history</a>
+                </span>
+            </div>
         </div>
     </div>
 
@@ -544,6 +552,12 @@ const pnlChart = new Chart(ctx, {
     }
 });
 
+// Active-positions pagination state. With 1000s of open snipes the DOM
+// table would otherwise lock the browser, so we render at most pageSize.
+const positionsPageSize = 50;
+let positionsOffset = 0;
+let positionsTotal = 0;
+
 async function loadSniperData() {
     try {
         // Load stats
@@ -555,11 +569,12 @@ async function loadSniperData() {
             }
         }
 
-        // Load positions
-        const posResponse = await fetch('/api/sniper/positions');
+        // Load positions (paginated)
+        const posResponse = await fetch(`/api/sniper/positions?limit=${positionsPageSize}&offset=${positionsOffset}`);
         if (posResponse.ok) {
             const posData = await posResponse.json();
             if (posData.success && posData.positions) {
+                positionsTotal = typeof posData.total === 'number' ? posData.total : posData.positions.length;
                 updatePositions(posData.positions);
             }
         }
@@ -691,6 +706,13 @@ function getActivityIcon(iconType) {
     return icons[iconType] || 'info-circle';
 }
 
+function changePositionsPage(delta) {
+    const newOffset = positionsOffset + delta * positionsPageSize;
+    if (newOffset < 0 || newOffset >= positionsTotal) return;
+    positionsOffset = newOffset;
+    loadSniperData();
+}
+
 function updatePositions(positions) {
     const container = document.getElementById('positions-container');
     const emptyState = document.getElementById('positions-empty');
@@ -698,10 +720,12 @@ function updatePositions(positions) {
     const countEl = document.getElementById('position-count');
     const closeAllBtn = document.getElementById('closeAllBtn');
 
-    countEl.textContent = positions.length;
-    closeAllBtn.disabled = positions.length === 0;
+    // Show TOTAL open positions in header (not just the visible page slice).
+    const headerTotal = positionsTotal || positions.length;
+    countEl.textContent = headerTotal;
+    closeAllBtn.disabled = headerTotal === 0;
 
-    if (positions.length === 0) {
+    if (headerTotal === 0) {
         emptyState.style.display = 'block';
         container.style.display = 'none';
         return;
@@ -709,6 +733,18 @@ function updatePositions(positions) {
 
     emptyState.style.display = 'none';
     container.style.display = 'block';
+
+    // Pagination footer
+    const footerInfo = document.getElementById('positions-footer-info');
+    const prevBtn = document.getElementById('positions-prev');
+    const nextBtn = document.getElementById('positions-next');
+    if (footerInfo) {
+        const start = positions.length === 0 ? 0 : positionsOffset + 1;
+        const end = positionsOffset + positions.length;
+        footerInfo.textContent = `Showing ${start}-${end} of ${headerTotal}`;
+    }
+    if (prevBtn) prevBtn.disabled = positionsOffset === 0;
+    if (nextBtn) nextBtn.disabled = positionsOffset + positions.length >= headerTotal;
 
     tableBody.innerHTML = positions.map(pos => {
         const pnl = pos.unrealized_pnl || 0;
