@@ -688,7 +688,14 @@ class SniperEngine:
                         result.tx_hash,
                         json.dumps({
                             'warnings': safety_report.get('warnings', []),
-                            'detection_path': data.get('target', {}).get('detection_path'),
+                            'detection_path': (
+                                # EVM listener stamps at target top level;
+                                # Solana listener nests under target['metadata'].
+                                # Read either location so both paths show up
+                                # in /api/sniper/timing groupings.
+                                data.get('target', {}).get('detection_path')
+                                or data.get('target', {}).get('metadata', {}).get('detection_path')
+                            ),
                             'timing': (data.get('target', {}).get('_timing').to_metadata_dict()
                                        if data.get('target', {}).get('_timing') is not None
                                        else None),
