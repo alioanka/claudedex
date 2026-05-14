@@ -92,6 +92,24 @@ WSS_BACKOFF_INITIAL_SECONDS = 1.0
 WSS_BACKOFF_MAX_SECONDS = 60.0
 
 
+def _block_time_to_iso(block_time_sec: Optional[int]) -> Optional[str]:
+    """Convert Solana RPC blockTime (Unix epoch seconds, int) to ISO-8601 UTC.
+    Returns None if input is None/invalid — callers should fall back to
+    datetime.utcnow().isoformat() in that case.
+
+    Used by both WSS and polling pool_dict construction sites to anchor
+    t_detect on the actual on-chain block-creation time rather than the
+    listener's queue-time. EVM listener still uses wall-clock pending a
+    separate eth.get_block(blockNumber).timestamp enhancement."""
+    if block_time_sec is None:
+        return None
+    try:
+        from datetime import timezone
+        return datetime.fromtimestamp(int(block_time_sec), tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError):
+        return None
+
+
 @dataclass
 class DetectedPool:
     """Represents a newly detected pool"""
@@ -181,6 +199,11 @@ class SolanaListener:
             'rejected_no_mint': 0,          # _parse_pool_transaction returned empty mint
             'rejected_filtered_mint': 0,    # mint in FILTERED_MINTS
             'rejected_bad_mint_format': 0,  # mint length not in [32, 44]
+            # Block-time anchoring (Solana): tracks how often pool_dict
+            # 'timestamp' was anchored on getTransaction.result.blockTime
+            # vs falling back to wall-clock. Visible via sniper_runtime_stats.
+            'block_time_anchored': 0,
+            'block_time_missing': 0,
         }
         self._log_interval = timedelta(minutes=1)
         self._max_signatures = 500  # Per source
@@ -494,18 +517,50 @@ class SolanaListener:
                             if pool_info is None:
                                 continue
 
+                            # Anchor t_detect on the on-chain block-time so
+                            # the WSS-vs-polling latency comparison reflects
+                            # real detection wall-time, not the listener's
+                            # queue-time. block_time comes from
+                            # getTransaction.result.blockTime (Unix epoch sec).
+                            # EVM listener still uses wall-clock pending a
+                            # separate eth.get_block(blockNumber).timestamp
+                            # enhancement (out of scope here).
+                            block_time = (pool_info.metadata or {}).get('block_time')
+                            block_iso = _block_time_to_iso(block_time)
+                            ts = block_iso or datetime.utcnow().isoformat()
+
+                            # Log staleness so operators can see how fresh
+                            # WSS notifications are. Sub-second is healthy;
+                            # multi-second suggests RPC lag.
+                            if block_iso:
+                                try:
+                                    from datetime import timezone
+                                    bt_age = (datetime.now(timezone.utc) - datetime.fromtimestamp(int(block_time), tz=timezone.utc)).total_seconds()
+                                    if bt_age > 5:
+                                        logger.debug(f"WSS block-time age {bt_age:.1f}s for {signature[:16]}...")
+                                except Exception:
+                                    pass
+
+                            if block_iso:
+                                self._stats['block_time_anchored'] = self._stats.get('block_time_anchored', 0) + 1
+                            else:
+                                self._stats['block_time_missing'] = self._stats.get('block_time_missing', 0) + 1
+
                             pool_dict = {
                                 'token_address': pool_info.token_address,
                                 'pair_address': pool_info.pair_address,
                                 'chain': 'solana',
                                 'source': src.value,
-                                # Wall-clock UTC ISO at emit-time — Phase 0
-                                # timing's parse_iso_to_perf_counter reads
-                                # this to anchor t_detect.
-                                'timestamp': datetime.utcnow().isoformat(),
+                                # block-time-anchored ISO when available,
+                                # else wall-clock fallback. SnipeTimingContext.
+                                # parse_iso_to_perf_counter consumes this.
+                                'timestamp': ts,
                                 'signature': signature,
                                 'base_liquidity': pool_info.base_liquidity,
-                                'metadata': dict(pool_info.metadata or {}, **{'detection_path': 'wss'}),
+                                'metadata': dict(pool_info.metadata or {}, **{
+                                    'detection_path': 'wss',
+                                    'block_time_anchored': bool(block_iso),
+                                }),
                             }
 
                             self._stats['pools_detected'] += 1
@@ -570,16 +625,33 @@ class SolanaListener:
                     self._stats['pools_queued'] += 1
                     self._stats['by_source'][source.value] += 1
 
+                    # Anchor t_detect on the on-chain block-time (see WSS
+                    # path for rationale). For polling this also reveals the
+                    # 7.5s-average cycle-wait that was previously hidden by
+                    # using the listener's queue-time. EVM listener still
+                    # uses wall-clock pending a separate enhancement.
+                    block_time = (pool_info.metadata or {}).get('block_time')
+                    block_iso = _block_time_to_iso(block_time)
+                    ts = block_iso or datetime.utcnow().isoformat()
+
+                    if block_iso:
+                        self._stats['block_time_anchored'] = self._stats.get('block_time_anchored', 0) + 1
+                    else:
+                        self._stats['block_time_missing'] = self._stats.get('block_time_missing', 0) + 1
+
                     # Convert to dict for queue
                     pool_dict = {
                         'token_address': pool_info.token_address,
                         'pair_address': pool_info.pair_address,
                         'chain': 'solana',
                         'source': source.value,
-                        'timestamp': pool_info.timestamp.isoformat(),
+                        'timestamp': ts,
                         'signature': signature,
                         'base_liquidity': pool_info.base_liquidity,
-                        'metadata': dict(pool_info.metadata or {}, **{'detection_path': 'polling'}),
+                        'metadata': dict(pool_info.metadata or {}, **{
+                            'detection_path': 'polling',
+                            'block_time_anchored': bool(block_iso),
+                        }),
                     }
 
                     await self.new_pools_queue.put(pool_dict)
