@@ -54,6 +54,15 @@ INIT_KEYWORDS = {
     PoolSource.METEORA: ["initialize", "create_pool", "init"],
 }
 
+# WSS-stage strict init tokens for Raydium V4. Operator-instrumentation
+# (commit 542bf51) showed INIT_KEYWORDS' bare "init" matches unrelated
+# transactions that merely *mention* the Raydium program in their account
+# list (DEX aggregators, generic SOL transfers, unknown programs). At the
+# WSS pre-filter we require one of these canonical Raydium V4 init signals
+# instead. INIT_KEYWORDS is still used by _is_pool_init as the second-stage
+# filter against canonical logMessages from getTransaction.
+STRICT_INIT_TOKENS = ("initialize2", "init_pc_amount", "ray_log:")
+
 # Known mints to filter out (stablecoins, wrapped SOL)
 WSOL_MINT = "So11111111111111111111111111111111111111112"
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
@@ -403,11 +412,22 @@ class SolanaListener:
                             if sig_set is None or signature in sig_set:
                                 continue
 
-                            # Keyword filter: avoid getTransaction round-trips
-                            # for non-init txs
-                            init_keywords = INIT_KEYWORDS.get(PoolSource.RAYDIUM_V4, [])
+                            # Phase 1.5 keyword pre-filter — fixes the "init" over-match bug.
+                            # logsSubscribe returns ANY tx that mentions the program; we need to
+                            # verify the program is actually INVOKED + a real init opcode appears
+                            # in the program's own log lines.
                             log_blob = " ".join(str(line).lower() for line in logs)
-                            if not any(kw in log_blob for kw in init_keywords):
+
+                            # Gate 1: program must actually be invoked, not just mentioned.
+                            program_invoke_marker = f"program {RAYDIUM_V4_PROGRAM_ID.lower()} invoke".lower()
+                            if program_invoke_marker not in log_blob:
+                                continue
+
+                            # Gate 2: init opcode must appear. Raydium V4 emits "initialize2"
+                            # in its init_pool path. Drop bare "init" (false positive) and the
+                            # overly-generic "initialize"; "initialize2" is the canonical opcode,
+                            # and "init_pc_amount" / "ray_log" are also strong signals.
+                            if not any(tok in log_blob for tok in STRICT_INIT_TOKENS):
                                 continue
 
                             # Throttle log spam: one INFO per detected-candidate signature
@@ -662,7 +682,9 @@ class SolanaListener:
                         sample = (log_messages[:5] if log_messages else ['<empty>'])
                         logger.info(
                             f"🔍 Rejection sample (not_init #{next_rej}): "
-                            f"sig={signature[:16]}... logs={sample}"
+                            f"sig={signature[:16]}... "
+                            f"log_count={len(log_messages)} "
+                            f"logs={sample}"
                         )
                     self._stats['rejected_not_init'] = next_rej
                     return None
