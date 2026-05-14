@@ -54,14 +54,28 @@ INIT_KEYWORDS = {
     PoolSource.METEORA: ["initialize", "create_pool", "init"],
 }
 
-# WSS-stage strict init tokens for Raydium V4. Operator-instrumentation
+# WSS-stage strict init tokens, per-source. Operator-instrumentation
 # (commit 542bf51) showed INIT_KEYWORDS' bare "init" matches unrelated
 # transactions that merely *mention* the Raydium program in their account
 # list (DEX aggregators, generic SOL transfers, unknown programs). At the
-# WSS pre-filter we require one of these canonical Raydium V4 init signals
-# instead. INIT_KEYWORDS is still used by _is_pool_init as the second-stage
-# filter against canonical logMessages from getTransaction.
-STRICT_INIT_TOKENS = ("initialize2", "init_pc_amount", "ray_log:")
+# WSS pre-filter we require one of these canonical init signals instead.
+# INIT_KEYWORDS is still used by _is_pool_init as the second-stage filter
+# against canonical logMessages from getTransaction.
+#
+# Per-source design lets each AMM declare its own canonical token-creation
+# marker. Pump.fun's "Buy"/"Sell" instructions fire orders of magnitude
+# more often than "Create" and are NOT token launches — strict filter
+# matches only the canonical create instruction. Each tuple's tokens are
+# lowercased; logsNotification's log_blob is also lowercased before
+# substring match.
+STRICT_INIT_TOKENS_BY_SOURCE = {
+    PoolSource.RAYDIUM_V4: ("initialize2", "init_pc_amount", "ray_log:"),
+    PoolSource.PUMP_FUN: ("instruction: create",),
+}
+
+# Back-compat alias (some downstream tests reference this constant
+# directly). Kept in sync with the Raydium V4 entry of the dict above.
+STRICT_INIT_TOKENS = STRICT_INIT_TOKENS_BY_SOURCE[PoolSource.RAYDIUM_V4]
 
 # Known mints to filter out (stablecoins, wrapped SOL)
 WSOL_MINT = "So11111111111111111111111111111111111111112"
@@ -127,6 +141,14 @@ class SolanaListener:
 
         # Which AMMs to monitor (configurable)
         self.enabled_sources = self._get_enabled_sources()
+
+        # WSS-eligible sources: enabled AND we know their strict init tokens.
+        # Other AMMs (orca/meteora/raydium_cpmm) can be added by extending
+        # STRICT_INIT_TOKENS_BY_SOURCE.
+        self._wss_sources = [
+            src for src in self.enabled_sources
+            if src in STRICT_INIT_TOKENS_BY_SOURCE
+        ]
 
         # State
         self.known_signatures: Dict[PoolSource, Set[str]] = {
@@ -338,10 +360,10 @@ class SolanaListener:
 
     async def _run_wss_listener(self) -> None:
         """Phase 1 SNIPER WSS listener — connects to a Solana WSS endpoint,
-        sends programSubscribe for Raydium V4, and logs incoming
-        notifications. Does NOT yet emit to self.new_pools_queue (Phase 1.5
-        will parse the notification payload and extract pool data). Reconnects
-        on disconnect with exponential backoff capped at 60s."""
+        sends one logsSubscribe per WSS-eligible AMM source on the same
+        connection, then routes incoming notifications back to the right
+        source via the subscription-id map. Reconnects on disconnect with
+        exponential backoff capped at 60s."""
         try:
             import websockets
         except ImportError:
@@ -359,22 +381,36 @@ class SolanaListener:
                 async with websockets.connect(self.wss_url, ping_interval=20, ping_timeout=10) as ws:
                     self._stats['wss_connects'] += 1
                     backoff = WSS_BACKOFF_INITIAL_SECONDS  # reset on successful connect
+                    sources_str = ", ".join(s.value for s in self._wss_sources) or "<none>"
                     logger.info(
                         f"🔌 WSS connected (connect #{self._stats['wss_connects']}); "
-                        f"subscribing to Raydium V4 program logs"
+                        f"📡 WSS listener targeting {len(self._wss_sources)} source(s): {sources_str}"
                     )
 
-                    sub_id_counter += 1
-                    subscribe_msg = {
-                        "jsonrpc": "2.0",
-                        "id": sub_id_counter,
-                        "method": "logsSubscribe",
-                        "params": [
-                            {"mentions": [RAYDIUM_V4_PROGRAM_ID]},
-                            {"commitment": "processed"},
-                        ],
-                    }
-                    await ws.send(json.dumps(subscribe_msg))
+                    # Subscribe to each WSS-eligible source separately so the
+                    # subscription-id in notifications tells us which AMM
+                    # emitted it. Solana RPC quirk: the request `id` echoed
+                    # in the ack is different from the subscription id in
+                    # `result` (which is what logsNotification.params.subscription
+                    # carries) — we rebind once the ack arrives.
+                    sub_id_to_source: Dict[int, PoolSource] = {}
+                    for src in self._wss_sources:
+                        sub_id_counter += 1
+                        program_id = PROGRAM_IDS[src]
+                        sub_msg = {
+                            "jsonrpc": "2.0",
+                            "id": sub_id_counter,
+                            "method": "logsSubscribe",
+                            "params": [
+                                {"mentions": [program_id]},
+                                {"commitment": "processed"},
+                            ],
+                        }
+                        await ws.send(json.dumps(sub_msg))
+                        sub_id_to_source[sub_id_counter] = src
+                        logger.info(
+                            f"🔌 WSS subscribing to {src.value} program {program_id}"
+                        )
 
                     async for raw in ws:
                         if not self.is_running:
@@ -383,95 +419,86 @@ class SolanaListener:
                             msg = json.loads(raw)
                         except Exception:
                             continue
-                        if 'result' in msg and msg.get('id') == sub_id_counter and 'method' not in msg:
-                            logger.info(f"✅ WSS subscription ack: subscription_id={msg.get('result')}")
+
+                        # Subscribe-ack: rebind request id -> actual subscription id.
+                        if 'result' in msg and 'method' not in msg:
+                            msg_id = msg.get('id')
+                            sub_id_returned = msg.get('result')
+                            if msg_id in sub_id_to_source and isinstance(sub_id_returned, int):
+                                src = sub_id_to_source.pop(msg_id)
+                                sub_id_to_source[sub_id_returned] = src
+                                logger.info(
+                                    f"✅ WSS subscription ack: {src.value} → sid={sub_id_returned}"
+                                )
+                            else:
+                                logger.info(f"✅ WSS subscription ack (unmapped): {msg}")
                             continue
 
                         if msg.get('method') == 'logsNotification':
                             self._stats['wss_notifications'] += 1
+                            params = msg.get('params') or {}
+                            sub_id = params.get('subscription')
+                            src = sub_id_to_source.get(sub_id)
+                            if src is None:
+                                # Notification for a subscription we don't recognize
+                                # (e.g., ack hasn't landed yet). Skip silently.
+                                continue
+
+                            program_id = PROGRAM_IDS[src]
+                            strict_tokens = STRICT_INIT_TOKENS_BY_SOURCE[src]
+
                             try:
-                                value = (msg.get('params') or {}).get('result', {}).get('value', {})
+                                value = params.get('result', {}).get('value', {})
                             except Exception:
                                 continue
-                            if not isinstance(value, dict):
+                            if not isinstance(value, dict) or value.get('err') is not None:
                                 continue
-
-                            # Skip failed transactions
-                            if value.get('err') is not None:
-                                continue
-
                             signature = value.get('signature')
                             logs = value.get('logs') or []
                             if not signature or not isinstance(logs, list):
                                 continue
 
-                            # Dedup against polling-path known_signatures (shared
-                            # state means we never re-process if both paths
-                            # happen to see the same tx)
-                            sig_set = self.known_signatures.get(PoolSource.RAYDIUM_V4)
+                            # Dedup per source against polling-path known_signatures
+                            sig_set = self.known_signatures.get(src)
                             if sig_set is None or signature in sig_set:
                                 continue
 
-                            # Phase 1.5 keyword pre-filter — fixes the "init" over-match bug.
-                            # logsSubscribe returns ANY tx that mentions the program; we need to
-                            # verify the program is actually INVOKED + a real init opcode appears
-                            # in the program's own log lines.
+                            # Strict two-gate filter — same shape as Raydium,
+                            # source-tunable via STRICT_INIT_TOKENS_BY_SOURCE.
                             log_blob = " ".join(str(line).lower() for line in logs)
-
-                            # Gate 1: program must actually be invoked, not just mentioned.
-                            program_invoke_marker = f"program {RAYDIUM_V4_PROGRAM_ID.lower()} invoke".lower()
+                            program_invoke_marker = f"program {program_id.lower()} invoke"
                             if program_invoke_marker not in log_blob:
                                 continue
-
-                            # Gate 2: init opcode must appear. Raydium V4 emits "initialize2"
-                            # in its init_pool path. Drop bare "init" (false positive) and the
-                            # overly-generic "initialize"; "initialize2" is the canonical opcode,
-                            # and "init_pc_amount" / "ray_log" are also strong signals.
-                            if not any(tok in log_blob for tok in STRICT_INIT_TOKENS):
+                            if not any(tok in log_blob for tok in strict_tokens):
                                 continue
 
-                            # Throttle log spam: one INFO per detected-candidate signature
                             logger.info(
-                                f"⚡ WSS init-candidate: sig={signature[:16]}... "
+                                f"⚡ WSS init-candidate [{src.value}]: sig={signature[:16]}... "
                                 f"({len(logs)} log lines)"
                             )
 
                             # Mark seen BEFORE the RPC call so concurrent
                             # retries don't double-fire if the call is slow.
-                            # Cap memory at _max_signatures.
                             sig_set.add(signature)
                             if len(sig_set) > self._max_signatures:
-                                # Drop oldest by rebuilding from the tail; Set
-                                # has no order so this is best-effort — keep
-                                # most-recently-added by converting to list,
-                                # slicing the tail, restoring. Same caveat as
-                                # polling path; keep behavior consistent.
                                 keep = list(sig_set)[-self._max_signatures:]
-                                self.known_signatures[PoolSource.RAYDIUM_V4] = set(keep)
+                                self.known_signatures[src] = set(keep)
 
-                            # Reuse the polling-path parser to extract
-                            # pool/mint addresses via getTransaction. This may
-                            # take 100-500ms but only fires on already-filtered
-                            # candidates.
                             try:
-                                pool_info = await self._check_pool_transaction(
-                                    signature, PoolSource.RAYDIUM_V4
-                                )
+                                pool_info = await self._check_pool_transaction(signature, src)
                             except Exception as e:
-                                logger.debug(f"WSS pool-check failed for {signature[:16]}: {e}")
+                                logger.debug(
+                                    f"WSS pool-check failed for {signature[:16]} [{src.value}]: {e}"
+                                )
                                 continue
-
                             if pool_info is None:
                                 continue
 
-                            # Build the same dict shape as the polling path so
-                            # downstream _evaluate_target / _check_filters
-                            # don't need a separate code path.
                             pool_dict = {
                                 'token_address': pool_info.token_address,
                                 'pair_address': pool_info.pair_address,
                                 'chain': 'solana',
-                                'source': PoolSource.RAYDIUM_V4.value,
+                                'source': src.value,
                                 # Wall-clock UTC ISO at emit-time — Phase 0
                                 # timing's parse_iso_to_perf_counter reads
                                 # this to anchor t_detect.
@@ -483,13 +510,12 @@ class SolanaListener:
 
                             self._stats['pools_detected'] += 1
                             self._stats['pools_queued'] += 1
-                            self._stats['by_source'][PoolSource.RAYDIUM_V4.value] += 1
-                            # Phase 1.5 counter so operators can A/B WSS vs polling
+                            self._stats['by_source'][src.value] += 1
                             self._stats['wss_pools_queued'] = self._stats.get('wss_pools_queued', 0) + 1
 
                             await self.new_pools_queue.put(pool_dict)
                             logger.info(
-                                f"🆕 [WSS RAYDIUM_V4] New pool: "
+                                f"🆕 [WSS {src.value.upper()}] New pool: "
                                 f"{pool_info.token_address[:12]}... "
                                 f"(pair: {(pool_info.pair_address or 'N/A')[:12]}...)"
                             )
