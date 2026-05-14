@@ -132,6 +132,7 @@ class SniperEngine:
             'high_tax_rejected': 0,
             'low_liquidity_rejected': 0,
             'passed_safety': 0,
+            'positions_synthetic_closed': 0,
             'last_stats_log': datetime.now()
         }
 
@@ -733,7 +734,18 @@ class SniperEngine:
                     # Get current price (simplified - in production use DEX price feeds)
                     current_price = await self._get_token_price(address, chain)
 
-                    if current_price <= 0:
+                    if current_price is None or current_price <= 0:
+                        # In DRY_RUN, new Pump.fun / freshly-launched mints have no
+                        # Jupiter/Birdeye/CoinGecko price yet, so the monitor loop
+                        # can never decide TP/SL and positions accumulate forever.
+                        # Force-retire so Phase 2 data accumulates. Live path is
+                        # unchanged: production should fix the price-fetch root cause
+                        # separately (Jupiter route quote or pool-derived price).
+                        dry = self.dry_run or os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
+                        if dry:
+                            await self._close_position_synthetic(
+                                data, reason='dry_run_no_price_feed'
+                            )
                         continue
 
                     # Calculate P&L
@@ -757,6 +769,62 @@ class SniperEngine:
                     logger.error(f"Error monitoring snipe {address}: {e}")
 
             await asyncio.sleep(1)
+
+    async def _close_position_synthetic(self, data: Dict, reason: str) -> None:
+        """Force-close a position in DRY_RUN when no price feed is available.
+
+        Sets exit_price = entry_price, profit_loss = 0, status = 'closed' so
+        the position retires from active_snipes. Used to prevent unbounded
+        accumulation when Pump.fun / freshly-launched mints have no price
+        feed; not used on the live path.
+        """
+        try:
+            target = data.get('target') or {}
+            token_address = target.get('token_address') if isinstance(target, dict) else None
+            if not token_address:
+                return
+
+            entry_price = data.get('entry_price', 0) or 0
+            trade_id = data.get('db_trade_id')
+            now = datetime.now()
+
+            # Mark in-memory before DB write so subsequent ticks skip it.
+            data['status'] = 'closed'
+            data['exit_price'] = entry_price
+            data['exit_reason'] = reason
+            data['exit_time'] = now
+
+            if trade_id and self.db_pool:
+                try:
+                    async with self.db_pool.acquire() as conn:
+                        await conn.execute(
+                            """
+                            UPDATE sniper_trades SET
+                                status = 'closed',
+                                exit_price = $1,
+                                exit_timestamp = $2,
+                                profit_loss = 0,
+                                profit_loss_pct = 0,
+                                exit_reason = $3
+                            WHERE trade_id = $4
+                            """,
+                            entry_price, now, reason, trade_id,
+                        )
+                except Exception as e:
+                    logger.debug(f"synthetic close db update failed: {e}")
+
+            # Retire from active_snipes so the monitor loop stops iterating it.
+            self.active_snipes.pop(token_address, None)
+
+            self._stats['positions_synthetic_closed'] = (
+                self._stats.get('positions_synthetic_closed', 0) + 1
+            )
+            logger.info(
+                f"🧹 Synthetic-close {token_address[:8]}... reason={reason} "
+                f"(no price feed; DRY_RUN cleanup)"
+            )
+        except Exception as e:
+            logger.error(f"_close_position_synthetic error: {e}")
 
     async def _get_token_price(self, token_address: str, chain: str) -> float:
         """Get current token price (simplified)"""
