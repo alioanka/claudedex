@@ -639,7 +639,11 @@ class SolanaListener:
             "method": "getTransaction",
             "params": [
                 signature,
-                {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}
+                {
+                    "encoding": "jsonParsed",
+                    "maxSupportedTransactionVersion": 0,
+                    "commitment": "confirmed",
+                }
             ]
         }
 
