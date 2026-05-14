@@ -448,16 +448,17 @@ class SniperEngine:
         return True
 
     async def _log_stats_if_needed(self):
-        """Log filter statistics every 5 minutes"""
+        """Log filter statistics every 1 minute (was 5; tightened for
+        faster dashboard refresh + Phase 2 iteration loop)."""
         now = datetime.now()
         elapsed = (now - self._stats['last_stats_log']).total_seconds()
 
-        if elapsed >= 300:  # 5 minutes
+        if elapsed >= 60:  # 1 minute
             total = self._stats['tokens_analyzed']
             passed = self._stats['passed_safety']
             pass_rate = (passed / total * 100) if total > 0 else 0
 
-            logger.info(f"📊 SNIPER STATS (Last 5 min): "
+            logger.info(f"📊 SNIPER STATS (Last 1 min): "
                        f"Analyzed: {total} | "
                        f"Passed: {passed} ({pass_rate:.1f}%) | "
                        f"Honeypots: {self._stats['honeypots_detected']} | "

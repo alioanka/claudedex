@@ -182,7 +182,7 @@ class SolanaListener:
             'rejected_filtered_mint': 0,    # mint in FILTERED_MINTS
             'rejected_bad_mint_format': 0,  # mint length not in [32, 44]
         }
-        self._log_interval = timedelta(minutes=5)
+        self._log_interval = timedelta(minutes=1)
         self._max_signatures = 500  # Per source
 
         # Session reuse for better performance
@@ -897,7 +897,7 @@ class SolanaListener:
             ]) or "No pools detected"
 
             logger.info(
-                f"📊 Solana Listener Stats (Last 5 min):\n"
+                f"📊 Solana Listener Stats (Last 1 min):\n"
                 f"   Polls: {polls} | API Calls: {api_calls} | Errors: {errors}\n"
                 f"   Pools Detected: {detected} | Queued: {queued}\n"
                 f"   WSS Rejections — "
