@@ -40,29 +40,74 @@ FACTORIES = {
     # Add Base/Arbitrum factories here as needed
 }
 
-# Well-known QUOTE tokens (mainnet). New pairs are almost always
-# NEW_TOKEN / QUOTE. PairCreated emits token0/token1 sorted by address;
-# token0 is often the quote (e.g. WETH=0xc02a...), token1 is the new
-# token we actually want to snipe. _select_target_token picks the
-# non-quote side; falls back to token0 if both/neither are well-known.
-EVM_QUOTE_TOKENS_LOWER = frozenset([
-    '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',  # WETH mainnet
-    '0xdac17f958d2ee523a2206206994597c13d831ec7',  # USDT mainnet
-    '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',  # USDC mainnet
-    '0x6b175474e89094c44da98b954eedeac495271d0f',  # DAI mainnet
-])
+# Well-known QUOTE tokens per chain. New pairs are almost always
+# NEW_TOKEN / QUOTE_TOKEN; PairCreated emits token0/token1 sorted
+# by address so the QUOTE side is sometimes token0. _select_target_token
+# picks the non-quote side using this table.
+#
+# Chain IDs: 1 = Ethereum, 56 = BSC, 137 = Polygon, 8453 = Base,
+# 42161 = Arbitrum, 10 = Optimism, 43114 = Avalanche.
+EVM_QUOTE_TOKENS_BY_CHAIN = {
+    1: frozenset([  # Ethereum mainnet
+        '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',  # WETH
+        '0xdac17f958d2ee523a2206206994597c13d831ec7',  # USDT
+        '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',  # USDC
+        '0x6b175474e89094c44da98b954eedeac495271d0f',  # DAI
+    ]),
+    56: frozenset([  # BSC
+        '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c',  # WBNB
+        '0x55d398326f99059ff775485246999027b3197955',  # USDT (BSC)
+        '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d',  # USDC (BSC)
+        '0xe9e7cea3dedca5984780bafc599bd69add087d56',  # BUSD
+    ]),
+    137: frozenset([  # Polygon
+        '0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270',  # WMATIC
+        '0xc2132d05d31c914a87c6611c10748aeb04b58e8f',  # USDT (Polygon)
+        '0x2791bca1f2de4661ed88a30c99a7a9449aa84174',  # USDC.e (Polygon)
+        '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359',  # USDC native (Polygon)
+        '0x8f3cf7ad23cd3cadbd9735aff958023239c6a063',  # DAI (Polygon)
+    ]),
+    8453: frozenset([  # Base
+        '0x4200000000000000000000000000000000000006',  # WETH (Base)
+        '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',  # USDC (Base)
+        '0x50c5725949a6f0c72e6c4a641f24049a917db0cb',  # DAI (Base)
+    ]),
+    42161: frozenset([  # Arbitrum
+        '0x82af49447d8a07e3bd95bd0d56f35241523fbab1',  # WETH (Arb)
+        '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9',  # USDT (Arb)
+        '0xaf88d065e77c8cc2239327c5edb3a432268e5831',  # USDC native (Arb)
+        '0xff970a61a04b1ca14834a43f5de4533ebddb5cc8',  # USDC.e (Arb)
+        '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1',  # DAI (Arb)
+    ]),
+    10: frozenset([  # Optimism
+        '0x4200000000000000000000000000000000000006',  # WETH (OP)
+        '0x94b008aa00579c1307b0ef2c499ad98a8ce58e58',  # USDT (OP)
+        '0x0b2c639c533813f4aa9d7837caf62653d097ff85',  # USDC (OP)
+        '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1',  # DAI (OP)
+    ]),
+    43114: frozenset([  # Avalanche
+        '0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7',  # WAVAX
+        '0x9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7',  # USDT (Avax)
+        '0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e',  # USDC native (Avax)
+    ]),
+}
+
+# Default fallback (mainnet) used when the connected chain isn't in the dict.
+_DEFAULT_QUOTE_TOKENS = EVM_QUOTE_TOKENS_BY_CHAIN[1]
 
 
-def _select_target_token(token0: str, token1: str) -> str:
-    """Return the non-quote side of a PairCreated event; the new token
-    we want to snipe rather than the WETH/USDC/USDT/DAI it pairs against."""
+def _select_target_token(token0: str, token1: str, chain_id: int = 1) -> str:
+    """Pick the non-quote side of a PairCreated event using the per-chain
+    quote-token set. Falls back to mainnet WETH/USDT/USDC/DAI if the chain
+    isn't in our table (better than returning token0 blindly)."""
+    quote_set = EVM_QUOTE_TOKENS_BY_CHAIN.get(chain_id, _DEFAULT_QUOTE_TOKENS)
     t0 = (token0 or '').lower()
     t1 = (token1 or '').lower()
-    if t0 in EVM_QUOTE_TOKENS_LOWER and t1 not in EVM_QUOTE_TOKENS_LOWER:
+    if t0 in quote_set and t1 not in quote_set:
         return token1
-    if t1 in EVM_QUOTE_TOKENS_LOWER and t0 not in EVM_QUOTE_TOKENS_LOWER:
+    if t1 in quote_set and t0 not in quote_set:
         return token0
-    return token0  # fallback — both or neither are quote tokens
+    return token0  # fallback when both/neither are well-known
 
 class EVMListener:
     def __init__(self, config: Dict):
@@ -71,6 +116,7 @@ class EVMListener:
         self.is_running = False
         self.is_configured = False  # Track if EVM is properly configured
         self.known_pairs = set()
+        self.chain_id: Optional[int] = None
 
         # Get RPC URL from config, PoolEngine (sync ctor), .env preserved as ultimate fallback
         self.rpc_url = (
@@ -118,7 +164,11 @@ class EVMListener:
             self.w3 = Web3(Web3.HTTPProvider(self.rpc_url, request_kwargs={'timeout': 10}))
             if self.w3.is_connected():
                 chain_id = self.w3.eth.chain_id
-                chain_name = {1: 'Ethereum', 56: 'BSC', 8453: 'Base', 42161: 'Arbitrum'}.get(chain_id, f'Chain {chain_id}')
+                self.chain_id = chain_id  # stored for _select_target_token
+                chain_name = {
+                    1: 'Ethereum', 56: 'BSC', 137: 'Polygon', 8453: 'Base',
+                    42161: 'Arbitrum', 10: 'Optimism', 43114: 'Avalanche',
+                }.get(chain_id, f'Chain {chain_id}')
                 logger.info(f"✅ Connected to EVM Node ({chain_name}): {self.rpc_url[:50]}...")
                 self.is_configured = True
             else:
@@ -247,7 +297,7 @@ class EVMListener:
                         bn_raw = log.get('blockNumber')
                         block_number = int(bn_raw, 16) if isinstance(bn_raw, str) else bn_raw
                         target = {
-                            'token_address': _select_target_token(parsed['token0'], parsed['token1']),
+                            'token_address': _select_target_token(parsed['token0'], parsed['token1'], self.chain_id or 1),
                             'pair_address': pair_addr,
                             'chain': 'ethereum',
                             'block_number': block_number,
@@ -309,7 +359,7 @@ class EVMListener:
                     self.known_pairs.add(pair_address['pair'])
 
                     target = {
-                        'token_address': _select_target_token(pair_address['token0'], pair_address['token1']),
+                        'token_address': _select_target_token(pair_address['token0'], pair_address['token1'], self.chain_id or 1),
                         'pair_address': pair_address['pair'],
                         'chain': 'ethereum',
                         'block_number': log['blockNumber'],
