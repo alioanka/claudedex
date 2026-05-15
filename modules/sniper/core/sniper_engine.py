@@ -123,6 +123,9 @@ class SniperEngine:
         self.test_mode_min_liquidity = 10.0  # Very relaxed for test mode
         self.safety_check_enabled = True
         self.test_mode = False  # Relaxed safety for testing
+        # Emergency brake against runaway position accumulation
+        # (DRY_RUN stress test hit 10k+ positions in 22h).
+        self.max_active_positions = 500
 
         # Statistics tracking for rate-limited logging
         self._stats = {
@@ -133,6 +136,8 @@ class SniperEngine:
             'low_liquidity_rejected': 0,
             'passed_safety': 0,
             'positions_synthetic_closed': 0,
+            'capped_rejections': 0,
+            'last_capped_log': datetime.now(),
             'last_stats_log': datetime.now()
         }
 
@@ -211,6 +216,8 @@ class SniperEngine:
                             self.take_profit_pct = float(val) if val else 50.0
                         elif key == 'stop_loss_pct':
                             self.stop_loss_pct = float(val) if val else 20.0
+                        elif key == 'max_active_positions':
+                            self.max_active_positions = int(val) if val else 500
 
             # Check for DRY_RUN mode
             self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
@@ -302,6 +309,26 @@ class SniperEngine:
         )
         target['_timing'] = timing
         try:
+            # 0. Active-positions cap (emergency brake against runaway accumulation).
+            # Gate here so we don't pay safety-check cost when already at cap.
+            if len(self.active_snipes) >= self.max_active_positions:
+                self._stats['capped_rejections'] = self._stats.get('capped_rejections', 0) + 1
+                now = datetime.now()
+                if now - self._stats.get('last_capped_log', now) >= timedelta(minutes=1):
+                    logger.warning(
+                        f"🛑 SNIPER CAP: {len(self.active_snipes)}/{self.max_active_positions} "
+                        f"active positions — rejected {self._stats['capped_rejections']} candidates "
+                        f"in last minute"
+                    )
+                    self._stats['last_capped_log'] = now
+                    self._stats['capped_rejections'] = 0
+                timing.outcome = 'rejected_capped'
+                try:
+                    timing.emit()
+                except Exception:
+                    pass
+                return
+
             # 1. Check Filters (Liquidity, Tax, Honeypot, Safety)
             if not await self._check_filters(target, chain_type):
                 # _check_filters sets timing.outcome (rejected_filter
@@ -479,6 +506,9 @@ class SniperEngine:
                 'high_tax_rejected': 0,
                 'low_liquidity_rejected': 0,
                 'passed_safety': 0,
+                'positions_synthetic_closed': 0,
+                'capped_rejections': 0,
+                'last_capped_log': now,
                 'last_stats_log': now
             }
 
@@ -526,6 +556,9 @@ class SniperEngine:
                 0,
                 snapshot['pools_evaluated'] - snapshot['pools_rejected']
             )
+            # Active-positions cap visibility for the dashboard
+            snapshot['active_positions'] = len(self.active_snipes)
+            snapshot['max_active_positions'] = self.max_active_positions
 
             import json as _json
             async with self.db_pool.acquire() as conn:
@@ -565,6 +598,22 @@ class SniperEngine:
         timing = data.get('target', {}).get('_timing')
         if timing:
             timing.stamp('t_broadcast_start')
+
+        # Belt-and-suspenders cap check: pending_targets can fill up between
+        # the _evaluate_target gate and broadcast. Skip silently (no DB log,
+        # no timing emit) — _evaluate_target already accounted the rejection.
+        if len(self.active_snipes) >= self.max_active_positions:
+            data['status'] = 'failed'
+            data['error'] = 'capped'
+            if timing:
+                timing.stamp('t_broadcast_done')
+                timing.outcome = 'rejected_capped'
+                try:
+                    timing.emit()
+                except Exception:
+                    pass
+            self.pending_targets.pop(token_address, None)
+            return
 
         logger.info(f"🔫 EXECUTING SNIPE: {token_address} on {chain}")
         data['status'] = 'buying'
