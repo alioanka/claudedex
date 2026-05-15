@@ -205,9 +205,29 @@ class SolanaListener:
             # vs falling back to wall-clock. Visible via sniper_runtime_stats.
             'block_time_anchored': 0,
             'block_time_missing': 0,
+            # WSS concurrency observability — peak in-flight and total
+            # dispatched lets us see semaphore saturation. Dashboard
+            # surfaces these via sniper_runtime_stats.
+            'wss_dispatched': 0,
+            'wss_inflight_peak': 0,
         }
         self._log_interval = timedelta(minutes=1)
         self._max_signatures = 500  # Per source
+
+        # WSS concurrency. The hot WSS loop used to block on each
+        # candidate's getTransaction (3-13s confirmed commit). That
+        # serialized processing inflated the rpc_receipt stamp on
+        # backlogged messages because the loop couldn't service the next
+        # ws message until the prior one's RPC roundtrip returned. We
+        # now stamp rpc_receipt at message arrival, then dispatch the
+        # RPC + decode work into a separate task — bounded by a
+        # semaphore so a burst doesn't fan out unbounded RPC calls.
+        # Default 16 in-flight; tune via env.
+        self._wss_max_concurrency = int(
+            os.getenv('SNIPER_WSS_CONCURRENCY', '16')
+        )
+        self._wss_sem: Optional[asyncio.Semaphore] = None  # lazy init in WSS task
+        self._wss_inflight: Set[asyncio.Task] = set()
 
         # Session reuse for better performance
         self._session: Optional[aiohttp.ClientSession] = None
@@ -496,10 +516,11 @@ class SolanaListener:
                             if not any(tok in log_blob for tok in strict_tokens):
                                 continue
 
-                            # Stamp t_rpc_receipt NOW — before the
-                            # getTransaction commitment wait. The delta from
-                            # block_time to this point is the pure detection
-                            # latency we need to isolate from RPC overhead.
+                            # Stamp t_rpc_receipt NOW — before any
+                            # downstream work. Earlier, the rpc_receipt
+                            # stamp drifted because the WSS loop awaited
+                            # getTransaction inline; we now stamp here
+                            # and dispatch the slow RPC work to a task.
                             rpc_receipt_perf = time.perf_counter()
 
                             logger.info(
@@ -514,80 +535,29 @@ class SolanaListener:
                                 keep = list(sig_set)[-self._max_signatures:]
                                 self.known_signatures[src] = set(keep)
 
-                            try:
-                                pool_info = await self._check_pool_transaction(signature, src)
-                            except Exception as e:
-                                logger.debug(
-                                    f"WSS pool-check failed for {signature[:16]} [{src.value}]: {e}"
-                                )
-                                continue
-                            if pool_info is None:
-                                continue
-
-                            # Anchor t_detect on the on-chain block-time so
-                            # the WSS-vs-polling latency comparison reflects
-                            # real detection wall-time, not the listener's
-                            # queue-time. block_time comes from
-                            # getTransaction.result.blockTime (Unix epoch sec).
-                            # EVM listener still uses wall-clock pending a
-                            # separate eth.get_block(blockNumber).timestamp
-                            # enhancement (out of scope here).
-                            block_time = (pool_info.metadata or {}).get('block_time')
-                            block_iso = _block_time_to_iso(block_time)
-                            ts = block_iso or datetime.utcnow().isoformat()
-
-                            # Log staleness so operators can see how fresh
-                            # WSS notifications are. Sub-second is healthy;
-                            # multi-second suggests RPC lag.
-                            if block_iso:
-                                try:
-                                    from datetime import timezone
-                                    bt_age = (datetime.now(timezone.utc) - datetime.fromtimestamp(int(block_time), tz=timezone.utc)).total_seconds()
-                                    if bt_age > 5:
-                                        logger.debug(f"WSS block-time age {bt_age:.1f}s for {signature[:16]}...")
-                                except Exception:
-                                    pass
-
-                            if block_iso:
-                                self._stats['block_time_anchored'] = self._stats.get('block_time_anchored', 0) + 1
-                            else:
-                                self._stats['block_time_missing'] = self._stats.get('block_time_missing', 0) + 1
-
-                            pool_dict = {
-                                'token_address': pool_info.token_address,
-                                'pair_address': pool_info.pair_address,
-                                'chain': 'solana',
-                                'source': src.value,
-                                # block-time-anchored ISO when available,
-                                # else wall-clock fallback. SnipeTimingContext.
-                                # parse_iso_to_perf_counter consumes this.
-                                'timestamp': ts,
-                                'signature': signature,
-                                'base_liquidity': pool_info.base_liquidity,
-                                'metadata': dict(pool_info.metadata or {}, **{
-                                    'detection_path': 'wss',
-                                    'block_time_anchored': bool(block_iso),
-                                    # perf_counter timestamp captured at
-                                    # WSS notification arrival; engine
-                                    # stamps onto SnipeTimingContext.
-                                    'rpc_receipt_perf': rpc_receipt_perf,
-                                }),
-                            }
-
-                            self._stats['pools_detected'] += 1
-                            self._stats['pools_queued'] += 1
-                            self._stats['by_source'][src.value] += 1
-                            self._stats['wss_pools_queued'] = self._stats.get('wss_pools_queued', 0) + 1
-
-                            await self.new_pools_queue.put(pool_dict)
-                            logger.info(
-                                f"🆕 [WSS {src.value.upper()}] New pool: "
-                                f"{pool_info.token_address[:12]}... "
-                                f"(pair: {(pool_info.pair_address or 'N/A')[:12]}...)"
+                            # Dispatch the slow getTransaction + decode
+                            # off the hot WSS loop so the loop can stamp
+                            # the NEXT message's rpc_receipt immediately
+                            # on arrival. Semaphore caps in-flight RPC
+                            # calls so a burst can't fan out unbounded.
+                            if self._wss_sem is None:
+                                self._wss_sem = asyncio.Semaphore(self._wss_max_concurrency)
+                            task = asyncio.create_task(
+                                self._process_wss_candidate(signature, src, rpc_receipt_perf)
                             )
+                            self._wss_inflight.add(task)
+                            task.add_done_callback(self._wss_inflight.discard)
+                            self._stats['wss_dispatched'] = self._stats.get('wss_dispatched', 0) + 1
+                            inflight_now = len(self._wss_inflight)
+                            if inflight_now > self._stats.get('wss_inflight_peak', 0):
+                                self._stats['wss_inflight_peak'] = inflight_now
 
             except asyncio.CancelledError:
                 logger.info("WSS listener cancelled")
+                # Cancel any in-flight candidate tasks so we don't leak
+                # them across reconnects / shutdown.
+                for t in list(self._wss_inflight):
+                    t.cancel()
                 return
             except Exception as e:
                 logger.warning(
@@ -599,6 +569,96 @@ class SolanaListener:
                 except asyncio.CancelledError:
                     return
                 backoff = min(backoff * 2, WSS_BACKOFF_MAX_SECONDS)
+
+    async def _process_wss_candidate(
+        self,
+        signature: str,
+        src: PoolSource,
+        rpc_receipt_perf: float,
+    ) -> None:
+        """Off-loop processing of a WSS init-candidate.
+
+        Runs under self._wss_sem so concurrent in-flight RPC calls are
+        bounded. The hot WSS loop already stamped rpc_receipt_perf at
+        message arrival; we propagate it untouched into pool_dict so the
+        engine's SnipeTimingContext sees the true wire-arrival time, not
+        the post-dispatch wall-clock. Errors here never propagate; they
+        are logged at debug and the candidate is dropped.
+        """
+        try:
+            assert self._wss_sem is not None  # set by caller before dispatch
+            async with self._wss_sem:
+                try:
+                    pool_info = await self._check_pool_transaction(signature, src)
+                except Exception as e:
+                    logger.debug(
+                        f"WSS pool-check failed for {signature[:16]} [{src.value}]: {e}"
+                    )
+                    return
+                if pool_info is None:
+                    return
+
+                # Anchor t_detect on the on-chain block-time so the
+                # WSS-vs-polling latency comparison reflects real
+                # detection wall-time, not queue time. block_time comes
+                # from getTransaction.result.blockTime (Unix epoch sec).
+                block_time = (pool_info.metadata or {}).get('block_time')
+                block_iso = _block_time_to_iso(block_time)
+                ts = block_iso or datetime.utcnow().isoformat()
+
+                if block_iso:
+                    try:
+                        from datetime import timezone
+                        bt_age = (
+                            datetime.now(timezone.utc)
+                            - datetime.fromtimestamp(int(block_time), tz=timezone.utc)
+                        ).total_seconds()
+                        if bt_age > 5:
+                            logger.debug(
+                                f"WSS block-time age {bt_age:.1f}s for {signature[:16]}..."
+                            )
+                    except Exception:
+                        pass
+
+                if block_iso:
+                    self._stats['block_time_anchored'] = self._stats.get('block_time_anchored', 0) + 1
+                else:
+                    self._stats['block_time_missing'] = self._stats.get('block_time_missing', 0) + 1
+
+                pool_dict = {
+                    'token_address': pool_info.token_address,
+                    'pair_address': pool_info.pair_address,
+                    'chain': 'solana',
+                    'source': src.value,
+                    'timestamp': ts,
+                    'signature': signature,
+                    'base_liquidity': pool_info.base_liquidity,
+                    'metadata': dict(pool_info.metadata or {}, **{
+                        'detection_path': 'wss',
+                        'block_time_anchored': bool(block_iso),
+                        'rpc_receipt_perf': rpc_receipt_perf,
+                    }),
+                }
+
+                self._stats['pools_detected'] += 1
+                self._stats['pools_queued'] += 1
+                self._stats['by_source'][src.value] += 1
+                self._stats['wss_pools_queued'] = self._stats.get('wss_pools_queued', 0) + 1
+
+                await self.new_pools_queue.put(pool_dict)
+                logger.info(
+                    f"🆕 [WSS {src.value.upper()}] New pool: "
+                    f"{pool_info.token_address[:12]}... "
+                    f"(pair: {(pool_info.pair_address or 'N/A')[:12]}...)"
+                )
+        except asyncio.CancelledError:
+            # Normal shutdown — don't log noise.
+            raise
+        except Exception as e:
+            logger.debug(
+                f"WSS candidate task failed for {signature[:16]} [{src.value}]: "
+                f"{type(e).__name__}: {e}"
+            )
 
     async def _poll_source(self, source: PoolSource):
         """Poll a specific AMM source for new pools"""

@@ -58,6 +58,24 @@ re-architecture:
   rendered on `/sniper/performance` as a highlighted yellow card.
   Historical rows (pre-marker) show "—".
 
+WSS concurrency: first VPS run showed `detect_to_rpc_receipt_ms`
+~1.9s for WSS — not the expected ~200ms. Root cause: the WSS loop
+awaited `_check_pool_transaction` inline, serializing all incoming
+notifications behind the prior message's 3-13s commitment wait. The
+`rpc_receipt` stamp of message N+1 was therefore taken AFTER message
+N's getTransaction had completed, contaminating the metric with
+queue-depth delay.
+
+Fix: `_process_wss_candidate` runs the slow `_check_pool_transaction`
++ decode + queue work as an `asyncio.create_task()` bounded by a
+`asyncio.Semaphore(SNIPER_WSS_CONCURRENCY, default=16)`. The hot
+WSS loop now stamps `rpc_receipt_perf`, logs the candidate, adds
+to `sig_set`, and dispatches — never blocks on RPC. In-flight task
+peak is exposed via `sniper_runtime_stats.solana_listener.wss_inflight_peak`
+so operators can see semaphore saturation; total dispatched via
+`wss_dispatched`. Tune `SNIPER_WSS_CONCURRENCY` upward if the peak
+hits the cap during normal bursts (be aware of RPC rate limits).
+
 Before going LIVE (not DRY_RUN), one DB-ops flip still required:
 1. Re-enable safety filter: `safety_check_enabled=true` in DB (was
    disabled for Phase 2 volume measurement). Engine now REFUSES to
