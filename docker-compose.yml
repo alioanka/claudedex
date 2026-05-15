@@ -43,6 +43,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
 
   redis:
     image: redis:7-alpine
@@ -58,6 +63,11 @@ services:
       - "127.0.0.1:6379:6379"
     networks:
       - trading-network
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
 
   trading-bot:
     build:
@@ -88,6 +98,12 @@ services:
       - ./config:/app/config
       - ./models:/app/models
       - ./.encryption_key:/app/.encryption_key:ro
+      # Mounting .env as a volume overrides the version baked into the
+      # image at build time. Edit .env on host then either:
+      #   - `docker compose restart trading-bot` (re-runs Python with new env)
+      #   - `docker compose down && docker compose up -d` (clean recycle)
+      # NOT required: rebuild (`--build`). Only needed for Python code changes.
+      - ./.env:/app/.env:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,6 +111,11 @@ services:
         condition: service_started
     networks:
       - trading-network
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
 
 # Docker secrets - stored in files, not in git
 secrets:
