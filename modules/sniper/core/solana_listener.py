@@ -13,6 +13,7 @@ Uses credit-efficient polling with smart filtering.
 
 import logging
 import asyncio
+import time
 from typing import List, Dict, Optional, Set, Tuple
 import aiohttp
 import json
@@ -495,6 +496,12 @@ class SolanaListener:
                             if not any(tok in log_blob for tok in strict_tokens):
                                 continue
 
+                            # Stamp t_rpc_receipt NOW — before the
+                            # getTransaction commitment wait. The delta from
+                            # block_time to this point is the pure detection
+                            # latency we need to isolate from RPC overhead.
+                            rpc_receipt_perf = time.perf_counter()
+
                             logger.info(
                                 f"⚡ WSS init-candidate [{src.value}]: sig={signature[:16]}... "
                                 f"({len(logs)} log lines)"
@@ -560,6 +567,10 @@ class SolanaListener:
                                 'metadata': dict(pool_info.metadata or {}, **{
                                     'detection_path': 'wss',
                                     'block_time_anchored': bool(block_iso),
+                                    # perf_counter timestamp captured at
+                                    # WSS notification arrival; engine
+                                    # stamps onto SnipeTimingContext.
+                                    'rpc_receipt_perf': rpc_receipt_perf,
                                 }),
                             }
 
@@ -602,6 +613,14 @@ class SolanaListener:
             if not signatures:
                 logger.debug(f"No signatures returned for {source.value}")
                 return
+
+            # Stamp t_rpc_receipt at batch-return-time. All signatures in
+            # this batch share the same value; the per-signature stale-
+            # ness comes from comparing each block_time against this
+            # single arrival moment. This is what makes polling look
+            # slower than WSS in the A/B even with identical commitment
+            # waits downstream.
+            rpc_receipt_perf = time.perf_counter()
 
             new_pools_found = 0
 
@@ -651,6 +670,11 @@ class SolanaListener:
                         'metadata': dict(pool_info.metadata or {}, **{
                             'detection_path': 'polling',
                             'block_time_anchored': bool(block_iso),
+                            # All signatures in this polling batch share
+                            # the same rpc_receipt — the batch arrival
+                            # time. Per-signature staleness is derived
+                            # from each block_time vs this single value.
+                            'rpc_receipt_perf': rpc_receipt_perf,
                         }),
                     }
 

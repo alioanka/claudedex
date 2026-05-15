@@ -325,10 +325,19 @@ class SniperEngine:
     async def _evaluate_target(self, target: Dict, chain_type: str):
         """Evaluate if a new token meets sniping criteria"""
         token_address = target.get('token_address', '')
+        # t_rpc_receipt is stamped by the listener BEFORE getTransaction
+        # commitment-wait. Read from either top-level (EVM listener) or
+        # nested metadata (Solana listener) so both detection paths
+        # surface the WSS-vs-polling staleness delta.
+        rpc_receipt_perf = (
+            target.get('rpc_receipt_perf')
+            or target.get('metadata', {}).get('rpc_receipt_perf')
+        )
         timing = SnipeTimingContext(
             token_address=token_address or '',
             chain=chain_type,
             t_detect=parse_iso_to_perf_counter(target.get('timestamp', '')),
+            t_rpc_receipt=rpc_receipt_perf,
         )
         target['_timing'] = timing
         try:

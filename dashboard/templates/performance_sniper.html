@@ -1066,8 +1066,18 @@ setInterval(loadPerformance, 30000);
         );
         body.innerHTML = ordered.map(function(path) {
             const m = paths[path];
+            // Detection-staleness — headline WSS-vs-polling metric.
+            // Falls back to "—" for rows captured before t_rpc_receipt
+            // marker existed.
+            const detectStale = (m.p50_detect_to_rpc_receipt_ms != null)
+                ? ('<div class="path-detect-stale" style="color:#fbbf24;font-weight:600;">' +
+                   fmtMs(m.p50_detect_to_rpc_receipt_ms) +
+                   ' <small style="font-size:0.7em;color:var(--text-secondary);font-weight:400;">p50 detect→rpc (' +
+                   (m.rpc_receipt_sample_count || 0) + ' samples)</small></div>')
+                : '';
             return '<div class="timing-ab-card path-' + path + '">' +
                 '<div class="path-name">' + path + ' &middot; ' + (m.sample_count || 0) + ' snipes</div>' +
+                detectStale +
                 '<div class="path-p50">' + fmtMs(m.p50_total_ms) + ' <small style="font-size:0.7em;color:var(--text-secondary);">p50 total</small></div>' +
                 '<div class="path-meta">p95 total: ' + fmtMs(m.p95_total_ms) +
                 ' &middot; safety p50: ' + fmtMs(m.p50_safety_ms) +

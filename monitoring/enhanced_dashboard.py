@@ -7680,7 +7680,18 @@ class DashboardEndpoints:
                     ) AS p50_safety_ms,
                     percentile_cont(0.5) WITHIN GROUP (
                         ORDER BY (metadata->'timing'->>'broadcast_ms')::float
-                    ) AS p50_broadcast_ms
+                    ) AS p50_broadcast_ms,
+                    -- Detection-staleness: block_time → process receipt.
+                    -- Headline WSS-vs-polling A/B metric, isolated from
+                    -- the getTransaction commitment wait that previously
+                    -- dominated total_ms.
+                    percentile_cont(0.5) WITHIN GROUP (
+                        ORDER BY (metadata->'timing'->>'detect_to_rpc_receipt_ms')::float
+                    ) AS p50_detect_to_rpc_receipt_ms,
+                    percentile_cont(0.95) WITHIN GROUP (
+                        ORDER BY (metadata->'timing'->>'detect_to_rpc_receipt_ms')::float
+                    ) AS p95_detect_to_rpc_receipt_ms,
+                    COUNT(metadata->'timing'->>'detect_to_rpc_receipt_ms') AS rpc_receipt_sample_count
                 FROM sniper_trades
                 WHERE metadata->'timing' IS NOT NULL
                   AND (metadata->'timing'->>'total_ms') IS NOT NULL
@@ -7698,6 +7709,18 @@ class DashboardEndpoints:
                     'p95_total_ms': float(row['p95_total_ms']) if row['p95_total_ms'] is not None else None,
                     'p50_safety_ms': float(row['p50_safety_ms']) if row['p50_safety_ms'] is not None else None,
                     'p50_broadcast_ms': float(row['p50_broadcast_ms']) if row['p50_broadcast_ms'] is not None else None,
+                    # Detection-staleness — headline WSS-vs-polling metric.
+                    # Will be None for historical rows captured before the
+                    # t_rpc_receipt marker was added.
+                    'p50_detect_to_rpc_receipt_ms': (
+                        float(row['p50_detect_to_rpc_receipt_ms'])
+                        if row['p50_detect_to_rpc_receipt_ms'] is not None else None
+                    ),
+                    'p95_detect_to_rpc_receipt_ms': (
+                        float(row['p95_detect_to_rpc_receipt_ms'])
+                        if row['p95_detect_to_rpc_receipt_ms'] is not None else None
+                    ),
+                    'rpc_receipt_sample_count': int(row['rpc_receipt_sample_count'] or 0),
                 }
             result['has_data'] = len(result['paths']) > 0
 

@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from datetime import datetime
 from typing import List, Dict, Optional
 from web3 import Web3
@@ -296,6 +297,11 @@ class EVMListener:
 
                         bn_raw = log.get('blockNumber')
                         block_number = int(bn_raw, 16) if isinstance(bn_raw, str) else bn_raw
+                        # EVM has no commitment-wait penalty (the log
+                        # itself carries everything we need), but stamp
+                        # rpc_receipt_perf anyway for cross-chain A/B
+                        # symmetry with Solana.
+                        rpc_receipt_perf = time.perf_counter()
                         target = {
                             'token_address': _select_target_token(parsed['token0'], parsed['token1'], self.chain_id or 1),
                             'pair_address': pair_addr,
@@ -303,6 +309,7 @@ class EVMListener:
                             'block_number': block_number,
                             'timestamp': datetime.utcnow().isoformat(),
                             'detection_path': 'wss',
+                            'rpc_receipt_perf': rpc_receipt_perf,
                         }
                         self._stats['wss_pairs_queued'] += 1
                         try:
@@ -352,6 +359,9 @@ class EVMListener:
                 'toBlock': 'latest',
                 'topics': [event_signature_hash]
             })
+            # All logs in this batch share the same rpc_receipt: the
+            # get_logs response moment.
+            rpc_receipt_perf = time.perf_counter()
 
             for log in logs:
                 pair_address = self._parse_log(log)
@@ -365,6 +375,7 @@ class EVMListener:
                         'block_number': log['blockNumber'],
                         'timestamp': datetime.utcnow().isoformat(),
                         'detection_path': 'polling',
+                        'rpc_receipt_perf': rpc_receipt_perf,
                     }
                     self._stats['polling_pairs_emitted'] += 1
                     new_pairs.append(target)

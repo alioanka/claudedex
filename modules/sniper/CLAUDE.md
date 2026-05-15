@@ -34,12 +34,19 @@ DRY_RUN data over 87,747 trades validates:
   propagated to `sniper_trades.metadata.block_time_anchored` so the
   underlying timing is SQL-filterable.
 
-Per-event latency advantage is **unverifiable** with current timing
-markers: `getTransaction` commitment='confirmed' wait (~3-13s) dominates
-end-to-end measurement (`detect→broadcast_done`). Real detection-time
-delta (~100ms WSS vs ~7.5s polling avg cycle) is buried under the
-RPC-confirmation noise. Isolating it requires re-anchoring t_detect on
-RPC-receipt time, not wall-clock — separate future work.
+Per-event latency advantage is now **verifiable** via the
+`detect_to_rpc_receipt_ms` marker shipped with the timing
+re-architecture:
+- `t_rpc_receipt` is stamped by each listener at notification arrival
+  (`logsSubscribe` push for WSS, `getSignaturesForAddress` / `eth_getLogs`
+  response for polling) BEFORE any `getTransaction` commitment wait.
+- Delta `(t_rpc_receipt - t_detect)` = pure detection staleness
+  (block production → process receipt), independent of the 3-13s
+  RPC confirmation wait that previously dominated `total_ms`.
+- Surfaced in `sniper_trades.metadata.timing.detect_to_rpc_receipt_ms`,
+  aggregated p50/p95 per detection_path at `/api/sniper/timing`, and
+  rendered on `/sniper/performance` as a highlighted yellow card.
+  Historical rows (pre-marker) show "—".
 
 Before going LIVE (not DRY_RUN), one DB-ops flip still required:
 1. Re-enable safety filter: `safety_check_enabled=true` in DB (was
