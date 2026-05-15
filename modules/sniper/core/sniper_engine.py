@@ -251,6 +251,23 @@ class SniperEngine:
         except Exception as e:
             logger.error(f"Error loading sniper settings: {e}")
 
+        # LIVE-trading safety guard: refuse to start sniping with the
+        # safety filter disabled while not in DRY_RUN. Phase 2 turned
+        # safety_check_enabled off to measure raw volume; leaving it
+        # off on a LIVE flip would buy honeypots indiscriminately.
+        # Kept OUTSIDE the try/except so the RuntimeError actually
+        # propagates and halts the subprocess instead of being logged.
+        if not self.dry_run and not self.safety_check_enabled:
+            logger.critical(
+                "🛑 REFUSING TO RUN: safety_check_enabled=false while DRY_RUN=false. "
+                "Run this in DB to re-enable before going live: "
+                "UPDATE config_settings SET value='true' WHERE config_type='sniper_config' "
+                "AND key='safety_check_enabled';"
+            )
+            raise RuntimeError(
+                "Sniper refused to start: safety_check_enabled=false in LIVE mode"
+            )
+
     async def run(self):
         """Main loop"""
         self.is_running = True
@@ -751,6 +768,13 @@ class SniperEngine:
                                 # in /api/sniper/timing groupings.
                                 data.get('target', {}).get('detection_path')
                                 or data.get('target', {}).get('metadata', {}).get('detection_path')
+                            ),
+                            # Propagate block-time anchoring flag so the DB
+                            # is SQL-filterable. Listener already stamps it
+                            # into target['metadata'] on WSS detection.
+                            'block_time_anchored': bool(
+                                data.get('target', {}).get('metadata', {}).get('block_time_anchored')
+                                or data.get('target', {}).get('block_time_anchored')
                             ),
                             'timing': (data.get('target', {}).get('_timing').to_metadata_dict()
                                        if data.get('target', {}).get('_timing') is not None

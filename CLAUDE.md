@@ -6,7 +6,7 @@ Multi-strategy crypto trading bot. Each strategy runs as an independent subproce
 | DEX | `modules/dex_trading/` | `main_dex.py` | AMBER → GREEN candidate (P1-04 pool_engine sweep closed in a21ec41) |
 | ARBITRAGE | `modules/arbitrage/` | `main_arbitrage.py` | AMBER → GREEN candidate (spatial; triangular path explicitly gated by atomic-receiver contract — scope cut, not defect) |
 | SOLANA | `modules/solana_trading/` | `main_solana.py` | AMBER → GREEN candidate (Jupiter spot; MB-15 Drift is a toggleable feature, not a blocker) |
-| SNIPER | `modules/sniper/` | `main_sniper.py` | AMBER → GREEN candidate (Phase 2 WSS volume = 2.6× polling over 22h/87k trades; per-event latency unverifiable under getTransaction commitment wait; pre-LIVE remaining: re-enable safety filter — active-positions cap + Jupiter quote price fallback shipped) |
+| SNIPER | `modules/sniper/` | `main_sniper.py` | AMBER → GREEN candidate (Phase 2 WSS volume = 2.6× polling over 22h/87k trades; per-event latency unverifiable under getTransaction commitment wait; pre-LIVE fixes shipped — active-positions cap + Jupiter quote price fallback + block_time_anchored DB propagation + LIVE-mode safety-filter startup guard; final step: flip safety_check_enabled=true in DB) |
 | FUTURES | `modules/futures_trading/` | `main_futures.py` | AMBER → GREEN candidate (Bybit V5 surface complete; reconcile + position normalizer + restart-cap detection shipped) |
 | AI | `modules/ai_analysis/` | `main_ai.py` | AMBER → GREEN candidate (executor delegation + secrets + prompt-injection sanitization closed) |
 | COPY_TRADING | `modules/copy_trading/` | `main_copy.py` | AMBER → GREEN candidate (MB-22..MB-25, BaseModule conversion, pool_engine + secrets all closed) |

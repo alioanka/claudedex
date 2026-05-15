@@ -30,9 +30,9 @@ DRY_RUN data over 87,747 trades validates:
 - **Pipeline**: end-to-end functional. No algorithmic failures.
 - **Synthetic-close fallback**: 84k positions retired cleanly via
   `dry_run_no_price_feed` path; no orphan accumulation post-fix.
-- **Block-time anchoring**: works at listener layer. Flag propagation
-  to `sniper_trades.metadata` pending (5-line follow-up fix; underlying
-  timing IS anchored, just not SQL-filterable).
+- **Block-time anchoring**: works at listener layer. Flag now
+  propagated to `sniper_trades.metadata.block_time_anchored` so the
+  underlying timing is SQL-filterable.
 
 Per-event latency advantage is **unverifiable** with current timing
 markers: `getTransaction` commitment='confirmed' wait (~3-13s) dominates
@@ -41,9 +41,12 @@ delta (~100ms WSS vs ~7.5s polling avg cycle) is buried under the
 RPC-confirmation noise. Isolating it requires re-anchoring t_detect on
 RPC-receipt time, not wall-clock — separate future work.
 
-Before going LIVE (not DRY_RUN), one production-grade fix still required:
+Before going LIVE (not DRY_RUN), one DB-ops flip still required:
 1. Re-enable safety filter: `safety_check_enabled=true` in DB (was
-   disabled for Phase 2 volume measurement).
+   disabled for Phase 2 volume measurement). Engine now REFUSES to
+   start if `DRY_RUN=false` and `safety_check_enabled=false` — see
+   `_load_settings` LIVE-trading safety guard — so a forgotten flip
+   raises `RuntimeError` instead of silently buying honeypots.
 
 Shipped pre-LIVE fixes:
 - Active-positions cap (`max_active_positions`, default 500, seeded by
@@ -59,6 +62,13 @@ Shipped pre-LIVE fixes:
   `jupiter_quote_fallback_hits` counter exposed in runtime stats.
   Pool-derived fallback (read AMM reserves directly) deferred — Jupiter
   quote covers Pump.fun and Raydium V4 launches in practice.
+- Block-time anchoring flag (`block_time_anchored`) propagated through
+  `_log_snipe_to_db` into `sniper_trades.metadata` JSONB. Detection
+  paths anchored via on-chain `blockTime` are now SQL-filterable.
+- LIVE-trading safety guard at `_load_settings`: raises `RuntimeError`
+  if the engine starts with `DRY_RUN=false` AND
+  `safety_check_enabled=false`. Belt-and-suspenders for the human DB
+  flip below.
 
 Commits delivering Phase 2 validation surface:
 afbc2c5 (Phase 0 instrumentation) + 1a8010b (DB timing persistence) +
