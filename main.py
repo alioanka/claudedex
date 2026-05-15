@@ -497,7 +497,7 @@ class TradingBotOrchestrator:
         )
 
         self.modules['sniper'] = ModuleProcess(
-            name="Sniper Module",
+            name="Sniper",
             script_path="modules/sniper/main_sniper.py",
             enabled_env_var="SNIPER_MODULE_ENABLED",
             module_key="sniper"
@@ -511,14 +511,14 @@ class TradingBotOrchestrator:
         )
 
         self.modules['arbitrage'] = ModuleProcess(
-            name="Arbitrage Module",
+            name="Arbitrage",
             script_path="modules/arbitrage/main_arbitrage.py",
             enabled_env_var="ARBITRAGE_MODULE_ENABLED",
             module_key="arbitrage"
         )
 
         self.modules['copy_trading'] = ModuleProcess(
-            name="Copy Trading Module",
+            name="Copy Trading",
             script_path="modules/copy_trading/main_copy.py",
             enabled_env_var="COPY_TRADING_MODULE_ENABLED",
             module_key="copy_trading"

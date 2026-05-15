@@ -636,12 +636,21 @@ function updateStats(data) {
     const pnlEl = document.getElementById('stat-pnl');
     pnlEl.textContent = `$${pnl.toFixed(2)}`;
     pnlEl.className = 'stat-value ' + (pnl >= 0 ? 'positive' : 'negative');
-    document.getElementById('stat-pnl-detail').textContent = `Win Rate: ${data.win_rate || 0}%`;
+    // Format win_rate; backend returns a raw float (e.g. 0.04900452) — without
+    // .toFixed it renders a 17-digit decimal in the header chip.
+    document.getElementById('stat-pnl-detail').textContent =
+        `Win Rate: ${(parseFloat(data.win_rate) || 0).toFixed(2)}%`;
 
-    // Trade amount
+    // Trade amount. unit is per-chain; 'all' / unknown defaults to a
+    // chain-agnostic display rather than misreporting SOL trades as ETH.
     const amount = data.trade_amount || 0.1;
-    const unit = chain === 'solana' ? 'SOL' : 'ETH';
-    document.getElementById('stat-amount').textContent = `${amount} ${unit}`;
+    let unit = '';
+    if (chain === 'solana') unit = 'SOL';
+    else if (chain === 'ethereum' || chain === 'eth') unit = 'ETH';
+    else if (chain === 'bsc' || chain === 'binance') unit = 'BNB';
+    else if (chain === 'all') unit = '(multi-chain)';
+    else unit = (chain || '').toUpperCase();
+    document.getElementById('stat-amount').textContent = `${amount} ${unit}`.trim();
     document.getElementById('stat-slippage').textContent = `Slippage: ${data.slippage || 10}%`;
 
     // Safety

@@ -17,7 +17,17 @@ New-pool / new-token sniper across EVM chains and Solana. Watches for liquidity 
 - Per-module: `logs/.pause_sniper` (written by dashboard pause/resume; read by `core.dry_run.is_module_paused`).
 - Effect: `should_skip_live` returns `True` -> trade executor returns simulated fill.
 ## Logs
-`logs/sniper/` — main, errors, trades (rotating handler).
+`logs/sniper/` is the single source of truth:
+- `sniper.log` / `sniper.log.{1..5}` — structured logger output (10MB cap, 5 rotations)
+- `sniper_errors.log` / `.{1..3}` — ERROR-level only (5MB cap, 3 rotations)
+- `stdout.log`, `stderr.log` / `.{1..3}` — captured by the parent
+  `RotatingLogFile` in `main.py` (10MB cap, 3 rotations)
+
+The subprocess used to install its own `StderrToRotatingFile` that
+double-wrote stderr to both `logs/sniper/stderr.log` AND fd 2 (where
+the parent then captured it into `logs/sniper_module/`). Removed; the
+parent's rotation is now the only stderr writer. If you see a
+`logs/sniper_module/` directory on disk it's stale — safe to `rm -rf`.
 ## Primary risk-policy gate
 Per-module local risk: `TokenSafetyChecker` (`modules/sniper/core/token_safety.py`) gates each candidate on tax / liquidity / honeypot heuristics before submission; no cross-module `RiskManager.validate_trade` call yet (P1 follow-up).
 ## Live-trade readiness
