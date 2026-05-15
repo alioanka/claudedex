@@ -148,6 +148,12 @@ class SniperEngine:
         # Price fetcher for real USD values
         self.price_fetcher = PriceFetcher()
 
+        # Per-mint price cache for the Jupiter quote fallback. Monitor loop
+        # ticks every second; without a cache we would issue a quote per
+        # active position per tick.
+        self._mint_price_cache: Dict[str, tuple] = {}  # token -> (price, ts)
+        self._mint_price_ttl = timedelta(seconds=15)
+
     async def initialize(self):
         """Initialize sniper components"""
         logger.info("🔫 Initializing Sniper Engine...")
@@ -876,23 +882,42 @@ class SniperEngine:
             logger.error(f"_close_position_synthetic error: {e}")
 
     async def _get_token_price(self, token_address: str, chain: str) -> float:
-        """Get current token price (simplified)"""
+        """Get current token price (simplified).
+
+        Solana path: Jupiter Price v2 first (indexed, fast, may be empty
+        for fresh Pump.fun mints) → Jupiter /quote fallback (live route
+        data, works as soon as a pool exists). Cache hit serves both
+        sources to bound RPS during the monitor loop.
+        """
         try:
+            cached = self._mint_price_cache.get(token_address)
+            if cached:
+                price, ts = cached
+                if datetime.now() - ts < self._mint_price_ttl:
+                    return price
+
             import aiohttp
 
-            # Jupiter Price API v2: returns USD-derived price. Unit cancels in
-            # the (current - entry) / entry ratio at the call site, so caller
-            # need not care about USD vs SOL.
             if chain == 'solana':
+                # 1) Jupiter Price API v2 — fast when indexed
                 url = f"https://api.jup.ag/price/v2?ids={token_address}"
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url, timeout=5) as response:
                         if response.status == 200:
                             data = await response.json()
                             price_info = data.get('data', {}).get(token_address)
-                            if not price_info:
-                                return 0
-                            return float(price_info.get('price') or 0)
+                            if price_info:
+                                price = float(price_info.get('price') or 0)
+                                if price > 0:
+                                    self._mint_price_cache[token_address] = (price, datetime.now())
+                                    return price
+
+                # 2) Jupiter /quote fallback — works for fresh mints that
+                # Price v2 has not yet indexed but already have a pool.
+                quote_price = await self._get_token_price_via_jupiter_quote(token_address)
+                if quote_price > 0:
+                    self._mint_price_cache[token_address] = (quote_price, datetime.now())
+                    return quote_price
             else:
                 # For EVM, use DexScreener or similar
                 url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
@@ -902,12 +927,60 @@ class SniperEngine:
                             data = await response.json()
                             pairs = data.get('pairs', [])
                             if pairs:
-                                return float(pairs[0].get('priceNative', 0))
+                                price = float(pairs[0].get('priceNative', 0))
+                                if price > 0:
+                                    self._mint_price_cache[token_address] = (price, datetime.now())
+                                    return price
 
         except Exception as e:
             logger.debug(f"Error fetching price for {token_address}: {e}")
 
         return 0
+
+    async def _get_token_price_via_jupiter_quote(self, token_address: str) -> float:
+        """Derive USD price per whole token from a Jupiter quote.
+
+        Sends a small SOL → token quote and converts outAmount into a
+        USD price. Trade executor normalizes amount_out at /1e6 (i.e.
+        assumes 6 decimals) so we match that convention here for unit
+        consistency with entry_price. Returns 0 on failure.
+        """
+        try:
+            import aiohttp
+            SOL_MINT = 'So11111111111111111111111111111111111111112'
+            in_lamports = 10_000_000  # 0.01 SOL probe
+            url = (
+                'https://lite-api.jup.ag/swap/v1/quote'
+                f'?inputMint={SOL_MINT}&outputMint={token_address}'
+                f'&amount={in_lamports}&slippageBps=500&onlyDirectRoutes=false'
+            )
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=5) as response:
+                    if response.status != 200:
+                        return 0
+                    data = await response.json()
+                    out_amount_raw = int(data.get('outAmount') or 0)
+                    if out_amount_raw <= 0:
+                        return 0
+
+            sol_usd = await self.price_fetcher.get_price('sol')
+            if sol_usd <= 0:
+                return 0
+
+            # Match trade_executor's 6-decimal convention: tokens_received
+            # is out_amount_raw / 1e6.
+            in_sol = in_lamports / 1e9
+            tokens_received = out_amount_raw / 1e6
+            if tokens_received <= 0:
+                return 0
+            price_usd = (in_sol * sol_usd) / tokens_received
+            self._stats['jupiter_quote_fallback_hits'] = (
+                self._stats.get('jupiter_quote_fallback_hits', 0) + 1
+            )
+            return float(price_usd)
+        except Exception as e:
+            logger.debug(f"Jupiter quote fallback error for {token_address}: {e}")
+            return 0
 
     async def _exit_position(self, data: Dict, reason: str):
         """Exit a position (sell tokens)"""

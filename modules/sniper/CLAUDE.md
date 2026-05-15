@@ -41,19 +41,24 @@ delta (~100ms WSS vs ~7.5s polling avg cycle) is buried under the
 RPC-confirmation noise. Isolating it requires re-anchoring t_detect on
 RPC-receipt time, not wall-clock — separate future work.
 
-Before going LIVE (not DRY_RUN), two production-grade fixes still required:
-1. Solana price fetcher for new mints (Jupiter quote + pool-derived
-   fallback). Without this, the `_check_pool_transaction`
-   "no price feed" path keeps firing for new Pump.fun launches.
-2. Re-enable safety filter: `safety_check_enabled=true` in DB (was
+Before going LIVE (not DRY_RUN), one production-grade fix still required:
+1. Re-enable safety filter: `safety_check_enabled=true` in DB (was
    disabled for Phase 2 volume measurement).
 
-Shipped: active-positions cap (`max_active_positions`, default 500,
-seeded by migration 016). Gated at `_evaluate_target` (cheapest exit,
-before safety cost) with belt-and-suspenders gate at `_execute_snipe`.
-`sniper_runtime_stats.stats` surfaces `active_positions` and
-`max_active_positions` for the dashboard. Per-window count of capped
-rejections is rate-limited to one warning per minute.
+Shipped pre-LIVE fixes:
+- Active-positions cap (`max_active_positions`, default 500, seeded by
+  migration 016). Gated at `_evaluate_target` (cheapest exit, before
+  safety cost) with belt-and-suspenders gate at `_execute_snipe`.
+  `sniper_runtime_stats.stats` surfaces `active_positions` and
+  `max_active_positions`. Per-window cap-rejection log throttled to
+  once per minute.
+- Solana price fetcher for new mints. `_get_token_price` now falls
+  through Jupiter Price v2 → Jupiter `/quote` (live route data, works
+  as soon as a pool exists even if Price v2 has not indexed yet).
+  15s per-mint cache bounds quote RPS during the 1s monitor tick.
+  `jupiter_quote_fallback_hits` counter exposed in runtime stats.
+  Pool-derived fallback (read AMM reserves directly) deferred — Jupiter
+  quote covers Pump.fun and Raydium V4 launches in practice.
 
 Commits delivering Phase 2 validation surface:
 afbc2c5 (Phase 0 instrumentation) + 1a8010b (DB timing persistence) +
