@@ -1070,6 +1070,11 @@ class SolanaTradingEngine:
         self.is_running = False
         self.config_manager = config_manager
         self.db_pool = db_pool  # Database pool for trade persistence
+        # Cross-module risk gate. Injected after construction via
+        # set_risk_manager() — matches the arbitrage pattern. Optional
+        # so DRY_RUN paths and unit tests can construct the engine
+        # without a fully wired RiskManager.
+        self.risk_manager = None
 
         # DRY_RUN mode - CRITICAL: Check environment variable
         dry_run_env = os.getenv('DRY_RUN', 'true').strip().lower()
@@ -1174,6 +1179,14 @@ class SolanaTradingEngine:
         logger.info(f"  Strategies: {', '.join(s.value for s in self.strategies)}")
         logger.info(f"  Position size: {self.position_size_sol} SOL")
         logger.info(f"  Slippage: {self.slippage_bps} bps")
+
+    def set_risk_manager(self, risk_manager) -> None:
+        """Inject the cross-module RiskManager so entry broadcasts can be
+        gated by validate_trade(). Setter pattern matches arbitrage's
+        engine; main_solana.py calls this once after constructing the
+        engine. Engine remains functional without one — DRY_RUN paths
+        and tests skip the gate."""
+        self.risk_manager = risk_manager
 
     async def initialize(self):
         """Initialize Solana connections and components"""
@@ -3280,6 +3293,25 @@ class SolanaTradingEngine:
                             trade_slippage = max(200, self.slippage_bps)  # Min 2% for other strategies
 
                     if self.jupiter_helper:
+                        # P1 cross-module risk gate (matches arbitrage_engine.py:1600).
+                        # Skipped if no risk_manager wired (DRY_RUN paths, tests).
+                        # Only the entry leg is gated; exits should always be
+                        # allowed because closing a position reduces exposure.
+                        if self.risk_manager is not None:
+                            try:
+                                allowed, reason = await self.risk_manager.validate_trade(
+                                    token_mint, amount_sol
+                                )
+                            except Exception as e:
+                                logger.warning(f"validate_trade raised: {e}; refusing entry")
+                                return False
+                            if not allowed:
+                                logger.warning(
+                                    f"⛔ Risk manager rejected SOL entry {token_symbol} "
+                                    f"({token_mint[:10]}): {reason}"
+                                )
+                                return False
+
                         # Use JupiterHelper for full swap execution
                         logger.info(f"🔄 Executing LIVE swap: {amount_sol} SOL → {token_symbol} (slippage: {trade_slippage}bps)")
                         tx_signature = await self.jupiter_helper.execute_swap(

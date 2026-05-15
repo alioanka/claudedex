@@ -141,6 +141,10 @@ class CopyTradeExecutor:
         self.db_pool = db_pool
         self.session: Optional[aiohttp.ClientSession] = None
         self.price_fetcher = PriceFetcher()
+        # Cross-module risk gate. Injected via set_risk_manager() by the
+        # outer CopyTradingEngine after construction. Optional so DRY_RUN
+        # and tests can run without a fully wired RiskManager.
+        self.risk_manager = None
 
         # Credentials will be loaded asynchronously in initialize()
         self.solana_rpc_url = None
@@ -149,6 +153,12 @@ class CopyTradeExecutor:
         self.evm_private_key = None
         self.evm_wallet = None
         self.web3_provider = None
+
+    def set_risk_manager(self, risk_manager) -> None:
+        """Inject the cross-module RiskManager so broadcast paths can be
+        gated by validate_trade(). Setter pattern matches arbitrage and
+        solana engines."""
+        self.risk_manager = risk_manager
 
     async def _get_decrypted_key(self, key_name: str) -> Optional[str]:
         """Get decrypted private key from secrets manager or environment."""
@@ -264,6 +274,28 @@ class CopyTradeExecutor:
         if not self.solana_wallet or not self.solana_private_key:
             return {'success': False, 'error': 'Solana wallet not configured'}
 
+        # P1 cross-module risk gate (matches arbitrage_engine.py:1600).
+        # Validate against the token we're acquiring exposure to —
+        # output_mint on a BUY, input_mint on a SELL. Use lamports→SOL
+        # equivalent as the amount the gate sees.
+        if self.risk_manager is not None:
+            try:
+                SOL_MINT = 'So11111111111111111111111111111111111111112'
+                gated_token = output_mint if input_mint == SOL_MINT else input_mint
+                amount_sol_equiv = amount_lamports / 1_000_000_000
+                allowed, reason = await self.risk_manager.validate_trade(
+                    gated_token, amount_sol_equiv
+                )
+            except Exception as e:
+                logger.warning(f"validate_trade raised: {e}; refusing copy_solana_swap")
+                return {'success': False, 'error': f'risk gate raised: {e}'}
+            if not allowed:
+                logger.warning(
+                    f"⛔ Risk manager rejected COPY solana swap "
+                    f"{gated_token[:10]}: {reason}"
+                )
+                return {'success': False, 'error': f'risk gate rejected: {reason}'}
+
         try:
             # Get quote from Jupiter
             quote = await self._get_jupiter_quote(input_mint, output_mint, amount_lamports, slippage_bps)
@@ -316,6 +348,25 @@ class CopyTradeExecutor:
 
         if not self.evm_wallet or not self.evm_private_key:
             return {'success': False, 'error': 'EVM wallet not configured'}
+
+        # P1 cross-module risk gate. Amount sent to RiskManager is in
+        # chain-native (ETH) — wei / 1e18 — matching arbitrage's ETH
+        # input convention so the gate sees consistent units.
+        if self.risk_manager is not None:
+            try:
+                amount_eth = amount_wei / 1_000_000_000_000_000_000
+                allowed, reason = await self.risk_manager.validate_trade(
+                    token_address, amount_eth
+                )
+            except Exception as e:
+                logger.warning(f"validate_trade raised: {e}; refusing copy_evm_swap")
+                return {'success': False, 'error': f'risk gate raised: {e}'}
+            if not allowed:
+                logger.warning(
+                    f"⛔ Risk manager rejected COPY {chain} swap "
+                    f"{token_address[:10]}: {reason}"
+                )
+                return {'success': False, 'error': f'risk gate rejected: {reason}'}
 
         try:
             from web3 import Web3
@@ -620,6 +671,20 @@ class CopyTradingEngine(BaseModule):
             self.status = ModuleStatus.INITIALIZING
             # Initialize executor with db_pool for secrets manager access
             self.executor = CopyTradeExecutor(self.dry_run, db_pool=self.db_pool)
+
+            # P1 cross-module risk gate. Construct a shared RiskManager
+            # and inject into the executor so copy_solana_swap and
+            # copy_evm_swap can validate before broadcast. Fail-soft.
+            try:
+                from core.risk_manager import RiskManager
+                risk_manager = RiskManager(config=self.config_dict or {})
+                self.executor.set_risk_manager(risk_manager)
+                self.logger.info("✅ RiskManager wired into Copy Trading executor")
+            except Exception as e:
+                self.logger.warning(
+                    f"RiskManager init failed (executor will run without cross-module gate): {e}"
+                )
+
             await self.executor.initialize()
             await self._load_settings()
             return True

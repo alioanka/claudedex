@@ -538,6 +538,20 @@ class SolanaTradingApplication:
                 db_pool=self.db_pool  # Pass database pool for trade persistence
             )
 
+            # P1 cross-module risk gate. Construct a shared RiskManager
+            # and inject so _open_position can call validate_trade()
+            # before every Jupiter swap broadcast. Fail-soft: if the
+            # construction fails the engine still runs but with no gate.
+            try:
+                from core.risk_manager import RiskManager
+                risk_manager = RiskManager(config={}, config_manager=self.config_manager)
+                self.engine.set_risk_manager(risk_manager)
+                self.logger.info("✅ RiskManager wired into Solana engine")
+            except Exception as e:
+                self.logger.warning(
+                    f"RiskManager init failed (engine will run without cross-module gate): {e}"
+                )
+
             await self.engine.initialize()
 
             self.logger.info("✅ Solana trading engine initialized")

@@ -17,7 +17,8 @@ Solana spot trading via Jupiter aggregator with trailing-stop ladder, plus optio
 ## Logs
 `logs/solana_trading/` — main, errors, trades (rotating handler).
 ## Primary risk-policy gate
-Per-module local risk: position-count ceiling + per-strategy SL/TP percent at `modules/solana_trading/core/solana_engine.py` close-path; no cross-module `RiskManager.validate_trade` call yet (P1 follow-up).
+- Cross-module: `core.risk_manager.RiskManager.validate_trade(token_mint, amount_sol)` called in `_open_position` at `solana_engine.py:~3296` immediately before every Jupiter swap broadcast. Injected via `set_risk_manager()` from `main_solana.py`; engine is fail-soft if `RiskManager` construction fails (logs a warning, continues without the gate). Only entries are gated; exits always allowed.
+- Per-module local: position-count ceiling + per-strategy SL/TP percent enforced inside the engine's close-path.
 ## Live-trade readiness
 AMBER → GREEN candidate (Jupiter spot; pending production verification). MB-06..MB-10 closed (decimals, co-signers, priority fee, restart reconciliation, DRY_RUN gate); secrets_manager wiring (`8b4ee7d`) and pool_engine sweep (`a21ec41`) landed. MB-15 (Drift hardening) deferred — Drift is a toggleable feature gate, not a blocker for the Jupiter path.
 ## See also
