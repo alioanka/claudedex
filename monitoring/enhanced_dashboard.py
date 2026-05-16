@@ -7638,7 +7638,21 @@ class DashboardEndpoints:
                     except Exception as rt_err:
                         logger.debug(f"sniper_runtime_stats read failed (non-fatal): {rt_err}")
 
-                    stats['status'] = 'Online' if os.getenv('SNIPER_MODULE_ENABLED', 'false').lower() == 'true' else 'Offline'
+                    # Liveness derives from BOTH env flag AND snapshot
+                    # freshness: a crashed subprocess leaves env=true but
+                    # stats stop refreshing. Threshold is 10 min (longer
+                    # than the ~5-min snapshot cadence, short enough to
+                    # catch a real crash within one cycle).
+                    enabled = os.getenv('SNIPER_MODULE_ENABLED', 'false').lower() == 'true'
+                    age = stats.get('runtime_stats_age_seconds')
+                    if not enabled:
+                        stats['status'] = 'Offline'
+                    elif age is None:
+                        stats['status'] = 'Online (no snapshot yet)'
+                    elif age > 600:
+                        stats['status'] = f'Stale (no snapshot for {age}s)'
+                    else:
+                        stats['status'] = 'Online'
 
             return web.json_response({'success': True, **stats})
         except Exception as e:
