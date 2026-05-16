@@ -430,25 +430,22 @@
     <div class="grid-2">
         <!-- Left Column: Sentiment Gauge + Chart -->
         <div>
-            <!-- Current Sentiment -->
+            <!-- Current Sentiment (compact summary; full gauge lives on
+                 /ai/sentiment to avoid duplicating the same view on two
+                 pages — audit agent 2 #11). The gauge-score element is
+                 retained because updateSentiment() still writes the
+                 score, but rendered as a single big number with a link
+                 instead of the full gauge UI. -->
             <div class="section-card">
                 <div class="section-title">
                     <i class="fas fa-tachometer-alt"></i>
                     Market Sentiment
+                    <a href="/ai/sentiment" style="margin-left:auto;font-size:0.75rem;font-weight:400;color:var(--accent);text-decoration:none;">View full gauge →</a>
                 </div>
-                <div class="sentiment-gauge">
-                    <div class="gauge-score neutral" id="gaugeScore">0</div>
-                    <div class="gauge-label" id="gaugeLabel">Neutral</div>
-                    <div class="action-badge action-hold" id="actionBadge">HOLD</div>
-
-                    <div class="threshold-bar">
-                        <div class="threshold-marker" id="scoreMarker" style="left: 50%;"></div>
-                    </div>
-                    <div class="threshold-labels">
-                        <span>-100 (Sell)</span>
-                        <span>0 (Hold)</span>
-                        <span>+100 (Buy)</span>
-                    </div>
+                <div class="sentiment-gauge" style="padding:24px;text-align:center;">
+                    <div class="gauge-score neutral" id="gaugeScore" style="font-size:2.5rem;">0</div>
+                    <div class="gauge-label" id="gaugeLabel" style="margin-top:8px;">Neutral</div>
+                    <div class="action-badge action-hold" id="actionBadge" style="margin-top:12px;">HOLD</div>
                 </div>
 
                 <!-- Provider Info -->
@@ -635,11 +632,14 @@ function updateGauge(score) {
     const gaugeScore = document.getElementById('gaugeScore');
     const gaugeLabel = document.getElementById('gaugeLabel');
     const actionBadge = document.getElementById('actionBadge');
+    // #scoreMarker was removed when the threshold bar was dropped
+    // (the full gauge view lives on /ai/sentiment). Guard the
+    // assignment so the function stays compatible with both layouts.
     const marker = document.getElementById('scoreMarker');
-
-    // Position marker (score is -1 to 1, map to 0-100%)
-    const markerPos = ((score + 1) / 2) * 100;
-    marker.style.left = markerPos + '%';
+    if (marker) {
+        const markerPos = ((score + 1) / 2) * 100;
+        marker.style.left = markerPos + '%';
+    }
 
     if (score >= 0.5) {
         gaugeScore.className = 'gauge-score bullish';
