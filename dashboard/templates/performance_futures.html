@@ -874,17 +874,46 @@ function calculateStdDev(arr) {
     return Math.sqrt(squaredDiffs.reduce((a, b) => a + b, 0) / arr.length);
 }
 
+// Shared helper: renders a friendly empty-state message on a canvas
+// when the P&L series is degenerate (all zero). Avoids the misleading
+// flat $10k equity line when DRY_RUN trades close at entry price.
+function _renderChartEmptyState(canvasId, message) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.save();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '500 13px system-ui, -apple-system, sans-serif';
+    ctx.fillText(message, canvas.width / 2, canvas.height / 2);
+    ctx.restore();
+}
+
 function updateEquityChart(trades, equityCurve) {
     const ctx = document.getElementById('equityChart').getContext('2d');
+
+    if (equityChart) {
+        equityChart.destroy();
+        equityChart = null;
+    }
+
+    const hasNonZeroPnl = (trades || []).some(t =>
+        Math.abs(parseFloat(t.pnl || t.net_pnl || 0)) > 1e-9
+    );
+    if (!hasNonZeroPnl) {
+        _renderChartEmptyState(
+            'equityChart',
+            'No realized P&L yet — equity curve populates after closed trades'
+        );
+        return;
+    }
 
     const labels = ['Start', ...trades.map((t, i) => {
         const date = new Date(t.closed_at || t.time || t.exit_time);
         return date.toLocaleDateString();
     })];
-
-    if (equityChart) {
-        equityChart.destroy();
-    }
 
     equityChart = new Chart(ctx, {
         type: 'line',
@@ -939,6 +968,12 @@ function updateDailyPnlChart(trades) {
 
     if (dailyPnlChart) {
         dailyPnlChart.destroy();
+        dailyPnlChart = null;
+    }
+
+    if (!pnls.some(p => Math.abs(p) > 1e-9)) {
+        _renderChartEmptyState('dailyPnlChart', 'No realized P&L yet');
+        return;
     }
 
     dailyPnlChart = new Chart(ctx, {
@@ -981,6 +1016,12 @@ function updateWinLossChart(wins, losses) {
 
     if (winLossChart) {
         winLossChart.destroy();
+        winLossChart = null;
+    }
+
+    if ((wins || 0) + (losses || 0) === 0) {
+        _renderChartEmptyState('winLossChart', 'No closed trades yet');
+        return;
     }
 
     winLossChart = new Chart(ctx, {

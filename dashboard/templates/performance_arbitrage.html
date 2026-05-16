@@ -892,6 +892,20 @@ function updateCumulativePnlChart(trades, cumulativePnl) {
     });
 }
 
+function _renderArbChartEmptyState(canvasId, message) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.save();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '500 13px system-ui, -apple-system, sans-serif';
+    ctx.fillText(message, canvas.width / 2, canvas.height / 2);
+    ctx.restore();
+}
+
 function updateDailyPnlChart(trades) {
     const ctx = document.getElementById('dailyPnlChart').getContext('2d');
 
@@ -908,6 +922,12 @@ function updateDailyPnlChart(trades) {
 
     if (dailyPnlChart) {
         dailyPnlChart.destroy();
+        dailyPnlChart = null;
+    }
+
+    if (!pnls.some(p => Math.abs(p) > 1e-9)) {
+        _renderArbChartEmptyState('dailyPnlChart', 'No realized P&L yet');
+        return;
     }
 
     dailyPnlChart = new Chart(ctx, {
@@ -950,6 +970,12 @@ function updateWinLossChart(wins, losses) {
 
     if (winLossChart) {
         winLossChart.destroy();
+        winLossChart = null;
+    }
+
+    if ((wins || 0) + (losses || 0) === 0) {
+        _renderArbChartEmptyState('winLossChart', 'No closed trades yet');
+        return;
     }
 
     winLossChart = new Chart(ctx, {
