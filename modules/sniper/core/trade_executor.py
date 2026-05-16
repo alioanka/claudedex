@@ -689,8 +689,14 @@ class TradeExecutor:
                     amount_in=amount_in, amount_out=0, tx_hash=None, gas_used=None,
                     error=f"Quote failed: {quote_err}", timestamp=datetime.now()
                 )
-            slippage_frac = max(float(slippage), 0.0) / 100.0 if slippage is not None else 0.03
-            # TODO(config): plumb slippage_tolerance through ConfigManager.
+            # Primary path: caller passes slippage (already DB-plumbed via
+            # SniperEngine.slippage). Fallback only fires for direct
+            # callers that omit the arg; operator can override the floor
+            # via SNIPER_SLIPPAGE_FALLBACK_PCT env without redeploying.
+            if slippage is not None:
+                slippage_frac = max(float(slippage), 0.0) / 100.0
+            else:
+                slippage_frac = max(float(os.getenv('SNIPER_SLIPPAGE_FALLBACK_PCT', '3.0')), 0.0) / 100.0
             amount_out_min = int(expected_out * (1 - slippage_frac))
 
             # Deadline: 2 minutes from now
@@ -789,8 +795,14 @@ class TradeExecutor:
                     amount_in=amount_in, amount_out=0, tx_hash=None, gas_used=None,
                     error=f"Quote failed: {quote_err}", timestamp=datetime.now()
                 )
-            slippage_frac = max(float(slippage), 0.0) / 100.0 if slippage is not None else 0.03
-            # TODO(config): plumb slippage_tolerance through ConfigManager.
+            # Primary path: caller passes slippage (already DB-plumbed via
+            # SniperEngine.slippage). Fallback only fires for direct
+            # callers that omit the arg; operator can override the floor
+            # via SNIPER_SLIPPAGE_FALLBACK_PCT env without redeploying.
+            if slippage is not None:
+                slippage_frac = max(float(slippage), 0.0) / 100.0
+            else:
+                slippage_frac = max(float(os.getenv('SNIPER_SLIPPAGE_FALLBACK_PCT', '3.0')), 0.0) / 100.0
             amount_out_min = int(expected_out * (1 - slippage_frac))
 
             # Deadline
