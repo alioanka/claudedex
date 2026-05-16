@@ -616,7 +616,7 @@ async function loadDashboard() {
         const [statsRes, walletsRes, tradesRes] = await Promise.all([
             fetch('/api/copytrading/stats'),
             fetch('/api/copytrading/wallets'),
-            fetch('/api/copytrading/trades?limit=100')
+            fetch('/api/copytrading/trades?limit=2000')
         ]);
 
         const [statsData, walletsData, tradesData] = await Promise.all([
@@ -971,6 +971,11 @@ function formatTimeAgo(date) {
     const now = new Date();
     const diff = now - date;
 
+    // Guard against future timestamps (clock skew between the dashboard
+    // host and the chain-source of truth — Solana blocks can carry a
+    // block_time slightly ahead of NTP-wall, especially when the host
+    // is on a free-tier NTP pool).
+    if (diff < 0) return 'just now';
     if (diff < 60000) return 'Just now';
     if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
     if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
