@@ -104,16 +104,29 @@ async def migrate_database():
         for version in sorted(applied_versions):
             print(f"   ✓ {version}")
 
-        # Find migration files in correct directory
-        # Support both absolute and relative paths
-        migrations_dir = Path(__file__).parent.parent / 'data' / 'storage' / 'migrations'
-
-        # Fallback to relative path if absolute doesn't exist
-        if not migrations_dir.exists():
-            migrations_dir = Path('data/storage/migrations')
-
-        # Create directory if it doesn't exist (for fresh installations)
-        migrations_dir.mkdir(parents=True, exist_ok=True)
+        # Find migration files. Canonical location is the top-level
+        # `migrations/` dir at the project root; the legacy
+        # `data/storage/migrations/` path is kept as a fallback so an
+        # operator with an older repo layout still gets their migrations
+        # picked up. Without the canonical path, new SQL files
+        # (016, 017, …) were silently skipped at startup and had to be
+        # applied manually via `docker compose cp` + `psql -f`.
+        candidates = [
+            Path(__file__).parent.parent / 'migrations',
+            Path(__file__).parent.parent / 'data' / 'storage' / 'migrations',
+            Path('migrations'),
+            Path('data/storage/migrations'),
+        ]
+        migrations_dir = None
+        for candidate in candidates:
+            if candidate.exists() and any(candidate.glob('*.sql')):
+                migrations_dir = candidate
+                break
+        if migrations_dir is None:
+            # Last resort: create the canonical location empty so future
+            # files have somewhere to land.
+            migrations_dir = candidates[0]
+            migrations_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"\n🔍 Scanning migrations directory: {migrations_dir.absolute()}")
 
