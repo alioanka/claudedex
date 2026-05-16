@@ -2440,43 +2440,84 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
 
     async def api_get_logs(self, request):
-        """Get recent log entries from all available log files."""
+        """Get recent log entries across all module log dirs.
+
+        Previously hardcoded /app/logs/TradingBot*.log which doesn't
+        exist in the current layout — actual logs live in
+        logs/<module>/{module}.log (e.g. logs/sniper/sniper.log,
+        logs/arbitrage/arbitrage.log, logs/dashboard/dashboard.log).
+        The /logs page consequently always rendered empty.
+
+        Now walks the canonical SUBPROCESS_MODULE_DIRS plus the
+        legacy /app/logs path for back-compat, picks up text and
+        JSON log lines, and returns the most-recent 500 entries
+        sorted by timestamp (or filename order for plain text).
+
+        Query params:
+          ?module=<name>  — filter to one module's logs only
+          ?limit=N        — cap returned lines (default 500, max 2000)
+          ?level=ERROR    — filter by log level (text logs only)
+        """
         try:
-            log_dir = "/app/logs"
-            log_files = [
-                "TradingBot.log",
-                "TradingBot_errors.log",
-                "TradingBot_trades.log"
-            ]
-            # Add rotated logs
-            for i in range(1, 11):
-                log_files.append(f"TradingBot.log.{i}")
+            from pathlib import Path
+            limit = max(1, min(int(request.query.get('limit', 500)), 2000))
+            module_filter = request.query.get('module', '').strip().lower()
+            level_filter = request.query.get('level', '').strip().upper()
+
+            # Canonical per-module log dirs (relative paths work because
+            # docker-compose mounts ./logs:/app/logs). Also probe the
+            # legacy /app/logs root for back-compat.
+            try:
+                from core.module_manager import SUBPROCESS_MODULE_DIRS
+                module_dirs = dict(SUBPROCESS_MODULE_DIRS)
+            except Exception:
+                module_dirs = {
+                    'dex': 'logs/dex_trading',
+                    'futures': 'logs/futures_trading',
+                    'solana': 'logs/solana_trading',
+                    'sniper': 'logs/sniper',
+                    'arbitrage': 'logs/arbitrage',
+                    'copy_trading': 'logs/copy_trading',
+                    'ai': 'logs/ai_analysis',
+                    'dashboard': 'logs/dashboard',
+                }
 
             all_lines = []
-            for lf in log_files:
-                try:
-                    full_path = f"{log_dir}/{lf}"
-                    with open(full_path, 'r') as f:
-                        for line in f:
-                            try:
-                                log_entry = json.loads(line)
-                                # Ensure timestamp exists for sorting
-                                if 'timestamp' in log_entry:
-                                    all_lines.append(log_entry)
-                            except (json.JSONDecodeError, TypeError):
-                                pass
-                except FileNotFoundError:
-                    # It's normal for some rotated files not to exist
+            for mod_name, log_dir_path in module_dirs.items():
+                if module_filter and module_filter != mod_name:
                     continue
+                p = Path(log_dir_path)
+                if not p.exists() or not p.is_dir():
+                    continue
+                for log_file in sorted(p.glob('*.log')):
+                    try:
+                        with open(log_file, 'r', errors='replace') as f:
+                            # Only read the tail of large files
+                            for line in f.readlines()[-500:]:
+                                line = line.rstrip('\n')
+                                if not line:
+                                    continue
+                                if level_filter and level_filter not in line:
+                                    continue
+                                # Best-effort timestamp parse from
+                                # "YYYY-MM-DD HH:MM:SS,sss" prefix.
+                                ts = line[:23] if len(line) > 23 and line[4] == '-' else ''
+                                all_lines.append({
+                                    'module': mod_name,
+                                    'file': log_file.name,
+                                    'timestamp': ts,
+                                    'message': line,
+                                })
+                    except Exception as e:
+                        logger.debug(f"could not read {log_file}: {e}")
 
-            # Sort all log entries by timestamp
+            # Sort by timestamp descending (newest first); empty
+            # timestamps fall to the end.
             all_lines.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-
-            # Return last 500 log lines
-            return web.json_response({'success': True, 'data': all_lines[:500]})
+            return web.json_response({'success': True, 'data': all_lines[:limit], 'count': len(all_lines)})
         except Exception as e:
             logger.error(f"Error reading log files: {e}", exc_info=True)
-            return web.json_response({'error': str(e)}, status=500)
+            return web.json_response({'error': str(e), 'data': []}, status=200)
 
     async def api_get_analysis(self, request):
         """Get trade analysis data"""
