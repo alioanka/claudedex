@@ -441,15 +441,26 @@
 
     // =============== DATA LOADING ===============
     async function loadAllData() {
+        // Stamp the attempt time first so the "Last updated" indicator
+        // never silently freezes when fetches fail — previously a
+        // network blip left the timestamp showing a stale time that
+        // looked recent, giving false confidence in dashboard liveness.
+        // Show success/failure separately so operators see the truth.
+        const lastEl = document.getElementById('lastUpdated');
+        const attemptTime = new Date().toLocaleTimeString();
         try {
             await Promise.all([
                 loadPortfolioData(),
                 loadModulesData(),
                 loadChartsData()
             ]);
-            document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+            if (lastEl) lastEl.textContent = attemptTime;
         } catch (e) {
             console.error('Error loading dashboard data:', e);
+            if (lastEl) {
+                lastEl.textContent = `${attemptTime} ⚠`;
+                lastEl.title = 'Last fetch attempt failed — data may be stale';
+            }
         }
     }
 
