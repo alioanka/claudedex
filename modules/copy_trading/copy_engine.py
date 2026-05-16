@@ -645,6 +645,11 @@ class CopyTradingEngine(BaseModule):
         # matching the Solana path's USD/sol_price -> lamports convention.
         self.max_copy_amount = 100.0  # Max USD per copy
         self.copy_ratio = 10  # Copy 10% of original
+        # Global concurrent-position cap. Per-leader cooldown bounds the
+        # per-leader rate, but with many leaders the count of open
+        # copy_trades positions can still climb unbounded. Cap defaults
+        # to 50; tune via config_settings.copy_trading_config.max_active_positions.
+        self.max_active_positions = 50
 
         # Trade executor
         self.executor: Optional[CopyTradeExecutor] = None
@@ -804,6 +809,16 @@ class CopyTradingEngine(BaseModule):
                                 except (ValueError, SyntaxError):
                                     # Fallback for comma/newline separated string
                                     targets_loaded = [t.strip() for t in val.replace(',', '\n').split('\n') if t.strip()]
+                    elif key == 'max_active_positions':
+                        try:
+                            self.max_active_positions = int(val) if val else 50
+                        except (TypeError, ValueError):
+                            pass
+                    elif key == 'max_copy_amount':
+                        try:
+                            self.max_copy_amount = float(val) if val else 100.0
+                        except (TypeError, ValueError):
+                            pass
 
                 if targets_loaded != self.targets:
                     self.targets = targets_loaded
@@ -1111,6 +1126,11 @@ class CopyTradingEngine(BaseModule):
 
             logger.info(f"👯 Detected {side.upper()} trade for token {token_address[:20]}...")
 
+            # Global open-position cap; bounded SQL count so a fanout
+            # of leaders can't blow past the operator's exposure budget.
+            if await self._at_position_cap():
+                return
+
             # Execute copy trade
             result = await self.executor.copy_evm_swap(
                 token_address=token_address,
@@ -1142,6 +1162,32 @@ class CopyTradingEngine(BaseModule):
                 return True  # Still in cooldown, skip
 
         return False  # Not in cooldown, proceed
+
+    async def _at_position_cap(self) -> bool:
+        """Return True if the global open-copy-trade count is at or above
+        max_active_positions. Per-leader cooldown bounds per-leader rate;
+        this gate bounds GLOBAL exposure across all leaders so a
+        many-leader config can't fan out unbounded simultaneous positions.
+        Fail-soft: a DB error returns False (don't block trading if the
+        cap-check itself fails)."""
+        if not self.db_pool or self.max_active_positions <= 0:
+            return False
+        try:
+            async with self.db_pool.acquire() as conn:
+                count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM copytrading_trades WHERE status = 'open'"
+                )
+            count = int(count or 0)
+            if count >= self.max_active_positions:
+                logger.warning(
+                    f"🛑 COPY CAP: {count}/{self.max_active_positions} open "
+                    f"copy_trades positions — refusing new copy"
+                )
+                return True
+            return False
+        except Exception as e:
+            logger.debug(f"COPY position-cap check failed (fail-soft): {e}")
+            return False
 
     def _update_wallet_cooldown(self, wallet: str):
         """Update wallet's last copy time"""
@@ -1304,6 +1350,11 @@ class CopyTradingEngine(BaseModule):
             copy_lamports = int(min(self.max_copy_amount / sol_price, 0.1) * 1e9)
 
             if is_buy:
+                # Global open-position cap — only gates BUYs because
+                # SELLs close existing exposure and should never be
+                # blocked by the cap.
+                if await self._at_position_cap():
+                    return
                 # Execute BUY copy trade
                 result = await self.executor.copy_solana_swap(
                     input_mint=WSOL_MINT,
