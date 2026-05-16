@@ -583,15 +583,24 @@ class DashboardEndpoints:
         # Pages - all will be protected by auth middleware if enabled
         self.app.router.add_get('/', self.index)
         self.app.router.add_get('/full-dashboard', self.full_dashboard_page)
-        self.app.router.add_get('/dashboard', self.dashboard_page)
+        self.app.router.add_get('/dashboard', self.dashboard_page)  # 301 → /dex/dashboard
+        # DEX module pages — root-prefixed URLs are kept for back-compat.
+        # /dex/* aliases give URL consistency with /futures/*, /solana/*,
+        # /sniper/*, etc. Audit agent 1 #5.
         self.app.router.add_get('/trades', self.trades_page)
+        self.app.router.add_get('/dex/trades', self.trades_page)
         self.app.router.add_get('/positions', self.positions_page)
+        self.app.router.add_get('/dex/positions', self.positions_page)
         self.app.router.add_get('/performance', self.performance_page)
+        self.app.router.add_get('/dex/performance', self.performance_page)
         self.app.router.add_get('/settings', self.settings_page)
         self.app.router.add_get('/reports', self.reports_page)
+        self.app.router.add_get('/dex/reports', self.reports_page)
         self.app.router.add_get('/backtest', self.backtest_page)
+        self.app.router.add_get('/dex/backtest', self.backtest_page)
         self.app.router.add_get('/logs', self.logs_page)
         self.app.router.add_get('/analysis', self.analysis_page)
+        self.app.router.add_get('/dex/analysis', self.analysis_page)
         # /analytics intentionally NOT registered here — the real
         # implementation lives in monitoring/analytics_routes.py
         # (AnalyticsRoutes.analytics_page) and was shadowed by a
@@ -1716,12 +1725,15 @@ class DashboardEndpoints:
         )
     
     async def dashboard_page(self, request):
-        """Main dashboard page"""
-        template = self.jinja_env.get_template('dashboard.html')
-        return web.Response(
-            text=template.render(page='dashboard'),
-            content_type='text/html'
-        )
+        """Legacy /dashboard URL — permanently redirects to /dex/dashboard.
+
+        The two paths historically rendered the same template, so any
+        link or bookmark pointing at /dashboard would silently land
+        on what's really the DEX dashboard. Now redirects (301) so
+        external links keep working while operators converge on the
+        canonical /dex/dashboard URL. Audit agent 3 #7.
+        """
+        raise web.HTTPMovedPermanently('/dex/dashboard')
     
     async def trades_page(self, request):
         """Recent trades page"""
