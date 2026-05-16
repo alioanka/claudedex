@@ -5696,7 +5696,12 @@ class DashboardEndpoints:
                         'positions': db_positions,
                         'total_pnl': f'{total_pnl_sol:.4f} SOL',
                         'daily_pnl': '0.0000 SOL',
-                        'sol_price_usd': 200,
+                        # Pull live SOL/USD via the dashboard's cached
+                        # helper (60s TTL CoinGecko) instead of the
+                        # historical hardcoded $200 sentinel — that
+                        # value was 30-150% off current spot for the
+                        # entire 2025-2026 window.
+                        'sol_price_usd': await self._get_sol_usd_price(),
                         'mode': 'OFFLINE',
                         'win_rate': f'{(winning_trades/total_trades*100) if total_trades > 0 else 0:.0f}%'
                     },
