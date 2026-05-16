@@ -665,9 +665,18 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/simulator/export', self.api_simulator_export)
 
         # API - Bot control (MB-28: admin-gate state-changing routes; status is read-only)
-        self.app.router.add_post('/api/bot/start', require_auth(require_admin(self.api_bot_start)))
-        self.app.router.add_post('/api/bot/stop', require_auth(require_admin(self.api_bot_stop)))
-        self.app.router.add_post('/api/bot/restart', require_auth(require_admin(self.api_bot_restart)))
+        # Start/Stop/Restart are NOT registered here — they were taking
+        # precedence over module_routes.bot_{start,stop,restart} which
+        # operate on the full subprocess set. The engine-only handlers
+        # below acted on self.engine (DEX-only), so the user's "Start
+        # Bot" button only restarted DEX. Audit agent 3 caught this.
+        # ModuleRoutes.setup_routes (called from _setup_module_routes)
+        # owns these endpoints now.
+        # Kept here:
+        #  /api/bot/emergency_exit (underscore) for legacy callers — the
+        #    hyphen form /api/bot/emergency-exit is the canonical path
+        #    that module_routes registers separately.
+        #  /api/bot/status — read-only, no module_routes counterpart.
         self.app.router.add_post('/api/bot/emergency_exit', require_auth(require_admin(self.api_emergency_exit)))
         self.app.router.add_get('/api/bot/status', require_auth(self.api_bot_status))
 
