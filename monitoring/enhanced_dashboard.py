@@ -2541,10 +2541,21 @@ class DashboardEndpoints:
                                 # Best-effort timestamp parse from
                                 # "YYYY-MM-DD HH:MM:SS,sss" prefix.
                                 ts = line[:23] if len(line) > 23 and line[4] == '-' else ''
+                                # Best-effort level extraction so the
+                                # /logs UI can filter by level. Format
+                                # is "... - <Logger> - <LEVEL> - ...".
+                                lvl = 'INFO'
+                                for marker in (' - DEBUG - ', ' - INFO - ',
+                                               ' - WARNING - ', ' - ERROR - ',
+                                               ' - CRITICAL - '):
+                                    if marker in line:
+                                        lvl = marker.strip(' -')
+                                        break
                                 all_lines.append({
                                     'module': mod_name,
                                     'file': log_file.name,
                                     'timestamp': ts,
+                                    'level': lvl,
                                     'message': line,
                                 })
                     except Exception as e:

@@ -7,6 +7,17 @@
     <h1>Log Viewer</h1>
     <div class="page-actions">
         <input type="text" id="logSearch" class="form-control" placeholder="Search logs..." style="width: 300px;">
+        <select id="logModuleFilter" class="form-control" style="width: auto;">
+            <option value="all">All Modules</option>
+            <option value="dashboard">Dashboard</option>
+            <option value="dex">DEX</option>
+            <option value="futures">Futures</option>
+            <option value="solana">Solana</option>
+            <option value="sniper">Sniper</option>
+            <option value="arbitrage">Arbitrage</option>
+            <option value="copy_trading">Copy Trading</option>
+            <option value="ai">AI</option>
+        </select>
         <select id="logLevelFilter" class="form-control" style="width: auto;">
             <option value="all">All Levels</option>
             <option value="INFO">Info</option>
@@ -24,6 +35,7 @@
                 <thead>
                     <tr>
                         <th>Timestamp</th>
+                        <th>Module</th>
                         <th>Level</th>
                         <th>Message</th>
                     </tr>
