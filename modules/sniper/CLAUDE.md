@@ -9,7 +9,7 @@ New-pool / new-token sniper across EVM chains and Solana. Watches for liquidity 
 - `priority_fee` — Solana compute-unit priority fee for snipe txs
 - `max_buy_tax` / `max_sell_tax` — reject tokens exceeding these tax ceilings
 - `min_liquidity` — minimum pool liquidity gate (chain-native)
-- `take_profit_pct` / `stop_loss_pct` — read from DB at `sniper_engine.py:208-211` (no longer shadowed after MB-12)
+- `take_profit_pct` / `stop_loss_pct` — read from DB in `sniper_engine.py:_load_settings` (no longer shadowed after MB-12)
 - `target_chain` — EVM chain id / `solana` for routing
 - `max_active_positions` — emergency brake; reject new candidates at `_evaluate_target` once `len(active_snipes) >= cap` (default 500, seeded by migration 016)
 ## Kill switch

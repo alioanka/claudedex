@@ -18,7 +18,7 @@ LLM-driven sentiment + news analysis pipeline. Produces directional signals from
 ## Logs
 `logs/ai_analysis/` — main, errors, trades (rotating handler).
 ## Primary risk-policy gate
-`core.risk_manager.RiskManager.validate_trade(symbol, amount_usd)` called at `modules/ai_analysis/core/sentiment_engine.py:109-117` before submitting to the canonical `BinanceFuturesExecutor` (MB-20).
+`core.risk_manager.RiskManager.validate_trade(symbol, amount_usd)` called in `sentiment_engine.py` immediately before submitting to the canonical `BinanceFuturesExecutor` (search for `# Phase 2 #5 wired self.risk_manager`).
 ## Live-trade readiness
 AMBER → GREEN candidate (pending production verification). MB-19 (load-or-refuse scaler + `ai_feature_store` + training scripts for scaler/rug/pump + 27-feature canonical layout + outcome-backfill on close) end-to-end closed; MB-20 (executor delegation through canonical futures path) and MB-21 (headline sanitisation) closed; secrets_manager already wired. Latch-at-open refinement (`60a3235`) makes re-entry feature-row backfill correct.
 ## See also

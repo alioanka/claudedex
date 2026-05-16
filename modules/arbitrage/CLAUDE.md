@@ -16,7 +16,7 @@ Spatial (cross-DEX) and triangular EVM arbitrage with flash-loan funding (Aave V
 ## Logs
 `logs/arbitrage/` — main, errors, trades (rotating handler).
 ## Primary risk-policy gate
-`core.risk_manager.RiskManager.validate_trade(token_in, amount)` called at `modules/arbitrage/arbitrage_engine.py:1600-1604` (P1-06). Injected via `set_risk_manager()` at `:962-964`.
+`core.risk_manager.RiskManager.validate_trade(token_in, amount)` called inside the spatial-arbitrage execute path in `arbitrage_engine.py` (search for `# P1-06: pre-execute risk gate`). Injected via `set_risk_manager()` method on the engine.
 ## Live-trade readiness
 AMBER → GREEN candidate (spatial; pending production verification). MB-03 (DAI typo), MB-04 (one-legged broadcast), MB-05 (placeholder amountIn) closed; secrets_manager wiring (`b20f56a`) and pool_engine sweep (`a21ec41`) landed. Triangular path remains entry-disabled by atomic-receiver guard — explicit scope cut pending contract deploy, not a defect.
 ## See also

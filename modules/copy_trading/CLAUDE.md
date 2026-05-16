@@ -12,7 +12,7 @@ Mirrors on-chain trades from configured leader wallets across EVM chains and Sol
 ## Kill switch
 - Global: `logs/.killswitch` (written by `scripts/emergency_stop.py` or `/api/bot/emergency-exit`; polled by BaseModule subprocesses via `core.dry_run.start_killswitch_poller`).
 - Per-module: `logs/.pause_copy_trading` (written by dashboard pause/resume; read by `core.dry_run.is_module_paused`).
-- Effect: `should_skip_live` returns `True` at `copy_engine.py:263` -> `_simulate_solana_swap` / EVM equivalent.
+- Effect: `should_skip_live` returns `True` at the top of `copy_solana_swap` / `copy_evm_swap` in `copy_engine.py` -> `_simulate_solana_swap` / `_simulate_evm_swap`.
 ## Logs
 `logs/copy_trading/` — main, errors, trades (rotating handler).
 ## Primary risk-policy gate
