@@ -268,11 +268,12 @@ fi
 # ---------------------------------------------------------------------------
 hdr "Unit tests for new code paths"
 
-# Run from /app where pytest config lives; use --no-cov so we don't have
-# to depend on the coverage tooling being importable. Capture full output
-# so we can show it on failure.
-TEST_OUT=$(docker compose exec -T -w /app trading-bot \
-    python -m pytest tests/unit/test_sniper_new_paths.py -q --no-header --no-cov 2>&1 | tail -8)
+# Run from /app where pytest config lives. Use PYTEST_ADDOPTS to wipe
+# the --cov flags inherited from pytest.ini so the test step doesn't
+# break when pytest-cov isn't installed yet (older images). The empty
+# string OVERRIDES the inifile's addopts entirely.
+TEST_OUT=$(docker compose exec -T -w /app -e PYTEST_ADDOPTS='-p no:cacheprovider -p no:anchorpy' \
+    trading-bot python -m pytest tests/unit/test_sniper_new_paths.py -q --no-header -o addopts= 2>&1 | tail -10)
 if echo "$TEST_OUT" | grep -qE "passed|no tests"; then
     SUMMARY=$(echo "$TEST_OUT" | tail -1 | tr -d '\r')
     pass "tests/unit/test_sniper_new_paths.py: $SUMMARY"

@@ -148,6 +148,7 @@ RUN pip install --no-cache-dir \
     psutil \
     pytest \
     pytest-asyncio \
+    pytest-cov \
     textblob \
     scripts \
     setuptools \
