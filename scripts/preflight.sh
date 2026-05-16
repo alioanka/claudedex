@@ -185,11 +185,16 @@ fi
 hdr "block_time_anchored DB propagation (last 30m)"
 
 OUT=$(pg "SELECT
-  metadata->>'detection_path' || ':' || (metadata->>'block_time_anchored') || ':' || COUNT(*)
+  COALESCE(metadata->>'detection_path','?') || ':' ||
+  (metadata->>'block_time_anchored') || ':' ||
+  COUNT(*)::text
 FROM sniper_trades
 WHERE entry_timestamp > NOW() - INTERVAL '30 minutes'
   AND metadata->>'block_time_anchored' IS NOT NULL
-GROUP BY 1, 2 ORDER BY 1, 2;")
+GROUP BY
+  COALESCE(metadata->>'detection_path','?'),
+  (metadata->>'block_time_anchored')
+ORDER BY 1;")
 
 if [[ -z "$OUT" ]]; then
     warn "no rows in last 30m have block_time_anchored — sniper may be idle or not running"
@@ -206,14 +211,15 @@ fi
 hdr "Detection latency p50/p95 (last 30m)"
 
 OUT=$(pg "SELECT
-  metadata->>'detection_path' || '|' ||
-  COUNT(*) || '|' ||
-  ROUND((percentile_cont(0.5) WITHIN GROUP (ORDER BY (metadata->'timing'->>'detect_to_rpc_receipt_ms')::float))::numeric, 0) || '|' ||
-  ROUND((percentile_cont(0.95) WITHIN GROUP (ORDER BY (metadata->'timing'->>'detect_to_rpc_receipt_ms')::float))::numeric, 0)
+  COALESCE(metadata->>'detection_path','?') || '|' ||
+  COUNT(*)::text || '|' ||
+  ROUND((percentile_cont(0.5) WITHIN GROUP (ORDER BY (metadata->'timing'->>'detect_to_rpc_receipt_ms')::float))::numeric, 0)::text || '|' ||
+  ROUND((percentile_cont(0.95) WITHIN GROUP (ORDER BY (metadata->'timing'->>'detect_to_rpc_receipt_ms')::float))::numeric, 0)::text
 FROM sniper_trades
 WHERE entry_timestamp > NOW() - INTERVAL '30 minutes'
   AND metadata->'timing'->>'detect_to_rpc_receipt_ms' IS NOT NULL
-GROUP BY 1 ORDER BY 1;")
+GROUP BY COALESCE(metadata->>'detection_path','?')
+ORDER BY 1;")
 
 if [[ -z "$OUT" ]]; then
     warn "no timing rows yet — wait ~10 min after sniper restart"
@@ -281,21 +287,32 @@ fi
 hdr "/health endpoint + git SHA"
 
 HEALTH_JSON=$(docker compose exec -T trading-bot python -c "
-import urllib.request, json
+import urllib.request, urllib.error
+req = urllib.request.Request('http://localhost:8080/health')
 try:
-    body = urllib.request.urlopen('http://localhost:8080/health', timeout=5).read()
-    print(body.decode())
+    resp = urllib.request.urlopen(req, timeout=5)
+    print(f'HTTP_STATUS={resp.status}')
+    print(resp.read().decode())
+except urllib.error.HTTPError as e:
+    # Capture body even on 4xx/5xx so we can see the real error.
+    print(f'HTTP_STATUS={e.code}')
+    try:
+        print(e.read().decode())
+    except Exception:
+        print(f'(could not read body: {e})')
 except Exception as e:
-    print(f'ERROR: {type(e).__name__}: {e}')
+    print(f'CONNECTION_ERROR: {type(e).__name__}: {e}')
 " 2>&1)
 
 if echo "$HEALTH_JSON" | grep -q '"status":.*"healthy"'; then
-    SHA=$(echo "$HEALTH_JSON" | python -c "import sys,json; print(json.load(sys.stdin).get('git_sha','?'))" 2>/dev/null || echo '?')
+    SHA=$(echo "$HEALTH_JSON" | grep -v HTTP_STATUS | python -c "import sys,json; print(json.load(sys.stdin).get('git_sha','?'))" 2>/dev/null || echo '?')
     pass "/health = healthy, git_sha=$SHA"
 elif echo "$HEALTH_JSON" | grep -q '"status":'; then
-    warn "/health responded but not healthy: $HEALTH_JSON"
+    warn "/health responded but not healthy:"
+    echo "$HEALTH_JSON" | sed 's/^/          /'
 else
-    fail "/health unreachable: $HEALTH_JSON"
+    fail "/health unreachable or non-JSON:"
+    echo "$HEALTH_JSON" | sed 's/^/          /'
 fi
 
 # ---------------------------------------------------------------------------

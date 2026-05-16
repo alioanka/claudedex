@@ -201,60 +201,62 @@ class DashboardEndpoints:
 
     @staticmethod
     async def health_endpoint(self, request):
-        """Public health endpoint — returns 200 + JSON if the dashboard
-        is responsive and can reach the DB. Used by Docker healthcheck
-        and scripts/health_check.py. Includes git SHA if /app/.git is
-        available so operators can identify the running build.
+        """Public health endpoint — never raises, never 500s.
 
-        Wrapped in a try/except so any unexpected attribute / import
-        error returns degraded JSON rather than bubbling to a 500.
+        The error_handler_middleware turns any uncaught exception into
+        a plain 500 response with body "Internal Server Error", which
+        breaks Docker healthchecks and external monitors. We catch
+        EVERYTHING here, including BaseException, and always return
+        a JSON response with HTTP 200 so the contract stays stable.
         """
+        out = {'status': 'healthy', 'service': 'claudedex-dashboard'}
         try:
-            from datetime import datetime as _dt
-            out = {
-                'status': 'healthy',
-                'service': 'claudedex-dashboard',
-                'time': _dt.now().isoformat(),
-            }
-            # git_sha is best-effort; never let it crash the endpoint
+            out['time'] = datetime.now().isoformat()
+        except BaseException as e:
+            out['time_error'] = f'{type(e).__name__}'
+
+        try:
+            out['git_sha'] = self._get_git_sha_cached()
+        except BaseException:
+            out['git_sha'] = ''
+
+        # Probe DB if available. Try every plausible pool reference; if
+        # any single accessor raises (e.g. AttributeError on a
+        # half-initialized db_manager), capture and move on.
+        pool = None
+        for accessor in (
+            lambda: self.db.pool if (getattr(self, 'db', None) and getattr(self.db, 'pool', None)) else None,
+            lambda: getattr(self, 'db_pool', None),
+        ):
             try:
-                out['git_sha'] = self._get_git_sha_cached()
-            except Exception:
-                out['git_sha'] = ''
+                p = accessor()
+                if p is not None:
+                    pool = p
+                    break
+            except BaseException:
+                continue
 
-            # Probe DB if available. Tries both .db.pool (the canonical
-            # manager attribute) and the standalone .db_pool that some
-            # constructors set; fail-soft for both.
-            pool = None
+        if pool is not None:
             try:
-                if hasattr(self, 'db') and self.db is not None and getattr(self.db, 'pool', None):
-                    pool = self.db.pool
-                elif getattr(self, 'db_pool', None):
-                    pool = self.db_pool
-            except Exception:
-                pool = None
+                async with pool.acquire() as conn:
+                    await conn.fetchval('SELECT 1')
+                out['db'] = 'reachable'
+            except BaseException as e:
+                out['status'] = 'degraded'
+                out['db'] = f'error: {type(e).__name__}: {e}'[:200]
+        else:
+            out['db'] = 'unavailable'
 
-            if pool is not None:
-                try:
-                    async with pool.acquire() as conn:
-                        await conn.fetchval('SELECT 1')
-                    out['db'] = 'reachable'
-                except Exception as e:
-                    out['status'] = 'degraded'
-                    out['db'] = f'error: {type(e).__name__}'
-            else:
-                out['db'] = 'unavailable'
-
+        # web.json_response must not raise on this dict (all strings).
+        # If somehow it does, wrap once more.
+        try:
             return web.json_response(out)
-        except Exception as e:
-            # Last-ditch fallback so /health NEVER 500s — Docker
-            # healthcheck and external monitors depend on this being a
-            # stable contract.
-            logger.error(f"health_endpoint raised: {type(e).__name__}: {e}", exc_info=True)
-            return web.json_response(
-                {'status': 'degraded', 'service': 'claudedex-dashboard',
-                 'error': f'{type(e).__name__}: {e}'},
-                status=200,  # 200 so the Docker probe doesn't restart
+        except BaseException as e:
+            logger.error(f"health_endpoint json_response failed: {e}", exc_info=True)
+            return web.Response(
+                text=f'{{"status":"degraded","error":"json_response: {type(e).__name__}"}}',
+                content_type='application/json',
+                status=200,
             )
 
     def _get_git_sha_cached(self) -> str:

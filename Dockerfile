@@ -147,6 +147,7 @@ RUN pip install --no-cache-dir \
     orjson \
     psutil \
     pytest \
+    pytest-asyncio \
     textblob \
     scripts \
     setuptools \
