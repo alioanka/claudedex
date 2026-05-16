@@ -274,17 +274,17 @@ class CopyTradeExecutor:
         if not self.solana_wallet or not self.solana_private_key:
             return {'success': False, 'error': 'Solana wallet not configured'}
 
-        # P1 cross-module risk gate (matches arbitrage_engine.py:1600).
-        # Validate against the token we're acquiring exposure to —
-        # output_mint on a BUY, input_mint on a SELL. Use lamports→SOL
-        # equivalent as the amount the gate sees.
-        if self.risk_manager is not None:
+        # P1 cross-module risk gate (matches arbitrage_engine.py and
+        # SOLANA engine pattern). Only BUYs (SOL -> token) are gated;
+        # SELLs (token -> SOL) close existing exposure and must always
+        # be allowed. Amount sent to RiskManager is lamports->SOL.
+        SOL_MINT = 'So11111111111111111111111111111111111111112'
+        is_buy = (input_mint == SOL_MINT)
+        if is_buy and self.risk_manager is not None:
             try:
-                SOL_MINT = 'So11111111111111111111111111111111111111112'
-                gated_token = output_mint if input_mint == SOL_MINT else input_mint
                 amount_sol_equiv = amount_lamports / 1_000_000_000
                 allowed, reason = await self.risk_manager.validate_trade(
-                    gated_token, amount_sol_equiv
+                    output_mint, amount_sol_equiv
                 )
             except Exception as e:
                 logger.warning(f"validate_trade raised: {e}; refusing copy_solana_swap")
@@ -292,7 +292,7 @@ class CopyTradeExecutor:
             if not allowed:
                 logger.warning(
                     f"⛔ Risk manager rejected COPY solana swap "
-                    f"{gated_token[:10]}: {reason}"
+                    f"{output_mint[:10]}: {reason}"
                 )
                 return {'success': False, 'error': f'risk gate rejected: {reason}'}
 
@@ -349,10 +349,12 @@ class CopyTradeExecutor:
         if not self.evm_wallet or not self.evm_private_key:
             return {'success': False, 'error': 'EVM wallet not configured'}
 
-        # P1 cross-module risk gate. Amount sent to RiskManager is in
-        # chain-native (ETH) — wei / 1e18 — matching arbitrage's ETH
-        # input convention so the gate sees consistent units.
-        if self.risk_manager is not None:
+        # P1 cross-module risk gate. Only BUYs are gated — SELLs close
+        # existing exposure and must always be allowed. Amount sent to
+        # RiskManager is in chain-native (ETH) — wei / 1e18 — matching
+        # arbitrage's ETH input convention so the gate sees consistent
+        # units across both modules.
+        if is_buy and self.risk_manager is not None:
             try:
                 amount_eth = amount_wei / 1_000_000_000_000_000_000
                 allowed, reason = await self.risk_manager.validate_trade(
