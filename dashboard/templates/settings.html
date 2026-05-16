@@ -265,11 +265,27 @@
         </div>
     </div>
 
-    <!-- Module Control Section Header -->
-    <h2 style="font-size: 1.25rem; font-weight: 600; color: var(--text-primary); margin-bottom: 20px;">
-        <i class="fas fa-cubes"></i>
-        Module Control
-    </h2>
+    <!-- Module Control section moved to its canonical /module-control
+         page (audit agent 3 #8). The duplicate cards here were
+         confusing operators about where to enable/disable modules.
+         This page now focuses on account-scoped settings (password
+         change above). -->
+    <div class="section-card" style="text-align:center;padding:24px;background:rgba(96,165,250,0.08);border-left:3px solid #60a5fa;">
+        <i class="fas fa-cubes" style="font-size:1.5rem;color:#60a5fa;"></i>
+        <h3 style="margin:12px 0;">Module Control moved</h3>
+        <p style="color:var(--text-secondary);margin-bottom:16px;">
+            Enable, disable, pause, and restart trading modules from the
+            dedicated control page.
+        </p>
+        <a href="/module-control" class="btn btn-primary">
+            <i class="fas fa-external-link-alt"></i> Open Module Control
+        </a>
+    </div>
+
+    <!-- DEPRECATED module control grid kept for back-compat but hidden;
+         remove in a future cleanup once we're sure no scripts/links
+         depend on these element IDs. -->
+    <div style="display:none;" aria-hidden="true">
 
     <!-- Module Control Grid -->
     <div class="module-control-grid">
