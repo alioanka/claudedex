@@ -8668,8 +8668,26 @@ class DashboardEndpoints:
                 'mode': 'DRY_RUN'
             }
 
-            # Check if DRY_RUN mode
-            status['mode'] = 'DRY_RUN' if os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes') else 'LIVE'
+            # Effective DRY_RUN: arbitrage-specific override in config_settings
+            # wins over the global DRY_RUN env. Without this check the
+            # arbitrage trading-status card would lie when an operator
+            # set ARBITRAGE in DRY mode but kept the global LIVE (or
+            # vice versa). Falls back to the global env if no DB row.
+            arb_dry = None
+            if self.db_pool:
+                try:
+                    async with self.db_pool.acquire() as conn:
+                        row = await conn.fetchval(
+                            "SELECT value FROM config_settings "
+                            "WHERE config_type='arbitrage_config' AND key='dry_run'"
+                        )
+                        if row is not None:
+                            arb_dry = str(row).lower() in ('true', '1', 'yes')
+                except Exception:
+                    pass
+            if arb_dry is None:
+                arb_dry = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
+            status['mode'] = 'DRY_RUN' if arb_dry else 'LIVE'
 
             # Try to get pool from various sources
             pool = None
