@@ -7856,7 +7856,14 @@ class DashboardEndpoints:
     async def api_get_sniper_timing(self, request):
         """Return P50/P95 detection latency split by detection_path
         for the SNIPER Phase 2 A/B comparison. Reads sniper_trades.metadata
-        JSONB populated by commits 1a8010b + c8debf6."""
+        JSONB populated by commits 1a8010b + c8debf6.
+
+        Cached per-(window_days) with a 30s TTL because the underlying
+        percentile_cont queries scan 100k+ rows every time and the
+        dashboard polls /api/sniper/timing once a minute. Without the
+        cache, two open dashboard tabs at 1-min intervals doubled the
+        load on every refresh tick.
+        """
         result = {
             'paths': {},
             'window_days': 7,
@@ -7868,6 +7875,14 @@ class DashboardEndpoints:
             result['window_days'] = days
         except (TypeError, ValueError):
             days = 7
+
+        # Cache check
+        cache = getattr(self, '_sniper_timing_cache', None) or {}
+        entry = cache.get(days)
+        if entry:
+            ts, cached_result = entry
+            if (datetime.now() - ts).total_seconds() < 30:
+                return web.json_response({'success': True, 'data': cached_result, 'cached': True})
 
         try:
             if not self.db:
@@ -7931,6 +7946,12 @@ class DashboardEndpoints:
                     'rpc_receipt_sample_count': int(row['rpc_receipt_sample_count'] or 0),
                 }
             result['has_data'] = len(result['paths']) > 0
+
+            # Cache the fresh result for 30s. Bounded by window_days, so
+            # the cache map is at most 90 entries (the days clamp).
+            if not hasattr(self, '_sniper_timing_cache'):
+                self._sniper_timing_cache = {}
+            self._sniper_timing_cache[days] = (datetime.now(), result)
 
             return web.json_response({'success': True, 'data': result})
 
