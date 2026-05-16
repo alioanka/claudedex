@@ -9192,7 +9192,22 @@ class DashboardEndpoints:
                     if pos_count and pos_count > stats['active_positions']:
                         stats['active_positions'] = pos_count
 
-                    stats['status'] = 'Online' if stats['total_trades'] > 0 or stats['active_positions'] > 0 else 'Idle'
+                    # Status reflects whether the subprocess is alive, not
+                    # whether historical trades exist. Treats COPY_TRADING_MODULE_ENABLED
+                    # as the env source of truth; a fresher liveness probe
+                    # would require runtime_stats which COPY doesn't yet
+                    # write. Until then, env=true + recent trade ≤2h is the
+                    # most honest proxy.
+                    enabled = os.getenv('COPY_TRADING_MODULE_ENABLED', 'false').lower() == 'true'
+                    if not enabled:
+                        stats['status'] = 'Disabled'
+                    else:
+                        # Recent activity within last 2h = Online; older = Stale/Idle
+                        recent = await conn.fetchval(
+                            "SELECT COUNT(*) FROM copytrading_trades "
+                            "WHERE entry_timestamp > NOW() - INTERVAL '2 hours'"
+                        )
+                        stats['status'] = 'Online' if (recent and recent > 0) else 'Idle'
 
                     # Get number of tracked wallets from config
                     wallets_row = await conn.fetchval(
@@ -10372,16 +10387,26 @@ class DashboardEndpoints:
                 'total_pnl': 0.0
             }
 
-            # Check if running (via env)
-            if os.getenv('AI_MODULE_ENABLED', 'false').lower() == 'true':
-                stats['status'] = 'Running'
+            # Status: env=enabled isn't sufficient — the subprocess may
+            # have crashed. Use sentiment_logs freshness as the heartbeat:
+            # the AI subprocess writes a sentiment row roughly every
+            # analysis_interval (~5-15 min). If the latest row is older
+            # than 30 min while env=true, the module is stale not running.
+            enabled = os.getenv('AI_MODULE_ENABLED', 'false').lower() == 'true'
+            stats['status'] = 'Disabled' if not enabled else 'Offline'
 
             if self.db:
                 async with self.db.pool.acquire() as conn:
-                    # Get latest sentiment from sentiment_logs
-                    latest = await conn.fetchrow("SELECT score FROM sentiment_logs ORDER BY timestamp DESC LIMIT 1")
+                    # Get latest sentiment from sentiment_logs (used as
+                    # both data source AND heartbeat).
+                    latest = await conn.fetchrow(
+                        "SELECT score, timestamp FROM sentiment_logs ORDER BY timestamp DESC LIMIT 1"
+                    )
                     if latest:
                         score = float(latest['score'])
+                        if enabled and latest.get('timestamp'):
+                            age = (datetime.now() - latest['timestamp']).total_seconds()
+                            stats['status'] = 'Running' if age <= 1800 else f'Stale ({int(age)}s)'
                         stats['sentiment_score'] = score
                         if score > 0.5: stats['sentiment_label'] = 'Bullish'
                         elif score < -0.5: stats['sentiment_label'] = 'Bearish'
