@@ -200,6 +200,52 @@ class DashboardEndpoints:
         self.backtests = {}
 
     @staticmethod
+    async def health_endpoint(self, request):
+        """Public health endpoint — returns 200 + JSON if the dashboard
+        is responsive and can reach the DB. Used by Docker healthcheck
+        and scripts/health_check.py. Includes git SHA if /app/.git is
+        available so operators can identify the running build."""
+        from aiohttp import web
+        out = {
+            'status': 'healthy',
+            'service': 'claudedex-dashboard',
+            'time': datetime.now().isoformat(),
+            'git_sha': self._get_git_sha_cached(),
+        }
+        # Probe DB if available, fail-soft otherwise.
+        if self.db and self.db.pool:
+            try:
+                async with self.db.pool.acquire() as conn:
+                    await conn.fetchval('SELECT 1')
+                out['db'] = 'reachable'
+            except Exception as e:
+                out['status'] = 'degraded'
+                out['db'] = f'error: {type(e).__name__}'
+        return web.json_response(out)
+
+    def _get_git_sha_cached(self) -> str:
+        """Return short git SHA (first 7 chars) of HEAD or '' on failure.
+        Cached on the instance after first read because the SHA does not
+        change at runtime."""
+        cached = getattr(self, '_git_sha', None)
+        if cached is not None:
+            return cached
+        sha = ''
+        try:
+            head_file = Path('.git/HEAD')
+            if head_file.exists():
+                head = head_file.read_text().strip()
+                if head.startswith('ref: '):
+                    ref_path = Path('.git') / head[5:]
+                    if ref_path.exists():
+                        sha = ref_path.read_text().strip()[:7]
+                else:
+                    sha = head[:7]
+        except Exception:
+            pass
+        self._git_sha = sha
+        return sha
+
     async def _get_sol_usd_price(self) -> float:
         """Return a recently cached SOL/USD price (60s TTL) for converting
         SOL-denominated PnL to USD in dashboard surfaces. Hits CoinGecko
@@ -442,6 +488,12 @@ class DashboardEndpoints:
 
         # ⚠️ Auth routes (including /login) will be added during startup (see _on_startup handler)
         # This ensures the login route is available when the app serves requests
+
+        # /health — public, unauthenticated. Docker healthcheck and
+        # scripts/health_check.py expect it; previously missing so the
+        # checks always 404'd. Returns JSON with current git SHA when
+        # available so operators can identify which build is running.
+        self.app.router.add_get('/health', self.health_endpoint)
 
         # Pages - all will be protected by auth middleware if enabled
         self.app.router.add_get('/', self.index)

@@ -173,9 +173,15 @@ COPY . .
 # Make entrypoint script executable
 RUN chmod +x scripts/docker-entrypoint.sh
 
-# Health check
+# Health check — actually probe the dashboard /health endpoint rather
+# than just checking Python imports (the previous check always passed
+# even when the dashboard was unresponsive, masking real outages).
+# Tolerates a non-2xx status by counting only timeout/connection errors
+# as unhealthy so a degraded DB doesn't take down the container.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import sys; sys.exit(0)"
+    CMD python -c "import urllib.request, sys; \
+        urllib.request.urlopen('http://localhost:8080/health', timeout=5); \
+        sys.exit(0)" || exit 1
 
 # Use entrypoint to run migrations before starting app
 ENTRYPOINT ["./scripts/docker-entrypoint.sh"]
