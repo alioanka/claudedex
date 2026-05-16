@@ -1287,21 +1287,25 @@ class DashboardEndpoints:
         # DEX: RUNNING if enabled (DEX runs in same process as dashboard)
         dex_status = 'RUNNING' if dex_enabled else 'DISABLED'
 
-        # Futures: Check if actually running via health endpoint OR has activity
+        # Futures: status derives from (subprocess alive, env flag). Historical
+        # trades in the DB do NOT prove the module is running NOW — that was
+        # the previous bug that made disabled modules display as RUNNING when
+        # they had any past activity.
         if futures_running:
             futures_status = 'RUNNING'
-        elif futures_enabled or futures_metrics.get('total_trades', 0) > 0:
-            # If enabled or has trades, consider it RUNNING (data available)
-            futures_status = 'RUNNING' if futures_metrics.get('total_trades', 0) > 0 else 'ENABLED'
+        elif futures_enabled:
+            futures_status = 'ENABLED'  # configured but subprocess not (yet) alive
         else:
             futures_status = 'DISABLED'
 
-        # Solana: Check if actually running via health endpoint OR has activity
+        # Solana: same shape as Futures. Previously checked total_trades > 0
+        # which conflated historical activity with current liveness, so a
+        # SOLANA_MODULE_ENABLED=false module with stale trades displayed
+        # "RUNNING" on /full-dashboard and /.
         if solana_running:
             solana_status = 'RUNNING'
-        elif solana_enabled or solana_metrics.get('total_trades', 0) > 0:
-            # If enabled or has trades, consider it RUNNING (data available)
-            solana_status = 'RUNNING' if solana_metrics.get('total_trades', 0) > 0 else 'ENABLED'
+        elif solana_enabled:
+            solana_status = 'ENABLED'
         else:
             solana_status = 'DISABLED'
 
@@ -1425,11 +1429,21 @@ class DashboardEndpoints:
             except Exception as e:
                 logger.debug(f"Error fetching additional module metrics: {e}")
 
-        # Determine status for additional modules
-        sniper_status = 'RUNNING' if sniper_running or sniper_metrics['total_trades'] > 0 else ('STOPPED' if sniper_enabled else 'DISABLED')
-        arbitrage_status = 'RUNNING' if arbitrage_running or arbitrage_metrics['total_trades'] > 0 else ('STOPPED' if arbitrage_enabled else 'DISABLED')
-        copytrading_status = 'RUNNING' if copytrading_running or copytrading_metrics['total_trades'] > 0 else ('STOPPED' if copytrading_enabled else 'DISABLED')
-        ai_status = 'RUNNING' if ai_running or ai_metrics['total_trades'] > 0 else ('STOPPED' if ai_enabled else 'DISABLED')
+        # Determine status for additional modules. Historical trades do NOT
+        # imply a running subprocess — fixed alongside the Futures/Solana
+        # status logic above. RUNNING requires the subprocess to be alive
+        # (via the *_running health probe); ENABLED means configured but
+        # not yet visible as alive; DISABLED otherwise.
+        def _status(running: bool, enabled: bool) -> str:
+            if running:
+                return 'RUNNING'
+            if enabled:
+                return 'ENABLED'
+            return 'DISABLED'
+        sniper_status = _status(sniper_running, sniper_enabled)
+        arbitrage_status = _status(arbitrage_running, arbitrage_enabled)
+        copytrading_status = _status(copytrading_running, copytrading_enabled)
+        ai_status = _status(ai_running, ai_enabled)
 
         logger.info(f"Final module status: DEX={dex_status}, Futures={futures_status} (trades={futures_metrics.get('total_trades', 0)}), Solana={solana_status} (trades={solana_metrics.get('total_trades', 0)})")
         logger.info(f"Additional modules: Sniper={sniper_status}, Arbitrage={arbitrage_status}, CopyTrading={copytrading_status}, AI={ai_status}")
