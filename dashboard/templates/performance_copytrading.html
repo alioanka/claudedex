@@ -356,6 +356,8 @@
         </div>
     </div>
 
+    <div id="perfOverflowWarn" style="padding:8px 12px;font-size:0.85rem;color:#f59e0b;"></div>
+
     <!-- Hero Stats -->
     <div class="hero-stats">
         <div class="hero-stat purple">
@@ -480,10 +482,12 @@ let timeDistChart = null;
 let chainPnlChart = null;
 let chainVolumeChart = null;
 
+const PERF_TRADES_LIMIT = 5000;
+
 async function loadPerformance() {
     try {
         const [tradesRes, walletsRes] = await Promise.all([
-            fetch('/api/copytrading/trades?limit=5000'),
+            fetch(`/api/copytrading/trades?limit=${PERF_TRADES_LIMIT}`),
             fetch('/api/copytrading/wallets')
         ]);
 
@@ -493,6 +497,14 @@ async function loadPerformance() {
         ]);
 
         if (tradesData.success && tradesData.trades) {
+            // Warn when we hit the cap — older trades silently drop
+            // from the equity-curve domain otherwise.
+            const warn = document.getElementById('perfOverflowWarn');
+            if (warn) {
+                warn.textContent = (tradesData.trades.length >= PERF_TRADES_LIMIT)
+                    ? `⚠ Showing the most recent ${PERF_TRADES_LIMIT} trades (cap). Older history is truncated; equity-curve / win-rate stats are bounded to this window.`
+                    : '';
+            }
             processPerformance(tradesData.trades);
         }
 
