@@ -40,9 +40,13 @@ DRY_RUN data over 87,747 trades validates:
 - **Pipeline**: end-to-end functional. No algorithmic failures.
 - **Synthetic-close fallback**: 84k positions retired cleanly via
   `dry_run_no_price_feed` path; no orphan accumulation post-fix.
-- **Block-time anchoring**: works at listener layer. Flag now
-  propagated to `sniper_trades.metadata.block_time_anchored` so the
-  underlying timing is SQL-filterable.
+- **Block-time anchoring**: works at listener layer for both chains.
+  Flag propagated to `sniper_trades.metadata.block_time_anchored` so
+  the underlying timing is SQL-filterable. Solana anchors via
+  `getTransaction.result.blockTime`; EVM polling anchors via
+  `eth.get_block(blockNumber).timestamp` with a bounded LRU cache
+  (`_block_ts_cache_max=200`), and EVM WSS reuses the same cache so
+  bursts get real block-time for free without blocking the WSS loop.
 
 Per-event latency advantage is now **verifiable** via the
 `detect_to_rpc_receipt_ms` marker shipped with the timing

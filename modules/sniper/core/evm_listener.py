@@ -8,7 +8,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional
 from web3 import Web3
 from web3.contract import Contract
@@ -132,11 +132,20 @@ class EVMListener:
         self.wss_url = os.getenv('SNIPER_EVM_WSS_URL', '').strip() or self._infer_wss_url()
         self._wss_queue: asyncio.Queue = asyncio.Queue()
         self.wss_task: Optional[asyncio.Task] = None
+        # Small LRU-ish cache mapping block_number -> Unix epoch seconds.
+        # Polling burst returns many logs from a small window of recent
+        # blocks; caching avoids one RPC roundtrip per log.
+        self._block_ts_cache: Dict[int, int] = {}
+        self._block_ts_cache_max = 200
         self._stats = {
             'wss_connects': 0,
             'wss_log_notifications': 0,
             'wss_pairs_queued': 0,
             'polling_pairs_emitted': 0,
+            # Block-time anchoring counters mirror the Solana listener so
+            # /sniper/timing can compare EVM polling staleness honestly.
+            'block_time_anchored': 0,
+            'block_time_missing': 0,
         }
 
     def _infer_wss_url(self) -> Optional[str]:
@@ -150,6 +159,37 @@ class EVMListener:
         if self.rpc_url.startswith('http://'):
             return 'ws://' + self.rpc_url[len('http://'):]
         return None
+
+    def _get_cached_block_timestamp(self, block_number: int) -> Optional[int]:
+        """Return the Unix-epoch timestamp for `block_number`, fetching
+        from web3 on miss and caching. Bounded by _block_ts_cache_max.
+        Returns None on any RPC failure so callers can fall back to
+        wall-clock without crashing the listener."""
+        if not isinstance(block_number, int):
+            try:
+                block_number = int(block_number)
+            except (TypeError, ValueError):
+                return None
+        cached = self._block_ts_cache.get(block_number)
+        if cached is not None:
+            return cached
+        if self.w3 is None:
+            return None
+        try:
+            blk = self.w3.eth.get_block(block_number)
+            ts = int(blk['timestamp'])
+        except Exception as e:
+            logger.debug(f"get_block({block_number}) failed: {e}")
+            return None
+        # Bound the cache; evict the oldest entry by insertion order.
+        if len(self._block_ts_cache) >= self._block_ts_cache_max:
+            try:
+                oldest = next(iter(self._block_ts_cache))
+                self._block_ts_cache.pop(oldest, None)
+            except StopIteration:
+                pass
+        self._block_ts_cache[block_number] = ts
+        return ts
 
     async def initialize(self):
         """Initialize Web3 connection"""
@@ -302,14 +342,28 @@ class EVMListener:
                         # rpc_receipt_perf anyway for cross-chain A/B
                         # symmetry with Solana.
                         rpc_receipt_perf = time.perf_counter()
+                        # Prefer cached block.timestamp (populated by the
+                        # polling backstop) to anchor t_detect; fall back
+                        # to wall-clock if missing rather than blocking
+                        # the WSS loop on an inline get_block call.
+                        block_ts = self._block_ts_cache.get(block_number)
+                        if block_ts is not None:
+                            ts_iso = datetime.fromtimestamp(int(block_ts), tz=timezone.utc).isoformat()
+                            self._stats['block_time_anchored'] = self._stats.get('block_time_anchored', 0) + 1
+                            anchored = True
+                        else:
+                            ts_iso = datetime.utcnow().isoformat()
+                            self._stats['block_time_missing'] = self._stats.get('block_time_missing', 0) + 1
+                            anchored = False
                         target = {
                             'token_address': _select_target_token(parsed['token0'], parsed['token1'], self.chain_id or 1),
                             'pair_address': pair_addr,
                             'chain': 'ethereum',
                             'block_number': block_number,
-                            'timestamp': datetime.utcnow().isoformat(),
+                            'timestamp': ts_iso,
                             'detection_path': 'wss',
                             'rpc_receipt_perf': rpc_receipt_perf,
+                            'block_time_anchored': anchored,
                         }
                         self._stats['wss_pairs_queued'] += 1
                         try:
@@ -368,14 +422,31 @@ class EVMListener:
                 if pair_address and pair_address['pair'] not in self.known_pairs:
                     self.known_pairs.add(pair_address['pair'])
 
+                    block_number = log['blockNumber']
+                    # Anchor t_detect on real block.timestamp instead of
+                    # wall-clock. On EVM mainnet the polling window scans
+                    # the last 5 blocks (~60s); without this anchor every
+                    # row stamps "now" and detect_to_rpc_receipt_ms
+                    # collapses to ~0ms, hiding real polling staleness.
+                    block_ts = self._get_cached_block_timestamp(block_number)
+                    if block_ts is not None:
+                        ts_iso = datetime.fromtimestamp(int(block_ts), tz=timezone.utc).isoformat()
+                        self._stats['block_time_anchored'] = self._stats.get('block_time_anchored', 0) + 1
+                        anchored = True
+                    else:
+                        ts_iso = datetime.utcnow().isoformat()
+                        self._stats['block_time_missing'] = self._stats.get('block_time_missing', 0) + 1
+                        anchored = False
+
                     target = {
                         'token_address': _select_target_token(pair_address['token0'], pair_address['token1'], self.chain_id or 1),
                         'pair_address': pair_address['pair'],
                         'chain': 'ethereum',
-                        'block_number': log['blockNumber'],
-                        'timestamp': datetime.utcnow().isoformat(),
+                        'block_number': block_number,
+                        'timestamp': ts_iso,
                         'detection_path': 'polling',
                         'rpc_receipt_perf': rpc_receipt_perf,
+                        'block_time_anchored': anchored,
                     }
                     self._stats['polling_pairs_emitted'] += 1
                     new_pairs.append(target)
