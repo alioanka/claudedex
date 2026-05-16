@@ -380,10 +380,12 @@
                 <span class="metric-label">Total Trades</span>
                 <span class="metric-value" id="totalTrades">0</span>
             </div>
-            <div class="metric-row">
-                <span class="metric-label">Win Rate</span>
-                <span class="metric-value text-success" id="winRate">0%</span>
-            </div>
+            <!-- Win Rate intentionally NOT duplicated here — it lives
+                 in the #winRateStat hero card at the top of the page
+                 (audit agent 1 #7). #winRate kept as a hidden element
+                 so updateHistoricalStats() doesn't blow up if it
+                 references the old ID. -->
+            <span id="winRate" style="display:none;">0%</span>
             <div class="metric-row">
                 <span class="metric-label">Avg Win</span>
                 <span class="metric-value text-success" id="avgWin">$0.00</span>
