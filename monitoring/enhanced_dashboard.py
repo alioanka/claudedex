@@ -744,6 +744,7 @@ class DashboardEndpoints:
         # API - Backtesting
         self.app.router.add_post('/api/backtest/run', self.api_run_backtest)
         self.app.router.add_get('/api/backtest/results/{test_id}', self.api_backtest_results)
+        self.app.router.add_get('/api/backtest/results/{test_id}/export', self.api_backtest_export)
         
         # API - Strategy
         self.app.router.add_get('/api/strategy/parameters', self.api_get_strategy_params)
@@ -6678,13 +6679,58 @@ class DashboardEndpoints:
         try:
             test_id = request.match_info['test_id']
             results = self.backtests.get(test_id, {'status': 'not_found'})
-            
+
             return web.json_response({
                 'success': True,
                 'data': results
             })
         except Exception as e:
             logger.error(f"Error getting backtest results: {e}")
+            return web.json_response({'error': str(e)}, status=500)
+
+    async def api_backtest_export(self, request):
+        """Export backtest results as CSV. The frontend's
+        backtest.js called this endpoint but it wasn't registered,
+        producing a 404 on every Export click (audit agent 1 HIGH #4).
+
+        Result schema is flexible (backtest engine is in flux) so we
+        emit one CSV row per top-level key/value, plus per-trade rows
+        if results.trades is a list. Returns text/csv with a sensible
+        filename so the browser downloads it directly.
+        """
+        try:
+            import csv
+            import io
+            test_id = request.match_info['test_id']
+            results = self.backtests.get(test_id)
+            if not results or results.get('status') == 'not_found':
+                return web.json_response({'error': 'backtest not found'}, status=404)
+
+            buf = io.StringIO()
+            writer = csv.writer(buf)
+            writer.writerow(['metric', 'value'])
+            # Top-level scalars (skip 'trades' — handled separately)
+            for k, v in (results.items() if isinstance(results, dict) else []):
+                if k == 'trades' or isinstance(v, (list, dict)):
+                    continue
+                writer.writerow([k, v])
+
+            trades = results.get('trades') if isinstance(results, dict) else None
+            if isinstance(trades, list) and trades:
+                writer.writerow([])
+                headers = sorted({k for t in trades if isinstance(t, dict) for k in t.keys()})
+                writer.writerow(headers)
+                for t in trades:
+                    if isinstance(t, dict):
+                        writer.writerow([t.get(h, '') for h in headers])
+
+            return web.Response(
+                text=buf.getvalue(),
+                content_type='text/csv',
+                headers={'Content-Disposition': f'attachment; filename="backtest_{test_id}.csv"'},
+            )
+        except Exception as e:
+            logger.error(f"Error exporting backtest results: {e}")
             return web.json_response({'error': str(e)}, status=500)
     
     # ==================== API - STRATEGY ====================
