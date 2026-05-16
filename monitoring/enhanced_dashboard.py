@@ -10528,7 +10528,8 @@ class DashboardEndpoints:
                 'trades': 0,
                 'avg_sentiment': 0,
                 'best_trade': 0,
-                'worst_trade': 0
+                'worst_trade': 0,
+                'avg_hold_seconds': 0,
             }
             if self.db:
                 async with self.db.pool.acquire() as conn:
@@ -10539,9 +10540,17 @@ class DashboardEndpoints:
                             COUNT(*) FILTER (WHERE profit_loss > 0) as wins,
                             COALESCE(AVG(sentiment_score), 0) as avg_sentiment,
                             COALESCE(MAX(profit_loss), 0) as best_trade,
-                            COALESCE(MIN(profit_loss), 0) as worst_trade
+                            COALESCE(MIN(profit_loss), 0) as worst_trade,
+                            -- Avg hold time in seconds across all closed
+                            -- trades. Frontend formats to hours/minutes.
+                            COALESCE(
+                                AVG(EXTRACT(EPOCH FROM (exit_timestamp - entry_timestamp))),
+                                0
+                            ) as avg_hold_seconds
                         FROM ai_trades
                         WHERE status = 'closed'
+                          AND exit_timestamp IS NOT NULL
+                          AND entry_timestamp IS NOT NULL
                     """)
                     if row and row['trades'] > 0:
                         metrics['trades'] = row['trades']
@@ -10550,6 +10559,7 @@ class DashboardEndpoints:
                         metrics['avg_sentiment'] = float(row['avg_sentiment'] or 0)
                         metrics['best_trade'] = float(row['best_trade'] or 0)
                         metrics['worst_trade'] = float(row['worst_trade'] or 0)
+                        metrics['avg_hold_seconds'] = float(row['avg_hold_seconds'] or 0)
 
             return web.json_response({'success': True, 'metrics': metrics})
         except Exception as e:
