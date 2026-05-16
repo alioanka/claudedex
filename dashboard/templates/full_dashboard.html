@@ -619,6 +619,9 @@
             chartStreaks: { type: 'bar', options: commonOptions }
         };
 
+        // Cache the configs so loadChartsData() can rebuild a chart
+        // after destroying it for an empty-overlay render.
+        _chartConfigsCache = chartConfigs;
         for (const [id, config] of Object.entries(chartConfigs)) {
             const el = document.getElementById(id);
             if (el) {
@@ -631,24 +634,81 @@
         }
     }
 
+    function _hasChartData(chartData) {
+        // A chart is "empty" if it has no labels OR every dataset's
+        // data array is empty/zero. Used to render the no-data overlay
+        // instead of a misleading blank-axes Chart.js render.
+        if (!chartData || !Array.isArray(chartData.labels) || chartData.labels.length === 0) {
+            return false;
+        }
+        const datasets = chartData.datasets || [];
+        if (datasets.length === 0) return false;
+        return datasets.some(ds => Array.isArray(ds.data) && ds.data.some(v =>
+            v !== null && v !== undefined && Number(v) !== 0
+        ));
+    }
+
+    function _renderEmptyOverlay(chartId, message) {
+        const el = document.getElementById(chartId);
+        if (!el) return;
+        const ctx = el.getContext('2d');
+        ctx.save();
+        ctx.clearRect(0, 0, el.width, el.height);
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = '500 13px system-ui, -apple-system, sans-serif';
+        ctx.fillText(message, el.width / 2, el.height / 2);
+        ctx.restore();
+    }
+
+    // Keep the original chartConfigs around so we can rebuild a chart
+    // after destroying it for an empty-overlay render.
+    let _chartConfigsCache = null;
+
     async function loadChartsData() {
+        // Loop through every initialized chart and either populate it
+        // with real data OR draw an explicit empty-state overlay.
+        // Previously 14 of the 15 charts initialized with empty
+        // {labels:[], datasets:[]} and STAYED empty (rendering blank
+        // axes that operators read as "no data yet" when really the
+        // backend had nothing to send for that chart_id). Now the
+        // distinction is visible at a glance. (Audit agent 3 #10.)
         try {
             const res = await fetch('/api/dashboard/charts/full');
             const result = await res.json();
+            const data = (result.success && result.data) ? result.data : {};
 
-            if (result.success && result.data) {
-                const data = result.data;
-
-                // Update each chart with data
-                for (const [chartId, chartData] of Object.entries(data)) {
-                    if (fullDashCharts[chartId] && chartData && chartData.labels) {
+            for (const chartId of Object.keys(fullDashCharts)) {
+                const chartData = data[chartId];
+                if (_hasChartData(chartData)) {
+                    // If the chart was destroyed last tick, recreate it.
+                    if (!fullDashCharts[chartId] && _chartConfigsCache && _chartConfigsCache[chartId]) {
+                        const el = document.getElementById(chartId);
+                        if (el) {
+                            fullDashCharts[chartId] = new Chart(el, {
+                                type: _chartConfigsCache[chartId].type,
+                                data: chartData,
+                                options: _chartConfigsCache[chartId].options,
+                            });
+                            continue;
+                        }
+                    }
+                    if (fullDashCharts[chartId]) {
                         fullDashCharts[chartId].data = chartData;
                         fullDashCharts[chartId].update('none');
                     }
+                } else {
+                    try { if (fullDashCharts[chartId]) fullDashCharts[chartId].destroy(); } catch (_) {}
+                    fullDashCharts[chartId] = null;
+                    _renderEmptyOverlay(chartId, 'No data yet');
                 }
             }
         } catch (e) {
             console.error('Error loading charts data:', e);
+            for (const chartId of Object.keys(fullDashCharts)) {
+                _renderEmptyOverlay(chartId, 'Failed to load — retrying');
+            }
         }
     }
 
