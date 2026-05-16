@@ -654,9 +654,17 @@ class CopyTradingEngine(BaseModule):
         # Trade executor
         self.executor: Optional[CopyTradeExecutor] = None
 
-        # Track known transactions to avoid duplicates
+        # Track known transactions to avoid duplicates. Bounded — the
+        # sets grew unboundedly across weeks of leader monitoring,
+        # eventually costing 10s of MB. Capped at _known_max with FIFO
+        # eviction (oldest insertion drops first). 5000 covers ~17 days
+        # of typical leader traffic at the 5-min cooldown rate; tune via
+        # SNIPER doesn't apply, this is a copy-trading internal.
         self._known_tx_hashes = set()
         self._known_solana_sigs = set()
+        self._known_tx_order: list = []   # insertion order for eviction
+        self._known_sig_order: list = []
+        self._known_max = 5000
 
         # Rate limiting - cooldown per wallet (5 min)
         self._wallet_last_copy_time: Dict[str, datetime] = {}
@@ -930,7 +938,7 @@ class CopyTradingEngine(BaseModule):
 
                                 # Check if recent (last minute)
                                 if int(tx['timeStamp']) > time.time() - 60:
-                                    self._known_tx_hashes.add(tx_hash)
+                                    self._remember_tx_hash(tx_hash)
                                     # Add chain info to tx for analysis
                                     tx['_chain'] = chain_name
                                     tx['_chain_id'] = chain_id
@@ -1006,7 +1014,7 @@ class CopyTradingEngine(BaseModule):
                             block_time = sig_info.get('blockTime', 0)
                             import time
                             if block_time and block_time > time.time() - 120:
-                                self._known_solana_sigs.add(sig)
+                                self._remember_sol_sig(sig)
 
                                 # Analyze the transaction
                                 if await self._analyze_and_copy_solana(wallet, sig):
@@ -1162,6 +1170,28 @@ class CopyTradingEngine(BaseModule):
                 return True  # Still in cooldown, skip
 
         return False  # Not in cooldown, proceed
+
+    def _remember_tx_hash(self, tx_hash: str) -> None:
+        """Track tx_hash as seen, evicting oldest entry when bounded by
+        _known_max. Prevents unbounded set growth under continuous
+        leader-monitoring traffic."""
+        if tx_hash in self._known_tx_hashes:
+            return
+        self._known_tx_hashes.add(tx_hash)
+        self._known_tx_order.append(tx_hash)
+        if len(self._known_tx_order) > self._known_max:
+            oldest = self._known_tx_order.pop(0)
+            self._known_tx_hashes.discard(oldest)
+
+    def _remember_sol_sig(self, sig: str) -> None:
+        """Solana-signature variant of _remember_tx_hash."""
+        if sig in self._known_solana_sigs:
+            return
+        self._known_solana_sigs.add(sig)
+        self._known_sig_order.append(sig)
+        if len(self._known_sig_order) > self._known_max:
+            oldest = self._known_sig_order.pop(0)
+            self._known_solana_sigs.discard(oldest)
 
     async def _at_position_cap(self) -> bool:
         """Return True if the global open-copy-trade count is at or above
