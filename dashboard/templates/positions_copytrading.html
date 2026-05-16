@@ -555,7 +555,13 @@ function formatTimeAgo(date) {
 // Load on page load
 loadPositions();
 
-// Auto-refresh every 10 seconds
-setInterval(loadPositions, 10000);
+// Auto-refresh every 30 seconds (raised from 10s) AND suspend while
+// the tab is hidden so a backgrounded dashboard doesn't pound the DB
+// when COPY_TRADING is disabled. The 30s cadence is still fast enough
+// for an active operator session.
+setInterval(() => {
+    if (document.hidden) return;
+    loadPositions();
+}, 30000);
 </script>
 {% endblock %}

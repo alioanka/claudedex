@@ -470,7 +470,25 @@ function escapeHtml(text) {
 // Load on page load
 loadLogs();
 
-// Auto-refresh every 60 seconds
-setInterval(loadLogs, 60000);
+// Auto-refresh every 60s, but suspend while the tab is hidden and
+// back off when consecutive responses are empty (e.g. AI module is
+// disabled — no point repolling the same empty endpoint).
+let aiLogsEmptyStreak = 0;
+async function loadLogsWithBackoff() {
+    if (document.hidden) return;
+    if (aiLogsEmptyStreak >= 5) {
+        // After 5 consecutive empty fetches (5 minutes) slow to once
+        // every 5 minutes until the AI module starts logging again.
+        if (aiLogsEmptyStreak % 5 !== 0) {
+            aiLogsEmptyStreak++;
+            return;
+        }
+    }
+    const before = (window._lastAiLogCount || 0);
+    await loadLogs();
+    const after = (window._lastAiLogCount || 0);
+    aiLogsEmptyStreak = (after > before) ? 0 : (aiLogsEmptyStreak + 1);
+}
+setInterval(loadLogsWithBackoff, 60000);
 </script>
 {% endblock %}
