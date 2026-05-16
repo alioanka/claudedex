@@ -267,6 +267,29 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Step 9: /health endpoint reachable
+# ---------------------------------------------------------------------------
+hdr "/health endpoint + git SHA"
+
+HEALTH_JSON=$(docker compose exec -T trading-bot python -c "
+import urllib.request, json
+try:
+    body = urllib.request.urlopen('http://localhost:8080/health', timeout=5).read()
+    print(body.decode())
+except Exception as e:
+    print(f'ERROR: {type(e).__name__}: {e}')
+" 2>&1)
+
+if echo "$HEALTH_JSON" | grep -q '"status":.*"healthy"'; then
+    SHA=$(echo "$HEALTH_JSON" | python -c "import sys,json; print(json.load(sys.stdin).get('git_sha','?'))" 2>/dev/null || echo '?')
+    pass "/health = healthy, git_sha=$SHA"
+elif echo "$HEALTH_JSON" | grep -q '"status":'; then
+    warn "/health responded but not healthy: $HEALTH_JSON"
+else
+    fail "/health unreachable: $HEALTH_JSON"
+fi
+
+# ---------------------------------------------------------------------------
 # Verdict
 # ---------------------------------------------------------------------------
 echo
