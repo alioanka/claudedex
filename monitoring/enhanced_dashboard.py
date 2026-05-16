@@ -209,6 +209,13 @@ class DashboardEndpoints:
         EVERYTHING here, including BaseException, and always return
         a JSON response with HTTP 200 so the contract stays stable.
         """
+        # Diagnostic: log every /health hit. Lets operators confirm the
+        # handler is actually being reached when troubleshooting why
+        # error_handler_middleware would otherwise serve 500.
+        try:
+            logger.info(f"/health hit from {request.remote}")
+        except Exception:
+            pass
         out = {'status': 'healthy', 'service': 'claudedex-dashboard'}
         try:
             out['time'] = datetime.now().isoformat()
