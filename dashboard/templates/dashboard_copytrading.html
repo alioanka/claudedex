@@ -544,30 +544,16 @@
         </div>
     </div>
 
-    <!-- Chain Distribution & Win/Loss -->
-    <div class="grid-2">
-        <div class="section-card">
-            <div class="section-header">
-                <div class="section-title">
-                    <i class="fas fa-pie-chart"></i>
-                    Win/Loss Distribution
-                </div>
-            </div>
-            <div class="chart-container" style="height: 220px;">
-                <canvas id="winLossChart"></canvas>
-            </div>
-        </div>
-        <div class="section-card">
-            <div class="section-header">
-                <div class="section-title">
-                    <i class="fas fa-link"></i>
-                    Chain Distribution
-                </div>
-            </div>
-            <div class="chart-container" style="height: 220px;">
-                <canvas id="chainChart"></canvas>
-            </div>
-        </div>
+    <!-- Win/Loss + Chain Distribution charts removed — both render
+         a larger, identical view on /copytrading/performance. Audit
+         agent 2 #18 — duplicating the same two pies on the dashboard
+         and the performance page meant operators paid for two
+         redundant renders per refresh. Performance page link below
+         keeps the workflow obvious. -->
+    <div style="text-align:center;padding:16px;color:var(--text-secondary);font-size:0.875rem;">
+        <a href="/copytrading/performance" style="color:var(--accent);text-decoration:none;">
+            View Win/Loss + Chain distribution on /copytrading/performance →
+        </a>
     </div>
 </div>
 
@@ -887,8 +873,13 @@ function updateCharts(trades) {
         }
     });
 
-    // Win/Loss Chart
-    const winLossCtx = document.getElementById('winLossChart').getContext('2d');
+    // Win/Loss and Chain Distribution canvases were removed from the
+    // template (audit agent 2 #18 — duplicated /copytrading/performance).
+    // Guard the lookups so this function stays compatible if any
+    // other template references it.
+    const winLossCanvas = document.getElementById('winLossChart');
+    if (!winLossCanvas) return;
+    const winLossCtx = winLossCanvas.getContext('2d');
     if (winLossChart) winLossChart.destroy();
     winLossChart = new Chart(winLossCtx, {
         type: 'doughnut',
@@ -910,8 +901,10 @@ function updateCharts(trades) {
         }
     });
 
-    // Chain Chart
-    const chainCtx = document.getElementById('chainChart').getContext('2d');
+    // Chain Chart — same removal, same guard.
+    const chainCanvas = document.getElementById('chainChart');
+    if (!chainCanvas) return;
+    const chainCtx = chainCanvas.getContext('2d');
     if (chainChart) chainChart.destroy();
     chainChart = new Chart(chainCtx, {
         type: 'doughnut',
@@ -958,13 +951,19 @@ function createEmptyCharts() {
     if (copiesChart) copiesChart.destroy();
     copiesChart = new Chart(copiesCtx, { type: 'bar', data: { labels: [], datasets: [] }, options: emptyOptions });
 
-    const winLossCtx = document.getElementById('winLossChart').getContext('2d');
-    if (winLossChart) winLossChart.destroy();
-    winLossChart = new Chart(winLossCtx, { type: 'doughnut', data: { labels: [], datasets: [] }, options: emptyOptions });
-
-    const chainCtx = document.getElementById('chainChart').getContext('2d');
-    if (chainChart) chainChart.destroy();
-    chainChart = new Chart(chainCtx, { type: 'doughnut', data: { labels: [], datasets: [] }, options: emptyOptions });
+    // winLossChart + chainChart canvases removed from template (audit
+    // agent 2 #18). Skip initialization gracefully if the elements
+    // aren't present.
+    const wl = document.getElementById('winLossChart');
+    if (wl) {
+        if (winLossChart) winLossChart.destroy();
+        winLossChart = new Chart(wl.getContext('2d'), { type: 'doughnut', data: { labels: [], datasets: [] }, options: emptyOptions });
+    }
+    const cc = document.getElementById('chainChart');
+    if (cc) {
+        if (chainChart) chainChart.destroy();
+        chainChart = new Chart(cc.getContext('2d'), { type: 'doughnut', data: { labels: [], datasets: [] }, options: emptyOptions });
+    }
 }
 
 function formatTimeAgo(date) {
