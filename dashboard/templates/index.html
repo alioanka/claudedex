@@ -552,6 +552,122 @@
                 <a href="/solana/dashboard" class="view-btn"><i class="fas fa-arrow-right"></i> View Solana Module</a>
             </div>
         </div>
+
+        <!-- Sniper Module -->
+        <div class="module-card" id="sniper-module">
+            <div class="module-header">
+                <div class="module-name"><i class="fas fa-crosshairs" style="color: #ef4444;"></i> Sniper</div>
+                <span class="module-status status-disabled" id="sniper-status">LOADING</span>
+            </div>
+            <div class="module-metrics">
+                <div class="metric-box">
+                    <div class="metric-label">Trades</div>
+                    <div class="metric-value" id="sniper-trades">0</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">P&L</div>
+                    <div class="metric-value" id="sniper-pnl">$0.00</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">Positions</div>
+                    <div class="metric-value" id="sniper-positions">0</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">Win Rate</div>
+                    <div class="metric-value" id="sniper-winrate">0%</div>
+                </div>
+            </div>
+            <div class="module-action">
+                <a href="/sniper/dashboard" class="view-btn"><i class="fas fa-arrow-right"></i> View Sniper Module</a>
+            </div>
+        </div>
+
+        <!-- Arbitrage Module -->
+        <div class="module-card" id="arbitrage-module">
+            <div class="module-header">
+                <div class="module-name"><i class="fas fa-exchange-alt" style="color: #06b6d4;"></i> Arbitrage</div>
+                <span class="module-status status-disabled" id="arbitrage-status">LOADING</span>
+            </div>
+            <div class="module-metrics">
+                <div class="metric-box">
+                    <div class="metric-label">Trades</div>
+                    <div class="metric-value" id="arbitrage-trades">0</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">P&L</div>
+                    <div class="metric-value" id="arbitrage-pnl">$0.00</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">Positions</div>
+                    <div class="metric-value" id="arbitrage-positions">0</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">Win Rate</div>
+                    <div class="metric-value" id="arbitrage-winrate">0%</div>
+                </div>
+            </div>
+            <div class="module-action">
+                <a href="/arbitrage/dashboard" class="view-btn"><i class="fas fa-arrow-right"></i> View Arbitrage Module</a>
+            </div>
+        </div>
+
+        <!-- Copy Trading Module -->
+        <div class="module-card" id="copy-module">
+            <div class="module-header">
+                <div class="module-name"><i class="fas fa-user-friends" style="color: #ec4899;"></i> Copy Trading</div>
+                <span class="module-status status-disabled" id="copy-status">LOADING</span>
+            </div>
+            <div class="module-metrics">
+                <div class="metric-box">
+                    <div class="metric-label">Trades</div>
+                    <div class="metric-value" id="copy-trades">0</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">P&L</div>
+                    <div class="metric-value" id="copy-pnl">$0.00</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">Positions</div>
+                    <div class="metric-value" id="copy-positions">0</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">Win Rate</div>
+                    <div class="metric-value" id="copy-winrate">0%</div>
+                </div>
+            </div>
+            <div class="module-action">
+                <a href="/copytrading/dashboard" class="view-btn"><i class="fas fa-arrow-right"></i> View Copy Trading Module</a>
+            </div>
+        </div>
+
+        <!-- AI Analysis Module -->
+        <div class="module-card" id="ai-module">
+            <div class="module-header">
+                <div class="module-name"><i class="fas fa-brain" style="color: #a78bfa;"></i> AI Analysis</div>
+                <span class="module-status status-disabled" id="ai-status">LOADING</span>
+            </div>
+            <div class="module-metrics">
+                <div class="metric-box">
+                    <div class="metric-label">Trades</div>
+                    <div class="metric-value" id="ai-trades">0</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">P&L</div>
+                    <div class="metric-value" id="ai-pnl">$0.00</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">Positions</div>
+                    <div class="metric-value" id="ai-positions">0</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">Win Rate</div>
+                    <div class="metric-value" id="ai-winrate">0%</div>
+                </div>
+            </div>
+            <div class="module-action">
+                <a href="/ai/dashboard" class="view-btn"><i class="fas fa-arrow-right"></i> View AI Module</a>
+            </div>
+        </div>
     </div>
 
     <!-- Charts Row 1: Main Performance Charts -->
@@ -872,14 +988,17 @@ function updateSummaryStats() {
 function updateModuleCards() {
     if (!moduleData) return;
 
-    // DEX Module
+    // DEX, Futures, Solana, Sniper, Arbitrage, Copy Trading, AI cards.
+    // The backend's /api/modules surfaces all seven; previously only
+    // three were rendered, leaving operators blind to half the running
+    // modules. Added per audit agent 3 #3.
     updateModuleCard('dex', moduleData.dex_trading);
-
-    // Futures Module
     updateModuleCard('futures', moduleData.futures_trading);
-
-    // Solana Module
     updateModuleCard('solana', moduleData.solana_strategies);
+    updateModuleCard('sniper', moduleData.sniper);
+    updateModuleCard('arbitrage', moduleData.arbitrage);
+    updateModuleCard('copy', moduleData.copy_trading);
+    updateModuleCard('ai', moduleData.ai_analysis);
 }
 
 function updateModuleCard(prefix, data) {
