@@ -51,10 +51,11 @@ docs/
 *.md
 README.md
 
-# Tests
-tests/
-test_*.py
-*_test.py
+# Tests — we DO ship tests/ into the image so preflight.sh and CI can
+# run them inside the container. The footprint is small (a few hundred
+# KB of .py) and operators rely on `docker compose exec trading-bot
+# pytest tests/unit/...` for fast validation. Re-exclude only the
+# heavyweight test fixtures / data if needed.
 
 # Backups
 *.backup

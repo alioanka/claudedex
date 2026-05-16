@@ -274,9 +274,17 @@ hdr "Unit tests for new code paths"
 # string OVERRIDES the inifile's addopts entirely.
 TEST_OUT=$(docker compose exec -T -w /app -e PYTEST_ADDOPTS='-p no:cacheprovider -p no:anchorpy' \
     trading-bot python -m pytest tests/unit/test_sniper_new_paths.py -q --no-header -o addopts= 2>&1 | tail -10)
-if echo "$TEST_OUT" | grep -qE "passed|no tests"; then
-    SUMMARY=$(echo "$TEST_OUT" | tail -1 | tr -d '\r')
+# Match only on pytest's actual passed-count summary line, e.g.
+# "19 passed in 0.42s". The previous grep matched any occurrence of
+# the substring "tests" — which false-positives on error paths like
+# "file or directory not found: tests/unit/...". Also detect the
+# explicit error/failed lines so we surface real problems.
+if echo "$TEST_OUT" | grep -qE '^[0-9]+ passed'; then
+    SUMMARY=$(echo "$TEST_OUT" | grep -E '^[0-9]+ passed' | tail -1 | tr -d '\r')
     pass "tests/unit/test_sniper_new_paths.py: $SUMMARY"
+elif echo "$TEST_OUT" | grep -qE 'no tests ran'; then
+    warn "tests/unit/test_sniper_new_paths.py: no tests ran"
+    echo "$TEST_OUT" | sed 's/^/          /'
 else
     warn "unit tests did not complete cleanly:"
     echo "$TEST_OUT" | sed 's/^/          /'
