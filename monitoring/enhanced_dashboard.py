@@ -202,17 +202,48 @@ class DashboardEndpoints:
     @staticmethod
     async def routes_debug_endpoint(self, request):
         """Diagnostic: dump every registered route so we can prove
-        /health is in the router table. Public; reveals paths only."""
+        /health is in the router table. Public; reveals paths only.
+
+        Defensive against route objects that don't expose canonical
+        attributes — Socket.IO long-poll routes and StaticRoutes can
+        raise on naive str()/getattr() probes, so we coerce every
+        field through a fail-soft helper.
+        """
+        def _safe(obj, attr=None, default='?'):
+            try:
+                if attr:
+                    val = getattr(obj, attr, None)
+                    if val is None:
+                        return default
+                    return str(val)
+                return str(obj)
+            except BaseException:
+                return default
+        rows = []
         try:
-            rows = []
             for r in self.app.router.routes():
-                resource = r.resource
-                path = getattr(resource, 'canonical', None) or str(resource)
-                rows.append({'method': r.method, 'path': path,
-                             'handler': getattr(r.handler, '__name__', str(r.handler))})
+                try:
+                    method = _safe(r, 'method')
+                    resource = getattr(r, 'resource', None)
+                    path = _safe(resource, 'canonical') if resource is not None else _safe(r)
+                    handler = _safe(getattr(r, 'handler', None), '__name__') or _safe(getattr(r, 'handler', None))
+                    rows.append({'method': method, 'path': path, 'handler': handler})
+                except BaseException as e:
+                    rows.append({'error': f'{type(e).__name__}'})
+        except BaseException as e:
+            return web.json_response(
+                {'error': f'iter failed: {type(e).__name__}: {e}',
+                 'partial_count': len(rows), 'partial_rows': rows},
+                status=200,
+            )
+        try:
             return web.json_response({'count': len(rows), 'routes': rows})
-        except Exception as e:
-            return web.json_response({'error': f'{type(e).__name__}: {e}'}, status=200)
+        except BaseException as e:
+            return web.Response(
+                text=f'{{"error":"json_response: {type(e).__name__}","count":{len(rows)}}}',
+                content_type='application/json',
+                status=200,
+            )
 
     async def health_endpoint(self, request):
         """Public health endpoint — never raises, never 500s.
@@ -223,17 +254,6 @@ class DashboardEndpoints:
         EVERYTHING here, including BaseException, and always return
         a JSON response with HTTP 200 so the contract stays stable.
         """
-        # Loud, multi-channel diagnostic so we can verify the handler is
-        # being reached even when stdout buffering hides logger output.
-        import sys as _sys
-        try:
-            print("HEALTH_HANDLER_REACHED", flush=True, file=_sys.stderr)
-        except Exception:
-            pass
-        try:
-            logger.warning("HEALTH_HANDLER_REACHED")
-        except Exception:
-            pass
         out = {'status': 'healthy', 'service': 'claudedex-dashboard'}
         try:
             out['time'] = datetime.now().isoformat()
