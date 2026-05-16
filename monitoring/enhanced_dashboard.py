@@ -7665,6 +7665,16 @@ class DashboardEndpoints:
                             stats['pools_evaluated'] = int(rt.get('pools_evaluated', 0) or 0)
                             stats['pools_passed'] = int(rt.get('pools_passed', 0) or 0)
                             stats['pools_rejected'] = int(rt.get('pools_rejected', 0) or 0)
+                            # WSS concurrency observability — surface the
+                            # peak in-flight and total dispatched so the
+                            # dashboard can show semaphore saturation.
+                            sl = rt.get('solana_listener') or {}
+                            if isinstance(sl, dict):
+                                stats['wss_dispatched'] = int(sl.get('wss_dispatched', 0) or 0)
+                                stats['wss_inflight_peak'] = int(sl.get('wss_inflight_peak', 0) or 0)
+                            # Position cap headroom (added by c59a32c)
+                            stats['active_positions_live'] = int(rt.get('active_positions', 0) or 0)
+                            stats['max_active_positions'] = int(rt.get('max_active_positions', 0) or 0)
                             stats['runtime_stats_age_seconds'] = int(
                                 (datetime.now() - runtime_row['updated_at']).total_seconds()
                             ) if runtime_row['updated_at'] else None

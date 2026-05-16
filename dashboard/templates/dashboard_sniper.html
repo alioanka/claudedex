@@ -408,6 +408,7 @@
         <div class="section-title">
             <i class="fas fa-radar"></i>
             Pool Detection Activity
+            <span id="wss-concurrency-note" style="margin-left:auto;font-size:0.75rem;color:var(--text-secondary);font-weight:400;"></span>
         </div>
         <div class="detection-stats">
             <div class="detection-stat">
@@ -665,6 +666,20 @@ function updateStats(data) {
         passedLabel.textContent = data.safety_enabled
             ? 'Passed Filters + Safety'
             : 'Passed Filters (safety off)';
+    }
+
+    // WSS concurrency observability — peak in-flight vs 16-default cap
+    // so operators can spot semaphore saturation at a glance. Note is
+    // empty when no WSS activity yet (cap=0 from runtime_stats).
+    const wssNote = document.getElementById('wss-concurrency-note');
+    if (wssNote) {
+        const peak = data.wss_inflight_peak;
+        const dispatched = data.wss_dispatched;
+        if (peak != null && peak > 0) {
+            wssNote.textContent = `WSS peak in-flight: ${peak}/16 · ${dispatched || 0} dispatched`;
+        } else {
+            wssNote.textContent = '';
+        }
     }
 
     // Detection stats
