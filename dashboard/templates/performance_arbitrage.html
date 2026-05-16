@@ -296,12 +296,16 @@
     </div>
 
     <!-- Performance by Route Section -->
+    <style>
+    .table-responsive.route-table-scroll { max-height: 520px; overflow-y: auto; }
+    </style>
     <div class="section-card">
         <div class="section-title">
             <i class="fas fa-route"></i>
             Performance by Route
+            <span id="routeTableNote" style="margin-left:auto;font-size:0.75rem;color:var(--text-secondary);font-weight:400;"></span>
         </div>
-        <div class="table-responsive">
+        <div class="table-responsive route-table-scroll">
             <table class="route-table" id="routeTable">
                 <thead>
                     <tr>
@@ -584,13 +588,24 @@ function sortRouteTable(column) {
 
 function updateRouteTable() {
     const tbody = document.getElementById('routeTableBody');
+    const note = document.getElementById('routeTableNote');
 
     if (routeStats.length === 0) {
         tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:20px;">No arbitrage trades yet</td></tr>';
+        if (note) note.textContent = '';
         return;
     }
 
-    tbody.innerHTML = routeStats.map(r => `
+    // Render top-25 by active sort; scrollable container handles overflow.
+    const ROW_LIMIT = 25;
+    const visible = routeStats.slice(0, ROW_LIMIT);
+    if (note) {
+        note.textContent = routeStats.length > ROW_LIMIT
+            ? `Top ${ROW_LIMIT} of ${routeStats.length} routes — sort by any column to re-rank`
+            : `${routeStats.length} routes`;
+    }
+
+    tbody.innerHTML = visible.map(r => `
         <tr>
             <td class="route-badge">
                 <span class="dex-tag">${r.buyDex}</span>
