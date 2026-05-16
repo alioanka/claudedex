@@ -592,7 +592,10 @@ class DashboardEndpoints:
         self.app.router.add_get('/backtest', self.backtest_page)
         self.app.router.add_get('/logs', self.logs_page)
         self.app.router.add_get('/analysis', self.analysis_page)
-        self.app.router.add_get('/analytics', self.analytics_page)
+        # /analytics intentionally NOT registered here — the real
+        # implementation lives in monitoring/analytics_routes.py
+        # (AnalyticsRoutes.analytics_page) and was shadowed by a
+        # dead redirect stub here.
         self.app.router.add_get('/simulator', self.simulator_page)
         self.app.router.add_get('/wallet-balances', self.wallet_balances_page)
 
@@ -1802,11 +1805,13 @@ class DashboardEndpoints:
             content_type='text/html'
         )
 
-    async def analytics_page(self, request):
-        """Analytics page - DEPRECATED, redirects to main dashboard"""
-        # Analytics page was not working properly - redirect to main dashboard
-        # TODO: Remove this route entirely in future cleanup
-        raise web.HTTPFound('/dashboard')
+    # analytics_page removed — was a redirect stub that shadowed the
+    # real AnalyticsRoutes.analytics_page (monitoring/analytics_routes.py).
+    # The full advanced-analytics surface lives in that module along
+    # with /api/analytics/{performance,risk,comparison,portfolio}.
+    # The deprecation comment "was not working properly" was wrong —
+    # the JS in static/js/analytics.js targets endpoints that already
+    # exist, so removing the redirect restores the page.
 
     async def simulator_page(self, request):
         """Trade simulator page for dry-run validation"""
