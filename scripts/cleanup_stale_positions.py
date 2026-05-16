@@ -43,37 +43,66 @@ async def main(apply: bool, stale_minutes: int) -> int:
 
     conn = await asyncpg.connect(db_url)
     try:
-        # Count first so we know what we're about to touch
-        count = await conn.fetchval(
+        # Count stale-open rows in both sniper_trades and copytrading_trades.
+        sniper_count = await conn.fetchval(
             f"""
             SELECT COUNT(*) FROM sniper_trades
             WHERE status = 'open'
               AND entry_timestamp < NOW() - INTERVAL '{stale_minutes} minutes'
             """
         )
-        print(f"Stale-open sniper_trades (>{stale_minutes} min old): {count}")
+        copy_count = 0
+        copy_table_exists = await conn.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='copytrading_trades')"
+        )
+        if copy_table_exists:
+            copy_count = await conn.fetchval(
+                f"""
+                SELECT COUNT(*) FROM copytrading_trades
+                WHERE status = 'open'
+                  AND entry_timestamp < NOW() - INTERVAL '{stale_minutes} minutes'
+                """
+            )
+        print(f"Stale-open sniper_trades       (>{stale_minutes} min old): {sniper_count}")
+        print(f"Stale-open copytrading_trades  (>{stale_minutes} min old): {copy_count}")
+        total = (sniper_count or 0) + (copy_count or 0)
 
         if not apply:
             print("\nDry-run: no rows touched. Add --apply to execute.")
             return 0
 
-        if count == 0:
+        if total == 0:
             print("Nothing to do.")
             return 0
 
-        result = await conn.execute(
-            f"""
-            UPDATE sniper_trades
-            SET status = 'closed',
-                exit_timestamp = NOW(),
-                exit_price = entry_price,
-                exit_reason = 'stale_cleanup',
-                profit_loss = COALESCE(profit_loss, 0)
-            WHERE status = 'open'
-              AND entry_timestamp < NOW() - INTERVAL '{stale_minutes} minutes'
-            """
-        )
-        print(f"UPDATE result: {result}")
+        if sniper_count:
+            result = await conn.execute(
+                f"""
+                UPDATE sniper_trades
+                SET status = 'closed',
+                    exit_timestamp = NOW(),
+                    exit_price = entry_price,
+                    exit_reason = 'stale_cleanup',
+                    profit_loss = COALESCE(profit_loss, 0)
+                WHERE status = 'open'
+                  AND entry_timestamp < NOW() - INTERVAL '{stale_minutes} minutes'
+                """
+            )
+            print(f"sniper_trades UPDATE result: {result}")
+
+        if copy_count and copy_table_exists:
+            result = await conn.execute(
+                f"""
+                UPDATE copytrading_trades
+                SET status = 'closed',
+                    exit_timestamp = NOW(),
+                    exit_reason = 'stale_cleanup'
+                WHERE status = 'open'
+                  AND entry_timestamp < NOW() - INTERVAL '{stale_minutes} minutes'
+                """
+            )
+            print(f"copytrading_trades UPDATE result: {result}")
+
         return 0
     finally:
         await conn.close()
