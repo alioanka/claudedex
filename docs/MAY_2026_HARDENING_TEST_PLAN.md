@@ -196,9 +196,63 @@ Then `docker compose restart trading-bot`. The LIVE-mode safety guard from Step 
 
 ---
 
+## Quick smoke checks for the late-additions
+
+### /health endpoint
+```bash
+curl -s http://38.242.251.156:8080/health | python -m json.tool
+```
+Expected: `{"status": "healthy", "service": "claudedex-dashboard", "git_sha": "...", "db": "reachable"}`
+
+### Migration runner picks up /migrations/ on restart
+```bash
+docker compose logs --since=2m trading-bot | grep -E "017_seed_copytrading|016_seed_sniper|migration"
+```
+Expected: either `[ALREADY APPLIED]` or `applied successfully` lines for 016 and 017.
+
+### Subprocess auto-restart cooldown
+```bash
+# After bot has been up >1 hour, kill the dex subprocess to test restart counter reset
+pgrep -f main_dex.py | head -1 | xargs -r kill
+# In ~10s logs should show "stable for ... reset restart budget" if a previous crash had bumped the counter
+```
+
+### Restart budget log
+```bash
+docker compose logs --since=24h trading-bot | grep "restart budget"
+```
+
+### COPY_TRADING bounded sets
+After leader monitoring runs for a while:
+```bash
+docker compose exec -T trading-bot python -c "
+import gc, sys
+sys.path.insert(0, '/app')
+# Pull a live engine instance if reachable, else just sanity-check the helper code
+from modules.copy_trading.copy_engine import CopyTradingEngine
+e = CopyTradingEngine.__new__(CopyTradingEngine)
+e._known_tx_hashes = set(); e._known_solana_sigs = set()
+e._known_tx_order = []; e._known_sig_order = []; e._known_max = 5
+for i in range(8):
+    e._remember_tx_hash(f'tx{i}')
+print(f'Bounded at: {len(e._known_tx_hashes)} (expected 5)')
+print(f'Oldest evicted: {\"tx0\" not in e._known_tx_hashes}')
+"
+```
+
+---
+
 ## Commit log this session
 
 ```
+08039d7 [backend] scripts: rewrite health_check.py to call /health, drop stale creds
+22534bc [backend] dashboard: real /health endpoint + Dockerfile healthcheck that uses it
+6f7cb85 [backend] dashboard: surface WSS concurrency observability on sniper page
+0fa8a2b [backend] main: reset module restart budget after sustained uptime
+6fbd137 [market] COPY_TRADING: bound _known_tx_hashes / _known_solana_sigs against memory growth
+35a41e8 [backend] dashboard: clarify "Passed Safety" label when safety_check_enabled=false
+d773f40 [backend] dashboard: rename misleading "Tokens Detected/Sniped" labels
+458c0c7 [docs] consolidated test plan for the evening validation session
 5d7f94c [backend] docs: replace brittle line-number refs in module CLAUDE.md files
 ab4a845 [backend] dashboard: empty-state messages for futures + arbitrage charts
 6a6b1ab [backend] dashboard: apply top-25+scroll pattern to futures & arbitrage perf tables
