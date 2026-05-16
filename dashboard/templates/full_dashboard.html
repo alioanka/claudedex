@@ -340,7 +340,7 @@
 <script>
     // =============== CONFIGURATION ===============
     const ALL_MODULES = [
-        { id: 'dex_trading', name: 'DEX Trading', icon: 'fa-cube', color: 'dex', dashboard: '/dashboard' },
+        { id: 'dex_trading', name: 'DEX Trading', icon: 'fa-cube', color: 'dex', dashboard: '/dex/dashboard' },
         { id: 'futures_trading', name: 'Futures', icon: 'fa-chart-line', color: 'futures', dashboard: '/futures/dashboard' },
         { id: 'solana_strategies', name: 'Solana', icon: 'fa-coins', color: 'solana', dashboard: '/solana/dashboard' },
         { id: 'sniper', name: 'Sniper', icon: 'fa-crosshairs', color: 'sniper', dashboard: '/sniper/dashboard' },
@@ -515,8 +515,13 @@
         ALL_MODULES.forEach(mod => {
             const data = modulesData[mod.id] || {};
             const metrics = data.metrics || { pnl: 0, total_trades: 0, win_rate: 0, positions: 0 };
-            const isRunning = data.status === 'RUNNING' || data.enabled;
-            const status = data.status || (isRunning ? 'RUNNING' : 'STOPPED');
+            // Render exactly what the backend reports. Previous code
+            // treated `enabled=true` as a fallback for RUNNING, so a
+            // disabled module with env=true still flashed RUNNING in
+            // the UI. The backend now reports RUNNING / ENABLED /
+            // STOPPED / DISABLED honestly — trust it.
+            const status = data.status || 'DISABLED';
+            const isRunning = status === 'RUNNING';
 
             if (status === 'RUNNING') activeCount++;
             totalTrades += metrics.total_trades || 0;
