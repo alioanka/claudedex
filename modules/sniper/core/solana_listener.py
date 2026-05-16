@@ -543,7 +543,9 @@ class SolanaListener:
                             if self._wss_sem is None:
                                 self._wss_sem = asyncio.Semaphore(self._wss_max_concurrency)
                             task = asyncio.create_task(
-                                self._process_wss_candidate(signature, src, rpc_receipt_perf)
+                                self._process_candidate(
+                                    signature, src, rpc_receipt_perf, detection_path='wss'
+                                )
                             )
                             self._wss_inflight.add(task)
                             task.add_done_callback(self._wss_inflight.discard)
@@ -570,12 +572,13 @@ class SolanaListener:
                     return
                 backoff = min(backoff * 2, WSS_BACKOFF_MAX_SECONDS)
 
-    async def _process_wss_candidate(
+    async def _process_candidate(
         self,
         signature: str,
         src: PoolSource,
         rpc_receipt_perf: float,
-    ) -> None:
+        detection_path: str = 'wss',
+    ) -> bool:
         """Off-loop processing of a WSS init-candidate.
 
         Runs under self._wss_sem so concurrent in-flight RPC calls are
@@ -592,11 +595,11 @@ class SolanaListener:
                     pool_info = await self._check_pool_transaction(signature, src)
                 except Exception as e:
                     logger.debug(
-                        f"WSS pool-check failed for {signature[:16]} [{src.value}]: {e}"
+                        f"{detection_path} pool-check failed for {signature[:16]} [{src.value}]: {e}"
                     )
-                    return
+                    return False
                 if pool_info is None:
-                    return
+                    return False
 
                 # Anchor t_detect on the on-chain block-time so the
                 # WSS-vs-polling latency comparison reflects real
@@ -615,7 +618,7 @@ class SolanaListener:
                         ).total_seconds()
                         if bt_age > 5:
                             logger.debug(
-                                f"WSS block-time age {bt_age:.1f}s for {signature[:16]}..."
+                                f"{detection_path} block-time age {bt_age:.1f}s for {signature[:16]}..."
                             )
                     except Exception:
                         pass
@@ -634,7 +637,7 @@ class SolanaListener:
                     'signature': signature,
                     'base_liquidity': pool_info.base_liquidity,
                     'metadata': dict(pool_info.metadata or {}, **{
-                        'detection_path': 'wss',
+                        'detection_path': detection_path,
                         'block_time_anchored': bool(block_iso),
                         'rpc_receipt_perf': rpc_receipt_perf,
                     }),
@@ -643,22 +646,25 @@ class SolanaListener:
                 self._stats['pools_detected'] += 1
                 self._stats['pools_queued'] += 1
                 self._stats['by_source'][src.value] += 1
-                self._stats['wss_pools_queued'] = self._stats.get('wss_pools_queued', 0) + 1
+                if detection_path == 'wss':
+                    self._stats['wss_pools_queued'] = self._stats.get('wss_pools_queued', 0) + 1
 
                 await self.new_pools_queue.put(pool_dict)
+                tag = 'WSS ' if detection_path == 'wss' else ''
                 logger.info(
-                    f"🆕 [WSS {src.value.upper()}] New pool: "
+                    f"🆕 [{tag}{src.value.upper()}] New pool: "
                     f"{pool_info.token_address[:12]}... "
                     f"(pair: {(pool_info.pair_address or 'N/A')[:12]}...)"
                 )
+                return True
         except asyncio.CancelledError:
-            # Normal shutdown — don't log noise.
             raise
         except Exception as e:
             logger.debug(
-                f"WSS candidate task failed for {signature[:16]} [{src.value}]: "
+                f"{detection_path} candidate task failed for {signature[:16]} [{src.value}]: "
                 f"{type(e).__name__}: {e}"
             )
+            return False
 
     async def _poll_source(self, source: PoolSource):
         """Poll a specific AMM source for new pools"""
@@ -682,69 +688,35 @@ class SolanaListener:
             # waits downstream.
             rpc_receipt_perf = time.perf_counter()
 
-            new_pools_found = 0
-
+            # Collect new sigs first; all share the same rpc_receipt_perf
+            # because batch arrival is one moment. Then dispatch the slow
+            # _check_pool_transaction calls in parallel via the shared
+            # semaphore — same trick we use in the WSS path.
+            new_sigs: List[str] = []
             for sig_info in signatures:
                 signature = sig_info.get('signature')
                 if not signature:
                     continue
-
-                # Skip if already seen
                 if signature in self.known_signatures[source]:
                     continue
-
                 self.known_signatures[source].add(signature)
+                new_sigs.append(signature)
 
-                # Check if this is a pool creation
-                pool_info = await self._check_pool_transaction(signature, source)
-
-                if pool_info:
-                    new_pools_found += 1
-                    self._stats['pools_detected'] += 1
-                    self._stats['pools_queued'] += 1
-                    self._stats['by_source'][source.value] += 1
-
-                    # Anchor t_detect on the on-chain block-time (see WSS
-                    # path for rationale). For polling this also reveals the
-                    # 7.5s-average cycle-wait that was previously hidden by
-                    # using the listener's queue-time. EVM listener still
-                    # uses wall-clock pending a separate enhancement.
-                    block_time = (pool_info.metadata or {}).get('block_time')
-                    block_iso = _block_time_to_iso(block_time)
-                    ts = block_iso or datetime.utcnow().isoformat()
-
-                    if block_iso:
-                        self._stats['block_time_anchored'] = self._stats.get('block_time_anchored', 0) + 1
-                    else:
-                        self._stats['block_time_missing'] = self._stats.get('block_time_missing', 0) + 1
-
-                    # Convert to dict for queue
-                    pool_dict = {
-                        'token_address': pool_info.token_address,
-                        'pair_address': pool_info.pair_address,
-                        'chain': 'solana',
-                        'source': source.value,
-                        'timestamp': ts,
-                        'signature': signature,
-                        'base_liquidity': pool_info.base_liquidity,
-                        'metadata': dict(pool_info.metadata or {}, **{
-                            'detection_path': 'polling',
-                            'block_time_anchored': bool(block_iso),
-                            # All signatures in this polling batch share
-                            # the same rpc_receipt — the batch arrival
-                            # time. Per-signature staleness is derived
-                            # from each block_time vs this single value.
-                            'rpc_receipt_perf': rpc_receipt_perf,
-                        }),
-                    }
-
-                    await self.new_pools_queue.put(pool_dict)
-
-                    logger.info(
-                        f"🆕 [{source.value.upper()}] New pool: "
-                        f"{pool_info.token_address[:12]}... "
-                        f"(pair: {pool_info.pair_address[:12] if pool_info.pair_address else 'N/A'}...)"
-                    )
+            if new_sigs:
+                if self._wss_sem is None:
+                    self._wss_sem = asyncio.Semaphore(self._wss_max_concurrency)
+                results = await asyncio.gather(
+                    *[
+                        self._process_candidate(sig, source, rpc_receipt_perf, detection_path='polling')
+                        for sig in new_sigs
+                    ],
+                    return_exceptions=True,
+                )
+                new_pools_found = sum(
+                    1 for r in results if r is True
+                )
+            else:
+                new_pools_found = 0
 
             if new_pools_found > 0:
                 logger.info(f"   Found {new_pools_found} new pools from {source.value}")
