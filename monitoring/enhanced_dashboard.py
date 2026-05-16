@@ -124,6 +124,13 @@ class DashboardEndpoints:
         # RPC/API Pool Engine
         self.pool_engine = pool_engine
 
+        # Cached SOL/USD price for SOL-denominated PnL display. CoinGecko
+        # is hit lazily on first read and cached for 60s. Falls back to
+        # 200.0 (mid-range approximation) on network failure so the
+        # dashboard never errors. Replaces two hardcoded $200.0 sites.
+        self._sol_usd_cache: float = 0.0
+        self._sol_usd_cached_at: datetime = datetime.min
+
         # Authentication
         self.auth_service = None
         self.auth_enabled = False
@@ -193,6 +200,31 @@ class DashboardEndpoints:
         self.backtests = {}
 
     @staticmethod
+    async def _get_sol_usd_price(self) -> float:
+        """Return a recently cached SOL/USD price (60s TTL) for converting
+        SOL-denominated PnL to USD in dashboard surfaces. Hits CoinGecko
+        on cache miss; falls back to 200.0 on network failure so the
+        dashboard never raises. Replaces hardcoded 200.0 sentinels."""
+        now = datetime.now()
+        if self._sol_usd_cache > 0 and (now - self._sol_usd_cached_at).total_seconds() < 60:
+            return self._sol_usd_cache
+        try:
+            import aiohttp
+            url = 'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd'
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=3) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        price = float((data.get('solana') or {}).get('usd') or 0)
+                        if price > 0:
+                            self._sol_usd_cache = price
+                            self._sol_usd_cached_at = now
+                            return price
+        except Exception as e:
+            logger.debug(f"_get_sol_usd_price fallback to 200.0: {e}")
+        # Last-known cached value beats the 200 fallback if we have one
+        return self._sol_usd_cache if self._sol_usd_cache > 0 else 200.0
+
     def _serialize_decimals(obj):
         """Convert Decimal objects to float for JSON serialization"""
         if isinstance(obj, dict):
@@ -2684,8 +2716,9 @@ class DashboardEndpoints:
                             net_pnl = stats.get('total_pnl', stats.get('net_pnl', stats.get('total_pnl_sol', 0)))
                             if isinstance(net_pnl, str):
                                 net_pnl = float(net_pnl.replace('$', '').replace(',', '').replace('SOL', '').strip())
-                            # Convert SOL to USD (approximate - should use real price)
-                            sol_price = 200.0  # TODO: Get real SOL price from API
+                            # Convert SOL to USD via cached CoinGecko fetch
+                            # (60s TTL; 200.0 fallback on network failure).
+                            sol_price = await self._get_sol_usd_price()
                             solana_pnl = net_pnl * sol_price
                             logger.debug(f"Solana summary: trades={solana_trades}, pnl={solana_pnl}, positions={solana_positions}")
             except Exception as e:
@@ -10630,7 +10663,7 @@ class DashboardEndpoints:
                 # Solana trades (from solana_trades table)
                 try:
                     solana_rows = await conn.fetch("SELECT pnl_sol FROM solana_trades")
-                    sol_price = 200.0  # Approximate SOL price
+                    sol_price = await self._get_sol_usd_price()
                     for r in solana_rows:
                         pnl = float(r['pnl_sol'] or 0) * sol_price
                         module_stats['Solana']['pnl'] += pnl
