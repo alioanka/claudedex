@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
-# scripts/sniper_preflight.sh
+# scripts/preflight.sh
 #
-# Validates every code path shipped in the May 2026 SNIPER hardening
-# session against a running stack (trading-bot + trading-postgres).
+# Validates every code path shipped in the May 2026 hardening session
+# against a running stack (trading-bot + trading-postgres). Covers:
+#   - SNIPER (cap, jupiter fallback, timing markers, WSS concurrency,
+#     LIVE safety guard, logging consolidation, block_time anchoring)
+#   - COPY_TRADING (global open-position cap, RiskManager gate)
+#   - SOLANA (RiskManager gate wiring)
+#   - Migration runner pickup of /migrations/ dir
+#   - Dashboard SOL/USD price + liveness freshness checks
+#
 # Run after `git pull` + `docker compose up -d --build trading-bot`.
 #
 # Prints PASS / WARN / FAIL per check and exits 0 only if no FAIL.
@@ -10,7 +17,7 @@
 # blocking.
 #
 # Usage:
-#   bash scripts/sniper_preflight.sh
+#   bash scripts/preflight.sh
 #
 # Compatible with the user's docker-compose stack:
 #   service: postgres (container_name: trading-postgres)
@@ -63,17 +70,26 @@ if [[ $FAILS -gt 0 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Step 1: migration 016 applied
+# Step 1: migrations 016 + 017 seeded
 # ---------------------------------------------------------------------------
-hdr "Migration 016 — max_active_positions seed"
+hdr "Seed migrations — position caps for sniper + copy_trading"
 
 OUT=$(pg "SELECT value FROM config_settings WHERE config_type='sniper_config' AND key='max_active_positions';")
 if [[ "$OUT" == "500" ]]; then
-    pass "max_active_positions=500 seeded in config_settings"
+    pass "sniper.max_active_positions=500 seeded"
 elif [[ -z "$OUT" ]]; then
-    fail "max_active_positions row missing — apply migration: docker compose cp migrations/016_seed_sniper_max_active_positions.sql postgres:/tmp/016.sql && docker compose exec postgres sh -c 'psql -U \$(cat /run/secrets/db_user) -d tradingbot -f /tmp/016.sql'"
+    fail "sniper max_active_positions missing — migration 016 not applied. Note: b82d632 fixed the auto-runner; next 'docker compose up -d --build trading-bot' will apply it. Manual: docker compose cp migrations/016_seed_sniper_max_active_positions.sql postgres:/tmp/016.sql && docker compose exec postgres sh -c 'psql -U \$(cat /run/secrets/db_user) -d tradingbot -f /tmp/016.sql'"
 else
-    pass "max_active_positions=$OUT (operator-tuned)"
+    pass "sniper.max_active_positions=$OUT (operator-tuned)"
+fi
+
+OUT=$(pg "SELECT value FROM config_settings WHERE config_type='copytrading_config' AND key='max_active_positions';")
+if [[ "$OUT" == "50" ]]; then
+    pass "copytrading.max_active_positions=50 seeded"
+elif [[ -z "$OUT" ]]; then
+    warn "copytrading max_active_positions missing — migration 017 will auto-apply on next bot restart (post-b82d632), or apply manually now: docker compose cp migrations/017_seed_copytrading_max_active_positions.sql postgres:/tmp/017.sql && docker compose exec postgres sh -c 'psql -U \$(cat /run/secrets/db_user) -d tradingbot -f /tmp/017.sql'"
+else
+    pass "copytrading.max_active_positions=$OUT (operator-tuned)"
 fi
 
 # ---------------------------------------------------------------------------
