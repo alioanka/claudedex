@@ -497,36 +497,23 @@
         if (!confirm('Are you sure you want to stop tracking this wallet?')) {
             return;
         }
-
+        // Use the dedicated atomic remove endpoint. Previous GET-then-POST
+        // round-trip splatted the full settings object back; if the
+        // intermediate GET failed or returned partial data, the entire
+        // target_wallets list could vanish from the DB on save (audit
+        // agent 2 HIGH #4). The new endpoint does SELECT + filter +
+        // UPDATE in one transaction so there's no window for loss.
         try {
-            // Get current settings
-            const getResponse = await fetch('/api/copytrading/settings');
-            const getData = await getResponse.json();
-
-            if (!getData.success) {
-                alert('Failed to load settings');
-                return;
-            }
-
-            const currentWallets = getData.settings.target_wallets || [];
-            const newWallets = currentWallets.filter(w => w !== address);
-
-            // Save updated settings
-            const saveResponse = await fetch('/api/copytrading/settings', {
+            const r = await fetch('/api/copytrading/wallets/remove', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    ...getData.settings,
-                    target_wallets: newWallets
-                })
+                body: JSON.stringify({ wallet: address })
             });
-
-            const saveData = await saveResponse.json();
-
-            if (saveData.success) {
-                loadWallets(); // Reload the list
+            const data = await r.json();
+            if (data.success) {
+                loadWallets();
             } else {
-                alert('Failed to remove wallet: ' + saveData.error);
+                alert('Failed to remove wallet: ' + (data.error || 'unknown error'));
             }
         } catch (error) {
             console.error('Error removing wallet:', error);

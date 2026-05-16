@@ -960,6 +960,18 @@ class DashboardEndpoints:
         self.app.router.add_get('/copytrading/trades', self._copytrading_trades)
         self.app.router.add_get('/copytrading/performance', self._copytrading_performance)
         self.app.router.add_get('/copytrading/settings', self._copytrading_settings)
+        # Atomic add/remove of a single tracked wallet — replaces the
+        # frontend's previous GET-then-POST round-trip that could wipe
+        # the entire target_wallets list on a transient settings-load
+        # failure (audit agent 2 HIGH #4).
+        self.app.router.add_post(
+            '/api/copytrading/wallets/remove',
+            require_auth(require_admin(self.api_copytrading_wallet_remove)),
+        )
+        self.app.router.add_post(
+            '/api/copytrading/wallets/add',
+            require_auth(require_admin(self.api_copytrading_wallet_add)),
+        )
         self.app.router.add_get('/copytrading/discovery', self._copytrading_discovery)
         self.app.router.add_get('/copytrading/wallets', self._copytrading_wallets)
         self.app.router.add_get('/api/copytrading/wallets', self.api_get_copytrading_wallets)
@@ -8826,6 +8838,110 @@ class DashboardEndpoints:
     async def _copytrading_wallets(self, request):
         template = self.jinja_env.get_template('wallets_copytrading.html')
         return web.Response(text=template.render(page='copytrading_wallets'), content_type='text/html')
+
+    async def api_copytrading_wallet_remove(self, request):
+        """Atomically remove a single wallet from copytrading_config.target_wallets.
+
+        Replaces the frontend's GET-then-POST settings round-trip,
+        which could wipe the entire target_wallets list if the
+        intermediate GET returned partial data. This endpoint does
+        the SELECT + filter + UPDATE in one DB transaction so the
+        list can never be lost on a transient error.
+
+        Body: {"wallet": "0x..." | "abc...solana"}
+        Returns: {"success": True, "remaining": int, "removed": bool}
+        """
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({'success': False, 'error': 'invalid JSON body'}, status=400)
+        target = (payload.get('wallet') or '').strip()
+        if not target:
+            return web.json_response({'success': False, 'error': 'wallet required'}, status=400)
+
+        if not (self.db and self.db.pool):
+            return web.json_response({'success': False, 'error': 'database unavailable'}, status=503)
+
+        try:
+            import json as _json
+            async with self.db.pool.acquire() as conn:
+                async with conn.transaction():
+                    row = await conn.fetchval(
+                        "SELECT value FROM config_settings WHERE config_type='copytrading_config' "
+                        "AND key='target_wallets' FOR UPDATE"
+                    )
+                    wallets = []
+                    if row:
+                        try:
+                            parsed = _json.loads(row)
+                            if isinstance(parsed, list):
+                                wallets = [str(w).strip() for w in parsed if w]
+                        except Exception:
+                            wallets = [w.strip() for w in str(row).split(',') if w.strip()]
+                    # Filter the requested wallet out (case-insensitive
+                    # because EVM addresses can vary in checksum case).
+                    target_lc = target.lower()
+                    new_wallets = [w for w in wallets if w.lower() != target_lc]
+                    removed = len(new_wallets) != len(wallets)
+                    if removed:
+                        await conn.execute(
+                            "INSERT INTO config_settings (config_type, key, value, value_type) "
+                            "VALUES ('copytrading_config', 'target_wallets', $1, 'json') "
+                            "ON CONFLICT (config_type, key) DO UPDATE SET value = EXCLUDED.value",
+                            _json.dumps(new_wallets),
+                        )
+            return web.json_response({'success': True, 'remaining': len(new_wallets), 'removed': removed})
+        except Exception as e:
+            logger.error(f"api_copytrading_wallet_remove failed: {e}", exc_info=True)
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def api_copytrading_wallet_add(self, request):
+        """Atomically add a single wallet to copytrading_config.target_wallets.
+
+        Idempotent: re-adding an existing wallet is a no-op.
+        Body: {"wallet": "0x..." | "abc...solana"}
+        """
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({'success': False, 'error': 'invalid JSON body'}, status=400)
+        target = (payload.get('wallet') or '').strip()
+        if not target:
+            return web.json_response({'success': False, 'error': 'wallet required'}, status=400)
+
+        if not (self.db and self.db.pool):
+            return web.json_response({'success': False, 'error': 'database unavailable'}, status=503)
+
+        try:
+            import json as _json
+            async with self.db.pool.acquire() as conn:
+                async with conn.transaction():
+                    row = await conn.fetchval(
+                        "SELECT value FROM config_settings WHERE config_type='copytrading_config' "
+                        "AND key='target_wallets' FOR UPDATE"
+                    )
+                    wallets = []
+                    if row:
+                        try:
+                            parsed = _json.loads(row)
+                            if isinstance(parsed, list):
+                                wallets = [str(w).strip() for w in parsed if w]
+                        except Exception:
+                            wallets = [w.strip() for w in str(row).split(',') if w.strip()]
+                    target_lc = target.lower()
+                    already = any(w.lower() == target_lc for w in wallets)
+                    if not already:
+                        wallets.append(target)
+                        await conn.execute(
+                            "INSERT INTO config_settings (config_type, key, value, value_type) "
+                            "VALUES ('copytrading_config', 'target_wallets', $1, 'json') "
+                            "ON CONFLICT (config_type, key) DO UPDATE SET value = EXCLUDED.value",
+                            _json.dumps(wallets),
+                        )
+            return web.json_response({'success': True, 'total': len(wallets), 'added': not already})
+        except Exception as e:
+            logger.error(f"api_copytrading_wallet_add failed: {e}", exc_info=True)
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
 
     async def api_get_copytrading_wallets(self, request):
         """Get tracked wallets with their activity status and calculated P&L"""
