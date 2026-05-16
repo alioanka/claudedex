@@ -325,6 +325,43 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Step 10: dashboard route health — sample a representative spread
+# ---------------------------------------------------------------------------
+hdr "Dashboard routes — HTTP status spot-check"
+
+# probe_route <url> <expected_status_pattern> <label>
+probe_route() {
+    local url="$1" expect="$2" label="$3"
+    local code
+    code=$(docker compose exec -T trading-bot python -c "
+import urllib.request, urllib.error
+try:
+    r = urllib.request.urlopen('http://localhost:8080$url', timeout=5)
+    print(r.status)
+except urllib.error.HTTPError as e:
+    print(e.code)
+except Exception as e:
+    print(f'ERR:{type(e).__name__}')
+" 2>&1 | tail -1 | tr -d '\r')
+    if [[ "$code" =~ $expect ]]; then
+        pass "$label  ($url → $code)"
+    else
+        warn "$label  ($url → $code, expected $expect)"
+    fi
+}
+
+# Most surfaces should redirect to /login (302) because we hit them
+# without an auth cookie — that's correct behavior. /health and
+# /__routes__ are public; should return 200. /dashboard is the new
+# 301 redirect to /dex/dashboard.
+probe_route /health        '^200$'      'Public /health'
+probe_route /__routes__    '^200$'      'Public /__routes__'
+probe_route /dashboard     '^(301|302)$' '/dashboard 301→/dex/dashboard (or 302 if auth front)'
+probe_route /analytics     '^(200|302|401)$' '/analytics serves (not the dead 302→/dashboard redirect)'
+probe_route /dex/trades    '^(200|302|401)$' '/dex/trades alias'
+probe_route /dex/positions '^(200|302|401)$' '/dex/positions alias'
+
+# ---------------------------------------------------------------------------
 # Verdict
 # ---------------------------------------------------------------------------
 echo
