@@ -8364,8 +8364,29 @@ class DashboardEndpoints:
         return web.Response(text=template.render(page='arbitrage_dashboard'), content_type='text/html')
 
     async def _arbitrage_positions(self, request):
-        # Arbitrage is instant execution - no open positions, redirect to trades
-        raise web.HTTPFound('/arbitrage/trades')
+        # Arbitrage opens + closes positions atomically inside a single
+        # tx — there's no concept of "open" arbitrage positions like the
+        # other modules have. Render an explanatory placeholder rather
+        # than silently 302-redirecting to /arbitrage/trades, so anyone
+        # who clicked the side-nav link knows why the page is empty.
+        body = (
+            '<!doctype html><html><head><meta charset="utf-8">'
+            '<title>Arbitrage Positions</title>'
+            '<style>body{font-family:system-ui,-apple-system,sans-serif;'
+            'background:#0f172a;color:#e2e8f0;padding:48px;max-width:640px;margin:0 auto;}'
+            'h1{font-size:1.5rem;margin-bottom:8px;}'
+            'p{color:#94a3b8;line-height:1.5;}'
+            'a{color:#60a5fa;}</style></head><body>'
+            '<h1>Arbitrage — No Open Positions</h1>'
+            '<p>Arbitrage is atomic: each opportunity executes the buy '
+            'and sell legs in a single transaction. There are no "open" '
+            'positions to display.</p>'
+            '<p>To see what arbitrage has done recently, visit '
+            '<a href="/arbitrage/trades">Arbitrage Trades</a> or '
+            '<a href="/arbitrage/performance">Arbitrage Performance</a>.</p>'
+            '</body></html>'
+        )
+        return web.Response(text=body, content_type='text/html')
 
     async def _arbitrage_trades(self, request):
         template = self.jinja_env.get_template('trades_arbitrage.html')
