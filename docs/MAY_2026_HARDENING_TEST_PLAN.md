@@ -242,9 +242,83 @@ print(f'Oldest evicted: {\"tx0\" not in e._known_tx_hashes}')
 
 ---
 
+## Dashboard audit pass — additional UI/UX validation
+
+After 3 parallel review agents inventoried 61 findings across the
+dashboard surface, the following extra checks are worth running in
+the evening session alongside the SNIPER preflight:
+
+| Check | URL | Expected |
+|---|---|---|
+| Index has all 7 module cards | `/` | DEX, Futures, Solana, Sniper, Arbitrage, Copy Trading, AI all present |
+| Status reflects actual liveness | `/`, `/full-dashboard` | Disabled modules say DISABLED, not RUNNING |
+| Analytics page actually loads | `/analytics` | No redirect to /dashboard; real Advanced Analytics page renders |
+| Logs show real per-module entries | `/logs` | Sniper/arbitrage/dashboard log lines visible (was always empty) |
+| Bot Start/Stop affects all modules | side-nav buttons | All enabled subprocesses restart, not just DEX |
+| /health returns healthy JSON | `curl http://localhost:8080/health` | 200 + `{status: healthy, db: reachable}` |
+| Sniper performance Top-25 table | `/sniper/performance` | "Top 25 of N tokens" header |
+| Sniper / Futures / Arbitrage charts honest empty state | each `/performance` | "No realized P&L yet" placeholder when DRY_RUN |
+| Sniper positions paginated | `/sniper/positions` | Prev/Next + "Showing X-Y of Z" |
+| Trades cap warning | `/arbitrage/trades`, `/copytrading/trades`, `/copytrading/performance` | Yellow ⚠ when fetch hits cap, blank otherwise |
+| Arbitrage Triangular tile honest | `/arbitrage/dashboard` | "Disabled / scope cut" badge |
+| AI cost estimate per-model | `/ai/logs` | Reasonable dollar figure (~$0.001-0.01) |
+| AI Avg Hold Time populated | `/ai/performance` | Real duration, not `--` |
+| Copy discovery doesn't auto-fire | `/copytrading/discovery` | "Click to load top traders" button, no auto-call |
+| Wallet remove atomic | `/copytrading/wallets` → Remove | Only that wallet drops; full list intact |
+| DEX trades capped at 100 rows | `/trades` | "Showing 100 of N" footer |
+| Last updated honest | `/full-dashboard` | Timestamp + ⚠ if fetch failed |
+| Pro Controls sidebar | `/pro-controls` | "Pro Controls" highlighted, not "DEX Dashboard" |
+
+If any of these regress, paste the relevant page output and we'll
+triage.
+
+---
+
 ## Commit log this session
 
 ```
+9407da0 [backend] dashboard: tab-hidden polling backoff for /ai/logs + /copytrading/positions
+0bf7784 [backend] /arbitrage/positions: explain the empty state instead of silent redirect to /trades
+4e3acec [backend] dashboard: overflow warnings on capped trade fetches (audit #15-17)
+e33b41f [backend] /full-dashboard: Last updated timestamp shows attempt time + ⚠ on failure
+96f3135 [backend] /sniper/positions: paginate (50/page) — was rendering 1000+ rows
+1e9ae76 [backend] /trades (DEX): cap visible rows to 100 + 'Showing N of M' footer
+20d1676 [backend] /api/arbitrage/trading/status: prefer arbitrage_config.dry_run over global env
+ca5c3df [backend] /api/backtest/results/{id}/export: CSV download endpoint (was 404)
+b45a979 [backend] /copytrading/dashboard: raise trades fetch limit 100→2000 + guard future timestamps
+a52e010 [backend] copytrading: atomic /api/copytrading/wallets/{add,remove} — stop risking full list loss
+cca4231 [backend] index.html: render module cards for Sniper, Arbitrage, Copy Trading, AI
+584fadb [backend] dashboard: drop misleading "ETH" suffix on mixed-chain arbitrage stats + de-dup AI avgSentiment
+44df8da [backend] /ai/performance: compute + render Avg Hold Time (was permanently --)
+4f15cce [backend] /ai/logs: per-model cost table instead of single GPT-3.5 $0.002/1K rate
+c8bd9a3 [backend] /arbitrage/dashboard: mark Triangular tile as Disabled (scope cut), not 0 trades
+65688eb [backend] /copytrading/discovery: make Hot Wallets opt-in to stop burning paid API quota
+5e4ea12 [backend] dashboard: clearer DEX page titles + honest emergency-exit warning
+9151757 [backend] dashboard: delete unused index_new.html + modules_old_backup.html templates
+2e01b43 [backend] dashboard.html: define missing loadInsights() — silent ReferenceError
+49672a7 [backend] /api/solana/stats: real SOL/USD via cached helper instead of 200 sentinel
+5443c0b [backend] dashboard: pro_controls page-context + drop fake [1,0] win-rate data
+54864aa [backend] dashboard: let module_routes own Start/Stop/Restart, not engine-only
+1476955 [backend] /analytics: remove dead redirect stub so AnalyticsRoutes wins
+9eabc3e [backend] /api/logs: walk per-module logs dirs instead of dead /app/logs path
+9a49c7b [backend] full_dashboard: stop treating env=true as fallback for RUNNING
+88e404b [backend] dashboard: fix Arbitrage Token Size math + DAI address typo
+7a4ebf3 [backend] dashboard: AI + COPY_TRADING status no longer spoofed by historical data
+9bd4cec [backend] cache /api/sniper/timing 30s — percentile_cont over 130k rows was hot
+3edbcac [backend] dashboard: status no longer reports RUNNING for disabled modules with stale trades
+6198edc [backend] dockerignore: ship tests/ into image + tighten preflight grep
+34621c6 [backend] preflight: install pytest-cov + override pytest.ini's --cov addopts
+7390d47 [backend] /health verified working; harden /__routes__ debug endpoint
+ced8af0 [backend] diagnose /health 500: multi-channel logging + /__routes__ debug
+938300a [backend] disable anchorpy pytest plugin + diagnostic log on /health hits
+dbba9fa [backend] fix preflight round-2: bulletproof /health, SQL GROUP BY shape, pytest-asyncio
+713da9f [backend] fix preflight findings: /health 500, cap counts wrong, preflight SQL escape, test runner
+21e3d4c [backend] preflight: add /health endpoint reachability + git SHA report
+a586796 [backend] cleanup_stale_positions: extend to copytrading_trades
+9452577 [market] COPY_TRADING: only gate BUYs through RiskManager, never SELLs
+761d5c1 [backend] dashboard: module_control honors Stale / Starting status states
+bf3508d [backend] scripts: cleanup_stale_positions.py operator utility
+2ae04b2 [docs] extend test plan with the latest 8 commits (health endpoint, restart budget, bounded sets, etc.)
 08039d7 [backend] scripts: rewrite health_check.py to call /health, drop stale creds
 22534bc [backend] dashboard: real /health endpoint + Dockerfile healthcheck that uses it
 6f7cb85 [backend] dashboard: surface WSS concurrency observability on sniper page
