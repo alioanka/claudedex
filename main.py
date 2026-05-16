@@ -394,6 +394,7 @@ class ModuleProcess:
             self._stderr_file = stderr_file
 
             logger.info(f"✅ {self.name} started (PID: {self.process.pid})")
+            self._last_start_ts = datetime.now()
             logger.info(f"   Logs: {log_dir}/stdout.log, {log_dir}/stderr.log (rotating, max 10MB)")
             return True
         except Exception as e:
@@ -444,7 +445,26 @@ class ModuleProcess:
                     pass
 
     async def restart(self):
-        """Restart the module"""
+        """Restart the module.
+
+        Resets restart_count after RESTART_COUNT_RESET_AFTER seconds of
+        successful uptime so a module that crashes once a week does NOT
+        eventually exhaust its budget over months — only sustained
+        crash-restart cycles trip the permanent-failure latch.
+        """
+        # Reset budget if the module has been up long enough since
+        # the most recent restart. self._last_start_ts tracked below.
+        RESTART_COUNT_RESET_AFTER = 3600  # 1 hour uptime resets budget
+        last_start = getattr(self, '_last_start_ts', None)
+        if last_start is not None and self.restart_count > 0:
+            uptime = (datetime.now() - last_start).total_seconds()
+            if uptime > RESTART_COUNT_RESET_AFTER:
+                logger.info(
+                    f"♻️  {self.name} stable for {uptime:.0f}s — "
+                    f"resetting restart budget from {self.restart_count}"
+                )
+                self.restart_count = 0
+
         if self.restart_count >= self.max_restarts:
             logger.error(f"❌ {self.name} exceeded max restarts ({self.max_restarts})")
             return False
@@ -454,7 +474,10 @@ class ModuleProcess:
         await asyncio.sleep(5)  # Wait before restart
 
         self.restart_count += 1
-        return await self.start()
+        ok = await self.start()
+        if ok:
+            self._last_start_ts = datetime.now()
+        return ok
 
 
 class TradingBotOrchestrator:
