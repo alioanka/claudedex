@@ -40,10 +40,13 @@ fail() { printf "${RED}  FAIL${NC}  %s\n" "$1"; FAILS=$((FAILS+1)); }
 hdr()  { printf "\n${CYAN}=== %s ===${NC}\n" "$1"; }
 
 pg() {
-    # Runs an SQL command inside trading-postgres using the secret-mounted user.
-    # Stdout is the raw psql output; caller decides what to grep for.
-    docker compose exec -T postgres bash -lc \
-        "psql -U \$(cat /run/secrets/db_user) -d tradingbot -tA -c \"$1\"" 2>&1
+    # Runs an SQL command inside trading-postgres using the secret-mounted
+    # user. Pipes SQL via stdin instead of -c so multi-line queries with
+    # embedded single quotes ('30 minutes', etc.) survive the bash quote
+    # gauntlet. Stdout is the raw psql output; caller decides what to
+    # grep for. -tA = tuples-only, unaligned.
+    printf '%s\n' "$1" | docker compose exec -T postgres bash -lc \
+        'psql -U $(cat /run/secrets/db_user) -d tradingbot -tA -f -' 2>&1
 }
 
 # ---------------------------------------------------------------------------
@@ -259,11 +262,17 @@ fi
 # ---------------------------------------------------------------------------
 hdr "Unit tests for new code paths"
 
-if docker compose exec -T trading-bot python -m pytest tests/unit/test_sniper_new_paths.py -q --no-header 2>&1 | tail -5 | grep -q "passed"; then
-    PASS_LINE=$(docker compose exec -T trading-bot python -m pytest tests/unit/test_sniper_new_paths.py -q --no-header 2>&1 | tail -1)
-    pass "tests/unit/test_sniper_new_paths.py: $PASS_LINE"
+# Run from /app where pytest config lives; use --no-cov so we don't have
+# to depend on the coverage tooling being importable. Capture full output
+# so we can show it on failure.
+TEST_OUT=$(docker compose exec -T -w /app trading-bot \
+    python -m pytest tests/unit/test_sniper_new_paths.py -q --no-header --no-cov 2>&1 | tail -8)
+if echo "$TEST_OUT" | grep -qE "passed|no tests"; then
+    SUMMARY=$(echo "$TEST_OUT" | tail -1 | tr -d '\r')
+    pass "tests/unit/test_sniper_new_paths.py: $SUMMARY"
 else
-    warn "could not run unit tests (test deps missing or test file not present)"
+    warn "unit tests did not complete cleanly:"
+    echo "$TEST_OUT" | sed 's/^/          /'
 fi
 
 # ---------------------------------------------------------------------------

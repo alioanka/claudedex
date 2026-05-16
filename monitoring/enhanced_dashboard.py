@@ -204,24 +204,58 @@ class DashboardEndpoints:
         """Public health endpoint — returns 200 + JSON if the dashboard
         is responsive and can reach the DB. Used by Docker healthcheck
         and scripts/health_check.py. Includes git SHA if /app/.git is
-        available so operators can identify the running build."""
-        from aiohttp import web
-        out = {
-            'status': 'healthy',
-            'service': 'claudedex-dashboard',
-            'time': datetime.now().isoformat(),
-            'git_sha': self._get_git_sha_cached(),
-        }
-        # Probe DB if available, fail-soft otherwise.
-        if self.db and self.db.pool:
+        available so operators can identify the running build.
+
+        Wrapped in a try/except so any unexpected attribute / import
+        error returns degraded JSON rather than bubbling to a 500.
+        """
+        try:
+            from datetime import datetime as _dt
+            out = {
+                'status': 'healthy',
+                'service': 'claudedex-dashboard',
+                'time': _dt.now().isoformat(),
+            }
+            # git_sha is best-effort; never let it crash the endpoint
             try:
-                async with self.db.pool.acquire() as conn:
-                    await conn.fetchval('SELECT 1')
-                out['db'] = 'reachable'
-            except Exception as e:
-                out['status'] = 'degraded'
-                out['db'] = f'error: {type(e).__name__}'
-        return web.json_response(out)
+                out['git_sha'] = self._get_git_sha_cached()
+            except Exception:
+                out['git_sha'] = ''
+
+            # Probe DB if available. Tries both .db.pool (the canonical
+            # manager attribute) and the standalone .db_pool that some
+            # constructors set; fail-soft for both.
+            pool = None
+            try:
+                if hasattr(self, 'db') and self.db is not None and getattr(self.db, 'pool', None):
+                    pool = self.db.pool
+                elif getattr(self, 'db_pool', None):
+                    pool = self.db_pool
+            except Exception:
+                pool = None
+
+            if pool is not None:
+                try:
+                    async with pool.acquire() as conn:
+                        await conn.fetchval('SELECT 1')
+                    out['db'] = 'reachable'
+                except Exception as e:
+                    out['status'] = 'degraded'
+                    out['db'] = f'error: {type(e).__name__}'
+            else:
+                out['db'] = 'unavailable'
+
+            return web.json_response(out)
+        except Exception as e:
+            # Last-ditch fallback so /health NEVER 500s — Docker
+            # healthcheck and external monitors depend on this being a
+            # stable contract.
+            logger.error(f"health_endpoint raised: {type(e).__name__}: {e}", exc_info=True)
+            return web.json_response(
+                {'status': 'degraded', 'service': 'claudedex-dashboard',
+                 'error': f'{type(e).__name__}: {e}'},
+                status=200,  # 200 so the Docker probe doesn't restart
+            )
 
     def _get_git_sha_cached(self) -> str:
         """Return short git SHA (first 7 chars) of HEAD or '' on failure.

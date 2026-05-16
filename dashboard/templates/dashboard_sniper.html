@@ -668,15 +668,18 @@ function updateStats(data) {
             : 'Passed Filters (safety off)';
     }
 
-    // WSS concurrency observability — peak in-flight vs 16-default cap
-    // so operators can spot semaphore saturation at a glance. Note is
-    // empty when no WSS activity yet (cap=0 from runtime_stats).
+    // WSS concurrency observability. wss_inflight_peak counts all
+    // dispatched tasks pending OR running — including those queued
+    // for the semaphore — so it can legitimately exceed the semaphore
+    // cap of 16. Label reflects that: "queued+running" is the task
+    // set; concurrent RPC execution is still bounded at 16.
     const wssNote = document.getElementById('wss-concurrency-note');
     if (wssNote) {
         const peak = data.wss_inflight_peak;
         const dispatched = data.wss_dispatched;
         if (peak != null && peak > 0) {
-            wssNote.textContent = `WSS peak in-flight: ${peak}/16 · ${dispatched || 0} dispatched`;
+            wssNote.textContent =
+                `WSS task peak (queued+running): ${peak} · ${dispatched || 0} dispatched (concurrent RPC capped at 16)`;
         } else {
             wssNote.textContent = '';
         }

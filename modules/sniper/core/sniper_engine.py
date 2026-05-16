@@ -322,6 +322,35 @@ class SniperEngine:
                 logger.error(f"Error in monitor loop: {e}")
                 await asyncio.sleep(1)
 
+    async def _effective_active_count(self) -> int:
+        """Return the count to evaluate against max_active_positions.
+
+        max(in-memory, DB) so the cap honors both:
+          - In-memory dict: positions THIS process has opened (resets to
+            0 on restart, so alone it's worthless after a crash).
+          - DB sniper_trades WHERE status='open': true active across
+            restarts, including orphan rows from prior crashes.
+
+        Prevents the dashboard "Active Positions: 1089 / cap: 500"
+        skew that surfaced when len(self.active_snipes)=0 after a
+        restart while the DB still carried 1089 orphans.
+
+        Fail-soft: a DB error falls back to in-memory count rather
+        than blocking trading.
+        """
+        in_mem = len(self.active_snipes)
+        if not self.db_pool:
+            return in_mem
+        try:
+            async with self.db_pool.acquire() as conn:
+                db_count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM sniper_trades WHERE status = 'open'"
+                )
+            return max(in_mem, int(db_count or 0))
+        except Exception as e:
+            logger.debug(f"_effective_active_count DB fallback: {e}")
+            return in_mem
+
     async def _evaluate_target(self, target: Dict, chain_type: str):
         """Evaluate if a new token meets sniping criteria"""
         token_address = target.get('token_address', '')
@@ -343,14 +372,19 @@ class SniperEngine:
         try:
             # 0. Active-positions cap (emergency brake against runaway accumulation).
             # Gate here so we don't pay safety-check cost when already at cap.
-            if len(self.active_snipes) >= self.max_active_positions:
+            # Uses _effective_active_count() which prefers DB count over the
+            # in-memory dict — len(self.active_snipes) resets to 0 on restart
+            # while DB orphans accumulate, leaving the cap unenforced.
+            effective = await self._effective_active_count()
+            if effective >= self.max_active_positions:
                 self._stats['capped_rejections'] = self._stats.get('capped_rejections', 0) + 1
                 now = datetime.now()
                 if now - self._stats.get('last_capped_log', now) >= timedelta(minutes=1):
                     logger.warning(
-                        f"🛑 SNIPER CAP: {len(self.active_snipes)}/{self.max_active_positions} "
-                        f"active positions — rejected {self._stats['capped_rejections']} candidates "
-                        f"in last minute"
+                        f"🛑 SNIPER CAP: {effective}/{self.max_active_positions} "
+                        f"active positions (in-mem={len(self.active_snipes)}, "
+                        f"db-open={effective}) — rejected {self._stats['capped_rejections']} "
+                        f"candidates in last minute"
                     )
                     self._stats['last_capped_log'] = now
                     self._stats['capped_rejections'] = 0
@@ -588,9 +622,16 @@ class SniperEngine:
                 0,
                 snapshot['pools_evaluated'] - snapshot['pools_rejected']
             )
-            # Active-positions cap visibility for the dashboard
+            # Active-positions cap visibility for the dashboard. Surface
+            # BOTH in-memory (what THIS process tracks) and the effective
+            # count (max of in-mem vs DB open rows) so operators can spot
+            # orphan accumulation immediately.
             snapshot['active_positions'] = len(self.active_snipes)
             snapshot['max_active_positions'] = self.max_active_positions
+            try:
+                snapshot['active_positions_effective'] = await self._effective_active_count()
+            except Exception:
+                snapshot['active_positions_effective'] = snapshot['active_positions']
 
             import json as _json
             async with self.db_pool.acquire() as conn:
@@ -634,7 +675,7 @@ class SniperEngine:
         # Belt-and-suspenders cap check: pending_targets can fill up between
         # the _evaluate_target gate and broadcast. Skip silently (no DB log,
         # no timing emit) — _evaluate_target already accounted the rejection.
-        if len(self.active_snipes) >= self.max_active_positions:
+        if await self._effective_active_count() >= self.max_active_positions:
             data['status'] = 'failed'
             data['error'] = 'capped'
             if timing:
