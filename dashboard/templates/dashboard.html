@@ -1022,6 +1022,33 @@
 // BLOCK STATUS MANAGEMENT
 // ========================================
 
+// loadInsights — was called from initial-load + refresh-tick but never
+// defined, throwing a silent ReferenceError on every page load. Now
+// fetches /api/insights and renders each item as an <li> in
+// #insightsList. Empty state renders a single placeholder row.
+async function loadInsights() {
+    const list = document.getElementById('insightsList');
+    if (!list) return;
+    try {
+        const r = await fetch('/api/insights');
+        if (!r.ok) return;
+        const j = await r.json();
+        const items = (j && (j.data || j.insights || [])) || [];
+        if (!items.length) {
+            list.innerHTML = '<li class="text-muted">No insights yet — populates as more trades close.</li>';
+            return;
+        }
+        list.innerHTML = items.slice(0, 10).map(it => {
+            const text = (it && (it.message || it.text || it.insight)) || String(it);
+            const sev = (it && it.severity) || 'info';
+            return `<li class="insight-${sev}">${text}</li>`;
+        }).join('');
+    } catch (e) {
+        // Silent; don't spam console on every refresh tick if the
+        // endpoint is briefly unavailable.
+    }
+}
+
 async function loadBlockStatus() {
     try {
         const response = await fetch('/api/portfolio/block-status');
