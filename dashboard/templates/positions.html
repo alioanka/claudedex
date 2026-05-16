@@ -9,8 +9,9 @@
         <button class="btn btn-secondary" onclick="refreshPositions()">
             <i class="fas fa-sync"></i> Refresh
         </button>
-        <button class="btn btn-danger" onclick="closeAllPositions()">
-            <i class="fas fa-times-circle"></i> Close All
+        <button class="btn btn-danger" onclick="closeAllPositions()"
+                title="Closes positions across ALL trading modules (not just DEX) — uses the global emergency-exit kill switch.">
+            <i class="fas fa-times-circle"></i> Emergency Exit (All Modules)
         </button>
     </div>
 </div>
@@ -544,8 +545,11 @@ async function closeCurrentPosition() {
 
 async function closeAllPositions() {
     const confirmed = await showConfirmation(
-        'Close All Positions',
-        `Close all ${currentPositions.length} open positions?`
+        'Emergency Exit — ALL Modules',
+        `This triggers the global emergency-exit kill switch, closing ` +
+        `positions across ALL enabled modules (DEX, Futures, Solana, Sniper, ` +
+        `Arbitrage, Copy Trading, AI), not just the ${currentPositions.length} ` +
+        `DEX positions shown on this page. Continue?`
     );
     
     if (!confirmed) return;
