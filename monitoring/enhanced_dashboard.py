@@ -200,6 +200,20 @@ class DashboardEndpoints:
         self.backtests = {}
 
     @staticmethod
+    async def routes_debug_endpoint(self, request):
+        """Diagnostic: dump every registered route so we can prove
+        /health is in the router table. Public; reveals paths only."""
+        try:
+            rows = []
+            for r in self.app.router.routes():
+                resource = r.resource
+                path = getattr(resource, 'canonical', None) or str(resource)
+                rows.append({'method': r.method, 'path': path,
+                             'handler': getattr(r.handler, '__name__', str(r.handler))})
+            return web.json_response({'count': len(rows), 'routes': rows})
+        except Exception as e:
+            return web.json_response({'error': f'{type(e).__name__}: {e}'}, status=200)
+
     async def health_endpoint(self, request):
         """Public health endpoint — never raises, never 500s.
 
@@ -209,11 +223,15 @@ class DashboardEndpoints:
         EVERYTHING here, including BaseException, and always return
         a JSON response with HTTP 200 so the contract stays stable.
         """
-        # Diagnostic: log every /health hit. Lets operators confirm the
-        # handler is actually being reached when troubleshooting why
-        # error_handler_middleware would otherwise serve 500.
+        # Loud, multi-channel diagnostic so we can verify the handler is
+        # being reached even when stdout buffering hides logger output.
+        import sys as _sys
         try:
-            logger.info(f"/health hit from {request.remote}")
+            print("HEALTH_HANDLER_REACHED", flush=True, file=_sys.stderr)
+        except Exception:
+            pass
+        try:
+            logger.warning("HEALTH_HANDLER_REACHED")
         except Exception:
             pass
         out = {'status': 'healthy', 'service': 'claudedex-dashboard'}
@@ -537,6 +555,10 @@ class DashboardEndpoints:
         # checks always 404'd. Returns JSON with current git SHA when
         # available so operators can identify which build is running.
         self.app.router.add_get('/health', self.health_endpoint)
+        # Diagnostic: lists every registered route so we can confirm
+        # the /health binding made it into the routing table. Public
+        # (not auth-gated) because it reveals only paths, not data.
+        self.app.router.add_get('/__routes__', self.routes_debug_endpoint)
 
         # Pages - all will be protected by auth middleware if enabled
         self.app.router.add_get('/', self.index)

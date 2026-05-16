@@ -127,6 +127,7 @@ async def auth_middleware_factory(app: web.Application, handler: Callable) -> Ca
             '/api/auth/login',
             '/api/auth/logout',
             '/health',
+            '/__routes__',
         ]
 
         # Public path prefixes. /socket.io/ is gated by the Socket.IO
