@@ -1417,9 +1417,25 @@ async function loadWinRateChart() {
                 existingChart.destroy();
             }
             
-            // ✅ FIX: Use actual trade counts, not percentages
-            const chartData = totalTrades > 0 ? [winningTrades, losingTrades] : [1, 0];
-            
+            // ✅ FIX: Use actual trade counts, not percentages.
+            // Previously fell back to [1, 0] when totalTrades was 0,
+            // which rendered as "1 Win, 0 Losses" — misleading. Now
+            // render an explicit empty-state caption on the canvas
+            // instead of fabricating data.
+            if (totalTrades === 0) {
+                const c2 = ctx.getContext ? ctx.getContext('2d') : ctx;
+                c2.save();
+                c2.clearRect(0, 0, ctx.width, ctx.height);
+                c2.fillStyle = 'rgba(148, 163, 184, 0.9)';
+                c2.textAlign = 'center';
+                c2.textBaseline = 'middle';
+                c2.font = '500 13px system-ui, -apple-system, sans-serif';
+                c2.fillText('No closed trades yet', ctx.width / 2, ctx.height / 2);
+                c2.restore();
+                return;
+            }
+            const chartData = [winningTrades, losingTrades];
+
             // Create new chart
             new Chart(ctx, {
                 type: 'doughnut',

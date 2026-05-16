@@ -1800,7 +1800,7 @@ class DashboardEndpoints:
         """Pro controls page"""
         template = self.jinja_env.get_template('pro_controls.html')
         return web.Response(
-            text=template.render(page='dashboard'),
+            text=template.render(page='pro_controls'),
             content_type='text/html'
         )
     
