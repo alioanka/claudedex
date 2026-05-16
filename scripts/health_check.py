@@ -1,71 +1,45 @@
 # scripts/health_check.py
 """
-Health check script for monitoring
+Lightweight health check used by Docker / external monitoring.
+
+Hits the dashboard's /health endpoint and reports its findings. The
+dashboard already probes the DB internally, so we don't duplicate that
+work here (and we don't carry stale 'trading:trading123' credentials,
+which never worked against the secrets-mounted postgres).
+
+Exits 0 if /health returns 200 AND status == 'healthy'.
+Exits 1 otherwise.
 """
 import asyncio
-import aiohttp
-import asyncpg
-import redis.asyncio as redis
-from datetime import datetime
 import sys
+import aiohttp
 
-async def check_health():
-    """Check health of all components"""
-    
-    health_status = {
-        "timestamp": datetime.now().isoformat(),
-        "status": "healthy",
-        "checks": {}
-    }
-    
-    # Check API
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get("http://localhost:8080/health") as response:
-                if response.status == 200:
-                    health_status["checks"]["api"] = {"status": "healthy"}
-                else:
-                    health_status["checks"]["api"] = {"status": "unhealthy", "code": response.status}
-                    health_status["status"] = "unhealthy"
-    except Exception as e:
-        health_status["checks"]["api"] = {"status": "unhealthy", "error": str(e)}
-        health_status["status"] = "unhealthy"
-    
-    # Check Database
-    try:
-        conn = await asyncpg.connect(
-            "postgresql://trading:trading123@localhost:5432/tradingbot"
-        )
-        await conn.fetchval("SELECT 1")
-        await conn.close()
-        health_status["checks"]["database"] = {"status": "healthy"}
-    except Exception as e:
-        health_status["checks"]["database"] = {"status": "unhealthy", "error": str(e)}
-        health_status["status"] = "unhealthy"
-    
-    # Check Redis
-    try:
-        r = redis.from_url("redis://localhost:6379/0")
-        await r.ping()
-        await r.close()
-        health_status["checks"]["redis"] = {"status": "healthy"}
-    except Exception as e:
-        health_status["checks"]["redis"] = {"status": "unhealthy", "error": str(e)}
-        health_status["status"] = "unhealthy"
-    
-    return health_status
 
-async def main():
-    """Main health check"""
-    health = await check_health()
-    
-    print(f"Health Status: {health['status']}")
-    for component, status in health["checks"].items():
-        icon = "✅" if status["status"] == "healthy" else "❌"
-        print(f"{icon} {component}: {status['status']}")
-    
-    if health["status"] != "healthy":
-        sys.exit(1)
+async def check_health(url: str = "http://localhost:8080/health") -> int:
+    try:
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    print(f"❌ /health returned HTTP {resp.status}")
+                    return 1
+                data = await resp.json()
+        status = data.get('status', 'unknown')
+        sha = data.get('git_sha') or 'unknown'
+        db_state = data.get('db') or 'unknown'
+        print(f"Health Status: {status}")
+        print(f"  service: {data.get('service', '?')}")
+        print(f"  build:   {sha}")
+        print(f"  db:      {db_state}")
+        return 0 if status == 'healthy' else 1
+    except aiohttp.ClientError as e:
+        print(f"❌ /health unreachable: {type(e).__name__}: {e}")
+        return 1
+    except Exception as e:
+        print(f"❌ unexpected error: {type(e).__name__}: {e}")
+        return 1
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    rc = asyncio.run(check_health())
+    sys.exit(rc)
