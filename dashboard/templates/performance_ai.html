@@ -537,9 +537,13 @@ function updateSentimentData(data) {
     document.getElementById('buySignals').textContent = buyCount;
     document.getElementById('sellSignals').textContent = sellCount;
 
-    if (data.length > 0) {
-        document.getElementById('avgSentiment').textContent = ((avgScore / data.length) * 100).toFixed(0);
-    }
+    // NOTE: do NOT write into #avgSentiment here. That stat card is
+    // populated by updateMetrics() from /api/ai/performance with the
+    // avg sentiment across CLOSED TRADES (a performance metric).
+    // The signal-list average computed above is a different number
+    // (avg over recent sentiment LOGS) and used to overwrite the
+    // performance figure depending on fetch order. If you need the
+    // signal-list average displayed, give it its own element.
 }
 
 function updateModeInfo(settings) {

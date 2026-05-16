@@ -239,8 +239,8 @@
             <div class="stat-value" id="stat-avg-spread">0.00%</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Total Volume</div>
-            <div class="stat-value" id="stat-volume">0.00 ETH</div>
+            <div class="stat-label" title="Sum of native-token volume across all arbitrage trades. Mixed ETH/SOL — see per-chain breakdown on /arbitrage/trades for separate totals.">Total Volume (mixed)</div>
+            <div class="stat-value" id="stat-volume">0.00</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Total Trades</div>
@@ -264,7 +264,7 @@
         </div>
         <div class="stat-card">
             <div class="stat-label">Avg Trade Size</div>
-            <div class="stat-value" id="stat-avg-size">0.00 ETH</div>
+            <div class="stat-value" id="stat-avg-size">0.00</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Active Routes</div>
@@ -419,13 +419,13 @@ function showEmptyState() {
     document.getElementById('stat-winrate').textContent = '0%';
     document.getElementById('stat-profit-factor').textContent = '0.00';
     document.getElementById('stat-avg-spread').textContent = '0.00%';
-    document.getElementById('stat-volume').textContent = '0.00 ETH';
+    document.getElementById('stat-volume').textContent = '0.00';
     document.getElementById('stat-total-trades').textContent = '0';
     document.getElementById('stat-avg-profit').textContent = '$0.00';
     document.getElementById('stat-best-trade').textContent = '$0.00';
     document.getElementById('stat-worst-trade').textContent = '$0.00';
     document.getElementById('stat-best-spread').textContent = '0.00%';
-    document.getElementById('stat-avg-size').textContent = '0.00 ETH';
+    document.getElementById('stat-avg-size').textContent = '0.00';
     document.getElementById('stat-routes').textContent = '0';
     document.getElementById('routeTableBody').innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:20px;">No arbitrage trades yet</td></tr>';
 }
@@ -480,13 +480,13 @@ function calculateAndDisplayMetrics(trades) {
     document.getElementById('stat-winrate').textContent = winRate.toFixed(1) + '%';
     document.getElementById('stat-profit-factor').textContent = profitFactor >= 999 ? '∞' : profitFactor.toFixed(2);
     document.getElementById('stat-avg-spread').textContent = avgSpread.toFixed(2) + '%';
-    document.getElementById('stat-volume').textContent = totalVolume.toFixed(4) + ' ETH';
+    document.getElementById('stat-volume').textContent = totalVolume.toFixed(4);
     document.getElementById('stat-total-trades').textContent = trades.length;
     document.getElementById('stat-avg-profit').textContent = `$${avgProfit.toFixed(2)}`;
     document.getElementById('stat-best-trade').textContent = `$${bestTrade.toFixed(2)}`;
     document.getElementById('stat-worst-trade').textContent = `$${worstTrade.toFixed(2)}`;
     document.getElementById('stat-best-spread').textContent = bestSpread.toFixed(2) + '%';
-    document.getElementById('stat-avg-size').textContent = avgSize.toFixed(4) + ' ETH';
+    document.getElementById('stat-avg-size').textContent = avgSize.toFixed(4);
     document.getElementById('stat-routes').textContent = routes.size;
 
     // Update charts
