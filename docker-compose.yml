@@ -1,5 +1,3 @@
-version: '3.8'
-
 # ⚠️  IMPORTANT: Database Persistence
 # - Use: docker-compose up -d --build           (REBUILDS code, KEEPS data ✅)
 # - Avoid: docker-compose down -v               (WIPES ALL DATA including admin user & secrets ❌)

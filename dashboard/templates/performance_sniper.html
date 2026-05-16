@@ -916,17 +916,51 @@ function calculateStdDev(arr) {
     return Math.sqrt(squaredDiffs.reduce((a, b) => a + b, 0) / arr.length);
 }
 
+// Shared helper: renders a friendly empty-state message on a canvas
+// when the underlying P&L series is degenerate (e.g. all zero — every
+// DRY_RUN trade returns 0 because exit_price = entry_price under the
+// synthetic-close path). Avoids showing a meaningless flat $10k line.
+function _renderChartEmptyState(canvasId, message) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.save();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '500 13px system-ui, -apple-system, sans-serif';
+    ctx.fillText(message, canvas.width / 2, canvas.height / 2);
+    ctx.restore();
+}
+
 function updateEquityChart(trades, equityCurve) {
     const ctx = document.getElementById('equityChart').getContext('2d');
+
+    if (equityChart) {
+        equityChart.destroy();
+        equityChart = null;
+    }
+
+    // If every closed trade is $0 P&L (DRY_RUN synthetic-close path),
+    // the equity curve is a flat $10k line — render an explanatory
+    // empty state instead so operators aren't confused into thinking
+    // capital is parked.
+    const hasNonZeroPnl = (trades || []).some(t =>
+        Math.abs(parseFloat(t.pnl || t.net_pnl || 0)) > 1e-9
+    );
+    if (!hasNonZeroPnl) {
+        _renderChartEmptyState(
+            'equityChart',
+            'No realized P&L yet — DRY_RUN trades close at entry price'
+        );
+        return;
+    }
 
     const labels = ['Start', ...trades.map((t, i) => {
         const date = new Date(t.closed_at || t.time || t.exit_time);
         return date.toLocaleDateString();
     })];
-
-    if (equityChart) {
-        equityChart.destroy();
-    }
 
     equityChart = new Chart(ctx, {
         type: 'line',
@@ -981,6 +1015,16 @@ function updateDailyPnlChart(trades) {
 
     if (dailyPnlChart) {
         dailyPnlChart.destroy();
+        dailyPnlChart = null;
+    }
+
+    // Empty-state when no day in the window had any non-zero P&L.
+    if (!pnls.some(p => Math.abs(p) > 1e-9)) {
+        _renderChartEmptyState(
+            'dailyPnlChart',
+            'No realized P&L yet — populated after the LIVE flip'
+        );
+        return;
     }
 
     dailyPnlChart = new Chart(ctx, {
@@ -1023,6 +1067,17 @@ function updateWinLossChart(wins, losses) {
 
     if (winLossChart) {
         winLossChart.destroy();
+        winLossChart = null;
+    }
+
+    // Empty-state when neither side has any closed trades with P&L —
+    // matches the DRY_RUN profile where every position closes flat.
+    if ((wins || 0) + (losses || 0) === 0) {
+        _renderChartEmptyState(
+            'winLossChart',
+            'No win/loss data yet — populated after the LIVE flip'
+        );
+        return;
     }
 
     winLossChart = new Chart(ctx, {
