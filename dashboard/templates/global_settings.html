@@ -15,69 +15,121 @@
 </div>
 
 <script>
+// Renders a single setting row with a type-appropriate input.
+// Previously every non-bool got <input type=text> regardless of the
+// underlying type, so numbers got coerced to strings and JSON
+// objects rendered as their stringified form with no validation.
+// Now: bool → checkbox, number → numeric input, object → JSON
+// textarea, anything else → text. data-type attribute preserves the
+// expected type so the submit handler can convert back correctly.
+// (Audit agent 3 #12.)
+function renderSettingInput(key, config) {
+    const v = config.value;
+    if (typeof v === 'boolean') {
+        return `<input type="checkbox" class="form-check-input" name="${key}" data-type="bool" ${v ? 'checked' : ''}>`;
+    }
+    if (typeof v === 'number') {
+        return `<input type="number" class="form-control" name="${key}" value="${v}" step="any" data-type="number">`;
+    }
+    if (v !== null && typeof v === 'object') {
+        return `<textarea class="form-control" name="${key}" rows="3" data-type="json">${JSON.stringify(v, null, 2)}</textarea>`;
+    }
+    const escaped = (v === null || v === undefined) ? '' : String(v);
+    return `<input type="text" class="form-control" name="${key}" value="${escaped}" data-type="text">`;
+}
+
 async function loadSettings() {
     const response = await fetch('/api/settings/all');
     const data = await response.json();
     const container = document.getElementById('settings-editor');
 
-    if (data.success) {
-        let html = '<div class="accordion" id="settingsAccordion">';
-        for (const [category, settings] of Object.entries(data.data)) {
-            html += `
-            <div class="accordion-item bg-secondary">
-                <h2 class="accordion-header" id="heading${category}">
-                    <button class="accordion-button collapsed bg-dark text-white" type="button" data-bs-toggle="collapse" data-bs-target="#collapse${category}">
-                        ${category.toUpperCase()}
-                    </button>
-                </h2>
-                <div id="collapse${category}" class="accordion-collapse collapse" data-bs-parent="#settingsAccordion">
-                    <div class="accordion-body">
-                        <form onsubmit="saveSettings(event, '${category}')">
-                            ${Object.entries(settings).map(([key, config]) => `
-                                <div class="mb-3">
-                                    <label class="form-label">${key}</label>
-                                    <input type="${typeof config.value === 'boolean' ? 'checkbox' : 'text'}"
-                                           class="form-control"
-                                           name="${key}"
-                                           value="${config.value}"
-                                           ${typeof config.value === 'boolean' && config.value ? 'checked' : ''}>
-                                    <small class="text-muted">${config.description || ''}</small>
-                                </div>
-                            `).join('')}
-                            <button type="submit" class="btn btn-primary">Save ${category}</button>
-                        </form>
-                    </div>
-                </div>
-            </div>`;
-        }
-        html += '</div>';
-        container.innerHTML = html;
+    if (!data.success) {
+        container.innerHTML = '<div class="alert alert-danger">Failed to load settings.</div>';
+        return;
     }
+
+    let html = '<div class="accordion" id="settingsAccordion">';
+    for (const [category, settings] of Object.entries(data.data)) {
+        const rowsHtml = Object.entries(settings).map(([key, config]) => `
+            <div class="mb-3">
+                <label class="form-label">${key}</label>
+                ${renderSettingInput(key, config)}
+                <small class="text-muted">${config.description || ''}</small>
+            </div>
+        `).join('');
+        html += `
+        <div class="accordion-item bg-secondary">
+            <h2 class="accordion-header" id="heading${category}">
+                <button class="accordion-button collapsed bg-dark text-white" type="button" data-bs-toggle="collapse" data-bs-target="#collapse${category}">
+                    ${category.toUpperCase()}
+                </button>
+            </h2>
+            <div id="collapse${category}" class="accordion-collapse collapse" data-bs-parent="#settingsAccordion">
+                <div class="accordion-body">
+                    <form onsubmit="saveSettings(event, '${category}')">
+                        ${rowsHtml}
+                        <button type="submit" class="btn btn-primary">Save ${category}</button>
+                    </form>
+                </div>
+            </div>
+        </div>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
 }
 
 async function saveSettings(event, category) {
     event.preventDefault();
-    const formData = new FormData(event.target);
+    const form = event.target;
     const updates = {};
 
-    for (const [key, value] of formData.entries()) {
-        updates[key] = value;
+    // Iterate all named inputs and convert by their data-type marker.
+    // FormData would otherwise turn every value into a string AND drop
+    // unchecked checkboxes. Surfacing JSON parse errors before the
+    // POST means the operator sees the problem on their own page
+    // instead of after a 500.
+    for (const el of form.querySelectorAll('input[name], textarea[name]')) {
+        const name = el.name;
+        const t = el.dataset.type;
+        if (t === 'bool') {
+            updates[name] = el.checked;
+        } else if (t === 'number') {
+            const n = parseFloat(el.value);
+            if (Number.isNaN(n)) {
+                alert(`Field "${name}" must be a number.`);
+                return;
+            }
+            updates[name] = n;
+        } else if (t === 'json') {
+            try {
+                updates[name] = JSON.parse(el.value);
+            } catch (err) {
+                alert(`Field "${name}" is not valid JSON: ${err.message}`);
+                return;
+            }
+        } else {
+            updates[name] = el.value;
+        }
     }
 
-    // Handle checkboxes (unchecked ones are missing from FormData)
-    event.target.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-        updates[cb.name] = cb.checked;
-    });
-
-    await fetch('/api/settings/update', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            config_type: category,
-            updates: updates
-        })
-    });
-    alert('Settings saved!');
+    let resp;
+    try {
+        resp = await fetch('/api/settings/update', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ config_type: category, updates: updates })
+        });
+    } catch (err) {
+        alert(`Save failed (network): ${err.message}`);
+        return;
+    }
+    let body = {};
+    try { body = await resp.json(); } catch (_) {}
+    if (!resp.ok || body.success === false) {
+        alert(`Save failed: ${body.error || resp.statusText || resp.status}`);
+        return;
+    }
+    alert(`Saved ${category} settings.`);
 }
 
 loadSettings();
