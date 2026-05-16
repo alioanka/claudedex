@@ -22,7 +22,28 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // Shared empty-state renderer for canvases in this file. Audit
+    // agent 1 #14 — previously both charts rendered blank axes when
+    // the underlying datasets were empty.
+    function _renderEmptyOverlay(canvasId, message) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        ctx.save();
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = '500 13px system-ui, -apple-system, sans-serif';
+        ctx.fillText(message, canvas.width / 2, canvas.height / 2);
+        ctx.restore();
+    }
+
     function createStrategyPerformanceChart(data) {
+        if (!Array.isArray(data) || data.length === 0) {
+            _renderEmptyOverlay('strategyPerformanceChart', 'No strategy performance data yet');
+            return;
+        }
         // Format strategy names to be user-friendly
         const formatStrategyName = (name) => {
             if (!name || name === 'unknown' || name === 'Unknown') {
@@ -54,6 +75,10 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function createHourlyProfitabilityChart(data) {
+        if (!Array.isArray(data) || data.length === 0) {
+            _renderEmptyOverlay('hourlyProfitabilityChart', 'No hourly P&L data yet');
+            return;
+        }
         const chartData = {
             labels: data.map(d => `${String(d.hour).padStart(2, '0')}:00`),
             datasets: [{
