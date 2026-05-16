@@ -525,7 +525,7 @@ const TOKEN_SYMBOLS = {
     '0x6B3595068778DD592e39A122f4f5a5cF09C90fE2': 'SUSHI',
     '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48': 'USDC',
     '0xdAC17F958D2ee523a2206206994597C13D831ec7': 'USDT',
-    '0x6B175474E89094C44Da98b954EescdecB5E4bEda34': 'DAI'
+    '0x6B175474E89094C44Da98b954EEdeAC495271d0F': 'DAI'
 };
 
 function getTokenSymbol(address) {
@@ -799,8 +799,14 @@ function renderTrades() {
         const tokenSymbol = getTokenSymbol(token);
         const shortToken = token.length > 10 ? `${token.slice(0, 6)}...${token.slice(-4)}` : token;
 
-        // Calculate approximate token size bought
-        const tokenSize = nativePrice > 0 && spread > 0 ? (amount * nativePrice / (spread + 1)).toFixed(2) : '-';
+        // Calculate approximate token size bought. `spread` is a percent
+        // (e.g. 2.5 means 2.5%), so the multiplier on the buy-side leg
+        // is (1 + spread/100), NOT (spread + 1) which would imply a
+        // 250% slippage hit. The previous expression made the column
+        // off by a factor of ~3 for typical 1-3% spreads.
+        const tokenSize = nativePrice > 0 && spread > 0
+            ? (amount * nativePrice / (1 + spread / 100)).toFixed(2)
+            : '-';
 
         return `
             <tr>
