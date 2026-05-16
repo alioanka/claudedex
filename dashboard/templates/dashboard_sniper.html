@@ -420,7 +420,7 @@
             </div>
             <div class="detection-stat">
                 <div class="detection-stat-value" id="pools-passed">0</div>
-                <div class="detection-stat-label">Passed Safety</div>
+                <div class="detection-stat-label" id="pools-passed-label">Passed Filters</div>
             </div>
             <div class="detection-stat">
                 <div class="detection-stat-value" id="pools-rejected">0</div>
@@ -656,6 +656,16 @@ function updateStats(data) {
     // Safety
     document.getElementById('stat-safety').textContent = data.safety_enabled ? 'Enabled' : 'Disabled';
     document.getElementById('stat-safety-detail').textContent = `Test Mode: ${data.test_mode ? 'On' : 'Off'}`;
+
+    // Annotate the "Passed Filters" label so operators don't read it as
+    // "passed safety check" when safety_check_enabled is false. With
+    // safety disabled, the count reflects liquidity + tax filters only.
+    const passedLabel = document.getElementById('pools-passed-label');
+    if (passedLabel) {
+        passedLabel.textContent = data.safety_enabled
+            ? 'Passed Filters + Safety'
+            : 'Passed Filters (safety off)';
+    }
 
     // Detection stats
     document.getElementById('pools-detected').textContent = data.pools_detected || 0;
