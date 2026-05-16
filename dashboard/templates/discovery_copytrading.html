@@ -872,10 +872,38 @@
         container.innerHTML = html;
     }
 
-    // Load hot wallets on page load
-    loadHotWallets();
+    // Hot Wallets discovery hits paid Helius/Birdeye quota. Make it
+    // opt-in instead of firing on every page open + every 5 min:
+    //   - First load: render a "Click to load top traders" placeholder
+    //     in the container.
+    //   - User-triggered refresh button reloads on demand.
+    //   - When the tab is hidden the auto-interval is suspended so
+    //     leaving the page open doesn't quietly burn credits.
+    const hotContainer = document.getElementById('hotWalletsContainer');
+    if (hotContainer) {
+        hotContainer.innerHTML =
+            '<div style="text-align:center;padding:24px;color:var(--text-secondary);">' +
+            '<p>Hot Wallets discovery uses paid Helius/Birdeye quota.</p>' +
+            '<button class="btn btn-primary" id="loadHotWalletsBtn">' +
+            '<i class="fas fa-search"></i> Load Top Traders</button>' +
+            '</div>';
+        const btn = document.getElementById('loadHotWalletsBtn');
+        if (btn) btn.addEventListener('click', () => loadHotWallets());
+    }
 
-    // Refresh hot wallets every 5 minutes
-    setInterval(loadHotWallets, 5 * 60 * 1000);
+    // Auto-refresh every 30 min — only when the tab is visible and the
+    // user has already opted in (clicked Load once). The flag flips
+    // the first time loadHotWallets succeeds.
+    let _hotAutoRefreshArmed = false;
+    const _origLoad = loadHotWallets;
+    loadHotWallets = async function() {
+        _hotAutoRefreshArmed = true;
+        return _origLoad();
+    };
+    setInterval(() => {
+        if (!_hotAutoRefreshArmed) return;
+        if (document.hidden) return;
+        loadHotWallets();
+    }, 30 * 60 * 1000);
 </script>
 {% endblock %}
