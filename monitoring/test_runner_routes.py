@@ -498,10 +498,71 @@ class TestRunnerRoutes:
 
     async def _run_probe(self, request: web.Request,
                          entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Issue a same-origin GET against the dashboard's own API
+        carrying the caller's session+csrf cookies. This is how the UI
+        clones reach /api/sniper/stats, /api/modules, etc. without
+        re-implementing the auth dance.
+
+        Uses aiohttp.ClientSession with the request's Cookie header so
+        the proxy inherits the caller's identity. We never accept a raw
+        URL from the client — only the catalog's endpoint path."""
+        import aiohttp
+
+        endpoint: str = entry["endpoint"]
+        timeout_s: int = int(entry.get("timeout_s", 15))
+        # Reconstruct same-origin URL. request.scheme + request.host
+        # reflects whatever proxy/binding the dashboard is reached
+        # through, so the proxy works behind nginx/cloudflare too.
+        url = f"{request.scheme}://{request.host}/api/{endpoint.lstrip('/')}"
+        t0 = time.perf_counter()
+
+        # Forward auth + CSRF cookies so the proxied request looks
+        # identical to a direct browser GET from the same session.
+        cookies = {k: v for k, v in request.cookies.items()}
+        headers = {
+            "X-CSRF-Token": request.cookies.get("csrf_token", ""),
+            "Accept": "application/json",
+        }
+
+        try:
+            async with aiohttp.ClientSession(cookies=cookies) as sess:
+                async with sess.get(
+                    url, headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=timeout_s),
+                ) as resp:
+                    status = resp.status
+                    text = await resp.text()
+        except asyncio.TimeoutError:
+            return {
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": f"probe timed out after {timeout_s}s",
+                "duration_ms": int((time.perf_counter() - t0) * 1000),
+                "timed_out": True,
+            }
+        except Exception as exc:
+            return {
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": f"probe error: {exc}",
+                "duration_ms": int((time.perf_counter() - t0) * 1000),
+                "timed_out": False,
+            }
+
+        # Try to pretty-print JSON; fall back to raw text for HTML
+        # error pages (e.g. login redirect).
+        try:
+            parsed = json.loads(text)
+            pretty = json.dumps(parsed, indent=2)
+        except Exception:
+            pretty = text[:_MAX_OUTPUT_BYTES]
+
+        # exit_code == HTTP status per the API contract, so the
+        # frontend can chip-green on 200..299, chip-red otherwise.
         return {
-            "exit_code": -1,
-            "stdout": "",
-            "stderr": "probe executor not yet implemented",
-            "duration_ms": 0,
+            "exit_code": status,
+            "stdout": pretty,
+            "stderr": "" if 200 <= status < 300 else f"HTTP {status}",
+            "duration_ms": int((time.perf_counter() - t0) * 1000),
             "timed_out": False,
         }
