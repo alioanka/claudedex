@@ -1837,15 +1837,15 @@ class DashboardEndpoints:
         )
     
     async def reports_page(self, request):
-        """Reports generation page"""
+        """Reports generation page (DEX)"""
         template = self.jinja_env.get_template('reports.html')
         return web.Response(
             text=template.render(page='reports'),
             content_type='text/html'
         )
-    
+
     async def backtest_page(self, request):
-        """Backtesting interface page"""
+        """Backtesting interface page (DEX)"""
         template = self.jinja_env.get_template('backtest.html')
         return web.Response(
             text=template.render(page='backtest'),
@@ -1861,10 +1861,12 @@ class DashboardEndpoints:
         )
 
     async def global_settings_page(self, request):
-        """Global settings editor page"""
+        """Global settings editor page. Distinct from /settings (account
+        settings) — base.html nav uses page='global_settings' to
+        highlight it."""
         template = self.jinja_env.get_template('global_settings.html')
         return web.Response(
-            text=template.render(page='settings'),
+            text=template.render(page='global_settings'),
             content_type='text/html'
         )
 
@@ -1875,11 +1877,11 @@ class DashboardEndpoints:
             text=template.render(page='pro_controls'),
             content_type='text/html'
         )
-    
+
     # ==================== API - DATA ENDPOINTS ====================
 
     async def analysis_page(self, request):
-        """Trade analysis page"""
+        """Trade analysis page (DEX)"""
         template = self.jinja_env.get_template('analysis.html')
         return web.Response(
             text=template.render(page='analysis'),
