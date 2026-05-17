@@ -891,7 +891,14 @@ async function loadPerformanceChart() {
 function updateStats(stats) {
     // Mode and Network
     document.getElementById('stat-mode').textContent = stats.mode || 'DRY_RUN';
-    document.getElementById('stat-network').textContent = `${stats.exchange || 'BINANCE'} ${stats.network || 'TESTNET'}`;
+    // Mode / Network. Don't fabricate "BINANCE TESTNET" when the
+    // backend hasn't reported exchange/network — misleading for Bybit
+    // V5 deployments (the project's actual futures surface per
+    // modules/futures_trading/CLAUDE.md). Render '--' until real data.
+    const exch = stats.exchange ? String(stats.exchange).toUpperCase() : '';
+    const net  = stats.network  ? String(stats.network).toUpperCase()  : '';
+    document.getElementById('stat-network').textContent =
+        (exch || net) ? `${exch} ${net}`.trim() : '--';
 
     // P&L
     const netPnl = stats.net_pnl || '$0.00';
