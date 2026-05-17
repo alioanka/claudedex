@@ -274,6 +274,22 @@ class SniperEngine:
                 "Sniper refused to start: safety_check_enabled=false in LIVE mode"
             )
 
+        # SNIPE-RM-19: test_mode + LIVE is unsafe. test_mode relaxes
+        # the tax/liquidity gates (allows DANGER-rated tokens for
+        # measurement); combining it with LIVE means buying tokens
+        # that would normally be filtered. Refuse to start.
+        if not self.dry_run and getattr(self, 'test_mode', False):
+            logger.critical(
+                "🛑 REFUSING TO RUN: test_mode=true while DRY_RUN=false. "
+                "test_mode bypasses honeypot/tax gates and is only safe in DRY_RUN. "
+                "Disable in DB before going live: "
+                "UPDATE config_settings SET value='false' WHERE config_type='sniper_config' "
+                "AND key='test_mode';"
+            )
+            raise RuntimeError(
+                "Sniper refused to start: test_mode=true in LIVE mode"
+            )
+
     async def run(self):
         """Main loop"""
         self.is_running = True
