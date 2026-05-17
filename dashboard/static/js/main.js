@@ -262,16 +262,20 @@ async function handleEmergencyExit() {
     try {
         showToast('warning', 'Executing emergency exit...');
         
-        const response = await fetch('/api/bot/emergency_exit', {
+        // Canonical kill-switch endpoint is /api/bot/emergency-exit
+        // (kebab). The underscore form 404s; see DASH-RM-01.
+        const response = await fetch('/api/bot/emergency-exit', {
             method: 'POST',
             headers: withCsrfHeaders('POST'),
         });
         const data = await response.json();
-        
+
         if (data.success) {
-            showToast('success', data.message);
-            showAlert('success', 'Emergency Exit Complete', 
-                `Closed: ${data.closed.length}, Failed: ${data.failed.length}`);
+            showToast('success', data.message || 'Emergency exit complete');
+            const closed = (data.closed && data.closed.length) || 0;
+            const failed = (data.failed && data.failed.length) || 0;
+            showAlert('success', 'Emergency Exit Complete',
+                `Closed: ${closed}, Failed: ${failed}`);
         } else {
             showToast('error', data.error || 'Emergency exit failed');
         }
