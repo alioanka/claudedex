@@ -878,10 +878,15 @@ class DashboardEndpoints:
 
             logger.info("Setting up analytics routes...")
 
-            # Create analytics routes handler
+            # Create analytics routes handler. FAILURE B: pass db_manager so
+            # the routes can serve real DB-backed analytics when the
+            # standalone dashboard subprocess runs without an
+            # analytics_engine (it is constructed without one in
+            # modules/dashboard/main_dashboard.py).
             analytics_routes = AnalyticsRoutes(
                 analytics_engine=self.analytics_engine,
-                jinja_env=self.jinja_env
+                jinja_env=self.jinja_env,
+                db_manager=getattr(self, 'db', None) or getattr(self, 'db_manager', None),
             )
 
             # Setup all analytics routes
