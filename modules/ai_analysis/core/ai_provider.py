@@ -108,7 +108,7 @@ class RateLimiter:
 
     def __init__(self, requests_per_minute: int):
         self.rpm = requests_per_minute
-        self.tokens = requests_per_minute
+        self.tokens = float(requests_per_minute)
         self.last_refill = datetime.utcnow()
         self._lock = asyncio.Lock()
 
@@ -117,14 +117,21 @@ class RateLimiter:
             now = datetime.utcnow()
             elapsed = (now - self.last_refill).total_seconds()
 
-            # Refill tokens based on elapsed time
-            refill = int(elapsed * self.rpm / 60)
-            if refill > 0:
-                self.tokens = min(self.rpm, self.tokens + refill)
+            # Refill tokens based on elapsed time. Use float math
+            # internally — the previous `int(elapsed * rpm / 60)` floor
+            # rounded to zero for any (elapsed, rpm) where the product
+            # was below 1 (e.g. rpm=20 polled at 100ms → 20*0.1/60 =
+            # 0.033 → int → 0), so the bucket never refilled until 3+
+            # seconds had passed. Accumulate fractional tokens and only
+            # advance last_refill by the integer part actually used.
+            # AI-BE-09.
+            refill_f = elapsed * self.rpm / 60.0
+            if refill_f > 0:
+                self.tokens = min(float(self.rpm), self.tokens + refill_f)
                 self.last_refill = now
 
-            if self.tokens > 0:
-                self.tokens -= 1
+            if self.tokens >= 1.0:
+                self.tokens -= 1.0
                 return True
             return False
 
