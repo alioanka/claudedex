@@ -180,9 +180,14 @@ class DashboardEndpoints:
             # Register fallback routes for module pages when module_manager is not available
             self._setup_fallback_module_routes()
 
-        # Setup analytics routes if analytics engine available
-        if self.analytics_engine:
-            self._setup_analytics_routes()
+        # Setup analytics routes. Previously gated on analytics_engine
+        # being non-None, which meant the dashboard subprocess (which
+        # passes analytics_engine=None) never registered /analytics at
+        # all — the page silently 302'd to /login under auth, looking
+        # like it worked when really the route didn't exist. The route
+        # registration is harmless without an engine; the AnalyticsRoutes
+        # handlers now fail-soft on missing engine.
+        self._setup_analytics_routes()
 
         # Setup RPC/API Pool routes
         self._setup_rpc_pool_routes()

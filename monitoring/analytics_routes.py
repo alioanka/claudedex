@@ -75,24 +75,52 @@ class AnalyticsRoutes:
         app.router.add_get('/api/analytics/trades/{module}', self.get_trade_history)
         app.router.add_get('/api/analytics/daily-pnl/{module}', self.get_daily_pnl)
 
-        self.logger.info("Analytics routes configured")
+        self.logger.info(
+            "Analytics routes configured%s",
+            "" if self.analytics is not None else " (engine=None — endpoints will return 503)"
+        )
+
+    def _require_engine(self):
+        """Return None if engine is wired, else a 503 response.
+
+        Lets every API endpoint fail-soft when self.analytics is None
+        (which is normal in the standalone dashboard subprocess that
+        doesn't construct an analytics engine). Without this guard
+        every endpoint would AttributeError into a 500."""
+        if self.analytics is None:
+            return json_response(
+                {'success': False, 'error': 'analytics engine not initialized',
+                 'data': {}},
+                status=503,
+            )
+        return None
 
     async def analytics_page(self, request: web.Request) -> web.Response:
-        """Render analytics dashboard page"""
+        """Render analytics dashboard page.
+
+        Fail-soft when self.analytics is None: still render the template
+        with summary=None and a flag so the JS can decide what to show.
+        Previously the page wouldn't even register without an engine; now
+        it always serves so operators can see the static layout and the
+        JS-side empty states.
+        """
         try:
             if not self.jinja_env:
                 return web.Response(text="Analytics dashboard not configured", status=500)
 
-            # Get portfolio summary
-            summary = await self.analytics.get_portfolio_summary()
+            summary = None
+            if self.analytics is not None:
+                try:
+                    summary = await self.analytics.get_portfolio_summary()
+                except Exception as e:
+                    self.logger.warning(f"analytics.get_portfolio_summary failed: {e}")
 
-            # Render template
             template = self.jinja_env.get_template('analytics.html')
             html = template.render(
                 summary=summary,
+                analytics_available=(self.analytics is not None),
                 timestamp=datetime.now()
             )
-
             return web.Response(text=html, content_type='text/html')
 
         except Exception as e:
@@ -101,6 +129,9 @@ class AnalyticsRoutes:
 
     async def get_performance(self, request: web.Request) -> web.Response:
         """Get performance metrics for a module"""
+        guard = self._require_engine()
+        if guard is not None:
+            return guard
         try:
             module_name = request.match_info['module']
             timeframe_str = request.query.get('timeframe', '24h')
@@ -161,6 +192,9 @@ class AnalyticsRoutes:
             return json_response({'success': False, 'error': str(e)}, status=500)
 
     async def get_risk(self, request: web.Request) -> web.Response:
+        guard = self._require_engine()
+        if guard is not None:
+            return guard
         """Get risk metrics for a module"""
         try:
             module_name = request.match_info['module']
@@ -195,6 +229,9 @@ class AnalyticsRoutes:
             return json_response({'success': False, 'error': str(e)}, status=500)
 
     async def get_comparison(self, request: web.Request) -> web.Response:
+        guard = self._require_engine()
+        if guard is not None:
+            return guard
         """Get module comparison"""
         try:
             comparison = await self.analytics.compare_modules()
@@ -216,6 +253,9 @@ class AnalyticsRoutes:
             return json_response({'success': False, 'error': str(e)}, status=500)
 
     async def get_portfolio(self, request: web.Request) -> web.Response:
+        guard = self._require_engine()
+        if guard is not None:
+            return guard
         """Get portfolio summary"""
         try:
             summary = await self.analytics.get_portfolio_summary()
@@ -226,6 +266,9 @@ class AnalyticsRoutes:
             return json_response({'success': False, 'error': str(e)}, status=500)
 
     async def get_equity_curve(self, request: web.Request) -> web.Response:
+        guard = self._require_engine()
+        if guard is not None:
+            return guard
         """Get equity curve for a module"""
         try:
             module_name = request.match_info['module']
@@ -258,6 +301,9 @@ class AnalyticsRoutes:
             return json_response({'success': False, 'error': str(e)}, status=500)
 
     async def get_trade_history(self, request: web.Request) -> web.Response:
+        guard = self._require_engine()
+        if guard is not None:
+            return guard
         """Get trade history for a module"""
         try:
             module_name = request.match_info['module']
@@ -300,6 +346,9 @@ class AnalyticsRoutes:
             return json_response({'success': False, 'error': str(e)}, status=500)
 
     async def get_daily_pnl(self, request: web.Request) -> web.Response:
+        guard = self._require_engine()
+        if guard is not None:
+            return guard
         """Get daily PnL for a module"""
         try:
             module_name = request.match_info['module']
