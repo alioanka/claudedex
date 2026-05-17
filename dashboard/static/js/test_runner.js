@@ -379,20 +379,101 @@
     }
   }
 
+  // A5: Analytics module switcher — sequentially probe each module's
+  // /api/analytics/performance endpoint. Pass if every one returns
+  // success=true.
+  const ANALYTICS_MODULES = [
+    'dex_trading', 'futures', 'solana', 'sniper',
+    'arbitrage', 'copy_trading', 'ai_analysis',
+  ];
+
+  async function verifyAnalyticsSwitcher() {
+    const tabsEl = document.getElementById('tr-analytics-tabs');
+    if (!tabsEl) return;
+    tabsEl.innerHTML = '';
+    const lines = [];
+    let failCount = 0;
+    for (const mod of ANALYTICS_MODULES) {
+      const tab = document.createElement('div');
+      tab.style.cssText = 'padding:4px 10px;border-radius:6px;font-size:0.75rem;' +
+                          'background:var(--bg-secondary,#1e293b);' +
+                          'border:1px solid var(--border-color,#334155);';
+      tab.textContent = mod + '…';
+      tabsEl.appendChild(tab);
+      try {
+        const url = `/api/analytics/performance/${mod}?timeframe=all`;
+        const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        const ok = r.ok;
+        let payload = {};
+        try { payload = await r.json(); } catch (_) {}
+        const success = ok && (payload.success !== false);
+        const trades = (payload.data && payload.data.total_trades) ?? 0;
+        tab.textContent = `${mod} ${success ? '✓' : '✗'} (${r.status}, ${trades} tr)`;
+        tab.style.background = success ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)';
+        tab.style.borderColor = success ? '#10b981' : '#ef4444';
+        if (!success) failCount++;
+        lines.push(`${mod.padEnd(15)} HTTP ${r.status}  trades=${trades}  success=${success}`);
+      } catch (e) {
+        failCount++;
+        tab.textContent = `${mod} ✗ (error)`;
+        tab.style.background = 'rgba(239,68,68,0.2)';
+        lines.push(`${mod.padEnd(15)} ERROR: ${e.message || e}`);
+      }
+    }
+    setCardStatus('tr-clone-analytics-switcher',
+      failCount === 0 ? 'pass' : (failCount === ANALYTICS_MODULES.length ? 'fail' : 'warn'),
+      failCount === 0 ? null : `${failCount}/${ANALYTICS_MODULES.length} fail`,
+      lines.join('\n'));
+  }
+
+  // A6: CSRF probe — POSTs against /api/test-runner/run with the
+  // CSRF header set; failure mode would be 403 "CSRF token missing
+  // or invalid". We use test_id=api_health which is harmless.
+  async function verifyCsrfProbe() {
+    try {
+      const r = await fetch('/api/test-runner/run', {
+        method: 'POST',
+        headers: csrfHeaders('POST'),
+        body: JSON.stringify({ test_id: 'api_health' }),
+      });
+      const body = await r.text();
+      if (r.status === 403 && /csrf/i.test(body)) {
+        setCardStatus('tr-clone-csrf-probe', 'fail', '403 CSRF',
+          `HTTP ${r.status}\n${body}`);
+        return;
+      }
+      if (!r.ok) {
+        setCardStatus('tr-clone-csrf-probe', 'warn', `HTTP ${r.status}`,
+          `HTTP ${r.status}\n${body.slice(0, 800)}`);
+        return;
+      }
+      setCardStatus('tr-clone-csrf-probe', 'pass', null,
+        `CSRF accepted (HTTP 200). Sample body:\n` + body.slice(0, 400));
+    } catch (e) {
+      setCardStatus('tr-clone-csrf-probe', 'fail', 'fetch error',
+        'error: ' + (e && e.message ? e.message : e));
+    }
+  }
+
   // Bind Verify buttons inside Section A cards.
   function wireSectionA() {
     const handlers = {
       'tr-clone-mode-badge': verifyModeBadge,
       'tr-clone-sniper-cap': verifySniperCap,
       'tr-clone-module-overview': verifyModuleOverview,
+      'tr-clone-analytics-switcher': verifyAnalyticsSwitcher,
+      'tr-clone-csrf-probe': verifyCsrfProbe,
     };
     Object.entries(handlers).forEach(([cardId, fn]) => {
       const card = document.getElementById(cardId);
       if (!card) return;
       const btn = card.querySelector('[data-action="verify"]');
       if (btn) btn.addEventListener('click', fn);
-      // Run once on load so the chip isn't stale on first paint.
-      fn();
+      // Run once on load EXCEPT for the analytics switcher (7 sequential
+      // HTTP calls) and CSRF probe (fires a real backend run). Operator
+      // clicks Verify when ready.
+      if (cardId !== 'tr-clone-analytics-switcher' &&
+          cardId !== 'tr-clone-csrf-probe') fn();
     });
     wireRiskCss();
   }

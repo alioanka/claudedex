@@ -229,6 +229,50 @@
         <pre class="tr-output" style="display:none;"></pre>
       </div>
 
+      <!-- A5: Analytics module switcher clone — verifies each tab
+           routes to a working /api/analytics/performance/<mod> response. -->
+      <div class="tr-card" id="tr-clone-analytics-switcher"
+           style="grid-column: 1 / -1;">
+        <div class="tr-card-title">A5. Analytics module switcher</div>
+        <div class="tr-row">
+          <button type="button" class="btn btn-sm btn-primary" data-action="verify">
+            <i class="fas fa-sync"></i> Test all tabs
+          </button>
+          <span class="tr-status"><span class="chip chip-pending">pending</span></span>
+        </div>
+        <div id="tr-analytics-tabs"
+             style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+        </div>
+        <div class="tr-expected">
+          Expected: every tab fetches its own perf+risk data without
+          one-tab content leaking across (Agent 2 fix <code>3cb544b</code>).
+          PASS if every module returns HTTP 200 from
+          <code>/api/analytics/performance/&lt;mod&gt;?timeframe=all</code>.
+        </div>
+        <pre class="tr-output" style="display:none;"></pre>
+      </div>
+
+      <!-- A6: CSRF probe — fires a POST with the X-CSRF-Token header
+           against a SAFE endpoint (the test-runner's own /run). PASS
+           if not rejected with 403 "CSRF token missing or invalid". -->
+      <div class="tr-card" id="tr-clone-csrf-probe">
+        <div class="tr-card-title">A6. CSRF token plumbing</div>
+        <div class="tr-row">
+          <button type="button" class="btn btn-sm btn-primary" data-action="verify">
+            <i class="fas fa-shield-alt"></i> Probe CSRF
+          </button>
+          <span class="tr-status"><span class="chip chip-pending">pending</span></span>
+        </div>
+        <div class="tr-expected">
+          Expected: POST /api/test-runner/run with X-CSRF-Token header
+          returns 200 (test executes). Without the header it returns
+          403 "CSRF token missing or invalid" — exactly the failure
+          the operator saw on /pro-controls + /global-settings before
+          commits <code>dddb1a5</code> + <code>bd0a0a6</code>.
+        </div>
+        <pre class="tr-output" style="display:none;"></pre>
+      </div>
+
     </div>
   </section>
 
