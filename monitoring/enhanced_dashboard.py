@@ -204,11 +204,24 @@ class DashboardEndpoints:
         """Diagnostic: dump every registered route so we can prove
         /health is in the router table. Public; reveals paths only.
 
-        Defensive against route objects that don't expose canonical
-        attributes — Socket.IO long-poll routes and StaticRoutes can
-        raise on naive str()/getattr() probes, so we coerce every
-        field through a fail-soft helper.
+        Wrapped in a "report ANY error as a 200 JSON body" outer
+        try/except so a regression in this debug endpoint never
+        cascades to a confusing 500 from the global error middleware.
         """
+        import traceback as _tb
+        try:
+            return await self._routes_debug_inner(request)
+        except BaseException as e:
+            tb_str = ''.join(_tb.format_exception(type(e), e, e.__traceback__))[-1500:]
+            logger.error(
+                f"routes_debug_endpoint outer catch: {type(e).__name__}: {e}\n{tb_str}"
+            )
+            return web.json_response(
+                {'error': f'{type(e).__name__}: {e}', 'traceback': tb_str},
+                status=200,
+            )
+
+    async def _routes_debug_inner(self, request):
         def _safe(obj, attr=None, default='?'):
             try:
                 if attr:
