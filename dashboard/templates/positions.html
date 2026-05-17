@@ -555,7 +555,7 @@ async function closeAllPositions() {
     if (!confirmed) return;
     
     try {
-        const response = await apiPost('/api/bot/emergency_exit', {});
+        const response = await apiPost('/api/bot/emergency-exit', {});
         if (response.success) {
             showToast('success', response.message);
             await loadPositions();
