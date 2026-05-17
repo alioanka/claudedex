@@ -116,16 +116,58 @@
     </div>
   </div>
 
-  <!-- Section A: UI Verification Clones (built in commit 2) -->
+  <!-- Section A: UI Verification Clones -->
   <section class="tr-section" id="tr-section-a">
     <h2>A. UI Verification Clones</h2>
     <div class="tr-sub">Inline reproductions of every UI element that
-      this-session's fixes touch. No browsing required.</div>
+      this-session's fixes touch. No browsing required — click each
+      Verify button to populate the chip.</div>
     <div id="tr-section-a-body" class="tr-grid">
-      <div class="tr-card">
-        <div class="tr-card-title">Pending</div>
-        <div class="tr-output">Section A not yet rendered — see commit 2.</div>
+
+      <!-- A1: MODE badge clone -->
+      <div class="tr-card" id="tr-clone-mode-badge">
+        <div class="tr-card-title">A1. MODE badge</div>
+        <div class="tr-row">
+          <div id="tr-mode-badge" class="bot-mode-badge bot-mode-unknown"
+               style="position:static;margin:0;">
+            <span id="tr-mode-text">checking…</span>
+          </div>
+          <button type="button" class="btn btn-sm btn-primary" data-action="verify">
+            <i class="fas fa-sync"></i> Verify
+          </button>
+          <span class="tr-status"><span class="chip chip-pending">pending</span></span>
+        </div>
+        <div class="tr-expected">
+          Expected: <code>🔵 DRY-RUN</code> (blue) under DRY_RUN=true.
+          Was <code>UNKNOWN</code> (gray) before commit <code>5c7777b</code>
+          + cache-buster <code>f8375db</code>.
+        </div>
+        <pre class="tr-output" style="display:none;"></pre>
       </div>
+
+      <!-- A2: Sniper cap tile clone -->
+      <div class="tr-card" id="tr-clone-sniper-cap">
+        <div class="tr-card-title">A2. Sniper cap tile</div>
+        <div class="tr-row">
+          <div id="tr-sniper-cap"
+               style="font-family:ui-monospace,Menlo,monospace;font-size:0.95rem;
+                      padding:6px 10px;border:1px solid var(--border-color,#334155);
+                      border-radius:6px;background:var(--bg-tertiary,#0f172a);">
+            Active: …
+          </div>
+          <button type="button" class="btn btn-sm btn-primary" data-action="verify">
+            <i class="fas fa-sync"></i> Verify
+          </button>
+          <span class="tr-status"><span class="chip chip-pending">pending</span></span>
+        </div>
+        <div class="tr-expected">
+          Expected: <code>Active: N/500</code> (cap ≥ 1). Before fix
+          <code>118f2ae</code> the cap was 0 right after restart so the
+          tile showed just <code>Active: N</code>.
+        </div>
+        <pre class="tr-output" style="display:none;"></pre>
+      </div>
+
     </div>
   </section>
 

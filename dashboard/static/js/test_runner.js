@@ -197,9 +197,138 @@
     });
   }
 
-  // ---- DOM ready: kick off catalog load + wire Copy All
+  // ─── Section A clones — each verify() reads the same data the real
+  //     page uses, sets the inline preview, and reports PASS/FAIL.
+
+  async function fetchJson(url) {
+    const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }
+
+  function setCardStatus(cardId, status, label, body) {
+    const card = document.getElementById(cardId);
+    if (!card) return;
+    const statusEl = card.querySelector('.tr-status');
+    if (statusEl) statusEl.innerHTML = chip(status, label);
+    if (body !== undefined) {
+      const outEl = card.querySelector('.tr-output');
+      if (outEl) {
+        outEl.textContent = body;
+        outEl.style.display = 'block';
+      }
+    }
+    // Record into the Copy All Results blob.
+    const title = card.querySelector('.tr-card-title');
+    recordResult('ui_clones', {
+      id: cardId,
+      title: title ? title.textContent : cardId,
+      chip: (status || '?').toUpperCase() + (label ? ' (' + label + ')' : ''),
+      body: body || '',
+    });
+  }
+
+  // A1: MODE badge clone — mirrors refreshBotModeBadge() in main.js
+  // but writes into the cloned div ids (tr-mode-*).
+  async function verifyModeBadge() {
+    const badge = document.getElementById('tr-mode-badge');
+    const txt = document.getElementById('tr-mode-text');
+    if (!badge || !txt) return;
+    try {
+      const payload = await fetchJson('/api/bot/status');
+      const data = (payload && payload.data) ? payload.data : payload;
+      badge.classList.remove('bot-mode-live', 'bot-mode-dry', 'bot-mode-unknown');
+      let pass = false, body = '';
+      if (data.dry_run === undefined || data.dry_run === null) {
+        badge.classList.add('bot-mode-unknown');
+        txt.textContent = 'UNKNOWN';
+        body = JSON.stringify(data, null, 2);
+      } else if (data.dry_run === false) {
+        badge.classList.add('bot-mode-live');
+        txt.textContent = '🔴 LIVE TRADING';
+        pass = true;
+        body = 'dry_run=false → 🔴 LIVE TRADING\n' + JSON.stringify(data, null, 2);
+      } else {
+        badge.classList.add('bot-mode-dry');
+        txt.textContent = '🔵 DRY-RUN';
+        pass = true;
+        body = 'dry_run=true → 🔵 DRY-RUN\n' + JSON.stringify(data, null, 2);
+      }
+      setCardStatus('tr-clone-mode-badge', pass ? 'pass' : 'fail',
+                    pass ? null : 'UNKNOWN', body);
+    } catch (e) {
+      badge.classList.add('bot-mode-unknown');
+      txt.textContent = 'STATUS UNAVAILABLE';
+      setCardStatus('tr-clone-mode-badge', 'fail', 'fetch error',
+                    'error: ' + (e && e.message ? e.message : e));
+    }
+  }
+
+  // A2: Sniper cap tile clone — mirrors dashboard_sniper.html cap-warn
+  // logic from lines 625-665.
+  async function verifySniperCap() {
+    const el = document.getElementById('tr-sniper-cap');
+    if (!el) return;
+    try {
+      const data = await fetchJson('/api/sniper/stats');
+      const active = (data.active_positions_effective != null)
+        ? data.active_positions_effective
+        : (data.active_positions || 0);
+      const cap = data.max_active_positions || 0;
+      let text = 'Active: ' + active;
+      let status = 'pass', label = null;
+      if (cap > 0) {
+        const pct = (active / cap) * 100;
+        if (pct >= 95) {
+          text = `Active: ${active}/${cap} ⛔ CAPPED — new snipes blocked`;
+          label = 'CAPPED';
+        } else if (pct >= 80) {
+          text = `Active: ${active}/${cap} ⚠ near cap`;
+          label = 'near cap';
+        } else {
+          text = `Active: ${active}/${cap}`;
+        }
+      } else {
+        // Cap missing — exactly the failure mode the fix addresses.
+        text = `Active: ${active} (cap missing!)`;
+        status = 'fail';
+        label = 'no cap';
+      }
+      el.textContent = text;
+      const body =
+        `active_positions          = ${data.active_positions}\n` +
+        `active_positions_live     = ${data.active_positions_live}\n` +
+        `active_positions_effective= ${data.active_positions_effective}\n` +
+        `max_active_positions      = ${data.max_active_positions}\n` +
+        `status                    = ${data.status}`;
+      setCardStatus('tr-clone-sniper-cap', status, label, body);
+    } catch (e) {
+      el.textContent = 'Active: error';
+      setCardStatus('tr-clone-sniper-cap', 'fail', 'fetch error',
+                    'error: ' + (e && e.message ? e.message : e));
+    }
+  }
+
+  // Bind Verify buttons inside Section A cards.
+  function wireSectionA() {
+    const handlers = {
+      'tr-clone-mode-badge': verifyModeBadge,
+      'tr-clone-sniper-cap': verifySniperCap,
+    };
+    Object.entries(handlers).forEach(([cardId, fn]) => {
+      const card = document.getElementById(cardId);
+      if (!card) return;
+      const btn = card.querySelector('[data-action="verify"]');
+      if (btn) btn.addEventListener('click', fn);
+      // Run once on load so the chip isn't stale on first paint.
+      fn();
+    });
+  }
+
+  // ---- DOM ready: kick off catalog load + Section A + Copy All
   document.addEventListener('DOMContentLoaded', function () {
     loadCatalog();
+    wireSectionA();
     const copyBtn = document.getElementById('tr-copy-all');
     if (copyBtn) {
       copyBtn.addEventListener('click', copyAllResults);
