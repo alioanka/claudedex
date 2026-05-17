@@ -154,6 +154,25 @@ class DashboardEndpoints:
             loader=FileSystemLoader('dashboard/templates'),
             autoescape=select_autoescape(['html', 'xml'])
         )
+        # Static-asset cache buster — pinned to git HEAD at startup so that
+        # every deploy invalidates browser caches automatically. Falls back
+        # to the process start timestamp if git is unavailable (e.g. the
+        # repo dir got copied without .git). VPS failure 2: after the
+        # 5c7777b fix the operator still saw 'UNKNOWN' because Chrome had
+        # the pre-fix main.js cached. Now every script tag in base.html
+        # appends ?v={{ asset_version }}.
+        try:
+            import subprocess as _sp
+            _sha = _sp.check_output(
+                ['git', 'rev-parse', '--short', 'HEAD'],
+                cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                stderr=_sp.DEVNULL,
+                timeout=2,
+            ).decode().strip()
+        except Exception:
+            import time as _t
+            _sha = str(int(_t.time()))
+        self.jinja_env.globals['asset_version'] = _sha or 'dev'
 
         # ========== WALLET BALANCE CACHING ==========
         # Cache wallet balances to prevent instability from intermittent RPC failures
