@@ -413,15 +413,86 @@ class TestRunnerRoutes:
             "timed_out": timed_out,
         }
 
-    # ── stub executors for kind=db_query / kind=probe ──────────────
-    # Both implemented in the next commits — return a clean placeholder
-    # response so the frontend can render a useful chip instead of 500.
+    # ── kind=db_query executor ──────────────────────────────────────
     async def _run_db_query(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Run a whitelisted SELECT through the dashboard's own asyncpg
+        pool. We deliberately do NOT exec into the postgres container —
+        that would require docker.sock; the dashboard already has DB
+        access so this is cleaner.
+
+        Safety: catalog SQL is hard-coded; we never accept SQL from the
+        client. We still wrap a SET statement_timeout via per-conn
+        execute to bound DB-side runtime in case a query goes wild.
+        """
+        sql: str = entry["sql"]
+        timeout_s: int = int(entry.get("timeout_s", 15))
+        t0 = time.perf_counter()
+
+        if not self.db or not getattr(self.db, "pool", None):
+            return {
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": "db pool unavailable (self.db is None)",
+                "duration_ms": int((time.perf_counter() - t0) * 1000),
+                "timed_out": False,
+            }
+
+        try:
+            async with self.db.pool.acquire() as conn:
+                # DB-side guard. asyncpg accepts an integer in ms; cap
+                # at 80% of our wall-clock budget so we always see the
+                # SQL error before the application timeout fires.
+                ms = max(1000, int(timeout_s * 800))
+                await conn.execute(f"SET statement_timeout = {ms}")
+                rows = await asyncio.wait_for(
+                    conn.fetch(sql), timeout=timeout_s
+                )
+        except asyncio.TimeoutError:
+            return {
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": f"query timed out after {timeout_s}s",
+                "duration_ms": int((time.perf_counter() - t0) * 1000),
+                "timed_out": True,
+            }
+        except Exception as exc:
+            return {
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": f"SQL error: {exc}",
+                "duration_ms": int((time.perf_counter() - t0) * 1000),
+                "timed_out": False,
+            }
+
+        # Render column-aligned table; cap rows to keep the response
+        # paste-friendly even on a runaway result-set.
+        MAX_ROWS = 200
+        out_lines: List[str] = []
+        if not rows:
+            out_lines.append("(0 rows)")
+        else:
+            cols = list(rows[0].keys())
+            widths = {c: len(c) for c in cols}
+            for r in rows[:MAX_ROWS]:
+                for c in cols:
+                    widths[c] = max(widths[c], len(str(r[c])))
+            header = "  ".join(c.ljust(widths[c]) for c in cols)
+            sep = "  ".join("-" * widths[c] for c in cols)
+            out_lines.append(header)
+            out_lines.append(sep)
+            for r in rows[:MAX_ROWS]:
+                out_lines.append("  ".join(
+                    str(r[c]).ljust(widths[c]) for c in cols
+                ))
+            if len(rows) > MAX_ROWS:
+                out_lines.append(f"…[{len(rows) - MAX_ROWS} more rows]")
+            out_lines.append(f"({len(rows)} rows)")
+
         return {
-            "exit_code": -1,
-            "stdout": "",
-            "stderr": "db_query executor not yet implemented",
-            "duration_ms": 0,
+            "exit_code": 0,
+            "stdout": "\n".join(out_lines),
+            "stderr": "",
+            "duration_ms": int((time.perf_counter() - t0) * 1000),
             "timed_out": False,
         }
 
