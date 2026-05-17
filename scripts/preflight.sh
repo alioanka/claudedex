@@ -225,7 +225,14 @@ if [[ -z "$OUT" ]]; then
     warn "no timing rows yet — wait ~10 min after sniper restart"
 else
     echo "$OUT" | while IFS='|' read -r path samples p50 p95; do
-        if [[ "$path" == "wss" ]] && [[ "$p50" -lt 500 ]]; then
+        # Small-sample caveat: <10 samples in the window means a single
+        # block_time_anchored=false row can drag p50 to 0 because its
+        # detect_to_rpc_receipt = 0 by construction (wall-clock t_detect
+        # equals wall-clock rpc_receipt). Don't claim "excellent" until
+        # we have a meaningful sample.
+        if [[ "$path" == "wss" ]] && [[ "$samples" -lt 10 ]]; then
+            warn "wss: $samples samples (low) p50=${p50}ms p95=${p95}ms — wait for more snipes for a meaningful number"
+        elif [[ "$path" == "wss" ]] && [[ "$p50" -lt 500 ]]; then
             pass "wss: $samples samples, p50=${p50}ms p95=${p95}ms (excellent — sub-500ms)"
         elif [[ "$path" == "wss" ]]; then
             warn "wss: $samples samples, p50=${p50}ms p95=${p95}ms (above 500ms — RPC provider may be lagging)"
@@ -330,13 +337,20 @@ fi
 hdr "Dashboard routes — HTTP status spot-check"
 
 # probe_route <url> <expected_status_pattern> <label>
+# Uses HTTPRedirectHandler subclass to STOP at redirects so we can
+# spot-check 301/302 responses (urllib normally follows them
+# transparently, turning a 301 into the 200 of the target page).
 probe_route() {
     local url="$1" expect="$2" label="$3"
     local code
     code=$(docker compose exec -T trading-bot python -c "
 import urllib.request, urllib.error
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # don't follow
+opener = urllib.request.build_opener(NoRedirect)
 try:
-    r = urllib.request.urlopen('http://localhost:8080$url', timeout=5)
+    r = opener.open('http://localhost:8080$url', timeout=5)
     print(r.status)
 except urllib.error.HTTPError as e:
     print(e.code)

@@ -220,30 +220,54 @@ class DashboardEndpoints:
             except BaseException:
                 return default
         rows = []
+        loop_error = None
         try:
             for r in self.app.router.routes():
                 try:
                     method = _safe(r, 'method')
                     resource = getattr(r, 'resource', None)
                     path = _safe(resource, 'canonical') if resource is not None else _safe(r)
-                    handler = _safe(getattr(r, 'handler', None), '__name__') or _safe(getattr(r, 'handler', None))
-                    rows.append({'method': method, 'path': path, 'handler': handler})
+                    handler_name = '?'
+                    try:
+                        h = getattr(r, 'handler', None)
+                        if h is not None:
+                            handler_name = _safe(h, '__name__')
+                            if handler_name == '?':
+                                handler_name = _safe(h)
+                    except BaseException:
+                        handler_name = '?'
+                    rows.append({'method': method, 'path': path, 'handler': handler_name})
                 except BaseException as e:
-                    rows.append({'error': f'{type(e).__name__}'})
+                    rows.append({'error': f'{type(e).__name__}: {e}'[:120]})
         except BaseException as e:
-            return web.json_response(
-                {'error': f'iter failed: {type(e).__name__}: {e}',
-                 'partial_count': len(rows), 'partial_rows': rows},
-                status=200,
-            )
+            loop_error = f'{type(e).__name__}: {e}'
+
         try:
-            return web.json_response({'count': len(rows), 'routes': rows})
+            payload = {'count': len(rows), 'routes': rows}
+            if loop_error:
+                payload['iter_error'] = loop_error
+            return web.json_response(payload)
         except BaseException as e:
-            return web.Response(
-                text=f'{{"error":"json_response: {type(e).__name__}","count":{len(rows)}}}',
-                content_type='application/json',
-                status=200,
+            # Fall back to a plain text response so we still get SOMETHING
+            # back; also log so operators can see the underlying cause.
+            logger.error(
+                f"routes_debug_endpoint json_response failed: "
+                f"{type(e).__name__}: {e}",
+                exc_info=True,
             )
+            try:
+                return web.Response(
+                    text=(
+                        '{"error":"json_response failed",'
+                        f'"exception":"{type(e).__name__}",'
+                        f'"count":{len(rows)}}}'
+                    ),
+                    content_type='application/json',
+                    status=200,
+                )
+            except BaseException:
+                return web.Response(text='{"error":"all serialization failed"}',
+                                    content_type='application/json', status=200)
 
     async def health_endpoint(self, request):
         """Public health endpoint — never raises, never 500s.
