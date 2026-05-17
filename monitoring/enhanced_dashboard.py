@@ -199,35 +199,26 @@ class DashboardEndpoints:
         # In-memory storage for backtests
         self.backtests = {}
 
-    @staticmethod
     async def routes_debug_endpoint(self, request):
-        """Diagnostic: dump every registered route. SUPER-defensive
-        wrap because something keeps eating the response and turning
-        it into a 500 — outer middleware's "Internal Server Error".
-        This version does the minimum possible work so we can
-        isolate whether the handler is even being reached.
-        """
-        # Step 1: prove the handler is being called by ALWAYS logging.
+        """Diagnostic: dump every registered route. Wrapped in an
+        outer try/except BaseException so a regression here never
+        cascades to a 500 from the error_handler_middleware."""
+        import traceback as _tb
         try:
-            print('[/__routes__] handler invoked', flush=True)
-        except Exception:
-            pass
-        try:
-            logger.warning('[/__routes__] handler invoked')
-        except Exception:
-            pass
-        # Step 2: try the cheapest possible JSON response first.
-        try:
-            return web.json_response({'ok': True, 'ts': str(datetime.now())})
+            return await self._routes_debug_inner(request)
         except BaseException as e:
-            # Fall through to plain text if even the trivial JSON
-            # response fails.
+            tb_str = ''.join(_tb.format_exception(type(e), e, e.__traceback__))[-1500:]
             try:
-                logger.error(f'[/__routes__] trivial json_response failed: {type(e).__name__}: {e}')
+                logger.error(
+                    f"routes_debug_endpoint outer catch: "
+                    f"{type(e).__name__}: {e}\n{tb_str}"
+                )
             except Exception:
                 pass
-            return web.Response(text='{"ok":false,"trivial_fail":true}',
-                                content_type='application/json', status=200)
+            return web.json_response(
+                {'error': f'{type(e).__name__}: {e}', 'traceback': tb_str},
+                status=200,
+            )
 
     async def _routes_debug_inner(self, request):
         def _safe(obj, attr=None, default='?'):
