@@ -640,6 +640,16 @@
                 </a>
             </li>
 
+            <!-- Analytics (cross-module). Placed directly below Full Dashboard
+                 per VPS-feedback FAILURE B — operators couldn't find it
+                 when it was buried as the 8th entry inside the DEX submenu. -->
+            <li class="nav-item {% if page == 'analytics' %}active{% endif %}">
+                <a href="/analytics">
+                    <i class="fas fa-chart-bar"></i>
+                    <span>Analytics</span>
+                </a>
+            </li>
+
             <!-- Main Dashboard (Overview) -->
             <li class="nav-item {% if page == 'main_dashboard' %}active{% endif %}">
                 <a href="/">
@@ -700,12 +710,10 @@
                             <span>Analysis</span>
                         </a>
                     </li>
-                    <li class="nav-item {% if page == 'analytics' %}active{% endif %}">
-                        <a href="/analytics">
-                            <i class="fas fa-chart-bar"></i>
-                            <span>Analytics</span>
-                        </a>
-                    </li>
+                    <!-- /analytics moved to the top-level sidebar (above
+                         "Main Overview") per FAILURE B; it is cross-module,
+                         not DEX-specific. Removed from the DEX submenu to
+                         avoid the duplicate nav-item highlight bug. -->
                     <li class="nav-item {% if page == 'dex_settings' %}active{% endif %}">
                         <a href="/dex/settings">
                             <i class="fas fa-cog"></i>
