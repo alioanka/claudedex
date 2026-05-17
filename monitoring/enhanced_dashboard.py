@@ -8016,6 +8016,14 @@ class DashboardEndpoints:
                             # Position cap headroom (added by c59a32c)
                             stats['active_positions_live'] = int(rt.get('active_positions', 0) or 0)
                             stats['max_active_positions'] = int(rt.get('max_active_positions', 0) or 0)
+                            # Effective count = max(in-memory, db_open) — what
+                            # the engine actually evaluates against the cap.
+                            # Falls back to live count if engine hasn't
+                            # populated the field yet.
+                            stats['active_positions_effective'] = int(
+                                rt.get('active_positions_effective',
+                                       rt.get('active_positions', 0)) or 0
+                            )
                             stats['runtime_stats_age_seconds'] = int(
                                 (datetime.now() - runtime_row['updated_at']).total_seconds()
                             ) if runtime_row['updated_at'] else None

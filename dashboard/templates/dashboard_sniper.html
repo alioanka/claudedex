@@ -632,7 +632,12 @@ function updateStats(data) {
     // if the active count is at or near the configured cap, badge it
     // with a warning chip so operators see the throttle is active.
     document.getElementById('stat-sniped').textContent = data.tokens_sniped || 0;
-    const active = data.active_positions || 0;
+    // Prefer the effective count (max of in-memory and db_open) — that's
+    // what the engine actually checks against the cap. Falls back to the
+    // DB count if the engine hasn't published a snapshot yet.
+    const active = (data.active_positions_effective != null)
+        ? data.active_positions_effective
+        : (data.active_positions || 0);
     const cap = data.max_active_positions || 0;
     let activeText = `Active: ${active}`;
     if (cap > 0) {
