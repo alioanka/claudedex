@@ -947,7 +947,9 @@ class JupiterHelper:
         amount: int,
         slippage_bps: int = 50,
         user_public_key: str = None,
-        restrict_intermediate_tokens: bool = False
+        restrict_intermediate_tokens: bool = False,
+        dry_run: bool = False,
+        module: str = 'solana',
     ) -> Optional[str]:
         """
         Execute complete swap: quote → transaction → sign → send → confirm
@@ -958,6 +960,14 @@ class JupiterHelper:
             amount: Amount to swap
             slippage_bps: Slippage tolerance
             user_public_key: User public key (defaults to loaded keypair)
+            dry_run: Defense-in-depth flag. The primary gate is at the
+                engine layer (`solana_engine` only instantiates
+                JupiterHelper when dry_run=False), but SOL-RM-14 asks
+                this helper to honor a passed-in flag and the global
+                killswitch in case a future caller forgets the engine
+                gate. When True (or the kill-switch / pause flag is
+                set), returns a sentinel signature instead of signing.
+            module: module-name used for the kill-switch/pause lookup.
 
         Returns:
             Optional[str]: Transaction signature or None
@@ -965,6 +975,21 @@ class JupiterHelper:
         # Use module-level logger that matches SolanaTradingEngine
         import logging
         swap_logger = logging.getLogger("SolanaTradingEngine")
+
+        # Defense-in-depth gate. Honors module dry_run + global
+        # killswitch + per-module pause flag. SOL-RM-14.
+        try:
+            from core.dry_run import should_skip_live
+            if should_skip_live(dry_run, module=module, account=user_public_key):
+                swap_logger.info(
+                    f"🔶 JupiterHelper DRY-RUN/PAUSED gate engaged "
+                    f"({input_mint[:6]}→{output_mint[:6]} amt={amount}) — no tx broadcast"
+                )
+                return 'DRY_RUN_SIMULATED'
+        except ImportError:
+            # core.dry_run absent (older deployments) — fall through
+            # to the engine-layer gate.
+            pass
 
         try:
             # Clear last error for this swap attempt
