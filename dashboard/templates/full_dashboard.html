@@ -112,8 +112,18 @@
         text-transform: uppercase;
     }
     .module-status.running { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .module-status.enabled { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .module-status.disabled { background: rgba(100, 116, 139, 0.2); color: #64748b; }
     .module-status.stopped { background: rgba(100, 116, 139, 0.2); color: #64748b; }
     .module-status.error { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+    /* historical tag — shown next to P&L/Win Rate/Trades on DISABLED modules
+       so operators don't mistake stale DB numbers for live trading activity */
+    .hist-tag {
+        margin-left: 4px; padding: 1px 6px; border-radius: 8px;
+        font-size: 0.62rem; font-weight: 600; text-transform: uppercase;
+        background: rgba(148, 163, 184, 0.15); color: #94a3b8;
+        letter-spacing: 0.04em; vertical-align: middle;
+    }
     .module-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .stat-item { }
     .stat-label { color: #64748b; font-size: 0.75rem; margin-bottom: 2px; }
@@ -526,41 +536,53 @@
         ALL_MODULES.forEach(mod => {
             const data = modulesData[mod.id] || {};
             const metrics = data.metrics || { pnl: 0, total_trades: 0, win_rate: 0, positions: 0 };
-            // Render exactly what the backend reports. Previous code
-            // treated `enabled=true` as a fallback for RUNNING, so a
-            // disabled module with env=true still flashed RUNNING in
-            // the UI. The backend now reports RUNNING / ENABLED /
-            // STOPPED / DISABLED honestly — trust it.
+            // FAILURE A/C: trust the backend status string. Possible values:
+            //   "ENABLED + RUNNING" — env=true AND subprocess responding
+            //   "ENABLED (no health)" — env=true AND no health response
+            //   "DISABLED"           — env=false (label numbers "historical")
             const status = data.status || 'DISABLED';
-            const isRunning = status === 'RUNNING';
+            const isRunning = status === 'ENABLED + RUNNING';
+            const isDisabled = status === 'DISABLED';
+            const isHistorical = !!data.historical || isDisabled;
 
-            if (status === 'RUNNING') activeCount++;
-            totalTrades += metrics.total_trades || 0;
-            totalPnl += metrics.pnl || 0;
+            if (isRunning) activeCount++;
+            // Do NOT add disabled-module historical trades/P&L to the
+            // dashboard-wide running totals — those should reflect the
+            // currently-live system, not stale data.
+            if (!isDisabled) {
+                totalTrades += metrics.total_trades || 0;
+                totalPnl += metrics.pnl || 0;
+            }
 
             const pnlClass = metrics.pnl >= 0 ? 'positive' : 'negative';
+            // Status badge styling: dot-class derived from the head word.
+            const badgeClass = isRunning ? 'running'
+                : (status.startsWith('ENABLED') ? 'enabled' : 'disabled');
+            const histTag = isHistorical
+                ? '<span class="hist-tag" title="Historical data — module is DISABLED">historical</span>'
+                : '';
 
             const card = document.createElement('div');
-            card.className = `module-card ${status === 'RUNNING' ? 'active' : 'inactive'}`;
+            card.className = `module-card ${isRunning ? 'active' : 'inactive'}`;
             card.innerHTML = `
                 <div class="module-header">
                     <div class="module-name">
                         <div class="module-icon ${mod.color}"><i class="fas ${mod.icon}"></i></div>
                         <h4>${mod.name}</h4>
                     </div>
-                    <span class="module-status ${status.toLowerCase()}">${status}</span>
+                    <span class="module-status ${badgeClass}">${status}</span>
                 </div>
                 <div class="module-stats">
                     <div class="stat-item">
-                        <div class="stat-label">P&L</div>
+                        <div class="stat-label">P&L ${histTag}</div>
                         <div class="stat-value ${pnlClass}">${formatCurrency(metrics.pnl || 0)}</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-label">Win Rate</div>
+                        <div class="stat-label">Win Rate ${histTag}</div>
                         <div class="stat-value">${(metrics.win_rate || 0).toFixed(1)}%</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-label">Trades</div>
+                        <div class="stat-label">Trades ${histTag}</div>
                         <div class="stat-value">${metrics.total_trades || 0}</div>
                     </div>
                     <div class="stat-item">

@@ -1132,11 +1132,14 @@ class DashboardEndpoints:
         else:
             logger.warning(f".env file not found at: {env_path}")
 
-        # Read module enabled status from .env (default to all enabled since user typically enables all)
-        # Also read raw values for debugging
-        dex_raw = os.getenv('DEX_MODULE_ENABLED', 'true')
-        futures_raw = os.getenv('FUTURES_MODULE_ENABLED', 'true')
-        solana_raw = os.getenv('SOLANA_MODULE_ENABLED', 'true')
+        # Read module enabled status from .env. FAILURE A fix: default to
+        # 'false' (DISABLED). Defaulting to 'true' lied to the operator when
+        # a flag was unset — modules silently appeared ENABLED even though
+        # the orchestrator would not spawn them. Single source of truth is
+        # the env flag; if it's missing the module is DISABLED.
+        dex_raw = os.getenv('DEX_MODULE_ENABLED', 'false')
+        futures_raw = os.getenv('FUTURES_MODULE_ENABLED', 'false')
+        solana_raw = os.getenv('SOLANA_MODULE_ENABLED', 'false')
 
         # Handle various true values: 'true', 'True', 'TRUE', '1', 'yes', 'Yes'
         def is_enabled(val):
@@ -1373,41 +1376,40 @@ class DashboardEndpoints:
         except Exception as e:
             logger.warning(f"Error reading module config files: {e}")
 
-        # Determine actual status for each module
-        # Consider module as running if either:
-        # 1. Health check succeeds (module process is live)
-        # 2. Module is enabled AND has data (metrics show trades)
+        # Determine actual status for each module.
+        # FAILURE A/C fix: status string clearly distinguishes
+        #   "ENABLED + RUNNING"  — env flag true AND subprocess responding on health port
+        #   "ENABLED (no health)" — env flag true BUT no health response
+        #   "DISABLED"            — env flag false
+        # The previous strings ('RUNNING'/'ENABLED'/'DISABLED') let operators
+        # mistake a stale "ENABLED" for "actually live" when really the
+        # subprocess hadn't started or had died.
+        def _module_status(running: bool, enabled: bool) -> str:
+            if not enabled:
+                return 'DISABLED'
+            if running:
+                return 'ENABLED + RUNNING'
+            return 'ENABLED (no health)'
 
-        # DEX: RUNNING if enabled (DEX runs in same process as dashboard)
-        dex_status = 'RUNNING' if dex_enabled else 'DISABLED'
-
-        # Futures: status derives from (subprocess alive, env flag). Historical
-        # trades in the DB do NOT prove the module is running NOW — that was
-        # the previous bug that made disabled modules display as RUNNING when
-        # they had any past activity.
-        if futures_running:
-            futures_status = 'RUNNING'
-        elif futures_enabled:
-            futures_status = 'ENABLED'  # configured but subprocess not (yet) alive
-        else:
-            futures_status = 'DISABLED'
-
-        # Solana: same shape as Futures. Previously checked total_trades > 0
-        # which conflated historical activity with current liveness, so a
-        # SOLANA_MODULE_ENABLED=false module with stale trades displayed
-        # "RUNNING" on /full-dashboard and /.
-        if solana_running:
-            solana_status = 'RUNNING'
-        elif solana_enabled:
-            solana_status = 'ENABLED'
-        else:
-            solana_status = 'DISABLED'
+        # DEX: runs in same process as the engine/dashboard. We approximate
+        # 'running' as enabled + engine attached (no separate health port).
+        dex_running_flag = bool(dex_enabled and self.engine is not None)
+        dex_status = _module_status(dex_running_flag, dex_enabled)
+        futures_status = _module_status(futures_running, futures_enabled)
+        solana_status = _module_status(solana_running, solana_enabled)
 
         # ==================== CHECK SNIPER, ARBITRAGE, COPY TRADING, AI MODULES ====================
-        sniper_enabled = is_enabled(os.getenv('SNIPER_MODULE_ENABLED', 'true'))
-        arbitrage_enabled = is_enabled(os.getenv('ARBITRAGE_MODULE_ENABLED', 'true'))
-        copytrading_enabled = is_enabled(os.getenv('COPYTRADING_MODULE_ENABLED', 'true'))
-        ai_enabled = is_enabled(os.getenv('AI_MODULE_ENABLED', 'true'))
+        # FAILURE A fix: env-flag is the single source of truth, default to
+        # 'false' (DISABLED) — not 'true' — because if the operator hasn't
+        # set the flag at all the module must NOT be claimed as enabled.
+        # Also: the orchestrator (main.py:546) reads COPY_TRADING_MODULE_ENABLED
+        # (with underscore). The previous spelling here (COPYTRADING_MODULE_ENABLED)
+        # was a different var that nothing else sets, so Copy Trading always
+        # appeared enabled by default. Standardize on COPY_TRADING_MODULE_ENABLED.
+        sniper_enabled = is_enabled(os.getenv('SNIPER_MODULE_ENABLED', 'false'))
+        arbitrage_enabled = is_enabled(os.getenv('ARBITRAGE_MODULE_ENABLED', 'false'))
+        copytrading_enabled = is_enabled(os.getenv('COPY_TRADING_MODULE_ENABLED', 'false'))
+        ai_enabled = is_enabled(os.getenv('AI_MODULE_ENABLED', 'false'))
 
         sniper_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
         arbitrage_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
@@ -1523,25 +1525,22 @@ class DashboardEndpoints:
             except Exception as e:
                 logger.debug(f"Error fetching additional module metrics: {e}")
 
-        # Determine status for additional modules. Historical trades do NOT
-        # imply a running subprocess — fixed alongside the Futures/Solana
-        # status logic above. RUNNING requires the subprocess to be alive
-        # (via the *_running health probe); ENABLED means configured but
-        # not yet visible as alive; DISABLED otherwise.
-        def _status(running: bool, enabled: bool) -> str:
-            if running:
-                return 'RUNNING'
-            if enabled:
-                return 'ENABLED'
-            return 'DISABLED'
-        sniper_status = _status(sniper_running, sniper_enabled)
-        arbitrage_status = _status(arbitrage_running, arbitrage_enabled)
-        copytrading_status = _status(copytrading_running, copytrading_enabled)
-        ai_status = _status(ai_running, ai_enabled)
+        # FAILURE A: reuse the same three-state status string as DEX/Futures/Solana
+        # so the dashboard never marks a module RUNNING based on historical
+        # trades alone. _module_status was defined above.
+        sniper_status = _module_status(sniper_running, sniper_enabled)
+        arbitrage_status = _module_status(arbitrage_running, arbitrage_enabled)
+        copytrading_status = _module_status(copytrading_running, copytrading_enabled)
+        ai_status = _module_status(ai_running, ai_enabled)
 
         logger.info(f"Final module status: DEX={dex_status}, Futures={futures_status} (trades={futures_metrics.get('total_trades', 0)}), Solana={solana_status} (trades={solana_metrics.get('total_trades', 0)})")
         logger.info(f"Additional modules: Sniper={sniper_status}, Arbitrage={arbitrage_status}, CopyTrading={copytrading_status}, AI={ai_status}")
 
+        # FAILURE A/C: `historical=True` when env flag is false. Lets the UI
+        # label numbers as "historical" so DISABLED rows with stale P&L/trades
+        # do not look like live activity. Operators were misreading a
+        # DISABLED Solana row showing "$1.23, 60.9% WR, 425 trades" as if
+        # the module were trading right now.
         return web.json_response({
             'success': True,
             'data': {
@@ -1551,7 +1550,8 @@ class DashboardEndpoints:
                         'enabled': dex_enabled,
                         'status': dex_status,
                         'capital': dex_capital,
-                        'metrics': dex_metrics
+                        'metrics': dex_metrics,
+                        'historical': not dex_enabled,
                     },
                     'futures_trading': {
                         'name': 'Futures Trading',
@@ -1559,7 +1559,8 @@ class DashboardEndpoints:
                         'status': futures_status,
                         'capital': futures_capital,
                         'metrics': futures_metrics,
-                        'health': futures_health_data
+                        'health': futures_health_data,
+                        'historical': not futures_enabled,
                     },
                     'solana_strategies': {
                         'name': 'Solana Strategies',
@@ -1567,35 +1568,40 @@ class DashboardEndpoints:
                         'status': solana_status,
                         'capital': solana_capital,
                         'metrics': solana_metrics,
-                        'health': solana_health_data
+                        'health': solana_health_data,
+                        'historical': not solana_enabled,
                     },
                     'sniper': {
                         'name': 'Sniper',
                         'enabled': sniper_enabled,
                         'status': sniper_status,
                         'capital': 100.0,
-                        'metrics': sniper_metrics
+                        'metrics': sniper_metrics,
+                        'historical': not sniper_enabled,
                     },
                     'arbitrage': {
                         'name': 'Arbitrage',
                         'enabled': arbitrage_enabled,
                         'status': arbitrage_status,
                         'capital': 200.0,
-                        'metrics': arbitrage_metrics
+                        'metrics': arbitrage_metrics,
+                        'historical': not arbitrage_enabled,
                     },
                     'copy_trading': {
                         'name': 'Copy Trading',
                         'enabled': copytrading_enabled,
                         'status': copytrading_status,
                         'capital': 100.0,
-                        'metrics': copytrading_metrics
+                        'metrics': copytrading_metrics,
+                        'historical': not copytrading_enabled,
                     },
                     'ai_analysis': {
                         'name': 'AI Analysis',
                         'enabled': ai_enabled,
                         'status': ai_status,
                         'capital': 100.0,
-                        'metrics': ai_metrics
+                        'metrics': ai_metrics,
+                        'historical': not ai_enabled,
                     }
                 }
             }
@@ -7990,7 +7996,15 @@ class DashboardEndpoints:
                     """)
                     stats['tokens_detected'] = detected_24h or 0
 
-                    # Load settings from config_settings
+                    # Load settings from config_settings. VPS failure 3:
+                    # also capture max_active_positions here as the
+                    # source-of-truth fallback for the dashboard tile. When
+                    # the sniper subprocess has just restarted, the runtime
+                    # snapshot (5-min cadence) hasn't run yet so its
+                    # max_active_positions is 0 and the UI fell through to
+                    # "Active: N" with no /cap. Config DB always has the
+                    # configured value (defaults to 500 below if unset).
+                    config_max_active = 0
                     settings_rows = await conn.fetch(
                         "SELECT key, value FROM config_settings WHERE config_type = 'sniper_config'"
                     )
@@ -8006,6 +8020,11 @@ class DashboardEndpoints:
                             stats['trade_amount'] = float(val) if val else 0.1
                         elif key == 'slippage':
                             stats['slippage'] = float(val) if val else 10.0
+                        elif key == 'max_active_positions':
+                            try:
+                                config_max_active = int(val) if val else 0
+                            except (TypeError, ValueError):
+                                config_max_active = 0
 
                     # Read live in-process counters from sniper_runtime_stats
                     # (the sniper subprocess snapshots its _stats here every
@@ -8048,6 +8067,27 @@ class DashboardEndpoints:
                             ) if runtime_row['updated_at'] else None
                     except Exception as rt_err:
                         logger.debug(f"sniper_runtime_stats read failed (non-fatal): {rt_err}")
+
+                    # VPS failure 3: backstop runtime-stats-derived cap and
+                    # effective-count fields. If the engine just restarted
+                    # and hasn't snapshot yet, the runtime row is missing or
+                    # all-zero. Operators saw "Active: 356" with no /cap.
+                    # Order of precedence:
+                    #   max_active_positions: runtime snapshot > config_settings > 500 default
+                    #   active_positions_effective: max(runtime_effective, db_open_count)
+                    # (db_open_count = stats['active_positions'] computed above).
+                    if not stats.get('max_active_positions'):
+                        stats['max_active_positions'] = (
+                            config_max_active if config_max_active > 0 else 500
+                        )
+                    # If the runtime path didn't populate the effective count,
+                    # fall back to the DB-open count from sniper_trades so the
+                    # tile always renders the X/Y form. Keep the larger of the
+                    # two when both exist — that matches what the engine
+                    # checks against the cap.
+                    db_open = int(stats.get('active_positions', 0) or 0)
+                    rt_eff = int(stats.get('active_positions_effective', 0) or 0)
+                    stats['active_positions_effective'] = max(rt_eff, db_open)
 
                     # Liveness derives from BOTH env flag AND snapshot
                     # freshness: a crashed subprocess leaves env=true but
