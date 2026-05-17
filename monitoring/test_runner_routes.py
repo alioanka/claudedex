@@ -78,12 +78,22 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import time
 from typing import Any, Dict, List, Optional
 
 from aiohttp import web
 
 from auth.middleware import require_auth
+
+# Hard cap on stdout/stderr captured per run — guards the dashboard
+# process from a runaway test dumping gigabytes. 2 MB each is plenty
+# for any preflight/smoke script we ship.
+_MAX_OUTPUT_BYTES = 2 * 1024 * 1024
+
+# Repo root inside the container (and the host bind-mount). All bash
+# tests run with cwd here so relative paths in scripts work.
+_REPO_ROOT = os.environ.get("CLAUDEDEX_REPO_ROOT", "/app")
 
 logger = logging.getLogger("TestRunnerRoutes")
 

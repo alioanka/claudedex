@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+
+{% block title %}Test Runner - DexScreener Trading Bot{% endblock %}
+
+{#
+  Single-screen verification page for the session-18 fixes.
+  Operators land here, eyeball Section A's UI clones, click the Section
+  B/C/D buttons to run the catalogued scripts/probes, then hit Section
+  E's "Copy All Results" to paste a single markdown blob back to the
+  conversation. Frontend-only; backend contract is documented in JS.
+#}
+
+{% block extra_css %}
+<style>
+  .tr-page {
+    color: var(--text-primary, #f1f5f9);
+  }
+  .tr-section {
+    background: var(--bg-secondary, #1e293b);
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 18px;
+  }
+  .tr-section h2 {
+    font-size: 1.1rem;
+    margin: 0 0 6px 0;
+    color: var(--text-primary, #f1f5f9);
+    pointer-events: auto;
+  }
+  .tr-section .tr-sub {
+    color: var(--text-secondary, #94a3b8);
+    font-size: 0.85rem;
+    margin-bottom: 14px;
+  }
+  .tr-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 14px;
+  }
+  .tr-card {
+    background: var(--bg-tertiary, #0f172a);
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .tr-card-title {
+    font-weight: 600;
+    margin-bottom: 8px;
+    pointer-events: auto;
+  }
+  .tr-expected {
+    font-size: 0.8rem;
+    color: var(--text-secondary, #94a3b8);
+    margin-top: 8px;
+    font-style: italic;
+  }
+  .chip {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .chip-pass    { background: #10b981; color: #fff; }
+  .chip-fail    { background: #ef4444; color: #fff; }
+  .chip-pending { background: #64748b; color: #fff; }
+  .chip-warn    { background: #f59e0b; color: #fff; }
+
+  .tr-output {
+    background: #0a0f1c;
+    color: #cbd5e1;
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid #1e293b;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 280px;
+    overflow: auto;
+    margin-top: 8px;
+  }
+  .tr-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .tr-copy-btn {
+    font-size: 0.7rem;
+    padding: 2px 8px !important;
+    min-height: 22px !important;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="tr-page">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h1 style="pointer-events:auto;">Test Runner</h1>
+      <div style="color: var(--text-secondary, #94a3b8); font-size: 0.9rem;">
+        One-screen verification for the session-18 dashboard fixes.
+        Backend contract: <code>/api/test-runner/{tests,run,probe/&lt;id&gt;}</code>
+        (owned by Agent 3 — pin to this shape).
+      </div>
+    </div>
+    <div>
+      <button id="tr-copy-all" class="btn btn-primary" type="button">
+        <i class="fas fa-clipboard"></i> Copy All Results
+      </button>
+    </div>
+  </div>
+
+  <!-- Section A: UI Verification Clones (built in commit 2) -->
+  <section class="tr-section" id="tr-section-a">
+    <h2>A. UI Verification Clones</h2>
+    <div class="tr-sub">Inline reproductions of every UI element that
+      this-session's fixes touch. No browsing required.</div>
+    <div id="tr-section-a-body" class="tr-grid">
+      <div class="tr-card">
+        <div class="tr-card-title">Pending</div>
+        <div class="tr-output">Section A not yet rendered — see commit 2.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section B: Scripts (built in commit 3) -->
+  <section class="tr-section" id="tr-section-b">
+    <h2>B. Scripts <span class="chip chip-pending">pending</span></h2>
+    <div class="tr-sub">bash kind tests from <code>/api/test-runner/tests</code>.</div>
+    <div id="tr-section-b-body"></div>
+  </section>
+
+  <!-- Section C: API Probes (built in commit 4) -->
+  <section class="tr-section" id="tr-section-c">
+    <h2>C. API Probes <span class="chip chip-pending">pending</span></h2>
+    <div class="tr-sub">probe kind tests via <code>/api/test-runner/probe/&lt;id&gt;</code>.</div>
+    <div id="tr-section-c-body"></div>
+  </section>
+
+  <!-- Section D: DB Probes (built in commit 4) -->
+  <section class="tr-section" id="tr-section-d">
+    <h2>D. DB Probes <span class="chip chip-pending">pending</span></h2>
+    <div class="tr-sub">db_query kind tests via <code>/api/test-runner/run</code>.</div>
+    <div id="tr-section-d-body"></div>
+  </section>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/test_runner.js?v={{ asset_version or 'dev' }}"></script>
+{% endblock %}
