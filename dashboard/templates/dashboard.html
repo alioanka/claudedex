@@ -1041,9 +1041,12 @@ async function loadInsights() {
             return;
         }
         list.innerHTML = items.slice(0, 10).map(it => {
+            const title = (it && it.title) ? `<strong>${it.title}: </strong>` : '';
             const text = (it && (it.message || it.text || it.insight)) || String(it);
-            const sev = (it && it.severity) || 'info';
-            return `<li class="insight-${sev}">${text}</li>`;
+            // Backend emits 'type' (info/warning/success/danger);
+            // accept 'severity' too for forward-compat with other producers.
+            const sev = (it && (it.type || it.severity)) || 'info';
+            return `<li class="insight-${sev}">${title}${text}</li>`;
         }).join('');
     } catch (e) {
         // Silent; don't spam console on every refresh tick if the
