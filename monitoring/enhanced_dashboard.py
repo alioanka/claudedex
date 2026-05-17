@@ -211,6 +211,11 @@ class DashboardEndpoints:
         # Setup RPC/API Pool routes
         self._setup_rpc_pool_routes()
 
+        # Setup Test Runner routes (/api/test-runner/*) + /test-runner page.
+        # Registers unconditionally so /test-runner is reachable even
+        # when the dashboard runs standalone without the trading engine.
+        self._setup_test_runner_routes()
+
         # NOTE: Credentials routes are now setup in _on_startup AFTER db is ready
         # This was moved to ensure db_pool is available for the credentials API
 
@@ -897,6 +902,38 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Failed to setup analytics routes: {e}", exc_info=True)
             logger.warning("Module management will not be available")
+
+    def _setup_test_runner_routes(self):
+        """Wire the Test Runner backend + page handler. Mirrors the
+        AnalyticsRoutes pattern: instantiate the Routes class, pass db
+        manager, call setup_routes(self.app). Also registers the
+        /test-runner GET handler that renders the template."""
+        try:
+            from monitoring.test_runner_routes import TestRunnerRoutes
+            logger.info("Setting up Test Runner routes...")
+            tr = TestRunnerRoutes(
+                self.app,
+                db_manager=getattr(self, 'db', None) or getattr(self, 'db_manager', None),
+                jinja_env=self.jinja_env,
+            )
+            tr.setup_routes(self.app)
+            # GET /test-runner — render the page template.
+            self.app.router.add_get(
+                '/test-runner', require_auth(self._test_runner_page)
+            )
+            logger.info("✅ Test Runner routes initialized")
+        except Exception as e:
+            logger.error(f"Failed to setup test runner routes: {e}", exc_info=True)
+
+    async def _test_runner_page(self, request):
+        """Render dashboard/templates/test_runner.html with the same
+        page='test_runner' context every other page uses for sidebar
+        highlighting."""
+        template = self.jinja_env.get_template('test_runner.html')
+        return web.Response(
+            text=template.render(page='test_runner'),
+            content_type='text/html',
+        )
 
     def _setup_rpc_pool_routes(self):
         """Setup RPC/API Pool management routes"""
