@@ -608,3 +608,141 @@ bash scripts/dashboard_smoke.sh http://127.0.0.1:8080 admin admin123
 
 If any assertion FAILs, the line tells you which field/endpoint
 returned the wrong shape — paste the FAIL block to the next agent.
+
+## Agent 2 Re-test (dashboard pages)
+
+Four follow-up fixes from the VPS report:
+- `f8375db` asset-version cache buster + bot-mode JSON Accept
+- `118f2ae` full_dashboard: env-flag single source of truth
+- `0eb827b` full_dashboard: unified-trade query for charts
+- `3cb544b` analytics page: dynamic tabs + surface API failures
+- `769ca72` analytics_routes: DB fallback when engine missing
+
+### Agent-2 Re-test 1 — Module Overview shows correct ENABLED set
+
+Fix: `monitoring/enhanced_dashboard.py:_fallback_api_modules` —
+`COPYTRADING_MODULE_ENABLED` → `COPY_TRADING_MODULE_ENABLED`,
+defaults flipped from `'true'` → `'false'`, status string now
+`ENABLED + RUNNING` / `ENABLED (no health)` / `DISABLED`.
+
+```bash
+# 1. Confirm the env-var defaults are 'false' and the typo is gone.
+grep -nE "COPY_TRADING_MODULE_ENABLED|COPYTRADING_MODULE_ENABLED" \
+    /root/claudedex/monitoring/enhanced_dashboard.py
+# Expect: only COPY_TRADING_MODULE_ENABLED with default 'false'.
+
+# 2. With the operator's .env (only SNIPER + ARBITRAGE = true),
+#    /api/modules should report only those two as ENABLED + RUNNING
+#    (and DISABLED for all others).
+COOKIES=/tmp/agent2_jar.txt
+BASE=http://127.0.0.1:8080
+curl -sS -c $COOKIES -X POST $BASE/api/auth/login \
+    -H 'Content-Type: application/json' \
+    -d '{"username":"admin","password":"admin123"}' >/dev/null
+
+curl -sS -b $COOKIES $BASE/api/modules | python3 -c "
+import json, sys
+d = json.load(sys.stdin)['data']['modules']
+for k, v in d.items():
+    print(f\"{k:20s} enabled={v['enabled']} status={v['status']!r} hist={v.get('historical')}\")"
+# Expect (with the operator's .env):
+#   dex_trading          enabled=False status='DISABLED'           hist=True
+#   futures_trading      enabled=False status='DISABLED'           hist=True
+#   solana_strategies    enabled=False status='DISABLED'           hist=True
+#   sniper               enabled=True  status='ENABLED + RUNNING'  hist=False
+#   arbitrage            enabled=True  status='ENABLED + RUNNING'  hist=False
+#   copy_trading         enabled=False status='DISABLED'           hist=True
+#   ai_analysis          enabled=False status='DISABLED'           hist=True
+```
+
+Screenshot description: open `/full-dashboard` → Module Overview cards.
+Cards now show:
+- Sniper — green dot + `ENABLED + RUNNING`, live numbers
+- Arbitrage — green dot + `ENABLED + RUNNING`, live numbers
+- Copy Trading — grey `DISABLED`, P&L/Win Rate/Trades each suffixed
+  with a small "historical" tag
+- All other modules — grey `DISABLED` + "historical" tag on their
+  P&L/Win Rate/Trades labels
+
+### Agent-2 Re-test 2 — Empty Performance Analytics cards now have data
+
+Fix: `monitoring/enhanced_dashboard.py:_unified_closed_trades` —
+queries every `*_trades` table and synthesizes the 12 charts that
+previously only read the legacy `trades` table.
+
+```bash
+curl -sS -b $COOKIES $BASE/api/dashboard/charts/full | python3 -c "
+import json, sys
+d = json.load(sys.stdin)['data']
+for k in ['chartEquity','chartChainRoi','chartChainVol',
+          'chartHourlyHeatmap','chartDuration','chartFees',
+          'chartDrawdown','chartRR','chartSlippage','chartStreaks',
+          'chartPnlDist']:
+    labels = d.get(k, {}).get('labels', [])
+    dsets = d.get(k, {}).get('datasets', [])
+    n_pts = sum(len(ds.get('data', [])) for ds in dsets)
+    print(f'{k:22s} labels={len(labels):3d} points={n_pts}')"
+# Expect (with 10000+ sniper_trades in the DB):
+#   chartEquity            labels=>0 points=>0    (cumulative equity series)
+#   chartChainRoi          labels=>0 points=>0    (e.g. SOLANA, ETHEREUM)
+#   chartChainVol          labels=>0 points=>0
+#   chartHourlyHeatmap     labels=24 points=24    (always full 24 buckets)
+#   chartDuration          labels=>0 points=>0
+#   chartFees              labels=>0 points=>0
+#   chartDrawdown          labels=>0 points=>0
+#   chartRR                labels=>0 points=>0
+#   chartSlippage          labels=>0 points=>0
+#   chartStreaks           labels=2  points=2
+#   chartPnlDist           labels=2  points=2
+```
+
+Screenshot description: open `/full-dashboard`, scroll to Performance
+Analytics. Equity Curve / Drawdown / Hourly Profitability charts now
+render real lines/bars instead of "No data yet" placeholder text.
+
+### Agent-2 Re-test 3 — Analytics page module switcher actually switches
+
+Fix: `dashboard/static/js/analytics.js` — dynamic tabs stamped with
+`data-module`, strict-match in `switchModule()`; surface API errors via
+toast.
+
+```bash
+# 1. Confirm the analytics endpoints serve DB-backed data when the
+#    engine is None (standalone dashboard subprocess case).
+for m in sniper arbitrage dex_trading futures_trading copy_trading; do
+    n=$(curl -sS -b $COOKIES "$BASE/api/analytics/performance/$m?timeframe=all" \
+        | python3 -c "import json,sys;print(json.load(sys.stdin).get('data',{}).get('total_trades','?'))")
+    echo "$m total_trades=$n"
+done
+# Expect: sniper >> 0, arbitrage >= 0, others may be 0 (no historical
+# data for those modules). All endpoints return 200 + success:true.
+```
+
+Browser action: open `/analytics`. Wait ~1s for `loadModuleTabs()`.
+Tabs across the top now show all 7 modules (DEX, Futures, Solana,
+Sniper, Arbitrage, Copy Trading, AI Analysis). Click "Sniper" → the
+Performance Metrics card switches to show the sniper totals (win rate,
+profit factor, avg win/loss); the Equity Curve chart redraws with the
+sniper cumulative curve. Repeat with "Arbitrage" → numbers change
+again. Disabled modules' tab labels show `(disabled)` suffix.
+
+### Agent-2 Re-test 4 — Analytics sidebar link moved out of DEX submenu
+
+Fix: `dashboard/templates/base.html` (commit `554b589`) — `/analytics`
+sidebar link promoted to top-level, removed from the DEX submenu.
+
+```bash
+# Confirm the nav structure: Analytics is at position 2 in the
+# top-level sidebar (right below Full Dashboard).
+auth_get() { curl -sS -b $COOKIES "$1"; }
+auth_get "$BASE/" | grep -A1 'href="/analytics"' | head -4
+# Expect: an outer top-level <li class="nav-item"> wrapping the
+# anchor (not inside <ul class="nav-submenu" id="dex-menu">).
+```
+
+Browser action: refresh any page. The left sidebar shows:
+1. Full Dashboard
+2. Analytics   ← used to be 8th-entry inside DEX submenu
+3. Main Overview
+4. DEX Trading (expandable; no longer contains an Analytics link)
+
