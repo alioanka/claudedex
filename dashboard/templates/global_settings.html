@@ -14,7 +14,32 @@
     </div>
 </div>
 
+<style>
+.risk-critical { border: 2px solid #b00020 !important; background: #fff5f5 !important; }
+.risk-critical-label { color: #b00020; font-weight: 700; }
+.risk-critical-label::after { content: " ⚠ RISK"; font-size: 0.8em; }
+</style>
 <script>
+// Settings whose value directly controls how much capital can be lost.
+// Editing these without explicit confirmation has caused incidents
+// (operator typed 1.5 instead of 15 for drawdown_pct). See DASH-RM-11.
+const RISK_CRITICAL_KEYS = new Set([
+    'max_drawdown_pct',
+    'max_position_size',
+    'max_slippage',
+    'max_slippage_pct',
+    'daily_loss_limit',
+    'max_loss_per_trade',
+    'min_liquidity',
+    'min_liquidity_usd',
+    'kill_switch_drawdown_pct',
+    'circuit_breaker_threshold',
+]);
+
+function isRiskCritical(key) {
+    return RISK_CRITICAL_KEYS.has(key);
+}
+
 // Renders a single setting row with a type-appropriate input.
 // Previously every non-bool got <input type=text> regardless of the
 // underlying type, so numbers got coerced to strings and JSON
@@ -25,17 +50,18 @@
 // (Audit agent 3 #12.)
 function renderSettingInput(key, config) {
     const v = config.value;
+    const dangerClass = isRiskCritical(key) ? ' risk-critical' : '';
     if (typeof v === 'boolean') {
-        return `<input type="checkbox" class="form-check-input" name="${key}" data-type="bool" ${v ? 'checked' : ''}>`;
+        return `<input type="checkbox" class="form-check-input${dangerClass}" name="${key}" data-type="bool" ${v ? 'checked' : ''}>`;
     }
     if (typeof v === 'number') {
-        return `<input type="number" class="form-control" name="${key}" value="${v}" step="any" data-type="number">`;
+        return `<input type="number" class="form-control${dangerClass}" name="${key}" value="${v}" step="any" data-type="number" data-original="${v}">`;
     }
     if (v !== null && typeof v === 'object') {
-        return `<textarea class="form-control" name="${key}" rows="3" data-type="json">${JSON.stringify(v, null, 2)}</textarea>`;
+        return `<textarea class="form-control${dangerClass}" name="${key}" rows="3" data-type="json">${JSON.stringify(v, null, 2)}</textarea>`;
     }
     const escaped = (v === null || v === undefined) ? '' : String(v);
-    return `<input type="text" class="form-control" name="${key}" value="${escaped}" data-type="text">`;
+    return `<input type="text" class="form-control${dangerClass}" name="${key}" value="${escaped}" data-type="text">`;
 }
 
 async function loadSettings() {
@@ -50,13 +76,16 @@ async function loadSettings() {
 
     let html = '<div class="accordion" id="settingsAccordion">';
     for (const [category, settings] of Object.entries(data.data)) {
-        const rowsHtml = Object.entries(settings).map(([key, config]) => `
+        const rowsHtml = Object.entries(settings).map(([key, config]) => {
+            const labelClass = isRiskCritical(key) ? 'form-label risk-critical-label' : 'form-label';
+            return `
             <div class="mb-3">
-                <label class="form-label">${key}</label>
+                <label class="${labelClass}">${key}</label>
                 ${renderSettingInput(key, config)}
                 <small class="text-muted">${config.description || ''}</small>
             </div>
-        `).join('');
+        `;
+        }).join('');
         html += `
         <div class="accordion-item bg-secondary">
             <h2 class="accordion-header" id="heading${category}">
@@ -82,6 +111,7 @@ async function saveSettings(event, category) {
     event.preventDefault();
     const form = event.target;
     const updates = {};
+    const riskChanges = [];
 
     // Iterate all named inputs and convert by their data-type marker.
     // FormData would otherwise turn every value into a string AND drop
@@ -100,6 +130,14 @@ async function saveSettings(event, category) {
                 return;
             }
             updates[name] = n;
+            // Track risk-critical numeric changes for the confirmation
+            // step. data-original was set when the row rendered.
+            if (isRiskCritical(name) && el.dataset.original !== undefined) {
+                const orig = parseFloat(el.dataset.original);
+                if (!Number.isNaN(orig) && Math.abs(orig - n) > 1e-9) {
+                    riskChanges.push(`${name}: ${orig} → ${n}`);
+                }
+            }
         } else if (t === 'json') {
             try {
                 updates[name] = JSON.parse(el.value);
@@ -110,6 +148,17 @@ async function saveSettings(event, category) {
         } else {
             updates[name] = el.value;
         }
+    }
+
+    // Risk-critical confirmation. Operators have historically typed 1.5
+    // when they meant 15 for drawdown_pct — surfacing the old → new
+    // delta in the confirm dialog catches that class of typo. See
+    // DASH-RM-11.
+    if (riskChanges.length > 0) {
+        const msg = "You are changing RISK-CRITICAL values:\n\n  "
+            + riskChanges.join("\n  ")
+            + "\n\nThese controls how much capital can be lost. Confirm?";
+        if (!confirm(msg)) return;
     }
 
     let resp;
