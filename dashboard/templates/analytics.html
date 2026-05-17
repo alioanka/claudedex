@@ -190,12 +190,13 @@
     </div>
 </section>
 
-<!-- Module Tabs -->
+<!-- Module Tabs — populated dynamically from /api/modules by
+     dashboard/static/js/analytics.js#loadModuleTabs (FAILURE B fix).
+     The placeholder buttons below are shown only while the JS is fetching
+     so the page never looks empty on first paint. -->
 <section class="module-tabs">
     <div class="tabs-header" id="module-tabs">
-        <button class="tab-button active" data-module="dex_trading">DEX Trading</button>
-        <button class="tab-button" data-module="futures_trading">Futures Trading</button>
-        <button class="tab-button" data-module="solana_trading">Solana Strategies</button>
+        <button class="tab-button tab-btn active" data-module="dex_trading" disabled>Loading modules&hellip;</button>
     </div>
 </section>
 
