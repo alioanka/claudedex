@@ -256,6 +256,210 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         "timeout_s": 15,
         "description": "Open-position counts per trading module.",
     },
+
+    # ── DB probes from MAY_2026_HARDENING_TEST_PLAN.md ────────────────
+    {
+        "id": "db_migration_seeds",
+        "title": "DB: migration seeds (caps + safety_check)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE (config_type='sniper_config' AND key='max_active_positions') "
+            "   OR (config_type='copytrading_config' AND key='max_active_positions') "
+            "   OR (config_type='sniper_config' AND key='safety_check_enabled') "
+            "ORDER BY config_type, key"
+        ),
+        "cmd_preview": (
+            "SELECT config_type,key,value FROM config_settings WHERE seed-keys"
+        ),
+        "timeout_s": 15,
+        "description": (
+            "Confirms migrations 016 (sniper cap=500) + 017 (copy cap=50) "
+            "+ Phase-2 safety_check_enabled row are present in config_settings."
+        ),
+    },
+    {
+        "id": "db_runtime_stats_freshness",
+        "title": "DB: sniper_runtime_stats freshness",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT id, "
+            "EXTRACT(EPOCH FROM (NOW() - updated_at))::int AS age_seconds, "
+            "(stats->>'pools_detected')::int AS pools_detected, "
+            "(stats->>'pools_evaluated')::int AS pools_evaluated, "
+            "(stats->>'pools_passed')::int AS pools_passed, "
+            "(stats->>'pools_rejected')::int AS pools_rejected, "
+            "(stats->>'active_positions')::int AS active_positions, "
+            "(stats->>'max_active_positions')::int AS max_active_positions, "
+            "(stats->>'jupiter_quote_fallback_hits')::int AS jupiter_fallback "
+            "FROM sniper_runtime_stats WHERE id = 1"
+        ),
+        "cmd_preview": (
+            "SELECT age_seconds, pools_*, active_positions, jupiter_fallback "
+            "FROM sniper_runtime_stats WHERE id=1"
+        ),
+        "timeout_s": 15,
+        "description": (
+            "Sniper subprocess snapshot freshness + every Phase-2 counter. "
+            "Stale (age > 600s) means the subprocess crashed or stopped."
+        ),
+    },
+    {
+        "id": "db_block_time_anchored",
+        "title": "DB: block_time_anchored propagation (30m window)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT "
+            "  COALESCE(metadata->>'detection_path', 'unknown') AS path, "
+            "  COALESCE(metadata->>'block_time_anchored', 'false') AS anchored, "
+            "  COUNT(*) AS n "
+            "FROM sniper_trades "
+            "WHERE entry_timestamp > NOW() - INTERVAL '30 minutes' "
+            "GROUP BY path, anchored "
+            "ORDER BY path, anchored"
+        ),
+        "cmd_preview": (
+            "GROUP-BY path, anchored on sniper_trades.metadata, last 30m"
+        ),
+        "timeout_s": 15,
+        "description": (
+            "Confirms detection paths anchor their timing to on-chain "
+            "blockTime (Phase-2 fix). anchored=true should dominate "
+            "both polling and wss buckets."
+        ),
+    },
+    {
+        "id": "db_detection_latency",
+        "title": "DB: detection latency p50/p95 (30m)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT "
+            "  COALESCE(metadata->>'detection_path', 'unknown') AS path, "
+            "  COUNT(*) AS samples, "
+            "  PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY "
+            "    ((metadata->'timing'->>'detect_to_rpc_receipt_ms')::int)) AS p50_ms, "
+            "  PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY "
+            "    ((metadata->'timing'->>'detect_to_rpc_receipt_ms')::int)) AS p95_ms "
+            "FROM sniper_trades "
+            "WHERE entry_timestamp > NOW() - INTERVAL '30 minutes' "
+            "  AND metadata->'timing'->>'detect_to_rpc_receipt_ms' IS NOT NULL "
+            "GROUP BY path"
+        ),
+        "cmd_preview": "p50/p95 of detect_to_rpc_receipt_ms by path, 30m",
+        "timeout_s": 30,
+        "description": (
+            "Phase-2 headline metric: how stale a candidate is by the "
+            "time we receive the listener notification. Lower is better. "
+            "WSS should beat polling by 2-5x once both have samples."
+        ),
+    },
+    {
+        "id": "db_copytrading_bounded_sets",
+        "title": "DB: COPY_TRADING bounded sets snapshot",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT "
+            "  COUNT(*) FILTER (WHERE status='open') AS open_count, "
+            "  COUNT(*) FILTER (WHERE status='closed') AS closed_count, "
+            "  COUNT(DISTINCT source_wallet) AS unique_leaders, "
+            "  COUNT(*) FILTER (WHERE is_simulated) AS simulated_count, "
+            "  COUNT(*) FILTER (WHERE NOT is_simulated) AS live_count "
+            "FROM copytrading_trades"
+        ),
+        "cmd_preview": (
+            "open/closed/leaders/simulated/live counts on copytrading_trades"
+        ),
+        "timeout_s": 15,
+        "description": (
+            "COPY_TRADING bounded sets after MB-22..25 — confirms data "
+            "shape and the new is_simulated split (DASH-Q-04)."
+        ),
+    },
+
+    # ── More API probes for COMPLETE_TEST_SCRIPTS.md coverage ────────
+    {
+        "id": "api_health",
+        "title": "API: /health (canary, no auth)",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "../health",  # rewritten to /health below
+        "cmd_preview": "GET /health",
+        "timeout_s": 10,
+        "description": (
+            "No-auth liveness canary. /__routes__ + /health are the only "
+            "endpoints intentionally exempt from auth middleware."
+        ),
+    },
+    {
+        "id": "api_routes",
+        "title": "API: /__routes__ count",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "../__routes__",
+        "cmd_preview": "GET /__routes__ | length",
+        "timeout_s": 15,
+        "description": (
+            "Diagnostic: every registered aiohttp route. Baseline ≥ 470 "
+            "after this session's additions."
+        ),
+    },
+    {
+        "id": "api_sniper_timing",
+        "title": "API: /api/sniper/timing (cached)",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "sniper/timing",
+        "cmd_preview": "GET /api/sniper/timing",
+        "timeout_s": 30,
+        "description": (
+            "P50/P95 detection latency by path. Response carries "
+            "'cached': true on the 2nd call within the 30s TTL window."
+        ),
+    },
+    {
+        "id": "api_dashboard_summary",
+        "title": "API: /api/dashboard/summary",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "dashboard/summary",
+        "cmd_preview": "GET /api/dashboard/summary",
+        "timeout_s": 15,
+        "description": (
+            "Source for the /dashboard hero metrics (portfolio value, "
+            "P&L, open positions). Verifies the unified-trade query."
+        ),
+    },
+    {
+        "id": "api_analytics_perf_arbitrage",
+        "title": "API: /api/analytics/performance/arbitrage",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "analytics/performance/arbitrage?timeframe=all",
+        "cmd_preview": "GET /api/analytics/performance/arbitrage",
+        "timeout_s": 15,
+        "description": (
+            "Verifies /analytics module switcher routes correctly to "
+            "arbitrage data after Agent 2's fix (commit 3cb544b)."
+        ),
+    },
+    {
+        "id": "api_full_dashboard_modules",
+        "title": "API: /api/modules (Module Overview source)",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "modules?include_disabled=true",
+        "cmd_preview": "GET /api/modules?include_disabled=true",
+        "timeout_s": 15,
+        "description": (
+            "Source for /full-dashboard's Module Overview. env-flag "
+            "should be the single source of truth (FAILURE A — Agent 2)."
+        ),
+    },
 ]
 
 
@@ -513,7 +717,13 @@ class TestRunnerRoutes:
         # Reconstruct same-origin URL. request.scheme + request.host
         # reflects whatever proxy/binding the dashboard is reached
         # through, so the proxy works behind nginx/cloudflare too.
-        url = f"{request.scheme}://{request.host}/api/{endpoint.lstrip('/')}"
+        # Catalog convention: endpoint values under /api/* are bare
+        # (e.g. "bot/status"); values rooted elsewhere prefix with
+        # "../" (e.g. "../health" → /health, "../__routes__" → /__routes__).
+        if endpoint.startswith("../"):
+            url = f"{request.scheme}://{request.host}/{endpoint[3:].lstrip('/')}"
+        else:
+            url = f"{request.scheme}://{request.host}/api/{endpoint.lstrip('/')}"
         t0 = time.perf_counter()
 
         # Forward auth + CSRF cookies so the proxied request looks
