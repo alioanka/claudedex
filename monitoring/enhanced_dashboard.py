@@ -9547,6 +9547,41 @@ class DashboardEndpoints:
                     if pos_count and pos_count > stats['active_positions']:
                         stats['active_positions'] = pos_count
 
+                    # DASH-Q-04: expose live (is_simulated=false) PnL +
+                    # count separately so the UI can show a 'Live vs
+                    # DRY_RUN' toggle. Without this, a DRY_RUN-only
+                    # period reports a fake PnL that operators read as
+                    # real money. We keep the existing fields unchanged
+                    # for back-compat and add live_* siblings.
+                    live_row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) FILTER (WHERE NOT is_simulated) as live_trades,
+                            COUNT(*) FILTER (WHERE is_simulated) as simulated_trades,
+                            COALESCE(SUM(CASE
+                                WHEN NOT is_simulated AND profit_loss != 0 THEN profit_loss
+                                WHEN NOT is_simulated AND status = 'closed' AND entry_usd > 0 AND exit_usd > 0
+                                    THEN exit_usd - entry_usd
+                                ELSE 0
+                            END), 0) as live_pnl,
+                            COUNT(*) FILTER (WHERE NOT is_simulated AND
+                                ((profit_loss > 0) OR
+                                 (status = 'closed' AND entry_usd > 0 AND exit_usd > entry_usd))
+                            ) as live_winning,
+                            COUNT(*) FILTER (WHERE NOT is_simulated AND
+                                ((profit_loss < 0) OR
+                                 (status = 'closed' AND entry_usd > 0 AND exit_usd > 0 AND exit_usd < entry_usd))
+                            ) as live_losing
+                        FROM copytrading_trades
+                    """)
+                    if live_row:
+                        stats['live_trades'] = live_row['live_trades'] or 0
+                        stats['simulated_trades'] = live_row['simulated_trades'] or 0
+                        stats['live_pnl'] = float(live_row['live_pnl'] or 0)
+                        live_wins = live_row['live_winning'] or 0
+                        live_losses = live_row['live_losing'] or 0
+                        live_valid = live_wins + live_losses
+                        stats['live_win_rate'] = round((live_wins / live_valid) * 100, 1) if live_valid > 0 else 0.0
+
                     # Status reflects whether the subprocess is alive, not
                     # whether historical trades exist. Treats COPY_TRADING_MODULE_ENABLED
                     # as the env source of truth; a fresher liveness probe
