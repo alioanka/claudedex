@@ -298,6 +298,9 @@ class TestRunnerRoutes:
         target.router.add_get(
             '/api/test-runner/tests', require_auth(self.list_tests)
         )
+        target.router.add_post(
+            '/api/test-runner/run', require_auth(self.run_test)
+        )
         self.logger.info(
             "Test-runner routes configured (%d tests in catalog)",
             len(TEST_CATALOG),
@@ -312,3 +315,122 @@ class TestRunnerRoutes:
             "success": True,
             "tests": [_public_catalog_entry(t) for t in TEST_CATALOG],
         })
+
+    # ── POST /api/test-runner/run ───────────────────────────────────
+    async def run_test(self, request: web.Request) -> web.Response:
+        """Dispatch to the correct executor based on the catalog entry's
+        kind. Client posts only {"test_id": "<id>"}; we never accept a
+        raw command."""
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response(
+                {"success": False, "error": "invalid JSON body"}, status=400
+            )
+        test_id = (payload or {}).get("test_id")
+        entry = self._by_id.get(test_id) if test_id else None
+        if not entry:
+            return web.json_response(
+                {"success": False, "error": f"unknown test_id: {test_id!r}"},
+                status=400,
+            )
+
+        kind = entry["kind"]
+        try:
+            if kind == "bash":
+                result = await self._run_bash(entry)
+            elif kind == "db_query":
+                result = await self._run_db_query(entry)
+            elif kind == "probe":
+                # probe kind is normally served by GET /probe — but
+                # accept it here too so the frontend can keep one POST
+                # path for everything.
+                result = await self._run_probe(request, entry)
+            else:
+                return web.json_response(
+                    {"success": False, "error": f"unsupported kind {kind!r}"},
+                    status=400,
+                )
+        except Exception as exc:
+            self.logger.exception("test_runner: executor crashed for %s", test_id)
+            return web.json_response(
+                {"success": False, "error": str(exc), "test_id": test_id},
+                status=500,
+            )
+
+        return web.json_response({
+            "success": True,
+            "test_id": test_id,
+            "kind": kind,
+            **result,
+        })
+
+    # ── kind=bash executor ──────────────────────────────────────────
+    async def _run_bash(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Spawn a subprocess for a whitelisted bash command. Caps
+        stdout/stderr at _MAX_OUTPUT_BYTES each, kills the process
+        group on timeout."""
+        cmd: List[str] = entry["cmd"]
+        timeout_s: int = int(entry.get("timeout_s", 120))
+        t0 = time.perf_counter()
+        timed_out = False
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=_REPO_ROOT,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,  # new process group for clean kill
+        )
+        try:
+            stdout_b, stderr_b = await asyncio.wait_for(
+                proc.communicate(), timeout=timeout_s
+            )
+        except asyncio.TimeoutError:
+            timed_out = True
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+                await asyncio.sleep(2)
+                if proc.returncode is None:
+                    os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            stdout_b, stderr_b = await proc.communicate()
+
+        duration_ms = int((time.perf_counter() - t0) * 1000)
+
+        def _trunc(b: bytes) -> str:
+            if len(b) > _MAX_OUTPUT_BYTES:
+                head = b[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
+                return head + f"\n…[truncated at {_MAX_OUTPUT_BYTES} bytes]"
+            return b.decode("utf-8", errors="replace")
+
+        return {
+            "exit_code": proc.returncode if proc.returncode is not None else -1,
+            "stdout": _trunc(stdout_b or b""),
+            "stderr": _trunc(stderr_b or b""),
+            "duration_ms": duration_ms,
+            "timed_out": timed_out,
+        }
+
+    # ── stub executors for kind=db_query / kind=probe ──────────────
+    # Both implemented in the next commits — return a clean placeholder
+    # response so the frontend can render a useful chip instead of 500.
+    async def _run_db_query(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "exit_code": -1,
+            "stdout": "",
+            "stderr": "db_query executor not yet implemented",
+            "duration_ms": 0,
+            "timed_out": False,
+        }
+
+    async def _run_probe(self, request: web.Request,
+                         entry: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "exit_code": -1,
+            "stdout": "",
+            "stderr": "probe executor not yet implemented",
+            "duration_ms": 0,
+            "timed_out": False,
+        }
