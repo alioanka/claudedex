@@ -830,9 +830,13 @@ class SolanaArbitrageEngine:
         self.trade_amount_sol = config.get('sol_trade_amount', 1.0)
         self.use_jito = config.get('use_jito', True)
 
-        # Arbitrage slippage - higher than normal trading to account for price movement
-        # during signing and bundle submission (default 150 bps = 1.5%)
-        self.arb_slippage_bps = config.get('sol_arb_slippage_bps', 150)
+        # Arbitrage slippage. Default tightened 150 → 75 bps per
+        # AR-10: the engine already retries on quote-staleness at
+        # solana_engine.py:1216, so a wider slippage tolerance was just
+        # giving away edge to wrappers. Operators who genuinely need
+        # more headroom can override via sol_arb_slippage_bps in the
+        # config UI.
+        self.arb_slippage_bps = config.get('sol_arb_slippage_bps', 75)
 
         # Verbose logging (configurable via settings page)
         self.verbose_logging = config.get('sol_arb_verbose', False)
