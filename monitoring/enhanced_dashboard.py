@@ -11130,9 +11130,23 @@ class DashboardEndpoints:
                 # Mock query or use internal tracking table
                 pass
 
-            balances['exchanges'] = {
-                'binance_futures': {'balance': 0.0, 'usd_value': 0.0}, # Placeholder until CCXT integration
-            }
+            # Exchange balances. Only include exchanges that are
+            # actually configured (have an API key in secrets/env) so
+            # the dashboard doesn't render misleading "$0.00 Binance"
+            # rows for unwired exchanges. Audit agent 3 #14.
+            balances['exchanges'] = {}
+            if os.getenv('BINANCE_API_KEY') or os.getenv('BINANCE_FUTURES_API_KEY'):
+                balances['exchanges']['binance_futures'] = {
+                    'balance': 0.0,
+                    'usd_value': 0.0,
+                    'status': 'configured (CCXT fetch not yet wired)',
+                }
+            if os.getenv('BYBIT_API_KEY'):
+                balances['exchanges']['bybit_futures'] = {
+                    'balance': 0.0,
+                    'usd_value': 0.0,
+                    'status': 'configured (CCXT fetch not yet wired)',
+                }
 
             # Fallback: If total is 0 (network failure), calculate from DB PnL + Initial
             if balances['total_usd'] == 0:
