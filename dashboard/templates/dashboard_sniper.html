@@ -628,9 +628,24 @@ function updateStats(data) {
     // Tokens detected
     document.getElementById('stat-detected').textContent = data.tokens_detected || 0;
 
-    // Tokens sniped
+    // Tokens sniped. Active count surfaces cap-saturation visually:
+    // if the active count is at or near the configured cap, badge it
+    // with a warning chip so operators see the throttle is active.
     document.getElementById('stat-sniped').textContent = data.tokens_sniped || 0;
-    document.getElementById('stat-sniped-detail').textContent = `Active: ${data.active_positions || 0}`;
+    const active = data.active_positions || 0;
+    const cap = data.max_active_positions || 0;
+    let activeText = `Active: ${active}`;
+    if (cap > 0) {
+        const pct = (active / cap) * 100;
+        if (pct >= 95) {
+            activeText = `Active: ${active}/${cap} ⛔ CAPPED — new snipes blocked`;
+        } else if (pct >= 80) {
+            activeText = `Active: ${active}/${cap} ⚠ near cap`;
+        } else {
+            activeText = `Active: ${active}/${cap}`;
+        }
+    }
+    document.getElementById('stat-sniped-detail').textContent = activeText;
 
     // P&L
     const pnl = data.total_pnl || 0;
