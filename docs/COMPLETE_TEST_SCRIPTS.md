@@ -1,5 +1,14 @@
 # Complete Test Scripts — All Session Commits
 
+> ⚠️ **SUPERSEDED.** Every script + SQL probe + API call below has been
+> ported into the **/test-runner** dashboard page (commit `d5eb661`).
+> Open `http://<host>:8080/test-runner`, click each Run button, then
+> **Copy All Results** at the top right. This is the single source of
+> truth for testing the session-18 fixes.
+>
+> Kept for historical context. Scenarios live in
+> `monitoring/test_runner_routes.py` `TEST_CATALOG`.
+
 Generated for the May 2026 hardening session. Covers all 90+ commits
 across SNIPER hardening, cross-module RiskManager gates, dashboard
 audit fixes, infrastructure hardening, and operator tooling.

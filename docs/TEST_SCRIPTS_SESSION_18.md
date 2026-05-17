@@ -746,3 +746,37 @@ Browser action: refresh any page. The left sidebar shows:
 3. Main Overview
 4. DEX Trading (expandable; no longer contains an Analytics link)
 
+
+---
+
+## Test Runner page — `/test-runner`
+
+Single-screen replacement for sections 2-6 above. Open
+`http://<host>:8080/test-runner` (sidebar link `Test Runner`).
+
+### Layout
+
+| Section | What | Source of truth |
+|---------|------|------------------|
+| **A. UI Verification Clones** | 6 inline reproductions: MODE badge (A1), Sniper cap tile (A2), Risk-critical input styling (A3, operator-judged), Module Overview env-truth grid (A4), Analytics module switcher (A5), CSRF probe (A6). Each card auto-loads or shows a Verify button; PASS/FAIL chip populates next to it. | Mirrors `base.html`, `dashboard_sniper.html`, `global_settings.html`, `/full-dashboard`, `/analytics` |
+| **B. Scripts** | One Run button per `kind=bash` test from the catalog: `preflight`, `dashboard_smoke`. Captures stdout/stderr in a copy-friendly `<pre>`. | `monitoring/test_runner_routes.py` POST /run |
+| **C. API Probes** | One Run button per `kind=probe` test: bot/status, sniper/stats, copytrading/stats, analytics/risk/sniper, analytics/perf/sniper, modules, arbitrage/stats, /health, /__routes__, sniper/timing, dashboard/summary, perf/arbitrage, modules?include_disabled. Authenticated same-origin proxy. | POST /run with kind=probe (auth-aware proxy) |
+| **D. DB Probes** | One Run button per `kind=db_query` test: sniper config_settings, seeded caps, open positions across modules, migration seeds, runtime_stats freshness, block_time_anchored counts, detection_latency p50/p95, copytrading bounded sets. Runs through the dashboard's own asyncpg pool — no docker.sock needed. | POST /run with kind=db_query |
+| **E. Copy All Results** | Single button top-right. Walks every recorded result (A through D), builds a markdown blob, copies to clipboard. Paste back to the conversation. | `copyAllResults()` in `test_runner.js` |
+
+### Usage
+
+1. Browse `/test-runner`.
+2. Section A auto-populates on load (except A5 and A6 — click their Verify buttons when ready).
+3. Click each Run button in Sections B/C/D you want to verify.
+4. Click **Copy All Results** at the top right.
+5. Paste the markdown blob back to the chat.
+
+### Backend contract
+
+```
+GET  /api/test-runner/tests           → {success, tests: [...]}
+POST /api/test-runner/run {test_id}   → {success, exit_code, stdout, stderr, duration_ms, timed_out}
+```
+
+`test_id` must match an entry in `TEST_CATALOG`; raw commands are never accepted. The catalog lives in `monitoring/test_runner_routes.py` and is the single source of truth for "what can the operator test from the UI?". Add a new entry to the list to expose a new test.

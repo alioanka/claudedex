@@ -1,5 +1,14 @@
 # May 2026 Hardening — Consolidated Test Plan
 
+> ⚠️ **SUPERSEDED.** The scenarios in this document are now available as
+> clickable buttons + UI clones on the **/test-runner** dashboard page
+> (added in commit `d5eb661`). Open `http://<host>:8080/test-runner`,
+> click Run on each Section B/C/D entry, then **Copy All Results** at
+> the top right to paste a single markdown blob back to the conversation.
+>
+> This file is kept for historical context — every test below has been
+> ported into `monitoring/test_runner_routes.py` `TEST_CATALOG`.
+
 Run this top-to-bottom in your evening session. Each phase has a copy-pasteable command block + expected output. If anything diverges, paste the actual output and we'll triage.
 
 The session pushed **23 commits** to `claude/create-expert-agents-JFSF5` covering: SNIPER (active-positions cap, Jupiter quote fallback, LIVE safety guard, block-time anchoring, t_rpc_receipt timing, WSS+polling concurrency, logging consolidation), SOLANA + COPY_TRADING (cross-module RiskManager.validate_trade gates, COPY position cap), dashboard (Win Rate format, top-25 table limit, empty-state chart messages, real SOL/USD price, freshness-based liveness check), and infrastructure (migration runner path fix, docker-compose version cleanup, unit tests, preflight script).
