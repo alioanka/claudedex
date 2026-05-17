@@ -67,7 +67,10 @@ SCAM_NAME_PATTERNS = [
     r'SEND\s*IT',
 
     # Suspicious patterns
-    r'^[A-Z]{1,2}\d+$',  # Very short name with numbers (A1, X99)
+    # Was r'^[A-Z]{1,2}\d+$' but that swept up legit short tickers like
+    # 'B2', 'X1' (real Solana tokens). Require ≥3 digits to keep the
+    # heuristic narrow — A100, X999 still look spammy. SOL-RM-20.
+    r'^[A-Z]{1,2}\d{3,}$',  # Short letter + ≥3-digit number (A100, X999)
     r'FREE\s*MONEY',
     r'GUARANTEED',
     r'NO\s*TAX',
