@@ -11273,6 +11273,85 @@ class DashboardEndpoints:
             logger.error(f"Error getting aggregated balances: {e}")
             return web.json_response({'error': str(e)}, status=500)
 
+    async def _unified_closed_trades(self, conn):
+        """FAILURE A (charts): SNIPER trades live in `sniper_trades`, ARBITRAGE
+        in `arbitrage_trades`, FUTURES in `futures_trades`, SOLANA in
+        `solana_trades`, COPY in `copytrading_trades`, AI in `ai_trades`, and
+        DEX in the generic `trades` table. The Full-Dashboard Performance
+        Analytics cards were querying only `trades` so an operator running
+        only SNIPER+ARBITRAGE saw "No data yet" on 12 of 15 cards despite
+        having 10000+ sniper trades in the DB.
+
+        Returns a list of dict-rows with normalized columns:
+          strategy, chain, profit_loss, entry_timestamp, exit_timestamp,
+          amount, entry_price, metadata.
+        Each per-table query is wrapped in try/except so a missing table
+        (older deployments) does not break the whole endpoint."""
+        rows = []
+        per_table = [
+            # (table, strategy_label, pnl_col, pnl_multiplier_column, default_chain)
+            ('trades',             'dex',       'profit_loss', None,           None),
+            ('sniper_trades',      'sniper',    'profit_loss', None,           None),
+            ('arbitrage_trades',   'arbitrage', 'profit_loss', None,           None),
+            ('futures_trades',     'futures',   'net_pnl',     None,           'EXCHANGE'),
+            ('copytrading_trades', 'copy',      'profit_loss', None,           None),
+            ('ai_trades',          'ai',        'profit_loss', None,           None),
+        ]
+        for table, strat, pnl_col, _mult, default_chain in per_table:
+            try:
+                table_rows = await conn.fetch(f"""
+                    SELECT
+                        COALESCE(chain, '{default_chain or "UNKNOWN"}') AS chain,
+                        {pnl_col} AS profit_loss,
+                        entry_timestamp, exit_timestamp,
+                        COALESCE(amount, 0) AS amount,
+                        COALESCE(entry_price, 0) AS entry_price,
+                        metadata
+                    FROM {table}
+                    WHERE status='closed'
+                """)
+                for r in table_rows:
+                    rows.append({
+                        'strategy': strat,
+                        'chain': r['chain'] or 'UNKNOWN',
+                        'profit_loss': float(r['profit_loss'] or 0),
+                        'entry_timestamp': r['entry_timestamp'],
+                        'exit_timestamp': r['exit_timestamp'],
+                        'amount': float(r['amount'] or 0),
+                        'entry_price': float(r['entry_price'] or 0),
+                        'metadata': r['metadata'],
+                    })
+            except Exception as e:
+                logger.debug(f"_unified_closed_trades: {table} skipped: {e}")
+        # Solana is special — PnL is in SOL, multiply by spot to compare in USD.
+        try:
+            sol_price = await self._get_sol_usd_price()
+            solana_rows = await conn.fetch("""
+                SELECT
+                    COALESCE(chain, 'SOLANA') AS chain,
+                    pnl_sol AS profit_loss,
+                    entry_timestamp, exit_timestamp,
+                    COALESCE(amount, 0) AS amount,
+                    COALESCE(entry_price, 0) AS entry_price,
+                    metadata
+                FROM solana_trades
+                WHERE status='closed'
+            """)
+            for r in solana_rows:
+                rows.append({
+                    'strategy': 'solana',
+                    'chain': r['chain'] or 'SOLANA',
+                    'profit_loss': float(r['profit_loss'] or 0) * sol_price,
+                    'entry_timestamp': r['entry_timestamp'],
+                    'exit_timestamp': r['exit_timestamp'],
+                    'amount': float(r['amount'] or 0),
+                    'entry_price': float(r['entry_price'] or 0),
+                    'metadata': r['metadata'],
+                })
+        except Exception as e:
+            logger.debug(f"_unified_closed_trades: solana_trades skipped: {e}")
+        return rows
+
     async def api_get_full_dashboard_charts(self, request):
         """Get real data for all full dashboard charts"""
         try:
@@ -11282,10 +11361,13 @@ class DashboardEndpoints:
                 return web.json_response({'error': 'Database not available'}, status=503)
 
             async with self.db.pool.acquire() as conn:
-                # 1. PnL Distribution (Win/Loss)
-                # Group profit_loss into buckets
-                trades = await conn.fetch("SELECT profit_loss FROM trades WHERE status='closed'")
-                pnl_values = [float(t['profit_loss']) for t in trades if t['profit_loss'] is not None]
+                # FAILURE A (charts): unify closed-trade rows across every
+                # module-specific table so cards reflect ALL modules, not
+                # just legacy DEX rows in `trades`.
+                unified = await self._unified_closed_trades(conn)
+
+                # 1. PnL Distribution (Win/Loss) — spans every module.
+                pnl_values = [r['profit_loss'] for r in unified if r['profit_loss'] is not None]
 
                 # Create bins for histogram
                 if pnl_values:
@@ -11453,58 +11535,53 @@ class DashboardEndpoints:
                     'datasets': [{'data': list(assets.values()), 'backgroundColor': ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6']}]
                 }
 
-                # 4. Chain Performance (ROI)
-                chain_rows = await conn.fetch("""
-                    SELECT chain, SUM(profit_loss) as pnl, SUM(amount * entry_price) as volume
-                    FROM trades WHERE status='closed' GROUP BY chain
-                """)
-                chain_labels = [r['chain'] for r in chain_rows]
-                chain_roi = []
-                for r in chain_rows:
-                    vol = float(r['volume'] or 0)
-                    pnl = float(r['pnl'] or 0)
-                    chain_roi.append((pnl / vol * 100) if vol > 0 else 0)
+                # 4 + 7. Chain ROI + Chain Volume — derive from the unified
+                # trade set (was: trades-table-only, missed every module).
+                chain_agg = {}
+                for r in unified:
+                    ch = r['chain'] or 'UNKNOWN'
+                    e = chain_agg.setdefault(ch, {'pnl': 0.0, 'volume': 0.0})
+                    e['pnl'] += r['profit_loss']
+                    e['volume'] += r['amount'] * r['entry_price']
+                chain_labels = list(chain_agg.keys())
+                chain_roi = [(e['pnl'] / e['volume'] * 100) if e['volume'] > 0 else 0
+                             for e in chain_agg.values()]
+                chain_vols = [e['volume'] for e in chain_agg.values()]
 
                 charts['chartChainRoi'] = {
                     'labels': chain_labels,
                     'datasets': [{'label': 'ROI %', 'data': chain_roi, 'backgroundColor': '#8b5cf6'}]
                 }
 
-                # 5. Hourly Profitability Heatmap (simplified to bar for now)
-                hourly_rows = await conn.fetch("""
-                    SELECT EXTRACT(HOUR FROM exit_timestamp) as hour, AVG(profit_loss) as avg_pnl
-                    FROM trades WHERE status='closed' GROUP BY hour ORDER BY hour
-                """)
-                hours = [int(r['hour']) for r in hourly_rows]
-                hourly_vals = [float(r['avg_pnl'] or 0) for r in hourly_rows]
-
-                # Fill missing hours
+                # 5. Hourly Profitability — bucket unified trades by exit hour.
+                hourly_buckets = {h: [] for h in range(24)}
+                for r in unified:
+                    ts = r['exit_timestamp']
+                    if ts is not None and hasattr(ts, 'hour'):
+                        hourly_buckets[ts.hour].append(r['profit_loss'])
                 full_hours = list(range(24))
-                full_vals = []
-                for h in full_hours:
-                    if h in hours:
-                        full_vals.append(hourly_vals[hours.index(h)])
-                    else:
-                        full_vals.append(0)
+                full_vals = [
+                    (sum(hourly_buckets[h]) / len(hourly_buckets[h])) if hourly_buckets[h] else 0
+                    for h in full_hours
+                ]
 
                 charts['chartHourlyHeatmap'] = {
                     'labels': [f"{h}:00" for h in full_hours],
                     'datasets': [{'label': 'Avg PnL', 'data': full_vals, 'backgroundColor': '#ec4899'}]
                 }
 
-                # 6. Equity Curve (Cumulative PnL over time)
-                equity_rows = await conn.fetch("""
-                    SELECT exit_timestamp, profit_loss
-                    FROM trades WHERE status='closed' ORDER BY exit_timestamp
-                """)
-
-                cum_pnl = 0
+                # 6. Equity Curve — cumulative PnL across all module tables.
+                equity_rows = sorted(
+                    [r for r in unified if r['exit_timestamp'] is not None],
+                    key=lambda r: r['exit_timestamp']
+                )
+                cum_pnl = 0.0
                 equity_data = []
                 equity_labels = []
-                initial_balance = 400 # Default
+                initial_balance = 400  # Default
 
                 for r in equity_rows:
-                    cum_pnl += float(r['profit_loss'] or 0)
+                    cum_pnl += r['profit_loss']
                     equity_data.append(initial_balance + cum_pnl)
                     equity_labels.append(r['exit_timestamp'].strftime('%Y-%m-%d'))
 
@@ -11516,71 +11593,65 @@ class DashboardEndpoints:
                 # 7. Chain Volume
                 charts['chartChainVol'] = {
                     'labels': chain_labels,
-                    'datasets': [{'label': 'Volume', 'data': [float(r['volume'] or 0) for r in chain_rows], 'backgroundColor': '#22d3ee'}]
+                    'datasets': [{'label': 'Volume', 'data': chain_vols, 'backgroundColor': '#22d3ee'}]
                 }
 
-                # 8. Average Trade Duration by Module
-                duration_rows = await conn.fetch("""
-                    SELECT strategy,
-                           AVG(EXTRACT(EPOCH FROM (exit_timestamp - entry_timestamp))/3600) as avg_hours
-                    FROM trades
-                    WHERE status='closed' AND exit_timestamp IS NOT NULL AND entry_timestamp IS NOT NULL
-                    GROUP BY strategy
-                """)
-                duration_labels = []
-                duration_vals = []
-                for r in duration_rows:
-                    strat = (r['strategy'] or 'unknown').lower()
-                    # Map to readable name
-                    if 'future' in strat or 'perp' in strat:
-                        duration_labels.append('Futures')
-                    elif 'solana' in strat or 'pump' in strat:
-                        duration_labels.append('Solana')
-                    elif 'sniper' in strat:
-                        duration_labels.append('Sniper')
-                    elif 'arb' in strat:
-                        duration_labels.append('Arbitrage')
-                    elif 'copy' in strat:
-                        duration_labels.append('CopyTrade')
-                    elif 'ai' in strat:
-                        duration_labels.append('AI')
-                    else:
-                        duration_labels.append('DEX')
-                    duration_vals.append(round(float(r['avg_hours'] or 0), 2))
+                # 8. Average Trade Duration by Module — bucket unified trades.
+                _label_map = {
+                    'dex': 'DEX', 'futures': 'Futures', 'solana': 'Solana',
+                    'sniper': 'Sniper', 'arbitrage': 'Arbitrage',
+                    'copy': 'CopyTrade', 'ai': 'AI',
+                }
+                dur_buckets = {}
+                for r in unified:
+                    if not (r['exit_timestamp'] and r['entry_timestamp']):
+                        continue
+                    hrs = (r['exit_timestamp'] - r['entry_timestamp']).total_seconds() / 3600
+                    label = _label_map.get(r['strategy'], 'DEX')
+                    dur_buckets.setdefault(label, []).append(hrs)
+                duration_labels = list(dur_buckets.keys())
+                duration_vals = [round(sum(v) / len(v), 2) for v in dur_buckets.values()]
 
                 charts['chartDuration'] = {
                     'labels': duration_labels if duration_labels else ['No Data'],
                     'datasets': [{'label': 'Avg Hours', 'data': duration_vals if duration_vals else [0], 'backgroundColor': '#f59e0b'}]
                 }
 
-                # 9. Fee Analysis by Chain
-                fee_rows = await conn.fetch("""
-                    SELECT chain, SUM(COALESCE(
-                        (metadata->>'gas_cost')::numeric,
-                        (metadata->>'fee')::numeric,
-                        0
-                    )) as total_fees
-                    FROM trades
-                    WHERE status='closed'
-                    GROUP BY chain
-                """)
-                fee_labels = [r['chain'] or 'Unknown' for r in fee_rows]
-                fee_vals = [float(r['total_fees'] or 0) for r in fee_rows]
+                # 9. Fee Analysis by Chain — pull from unified metadata.
+                def _meta_dict(m):
+                    if m is None: return {}
+                    if isinstance(m, dict): return m
+                    if isinstance(m, str):
+                        try: return json.loads(m) or {}
+                        except Exception: return {}
+                    return {}
+                fee_agg = {}
+                for r in unified:
+                    md = _meta_dict(r['metadata'])
+                    raw_fee = md.get('gas_cost') or md.get('fee') or md.get('fees') or 0
+                    try:
+                        fee = float(raw_fee)
+                    except Exception:
+                        fee = 0
+                    fee_agg[r['chain']] = fee_agg.get(r['chain'], 0) + fee
+                fee_labels = list(fee_agg.keys())
+                fee_vals = list(fee_agg.values())
 
                 charts['chartFees'] = {
                     'labels': fee_labels if fee_labels else ['No Data'],
                     'datasets': [{'label': 'Fees ($)', 'data': fee_vals if fee_vals else [0], 'backgroundColor': '#ef4444'}]
                 }
 
-                # 10. Drawdown Analysis (calculate running max drawdown)
+                # 10. Drawdown Analysis — running max drawdown across unified equity curve.
                 drawdown_data = []
                 drawdown_labels = []
                 peak = initial_balance
-                for i, r in enumerate(equity_rows):
-                    equity = initial_balance + sum(float(equity_rows[j]['profit_loss'] or 0) for j in range(i+1))
-                    peak = max(peak, equity)
-                    drawdown = ((peak - equity) / peak * 100) if peak > 0 else 0
-                    drawdown_data.append(round(drawdown, 2))
+                running = initial_balance
+                for r in equity_rows:
+                    running += r['profit_loss']
+                    peak = max(peak, running)
+                    dd = ((peak - running) / peak * 100) if peak > 0 else 0
+                    drawdown_data.append(round(dd, 2))
                     drawdown_labels.append(r['exit_timestamp'].strftime('%Y-%m-%d') if r['exit_timestamp'] else '')
 
                 charts['chartDrawdown'] = {
@@ -11594,35 +11665,21 @@ class DashboardEndpoints:
                     }]
                 }
 
-                # 11. Risk/Reward Ratio by Module
-                rr_rows = await conn.fetch("""
-                    SELECT strategy,
-                           AVG(CASE WHEN profit_loss > 0 THEN profit_loss ELSE 0 END) as avg_win,
-                           AVG(CASE WHEN profit_loss < 0 THEN ABS(profit_loss) ELSE 0 END) as avg_loss
-                    FROM trades
-                    WHERE status='closed'
-                    GROUP BY strategy
-                """)
-                rr_labels = []
+                # 11. Risk/Reward Ratio by Module — unified strategy buckets.
+                rr_buckets = {}
+                for r in unified:
+                    label = _label_map.get(r['strategy'], 'DEX')
+                    b = rr_buckets.setdefault(label, {'wins': [], 'losses': []})
+                    if r['profit_loss'] > 0:
+                        b['wins'].append(r['profit_loss'])
+                    elif r['profit_loss'] < 0:
+                        b['losses'].append(abs(r['profit_loss']))
+                rr_labels = list(rr_buckets.keys())
                 rr_vals = []
-                for r in rr_rows:
-                    strat = (r['strategy'] or 'dex').lower()
-                    if 'future' in strat:
-                        rr_labels.append('Futures')
-                    elif 'solana' in strat:
-                        rr_labels.append('Solana')
-                    elif 'sniper' in strat:
-                        rr_labels.append('Sniper')
-                    elif 'arb' in strat:
-                        rr_labels.append('Arbitrage')
-                    elif 'copy' in strat:
-                        rr_labels.append('CopyTrade')
-                    elif 'ai' in strat:
-                        rr_labels.append('AI')
-                    else:
-                        rr_labels.append('DEX')
-                    avg_win = float(r['avg_win'] or 0)
-                    avg_loss = float(r['avg_loss'] or 1)
+                for label in rr_labels:
+                    b = rr_buckets[label]
+                    avg_win = (sum(b['wins']) / len(b['wins'])) if b['wins'] else 0
+                    avg_loss = (sum(b['losses']) / len(b['losses'])) if b['losses'] else 0
                     rr_vals.append(round(avg_win / avg_loss, 2) if avg_loss > 0 else 0)
 
                 charts['chartRR'] = {
@@ -11630,36 +11687,39 @@ class DashboardEndpoints:
                     'datasets': [{'label': 'R:R Ratio', 'data': rr_vals if rr_vals else [0], 'backgroundColor': '#8b5cf6'}]
                 }
 
-                # 12. Slippage Impact
-                slippage_rows = await conn.fetch("""
-                    SELECT chain,
-                           AVG(COALESCE(
-                               (metadata->>'slippage')::numeric,
-                               (metadata->>'price_impact')::numeric,
-                               0
-                           )) as avg_slippage
-                    FROM trades
-                    WHERE status='closed'
-                    GROUP BY chain
-                """)
-                slippage_labels = [r['chain'] or 'Unknown' for r in slippage_rows]
-                slippage_vals = [round(float(r['avg_slippage'] or 0), 3) for r in slippage_rows]
+                # 12. Slippage Impact by Chain — unified metadata.
+                slip_agg = {}
+                for r in unified:
+                    md = _meta_dict(r['metadata'])
+                    raw_s = md.get('slippage') or md.get('price_impact') or 0
+                    try:
+                        s = float(raw_s)
+                    except Exception:
+                        s = 0
+                    b = slip_agg.setdefault(r['chain'], [])
+                    b.append(s)
+                slippage_labels = list(slip_agg.keys())
+                slippage_vals = [
+                    round(sum(v) / len(v), 3) if v else 0
+                    for v in slip_agg.values()
+                ]
 
                 charts['chartSlippage'] = {
                     'labels': slippage_labels if slippage_labels else ['No Data'],
                     'datasets': [{'label': 'Avg Slippage %', 'data': slippage_vals if slippage_vals else [0], 'backgroundColor': '#ec4899'}]
                 }
 
-                # 13. Win/Loss Streaks
-                streak_rows = await conn.fetch("""
-                    SELECT profit_loss FROM trades WHERE status='closed' ORDER BY exit_timestamp
-                """)
+                # 13. Win/Loss Streaks — across the unified ordered trade tape.
+                ordered = sorted(
+                    [r for r in unified if r['exit_timestamp'] is not None],
+                    key=lambda r: r['exit_timestamp']
+                )
                 max_win_streak = 0
                 max_loss_streak = 0
                 current_win = 0
                 current_loss = 0
-                for r in streak_rows:
-                    pnl = float(r['profit_loss'] or 0)
+                for r in ordered:
+                    pnl = r['profit_loss']
                     if pnl > 0:
                         current_win += 1
                         current_loss = 0
