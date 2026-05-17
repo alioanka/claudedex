@@ -376,6 +376,17 @@ class SniperEngine:
     async def _evaluate_target(self, target: Dict, chain_type: str):
         """Evaluate if a new token meets sniping criteria"""
         token_address = target.get('token_address', '')
+        # SNIPE-RM-18: dedupe before doing any work. The same address
+        # can arrive on multiple listener paths (polling + WSS race,
+        # or repeat block scans), and without this gate we'd burn
+        # safety-check API calls + log duplicate "TARGET ACQUIRED"
+        # lines for each. Cheap O(1) check against the live pending +
+        # active sets.
+        if token_address and (
+            token_address in self.pending_targets
+            or token_address in self.active_snipes
+        ):
+            return
         # t_rpc_receipt is stamped by the listener BEFORE getTransaction
         # commitment-wait. Read from either top-level (EVM listener) or
         # nested metadata (Solana listener) so both detection paths
