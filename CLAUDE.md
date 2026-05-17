@@ -20,7 +20,7 @@ Run-from-dashboard: the dashboard runs independently on port 8080 and does NOT r
 ## Safety primitives
 - `core/dry_run.py` — `should_skip_live(module_dry_run, *, module, account)` returns `True` iff module DRY_RUN is set, the global kill switch is set, or the module is paused via `logs/.pause_<module>`.
 - `logs/.killswitch` — flag file written by `scripts/emergency_stop.py` or the dashboard's `/api/bot/emergency-exit`. Polled by every BaseModule subprocess via `core.dry_run.start_killswitch_poller`.
-- `core/risk_manager.py` — `RiskManager.validate_trade(token, amount)`. Called by ARB and AI execution paths before broadcast. FUTURES has its own `FuturesRiskManager.validate_new_position`.
+- `core/risk_manager.py` — `RiskManager.validate_trade(token, amount)`. Called by ARB, AI, SOLANA (entry-only), and COPY_TRADING (BUY-only) execution paths before broadcast. FUTURES has its own `FuturesRiskManager.validate_new_position`.
 - `config/pool_engine.py` — `PoolEngine.get_endpoint(provider_type)` is the single source of RPC URLs across all on-chain modules.
 ## See also
 - Phase 1 module audits: `docs/agents/reports/<MODULE>_*.md`
