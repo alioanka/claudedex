@@ -142,8 +142,21 @@ async function executeTrade() {
 async function panicSell() {
     if(!confirm("Are you sure you want to close ALL positions across ALL modules?")) return;
 
-    await fetch('/api/bot/emergency_exit', { method: 'POST' });
-    alert('Emergency exit triggered!');
+    // Matches the canonical kill-switch endpoint at base.html:1169 —
+    // earlier the wrong URL (emergency_exit with underscore) silently
+    // 404'd, so operators thought they'd panicked but the bot kept
+    // trading. See audit DASH-RM-01.
+    try {
+        const response = await fetch('/api/bot/emergency-exit', { method: 'POST' });
+        const data = await response.json().catch(() => ({}));
+        if (response.ok) {
+            alert(data.message || 'Emergency exit triggered!');
+        } else {
+            alert('Emergency exit FAILED: ' + (data.error || response.statusText));
+        }
+    } catch (e) {
+        alert('Emergency exit FAILED: ' + e.message);
+    }
 }
 </script>
 {% endblock %}

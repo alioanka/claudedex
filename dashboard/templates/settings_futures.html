@@ -927,10 +927,13 @@ async function checkModuleRunningStatus() {
                 enabledLabel.textContent = 'Running';
                 runningInfo.style.display = 'flex';
 
-                // Show mode info
-                const mode = data.futures.mode || 'DRY_RUN';
-                const network = data.futures.network || 'TESTNET';
-                const exchange = data.futures.exchange || 'BINANCE';
+                // Show mode info. Don't fabricate exchange/network/mode
+                // names when the API hasn't reported them — show '--' so
+                // an operator looking at a Bybit deployment doesn't see
+                // a stale 'BINANCE TESTNET' label.
+                const mode = data.futures.mode || '--';
+                const network = data.futures.network ? String(data.futures.network).toUpperCase() : '--';
+                const exchange = data.futures.exchange ? String(data.futures.exchange).toUpperCase() : '--';
                 const positions = data.futures.active_positions || 0;
                 runningInfoText.innerHTML = `<strong>Module Running:</strong> ${exchange} ${network} - ${mode} mode | ${positions} active position(s)`;
                 return;
