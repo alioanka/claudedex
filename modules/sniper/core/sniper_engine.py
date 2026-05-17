@@ -126,6 +126,10 @@ class SniperEngine:
         # Emergency brake against runaway position accumulation
         # (DRY_RUN stress test hit 10k+ positions in 22h).
         self.max_active_positions = 500
+        # SNIPE-RM-12: per-position max hold. 0 = disabled (keep
+        # back-compat with existing deployments that have no
+        # max_hold_minutes row in config_settings).
+        self.max_hold_minutes = 0
 
         # Statistics tracking for rate-limited logging
         self._stats = {
@@ -224,6 +228,8 @@ class SniperEngine:
                             self.stop_loss_pct = float(val) if val else 20.0
                         elif key == 'max_active_positions':
                             self.max_active_positions = int(val) if val else 500
+                        elif key == 'max_hold_minutes':
+                            self.max_hold_minutes = int(val) if val else 0
 
             # Check for DRY_RUN mode
             self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
@@ -893,6 +899,26 @@ class SniperEngine:
                     elif pnl_pct <= stop_loss_pct:
                         logger.warning(f"🛑 STOP LOSS triggered for {address[:8]}... ({pnl_pct:.2f}%)")
                         await self._exit_position(data, 'STOP_LOSS')
+
+                    # SNIPE-RM-12: time-stop. Some snipes neither hit
+                    # TP nor SL but just sit at -10% for hours, tying
+                    # up the position-cap slot. If max_hold_minutes is
+                    # configured, exit at market regardless of P&L.
+                    elif self.max_hold_minutes > 0:
+                        entry_time = data.get('entry_time')
+                        if entry_time is not None:
+                            try:
+                                hold_minutes = (datetime.now() - entry_time).total_seconds() / 60.0
+                                if hold_minutes >= self.max_hold_minutes:
+                                    logger.info(
+                                        f"⏰ TIME STOP triggered for {address[:8]}... "
+                                        f"(held {hold_minutes:.0f}m, cap {self.max_hold_minutes}m, P&L {pnl_pct:+.2f}%)"
+                                    )
+                                    await self._exit_position(data, 'TIME_STOP')
+                            except (TypeError, AttributeError):
+                                # entry_time wasn't a datetime — skip
+                                # the check rather than crash the loop.
+                                pass
 
                 except Exception as e:
                     logger.error(f"Error monitoring snipe {address}: {e}")
