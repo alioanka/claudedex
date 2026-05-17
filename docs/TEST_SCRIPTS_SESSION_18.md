@@ -91,14 +91,24 @@ PASS if all 12 rows behave as described.
 
 ## 3. API sanity (one paste, no UI)
 
+> **CORRECTED LOGIN PATTERN (VPS failure 5):** the older quick-script used
+> `curl -X POST $BASE/login -d 'username=admin&password=admin123'` and then
+> `awk` to extract a `session` cookie. That is wrong on 4 counts: the
+> endpoint is `/api/auth/login`, the cookie is `session_id`, the body is
+> JSON (not form-urlencoded), and grepping the cookie jar with `awk` breaks
+> as soon as `csrf_token` also lands in the jar. Use the pattern below or
+> the canned script `scripts/dashboard_smoke.sh`.
+
 ```bash
 BASE=http://127.0.0.1:8080
 
-# Login + grab session cookie
+# Login + grab session_id cookie (and csrf_token cookie, set by the
+# CSRF middleware on the same response).
 COOKIE_JAR=$(mktemp)
-curl -s -c "$COOKIE_JAR" -X POST "$BASE/login" \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    -d 'username=admin&password=admin123' >/dev/null
+curl -s -c "$COOKIE_JAR" -X POST "$BASE/api/auth/login" \
+    -H 'Content-Type: application/json' \
+    -d '{"username":"admin","password":"admin123"}' | jq '.success'
+# Expect: true
 
 curl_auth() { curl -s -b "$COOKIE_JAR" "$@"; }
 
@@ -433,3 +443,168 @@ Before flipping `DRY_RUN=false` for real:
 | `832cfb9` sniper max_hold_minutes | 5.2 |
 | `bb0af24` sniper test_mode+LIVE refuse | 4.1 |
 | `19b5a7b` sniper _evaluate_target dedup | 5.1 |
+
+---
+
+## Agent 1 Re-test (post-recovery)
+
+Sprint commits `dddb1a5..HEAD` fix five VPS failures the operator reported
+on top of the 18-commit session. Each block below is paste-friendly: copy
+the whole fenced block into your shell, no edits needed (the cookie+CSRF
+plumbing is identical across all five).
+
+### Required: the CORRECT cookie + CSRF pattern
+
+Everything below assumes you ran this first to populate the cookie jar.
+
+```bash
+BASE=http://127.0.0.1:8080
+COOKIE_JAR=$(mktemp)
+curl -s -c "$COOKIE_JAR" -X POST "$BASE/api/auth/login" \
+    -H 'Content-Type: application/json' \
+    -d '{"username":"admin","password":"admin123"}' | jq '.success'
+# Expect: true
+
+# Helpers
+auth_get() { curl -s -b "$COOKIE_JAR" "$@"; }
+csrf() { awk '$6=="csrf_token"{print $7}' "$COOKIE_JAR"; }
+auth_post() {
+    local url="$1"; shift
+    curl -s -b "$COOKIE_JAR" -X POST "$url" \
+        -H 'Content-Type: application/json' \
+        -H "X-CSRF-Token: $(csrf)" "$@"
+}
+```
+
+The single-command alternative is `scripts/dashboard_smoke.sh` which runs
+every assertion in this section and exits non-zero if anything fails.
+
+### VPS DB note
+
+Postgres credentials live at `/run/secrets/db_password` and
+`/run/secrets/db_user` *inside* the `trading-postgres` container. The
+host shell does NOT have access to those paths (`cat: No such file or
+directory`). Always run psql FROM INSIDE the container:
+
+```bash
+docker exec -it trading-postgres bash -c \
+  'psql -U "$(cat /run/secrets/db_user)" -d trading_bot'
+
+# Or for a one-shot query without an interactive shell:
+docker exec -i trading-postgres bash -c \
+  'PGPASSWORD="$(cat /run/secrets/db_password)" \
+   psql -U "$(cat /run/secrets/db_user)" -d trading_bot -At -c "SELECT 1;"'
+```
+
+### Re-test 1 — CSRF on emergency-exit + global-settings save
+
+Fixes: `dddb1a5` pro_controls panicSell sends `X-CSRF-Token`;
+`bd0a0a6` global_settings saveSettings sends `X-CSRF-Token`.
+
+```bash
+# 1a. CSRF middleware must 403 a POST that lacks the header.
+echo -n "no-header POST status: "
+curl -s -o /dev/null -w '%{http_code}\n' -b "$COOKIE_JAR" -X POST \
+    "$BASE/api/bot/emergency-exit"
+# Expect: 403
+
+# 1b. Same POST WITH the X-CSRF-Token header must NOT 403.
+echo -n "with-header POST status: "
+curl -s -o /dev/null -w '%{http_code}\n' -b "$COOKIE_JAR" -X POST \
+    "$BASE/api/bot/emergency-exit" \
+    -H "X-CSRF-Token: $(csrf)"
+# Expect: 200 (DRY_RUN — no actual sells) — definitely NOT 403.
+
+# 1c. settings save echoes the token correctly.
+echo -n "settings save status: "
+auth_post "$BASE/api/settings/update" \
+    -d '{"config_type":"smoke_noop","updates":{}}' \
+    -o /dev/null -w '%{http_code}\n'
+# Expect: 200 (the backend may reject the unknown config_type but it
+# must NOT be a 403)
+```
+
+UI re-test: open `/pro-controls` → click "Panic Sell" (DRY_RUN — safe).
+Should alert "Emergency exit triggered!" not "Emergency exit FAILED:
+CSRF token missing or invalid". Open `/global-settings` → expand any
+category → click Save → should alert "Saved <category> settings." not
+"Save failed: CSRF token missing or invalid".
+
+### Re-test 2 — MODE badge no longer UNKNOWN
+
+Fix: `f8375db` adds `?v={git-sha}` cache buster to all `<script>` tags
+and `Accept: application/json` + content-type sanity check in
+`refreshBotModeBadge`.
+
+```bash
+# 2a. Confirm payload shape.
+auth_get "$BASE/api/bot/status" | jq '{success, dry_run: .data.dry_run, mode: .data.mode}'
+# Expect: {"success": true, "dry_run": true, "mode": "DRY_RUN"}
+
+# 2b. Confirm the dashboard's HTML now appends asset_version.
+auth_get "$BASE/" | grep -oE '/static/js/main\.js\?v=[^"]+'
+# Expect: /static/js/main.js?v=<sha-or-timestamp> (NOT just main.js)
+```
+
+UI re-test: hard-reload any dashboard page (Ctrl-Shift-R). Top-right
+badge should read `🔵 DRY-RUN` within 5 seconds. If still UNKNOWN, open
+DevTools console — look for `[bot-mode]` warnings explaining the
+payload shape or non-JSON response.
+
+### Re-test 3 — Sniper cap tile shows X/Y
+
+Fix: `118f2ae` (rolled into Agent 2's commit) — `api_get_sniper_stats`
+falls back to `config_settings.max_active_positions` (then 500) when
+the runtime snapshot is missing or 0.
+
+```bash
+# 3a. Even right after a restart, max_active_positions must be > 0.
+auth_get "$BASE/api/sniper/stats" | jq '{
+    active_positions,
+    active_positions_effective,
+    max_active_positions,
+    status
+}'
+# Expect: max_active_positions >= 1 (the config_settings value, or 500).
+# active_positions_effective >= active_positions (uses max() of the two).
+```
+
+UI re-test: open `/sniper/dashboard`. The "Tokens Sniped" tile detail
+line should read `Active: N/M` (with the `/M`), with the `⚠ near cap`
+warning chip appearing when `N/M >= 0.8`.
+
+### Re-test 4 — Risk-critical CSS readable on dark theme
+
+Fix: `bd0a0a6` — `.risk-critical` defaults to dark-red bg + pink text
+(legible on the default dark theme); `.theme-light .risk-critical`
+restores the original light pink + dark red.
+
+```bash
+# 4a. Confirm the new CSS shipped.
+auth_get "$BASE/global-settings" | \
+    grep -E '\.risk-critical\s*\{|\.theme-light\s+\.risk-critical' | head -4
+# Expect: two rules — the default (dark theme) and the .theme-light override.
+```
+
+UI re-test: open `/global-settings` on the dark theme. Risk-critical
+rows (e.g. `max_drawdown_pct`) should have a dark-red background with
+clearly readable pinkish text. Toggle to light theme via the sun/moon
+icon → the same rows render with the original light-pink background +
+dark-red text.
+
+### Re-test 5 — Smoke test script authenticates correctly
+
+Fix: `scripts/dashboard_smoke.sh` — one-shot script that runs all of
+the above plus VaR/CVaR + copytrading-stats + arbitrage-stats checks.
+
+```bash
+# Run it from the host (NOT from inside the container — the script
+# only needs HTTP access to port 8080, no DB):
+bash scripts/dashboard_smoke.sh http://127.0.0.1:8080 admin admin123
+# Expect: every line prefixed "  PASS  ...", final line:
+#   "RESULT: PASS — all assertions held"
+# Exit code: 0 on full pass, 1 if any FAIL appeared.
+```
+
+If any assertion FAILs, the line tells you which field/endpoint
+returned the wrong shape — paste the FAIL block to the next agent.
