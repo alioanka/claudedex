@@ -778,7 +778,12 @@ async function refreshBotModeBadge() {
     try {
         const r = await fetch('/api/bot/status');
         if (!r.ok) throw new Error('status ' + r.status);
-        const data = await r.json();
+        // /api/bot/status returns {success, data: {dry_run, ...}}.
+        // Earlier we read data.dry_run from the unwrapped response, so
+        // the badge silently showed UNKNOWN even when the API knew the
+        // mode. Honor both shapes for resilience.
+        const payload = await r.json();
+        const data = (payload && payload.data) ? payload.data : payload;
         el.classList.remove('bot-mode-live', 'bot-mode-dry', 'bot-mode-unknown');
         if (data.dry_run === undefined || data.dry_run === null) {
             el.classList.add('bot-mode-unknown');
