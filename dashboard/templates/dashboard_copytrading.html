@@ -645,7 +645,9 @@ function updateStats(stats) {
     badge.className = 'status-badge status-' + status.toLowerCase();
     statusText.textContent = status;
 
-    // Update stats
+    // Update stats. DASH-Q-04: if the API reports any simulated trades,
+    // hint at it under the totals so operators don't mistake DRY_RUN
+    // P&L for realized money.
     document.getElementById('stat-wallets').textContent = stats.wallets_tracked || 0;
     document.getElementById('stat-copies').textContent = stats.total_trades || 0;
     document.getElementById('stat-wins').textContent = stats.winning_trades || 0;
@@ -656,7 +658,15 @@ function updateStats(stats) {
 
     const pnl = stats.total_pnl || 0;
     const pnlEl = document.getElementById('stat-pnl');
-    pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(2);
+    let pnlText = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(2);
+    const sim = stats.simulated_trades || 0;
+    const livePnl = stats.live_pnl;
+    if (sim > 0 && livePnl !== undefined) {
+        // Show real vs total when there are simulated rows in the mix
+        const liveStr = (livePnl >= 0 ? '+' : '') + '$' + Math.abs(livePnl).toFixed(2);
+        pnlText = `${liveStr} live (${pnlText} incl. DRY_RUN)`;
+    }
+    pnlEl.textContent = pnlText;
     pnlEl.className = 'hero-stat-value ' + (pnl >= 0 ? 'positive' : 'negative');
 }
 
