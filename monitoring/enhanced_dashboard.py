@@ -201,25 +201,33 @@ class DashboardEndpoints:
 
     @staticmethod
     async def routes_debug_endpoint(self, request):
-        """Diagnostic: dump every registered route so we can prove
-        /health is in the router table. Public; reveals paths only.
-
-        Wrapped in a "report ANY error as a 200 JSON body" outer
-        try/except so a regression in this debug endpoint never
-        cascades to a confusing 500 from the global error middleware.
+        """Diagnostic: dump every registered route. SUPER-defensive
+        wrap because something keeps eating the response and turning
+        it into a 500 — outer middleware's "Internal Server Error".
+        This version does the minimum possible work so we can
+        isolate whether the handler is even being reached.
         """
-        import traceback as _tb
+        # Step 1: prove the handler is being called by ALWAYS logging.
         try:
-            return await self._routes_debug_inner(request)
+            print('[/__routes__] handler invoked', flush=True)
+        except Exception:
+            pass
+        try:
+            logger.warning('[/__routes__] handler invoked')
+        except Exception:
+            pass
+        # Step 2: try the cheapest possible JSON response first.
+        try:
+            return web.json_response({'ok': True, 'ts': str(datetime.now())})
         except BaseException as e:
-            tb_str = ''.join(_tb.format_exception(type(e), e, e.__traceback__))[-1500:]
-            logger.error(
-                f"routes_debug_endpoint outer catch: {type(e).__name__}: {e}\n{tb_str}"
-            )
-            return web.json_response(
-                {'error': f'{type(e).__name__}: {e}', 'traceback': tb_str},
-                status=200,
-            )
+            # Fall through to plain text if even the trivial JSON
+            # response fails.
+            try:
+                logger.error(f'[/__routes__] trivial json_response failed: {type(e).__name__}: {e}')
+            except Exception:
+                pass
+            return web.Response(text='{"ok":false,"trivial_fail":true}',
+                                content_type='application/json', status=200)
 
     async def _routes_debug_inner(self, request):
         def _safe(obj, attr=None, default='?'):
