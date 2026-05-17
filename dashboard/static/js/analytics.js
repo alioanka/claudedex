@@ -181,6 +181,9 @@ function updateRiskMetrics(data) {
     updateElement('total-exposure', formatCurrency(data.total_exposure));
     updateElement('net-exposure', formatCurrency(data.net_exposure), data.net_exposure >= 0 ? 'pnl-positive' : 'pnl-negative');
     updateElement('var-95', formatCurrency(data.var_95));
+    // var_99 and cvar_95 were computed and discarded — see DASH-Q-12.
+    updateElement('var-99', formatCurrency(data.var_99));
+    updateElement('cvar-95', formatCurrency(data.cvar_95));
     updateElement('annual-vol', `${data.annual_volatility}%`);
     updateElement('avg-leverage', `${data.avg_leverage.toFixed(1)}x`);
     updateElement('largest-position', `${data.largest_position_pct}%`);
