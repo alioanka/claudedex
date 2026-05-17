@@ -8546,7 +8546,21 @@ class DashboardEndpoints:
                             'pnl': float(reg_row['pnl'] or 0)
                         }
 
-                    stats['status'] = 'Online' if stats['total_trades'] > 0 else 'Idle'
+                    # Status reflects subprocess liveness, not historical
+                    # trade count. Same fix shape as AI / COPY / SOLANA /
+                    # FUTURES (commits 3edbcac, 7a4ebf3, 49672a7). With
+                    # ARBITRAGE_MODULE_ENABLED=true we look for a recent
+                    # trade as a heartbeat (no separate runtime_stats
+                    # table for arbitrage yet); without it, Disabled.
+                    enabled = os.getenv('ARBITRAGE_MODULE_ENABLED', 'false').lower() == 'true'
+                    if not enabled:
+                        stats['status'] = 'Disabled'
+                    else:
+                        recent = await conn.fetchval(
+                            "SELECT COUNT(*) FROM arbitrage_trades "
+                            "WHERE entry_timestamp > NOW() - INTERVAL '2 hours'"
+                        )
+                        stats['status'] = 'Online' if (recent and recent > 0) else 'Idle'
 
             return web.json_response({'success': True, 'stats': stats})
         except Exception as e:
