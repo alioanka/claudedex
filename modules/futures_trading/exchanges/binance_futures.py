@@ -309,12 +309,16 @@ class BinanceFuturesExecutor:
             # Set isolated margin (safer)
             await self.set_margin_type(symbol, 'ISOLATED')
 
-            # Place market order
+            # Place market order. newClientOrderId is the Binance-side
+            # idempotency token: if our POST times out and we retry, the
+            # exchange dedupes on this value instead of double-filling.
+            # See FUT-RM-04.
             params = {
                 'symbol': symbol,
                 'side': 'BUY',
                 'type': 'MARKET',
-                'quantity': quantity
+                'quantity': quantity,
+                'newClientOrderId': f'cd-l-{symbol[:8]}-{int(time.time()*1000)}',
             }
 
             if reduce_only:
@@ -329,7 +333,7 @@ class BinanceFuturesExecutor:
 
             if result:
                 self.logger.info(
-                    f"✅ Opened LONG {symbol}: {quantity} @ {leverage}x leverage"
+                    f"✅ Opened LONG {symbol}: {quantity} @ {leverage}x leverage (clientOrderId={params['newClientOrderId']})"
                 )
                 return result
 
@@ -365,12 +369,13 @@ class BinanceFuturesExecutor:
             # Set isolated margin (safer)
             await self.set_margin_type(symbol, 'ISOLATED')
 
-            # Place market order
+            # Place market order. See FUT-RM-04 note in open_long.
             params = {
                 'symbol': symbol,
                 'side': 'SELL',
                 'type': 'MARKET',
-                'quantity': quantity
+                'quantity': quantity,
+                'newClientOrderId': f'cd-s-{symbol[:8]}-{int(time.time()*1000)}',
             }
 
             if reduce_only:
@@ -385,7 +390,7 @@ class BinanceFuturesExecutor:
 
             if result:
                 self.logger.info(
-                    f"✅ Opened SHORT {symbol}: {quantity} @ {leverage}x leverage"
+                    f"✅ Opened SHORT {symbol}: {quantity} @ {leverage}x leverage (clientOrderId={params['newClientOrderId']})"
                 )
                 return result
 
@@ -416,7 +421,8 @@ class BinanceFuturesExecutor:
             close_side = 'SELL' if position['side'] == 'LONG' else 'BUY'
             quantity = abs(position['position_amt'])
 
-            # Close with reduce-only market order
+            # Close with reduce-only market order. See FUT-RM-04 note
+            # in open_long for newClientOrderId rationale.
             result = await self._request(
                 'POST',
                 '/fapi/v1/order',
@@ -425,7 +431,8 @@ class BinanceFuturesExecutor:
                     'side': close_side,
                     'type': 'MARKET',
                     'quantity': quantity,
-                    'reduceOnly': 'true'
+                    'reduceOnly': 'true',
+                    'newClientOrderId': f'cd-c-{symbol[:8]}-{int(time.time()*1000)}',
                 },
                 signed=True
             )
