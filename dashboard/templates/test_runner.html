@@ -168,6 +168,67 @@
         <pre class="tr-output" style="display:none;"></pre>
       </div>
 
+      <!-- A3: Risk-critical CSS preview — purely visual, operator
+           confirms readability manually. Each input renders with
+           class="risk-critical" — the same global_settings.html
+           styling. PASS if BOTH inputs are legible. -->
+      <div class="tr-card" id="tr-clone-risk-css">
+        <div class="tr-card-title">A3. Risk-critical input CSS</div>
+        <div class="tr-row" style="flex-direction:column;align-items:stretch;">
+          <label style="font-size:0.8rem;" class="risk-critical-label">
+            max_drawdown_pct
+          </label>
+          <input type="number" class="risk-critical form-control"
+                 value="15" step="any" style="margin-bottom:8px;">
+          <label style="font-size:0.8rem;" class="risk-critical-label">
+            max_slippage
+          </label>
+          <input type="text" class="risk-critical form-control" value="2.5">
+        </div>
+        <div class="tr-row" style="margin-top:8px;">
+          <button type="button" class="btn btn-sm btn-primary" data-action="verify">
+            Mark legible
+          </button>
+          <button type="button" class="btn btn-sm btn-danger" data-action="fail">
+            Mark unreadable
+          </button>
+          <span class="tr-status"><span class="chip chip-pending">manual</span></span>
+        </div>
+        <div class="tr-expected">
+          Expected: dark-red background, light-pink text (DARK theme)
+          OR light-pink bg + dark-red text (LIGHT theme). Both values
+          ("15", "2.5") must be clearly readable. Before fix
+          <code>bd0a0a6</code> the values were invisible (light pink
+          bg + inherited light-gray text).
+        </div>
+      </div>
+
+      <!-- A4: Module Overview clone — replicates /full-dashboard's
+           module-status grid. Pulls /api/modules; PASS if envs match
+           our local truth (Sniper + Arbitrage ENABLED, rest DISABLED). -->
+      <div class="tr-card" id="tr-clone-module-overview"
+           style="grid-column: 1 / -1;">
+        <div class="tr-card-title">A4. Module Overview (env-truth)</div>
+        <div class="tr-row">
+          <button type="button" class="btn btn-sm btn-primary" data-action="verify">
+            <i class="fas fa-sync"></i> Refetch
+          </button>
+          <span class="tr-status"><span class="chip chip-pending">pending</span></span>
+        </div>
+        <div id="tr-module-grid" class="tr-grid"
+             style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+                    gap:8px;margin-top:8px;">
+          <span style="color:var(--text-secondary,#94a3b8);">loading…</span>
+        </div>
+        <div class="tr-expected">
+          Expected (per VPS .env): Sniper=<code>ENABLED+RUNNING</code>,
+          Arbitrage=<code>ENABLED+RUNNING</code>, all others
+          =<code>DISABLED</code>. Before fix <code>118f2ae</code>
+          historical-data rows were mislabeled ENABLED.
+        </div>
+        <pre class="tr-output" style="display:none;"></pre>
+      </div>
+
     </div>
   </section>
 

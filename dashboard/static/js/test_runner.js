@@ -309,11 +309,82 @@
     }
   }
 
+  // A3: Risk-critical CSS — operator-judged. Two buttons: "Mark
+  // legible" (pass) and "Mark unreadable" (fail). No auto-verify
+  // because contrast is subjective.
+  function wireRiskCss() {
+    const card = document.getElementById('tr-clone-risk-css');
+    if (!card) return;
+    const passBtn = card.querySelector('[data-action="verify"]');
+    const failBtn = card.querySelector('[data-action="fail"]');
+    if (passBtn) passBtn.addEventListener('click', () => {
+      setCardStatus('tr-clone-risk-css', 'pass', 'legible',
+        'Operator confirmed risk-critical inputs are readable.');
+    });
+    if (failBtn) failBtn.addEventListener('click', () => {
+      setCardStatus('tr-clone-risk-css', 'fail', 'unreadable',
+        'Operator flagged risk-critical inputs as unreadable.');
+    });
+  }
+
+  // A4: Module Overview — fetch /api/modules and diff against the
+  // operator's expected env-truth (Sniper + Arbitrage ENABLED).
+  const EXPECTED_ENABLED = new Set(['sniper', 'arbitrage']);
+
+  async function verifyModuleOverview() {
+    const grid = document.getElementById('tr-module-grid');
+    if (!grid) return;
+    grid.innerHTML = '<span style="color:var(--text-secondary,#94a3b8);">loading…</span>';
+    try {
+      const payload = await fetchJson('/api/modules');
+      const data = (payload && payload.data) ? payload.data : payload;
+      // /api/modules can return either an array or {modules: {...}}.
+      let entries = [];
+      if (Array.isArray(data)) {
+        entries = data.map(m => [m.name || m.key, m]);
+      } else if (data && data.modules) {
+        entries = Object.entries(data.modules);
+      }
+      grid.innerHTML = '';
+      const mismatches = [];
+      const rows = [];
+      entries.forEach(([name, mod]) => {
+        const enabled = !!mod.enabled;
+        const status = String(mod.status || (enabled ? 'ENABLED' : 'DISABLED'));
+        const expectEnabled = EXPECTED_ENABLED.has(name);
+        const match = enabled === expectEnabled;
+        if (!match) mismatches.push(`${name} expected=${expectEnabled} got=${enabled}`);
+        const cls = enabled ? 'chip-pass' : 'chip-pending';
+        const div = document.createElement('div');
+        div.style.cssText = 'padding:6px 8px;border:1px solid var(--border-color,#334155);' +
+                            'border-radius:6px;background:var(--bg-secondary,#1e293b);';
+        div.innerHTML =
+          `<div style="font-weight:600;font-size:0.85rem;">${esc(name)}</div>` +
+          `<div class="chip ${cls}" style="margin:4px 0 0 0;">${esc(status)}</div>` +
+          (match ? '' :
+            `<div style="color:#ef4444;font-size:0.7rem;margin-top:4px;">⚠ env mismatch</div>`);
+        grid.appendChild(div);
+        rows.push(`${name.padEnd(20)} status=${status.padEnd(20)} enabled=${enabled}`);
+      });
+      const body = rows.join('\n') + (mismatches.length
+        ? '\n\nMISMATCHES:\n' + mismatches.map(s => '  ' + s).join('\n') : '');
+      setCardStatus('tr-clone-module-overview',
+        mismatches.length === 0 ? 'pass' : 'fail',
+        mismatches.length ? `${mismatches.length} mismatch` : null,
+        body);
+    } catch (e) {
+      grid.innerHTML = '<span style="color:#ef4444;">fetch error</span>';
+      setCardStatus('tr-clone-module-overview', 'fail', 'fetch error',
+        'error: ' + (e && e.message ? e.message : e));
+    }
+  }
+
   // Bind Verify buttons inside Section A cards.
   function wireSectionA() {
     const handlers = {
       'tr-clone-mode-badge': verifyModeBadge,
       'tr-clone-sniper-cap': verifySniperCap,
+      'tr-clone-module-overview': verifyModuleOverview,
     };
     Object.entries(handlers).forEach(([cardId, fn]) => {
       const card = document.getElementById(cardId);
@@ -323,6 +394,7 @@
       // Run once on load so the chip isn't stale on first paint.
       fn();
     });
+    wireRiskCss();
   }
 
   // ---- DOM ready: kick off catalog load + Section A + Copy All
