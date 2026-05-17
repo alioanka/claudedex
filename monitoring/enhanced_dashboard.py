@@ -1776,27 +1776,33 @@ class DashboardEndpoints:
         """
         raise web.HTTPMovedPermanently('/dex/dashboard')
     
+    # NOTE: page contexts for DEX pages use the 'dex_*' prefix so that
+    # base.html's sidebar highlight ({% if page == 'dex_positions' %})
+    # actually fires. Previously these handlers passed page='trades'
+    # etc., so the DEX side-nav never highlighted the current page —
+    # the conditions never matched. Same fix shape for /trades,
+    # /positions, /performance, /reports, /backtest, /analysis.
     async def trades_page(self, request):
-        """Recent trades page"""
+        """Recent trades page (DEX)"""
         template = self.jinja_env.get_template('trades.html')
         return web.Response(
-            text=template.render(page='trades'),
+            text=template.render(page='dex_trades'),
             content_type='text/html'
         )
-    
+
     async def positions_page(self, request):
-        """Positions page"""
+        """Positions page (DEX)"""
         template = self.jinja_env.get_template('positions.html')
         return web.Response(
-            text=template.render(page='positions'),
+            text=template.render(page='dex_positions'),
             content_type='text/html'
         )
-    
+
     async def performance_page(self, request):
-        """Performance analytics page"""
+        """Performance analytics page (DEX)"""
         template = self.jinja_env.get_template('performance.html')
         return web.Response(
-            text=template.render(page='performance'),
+            text=template.render(page='dex_performance'),
             content_type='text/html'
         )
 
