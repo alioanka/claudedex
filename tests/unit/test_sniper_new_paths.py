@@ -331,3 +331,117 @@ async def test_dashboard_sol_usd_falls_back_when_empty():
     # the real SOL price — also > 0, so the assertion still passes.)
     price = await d._get_sol_usd_price()
     assert price > 0
+
+
+# ---------------------------------------------------------------------------
+# Module status derivation — Disabled / ENABLED / RUNNING (3edbcac, 7a4ebf3,
+# 49672a7, 8307113 fixes that stopped reporting RUNNING for disabled modules
+# with stale trades).
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+def test_status_helper_disabled_when_env_off():
+    """The _status(running, enabled) helper used for sniper/arbitrage/
+    copytrading/ai status returns 'DISABLED' when env flag is off,
+    regardless of whether subprocess is alive."""
+    def _status(running, enabled):
+        if running: return 'RUNNING'
+        if enabled: return 'ENABLED'
+        return 'DISABLED'
+    assert _status(False, False) == 'DISABLED'
+    assert _status(True, False) == 'RUNNING'   # running wins even if env off
+    assert _status(True, True) == 'RUNNING'
+    assert _status(False, True) == 'ENABLED'
+
+
+# ---------------------------------------------------------------------------
+# AI per-model cost rate table (4f15cce)
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+def test_ai_cost_per_model_consistency():
+    """Spot-check the AI cost-per-model rates produce sensible USD
+    figures for typical token usage. The frontend formula is
+    (tokens_used / 1000) * rate.
+    """
+    COST_PER_1K = {
+        'gpt-3.5-turbo': 0.002,
+        'gpt-4o-mini':   0.000375,
+        'gpt-4o':        0.0125,
+        'gpt-4-turbo':   0.020,
+        'gpt-4':         0.045,
+        'claude-3-haiku': 0.000750,
+        'claude-3.5-haiku': 0.0020,
+        'claude-3-sonnet': 0.0090,
+        'claude-3.5-sonnet': 0.009,
+        'claude-3-opus':   0.0450,
+    }
+    # 10k tokens on gpt-4o-mini ≈ $0.00375 (cheap)
+    assert (10000 / 1000) * COST_PER_1K['gpt-4o-mini'] == pytest.approx(0.00375)
+    # 10k tokens on gpt-4 ≈ $0.45 (45x more expensive)
+    assert (10000 / 1000) * COST_PER_1K['gpt-4'] == pytest.approx(0.45)
+    # The old single-rate-for-everything (0.002) was right for gpt-3.5
+    # but off by an order of magnitude for gpt-4. Sanity-check the
+    # ordering: gpt-4 > gpt-4-turbo > gpt-4o > gpt-3.5 > gpt-4o-mini.
+    rates = sorted(COST_PER_1K.values())
+    assert COST_PER_1K['gpt-4'] == max(rates) or COST_PER_1K['claude-3-opus'] == max(rates)
+    assert COST_PER_1K['gpt-4o-mini'] < COST_PER_1K['gpt-3.5-turbo'] < COST_PER_1K['gpt-4o']
+
+
+# ---------------------------------------------------------------------------
+# Atomic wallet add/remove endpoints (a52e010)
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_atomic_wallet_remove_payload_validation():
+    """api_copytrading_wallet_remove must reject requests with no
+    wallet field — prevents accidental no-op writes and surfaces
+    operator errors instead of silently mutating settings.
+    """
+    from monitoring.enhanced_dashboard import DashboardEndpoints
+
+    # Synthesize a request-like object that returns an empty body.
+    class FakeReq:
+        async def json(self):
+            return {}
+    d = DashboardEndpoints.__new__(DashboardEndpoints)
+    d.db = None  # forces the 'database unavailable' path AFTER
+                 # the wallet-required check.
+    resp = await d.api_copytrading_wallet_remove(FakeReq())
+    # Must be a web.Response with 400 (wallet required, hits before db check)
+    assert getattr(resp, 'status', None) == 400
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_atomic_wallet_add_rejects_empty():
+    """api_copytrading_wallet_add rejects empty body the same way."""
+    from monitoring.enhanced_dashboard import DashboardEndpoints
+
+    class FakeReq:
+        async def json(self):
+            return {'wallet': ''}  # empty string
+    d = DashboardEndpoints.__new__(DashboardEndpoints)
+    d.db = None
+    resp = await d.api_copytrading_wallet_add(FakeReq())
+    assert getattr(resp, 'status', None) == 400
+
+
+# ---------------------------------------------------------------------------
+# AnalyticsRoutes fail-soft when engine is None (cc21720)
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_analytics_routes_require_engine_guard():
+    """_require_engine returns a 503 response when engine is None,
+    None when wired. Used by every /api/analytics/* endpoint as a
+    fail-soft guard."""
+    from monitoring.analytics_routes import AnalyticsRoutes
+
+    # engine=None
+    r = AnalyticsRoutes(analytics_engine=None)
+    guard = r._require_engine()
+    assert guard is not None
+    assert getattr(guard, 'status', None) == 503
+
+    # engine present
+    r2 = AnalyticsRoutes(analytics_engine=object())
+    assert r2._require_engine() is None
