@@ -1509,9 +1509,22 @@ class FuturesTradingEngine:
                     # After TP1: Move stop loss to breakeven (entry price) - always enabled for safety
                     # After TP2+: Activate trailing stop (only if trailing_stop_enabled)
                     if tp['level'] == 1:
-                        # TP1 hit - move stop to breakeven (always enabled for capital protection)
-                        position.trailing_stop_price = position.entry_price
-                        logger.info(f"🔒 {position.symbol}: Stop moved to breakeven ${position.entry_price:.4f}")
+                        # TP1 hit - move stop to true breakeven INCLUDING
+                        # round-trip fees (FUT-RM-14). Stopping exactly at
+                        # entry_price still pays entry+exit fees, so the
+                        # operator nets a small loss on a "breakeven" stop.
+                        # Buffer = 2 × taker_fee + tiny slippage cushion.
+                        fee_rate = self.BINANCE_TAKER_FEE if self.exchange == 'binance' else self.BYBIT_TAKER_FEE
+                        be_buffer_pct = (2 * fee_rate) + 0.0001  # +1bp cushion
+                        if position.side == TradeSide.LONG:
+                            position.trailing_stop_price = position.entry_price * (1 + be_buffer_pct)
+                        else:  # SHORT
+                            position.trailing_stop_price = position.entry_price * (1 - be_buffer_pct)
+                        logger.info(
+                            f"🔒 {position.symbol}: Stop moved to fee-adjusted breakeven "
+                            f"${position.trailing_stop_price:.4f} (entry ${position.entry_price:.4f}, "
+                            f"buffer {be_buffer_pct*100:.3f}%)"
+                        )
                     elif tp['level'] >= 2 and not position.trailing_stop_active and self.trailing_stop_enabled:
                         # TP2+ hit - activate trailing stop (ONLY if trailing stop is enabled in settings)
                         position.trailing_stop_active = True
