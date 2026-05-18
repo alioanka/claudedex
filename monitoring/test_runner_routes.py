@@ -241,17 +241,20 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         "title": "DB: open positions across modules",
         "category": "db",
         "kind": "db_query",
+        # futures_trades is closed-only by schema (only completed trades
+        # land there; open futures positions live in futures_positions).
+        # Use the right table per module so the UNION doesn't blow up.
         "sql": (
             "SELECT 'sniper' AS src, COUNT(*) AS n "
             "FROM sniper_trades WHERE status='open' "
             "UNION ALL SELECT 'copy', COUNT(*) "
             "FROM copytrading_trades WHERE status='open' "
             "UNION ALL SELECT 'futures', COUNT(*) "
-            "FROM futures_trades WHERE status='open'"
+            "FROM futures_positions WHERE status='open'"
         ),
         "cmd_preview": (
-            "SELECT src, COUNT(*) FROM {sniper,copy,futures}_trades "
-            "WHERE status='open'"
+            "SELECT src, COUNT(*) FROM sniper_trades + copytrading_trades + "
+            "futures_positions WHERE status='open'"
         ),
         "timeout_s": 15,
         "description": "Open-position counts per trading module.",
@@ -336,14 +339,20 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         "title": "DB: detection latency p50/p95 (30m)",
         "category": "db",
         "kind": "db_query",
+        # detect_to_rpc_receipt_ms is stored as a JSONB number which
+        # asyncpg returns as the original numeric type — including
+        # values like "2038.02". ::int truncation would silently lose
+        # precision AND fails on "2038.02" (no implicit float→int cast
+        # in JSON-to-int). Use ::numeric so percentile_cont sees the
+        # full fractional resolution.
         "sql": (
             "SELECT "
             "  COALESCE(metadata->>'detection_path', 'unknown') AS path, "
             "  COUNT(*) AS samples, "
-            "  PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY "
-            "    ((metadata->'timing'->>'detect_to_rpc_receipt_ms')::int)) AS p50_ms, "
-            "  PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY "
-            "    ((metadata->'timing'->>'detect_to_rpc_receipt_ms')::int)) AS p95_ms "
+            "  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY "
+            "    ((metadata->'timing'->>'detect_to_rpc_receipt_ms')::numeric))::numeric, 1) AS p50_ms, "
+            "  ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY "
+            "    ((metadata->'timing'->>'detect_to_rpc_receipt_ms')::numeric))::numeric, 1) AS p95_ms "
             "FROM sniper_trades "
             "WHERE entry_timestamp > NOW() - INTERVAL '30 minutes' "
             "  AND metadata->'timing'->>'detect_to_rpc_receipt_ms' IS NOT NULL "
