@@ -69,8 +69,8 @@ async def _collect_module_inputs(
     conn, module: str, schema: dict, lookback_hours: int,
     market_btc_24h: Optional[float],
 ) -> Optional[ModuleScoreInputs]:
-    """One DB read per module. Returns None on error so the rest of
-    the tick can continue."""
+    """Two DB reads per module: aggregates + per-trade pnl series.
+    Returns None on error so the rest of the tick can continue."""
     try:
         if schema["has_is_simulated"]:
             row = await conn.fetchrow(
@@ -94,6 +94,21 @@ async def _collect_module_inputs(
             )
         if row is None:
             return None
+        # Per-trade pnls for Sharpe. Cap at 500 rows so a heavy-volume
+        # module like sniper (10k+ closed/day) doesn't blow the
+        # response budget. The 500 most recent is a tight enough
+        # sample for stable Sharpe + light DB load.
+        try:
+            pnl_rows = await conn.fetch(
+                f"SELECT {schema['pnl_col']} AS pnl FROM {schema['table']} "
+                f"WHERE status='closed' AND {schema['time_col']} > NOW() - INTERVAL "
+                f"'{lookback_hours} hours' "
+                f"ORDER BY {schema['time_col']} DESC LIMIT 500"
+            )
+            trade_pnls = [float(r['pnl'] or 0) for r in pnl_rows]
+        except Exception as e:
+            logger.debug("trade_pnls fetch failed for %s: %s", module, e)
+            trade_pnls = []
         return ModuleScoreInputs(
             module=module,
             closed_trades=int(row["closed"] or 0),
@@ -101,6 +116,7 @@ async def _collect_module_inputs(
             total_pnl_usd=float(row["pnl"] or 0),
             total_volume_usd=0.0,  # not used by score_module yet
             live_trades=int(row.get("live", 0) or 0) if schema["has_is_simulated"] else 0,
+            trade_pnls=trade_pnls,
             btc_24h_change_pct=market_btc_24h,
         )
     except Exception as e:
