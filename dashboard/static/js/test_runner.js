@@ -57,22 +57,25 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  // ---- copy-to-clipboard helper that also flashes a temporary label
+  // ---- copy-to-clipboard helper. Falls back to a textarea-modal on
+  //      http:// remote URLs where navigator.clipboard is blocked.
   function attachCopyBtn(btn, getText) {
     btn.addEventListener('click', function () {
       const txt = typeof getText === 'function' ? getText() : getText;
-      if (!navigator.clipboard) {
-        alert('Clipboard unavailable; select the <pre> text manually.');
-        return;
+      const flash = () => {
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = orig; }, 1200);
+      };
+      const tryAsync = navigator.clipboard && navigator.clipboard.writeText;
+      if (tryAsync) {
+        navigator.clipboard.writeText(txt).then(
+          flash,
+          () => showCopyFallback(txt)
+        );
+      } else {
+        showCopyFallback(txt);
       }
-      navigator.clipboard.writeText(txt).then(
-        () => {
-          const orig = btn.textContent;
-          btn.textContent = 'Copied!';
-          setTimeout(() => { btn.textContent = orig; }, 1200);
-        },
-        (e) => alert('Copy failed: ' + (e && e.message ? e.message : e))
-      );
     });
   }
 
@@ -521,14 +524,58 @@
       lines.push('_(no tests have been run yet — click each section\'s Run buttons first)_');
     }
     const md = lines.join('\n');
-    if (!navigator.clipboard) {
-      alert('Clipboard unavailable; here it is:\n\n' + md);
-      return;
+    // navigator.clipboard.writeText requires HTTPS or localhost (secure
+    // context); on http://<vps-ip>:8080 it throws. Try it first, then
+    // fall back to a modal with a pre-selected textarea the operator
+    // can Ctrl+C from.
+    const tryAsync = navigator.clipboard && navigator.clipboard.writeText;
+    if (tryAsync) {
+      navigator.clipboard.writeText(md).then(
+        () => alert('Copied ' + md.length + ' chars to clipboard. Paste back in chat.'),
+        () => showCopyFallback(md)
+      );
+    } else {
+      showCopyFallback(md);
     }
-    navigator.clipboard.writeText(md).then(
-      () => alert('Copied ' + md.length + ' chars to clipboard. Paste back in chat.'),
-      (e) => alert('Copy failed: ' + (e && e.message ? e.message : e))
-    );
+  }
+
+  // Modal with pre-selected textarea. Works on http:// remote IPs
+  // where the async clipboard API is blocked. Operator hits Ctrl+C
+  // then closes the modal.
+  function showCopyFallback(text) {
+    const old = document.getElementById('tr-copy-modal');
+    if (old) old.remove();
+    const wrap = document.createElement('div');
+    wrap.id = 'tr-copy-modal';
+    wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);' +
+      'z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+    wrap.innerHTML = `
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:10px;
+                  padding:16px;max-width:900px;width:100%;color:#f1f5f9;">
+        <div style="display:flex;justify-content:space-between;align-items:center;
+                    margin-bottom:10px;">
+          <strong>Test Runner — Copy results</strong>
+          <button id="tr-copy-modal-close" class="btn btn-sm btn-secondary">Close</button>
+        </div>
+        <div style="font-size:0.8rem;color:#94a3b8;margin-bottom:8px;">
+          Clipboard API unavailable on http:// remote URLs. Select the text below
+          (the textarea is pre-selected) and copy with Ctrl+C / Cmd+C.
+        </div>
+        <textarea id="tr-copy-modal-textarea" rows="20"
+          style="width:100%;background:#0a0f1c;color:#cbd5e1;border:1px solid #334155;
+                 border-radius:6px;padding:10px;font-family:ui-monospace,Menlo,monospace;
+                 font-size:0.78rem;"></textarea>
+      </div>
+    `;
+    document.body.appendChild(wrap);
+    const ta = document.getElementById('tr-copy-modal-textarea');
+    ta.value = text;
+    ta.focus();
+    ta.select();
+    document.getElementById('tr-copy-modal-close').addEventListener('click',
+      () => wrap.remove());
+    // Click backdrop to close
+    wrap.addEventListener('click', (e) => { if (e.target === wrap) wrap.remove(); });
   }
 
   // ---- expose for later commits
