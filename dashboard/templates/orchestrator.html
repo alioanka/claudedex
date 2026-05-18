@@ -113,6 +113,33 @@
     </button>
   </div>
 
+  <!-- Trend table: per-module score timeline. Compact ASCII-art
+       sparklines so we don't pull in Chart.js just for this. -->
+  <div class="card" style="margin-bottom:18px;background:var(--bg-secondary,#1e293b);
+                            border:1px solid var(--border-color,#334155);
+                            border-radius:10px;padding:14px 16px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <h3 style="margin:0;font-size:1rem;">Score trend (last 72h)</h3>
+      <button id="orch-trend-refresh" class="btn btn-sm btn-secondary">Refresh</button>
+    </div>
+    <table id="orch-trend-table" style="width:100%;border-collapse:collapse;
+           margin-top:10px;font-family:ui-monospace,Menlo,monospace;font-size:0.8rem;">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border-color,#334155);">
+          <th style="text-align:left;padding:4px 8px;">Module</th>
+          <th style="text-align:left;padding:4px 8px;">Sparkline</th>
+          <th style="text-align:right;padding:4px 8px;">Latest score</th>
+          <th style="text-align:right;padding:4px 8px;">Sharpe</th>
+          <th style="text-align:right;padding:4px 8px;">P&amp;L (window)</th>
+          <th style="text-align:right;padding:4px 8px;">Latest rec</th>
+        </tr>
+      </thead>
+      <tbody id="orch-trend-tbody">
+        <tr><td colspan="6" class="orch-empty">Loading trend…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
   <div id="orch-recs-list">
     <div class="orch-empty">Loading recommendations…</div>
   </div>
@@ -247,8 +274,62 @@
     }
   }
 
+  // ---- Score-trend table (sparklines from /api/orchestrator/history) ----
+  // Unicode block-element sparkline. No external dep.
+  const SPARK_CHARS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+  function sparkline(values) {
+    if (!values || values.length === 0) return '—';
+    const finite = values.filter(v => v !== null && !isNaN(v));
+    if (finite.length === 0) return '—';
+    const min = Math.min(...finite);
+    const max = Math.max(...finite);
+    const range = max - min || 1;
+    return values.map(v => {
+      if (v === null || isNaN(v)) return ' ';
+      const idx = Math.min(7, Math.max(0, Math.floor(((v - min) / range) * 7)));
+      return SPARK_CHARS[idx];
+    }).join('');
+  }
+
+  async function loadTrend() {
+    const tbody = document.getElementById('orch-trend-tbody');
+    tbody.innerHTML = '<tr><td colspan="6" class="orch-empty">Loading trend…</td></tr>';
+    try {
+      const r = await fetch('/api/orchestrator/history?hours=72');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      const series = (data && data.series) || {};
+      const modules = Object.keys(series).sort();
+      if (modules.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="orch-empty">No history yet. Orchestrator subprocess running?</td></tr>';
+        return;
+      }
+      tbody.innerHTML = modules.map(m => {
+        const pts = series[m];
+        const scores = pts.map(p => p.score);
+        const latest = pts[pts.length - 1] || {};
+        const comp = latest.components || {};
+        const sharpe = comp.sharpe;
+        const pnl = latest.total_pnl_usd;
+        return `<tr style="border-bottom:1px solid var(--border-color,#334155);">
+          <td style="padding:4px 8px;font-weight:600;">${esc(m)}</td>
+          <td style="padding:4px 8px;font-size:1rem;letter-spacing:0;">${esc(sparkline(scores))}</td>
+          <td style="padding:4px 8px;text-align:right;">${(latest.score != null) ? latest.score.toFixed(3) : '—'}</td>
+          <td style="padding:4px 8px;text-align:right;">${(sharpe != null) ? sharpe.toFixed(3) : '—'}</td>
+          <td style="padding:4px 8px;text-align:right;">${(pnl != null) ? '$' + pnl.toFixed(2) : '—'}</td>
+          <td style="padding:4px 8px;text-align:right;">
+            <span class="rec-action ${esc(latest.recommended || 'hold')}">${esc((latest.recommended || '?').replace('_', ' '))}</span>
+          </td>
+        </tr>`;
+      }).join('');
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="6" class="orch-empty" style="color:#ef4444;">Fetch failed: ${esc(e.message || e)}</td></tr>`;
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
     load();
+    loadTrend();
     document.querySelectorAll('.orch-status-tabs button').forEach(btn => {
       btn.addEventListener('click', () => {
         currentStatus = btn.dataset.status;
@@ -258,9 +339,12 @@
       });
     });
     document.getElementById('orch-refresh').addEventListener('click', load);
+    document.getElementById('orch-trend-refresh').addEventListener('click', loadTrend);
     // Auto-refresh pending every 60s so new recs surface without
     // operator action.
     setInterval(() => { if (currentStatus === 'pending') load(); }, 60000);
+    // Trend refresh every 5 min — matches the orchestrator tick.
+    setInterval(loadTrend, 5 * 60 * 1000);
   });
 })();
 </script>
