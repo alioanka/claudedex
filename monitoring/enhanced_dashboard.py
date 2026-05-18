@@ -1104,6 +1104,17 @@ class DashboardEndpoints:
         self.app.router.add_post('/api/modules/{module}/disable', self._api_module_disable)
         self.app.router.add_post('/api/modules/{module}/pause', self._api_module_pause)
         self.app.router.add_post('/api/modules/{module}/start', self._api_module_start)
+        # Phase 3 B1: per-module DRY_RUN toggle. Writes
+        # config_settings.<module>_config.dry_run; the module's main
+        # entry point reads this via resolve_module_dry_run() on next
+        # restart. (We don't auto-restart the subprocess here — that's
+        # an operator decision.)
+        self.app.router.add_post(
+            '/api/modules/{module}/dry-run', self._api_module_set_dry_run
+        )
+        self.app.router.add_get(
+            '/api/modules/{module}/dry-run', self._api_module_get_dry_run
+        )
 
         logger.info("✅ Fallback module routes registered")
 
@@ -1710,6 +1721,116 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Failed to set os.environ[{env_key}]: {e}")
             return False
+
+    # ---- Phase 3 B1: per-module DRY_RUN read/write ----
+    # The trading-bot subprocess reads its dry_run state via
+    # resolve_module_dry_run() at startup, which honors
+    # config_settings.<module>_config.dry_run > <MODULE>_DRY_RUN env >
+    # DRY_RUN env > default True. This pair of handlers lets the
+    # dashboard read AND flip the DB row WITHOUT touching .env. The
+    # flip only takes effect after the module subprocess restarts —
+    # we deliberately do NOT auto-restart here because that's a
+    # capital-impacting operator decision.
+    _DRY_RUN_CONFIG_TYPE_MAP = {
+        'sniper': 'sniper_config',
+        'arbitrage': 'arbitrage_config',
+        'copy_trading': 'copytrading_config',
+        'copytrading': 'copytrading_config',
+        'ai': 'ai_config',
+        'ai_analysis': 'ai_config',
+        'futures': 'futures_config',
+        'futures_trading': 'futures_config',
+        'solana': 'solana_config',
+        'solana_strategies': 'solana_config',
+        'dex': 'dex_config',
+        'dex_trading': 'dex_config',
+    }
+
+    async def _api_module_get_dry_run(self, request):
+        """GET /api/modules/{module}/dry-run — returns the current
+        DB-backed dry_run flag + the effective resolved value."""
+        module = (request.match_info.get('module', '') or '').lower()
+        config_type = self._DRY_RUN_CONFIG_TYPE_MAP.get(module)
+        if not config_type:
+            return web.json_response(
+                {'success': False, 'error': f'unknown module: {module}'},
+                status=400,
+            )
+        db_value = None
+        try:
+            if self.db and getattr(self.db, 'pool', None):
+                async with self.db.pool.acquire() as conn:
+                    db_value = await conn.fetchval(
+                        "SELECT value FROM config_settings "
+                        "WHERE config_type = $1 AND key = 'dry_run'",
+                        config_type,
+                    )
+        except Exception as e:
+            logger.warning(f"dry_run DB read failed for {module}: {e}")
+        try:
+            from core.dry_run import resolve_module_dry_run
+            effective = resolve_module_dry_run(module, db_row_value=db_value)
+        except Exception:
+            effective = True  # safe-by-default
+        return web.json_response({
+            'success': True,
+            'module': module,
+            'config_type': config_type,
+            'db_value': db_value,
+            'effective_dry_run': effective,
+        })
+
+    async def _api_module_set_dry_run(self, request):
+        """POST /api/modules/{module}/dry-run {"dry_run": bool} —
+        UPSERTs the DB row. Operator must restart the module subprocess
+        (via /api/modules/{module}/disable + /enable, or the dashboard
+        bot-control buttons) for the new value to take effect."""
+        module = (request.match_info.get('module', '') or '').lower()
+        config_type = self._DRY_RUN_CONFIG_TYPE_MAP.get(module)
+        if not config_type:
+            return web.json_response(
+                {'success': False, 'error': f'unknown module: {module}'},
+                status=400,
+            )
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if 'dry_run' not in payload:
+            return web.json_response(
+                {'success': False, 'error': 'body must contain {"dry_run": true|false}'},
+                status=400,
+            )
+        new_value = 'true' if bool(payload['dry_run']) else 'false'
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'},
+                status=503,
+            )
+        try:
+            async with self.db.pool.acquire() as conn:
+                await conn.execute(
+                    "INSERT INTO config_settings (config_type, key, value, value_type) "
+                    "VALUES ($1, 'dry_run', $2, 'bool') "
+                    "ON CONFLICT (config_type, key) DO UPDATE SET value = EXCLUDED.value",
+                    config_type, new_value,
+                )
+            logger.info(f"[Phase 3 B1] dry_run flipped: {module} -> {new_value}")
+            return web.json_response({
+                'success': True,
+                'module': module,
+                'config_type': config_type,
+                'new_value': new_value,
+                'note': 'Restart the module subprocess for the change to take effect '
+                        '(disable then enable from the modules page, or use the bot '
+                        'control buttons).',
+            })
+        except Exception as e:
+            logger.error(f"dry_run DB write failed for {module}: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)},
+                status=500,
+            )
 
     async def _api_module_enable(self, request):
         """Enable a module by updating .env"""
