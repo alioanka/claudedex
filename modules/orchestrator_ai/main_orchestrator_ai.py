@@ -93,12 +93,25 @@ async def main() -> None:
     ttl_minutes = int(os.getenv('ORCHESTRATOR_REC_TTL_MINUTES', '60'))
 
     from modules.orchestrator_ai.core.orchestrator_engine import run_loop
+    from modules.orchestrator_ai.core.market_state import MarketStateCache
+
+    # 5-minute cache matches the default tick interval, so we hit
+    # CoinGecko at most once per tick. The engine passes a getter
+    # callable; we wrap the cache so the scorer always sees a fresh
+    # snapshot via one indirection.
+    market_cache = MarketStateCache(ttl_seconds=tick_interval)
+
+    async def market_state_getter():
+        state = await market_cache.get()
+        return state.btc_24h_change_pct
+
     try:
         await run_loop(
             pool,
             tick_interval_seconds=tick_interval,
             lookback_hours=lookback_hours,
             recommendation_ttl_minutes=ttl_minutes,
+            market_state_getter=market_state_getter,
         )
     finally:
         await pool.close()
