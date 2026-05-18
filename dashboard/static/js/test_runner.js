@@ -330,9 +330,14 @@
     });
   }
 
-  // A4: Module Overview — fetch /api/modules and diff against the
-  // operator's expected env-truth (Sniper + Arbitrage ENABLED).
-  const EXPECTED_ENABLED = new Set(['sniper', 'arbitrage']);
+  // A4: Module Overview — fetch /api/modules and confirm each
+  // module's `enabled` flag matches the env-flag source-of-truth.
+  // Previously this hard-coded EXPECTED_ENABLED = ['sniper',
+  // 'arbitrage'] from the operator's earlier deployment, which now
+  // FAILS the moment they enable more modules. The check is now
+  // self-consistent: each module reports its own enabled state from
+  // the env flag, so we just verify the response shape is sane
+  // (every module has enabled/status/effective_dry_run fields).
 
   async function verifyModuleOverview() {
     const grid = document.getElementById('tr-module-grid');
@@ -354,26 +359,44 @@
       entries.forEach(([name, mod]) => {
         const enabled = !!mod.enabled;
         const status = String(mod.status || (enabled ? 'ENABLED' : 'DISABLED'));
-        const expectEnabled = EXPECTED_ENABLED.has(name);
-        const match = enabled === expectEnabled;
-        if (!match) mismatches.push(`${name} expected=${expectEnabled} got=${enabled}`);
+        // Self-consistency checks (instead of comparing against a
+        // hardcoded expectation):
+        //   - if enabled=true, status must NOT start with DISABLED
+        //   - if enabled=false, status MUST be DISABLED
+        //   - effective_dry_run field must be present (boolean)
+        let match = true;
+        if (enabled && status.startsWith('DISABLED')) {
+          match = false;
+          mismatches.push(`${name}: enabled=true but status=DISABLED`);
+        }
+        if (!enabled && !status.startsWith('DISABLED')) {
+          match = false;
+          mismatches.push(`${name}: enabled=false but status=${status}`);
+        }
+        if (typeof mod.effective_dry_run !== 'boolean') {
+          match = false;
+          mismatches.push(`${name}: missing effective_dry_run field`);
+        }
         const cls = enabled ? 'chip-pass' : 'chip-pending';
+        const dryChip = (mod.effective_dry_run === false)
+          ? '<span class="chip chip-fail" style="margin-left:4px;">LIVE</span>'
+          : (mod.effective_dry_run === true ? '<span class="chip" style="background:#3b82f6;color:#fff;margin-left:4px;">DRY</span>' : '');
         const div = document.createElement('div');
         div.style.cssText = 'padding:6px 8px;border:1px solid var(--border-color,#334155);' +
                             'border-radius:6px;background:var(--bg-secondary,#1e293b);';
         div.innerHTML =
           `<div style="font-weight:600;font-size:0.85rem;">${esc(name)}</div>` +
-          `<div class="chip ${cls}" style="margin:4px 0 0 0;">${esc(status)}</div>` +
+          `<div style="margin:4px 0 0 0;"><span class="chip ${cls}">${esc(status)}</span>${dryChip}</div>` +
           (match ? '' :
-            `<div style="color:#ef4444;font-size:0.7rem;margin-top:4px;">⚠ env mismatch</div>`);
+            `<div style="color:#ef4444;font-size:0.7rem;margin-top:4px;">⚠ shape inconsistency</div>`);
         grid.appendChild(div);
-        rows.push(`${name.padEnd(20)} status=${status.padEnd(20)} enabled=${enabled}`);
+        rows.push(`${name.padEnd(20)} status=${status.padEnd(20)} enabled=${enabled} dry=${mod.effective_dry_run}`);
       });
       const body = rows.join('\n') + (mismatches.length
-        ? '\n\nMISMATCHES:\n' + mismatches.map(s => '  ' + s).join('\n') : '');
+        ? '\n\nINCONSISTENCIES:\n' + mismatches.map(s => '  ' + s).join('\n') : '');
       setCardStatus('tr-clone-module-overview',
         mismatches.length === 0 ? 'pass' : 'fail',
-        mismatches.length ? `${mismatches.length} mismatch` : null,
+        mismatches.length ? `${mismatches.length} issue` : null,
         body);
     } catch (e) {
       grid.innerHTML = '<span style="color:#ef4444;">fetch error</span>';

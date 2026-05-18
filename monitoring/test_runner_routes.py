@@ -652,6 +652,9 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         # rows by a column each table actually has (entry_timestamp
         # for sniper/copy/arb; opened_at for futures).
         "sql": (
+            # Per-table time columns are NOT uniform across modules:
+            #   sniper / arbitrage / copy_trading → entry_timestamp
+            #   futures / solana                  → entry_time
             "SELECT 'sniper' AS module, COUNT(*) AS trades_24h "
             "FROM sniper_trades WHERE entry_timestamp > NOW() - INTERVAL '24 hours' "
             "UNION ALL SELECT 'arbitrage', COUNT(*) "
@@ -661,7 +664,7 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "UNION ALL SELECT 'futures', COUNT(*) "
             "FROM futures_trades WHERE entry_time > NOW() - INTERVAL '24 hours' "
             "UNION ALL SELECT 'solana', COUNT(*) "
-            "FROM solana_trades WHERE entry_timestamp > NOW() - INTERVAL '24 hours' "
+            "FROM solana_trades WHERE entry_time > NOW() - INTERVAL '24 hours' "
             "ORDER BY 1"
         ),
         "cmd_preview": "COUNT(*) per *_trades table, last 24h",
@@ -679,6 +682,10 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         "category": "db",
         "kind": "db_query",
         "sql": (
+            # Per-table conventions:
+            #   sniper/arbitrage/copy → status='open' filter
+            #   futures               → futures_positions table (every row open)
+            #   solana                → solana_positions table (no status col)
             "SELECT 'sniper' AS module, COUNT(*) AS open_positions "
             "FROM sniper_trades WHERE status='open' "
             "UNION ALL SELECT 'arbitrage', COUNT(*) "
@@ -688,10 +695,10 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "UNION ALL SELECT 'futures', COUNT(*) "
             "FROM futures_positions "
             "UNION ALL SELECT 'solana', COUNT(*) "
-            "FROM solana_trades WHERE status='open' "
+            "FROM solana_positions "
             "ORDER BY 1"
         ),
-        "cmd_preview": "COUNT(*) WHERE status='open' per module",
+        "cmd_preview": "COUNT(*) open positions per module (status / position tables)",
         "timeout_s": 15,
         "description": "How many positions each module currently holds open.",
     },
@@ -704,6 +711,10 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         # always simulated until proven otherwise (the operator can
         # query sniper directly to distinguish if needed).
         "sql": (
+            # Per-table pnl-column conventions (the user has hit this
+            # twice now): arb + copy = profit_loss, futures = net_pnl,
+            # solana = pnl_usd. Sniper has no is_simulated col so it
+            # cannot meaningfully split — handled elsewhere.
             "SELECT 'arbitrage' AS module, "
             "  COALESCE(SUM(profit_loss) FILTER (WHERE is_simulated), 0)::numeric(20,4) AS simulated_pnl, "
             "  COALESCE(SUM(profit_loss) FILTER (WHERE NOT is_simulated), 0)::numeric(20,4) AS live_pnl, "
@@ -724,6 +735,13 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "  COUNT(*) FILTER (WHERE is_simulated), "
             "  COUNT(*) FILTER (WHERE NOT is_simulated) "
             "FROM futures_trades "
+            "UNION ALL "
+            "SELECT 'solana', "
+            "  COALESCE(SUM(pnl_usd) FILTER (WHERE is_simulated), 0)::numeric(20,4), "
+            "  COALESCE(SUM(pnl_usd) FILTER (WHERE NOT is_simulated), 0)::numeric(20,4), "
+            "  COUNT(*) FILTER (WHERE is_simulated), "
+            "  COUNT(*) FILTER (WHERE NOT is_simulated) "
+            "FROM solana_trades "
             "ORDER BY 1"
         ),
         "cmd_preview": "SUM(pnl) split by is_simulated, per module",

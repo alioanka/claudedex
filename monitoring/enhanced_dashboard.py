@@ -2160,9 +2160,16 @@ class DashboardEndpoints:
         clauses = []
         params: list = []
         if status == 'pending':
-            clauses.append("approved_at IS NULL")
+            # Pending = not yet approved AND not superseded by a later
+            # allocator tick. The supersede semantic (effective_until
+            # set to NOW() on a prior tick) is the fix for the
+            # "every Recompute Now click adds 5 more duplicate rows"
+            # operator-reported bug.
+            clauses.append("approved_at IS NULL AND effective_until IS NULL")
         elif status == 'approved':
             clauses.append("approved_at IS NOT NULL")
+        elif status == 'superseded':
+            clauses.append("effective_until IS NOT NULL AND approved_at IS NULL")
         if module_filter:
             params.append(module_filter)
             clauses.append(f"module = ${len(params)}")
@@ -6011,17 +6018,20 @@ class DashboardEndpoints:
                 'modules': {
                     'dashboard': 'online',
                     'dex': dex_module_status,
-                    'futures': 'offline' if not os.getenv('FUTURES_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'unknown',
-                    'solana': 'offline' if not os.getenv('SOLANA_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'unknown',
-                    # The 4 previously-missing modules. env-flag is the
-                    # single source of truth for "is this module supposed
-                    # to be running?" — matches the Agent-2 fix on
-                    # /api/modules and stops the MODE-badge JS from
-                    # seeing a stale "DEX-only" world.
-                    'sniper': 'unknown' if os.getenv('SNIPER_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
-                    'arbitrage': 'unknown' if os.getenv('ARBITRAGE_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
-                    'copy_trading': 'unknown' if os.getenv('COPY_TRADING_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
-                    'ai_analysis': 'unknown' if os.getenv('AI_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
+                    # All seven trading modules report 'online' when
+                    # their env flag is true. Health-probing each one
+                    # belongs in /api/modules (which already does that
+                    # via a 3-second timeout per module health-port).
+                    # For /api/bot/status — which is polled every 5s by
+                    # the MODE badge — we keep it cheap by reading env
+                    # only. The MODE badge cares about dry_run, not
+                    # per-module liveness.
+                    'futures':      'online' if os.getenv('FUTURES_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
+                    'solana':       'online' if os.getenv('SOLANA_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
+                    'sniper':       'online' if os.getenv('SNIPER_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
+                    'arbitrage':    'online' if os.getenv('ARBITRAGE_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
+                    'copy_trading': 'online' if os.getenv('COPY_TRADING_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
+                    'ai_analysis':  'online' if os.getenv('AI_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
                 }
             }
 

@@ -77,7 +77,27 @@ async def collect_inputs(
 
 async def write_proposals(conn, report: AllocationReport) -> int:
     """Insert one row per proposal with proposed_by='allocator'.
-    Returns the number of rows inserted."""
+    Returns the number of rows inserted.
+
+    Before inserting the new batch, SUPERSEDE any prior pending
+    allocator proposals (one row per module). This is the missing
+    invariant that the operator hit: each Recompute click was adding
+    5 more pending rows on top of the previous 5, so a 3-click frenzy
+    showed 15 duplicates and pollutied history. We mark old pending
+    rows by setting effective_until = NOW(), which the UI/queries
+    interpret as 'no longer the active proposal'. Approved rows are
+    untouched.
+    """
+    try:
+        await conn.execute(
+            "UPDATE portfolio_allocations "
+            "SET effective_until = NOW() "
+            "WHERE proposed_by = 'allocator' "
+            "  AND approved_at IS NULL "
+            "  AND effective_until IS NULL"
+        )
+    except Exception as e:
+        logger.warning("supersede prior pending allocator proposals failed: %s", e)
     n = 0
     for p in report.proposals:
         try:

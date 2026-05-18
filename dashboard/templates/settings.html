@@ -460,9 +460,16 @@ async function handlePasswordChange(event) {
     }
 
     try {
+        // CSRF: auth/csrf.py requires X-CSRF-Token on every non-GET.
+        // Without it the request 403s "CSRF token missing or invalid"
+        // — exactly the failure the operator saw.
+        const csrf = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
         const response = await fetch('/api/auth/change-password', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': decodeURIComponent(csrf),
+            },
             body: JSON.stringify({
                 current_password: currentPassword,
                 new_password: newPassword

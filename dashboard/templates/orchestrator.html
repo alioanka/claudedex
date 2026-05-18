@@ -193,7 +193,7 @@
         list.innerHTML = `<div class="orch-empty">
           No <strong>${esc(currentStatus)}</strong> recommendations.
           ${currentStatus === 'pending'
-            ? 'Either the orchestrator subprocess isn\\'t running, no module crossed a scoring threshold yet, or all pending recs were already actioned.'
+            ? "Either the orchestrator subprocess isn't running, no module crossed a scoring threshold yet, or all pending recs were already actioned."
             : ''}
         </div>`;
         return;
