@@ -1115,6 +1115,19 @@ class DashboardEndpoints:
         self.app.router.add_get(
             '/api/modules/{module}/dry-run', self._api_module_get_dry_run
         )
+        # Phase 3 D5: orchestrator advisory layer. Surfaces pending
+        # recommendations + approval action.
+        self.app.router.add_get(
+            '/api/orchestrator/recommendations', self._api_orch_list_recs
+        )
+        self.app.router.add_post(
+            '/api/orchestrator/recommendations/{rec_id}/approve',
+            self._api_orch_approve_rec,
+        )
+        self.app.router.add_post(
+            '/api/orchestrator/recommendations/{rec_id}/reject',
+            self._api_orch_reject_rec,
+        )
 
         logger.info("✅ Fallback module routes registered")
 
@@ -1867,6 +1880,159 @@ class DashboardEndpoints:
             })
         except Exception as e:
             logger.error(f"dry_run DB write failed for {module}: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)},
+                status=500,
+            )
+
+    # ---- Phase 3 D5/D6: orchestrator recommendations surface ----
+    async def _api_orch_list_recs(self, request):
+        """GET /api/orchestrator/recommendations
+        Query params:
+          ?status=pending|approved|rejected|superseded|all  (default pending)
+          ?limit=N  (default 50, max 200)
+          ?module=<name>  (optional filter)
+        """
+        status = (request.query.get('status') or 'pending').lower()
+        try:
+            limit = max(1, min(int(request.query.get('limit', '50')), 200))
+        except (TypeError, ValueError):
+            limit = 50
+        module_filter = request.query.get('module') or None
+
+        clauses = []
+        params: list = []
+        if status == 'pending':
+            clauses.append("approved IS NULL AND superseded_at IS NULL")
+        elif status == 'approved':
+            clauses.append("approved IS TRUE")
+        elif status == 'rejected':
+            clauses.append("approved IS FALSE")
+        elif status == 'superseded':
+            clauses.append("superseded_at IS NOT NULL")
+        # 'all' = no filter
+        if module_filter:
+            params.append(module_filter)
+            clauses.append(f"module = ${len(params)}")
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(limit)
+        sql = (
+            "SELECT id::text, created_at, module, recommended, "
+            "  confidence, reason, metrics, approved, approved_at, "
+            "  approved_by, superseded_at "
+            f"FROM orchestrator_recommendations {where} "
+            f"ORDER BY created_at DESC LIMIT ${len(params)}"
+        )
+        try:
+            if not self.db or not getattr(self.db, 'pool', None):
+                return web.json_response(
+                    {'success': False, 'error': 'db pool unavailable'},
+                    status=503,
+                )
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(sql, *params)
+            return web.json_response({
+                'success': True,
+                'count': len(rows),
+                'recommendations': [
+                    {
+                        'id': r['id'],
+                        'created_at': r['created_at'].isoformat() if r['created_at'] else None,
+                        'module': r['module'],
+                        'recommended': r['recommended'],
+                        'confidence': float(r['confidence']) if r['confidence'] is not None else None,
+                        'reason': r['reason'],
+                        'metrics': r['metrics'],
+                        'approved': r['approved'],
+                        'approved_at': r['approved_at'].isoformat() if r['approved_at'] else None,
+                        'approved_by': r['approved_by'],
+                        'superseded_at': r['superseded_at'].isoformat() if r['superseded_at'] else None,
+                    }
+                    for r in rows
+                ],
+            })
+        except Exception as e:
+            logger.error(f"orch list error: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)},
+                status=500,
+            )
+
+    async def _api_orch_approve_rec(self, request):
+        """POST /api/orchestrator/recommendations/{rec_id}/approve
+        Marks the rec as approved + applies its action (flips
+        config_settings.<module>_config.dry_run, etc.). Operator must
+        still restart the subprocess for the flip to take effect on
+        the engine. We do NOT auto-restart."""
+        return await self._orch_decide(request, approved=True)
+
+    async def _api_orch_reject_rec(self, request):
+        """POST /api/orchestrator/recommendations/{rec_id}/reject
+        Marks the rec as rejected (audit trail) but takes no action."""
+        return await self._orch_decide(request, approved=False)
+
+    async def _orch_decide(self, request, *, approved: bool):
+        rec_id = request.match_info.get('rec_id', '')
+        # Identify the operator from the session if present.
+        approved_by = None
+        try:
+            session = request.get('session')
+            if session:
+                approved_by = session.get('username') or session.get('user_id')
+        except Exception:
+            pass
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'},
+                status=503,
+            )
+        try:
+            async with self.db.pool.acquire() as conn:
+                rec = await conn.fetchrow(
+                    "SELECT module, recommended FROM orchestrator_recommendations "
+                    "WHERE id = $1::uuid",
+                    rec_id,
+                )
+                if rec is None:
+                    return web.json_response(
+                        {'success': False, 'error': f'rec {rec_id} not found'},
+                        status=404,
+                    )
+                await conn.execute(
+                    "UPDATE orchestrator_recommendations "
+                    "SET approved = $1, approved_at = NOW(), approved_by = $2 "
+                    "WHERE id = $3::uuid",
+                    approved, approved_by, rec_id,
+                )
+                applied = None
+                # APPLY the action only on approval. Currently only
+                # 'to_dry' / 'to_live' map to DB flips; enable/disable
+                # are recommended-only for now (require env edits).
+                if approved and rec['recommended'] in ('to_dry', 'to_live'):
+                    new_dry = 'true' if rec['recommended'] == 'to_dry' else 'false'
+                    config_type = self._DRY_RUN_CONFIG_TYPE_MAP.get(rec['module'])
+                    if config_type:
+                        await conn.execute(
+                            "INSERT INTO config_settings (config_type, key, value, value_type) "
+                            "VALUES ($1, 'dry_run', $2, 'bool') "
+                            "ON CONFLICT (config_type, key) DO UPDATE SET value = EXCLUDED.value",
+                            config_type, new_dry,
+                        )
+                        applied = {'config_type': config_type, 'dry_run': new_dry}
+                        logger.info(
+                            f"[Phase 3 D6] orchestrator rec {rec_id} applied: "
+                            f"{rec['module']} -> dry_run={new_dry} by {approved_by}"
+                        )
+            return web.json_response({
+                'success': True,
+                'rec_id': rec_id,
+                'approved': approved,
+                'applied': applied,
+                'note': ('Restart the module subprocess for the change to take effect.'
+                         if applied else 'No DB-level action applied.'),
+            })
+        except Exception as e:
+            logger.error(f"orch decide({approved}) error: {e}")
             return web.json_response(
                 {'success': False, 'error': str(e)},
                 status=500,
