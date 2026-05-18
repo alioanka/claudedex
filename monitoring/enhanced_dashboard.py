@@ -1140,6 +1140,13 @@ class DashboardEndpoints:
         self.app.router.add_get(
             '/api/orchestrator/recommendations', self._api_orch_list_recs
         )
+        # Score-trend endpoint: per-module score over time, drawn from
+        # the metrics JSON of historical recommendation rows. Lets the
+        # /orchestrator page show a trend line per module without
+        # adding a separate "score_log" table.
+        self.app.router.add_get(
+            '/api/orchestrator/history', self._api_orch_history
+        )
         self.app.router.add_post(
             '/api/orchestrator/recommendations/{rec_id}/approve',
             self._api_orch_approve_rec,
@@ -2027,6 +2034,68 @@ class DashboardEndpoints:
             })
         except Exception as e:
             logger.error(f"orch list error: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)},
+                status=500,
+            )
+
+    async def _api_orch_history(self, request):
+        """GET /api/orchestrator/history?hours=72
+        Returns per-module timeseries of:
+          - score, confidence, recommended (categorical)
+          - decomposed metrics.components (win_rate, pnl_signal,
+            volume_factor, regime_signal)
+          - total_pnl_usd snapshot at that tick
+
+        Useful for /orchestrator's trend chart so the operator can see
+        a module's score-over-time, not just the most recent rec.
+        """
+        try:
+            hours = max(1, min(int(request.query.get('hours', '72')), 24 * 7))
+        except (TypeError, ValueError):
+            hours = 72
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'},
+                status=503,
+            )
+        try:
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT created_at, module, recommended, confidence, metrics "
+                    "FROM orchestrator_recommendations "
+                    f"WHERE created_at > NOW() - INTERVAL '{hours} hours' "
+                    "ORDER BY module, created_at ASC"
+                )
+            # Group by module so the frontend can render one series each.
+            series = {}
+            for r in rows:
+                m = r['module']
+                if m not in series:
+                    series[m] = []
+                metrics = r['metrics'] or {}
+                if isinstance(metrics, str):
+                    import json as _json
+                    try:
+                        metrics = _json.loads(metrics)
+                    except Exception:
+                        metrics = {}
+                series[m].append({
+                    'ts': r['created_at'].isoformat() if r['created_at'] else None,
+                    'recommended': r['recommended'],
+                    'confidence': float(r['confidence']) if r['confidence'] is not None else None,
+                    'score': metrics.get('score'),
+                    'components': metrics.get('components', {}),
+                    'total_pnl_usd': metrics.get('total_pnl_usd'),
+                    'closed_trades': metrics.get('closed_trades'),
+                })
+            return web.json_response({
+                'success': True,
+                'window_hours': hours,
+                'series': series,
+            })
+        except Exception as e:
+            logger.error(f"orch history error: {e}")
             return web.json_response(
                 {'success': False, 'error': str(e)},
                 status=500,
