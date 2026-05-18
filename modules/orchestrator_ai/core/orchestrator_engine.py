@@ -257,8 +257,28 @@ async def run_tick(
         "modules_scored": 0,
         "recommendations_inserted": 0,
         "stale_expired": 0,
+        "breaker_trips": 0,
         "errors": [],
     }
+    # Phase 4C: run the daily-loss circuit breaker BEFORE the scorer.
+    # If a module just got flipped to DRY by the breaker, the scorer's
+    # 'to_live' recommendation this tick would be moot anyway, and the
+    # operator gets a clearer audit trail when the trip event is the
+    # first thing in the log.
+    try:
+        from .circuit_breaker import check_all_modules
+        breaker_results = await check_all_modules(db_pool)
+        summary["breaker_trips"] = sum(
+            1 for r in breaker_results if r.get("tripped") is True
+        )
+        if summary["breaker_trips"]:
+            logger.critical(
+                "CIRCUIT BREAKER tick: %d module(s) tripped",
+                summary["breaker_trips"],
+            )
+    except Exception as e:
+        summary["errors"].append(f"breaker: {e}")
+
     async with db_pool.acquire() as conn:
         # 1. Expire stale pending rows first so the new pass starts clean.
         try:
