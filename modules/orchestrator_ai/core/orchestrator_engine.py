@@ -21,12 +21,89 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
+import os
+import pickle
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 
 from .performance_scorer import ModuleScoreInputs, score_module
 
 logger = logging.getLogger("orchestrator_ai")
+
+
+# ---- ML calibration model (optional) -----------------------------
+# When data/orchestrator_ai_model.pkl exists (trained by
+# modules.orchestrator_ai.core.ml_trainer), the engine multiplies
+# the scorer's hard-coded confidence by P(operator_agrees | features)
+# from the model. Lower confidence = more cautious; higher confidence
+# = the model thinks the operator will approve.
+_ML_MODEL: Optional[dict] = None
+_ML_MODEL_LOADED_AT: Optional[float] = None
+
+
+def _load_ml_model(path: str = "data/orchestrator_ai_model.pkl") -> Optional[dict]:
+    """Best-effort load. Returns None if the file isn't there or is
+    malformed — the engine falls back to the scorer's raw confidence."""
+    global _ML_MODEL, _ML_MODEL_LOADED_AT
+    p = Path(path)
+    if not p.exists():
+        _ML_MODEL = None
+        return None
+    try:
+        mtime = p.stat().st_mtime
+        # Reload only when the file changes on disk.
+        if _ML_MODEL is not None and _ML_MODEL_LOADED_AT == mtime:
+            return _ML_MODEL
+        with open(p, "rb") as f:
+            data = pickle.load(f)
+        # Sanity check
+        if not all(k in data for k in ("feature_columns", "weights", "bias")):
+            logger.warning("ml model %s missing required keys; ignoring", path)
+            return None
+        _ML_MODEL = data
+        _ML_MODEL_LOADED_AT = mtime
+        logger.info("loaded ML model from %s (acc=%.3f, n=%d, trained=%s)",
+                    path, data.get("accuracy", -1), data.get("n_examples", 0),
+                    data.get("trained_at", "?"))
+        return data
+    except Exception as e:
+        logger.warning("failed to load ml model %s: %s", path, e)
+        return None
+
+
+def _ml_calibrated_confidence(
+    model: dict, inputs: ModuleScoreInputs, components: dict, score: float,
+) -> Optional[float]:
+    """Run the logistic regression on the current features. Returns
+    P(approved) or None on shape mismatch."""
+    try:
+        feature_columns = model["feature_columns"]
+        weights = model["weights"]
+        bias = model["bias"]
+        # Build the feature vector in the exact order the trainer used.
+        # See ml_trainer.FEATURE_KEYS.
+        feat_map = {
+            "closed_trades": float(inputs.closed_trades),
+            "total_pnl_usd": float(inputs.total_pnl_usd),
+            "live_trades": float(inputs.live_trades),
+            "btc_24h_change_pct": float(inputs.btc_24h_change_pct or 0.0),
+            "win_rate": float(components.get("win_rate") or 0.0),
+            "pnl_signal": float(components.get("pnl_signal") or 0.0),
+            "volume_factor": float(components.get("volume_factor") or 0.0),
+            "regime_signal": float(components.get("regime_signal") or 0.0),
+            "sharpe_signal": float(components.get("sharpe_signal") or 0.0),
+            "sharpe": float(components.get("sharpe") or 0.0),
+            "score": float(score),
+        }
+        x = [feat_map.get(k, 0.0) for k in feature_columns]
+        z = bias + sum(w * xi for w, xi in zip(weights, x))
+        z = max(-30.0, min(30.0, z))
+        return 1.0 / (1.0 + math.exp(-z))
+    except Exception as e:
+        logger.debug("ml calibration failed: %s", e)
+        return None
 
 
 # Schema map: how to aggregate per-module. Each entry maps a module
@@ -203,6 +280,23 @@ async def run_tick(
                 # Skip noise — not enough data to meaningfully score.
                 continue
             result = score_module(inputs)
+            # ML-calibrated confidence (optional). When a trained model
+            # is on disk, multiply the hard-coded confidence by
+            # P(operator_agrees | features). Caps the result so the
+            # confidence shown in the rec reflects BOTH data sufficiency
+            # AND the model's belief that the operator will agree.
+            ml_model = _load_ml_model()
+            if ml_model is not None:
+                p_agree = _ml_calibrated_confidence(
+                    ml_model, inputs, result.components, result.score
+                )
+                if p_agree is not None:
+                    raw_conf = result.confidence
+                    # Geometric mean: any side near 0 drags the product down.
+                    calibrated = math.sqrt(raw_conf * p_agree)
+                    result.components["raw_confidence"] = round(raw_conf, 3)
+                    result.components["p_agree_ml"] = round(p_agree, 3)
+                    result.confidence = round(calibrated, 3)
             # We deliberately DO write 'hold' rows too — gives the
             # operator visibility into "the orchestrator looked at this
             # but chose not to act". But to keep the table bounded we
