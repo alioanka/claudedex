@@ -1132,6 +1132,18 @@ class DashboardEndpoints:
         self.app.router.add_post(
             '/api/modules/{module}/restart', self._api_module_restart
         )
+        # Phase 4A: backtest replay. POST runs the counterfactual
+        # simulator over the trade + recommendation history.
+        self.app.router.add_get(
+            '/backtest-replay', require_auth(self._backtest_replay_page)
+        )
+        self.app.router.add_post(
+            '/api/backtest/replay', self._api_backtest_replay
+        )
+        self.app.router.add_get(
+            '/api/backtest/strategies', self._api_backtest_strategies
+        )
+
         # Phase 3 D5: orchestrator advisory layer. Surfaces pending
         # recommendations + approval action.
         self.app.router.add_get(
@@ -1961,6 +1973,107 @@ class DashboardEndpoints:
             })
         except Exception as e:
             logger.error(f"restart flag write failed for {module}: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)},
+                status=500,
+            )
+
+    # ---- Phase 4A: backtest replay ----
+    async def _backtest_replay_page(self, request):
+        """Render dashboard/templates/backtest_replay.html."""
+        template = self.jinja_env.get_template('backtest_replay.html')
+        return web.Response(
+            text=template.render(page='backtest_replay'),
+            content_type='text/html',
+        )
+
+    async def _api_backtest_strategies(self, request):
+        """GET /api/backtest/strategies — returns the names of the
+        replay strategies available. Frontend uses this to populate
+        the strategy dropdown so adding a new strategy on the
+        backend lights up automatically."""
+        try:
+            from modules.backtest_replay.core.strategies import STRATEGY_FUNCS
+            return web.json_response({
+                'success': True,
+                'strategies': list(STRATEGY_FUNCS.keys()),
+            })
+        except Exception as e:
+            return web.json_response(
+                {'success': False, 'error': str(e)},
+                status=500,
+            )
+
+    async def _api_backtest_replay(self, request):
+        """POST /api/backtest/replay
+        Body: {start_ts?, end_ts?, strategy, strategy_params?, modules?}
+        Returns: dataclass-asdict of ReplayReport."""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        strategy = body.get('strategy', 'approve_all')
+        strategy_params = body.get('strategy_params', {})
+        modules = body.get('modules')
+        # Default window: last 30 days. Capped at 365 to bound DB load.
+        from datetime import datetime, timedelta
+        try:
+            if body.get('start_ts'):
+                start_ts = datetime.fromisoformat(body['start_ts'].replace('Z', ''))
+            else:
+                start_ts = datetime.utcnow() - timedelta(days=30)
+            if body.get('end_ts'):
+                end_ts = datetime.fromisoformat(body['end_ts'].replace('Z', ''))
+            else:
+                end_ts = datetime.utcnow()
+        except (TypeError, ValueError) as e:
+            return web.json_response(
+                {'success': False, 'error': f'bad date: {e}'},
+                status=400,
+            )
+        window_days = (end_ts - start_ts).days
+        if window_days > 365:
+            return web.json_response(
+                {'success': False, 'error': 'window too large (max 365 days)'},
+                status=400,
+            )
+        if window_days < 0:
+            return web.json_response(
+                {'success': False, 'error': 'end_ts must be after start_ts'},
+                status=400,
+            )
+
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'},
+                status=503,
+            )
+
+        try:
+            from modules.backtest_replay.core.trade_loader import (
+                load_trades, load_recommendations,
+            )
+            from modules.backtest_replay.core.replay_engine import run_replay
+            from dataclasses import asdict
+            trades = await load_trades(self.db.pool, start_ts, end_ts, modules)
+            recs = await load_recommendations(self.db.pool, start_ts, end_ts, modules)
+            report = run_replay(
+                trades, recs, strategy, strategy_params,
+                start_ts=start_ts, end_ts=end_ts,
+            )
+            return web.json_response({
+                'success': True,
+                'report': asdict(report),
+                'n_trades_loaded': sum(len(v) for v in trades.values()),
+                'n_recs_loaded': len(recs),
+            })
+        except ValueError as e:
+            return web.json_response(
+                {'success': False, 'error': str(e)},
+                status=400,
+            )
+        except Exception as e:
+            logger.error(f"backtest replay failed: {e}", exc_info=True)
             return web.json_response(
                 {'success': False, 'error': str(e)},
                 status=500,
