@@ -547,6 +547,17 @@ class TradingBotOrchestrator:
             module_key="copy_trading"
         )
 
+        # Phase 3 D: AI/ML orchestrator (advisory layer).
+        # Reads each trading module's recent DRY_RUN performance,
+        # writes recommendations to orchestrator_recommendations table.
+        # Never trades. Operator approves via dashboard.
+        self.modules['orchestrator_ai'] = ModuleProcess(
+            name="Orchestrator AI",
+            script_path="modules/orchestrator_ai/main_orchestrator_ai.py",
+            enabled_env_var="ORCHESTRATOR_AI_MODULE_ENABLED",
+            module_key="orchestrator_ai",
+        )
+
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
