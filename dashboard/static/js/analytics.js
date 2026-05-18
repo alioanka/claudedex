@@ -5,7 +5,10 @@
  */
 
 let currentModule = 'dex_trading';
-let currentTimeframe = '24h';
+// All Time so the page shows full P&L on first paint (matches the
+// <option selected> in analytics.html). A timeframe selector change
+// reassigns this immediately.
+let currentTimeframe = 'all';
 let equityChart = null;
 let dailyPnlChart = null;
 let refreshInterval = null;
