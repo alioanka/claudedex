@@ -134,3 +134,66 @@ can pull incrementally:
   data collection.
 - Operator can flip a single module to LIVE via dashboard without
   affecting other modules.
+
+---
+
+## Shipped — May 2026 (25 commits, f9c43e8..c1c07c0)
+
+### A. Per-module DRY_RUN
+- `core.dry_run.resolve_module_dry_run(module, db_row_value=...)` —
+  precedence DB > `<MODULE>_DRY_RUN` env > `DRY_RUN` env > default True.
+- All 7 `main_*.py` entry points use it.
+- `<MODULE>_DRY_RUN` env override works for every module.
+
+### B. Dashboard surface
+- `GET/POST /api/modules/<m>/dry-run` — read + flip DB row.
+- `POST /api/modules/<m>/restart` — drop logs/.restart_<m> flag;
+  main.py picks up within 5s and restarts the subprocess.
+- `/api/modules` includes `effective_dry_run` per module.
+- `/full-dashboard` Module Overview shows DRY/LIVE chip per module.
+
+### C. Test Runner additions
+- 13 new catalog entries covering per-module DRY_RUN flags,
+  trade-count growth, P&L split simulated-vs-live, orchestrator
+  table presence, pending-rec count, history endpoint, ML training-
+  data view + 2 trainer entries in B-section.
+
+### D. AI orchestrator (advisory, end-to-end)
+- `migrations/018_orchestrator_recommendations.sql` + `019_orchestrator_labels.sql`.
+- `modules/orchestrator_ai/`:
+  - `core/performance_scorer.py` — 5-signal weighted score (win-rate,
+    P&L, Sharpe, volume_factor, regime_signal). 15 unit tests pass.
+  - `core/orchestrator_engine.py` — collect → score → write recs.
+    Reads per-trade pnls (cap 500/module) so Sharpe fires on real
+    data. Optional ML calibration on confidence when the trained
+    model is on disk.
+  - `core/market_state.py` — CoinGecko BTC/ETH 24h cache with
+    stale-but-existing fallback on network failure.
+  - `core/ml_trainer.py` — sklearn-free logistic regression on
+    operator-approval labels; writes `data/orchestrator_ai_model.pkl`
+    + JSON sidecar. Skip-with-reason when <30 examples.
+  - `main_orchestrator_ai.py` — subprocess entry; cadence configurable
+    via `ORCHESTRATOR_TICK_INTERVAL`/`LOOKBACK_HOURS`/`REC_TTL_MINUTES`.
+- `main.py` registers the orchestrator subprocess under
+  `ORCHESTRATOR_AI_MODULE_ENABLED`.
+- Dashboard:
+  - `GET /api/orchestrator/recommendations` (filterable by status/module).
+  - `GET /api/orchestrator/history?hours=N` (per-module score timeseries).
+  - `POST /api/orchestrator/recommendations/{id}/{approve|reject}` —
+    approve flips the DB row + drops the restart flag in one click.
+  - `/orchestrator` page: status tabs, rec cards with approve/reject,
+    score-trend table with unicode sparklines, auto-refresh every 60s.
+
+### Operator workflow (end-to-end)
+
+1. Enable all modules in DRY_RUN via .env.
+2. Wait ~5-10 min for first orchestrator tick. Recs land in the table.
+3. Visit `/orchestrator` — see "Sniper → to_live, conf=0.78".
+4. Click Approve. Dashboard writes config_settings + drops restart flag.
+5. main.py picks up flag within 5s, restarts sniper subprocess.
+6. Sniper re-bootstraps with `dry_run=false` from DB row, starts
+   trading live. Total wall-clock click → live: ~10-15s.
+7. After 30 days of approval/reject decisions, run
+   `python -m modules.orchestrator_ai.core.ml_trainer` (or click the
+   Test Runner button). Engine auto-loads the pkl on next tick and
+   uses it to calibrate confidence on future recs.
