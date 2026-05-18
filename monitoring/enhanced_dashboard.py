@@ -1463,7 +1463,13 @@ class DashboardEndpoints:
         copytrading_running = False
         ai_running = False
 
-        # Check Sniper module health
+        # Check Sniper module health. Two signals — either is enough:
+        #   1. health-port HTTP probe (if BaseModule opened a server)
+        #   2. sniper_runtime_stats freshness — the engine snapshots
+        #      stats every ~30s; if the row is < 120s old the
+        #      subprocess is alive. This is the more reliable signal
+        #      because the health-port is optional, but runtime_stats
+        #      updates are mandatory for every engine tick.
         try:
             sniper_port = int(os.getenv('SNIPER_HEALTH_PORT', '8083'))
             async with aiohttp.ClientSession() as session:
@@ -1472,6 +1478,17 @@ class DashboardEndpoints:
                         sniper_running = True
         except Exception:
             pass
+        if not sniper_running and self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    age = await conn.fetchval("""
+                        SELECT EXTRACT(EPOCH FROM (NOW() - updated_at))::int
+                        FROM sniper_runtime_stats WHERE id = 1
+                    """)
+                    if age is not None and age <= 120:
+                        sniper_running = True
+            except Exception:
+                pass
 
         # Check Arbitrage module health
         try:
