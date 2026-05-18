@@ -789,6 +789,28 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "trend chart."
         ),
     },
+    {
+        "id": "db_orch_training_data",
+        "title": "DB: orchestrator ML training-data view",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT recommended, operator_agreed, COUNT(*) AS n "
+            "FROM orchestrator_training_data "
+            "GROUP BY recommended, operator_agreed "
+            "ORDER BY recommended, operator_agreed"
+        ),
+        "cmd_preview": (
+            "SELECT recommended, operator_agreed, COUNT(*) FROM orchestrator_training_data"
+        ),
+        "timeout_s": 15,
+        "description": (
+            "Confirms the labeled-data view exists and shows the per-"
+            "action accept/reject distribution. After 30+ days of "
+            "operator interactions this becomes the training set for "
+            "a confidence-calibration model."
+        ),
+    },
 ]
 
 
