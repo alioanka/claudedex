@@ -935,6 +935,16 @@ class DashboardEndpoints:
             content_type='text/html',
         )
 
+    async def _orchestrator_page(self, request):
+        """Render dashboard/templates/orchestrator.html — Phase 3 D5
+        advisory recommendations view. Operator sees pending recs,
+        clicks Approve / Reject, audit trail tracks who did what."""
+        template = self.jinja_env.get_template('orchestrator.html')
+        return web.Response(
+            text=template.render(page='orchestrator'),
+            content_type='text/html',
+        )
+
     def _setup_rpc_pool_routes(self):
         """Setup RPC/API Pool management routes"""
         try:
@@ -1117,6 +1127,9 @@ class DashboardEndpoints:
         )
         # Phase 3 D5: orchestrator advisory layer. Surfaces pending
         # recommendations + approval action.
+        self.app.router.add_get(
+            '/orchestrator', require_auth(self._orchestrator_page)
+        )
         self.app.router.add_get(
             '/api/orchestrator/recommendations', self._api_orch_list_recs
         )
