@@ -544,6 +544,43 @@
         <span id="restart-alert-banner-text"></span>
         <a href="/modules" style="color:#fff; text-decoration:underline; margin-left:12px;">View modules</a>
     </div>
+    <!-- Phase 4C: circuit breaker banner. Lights up red when any
+         module has tripped its daily-loss breaker in the last 24h
+         and the operator hasn't acknowledged. Banner is sticky so
+         the alert follows the operator across every dashboard page. -->
+    <div id="cb-alert-banner" style="display:none; position:sticky; top:0; z-index:9998;
+         background:#f59e0b; color:#1a1a1a; padding:8px 16px; text-align:center; font-weight:700;
+         box-shadow:0 2px 4px rgba(0,0,0,0.3);">
+        <i class="fas fa-bolt"></i>
+        <span id="cb-alert-banner-text"></span>
+        <a href="/orchestrator" style="color:#1a1a1a; text-decoration:underline; margin-left:12px;">View trips</a>
+    </div>
+    <script>
+    (function () {
+        async function checkBreakerAlerts() {
+            try {
+                const r = await fetch('/api/circuit-breaker/active');
+                if (!r.ok) return;
+                const data = await r.json();
+                const banner = document.getElementById('cb-alert-banner');
+                const text = document.getElementById('cb-alert-banner-text');
+                if (data.count && data.count > 0) {
+                    const modules = data.active.map(e =>
+                        `${e.module} (${e.pct_loss.toFixed(2)}% loss)`
+                    ).join(', ');
+                    text.textContent = ` CIRCUIT BREAKER tripped — ${data.count} module(s) auto-flipped to DRY_RUN: ${modules}`;
+                    banner.style.display = 'block';
+                } else {
+                    banner.style.display = 'none';
+                }
+            } catch (_) { /* silent */ }
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            checkBreakerAlerts();
+            setInterval(checkBreakerAlerts, 30000);
+        });
+    })();
+    </script>
     <script>
     (function(){
         async function checkRestartAlerts() {
