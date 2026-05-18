@@ -399,4 +399,6 @@
         }
     }
 </script>
+<script src="/static/js/dry_run_widget.js?v={{ asset_version or 'dev' }}"></script>
+<script>document.addEventListener('DOMContentLoaded', function () { DryRunWidget.init('sniper'); });</script>
 {% endblock %}

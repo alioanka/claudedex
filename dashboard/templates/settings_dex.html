@@ -208,4 +208,6 @@
 
 {% block extra_js %}
 <script src="/static/js/settings.js?v=4"></script>
+<script src="/static/js/dry_run_widget.js?v={{ asset_version or 'dev' }}"></script>
+<script>document.addEventListener('DOMContentLoaded', function () { DryRunWidget.init('dex'); });</script>
 {% endblock %}
