@@ -558,6 +558,17 @@ class TradingBotOrchestrator:
             module_key="orchestrator_ai",
         )
 
+        # Phase 4B: per-module capital allocator (advisory).
+        # Reads each module's rolling Sharpe, proposes allocations to
+        # portfolio_allocations table. Operator approves manually.
+        # Never trades.
+        self.modules['portfolio_allocator'] = ModuleProcess(
+            name="Portfolio Allocator",
+            script_path="modules/portfolio_allocator/main_portfolio_allocator.py",
+            enabled_env_var="PORTFOLIO_ALLOCATOR_MODULE_ENABLED",
+            module_key="portfolio_allocator",
+        )
+
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
