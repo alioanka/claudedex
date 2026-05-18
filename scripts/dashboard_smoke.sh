@@ -156,7 +156,13 @@ done
 echo
 echo "=== 5. /api/arbitrage/stats (honest status string) ==="
 ARB_STATS="$(auth_get "$BASE/api/arbitrage/stats")"
-if echo "$ARB_STATS" | jq -e '.status' >/dev/null 2>&1; then
+# Response shape is {success, stats: {status, total_trades, ...}}.
+# The earlier check at .status (top-level) always failed — the field
+# is nested under .stats. Accept either to stay tolerant of future
+# unwrapping.
+if echo "$ARB_STATS" | jq -e '.stats.status' >/dev/null 2>&1; then
+    pass "stats.status field present (= $(echo "$ARB_STATS" | jq -r '.stats.status'))"
+elif echo "$ARB_STATS" | jq -e '.status' >/dev/null 2>&1; then
     pass "status field present (= $(echo "$ARB_STATS" | jq -r '.status'))"
 else
     fail "status field missing"
@@ -166,10 +172,15 @@ fi
 echo
 echo "=== 6. /health canary ==="
 H="$(auth_get "$BASE/health")"
-if echo "$H" | jq -e '.ok == true' >/dev/null 2>&1; then
-    pass "ok:true"
+# /health returns {status: "healthy", service, time, git_sha, db}. The
+# previous `.ok == true` check came from an older draft of the route;
+# the canonical field is `.status == "healthy"`.
+if echo "$H" | jq -e '.status == "healthy"' >/dev/null 2>&1; then
+    pass "status:healthy ($(echo "$H" | jq -r '.db // "?"') db)"
+elif echo "$H" | jq -e '.ok == true' >/dev/null 2>&1; then
+    pass "ok:true (legacy shape)"
 else
-    fail "ok != true. Got: $H"
+    fail "/health not healthy. Got: $H"
 fi
 
 # ---------- 7. CSRF round-trip ----------
