@@ -780,3 +780,99 @@ POST /api/test-runner/run {test_id}   → {success, exit_code, stdout, stderr, d
 ```
 
 `test_id` must match an entry in `TEST_CATALOG`; raw commands are never accepted. The catalog lives in `monitoring/test_runner_routes.py` and is the single source of truth for "what can the operator test from the UI?". Add a new entry to the list to expose a new test.
+
+---
+
+## Phase 3 — Per-module DRY_RUN + AI Orchestrator (commits f9c43e8..2b6021c)
+
+### Operator workflow
+
+#### A. Enable a module in DRY_RUN to start collecting data
+
+```bash
+# .env on VPS
+SNIPER_MODULE_ENABLED=true
+ARBITRAGE_MODULE_ENABLED=true
+SOLANA_MODULE_ENABLED=true
+FUTURES_MODULE_ENABLED=true
+COPY_TRADING_MODULE_ENABLED=true
+AI_MODULE_ENABLED=true
+ORCHESTRATOR_AI_MODULE_ENABLED=true   # advisory layer
+
+DRY_RUN=true                          # global default
+# Per-module overrides (optional — leave unset to inherit DRY_RUN)
+# SNIPER_DRY_RUN=true
+# FUTURES_DRY_RUN=true
+# ...
+```
+
+```bash
+docker compose up -d --build trading-bot
+sleep 15
+docker compose ps    # expect trading-bot Up (healthy)
+```
+
+#### B. Flip a single module live without affecting others
+
+Two paths, pick one:
+
+1. **Dashboard**: `POST /api/modules/<module>/dry-run {"dry_run": false}`
+   Writes `config_settings.<module>_config.dry_run='false'`. The
+   module's subprocess reads this via
+   `core.dry_run.resolve_module_dry_run()` on next restart.
+2. **`.env`**: `SNIPER_DRY_RUN=false` (capital matters). Beats global
+   `DRY_RUN`. Restart trading-bot.
+
+Then **restart only that module**:
+```bash
+curl -X POST http://localhost:8080/api/modules/sniper/disable
+curl -X POST http://localhost:8080/api/modules/sniper/enable
+```
+
+(or use the dashboard `/modules` page buttons).
+
+#### C. Watch the orchestrator's advisory recommendations
+
+```
+http://<vps>:8080/orchestrator
+```
+
+The orchestrator subprocess wakes up every 5 minutes, reads each
+module's recent closed trades, and writes recommendations:
+- `to_live` — DRY_RUN performance crossed thresholds (≥100 trades,
+  ≥55% win rate, ≥$10 P&L); operator could flip live
+- `to_dry`  — module is live and recent P&L turned negative
+- `disable` — losing > $50 over the lookback window
+- `hold`    — keep current state (most common)
+
+Operator clicks Approve/Reject on each card. Approving `to_live` /
+`to_dry` flips the DB row — operator still has to restart the
+subprocess for the engine to pick up.
+
+### Verifying Phase 3 from /test-runner
+
+Section D has 4 new probes:
+- `db_per_module_dry_run_flags` — current dry_run overrides in DB
+- `db_trades_per_module_24h`    — confirms each module is writing
+- `db_open_positions_per_module` — open-position counts
+- `db_pnl_simulated_vs_live_per_module` — **must show 0 live_pnl**
+  for every module before any live flip
+- `db_orch_table_exists`        — migration 018 applied
+- `db_orch_recs_summary`        — pre-orchestrator-start = empty
+
+Section C has 2 new probes:
+- `api_module_dry_run_overview` — every module reports effective_dry_run
+- `api_orch_pending_recs`       — pending recommendations queue
+
+### Going-live safety gates
+
+1. **Sniper** still refuses to start with `DRY_RUN=false AND
+   safety_check_enabled=false` (SNIPE-RM-19). Run the unlock SQL
+   only after confirming the safety filter is on.
+2. **All modules** honor the global `logs/.killswitch` flag-file +
+   per-module `logs/.pause_<module>` flags. Emergency exit via the
+   dashboard panic button writes the killswitch — every module's
+   `should_skip_live()` immediately returns True regardless of its
+   own dry_run state.
+3. The orchestrator **never trades**. It writes recommendations.
+   Operator approval is mandatory for any toggle action.
