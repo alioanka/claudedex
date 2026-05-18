@@ -413,6 +413,77 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         ),
     },
     {
+        "id": "db_enable_pgcrypto",
+        "title": "DB: enable pgcrypto extension (run once)",
+        "category": "db",
+        "kind": "db_query",
+        # Single statement so asyncpg's extended protocol is happy.
+        # Verify with the next probe (db_check_pgcrypto) if needed.
+        "sql": "CREATE EXTENSION IF NOT EXISTS pgcrypto",
+        "cmd_preview": "CREATE EXTENSION IF NOT EXISTS pgcrypto",
+        "timeout_s": 10,
+        "description": (
+            "Enables pgcrypto so crypt()/gen_salt() are available for "
+            "the db_reset_admin_password probe below. Idempotent; safe "
+            "to run any time. Required only on first use. Returns 0 "
+            "rows on success."
+        ),
+    },
+    {
+        "id": "db_check_pgcrypto",
+        "title": "DB: pgcrypto extension status",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT extname AS extension, extversion AS version "
+            "FROM pg_extension WHERE extname = 'pgcrypto'"
+        ),
+        "cmd_preview": "SELECT ... FROM pg_extension WHERE extname='pgcrypto'",
+        "timeout_s": 10,
+        "description": "Verifies pgcrypto is registered in this DB.",
+    },
+    {
+        "id": "db_reset_admin_password",
+        "title": "DB: reset admin password to admin123 (for smoke tests)",
+        "category": "db",
+        "kind": "db_query",
+        # Uses pgcrypto's crypt() with gen_salt('bf') to generate a
+        # bcrypt-compatible hash at the database. asyncpg/psycopg can't
+        # easily import bcrypt at request time, so this is the cleanest
+        # path. pgcrypto is part of TimescaleDB's base image.
+        #
+        # NOTE: scripts/init_auth.py will rotate this BACK to a random
+        # password on the next bot restart (security measure for the
+        # leaked default). Use to enable smoke tests within ONE bot
+        # session; do not rely on it persisting across restarts.
+        # asyncpg's fetch() only accepts ONE statement per call, so we
+        # can't combine CREATE EXTENSION + UPDATE here. pgcrypto ships
+        # with TimescaleDB; if the operator gets "function crypt does
+        # not exist" they can run the separate db_enable_pgcrypto probe
+        # below first.
+        "sql": (
+            "UPDATE users SET "
+            "  password_hash = crypt('admin123', gen_salt('bf', 12)), "
+            "  failed_login_attempts = 0, "
+            "  updated_at = NOW() "
+            "WHERE username = 'admin' "
+            "RETURNING username, failed_login_attempts, "
+            "         substring(password_hash, 1, 7) AS hash_prefix"
+        ),
+        "cmd_preview": (
+            "UPDATE users SET password_hash=crypt('admin123', gen_salt('bf')) "
+            "WHERE username='admin'"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "Sets admin password back to 'admin123' so dashboard_smoke.sh "
+            "can log in. init_auth.py will rotate this on the next bot "
+            "restart — only good for the current session. Returns the "
+            "first 7 chars of the new hash (should be $2b$12$) so you "
+            "can verify the update."
+        ),
+    },
+    {
         "id": "db_copytrading_bounded_sets",
         "title": "DB: COPY_TRADING bounded sets snapshot",
         "category": "db",

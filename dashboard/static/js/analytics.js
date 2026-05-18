@@ -95,11 +95,19 @@ async function loadModuleTabs() {
             if (Array.isArray(result.data)) {
                 modules = result.data;
             } else if (result.data.modules && typeof result.data.modules === 'object') {
-                // Convert modules object to array
-                modules = Object.entries(result.data.modules).map(([name, data]) => ({
-                    name: name,
-                    display_name: data.display_name || name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-                    ...data
+                // Convert modules object to array. CRITICAL: `name`
+                // must come AFTER the spread because `data` carries
+                // its own `name` field (the display name like
+                // "Sniper") which would otherwise overwrite the
+                // route-key ("sniper"). When that happened, every
+                // analytics endpoint got hit with `/api/analytics/
+                // performance/Sniper` and returned empty data —
+                // exactly the "tab switching shows 0 trades" symptom.
+                modules = Object.entries(result.data.modules).map(([key, data]) => ({
+                    display_name: data.display_name || data.name ||
+                                  key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+                    ...data,
+                    name: key,
                 }));
             }
 
