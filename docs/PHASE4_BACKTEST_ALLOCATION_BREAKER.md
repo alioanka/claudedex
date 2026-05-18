@@ -186,3 +186,40 @@ Total estimate: 22-25 small commits.
   triggers auto-flip-to-DRY within one orchestrator tick (5 min).
 - All three covered by Test Runner probes (D section for DB checks,
   C section for API probes, B section for the replay script).
+
+---
+
+## Shipped — May 2026 (~22 commits, 959ebe4..5e50253)
+
+### 4A — Backtest replay
+- `modules/backtest_replay/`:
+  - `core/trade_loader.py` — schema-aware reader over 5 *_trades tables + orchestrator_recommendations
+  - `core/strategies.py` — 4 strategies (approve_all / approve_on_confidence / never_approve / operator_replay) + registry
+  - `core/replay_engine.py` — pure-function counterfactual simulator with Sharpe + max DD + sampled equity curve
+- `POST /api/backtest/replay`, `GET /api/backtest/strategies`
+- `/backtest-replay` page (date pickers, strategy dropdown, summary cards, per-module delta table with unicode sparklines)
+- 16 unit tests in `tests/unit/test_backtest_replay.py`
+
+### 4B — Capital allocation
+- `migrations/020_portfolio_allocations.sql` — proposals + approvals + audit
+- `modules/portfolio_allocator/`:
+  - `core/allocator.py` — modified-Kelly with floor (5%)/ceiling (40%)/reserve (10%)
+  - `core/rebalance_engine.py` — collect Sharpe inputs, propose, persist
+  - `main_portfolio_allocator.py` — subprocess wrapped by `PORTFOLIO_ALLOCATOR_MODULE_ENABLED`
+- `GET /api/portfolio/allocations[/current]`, `POST /api/portfolio/allocations/propose`, `POST /api/portfolio/allocations/{id}/approve`
+- `/allocation` page (stacked bar with reserve, pending table with override input, full history)
+- 11 unit tests in `tests/unit/test_portfolio_allocator.py`
+
+### 4C — Daily-loss circuit breaker
+- `migrations/021_seed_daily_loss_breakers.sql` — per-module threshold rows + `circuit_breaker_events` audit table
+- `modules/orchestrator_ai/core/circuit_breaker.py` — runs as a step inside `orchestrator_engine.run_tick`
+- 4 side-effects on trip: flip DB dry_run, audit row, recommendation row, restart flag
+- `GET /api/circuit-breaker/{events,active}`, `POST /api/circuit-breaker/{id}/clear`
+- Global amber banner in `base.html` — visible on every dashboard page
+
+### Total artifact count this Phase
+- 4 migrations (018-021)
+- 3 new modules (backtest_replay, portfolio_allocator, orchestrator_ai already existed)
+- 3 new pages (backtest_replay, allocation; orchestrator already existed)
+- 27 unit tests (16 backtest + 11 alloc; orchestrator scorer's 15 already existed)
+- 13 new Test Runner catalog entries (4A: 1, 4B: 4, 4C: 4, plus 4 from earlier orchestrator history work)
