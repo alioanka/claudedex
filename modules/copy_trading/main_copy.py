@@ -170,13 +170,34 @@ async def main():
             logger.warning(f"Telegram controller failed to initialize: {e}")
 
     try:
-        logger.info("✅ Copy Trading Engine initialized successfully")
-        await engine.start()
+        # NOTE: the previous "✅ initialized successfully" log here
+        # was misleading — main_copy.py constructs the engine object
+        # but does NOT call engine.initialize(). The real init runs
+        # inside engine.start() (line 714: if self.executor is None →
+        # await self.initialize()). When initialize() fails, start()
+        # returns False, main() returns, the subprocess exits silently,
+        # and the orchestrator restarts it in a loop until max_restarts
+        # is reached (the "Copy Trading has failed permanently" log).
+        # Surface the failure here so the operator can read the actual
+        # error from logs/copy_trading/copy_trading.log instead of
+        # spelunking the engine's own logger.
+        logger.info("🚀 Copy Trading Engine starting — entering main loop")
+        result = await engine.start()
+        if not result:
+            err = getattr(engine, 'error_message', None) or 'unknown (check engine.initialize)'
+            logger.error(f"❌ Copy Trading engine.start() returned False: {err}")
+            logger.error("   The subprocess will exit. Check upstream config / db / secrets.")
     except KeyboardInterrupt:
         if telegram_controller:
             await telegram_controller.notify("Copy Trading module shutting down...", priority="high")
             await telegram_controller.stop_polling()
         await engine.stop()
+    except Exception as e:
+        # Catch-all so the operator sees the traceback in
+        # logs/copy_trading/ instead of a silent exit.
+        import traceback
+        logger.error(f"❌ Copy Trading main loop crashed: {e}")
+        logger.error(traceback.format_exc())
     except Exception as e:
         logger.error(f"❌ Engine error: {e}")
         import traceback

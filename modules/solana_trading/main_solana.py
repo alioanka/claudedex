@@ -51,7 +51,11 @@ load_dotenv()
 # ============================================================================
 from logging.handlers import RotatingFileHandler
 
-log_dir = Path("logs/solana")
+# Aligned with main.py's per-subprocess stdout/stderr log dir
+# (self.name "Solana Trading" → logs/solana_trading/). Earlier this
+# was logs/solana/ which left the operator with two parallel dirs
+# for the same module and confused log-tail commands.
+log_dir = Path("logs/solana_trading")
 log_dir.mkdir(parents=True, exist_ok=True)
 
 # Create formatters

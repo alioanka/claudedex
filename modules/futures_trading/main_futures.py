@@ -38,7 +38,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 load_dotenv()
 
 # Configure futures-specific logging with multiple log files
-log_dir = Path("logs/futures")
+# Aligned with main.py's per-subprocess stdout/stderr log dir
+# (self.name "Futures Trading" → logs/futures_trading/). Earlier this
+# was logs/futures/ which left the operator with two parallel dirs
+# for the same module and confused log-tail commands.
+log_dir = Path("logs/futures_trading")
 log_dir.mkdir(parents=True, exist_ok=True)
 
 # Custom filter for trade-related messages (positions and stats only, not signal analysis)
