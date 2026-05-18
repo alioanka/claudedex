@@ -1132,6 +1132,17 @@ class DashboardEndpoints:
         self.app.router.add_post(
             '/api/modules/{module}/restart', self._api_module_restart
         )
+        # Phase 4C: circuit breaker events read API.
+        self.app.router.add_get(
+            '/api/circuit-breaker/events', self._api_breaker_events
+        )
+        self.app.router.add_get(
+            '/api/circuit-breaker/active', self._api_breaker_active
+        )
+        self.app.router.add_post(
+            '/api/circuit-breaker/{event_id}/clear', self._api_breaker_clear
+        )
+
         # Phase 4B: portfolio allocation surface.
         self.app.router.add_get(
             '/allocation', require_auth(self._allocation_page)
@@ -1995,6 +2006,137 @@ class DashboardEndpoints:
             return web.json_response(
                 {'success': False, 'error': str(e)},
                 status=500,
+            )
+
+    # ---- Phase 4C: circuit breaker surface ----
+    async def _api_breaker_events(self, request):
+        """GET /api/circuit-breaker/events?limit=N&module=<name>"""
+        try:
+            limit = max(1, min(int(request.query.get('limit', '50')), 200))
+        except (TypeError, ValueError):
+            limit = 50
+        module_filter = request.query.get('module') or None
+        clauses = []
+        params: list = []
+        if module_filter:
+            params.append(module_filter)
+            clauses.append(f"module = ${len(params)}")
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(limit)
+        sql = (
+            "SELECT id::text, tripped_at, module, pnl_loss_usd, "
+            "  capital_usd, pct_loss, threshold_pct, action_taken, "
+            "  notes, cleared_at, cleared_by "
+            f"FROM circuit_breaker_events {where} "
+            f"ORDER BY tripped_at DESC LIMIT ${len(params)}"
+        )
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'}, status=503,
+            )
+        try:
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(sql, *params)
+            return web.json_response({
+                'success': True,
+                'count': len(rows),
+                'events': [
+                    {
+                        'id': r['id'],
+                        'tripped_at': r['tripped_at'].isoformat() if r['tripped_at'] else None,
+                        'module': r['module'],
+                        'pnl_loss_usd': float(r['pnl_loss_usd']),
+                        'capital_usd': float(r['capital_usd']),
+                        'pct_loss': float(r['pct_loss']),
+                        'threshold_pct': float(r['threshold_pct']),
+                        'action_taken': r['action_taken'],
+                        'notes': r['notes'],
+                        'cleared_at': r['cleared_at'].isoformat() if r['cleared_at'] else None,
+                        'cleared_by': r['cleared_by'],
+                    } for r in rows
+                ],
+            })
+        except Exception as e:
+            logger.error(f"breaker events error: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)}, status=500,
+            )
+
+    async def _api_breaker_active(self, request):
+        """GET /api/circuit-breaker/active — uncleared trips in last 24h.
+        Used by the dashboard top-bar banner."""
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'}, status=503,
+            )
+        try:
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT id::text, tripped_at, module, pct_loss, threshold_pct "
+                    "FROM circuit_breaker_events "
+                    "WHERE cleared_at IS NULL "
+                    "  AND tripped_at > NOW() - INTERVAL '24 hours' "
+                    "ORDER BY tripped_at DESC"
+                )
+            return web.json_response({
+                'success': True,
+                'count': len(rows),
+                'active': [
+                    {
+                        'id': r['id'],
+                        'tripped_at': r['tripped_at'].isoformat() if r['tripped_at'] else None,
+                        'module': r['module'],
+                        'pct_loss': float(r['pct_loss']),
+                        'threshold_pct': float(r['threshold_pct']),
+                    } for r in rows
+                ],
+            })
+        except Exception as e:
+            logger.error(f"breaker active error: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)}, status=500,
+            )
+
+    async def _api_breaker_clear(self, request):
+        """POST /api/circuit-breaker/{event_id}/clear — operator
+        acknowledges and clears the trip. Module remains in DRY_RUN;
+        operator manually re-enables LIVE if appropriate."""
+        event_id = request.match_info.get('event_id', '')
+        cleared_by = None
+        try:
+            session = request.get('session')
+            if session:
+                cleared_by = session.get('username') or session.get('user_id')
+        except Exception:
+            pass
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'}, status=503,
+            )
+        try:
+            async with self.db.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "UPDATE circuit_breaker_events "
+                    "SET cleared_at = NOW(), cleared_by = $1 "
+                    "WHERE id = $2::uuid AND cleared_at IS NULL "
+                    "RETURNING module",
+                    cleared_by, event_id,
+                )
+                if row is None:
+                    return web.json_response(
+                        {'success': False, 'error': 'event not found or already cleared'},
+                        status=404,
+                    )
+            return web.json_response({
+                'success': True,
+                'event_id': event_id,
+                'module': row['module'],
+                'cleared_by': cleared_by,
+            })
+        except Exception as e:
+            logger.error(f"breaker clear error: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)}, status=500,
             )
 
     # ---- Phase 4B: portfolio allocator surface ----
