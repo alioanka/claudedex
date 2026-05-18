@@ -116,6 +116,20 @@
     .module-status.disabled { background: rgba(100, 116, 139, 0.2); color: #64748b; }
     .module-status.stopped { background: rgba(100, 116, 139, 0.2); color: #64748b; }
     .module-status.error { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+    /* Phase 3 B2: DRY / LIVE micro-chip alongside the status badge. */
+    .dry-live-chip {
+        display: inline-block;
+        margin-left: 6px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 0.65rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        vertical-align: middle;
+    }
+    .dry-live-chip.dry  { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+    .dry-live-chip.live { background: rgba(239, 68, 68, 0.25); color: #fca5a5;
+                          box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.5); }
     /* historical tag — shown next to P&L/Win Rate/Trades on DISABLED modules
        so operators don't mistake stale DB numbers for live trading activity */
     .hist-tag {
@@ -561,6 +575,16 @@
             const histTag = isHistorical
                 ? '<span class="hist-tag" title="Historical data — module is DISABLED">historical</span>'
                 : '';
+            // Phase 3 B2: DRY / LIVE micro-chip next to the status
+            // badge. Only shown for ENABLED modules — DISABLED rows
+            // are inherently inert and the chip would be misleading.
+            const effDry = data.effective_dry_run;
+            let dryLiveChip = '';
+            if (!isDisabled && effDry !== undefined && effDry !== null) {
+                dryLiveChip = effDry
+                    ? '<span class="dry-live-chip dry"  title="Module is paper-trading (DRY_RUN)">DRY</span>'
+                    : '<span class="dry-live-chip live" title="Module is trading LIVE capital">LIVE</span>';
+            }
 
             const card = document.createElement('div');
             card.className = `module-card ${isRunning ? 'active' : 'inactive'}`;
@@ -570,7 +594,7 @@
                         <div class="module-icon ${mod.color}"><i class="fas ${mod.icon}"></i></div>
                         <h4>${mod.name}</h4>
                     </div>
-                    <span class="module-status ${badgeClass}">${status}</span>
+                    <span class="module-status ${badgeClass}">${status}</span>${dryLiveChip}
                 </div>
                 <div class="module-stats">
                     <div class="stat-item">
