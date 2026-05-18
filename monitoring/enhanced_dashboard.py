@@ -5016,6 +5016,15 @@ class DashboardEndpoints:
                     'dex': dex_module_status,
                     'futures': 'offline' if not os.getenv('FUTURES_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'unknown',
                     'solana': 'offline' if not os.getenv('SOLANA_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'unknown',
+                    # The 4 previously-missing modules. env-flag is the
+                    # single source of truth for "is this module supposed
+                    # to be running?" — matches the Agent-2 fix on
+                    # /api/modules and stops the MODE-badge JS from
+                    # seeing a stale "DEX-only" world.
+                    'sniper': 'unknown' if os.getenv('SNIPER_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
+                    'arbitrage': 'unknown' if os.getenv('ARBITRAGE_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
+                    'copy_trading': 'unknown' if os.getenv('COPY_TRADING_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
+                    'ai_analysis': 'unknown' if os.getenv('AI_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
                 }
             }
 
