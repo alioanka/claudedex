@@ -128,6 +128,40 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "endpoint (CSRF, MODE badge, sniper cap fallback, ...)."
         ),
     },
+    {
+        "id": "orchestrator_train_report",
+        "title": "Orchestrator: train ML model (report-only)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": [
+            "python", "-m", "modules.orchestrator_ai.core.ml_trainer",
+            "--report-only",
+        ],
+        "cmd_preview": "python -m modules.orchestrator_ai.core.ml_trainer --report-only",
+        "timeout_s": 60,
+        "description": (
+            "Trains the orchestrator's confidence-calibration model from "
+            "orchestrator_training_data WITHOUT saving the pkl. Shows the "
+            "operator how many labeled examples are accumulated and the "
+            "current logistic-regression weights + accuracy. Exits 1 if "
+            "fewer than 30 examples exist."
+        ),
+    },
+    {
+        "id": "orchestrator_train_save",
+        "title": "Orchestrator: train + save ML model",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["python", "-m", "modules.orchestrator_ai.core.ml_trainer"],
+        "cmd_preview": "python -m modules.orchestrator_ai.core.ml_trainer",
+        "timeout_s": 60,
+        "description": (
+            "Same as the report-only run plus writes data/orchestrator_ai_"
+            "model.pkl + JSON sidecar. Run this after operator-approval "
+            "history accumulates. The orchestrator can optionally load "
+            "the pkl on next restart to override its hard-coded weights."
+        ),
+    },
 
     # ── API probes ───────────────────────────────────────────────────
     {
