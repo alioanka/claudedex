@@ -85,6 +85,60 @@ def resolve_dry_run_env(env_var: str = "DRY_RUN", default: bool = True) -> bool:
     return default
 
 
+def _parse_bool_value(raw: Optional[str], default: bool) -> bool:
+    """Lower-cased parser used by both env and DB reads."""
+    if raw is None:
+        return default
+    value = str(raw).strip().lower()
+    if value in _TRUTHY:
+        return True
+    if value in _FALSY:
+        return False
+    return default
+
+
+def resolve_module_dry_run(
+    module: str,
+    *,
+    db_row_value: Optional[str] = None,
+    default: bool = True,
+) -> bool:
+    """Per-module DRY_RUN resolver. Honors (in order):
+
+      1. config_settings.<module>_config.dry_run         (DB row; passed
+         in by the caller because reading DB is async — the caller is
+         the right place to do that)
+      2. <MODULE>_DRY_RUN env (e.g. SNIPER_DRY_RUN)      (per-module env)
+      3. DRY_RUN env (process-wide)                      (global default)
+      4. `default` argument                              (safe-by-default)
+
+    Returns True iff the module should DRY-RUN. Note: this does NOT
+    consult the kill-switch or pause flag — those are evaluated in
+    should_skip_live() so the per-call gate stays the single
+    authoritative check. resolve_module_dry_run() is for engine
+    bootstrap ("am I starting in dry or live mode?").
+
+    Pass db_row_value=None if you haven't queried the DB yet — the
+    function will fall through to env. This lets sync callers use
+    the helper without forcing an async DB hit on every call.
+    """
+    # 1. DB-backed override (highest precedence).
+    if db_row_value is not None:
+        return _parse_bool_value(db_row_value, default=default)
+    # 2. Per-module env override.
+    module_key = (module or "").upper().replace("-", "_")
+    if module_key:
+        per_module = os.environ.get(f"{module_key}_DRY_RUN")
+        if per_module is not None:
+            return _parse_bool_value(per_module, default=default)
+    # 3. Process-wide DRY_RUN.
+    global_env = os.environ.get("DRY_RUN")
+    if global_env is not None:
+        return _parse_bool_value(global_env, default=default)
+    # 4. Safe-by-default.
+    return default
+
+
 def should_skip_live(
     module_dry_run: bool,
     *,
