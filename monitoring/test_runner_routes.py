@@ -129,6 +129,21 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         ),
     },
     {
+        "id": "settings_save_smoke",
+        "title": "Per-module settings save CSRF smoke",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/settings_save_smoke.sh"],
+        "cmd_preview": "bash scripts/settings_save_smoke.sh",
+        "timeout_s": 120,
+        "description": (
+            "Logs in as admin, POSTs a benign payload to each "
+            "/api/<module>/settings endpoint with X-CSRF-Token, then "
+            "GETs each /api/modules/<m>/dry-run. 403 anywhere = the "
+            "'CSRF token missing or invalid' regression is back."
+        ),
+    },
+    {
         "id": "orchestrator_train_report",
         "title": "Orchestrator: train ML model (report-only)",
         "category": "scripts",
@@ -975,6 +990,192 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "never_approve, operator_replay."
         ),
     },
+    # ── Per-module settings page round-trip probes ────────────────────
+    # Verifies that each /<module>/settings page can read its config
+    # via GET. POST/save verification stays in the bash smoke layer
+    # because the catalog has no POST kind.
+    {
+        "id": "api_settings_arbitrage_get",
+        "title": "API: GET /api/arbitrage/settings",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "arbitrage/settings",
+        "cmd_preview": "GET /api/arbitrage/settings",
+        "timeout_s": 15,
+        "description": (
+            "Source for the /arbitrage/settings page. 200 = settings page "
+            "will populate. 401/403 = session expired. 500 = config_settings "
+            "table broken."
+        ),
+    },
+    {
+        "id": "api_settings_sniper_get",
+        "title": "API: GET /api/sniper/settings",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "sniper/settings",
+        "cmd_preview": "GET /api/sniper/settings",
+        "timeout_s": 15,
+        "description": "Source for the /sniper/settings page.",
+    },
+    {
+        "id": "api_settings_copytrading_get",
+        "title": "API: GET /api/copytrading/settings",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "copytrading/settings",
+        "cmd_preview": "GET /api/copytrading/settings",
+        "timeout_s": 15,
+        "description": "Source for the /copytrading/settings page.",
+    },
+    {
+        "id": "api_settings_ai_get",
+        "title": "API: GET /api/ai/settings",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "ai/settings",
+        "cmd_preview": "GET /api/ai/settings",
+        "timeout_s": 15,
+        "description": "Source for the /ai/settings page.",
+    },
+    {
+        "id": "api_settings_futures_get",
+        "title": "API: GET /api/settings/futures",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "settings/futures",
+        "cmd_preview": "GET /api/settings/futures",
+        "timeout_s": 15,
+        "description": "Source for the /futures/settings page.",
+    },
+    {
+        "id": "api_settings_solana_get",
+        "title": "API: GET /api/settings/solana",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "settings/solana",
+        "cmd_preview": "GET /api/settings/solana",
+        "timeout_s": 15,
+        "description": "Source for the /solana/settings page.",
+    },
+    {
+        "id": "api_credentials_list",
+        "title": "API: GET /api/credentials (admin)",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "credentials",
+        "cmd_preview": "GET /api/credentials",
+        "timeout_s": 15,
+        "description": (
+            "Source for the credentials settings page. Returns 403 if "
+            "the current session is not an admin."
+        ),
+    },
+    {
+        "id": "api_rpc_pool_endpoints_list",
+        "title": "API: GET /api/rpc-pool/endpoints",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "rpc-pool/endpoints",
+        "cmd_preview": "GET /api/rpc-pool/endpoints",
+        "timeout_s": 15,
+        "description": "Source for the RPC/API endpoint settings page.",
+    },
+
+    # ── Per-module DRY_RUN GET probes (canonical toggle endpoint) ─────
+    # Each /api/modules/<m>/dry-run GET returns
+    #   {db_value: "true"|"false"|null, effective_dry_run: bool}
+    # so the operator can confirm both the persisted override and the
+    # value the engine subprocess will actually resolve on startup.
+    {
+        "id": "api_dry_run_arbitrage",
+        "title": "API: GET /api/modules/arbitrage/dry-run",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "modules/arbitrage/dry-run",
+        "cmd_preview": "GET /api/modules/arbitrage/dry-run",
+        "timeout_s": 10,
+        "description": (
+            "Per-module DRY_RUN read for ARBITRAGE. Save settings on "
+            "/arbitrage/settings with the DRY RUN checkbox to flip; "
+            "subprocess restart required for effect."
+        ),
+    },
+    {
+        "id": "api_dry_run_sniper",
+        "title": "API: GET /api/modules/sniper/dry-run",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "modules/sniper/dry-run",
+        "cmd_preview": "GET /api/modules/sniper/dry-run",
+        "timeout_s": 10,
+        "description": "Per-module DRY_RUN read for SNIPER.",
+    },
+    {
+        "id": "api_dry_run_copytrading",
+        "title": "API: GET /api/modules/copy_trading/dry-run",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "modules/copy_trading/dry-run",
+        "cmd_preview": "GET /api/modules/copy_trading/dry-run",
+        "timeout_s": 10,
+        "description": "Per-module DRY_RUN read for COPY_TRADING.",
+    },
+    {
+        "id": "api_dry_run_ai",
+        "title": "API: GET /api/modules/ai/dry-run",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "modules/ai/dry-run",
+        "cmd_preview": "GET /api/modules/ai/dry-run",
+        "timeout_s": 10,
+        "description": "Per-module DRY_RUN read for AI_ANALYSIS.",
+    },
+    {
+        "id": "api_dry_run_futures",
+        "title": "API: GET /api/modules/futures/dry-run",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "modules/futures/dry-run",
+        "cmd_preview": "GET /api/modules/futures/dry-run",
+        "timeout_s": 10,
+        "description": "Per-module DRY_RUN read for FUTURES_TRADING.",
+    },
+    {
+        "id": "api_dry_run_solana",
+        "title": "API: GET /api/modules/solana/dry-run",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "modules/solana/dry-run",
+        "cmd_preview": "GET /api/modules/solana/dry-run",
+        "timeout_s": 10,
+        "description": "Per-module DRY_RUN read for SOLANA.",
+    },
+    {
+        "id": "api_dry_run_dex",
+        "title": "API: GET /api/modules/dex/dry-run",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "modules/dex/dry-run",
+        "cmd_preview": "GET /api/modules/dex/dry-run",
+        "timeout_s": 10,
+        "description": "Per-module DRY_RUN read for DEX_TRADING.",
+    },
+    {
+        "id": "api_performance_metrics",
+        "title": "API: GET /api/performance/metrics",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "performance/metrics",
+        "cmd_preview": "GET /api/performance/metrics",
+        "timeout_s": 30,
+        "description": (
+            "Aggregate performance from unified trades table. Used by "
+            "/performance and dashboard hero cards. Used to 500 on "
+            "Decimal/NaT inputs — hardened in 6970edc."
+        ),
+    },
+
     {
         "id": "db_orch_training_data",
         "title": "DB: orchestrator ML training-data view",
