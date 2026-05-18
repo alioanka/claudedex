@@ -37,7 +37,12 @@ services:
     networks:
       - trading-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -d tradingbot"]
+      # -U avoids the FATAL: role "root" log spam (~8.6k lines/day at
+      # 10s interval) when pg_isready defaults to the in-container OS
+      # user (root). Auth failure didn't break the health check —
+      # pg_isready returns OK on connection-refused — but the log
+      # noise hid real errors. Reads the same secret the app uses.
+      test: ["CMD-SHELL", "pg_isready -U $$(cat /run/secrets/db_user) -d tradingbot"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -73,6 +78,13 @@ services:
       dockerfile: Dockerfile
     container_name: trading-bot
     restart: "no"
+    # Resource ceiling — even if a Python subprocess leaks badly, the
+    # kernel OOM-killer reaps the container instead of taking the
+    # whole VPS down. 4 GB / 3 CPUs is generous for the current
+    # SNIPER+ARBITRAGE workload (steady-state ~1.3 GB total).
+    mem_limit: 4g
+    memswap_limit: 4g
+    cpus: 3.0
     ports:
       - "8080:8080"
     environment:

@@ -1,0 +1,16 @@
+[Unit]
+Description=Per-minute resource snapshot for post-freeze forensics
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/freeze-watchdog
+Restart=always
+RestartSec=10
+# Low priority so we never compete with the bot for resources.
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target
