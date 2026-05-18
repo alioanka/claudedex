@@ -1606,6 +1606,39 @@ class DashboardEndpoints:
         logger.info(f"Final module status: DEX={dex_status}, Futures={futures_status} (trades={futures_metrics.get('total_trades', 0)}), Solana={solana_status} (trades={solana_metrics.get('total_trades', 0)})")
         logger.info(f"Additional modules: Sniper={sniper_status}, Arbitrage={arbitrage_status}, CopyTrading={copytrading_status}, AI={ai_status}")
 
+        # Phase 3 B3: resolve effective_dry_run per module so the
+        # Module Overview cards can show "DRY" / "LIVE" alongside
+        # ENABLED/DISABLED. One query fetches all 7 rows; fall back
+        # to resolve_module_dry_run() with db_value=None when the DB
+        # row doesn't exist yet (which is the common case until the
+        # operator flips one explicitly).
+        dry_run_rows = {}
+        try:
+            if self.db and getattr(self.db, 'pool', None):
+                async with self.db.pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        "SELECT config_type, value FROM config_settings "
+                        "WHERE key = 'dry_run' AND config_type IN ("
+                        "'dex_config','futures_config','solana_config',"
+                        "'sniper_config','arbitrage_config','copytrading_config','ai_config'"
+                        ")"
+                    )
+                    dry_run_rows = {r['config_type']: r['value'] for r in rows}
+        except Exception as e:
+            logger.debug(f"per-module dry_run DB lookup failed: {e}")
+        from core.dry_run import resolve_module_dry_run
+        def _eff(module: str, config_type: str) -> bool:
+            return resolve_module_dry_run(
+                module, db_row_value=dry_run_rows.get(config_type)
+            )
+        dex_dry        = _eff('dex',        'dex_config')
+        futures_dry    = _eff('futures',    'futures_config')
+        solana_dry     = _eff('solana',     'solana_config')
+        sniper_dry     = _eff('sniper',     'sniper_config')
+        arbitrage_dry  = _eff('arbitrage',  'arbitrage_config')
+        copytrading_dry = _eff('copy_trading', 'copytrading_config')
+        ai_dry         = _eff('ai',         'ai_config')
+
         # FAILURE A/C: `historical=True` when env flag is false. Lets the UI
         # label numbers as "historical" so DISABLED rows with stale P&L/trades
         # do not look like live activity. Operators were misreading a
@@ -1622,6 +1655,7 @@ class DashboardEndpoints:
                         'capital': dex_capital,
                         'metrics': dex_metrics,
                         'historical': not dex_enabled,
+                        'effective_dry_run': dex_dry,
                     },
                     'futures_trading': {
                         'name': 'Futures Trading',
@@ -1631,6 +1665,7 @@ class DashboardEndpoints:
                         'metrics': futures_metrics,
                         'health': futures_health_data,
                         'historical': not futures_enabled,
+                        'effective_dry_run': futures_dry,
                     },
                     'solana_strategies': {
                         'name': 'Solana Strategies',
@@ -1640,6 +1675,7 @@ class DashboardEndpoints:
                         'metrics': solana_metrics,
                         'health': solana_health_data,
                         'historical': not solana_enabled,
+                        'effective_dry_run': solana_dry,
                     },
                     'sniper': {
                         'name': 'Sniper',
@@ -1648,6 +1684,7 @@ class DashboardEndpoints:
                         'capital': 100.0,
                         'metrics': sniper_metrics,
                         'historical': not sniper_enabled,
+                        'effective_dry_run': sniper_dry,
                     },
                     'arbitrage': {
                         'name': 'Arbitrage',
@@ -1656,6 +1693,7 @@ class DashboardEndpoints:
                         'capital': 200.0,
                         'metrics': arbitrage_metrics,
                         'historical': not arbitrage_enabled,
+                        'effective_dry_run': arbitrage_dry,
                     },
                     'copy_trading': {
                         'name': 'Copy Trading',
@@ -1664,6 +1702,7 @@ class DashboardEndpoints:
                         'capital': 100.0,
                         'metrics': copytrading_metrics,
                         'historical': not copytrading_enabled,
+                        'effective_dry_run': copytrading_dry,
                     },
                     'ai_analysis': {
                         'name': 'AI Analysis',
@@ -1672,6 +1711,7 @@ class DashboardEndpoints:
                         'capital': 100.0,
                         'metrics': ai_metrics,
                         'historical': not ai_enabled,
+                        'effective_dry_run': ai_dry,
                     }
                 }
             }
