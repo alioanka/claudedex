@@ -774,6 +774,21 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "orchestrator subprocess isn't running yet)."
         ),
     },
+    {
+        "id": "api_orch_history",
+        "title": "API: /api/orchestrator/history?hours=72",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "orchestrator/history?hours=72",
+        "cmd_preview": "GET /api/orchestrator/history?hours=72",
+        "timeout_s": 15,
+        "description": (
+            "Per-module score timeseries for the last 72h. Grouped by "
+            "module. Each point: ts, recommended, score, components, "
+            "total_pnl_usd, closed_trades. Powers the /orchestrator "
+            "trend chart."
+        ),
+    },
 ]
 
 

@@ -107,11 +107,41 @@ def test_live_with_positive_pnl_holds():
 
 def test_score_components_present():
     r = score_module(_inputs())
-    assert set(r.components.keys()) == {
-        "win_rate", "volume_factor", "pnl_signal", "regime_signal"
+    expected_keys = {
+        "win_rate", "volume_factor", "pnl_signal", "regime_signal",
+        "sharpe_signal", "sharpe",
     }
+    assert set(r.components.keys()) == expected_keys
+    # All [0,1] except `sharpe` which is the raw ratio (may be negative)
+    # and may be None when too few trades.
     for k, v in r.components.items():
+        if k == "sharpe":
+            continue
         assert 0.0 <= v <= 1.0, f"{k} out of [0,1]"
+
+
+def test_sharpe_positive_pnls_increases_score():
+    # Consistent small wins → high Sharpe → score boost.
+    consistent = score_module(_inputs(
+        closed_trades=20, winning_trades=18, total_pnl_usd=20.0,
+        trade_pnls=[1.0, 1.0, 1.1, 0.9, 1.0, 1.1, 1.0, 0.9,
+                    1.0, 1.0, 1.1, 0.9, 1.0, 1.1, 1.0, 0.9,
+                    1.0, 1.0, 1.1, 0.9],
+    ))
+    # Volatile equivalent total — same mean but high stdev → lower Sharpe.
+    volatile = score_module(_inputs(
+        closed_trades=20, winning_trades=18, total_pnl_usd=20.0,
+        trade_pnls=[10.0, -5.0, 15.0, -8.0, 12.0, -6.0, 8.0, -4.0,
+                    11.0, -7.0, 13.0, -5.0, 9.0, -3.0, 10.0, -6.0,
+                    14.0, -7.0, 12.0, -4.0],
+    ))
+    assert consistent.components["sharpe_signal"] > volatile.components["sharpe_signal"]
+
+
+def test_sharpe_too_few_trades_returns_neutral():
+    r = score_module(_inputs(trade_pnls=[1.0, 2.0]))
+    assert r.components["sharpe"] is None
+    assert r.components["sharpe_signal"] == 0.5
 
 
 def test_zero_trades_does_not_crash():

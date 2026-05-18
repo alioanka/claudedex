@@ -15,8 +15,9 @@ question. They are NOT tuned for live performance attribution.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional
+import math
+from dataclasses import dataclass, field
+from typing import List, Optional
 
 
 @dataclass
@@ -32,12 +33,29 @@ class ModuleScoreInputs:
     # Live (non-simulated) row counts. If non-zero we DOWNGRADE any
     # to_live recommendation (operator already on it).
     live_trades: int
+    # Per-trade pnl series for the window — used to compute Sharpe
+    # (mean / stdev). When empty, sharpe_signal contributes neutral.
+    trade_pnls: List[float] = field(default_factory=list)
     # Sniper-specific extras (None for other modules).
     detection_p95_ms: Optional[float] = None
     jupiter_fallback_hits: Optional[int] = None
     # Market regime — fed from /api/dashboard/summary's external feed.
     btc_24h_change_pct: Optional[float] = None
     eth_24h_change_pct: Optional[float] = None
+
+
+def _sharpe(pnls: List[float]) -> Optional[float]:
+    """Per-trade Sharpe = mean / stdev. Returns None when the series
+    has fewer than 5 trades (too noisy) or stdev is zero (all same
+    P&L, can happen with paper trades at a constant entry size)."""
+    if len(pnls) < 5:
+        return None
+    mean = sum(pnls) / len(pnls)
+    var = sum((x - mean) ** 2 for x in pnls) / (len(pnls) - 1)
+    stdev = math.sqrt(var)
+    if stdev == 0:
+        return None
+    return mean / stdev
 
 
 @dataclass
@@ -107,18 +125,33 @@ def score_module(inputs: ModuleScoreInputs) -> ModuleScore:
     else:
         regime_signal = 0.5
 
+    # ----- Sharpe (signal 5) -----
+    # Per-trade Sharpe over the lookback window. Strong positive
+    # Sharpe (> 1.0 per trade is exceptional) bumps the score; zero
+    # or negative drags it down. None (insufficient data) is neutral.
+    sharpe = _sharpe(inputs.trade_pnls)
+    if sharpe is None:
+        sharpe_signal = 0.5
+    else:
+        # Saturating: Sharpe of -0.5 .. +1.5 maps to 0 .. 1.
+        sharpe_signal = max(0.0, min((sharpe + 0.5) / 2.0, 1.0))
+
     # ----- Weighted combination -----
     components = {
-        'win_rate': round(win_rate, 4),
+        'win_rate':      round(win_rate, 4),
         'volume_factor': round(volume_factor, 4),
-        'pnl_signal': round(pnl_signal, 4),
+        'pnl_signal':    round(pnl_signal, 4),
         'regime_signal': round(regime_signal, 4),
+        'sharpe_signal': round(sharpe_signal, 4),
+        'sharpe':        round(sharpe, 4) if sharpe is not None else None,
     }
+    # Reweighted: Sharpe earns 0.20 from pnl_signal + volume_factor.
     score = (
-        0.40 * win_rate
-        + 0.25 * pnl_signal
+        0.35 * win_rate
+        + 0.20 * pnl_signal
+        + 0.20 * sharpe_signal
         + 0.10 * regime_signal
-        + 0.25 * volume_factor
+        + 0.15 * volume_factor
     )
     confidence = volume_factor  # confidence tracks data sufficiency
 
