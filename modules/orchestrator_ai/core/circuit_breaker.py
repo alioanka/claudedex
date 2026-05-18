@@ -59,8 +59,8 @@ _TRADE_SCHEMAS = {
                      "pnl_col": "profit_loss", "live_col": "is_simulated"},
     "futures": {"table": "futures_trades", "time_col": "exit_time",
                 "pnl_col": "net_pnl", "live_col": "is_simulated"},
-    "solana": {"table": "solana_trades", "time_col": "exit_timestamp",
-               "pnl_col": "profit_loss", "live_col": "is_simulated"},
+    "solana": {"table": "solana_trades", "time_col": "exit_time",
+               "pnl_col": "pnl_usd", "live_col": "is_simulated"},
 }
 
 

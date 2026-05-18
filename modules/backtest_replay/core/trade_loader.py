@@ -26,30 +26,35 @@ _TRADE_TABLES = {
         "time_col": "exit_timestamp",
         "fallback_time_col": "entry_timestamp",
         "pnl_col": "profit_loss",
+        "has_status": True,
     },
     "arbitrage": {
         "table": "arbitrage_trades",
         "time_col": "exit_timestamp",
         "fallback_time_col": "entry_timestamp",
         "pnl_col": "profit_loss",
+        "has_status": True,
     },
     "copy_trading": {
         "table": "copytrading_trades",
         "time_col": "exit_timestamp",
         "fallback_time_col": "entry_timestamp",
         "pnl_col": "profit_loss",
+        "has_status": True,
     },
     "futures": {
         "table": "futures_trades",
         "time_col": "exit_time",
         "fallback_time_col": "entry_time",
         "pnl_col": "net_pnl",
+        "has_status": False,
     },
     "solana": {
         "table": "solana_trades",
-        "time_col": "exit_timestamp",
-        "fallback_time_col": "entry_timestamp",
-        "pnl_col": "profit_loss",
+        "time_col": "exit_time",          # was exit_timestamp — wrong
+        "fallback_time_col": "entry_time", # was entry_timestamp — wrong
+        "pnl_col": "pnl_usd",             # was profit_loss — wrong
+        "has_status": False,
     },
 }
 
@@ -96,7 +101,10 @@ async def load_trades(
             # COALESCE(exit_ts, entry_ts) so we count trades that
             # are still open (no exit yet) using their entry time —
             # the replay engine needs the chronological order.
-            has_status = module != "futures"
+            # has_status read from the schema map so we don't hard-
+            # code per-module knowledge twice (futures + solana are
+            # both closed-only by schema).
+            has_status = schema.get("has_status", True)
             has_is_sim = module != "sniper"
             status_clause = "AND status='closed'" if has_status else ""
             is_sim_col = "is_simulated" if has_is_sim else "NULL::boolean"

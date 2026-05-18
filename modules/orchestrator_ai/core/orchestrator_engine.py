@@ -108,35 +108,48 @@ def _ml_calibrated_confidence(
 
 # Schema map: how to aggregate per-module. Each entry maps a module
 # name to the trade table + columns we read.
+#
+# Module-table conventions:
+#   sniper / arbitrage / copy_trading  → soft-delete tables; have a
+#                                          'status' column we filter to
+#                                          'closed', and entry_timestamp.
+#   futures / solana                   → closed-only tables; NO 'status'
+#                                          column, and use entry_time
+#                                          / pnl_col differently.
 _MODULE_QUERIES = {
     "sniper": {
         "table": "sniper_trades",
         "time_col": "entry_timestamp",
         "pnl_col": "profit_loss",
+        "has_status": True,
         "has_is_simulated": False,
     },
     "arbitrage": {
         "table": "arbitrage_trades",
         "time_col": "entry_timestamp",
         "pnl_col": "profit_loss",
+        "has_status": True,
         "has_is_simulated": True,
     },
     "copy_trading": {
         "table": "copytrading_trades",
         "time_col": "entry_timestamp",
         "pnl_col": "profit_loss",
+        "has_status": True,
         "has_is_simulated": True,
     },
     "futures": {
         "table": "futures_trades",
         "time_col": "entry_time",
         "pnl_col": "net_pnl",
+        "has_status": False,   # every row is closed by schema
         "has_is_simulated": True,
     },
     "solana": {
         "table": "solana_trades",
-        "time_col": "entry_timestamp",
-        "pnl_col": "profit_loss",
+        "time_col": "entry_time",
+        "pnl_col": "pnl_usd",
+        "has_status": False,   # every row is closed by schema
         "has_is_simulated": True,
     },
 }
@@ -149,25 +162,28 @@ async def _collect_module_inputs(
     """Two DB reads per module: aggregates + per-trade pnl series.
     Returns None on error so the rest of the tick can continue."""
     try:
+        # has_status decides whether to filter rows by status='closed'.
+        # has_is_simulated decides whether to count 'live' separately.
+        closed_filter = "status='closed' AND " if schema.get("has_status") else ""
         if schema["has_is_simulated"]:
             row = await conn.fetchrow(
                 f"SELECT "
-                f"  COUNT(*) FILTER (WHERE status='closed') AS closed, "
-                f"  COUNT(*) FILTER (WHERE status='closed' AND {schema['pnl_col']} > 0) AS wins, "
-                f"  COALESCE(SUM({schema['pnl_col']}) FILTER (WHERE status='closed'), 0) AS pnl, "
-                f"  COUNT(*) FILTER (WHERE status='closed' AND NOT is_simulated) AS live "
+                f"  COUNT(*) AS closed, "
+                f"  COUNT(*) FILTER (WHERE {schema['pnl_col']} > 0) AS wins, "
+                f"  COALESCE(SUM({schema['pnl_col']}), 0) AS pnl, "
+                f"  COUNT(*) FILTER (WHERE NOT is_simulated) AS live "
                 f"FROM {schema['table']} "
-                f"WHERE {schema['time_col']} > NOW() - INTERVAL '{lookback_hours} hours'"
+                f"WHERE {closed_filter}{schema['time_col']} > NOW() - INTERVAL '{lookback_hours} hours'"
             )
         else:
             # No is_simulated column — assume DRY_RUN until we can do better.
             row = await conn.fetchrow(
                 f"SELECT "
-                f"  COUNT(*) FILTER (WHERE status='closed') AS closed, "
-                f"  COUNT(*) FILTER (WHERE status='closed' AND {schema['pnl_col']} > 0) AS wins, "
-                f"  COALESCE(SUM({schema['pnl_col']}) FILTER (WHERE status='closed'), 0) AS pnl "
+                f"  COUNT(*) AS closed, "
+                f"  COUNT(*) FILTER (WHERE {schema['pnl_col']} > 0) AS wins, "
+                f"  COALESCE(SUM({schema['pnl_col']}), 0) AS pnl "
                 f"FROM {schema['table']} "
-                f"WHERE {schema['time_col']} > NOW() - INTERVAL '{lookback_hours} hours'"
+                f"WHERE {closed_filter}{schema['time_col']} > NOW() - INTERVAL '{lookback_hours} hours'"
             )
         if row is None:
             return None
@@ -178,7 +194,7 @@ async def _collect_module_inputs(
         try:
             pnl_rows = await conn.fetch(
                 f"SELECT {schema['pnl_col']} AS pnl FROM {schema['table']} "
-                f"WHERE status='closed' AND {schema['time_col']} > NOW() - INTERVAL "
+                f"WHERE {closed_filter}{schema['time_col']} > NOW() - INTERVAL "
                 f"'{lookback_hours} hours' "
                 f"ORDER BY {schema['time_col']} DESC LIMIT 500"
             )
