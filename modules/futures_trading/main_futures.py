@@ -807,13 +807,16 @@ async def main():
     if args.exchange:
         os.environ['FUTURES_EXCHANGE'] = args.exchange
 
-    # Handle dry-run
-    dry_run_env = os.getenv('DRY_RUN', 'true').strip().lower()
-    is_dry_run = dry_run_env in ('true', '1', 'yes')
-
+    # Handle dry-run — honors per-module override (Phase 3 A5).
+    # Precedence: --dry-run CLI > FUTURES_DRY_RUN env > DRY_RUN env >
+    # default True. DB row check happens later in the engine once the
+    # config manager has connected.
+    from core.dry_run import resolve_module_dry_run
+    is_dry_run = resolve_module_dry_run('futures', default=True)
     if args.dry_run:
         is_dry_run = True
-
+    # Mirror the resolved value into DRY_RUN so downstream `os.getenv
+    # ('DRY_RUN')` checks in the engine pick up the per-module flip.
     os.environ['DRY_RUN'] = 'true' if is_dry_run else 'false'
 
     if args.debug:

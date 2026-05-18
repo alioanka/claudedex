@@ -80,6 +80,16 @@ async def main():
     logger.info("👯 Copy Trading Module Starting...")
     logger.info(f"   Working dir: {Path.cwd()}")
     logger.info(f"   Log dir: {log_dir.absolute()}")
+    # Per-module DRY_RUN override (Phase 3 A4). COPY_TRADING_DRY_RUN
+    # env beats DRY_RUN. Mirror into DRY_RUN so copy_engine's
+    # should_skip_live() picks up the resolved value.
+    try:
+        from core.dry_run import resolve_module_dry_run
+        copy_dry = resolve_module_dry_run('copy_trading', default=True)
+        os.environ['DRY_RUN'] = 'true' if copy_dry else 'false'
+        logger.info(f"   DRY_RUN (resolved per-module): {copy_dry}")
+    except Exception as e:
+        logger.warning(f"   Could not resolve per-module DRY_RUN: {e}")
 
     # Check for API keys and RPC URLs - use Pool Engine for RPC management
     try:

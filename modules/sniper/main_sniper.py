@@ -70,6 +70,16 @@ async def main():
     logger.info("🔫 Sniper Module Starting...")
     logger.info(f"   Working dir: {Path.cwd()}")
     logger.info(f"   Log dir: {log_dir.absolute()}")
+    # Per-module DRY_RUN override (Phase 3 A2). SNIPER_DRY_RUN env beats
+    # DRY_RUN env. Mirror into DRY_RUN so the engine's internal env
+    # reads pick up the resolved value.
+    try:
+        from core.dry_run import resolve_module_dry_run
+        sniper_dry = resolve_module_dry_run('sniper', default=True)
+        os.environ['DRY_RUN'] = 'true' if sniper_dry else 'false'
+        logger.info(f"   DRY_RUN (resolved per-module): {sniper_dry}")
+    except Exception as e:
+        logger.warning(f"   Could not resolve per-module DRY_RUN: {e}")
 
     # Check for RPC URLs - use Pool Engine with fallback
     solana_rpc = None

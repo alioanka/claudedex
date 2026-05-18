@@ -712,13 +712,14 @@ async def main():
     if args.strategies:
         os.environ['SOLANA_STRATEGIES'] = ','.join(args.strategies)
 
-    # Handle dry-run
-    dry_run_env = os.getenv('DRY_RUN', 'true').strip().lower()
-    is_dry_run = dry_run_env in ('true', '1', 'yes')
-
+    # Per-module DRY_RUN override (Phase 3 A6).
+    # SOLANA_DRY_RUN env beats DRY_RUN; --dry-run CLI beats both.
+    from core.dry_run import resolve_module_dry_run
+    is_dry_run = resolve_module_dry_run('solana', default=True)
     if args.dry_run:
         is_dry_run = True
-
+    # Mirror into DRY_RUN so downstream `os.getenv('DRY_RUN')` in the
+    # engine picks up the resolved value.
     os.environ['DRY_RUN'] = 'true' if is_dry_run else 'false'
 
     if args.debug:

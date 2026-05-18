@@ -81,6 +81,17 @@ async def main():
     logger.info("🧠 AI Analysis Module Starting...")
     logger.info(f"   Working dir: {Path.cwd()}")
     logger.info(f"   Log dir: {log_dir.absolute()}")
+    # Per-module DRY_RUN override (Phase 3 A8). AI_DRY_RUN env beats
+    # DRY_RUN. Mirror into DRY_RUN so sentiment_engine's
+    # should_skip_live() picks up the resolved value before the LLM
+    # signal pipeline starts.
+    try:
+        from core.dry_run import resolve_module_dry_run
+        ai_dry = resolve_module_dry_run('ai', default=True)
+        os.environ['DRY_RUN'] = 'true' if ai_dry else 'false'
+        logger.info(f"   DRY_RUN (resolved per-module): {ai_dry}")
+    except Exception as e:
+        logger.warning(f"   Could not resolve per-module DRY_RUN: {e}")
 
     # Check API Keys from secrets manager (Docker secrets, database, or env)
     openai_key = None

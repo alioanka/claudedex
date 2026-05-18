@@ -316,6 +316,16 @@ async def main():
     logger.info("⚖️ Multi-Chain Arbitrage Module Starting...")
     logger.info(f"   Working dir: {Path.cwd()}")
     logger.info(f"   Log dir: {log_dir.absolute()}")
+    # Per-module DRY_RUN override (Phase 3 A3). ARBITRAGE_DRY_RUN env
+    # beats DRY_RUN. Mirror into DRY_RUN so the spatial + triangular
+    # engines pick up the resolved value via their own env reads.
+    try:
+        from core.dry_run import resolve_module_dry_run
+        arb_dry = resolve_module_dry_run('arbitrage', default=True)
+        os.environ['DRY_RUN'] = 'true' if arb_dry else 'false'
+        logger.info(f"   DRY_RUN (resolved per-module): {arb_dry}")
+    except Exception as e:
+        logger.warning(f"   Could not resolve per-module DRY_RUN: {e}")
 
     # Check for at least one RPC
     eth_rpc = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
