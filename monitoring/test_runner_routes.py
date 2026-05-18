@@ -586,6 +586,135 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "should be the single source of truth (FAILURE A — Agent 2)."
         ),
     },
+
+    # ── Phase 3: per-module DRY_RUN coverage ──────────────────────────
+    # One DB probe + one API probe per module so the operator can see
+    # at a glance whether each module is paper-trading, what its DB-row
+    # value is, and whether the engine has recorded trades recently.
+    {
+        "id": "db_per_module_dry_run_flags",
+        "title": "DB: per-module dry_run rows",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT config_type, value FROM config_settings "
+            "WHERE key = 'dry_run' "
+            "ORDER BY config_type"
+        ),
+        "cmd_preview": "SELECT config_type, value FROM config_settings WHERE key='dry_run'",
+        "timeout_s": 10,
+        "description": (
+            "Shows every per-module dry_run override saved in DB. "
+            "Missing rows fall back to the env / global / default chain."
+        ),
+    },
+    {
+        "id": "db_trades_per_module_24h",
+        "title": "DB: trades per module (last 24h)",
+        "category": "db",
+        "kind": "db_query",
+        # UNION across all five trade tables. The shape varies per
+        # table (futures_trades has no status column), so we COUNT
+        # rows by a column each table actually has (entry_timestamp
+        # for sniper/copy/arb; opened_at for futures).
+        "sql": (
+            "SELECT 'sniper' AS module, COUNT(*) AS trades_24h "
+            "FROM sniper_trades WHERE entry_timestamp > NOW() - INTERVAL '24 hours' "
+            "UNION ALL SELECT 'arbitrage', COUNT(*) "
+            "FROM arbitrage_trades WHERE entry_timestamp > NOW() - INTERVAL '24 hours' "
+            "UNION ALL SELECT 'copy_trading', COUNT(*) "
+            "FROM copytrading_trades WHERE entry_timestamp > NOW() - INTERVAL '24 hours' "
+            "UNION ALL SELECT 'futures', COUNT(*) "
+            "FROM futures_trades WHERE entry_time > NOW() - INTERVAL '24 hours' "
+            "UNION ALL SELECT 'solana', COUNT(*) "
+            "FROM solana_trades WHERE entry_timestamp > NOW() - INTERVAL '24 hours' "
+            "ORDER BY 1"
+        ),
+        "cmd_preview": "COUNT(*) per *_trades table, last 24h",
+        "timeout_s": 30,
+        "description": (
+            "Quick sanity that each enabled module is actually writing "
+            "trade rows. If a module is enabled but its row is 0, the "
+            "engine is alive but not capturing data — investigate. "
+            "Modules that are intentionally disabled return 0 (fine)."
+        ),
+    },
+    {
+        "id": "db_open_positions_per_module",
+        "title": "DB: open positions per module",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT 'sniper' AS module, COUNT(*) AS open_positions "
+            "FROM sniper_trades WHERE status='open' "
+            "UNION ALL SELECT 'arbitrage', COUNT(*) "
+            "FROM arbitrage_trades WHERE status='open' "
+            "UNION ALL SELECT 'copy_trading', COUNT(*) "
+            "FROM copytrading_trades WHERE status='open' "
+            "UNION ALL SELECT 'futures', COUNT(*) "
+            "FROM futures_positions "
+            "UNION ALL SELECT 'solana', COUNT(*) "
+            "FROM solana_trades WHERE status='open' "
+            "ORDER BY 1"
+        ),
+        "cmd_preview": "COUNT(*) WHERE status='open' per module",
+        "timeout_s": 15,
+        "description": "How many positions each module currently holds open.",
+    },
+    {
+        "id": "db_pnl_simulated_vs_live_per_module",
+        "title": "DB: P&L breakdown — simulated vs live, per module",
+        "category": "db",
+        "kind": "db_query",
+        # sniper_trades has no is_simulated column; assume sniper is
+        # always simulated until proven otherwise (the operator can
+        # query sniper directly to distinguish if needed).
+        "sql": (
+            "SELECT 'arbitrage' AS module, "
+            "  COALESCE(SUM(profit_loss) FILTER (WHERE is_simulated), 0)::numeric(20,4) AS simulated_pnl, "
+            "  COALESCE(SUM(profit_loss) FILTER (WHERE NOT is_simulated), 0)::numeric(20,4) AS live_pnl, "
+            "  COUNT(*) FILTER (WHERE is_simulated) AS sim_trades, "
+            "  COUNT(*) FILTER (WHERE NOT is_simulated) AS live_trades "
+            "FROM arbitrage_trades "
+            "UNION ALL "
+            "SELECT 'copy_trading', "
+            "  COALESCE(SUM(profit_loss) FILTER (WHERE is_simulated), 0)::numeric(20,4), "
+            "  COALESCE(SUM(profit_loss) FILTER (WHERE NOT is_simulated), 0)::numeric(20,4), "
+            "  COUNT(*) FILTER (WHERE is_simulated), "
+            "  COUNT(*) FILTER (WHERE NOT is_simulated) "
+            "FROM copytrading_trades "
+            "UNION ALL "
+            "SELECT 'futures', "
+            "  COALESCE(SUM(net_pnl) FILTER (WHERE is_simulated), 0)::numeric(20,4), "
+            "  COALESCE(SUM(net_pnl) FILTER (WHERE NOT is_simulated), 0)::numeric(20,4), "
+            "  COUNT(*) FILTER (WHERE is_simulated), "
+            "  COUNT(*) FILTER (WHERE NOT is_simulated) "
+            "FROM futures_trades "
+            "ORDER BY 1"
+        ),
+        "cmd_preview": "SUM(pnl) split by is_simulated, per module",
+        "timeout_s": 30,
+        "description": (
+            "Critical for live-readiness: how much real money has each "
+            "module made/lost vs paper. Pre-live the live_pnl column "
+            "MUST be 0 for every module. After flipping one module live, "
+            "operator watches this row to see real fills land."
+        ),
+    },
+    {
+        "id": "api_module_dry_run_overview",
+        "title": "API: /api/modules effective_dry_run roundup",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "modules",
+        "cmd_preview": "GET /api/modules | .data.modules[*].effective_dry_run",
+        "timeout_s": 15,
+        "description": (
+            "Confirms each module reports an effective_dry_run boolean "
+            "in the /api/modules response. If any module is missing the "
+            "field, the dashboard UI can't show its DRY/LIVE chip."
+        ),
+    },
 ]
 
 
