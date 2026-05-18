@@ -823,6 +823,62 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "trend chart."
         ),
     },
+    # ── Phase 4B: portfolio allocator ────────────────────────────────
+    {
+        "id": "db_alloc_table_exists",
+        "title": "DB: portfolio_allocations table present",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT table_name, "
+            "  (SELECT COUNT(*) FROM information_schema.columns "
+            "   WHERE table_name='portfolio_allocations') AS column_count "
+            "FROM information_schema.tables "
+            "WHERE table_name = 'portfolio_allocations'"
+        ),
+        "cmd_preview": "SELECT FROM information_schema.tables WHERE table_name='portfolio_allocations'",
+        "timeout_s": 10,
+        "description": "Confirms migration 020 has run.",
+    },
+    {
+        "id": "db_alloc_current",
+        "title": "DB: current approved allocation per module",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT DISTINCT ON (module) module, pct_of_book, usd_amount, "
+            "  approved_at, approved_by "
+            "FROM portfolio_allocations WHERE approved_at IS NOT NULL "
+            "ORDER BY module, approved_at DESC"
+        ),
+        "cmd_preview": "Most recent approved allocation per module",
+        "timeout_s": 10,
+        "description": (
+            "Shows the operative allocation per module. Sum + reserve "
+            "should equal 100%. Empty = no operator approvals yet."
+        ),
+    },
+    {
+        "id": "api_alloc_current",
+        "title": "API: /api/portfolio/allocations/current",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "portfolio/allocations/current",
+        "cmd_preview": "GET /api/portfolio/allocations/current",
+        "timeout_s": 15,
+        "description": "Current approved per-module allocation, JSON shape.",
+    },
+    {
+        "id": "api_alloc_pending",
+        "title": "API: /api/portfolio/allocations?status=pending",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "portfolio/allocations?status=pending&limit=20",
+        "cmd_preview": "GET /api/portfolio/allocations?status=pending",
+        "timeout_s": 15,
+        "description": "Pending allocator proposals awaiting operator approval.",
+    },
+
     # ── Phase 4A: backtest replay ────────────────────────────────────
     {
         "id": "api_backtest_strategies",
