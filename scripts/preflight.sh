@@ -54,16 +54,35 @@ pg() {
 # ---------------------------------------------------------------------------
 hdr "Stack health"
 
-if docker compose ps --status running 2>/dev/null | grep -q 'trading-bot'; then
-    pass "trading-bot container running"
-else
-    fail "trading-bot container not running — start with 'docker compose up -d --build trading-bot'"
-fi
+# Detect whether we're running INSIDE the trading-bot container vs
+# from the host. The Test Runner triggers preflight via subprocess
+# from the dashboard, which is in-container — `docker compose ps`
+# isn't available there (no docker.sock by design). In that case the
+# fact that this script is even running is proof trading-bot is alive,
+# so we substitute lightweight in-container checks.
+if [[ -f /.dockerenv ]] || grep -q 'docker\|containerd' /proc/1/cgroup 2>/dev/null; then
+    pass "trading-bot container running (running this script from inside it)"
+    # Postgres is verified by attempting a psql round-trip later — but
+    # surface a hint here.
+    if [[ -S /var/run/postgresql/.s.PGSQL.5432 ]] || [[ -n "${DB_HOST:-}" ]]; then
+        pass "trading-postgres reachable (DB_HOST set or socket present)"
+    else
+        warn "trading-postgres reachability not verified in-container"
+    fi
+elif command -v docker >/dev/null 2>&1; then
+    if docker compose ps --status running 2>/dev/null | grep -q 'trading-bot'; then
+        pass "trading-bot container running"
+    else
+        fail "trading-bot container not running — start with 'docker compose up -d --build trading-bot'"
+    fi
 
-if docker compose ps --status running 2>/dev/null | grep -q 'trading-postgres'; then
-    pass "trading-postgres container running"
+    if docker compose ps --status running 2>/dev/null | grep -q 'trading-postgres'; then
+        pass "trading-postgres container running"
+    else
+        fail "trading-postgres container not running"
+    fi
 else
-    fail "trading-postgres container not running"
+    warn "docker CLI unavailable; skipping container-presence checks"
 fi
 
 if [[ $FAILS -gt 0 ]]; then
