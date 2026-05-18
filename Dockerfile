@@ -7,16 +7,18 @@ ENV PIP_DEFAULT_TIMEOUT=100
 ENV PIP_RETRIES=5
 
 # Install system dependencies needed for compilation
-# Plus curl + jq for the Test Runner Section B scripts that need to
-# probe the running dashboard from inside the container. Without these
-# dashboard_smoke.sh and the inline curl checks in preflight fail with
-# "curl: command not found" — exactly the error seen on first run.
+# Plus curl + jq + postgresql-client for the Test Runner Section B
+# scripts that probe the running dashboard + run psql against the
+# postgres container from in-network. Without these the in-container
+# preflight emits 'docker: command not found' for every check that
+# expected to shell out to `docker compose exec postgres ...`.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
     g++ \
     curl \
     jq \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip and install wheel for faster builds

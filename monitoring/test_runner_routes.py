@@ -241,20 +241,27 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         "title": "DB: open positions across modules",
         "category": "db",
         "kind": "db_query",
-        # futures_trades is closed-only by schema (only completed trades
-        # land there; open futures positions live in futures_positions).
-        # Use the right table per module so the UNION doesn't blow up.
+        # Per-table conventions:
+        #   sniper_trades + copytrading_trades  → soft-delete pattern,
+        #                                         filter status='open'
+        #   futures_positions                   → every row IS an open
+        #                                         position (no status
+        #                                         column by schema)
+        # Earlier versions of this probe used `futures_trades WHERE
+        # status='open'` (wrong table — that's closed-only) and then
+        # `futures_positions WHERE status='open'` (column doesn't
+        # exist). Now COUNT(*) the positions table directly.
         "sql": (
             "SELECT 'sniper' AS src, COUNT(*) AS n "
             "FROM sniper_trades WHERE status='open' "
             "UNION ALL SELECT 'copy', COUNT(*) "
             "FROM copytrading_trades WHERE status='open' "
             "UNION ALL SELECT 'futures', COUNT(*) "
-            "FROM futures_positions WHERE status='open'"
+            "FROM futures_positions"
         ),
         "cmd_preview": (
-            "SELECT src, COUNT(*) FROM sniper_trades + copytrading_trades + "
-            "futures_positions WHERE status='open'"
+            "Counts: sniper_trades + copytrading_trades WHERE status='open', "
+            "futures_positions (table = open)"
         ),
         "timeout_s": 15,
         "description": "Open-position counts per trading module.",
@@ -364,6 +371,45 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "Phase-2 headline metric: how stale a candidate is by the "
             "time we receive the listener notification. Lower is better. "
             "WSS should beat polling by 2-5x once both have samples."
+        ),
+    },
+    {
+        "id": "db_admin_login_status",
+        "title": "DB: admin user login status",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT username, is_active, failed_login_attempts, "
+            "  CASE WHEN failed_login_attempts >= 5 "
+            "       THEN 'LOCKED' ELSE 'ok' END AS status, "
+            "  last_login_at, updated_at "
+            "FROM users WHERE username = 'admin'"
+        ),
+        "cmd_preview": (
+            "SELECT username, failed_login_attempts, status FROM users WHERE username='admin'"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "Checks whether admin is locked out from too many failed login "
+            "attempts (>= 5 = locked). If locked, run the next test to reset."
+        ),
+    },
+    {
+        "id": "db_unlock_admin",
+        "title": "DB: unlock admin login attempts",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "UPDATE users SET failed_login_attempts = 0, updated_at = NOW() "
+            "WHERE username = 'admin' "
+            "RETURNING username, failed_login_attempts"
+        ),
+        "cmd_preview": "UPDATE users SET failed_login_attempts=0 WHERE username='admin'",
+        "timeout_s": 10,
+        "description": (
+            "Resets admin's failed_login_attempts to 0 so dashboard_smoke.sh "
+            "(and any other auth-needing script) can log in again. "
+            "Returns the new value for confirmation."
         ),
     },
     {

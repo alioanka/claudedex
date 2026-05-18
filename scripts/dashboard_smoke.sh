@@ -38,15 +38,40 @@ fail() { printf '  FAIL  %s\n' "$1"; FAILED=$((FAILED + 1)); }
 
 # ---------- 0. Login ----------
 echo "=== 0. Login ==="
-LOGIN_RESP="$(curl -fsS -c "$COOKIE_JAR" -X POST "$BASE/api/auth/login" \
+# -fS rather than -fsS so the 401 body comes through on failure; curl
+# returns exit 22 on >=400 with -f. We capture the HTTP status code via
+# -w so we can give the operator a specific reason rather than just
+# "curl returned 22".
+LOGIN_HTTP_CODE=$(curl -sS -o "$COOKIE_JAR.body" -w '%{http_code}' \
+    -c "$COOKIE_JAR" -X POST "$BASE/api/auth/login" \
     -H 'Content-Type: application/json' \
-    -d "{\"username\":\"$USER\",\"password\":\"$PASS\"}" 2>&1)" || {
-    fail "login HTTP request itself failed: $LOGIN_RESP"
+    -d "{\"username\":\"$USER\",\"password\":\"$PASS\"}" 2>&1 || echo "000")
+LOGIN_BODY=$(cat "$COOKIE_JAR.body" 2>/dev/null || echo "")
+rm -f "$COOKIE_JAR.body"
+
+if [[ "$LOGIN_HTTP_CODE" != "200" ]]; then
+    fail "login returned HTTP $LOGIN_HTTP_CODE"
+    echo "      body: $LOGIN_BODY"
     echo
-    echo "Smoke test aborted: cannot authenticate. Make sure the dashboard"
-    echo "is reachable at $BASE and admin credentials are correct."
+    if [[ "$LOGIN_HTTP_CODE" == "401" ]] && echo "$LOGIN_BODY" | grep -qi 'locked\|too many failed'; then
+        cat <<'HELP'
+Admin account is locked (>= 5 failed login attempts).
+Unlock from inside the postgres container:
+
+  docker exec -it trading-postgres psql \
+      -U "$(docker exec trading-postgres cat /run/secrets/db_user)" tradingbot \
+      -c "UPDATE users SET failed_login_attempts=0 WHERE username='admin';"
+
+Or from the Test Runner D section, click "DB: unlock admin login attempts".
+HELP
+    else
+        echo "Smoke test aborted: cannot authenticate. Make sure the"
+        echo "dashboard is reachable at $BASE and admin credentials are"
+        echo "the defaults (admin / admin123)."
+    fi
     exit 1
-}
+fi
+LOGIN_RESP="$LOGIN_BODY"
 
 if echo "$LOGIN_RESP" | jq -e '.success == true' >/dev/null 2>&1; then
     pass "login returns success:true"

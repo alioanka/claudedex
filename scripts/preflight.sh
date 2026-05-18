@@ -39,14 +39,57 @@ warn() { printf "${YELLOW}  WARN${NC}  %s\n" "$1"; WARNS=$((WARNS+1)); }
 fail() { printf "${RED}  FAIL${NC}  %s\n" "$1"; FAILS=$((FAILS+1)); }
 hdr()  { printf "\n${CYAN}=== %s ===${NC}\n" "$1"; }
 
+# Detect whether we're running INSIDE the trading-bot container.
+# When yes, we cannot `docker compose exec` (no docker.sock by design),
+# but we CAN reach postgres on its internal hostname using the secrets
+# files that the bot container also mounts.
+_IN_CONTAINER=0
+if [[ -f /.dockerenv ]] || grep -q 'docker\|containerd' /proc/1/cgroup 2>/dev/null; then
+    _IN_CONTAINER=1
+fi
+
+bot_py() {
+    # Run a Python snippet "inside the trading-bot" — either via
+    # docker compose exec from the host, or by execve-ing python
+    # directly when already inside the container.
+    if [[ "$_IN_CONTAINER" == "1" ]]; then
+        python -c "$1" 2>&1
+    else
+        docker compose exec -T trading-bot python -c "$1" 2>&1
+    fi
+}
+
+bot_pytest() {
+    # Same idea but for pytest invocations.
+    if [[ "$_IN_CONTAINER" == "1" ]]; then
+        cd /app && PYTEST_ADDOPTS='-p no:cacheprovider -p no:anchorpy' \
+            python -m pytest "$@" -q --no-header -o addopts= 2>&1
+    else
+        docker compose exec -T -w /app -e PYTEST_ADDOPTS='-p no:cacheprovider -p no:anchorpy' \
+            trading-bot python -m pytest "$@" -q --no-header -o addopts= 2>&1
+    fi
+}
+
 pg() {
-    # Runs an SQL command inside trading-postgres using the secret-mounted
-    # user. Pipes SQL via stdin instead of -c so multi-line queries with
-    # embedded single quotes ('30 minutes', etc.) survive the bash quote
-    # gauntlet. Stdout is the raw psql output; caller decides what to
-    # grep for. -tA = tuples-only, unaligned.
-    printf '%s\n' "$1" | docker compose exec -T postgres bash -lc \
-        'psql -U $(cat /run/secrets/db_user) -d tradingbot -tA -f -' 2>&1
+    # Runs an SQL command against postgres via the secret-mounted user.
+    # -tA = tuples-only, unaligned. Two execution paths:
+    #
+    # Host:        docker compose exec -T postgres bash -lc 'psql …'
+    # In-container: psql -h postgres -U <user> -d tradingbot -tA -f -
+    #              (postgres reachable on the docker-compose network;
+    #               PGPASSWORD set from the secret the bot container
+    #               also mounts).
+    if [[ "$_IN_CONTAINER" == "1" ]]; then
+        local user pw
+        user=$(cat /run/secrets/db_user 2>/dev/null || echo "${DB_USER:-tradingbot}")
+        pw=$(cat /run/secrets/db_password 2>/dev/null || echo "${DB_PASSWORD:-}")
+        printf '%s\n' "$1" | PGPASSWORD="$pw" psql \
+            -h "${DB_HOST:-postgres}" -p "${DB_PORT:-5432}" \
+            -U "$user" -d tradingbot -tA -f - 2>&1
+    else
+        printf '%s\n' "$1" | docker compose exec -T postgres bash -lc \
+            'psql -U $(cat /run/secrets/db_user) -d tradingbot -tA -f -' 2>&1
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -266,7 +309,7 @@ fi
 # ---------------------------------------------------------------------------
 hdr "LIVE-mode safety filter guard"
 
-OUT=$(docker compose exec -T -e DRY_RUN=false trading-bot python -c "
+OUT=$(DRY_RUN=false bot_py "
 import asyncio, sys
 sys.path.insert(0, '/app')
 from modules.sniper.core.sniper_engine import SniperEngine
@@ -279,7 +322,7 @@ async def t():
     except RuntimeError:
         print('GUARD_OK')
 asyncio.run(t())
-" 2>&1 | grep -E "GUARD_OK|GUARD_FAIL" | head -1)
+" | grep -E "GUARD_OK|GUARD_FAIL" | head -1)
 
 if [[ "$OUT" == "GUARD_OK" ]]; then
     pass "LIVE-mode guard fires correctly (refuses safety_check_enabled=false)"
@@ -298,8 +341,7 @@ hdr "Unit tests for new code paths"
 # the --cov flags inherited from pytest.ini so the test step doesn't
 # break when pytest-cov isn't installed yet (older images). The empty
 # string OVERRIDES the inifile's addopts entirely.
-TEST_OUT=$(docker compose exec -T -w /app -e PYTEST_ADDOPTS='-p no:cacheprovider -p no:anchorpy' \
-    trading-bot python -m pytest tests/unit/test_sniper_new_paths.py -q --no-header -o addopts= 2>&1 | tail -10)
+TEST_OUT=$(bot_pytest tests/unit/test_sniper_new_paths.py | tail -10)
 # Match only on pytest's actual passed-count summary line, e.g.
 # "19 passed in 0.42s". The previous grep matched any occurrence of
 # the substring "tests" — which false-positives on error paths like
@@ -321,7 +363,7 @@ fi
 # ---------------------------------------------------------------------------
 hdr "/health endpoint + git SHA"
 
-HEALTH_JSON=$(docker compose exec -T trading-bot python -c "
+HEALTH_JSON=$(bot_py "
 import urllib.request, urllib.error
 req = urllib.request.Request('http://localhost:8080/health')
 try:
@@ -329,7 +371,6 @@ try:
     print(f'HTTP_STATUS={resp.status}')
     print(resp.read().decode())
 except urllib.error.HTTPError as e:
-    # Capture body even on 4xx/5xx so we can see the real error.
     print(f'HTTP_STATUS={e.code}')
     try:
         print(e.read().decode())
@@ -337,7 +378,7 @@ except urllib.error.HTTPError as e:
         print(f'(could not read body: {e})')
 except Exception as e:
     print(f'CONNECTION_ERROR: {type(e).__name__}: {e}')
-" 2>&1)
+")
 
 if echo "$HEALTH_JSON" | grep -q '"status":.*"healthy"'; then
     SHA=$(echo "$HEALTH_JSON" | grep -v HTTP_STATUS | python -c "import sys,json; print(json.load(sys.stdin).get('git_sha','?'))" 2>/dev/null || echo '?')
@@ -362,7 +403,7 @@ hdr "Dashboard routes — HTTP status spot-check"
 probe_route() {
     local url="$1" expect="$2" label="$3"
     local code
-    code=$(docker compose exec -T trading-bot python -c "
+    code=$(bot_py "
 import urllib.request, urllib.error
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -375,7 +416,7 @@ except urllib.error.HTTPError as e:
     print(e.code)
 except Exception as e:
     print(f'ERR:{type(e).__name__}')
-" 2>&1 | tail -1 | tr -d '\r')
+" | tail -1 | tr -d '\r')
     if [[ "$code" =~ $expect ]]; then
         pass "$label  ($url → $code)"
     else
