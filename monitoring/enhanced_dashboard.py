@@ -5600,8 +5600,23 @@ class DashboardEndpoints:
                 return web.json_response({'success': True, 'data': {'historical': default_metrics}})
 
             df = pd.DataFrame([dict(trade) for trade in trades])
-            df['profit_loss'] = pd.to_numeric(df['profit_loss'])
-            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
+            # asyncpg DECIMAL → Decimal; pd.to_numeric refuses Decimal/None
+            # without errors='coerce'. NULL exit_timestamp on a status='closed'
+            # row (data anomaly) becomes NaT and breaks resample('D').
+            df['profit_loss'] = pd.to_numeric(df['profit_loss'], errors='coerce').fillna(0)
+            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'], errors='coerce', utc=True)
+            df = df.dropna(subset=['exit_timestamp'])
+            if df.empty:
+                initial_balance = self.config_mgr.get_portfolio_config().initial_balance
+                return web.json_response({'success': True, 'data': {'historical': {
+                    'initial_balance': initial_balance,
+                    'total_pnl': 0.0, 'roi': 0.0, 'sortino_ratio': 0.0,
+                    'calmar_ratio': 0.0, 'daily_volatility': 0.0, 'annual_volatility': 0.0,
+                    'total_trades': 0, 'winning_trades': 0, 'losing_trades': 0,
+                    'win_rate': 0.0, 'avg_win': 0.0, 'avg_loss': 0.0,
+                    'best_trade': 0.0, 'worst_trade': 0.0, 'profit_factor': 0.0,
+                    'sharpe_ratio': 0.0, 'max_drawdown': 0.0,
+                }}})
 
             # --- FIX STARTS HERE ---
             # Basic metrics
@@ -5679,7 +5694,13 @@ class DashboardEndpoints:
             }
 
             for key, value in metrics.items():
-                if np.isnan(value) or np.isinf(value):
+                try:
+                    fv = float(value)
+                    if np.isnan(fv) or np.isinf(fv):
+                        metrics[key] = 0.0
+                    else:
+                        metrics[key] = fv
+                except (TypeError, ValueError):
                     metrics[key] = 0.0
 
             return web.json_response({
