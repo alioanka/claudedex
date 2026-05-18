@@ -1132,6 +1132,25 @@ class DashboardEndpoints:
         self.app.router.add_post(
             '/api/modules/{module}/restart', self._api_module_restart
         )
+        # Phase 4B: portfolio allocation surface.
+        self.app.router.add_get(
+            '/allocation', require_auth(self._allocation_page)
+        )
+        self.app.router.add_get(
+            '/api/portfolio/allocations', self._api_alloc_list
+        )
+        self.app.router.add_get(
+            '/api/portfolio/allocations/current', self._api_alloc_current
+        )
+        self.app.router.add_post(
+            '/api/portfolio/allocations/{alloc_id}/approve',
+            self._api_alloc_approve,
+        )
+        self.app.router.add_post(
+            '/api/portfolio/allocations/propose',
+            self._api_alloc_propose,
+        )
+
         # Phase 4A: backtest replay. POST runs the counterfactual
         # simulator over the trade + recommendation history.
         self.app.router.add_get(
@@ -1976,6 +1995,218 @@ class DashboardEndpoints:
             return web.json_response(
                 {'success': False, 'error': str(e)},
                 status=500,
+            )
+
+    # ---- Phase 4B: portfolio allocator surface ----
+    async def _allocation_page(self, request):
+        template = self.jinja_env.get_template('allocation.html')
+        return web.Response(
+            text=template.render(page='allocation'),
+            content_type='text/html',
+        )
+
+    async def _api_alloc_list(self, request):
+        """GET /api/portfolio/allocations?status=pending|approved|all
+                                          &limit=N (default 50, max 200)
+                                          &module=<name>"""
+        status = (request.query.get('status') or 'pending').lower()
+        try:
+            limit = max(1, min(int(request.query.get('limit', '50')), 200))
+        except (TypeError, ValueError):
+            limit = 50
+        module_filter = request.query.get('module') or None
+        clauses = []
+        params: list = []
+        if status == 'pending':
+            clauses.append("approved_at IS NULL")
+        elif status == 'approved':
+            clauses.append("approved_at IS NOT NULL")
+        if module_filter:
+            params.append(module_filter)
+            clauses.append(f"module = ${len(params)}")
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(limit)
+        sql = (
+            "SELECT id::text, created_at, module, pct_of_book, "
+            "  usd_amount, proposed_by, reason, metrics, "
+            "  approved_at, approved_by, effective_until "
+            f"FROM portfolio_allocations {where} "
+            f"ORDER BY created_at DESC LIMIT ${len(params)}"
+        )
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'}, status=503,
+            )
+        try:
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(sql, *params)
+            return web.json_response({
+                'success': True,
+                'count': len(rows),
+                'allocations': [
+                    {
+                        'id': r['id'],
+                        'created_at': r['created_at'].isoformat() if r['created_at'] else None,
+                        'module': r['module'],
+                        'pct_of_book': float(r['pct_of_book']),
+                        'usd_amount': float(r['usd_amount']),
+                        'proposed_by': r['proposed_by'],
+                        'reason': r['reason'],
+                        'metrics': r['metrics'],
+                        'approved_at': r['approved_at'].isoformat() if r['approved_at'] else None,
+                        'approved_by': r['approved_by'],
+                        'effective_until': r['effective_until'].isoformat() if r['effective_until'] else None,
+                    } for r in rows
+                ],
+            })
+        except Exception as e:
+            logger.error(f"alloc list error: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)}, status=500,
+            )
+
+    async def _api_alloc_current(self, request):
+        """GET /api/portfolio/allocations/current — single most-recent
+        approved allocation per module."""
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'}, status=503,
+            )
+        try:
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT DISTINCT ON (module) module, pct_of_book, "
+                    "  usd_amount, approved_at, approved_by, reason "
+                    "FROM portfolio_allocations "
+                    "WHERE approved_at IS NOT NULL "
+                    "ORDER BY module, approved_at DESC"
+                )
+            return web.json_response({
+                'success': True,
+                'count': len(rows),
+                'current': [
+                    {
+                        'module': r['module'],
+                        'pct_of_book': float(r['pct_of_book']),
+                        'usd_amount': float(r['usd_amount']),
+                        'approved_at': r['approved_at'].isoformat() if r['approved_at'] else None,
+                        'approved_by': r['approved_by'],
+                        'reason': r['reason'],
+                    } for r in rows
+                ],
+            })
+        except Exception as e:
+            logger.error(f"alloc current error: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)}, status=500,
+            )
+
+    async def _api_alloc_approve(self, request):
+        """POST /api/portfolio/allocations/{alloc_id}/approve
+        Body (optional): {"override_pct": 25.0, "effective_until_hours": 24}
+        Marks the proposal as approved. If override_pct is set, writes
+        a NEW operator-driven row instead of approving the original —
+        the original stays pending so the audit shows the divergence.
+        """
+        alloc_id = request.match_info.get('alloc_id', '')
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        override_pct = body.get('override_pct')
+        eff_hours = body.get('effective_until_hours')
+        approved_by = None
+        try:
+            session = request.get('session')
+            if session:
+                approved_by = session.get('username') or session.get('user_id')
+        except Exception:
+            pass
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'}, status=503,
+            )
+        try:
+            async with self.db.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT module, pct_of_book, usd_amount, metrics "
+                    "FROM portfolio_allocations WHERE id = $1::uuid",
+                    alloc_id,
+                )
+                if row is None:
+                    return web.json_response(
+                        {'success': False, 'error': f'alloc {alloc_id} not found'},
+                        status=404,
+                    )
+                if override_pct is not None:
+                    # Operator override: write a new row instead of
+                    # approving the allocator's number directly.
+                    pct = float(override_pct)
+                    book = float(row['usd_amount']) / (float(row['pct_of_book']) / 100.0) \
+                        if row['pct_of_book'] else 1000.0
+                    usd = pct / 100.0 * book
+                    sql = (
+                        "INSERT INTO portfolio_allocations "
+                        "(module, pct_of_book, usd_amount, proposed_by, reason, "
+                        " approved_at, approved_by, effective_until) "
+                        "VALUES ($1, $2, $3, 'operator', $4, NOW(), $5, "
+                        "       NOW() + INTERVAL '%s hours') "
+                        "RETURNING id::text" % int(eff_hours or 24)
+                    ) if eff_hours else (
+                        "INSERT INTO portfolio_allocations "
+                        "(module, pct_of_book, usd_amount, proposed_by, reason, "
+                        " approved_at, approved_by) "
+                        "VALUES ($1, $2, $3, 'operator', $4, NOW(), $5) "
+                        "RETURNING id::text"
+                    )
+                    new_id = await conn.fetchval(
+                        sql, row['module'], pct, usd,
+                        f"operator override (was {row['pct_of_book']}%)",
+                        approved_by,
+                    )
+                    return web.json_response({
+                        'success': True,
+                        'alloc_id': new_id,
+                        'overridden_from': alloc_id,
+                        'module': row['module'],
+                        'pct_of_book': pct,
+                    })
+                else:
+                    await conn.execute(
+                        "UPDATE portfolio_allocations "
+                        "SET approved_at = NOW(), approved_by = $1 "
+                        "WHERE id = $2::uuid",
+                        approved_by, alloc_id,
+                    )
+                    return web.json_response({
+                        'success': True,
+                        'alloc_id': alloc_id,
+                        'module': row['module'],
+                        'pct_of_book': float(row['pct_of_book']),
+                    })
+        except Exception as e:
+            logger.error(f"alloc approve error: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)}, status=500,
+            )
+
+    async def _api_alloc_propose(self, request):
+        """POST /api/portfolio/allocations/propose — operator-triggered
+        recompute (vs waiting for the subprocess tick)."""
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'}, status=503,
+            )
+        try:
+            from modules.portfolio_allocator.core.rebalance_engine import run_tick
+            book = float(os.getenv('PORTFOLIO_TOTAL_BOOK_USD', '1000.0'))
+            lookback = int(os.getenv('PORTFOLIO_ALLOCATOR_LOOKBACK_HOURS', '168'))
+            summary = await run_tick(self.db.pool, lookback, book)
+            return web.json_response({'success': True, 'summary': summary})
+        except Exception as e:
+            logger.error(f"alloc propose error: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)}, status=500,
             )
 
     # ---- Phase 4A: backtest replay ----
