@@ -823,6 +823,69 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "trend chart."
         ),
     },
+    # ── Phase 4C: circuit breaker ────────────────────────────────────
+    {
+        "id": "db_breaker_table_exists",
+        "title": "DB: circuit_breaker_events table present",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT table_name, "
+            "  (SELECT COUNT(*) FROM information_schema.columns "
+            "   WHERE table_name='circuit_breaker_events') AS column_count "
+            "FROM information_schema.tables "
+            "WHERE table_name = 'circuit_breaker_events'"
+        ),
+        "cmd_preview": "SELECT FROM information_schema.tables WHERE table_name='circuit_breaker_events'",
+        "timeout_s": 10,
+        "description": "Confirms migration 021 has run.",
+    },
+    {
+        "id": "db_breaker_thresholds",
+        "title": "DB: per-module daily-loss thresholds",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT config_type, value AS threshold_pct "
+            "FROM config_settings "
+            "WHERE key = 'daily_loss_breaker_pct' "
+            "ORDER BY config_type"
+        ),
+        "cmd_preview": "SELECT … WHERE key='daily_loss_breaker_pct'",
+        "timeout_s": 10,
+        "description": "Each module's threshold; defaults to 5.0%.",
+    },
+    {
+        "id": "db_breaker_active_events",
+        "title": "DB: active circuit-breaker trips",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT module, tripped_at, pct_loss, threshold_pct, "
+            "  action_taken "
+            "FROM circuit_breaker_events "
+            "WHERE cleared_at IS NULL "
+            "  AND tripped_at > NOW() - INTERVAL '24 hours' "
+            "ORDER BY tripped_at DESC"
+        ),
+        "cmd_preview": "Active (uncleared) trips in last 24h",
+        "timeout_s": 10,
+        "description": (
+            "Source for the dashboard's circuit-breaker banner. Empty = "
+            "no current trips, which is the normal state."
+        ),
+    },
+    {
+        "id": "api_breaker_active",
+        "title": "API: /api/circuit-breaker/active",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "circuit-breaker/active",
+        "cmd_preview": "GET /api/circuit-breaker/active",
+        "timeout_s": 10,
+        "description": "Active trips JSON — what the banner polls.",
+    },
+
     # ── Phase 4B: portfolio allocator ────────────────────────────────
     {
         "id": "db_alloc_table_exists",
