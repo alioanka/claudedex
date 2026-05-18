@@ -913,7 +913,7 @@ async function addEndpoint() {
     try {
         const response = await fetch('/api/rpc-pool/endpoints', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: withCsrfHeaders('POST'),
             body: JSON.stringify(data)
         });
 
@@ -966,7 +966,7 @@ async function saveEndpoint() {
     try {
         const response = await fetch(`/api/rpc-pool/endpoints/${id}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: withCsrfHeaders('PUT'),
             body: JSON.stringify(data)
         });
 
@@ -993,7 +993,8 @@ async function deleteEndpoint() {
 
     try {
         const response = await fetch(`/api/rpc-pool/endpoints/${id}`, {
-            method: 'DELETE'
+            method: 'DELETE',
+            headers: withCsrfHeaders('DELETE')
         });
 
         const result = await response.json();
@@ -1025,7 +1026,8 @@ async function testEndpoint(id) {
 
     try {
         const response = await fetch(`/api/rpc-pool/endpoints/${id}/test`, {
-            method: 'POST'
+            method: 'POST',
+            headers: withCsrfHeaders('POST')
         });
 
         const result = await response.json();
@@ -1083,7 +1085,8 @@ async function runHealthCheck() {
 
     try {
         const response = await fetch('/api/rpc-pool/health-check', {
-            method: 'POST'
+            method: 'POST',
+            headers: withCsrfHeaders('POST')
         });
 
         const result = await response.json();

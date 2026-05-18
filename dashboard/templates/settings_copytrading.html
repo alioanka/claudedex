@@ -343,7 +343,7 @@
         try {
             const response = await fetch('/api/copytrading/settings', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: withCsrfHeaders('POST'),
                 body: JSON.stringify(settings)
             });
             const data = await response.json();

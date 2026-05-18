@@ -1344,7 +1344,7 @@ DRY_RUN=true &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&
         try {
             const response = await fetch('/api/arbitrage/settings', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: withCsrfHeaders('POST'),
                 body: JSON.stringify(settings)
             });
             const data = await response.json();

@@ -959,7 +959,7 @@ async function saveSettings() {
     try {
         const response = await fetch('/api/settings/solana', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: withCsrfHeaders('POST'),
             body: JSON.stringify(settings)
         });
 
