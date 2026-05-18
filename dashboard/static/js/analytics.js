@@ -191,6 +191,30 @@ function updatePerformanceMetrics(data) {
     updateElement('max-drawdown', `${data.max_drawdown}%`);
     updateElement('avg-win', formatCurrency(data.avg_win));
     updateElement('avg-loss', formatCurrency(data.avg_loss));
+    // FAILURE-A5 follow-up: surface the trade count + timeframe so an
+    // operator who clicked Sniper and saw all-zeros immediately sees
+    // WHY ("Showing 24h: 0 trades — try 'all' timeframe"). Previously
+    // the cards just showed 0%/0.00/0.00 with no hint.
+    updateEmptyWindowHint(data.total_trades || 0);
+}
+
+function updateEmptyWindowHint(trades) {
+    let hint = document.getElementById('tr-empty-window-hint');
+    if (!hint) {
+        const grid = document.querySelector('.metrics-grid');
+        if (!grid || !grid.parentElement) return;
+        hint = document.createElement('div');
+        hint.id = 'tr-empty-window-hint';
+        hint.style.cssText = 'margin-top:8px;font-size:0.8rem;color:#94a3b8;';
+        grid.parentElement.appendChild(hint);
+    }
+    const tf = (document.getElementById('timeframe-selector') || {}).value || '?';
+    const mod = currentModule || '?';
+    hint.textContent = `Module: ${mod} • Timeframe: ${tf} • Closed trades in window: ${trades.toLocaleString()}`;
+    hint.style.color = trades === 0 ? '#f59e0b' : '#94a3b8';
+    if (trades === 0) {
+        hint.textContent += '  — try a longer timeframe (e.g. "All Time") if you expected data.';
+    }
 }
 
 function updateRiskMetrics(data) {
