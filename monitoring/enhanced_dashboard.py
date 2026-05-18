@@ -1125,6 +1125,13 @@ class DashboardEndpoints:
         self.app.router.add_get(
             '/api/modules/{module}/dry-run', self._api_module_get_dry_run
         )
+        # Phase 3 follow-up: explicit per-module restart via the
+        # logs/.restart_<module> flag-file pattern (orchestrator
+        # main.py polls every 5s). Replaces the operator's manual
+        # "disable + enable" 2-step.
+        self.app.router.add_post(
+            '/api/modules/{module}/restart', self._api_module_restart
+        )
         # Phase 3 D5: orchestrator advisory layer. Surfaces pending
         # recommendations + approval action.
         self.app.router.add_get(
@@ -1898,6 +1905,60 @@ class DashboardEndpoints:
                 status=500,
             )
 
+    # Module-name → orchestrator-process-key map. The orchestrator
+    # tracks subprocesses by short keys (sniper, arbitrage, ...)
+    # while the API may receive richer names (sniper_module,
+    # copy_trading vs copytrading). Normalize here.
+    _MODULE_RESTART_KEY_MAP = {
+        'sniper': 'sniper',
+        'arbitrage': 'arbitrage',
+        'copy_trading': 'copy_trading',
+        'copytrading': 'copy_trading',
+        'ai': 'ai_analysis',
+        'ai_analysis': 'ai_analysis',
+        'futures': 'futures_trading',
+        'futures_trading': 'futures_trading',
+        'solana': 'solana_strategies',
+        'solana_strategies': 'solana_strategies',
+        'dex': 'dex_trading',
+        'dex_trading': 'dex_trading',
+        'orchestrator_ai': 'orchestrator_ai',
+    }
+
+    async def _api_module_restart(self, request):
+        """POST /api/modules/{module}/restart — drop a flag file the
+        orchestrator's _restart_flag_monitor picks up within 5 seconds.
+
+        We don't poll for confirmation here; the dashboard frontend
+        can refetch /api/modules after a few seconds to see the
+        module status flip from RUNNING → restarting → RUNNING."""
+        from pathlib import Path
+        module = (request.match_info.get('module', '') or '').lower()
+        key = self._MODULE_RESTART_KEY_MAP.get(module)
+        if not key:
+            return web.json_response(
+                {'success': False, 'error': f'unknown module: {module}'},
+                status=400,
+            )
+        flag_dir = Path("logs")
+        flag_dir.mkdir(parents=True, exist_ok=True)
+        flag = flag_dir / f".restart_{key}"
+        try:
+            flag.write_text("")
+            logger.info(f"[Phase 3] restart flag written: {flag}")
+            return web.json_response({
+                'success': True,
+                'module': key,
+                'note': 'Restart flag written. Orchestrator polls every 5s; '
+                        'module should be back up within ~10s.',
+            })
+        except Exception as e:
+            logger.error(f"restart flag write failed for {module}: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)},
+                status=500,
+            )
+
     # ---- Phase 3 D5/D6: orchestrator recommendations surface ----
     async def _api_orch_list_recs(self, request):
         """GET /api/orchestrator/recommendations
@@ -2018,6 +2079,7 @@ class DashboardEndpoints:
                     approved, approved_by, rec_id,
                 )
                 applied = None
+                restart_triggered = False
                 # APPLY the action only on approval. Currently only
                 # 'to_dry' / 'to_live' map to DB flips; enable/disable
                 # are recommended-only for now (require env edits).
@@ -2036,13 +2098,36 @@ class DashboardEndpoints:
                             f"[Phase 3 D6] orchestrator rec {rec_id} applied: "
                             f"{rec['module']} -> dry_run={new_dry} by {approved_by}"
                         )
+                        # Auto-trigger a subprocess restart so the new
+                        # dry_run flag actually takes effect. Opt-out
+                        # by passing {"restart": false} in the body.
+                        try:
+                            payload = await request.json()
+                        except Exception:
+                            payload = {}
+                        if payload.get('restart', True):
+                            restart_key = self._MODULE_RESTART_KEY_MAP.get(rec['module'])
+                            if restart_key:
+                                from pathlib import Path
+                                flag_dir = Path("logs")
+                                flag_dir.mkdir(parents=True, exist_ok=True)
+                                (flag_dir / f".restart_{restart_key}").write_text("")
+                                restart_triggered = True
+                                logger.info(
+                                    f"[Phase 3 D6] restart flag dropped for {restart_key}"
+                                )
+            note = 'No DB-level action applied.'
+            if applied and restart_triggered:
+                note = 'Applied + restart flag dropped (subprocess back up within ~10s).'
+            elif applied:
+                note = 'Applied. Restart the module subprocess for the change to take effect.'
             return web.json_response({
                 'success': True,
                 'rec_id': rec_id,
                 'approved': approved,
                 'applied': applied,
-                'note': ('Restart the module subprocess for the change to take effect.'
-                         if applied else 'No DB-level action applied.'),
+                'restart_triggered': restart_triggered,
+                'note': note,
             })
         except Exception as e:
             logger.error(f"orch decide({approved}) error: {e}")

@@ -700,7 +700,8 @@ class TradingBotOrchestrator:
             tasks = [
                 asyncio.create_task(self.health_monitor()),
                 asyncio.create_task(self.status_reporter()),
-                asyncio.create_task(self._shutdown_monitor())
+                asyncio.create_task(self._shutdown_monitor()),
+                asyncio.create_task(self._restart_flag_monitor()),
             ]
 
             # Wait for shutdown signal or task failure
@@ -721,6 +722,59 @@ class TradingBotOrchestrator:
     async def _shutdown_monitor(self):
         """Wait for shutdown signal"""
         await self.shutdown_event.wait()
+
+    async def _restart_flag_monitor(self):
+        """Poll logs/.restart_<module> flag files. When present,
+        restart the named module (matches the killswitch / pause
+        flag-file pattern so the dashboard can ask the orchestrator
+        to restart a module without IPC).
+
+        Phase 3: this is the missing piece that turns "approve a
+        to_dry / to_live orchestrator recommendation" from a 2-step
+        (approve via dashboard + manually restart) into a 1-step
+        operator action — the dashboard writes the flag and the
+        orchestrator picks it up within the poll interval (5s).
+        """
+        from pathlib import Path
+        flag_dir = Path("logs")
+        flag_dir.mkdir(parents=True, exist_ok=True)
+        # Snapshot module keys to avoid mid-iteration mutation issues.
+        known_modules = list(self.modules.keys())
+        while not self.shutdown_event.is_set():
+            try:
+                for module_key in known_modules:
+                    flag = flag_dir / f".restart_{module_key}"
+                    if not flag.exists():
+                        continue
+                    module = self.modules.get(module_key)
+                    if module is None:
+                        # Stale flag for a removed module — clean up.
+                        try:
+                            flag.unlink()
+                        except OSError:
+                            pass
+                        continue
+                    logger.info(
+                        "🔁 Restart flag detected for %s — restarting module",
+                        module_key,
+                    )
+                    try:
+                        await module.restart()
+                    except Exception as e:
+                        logger.error(
+                            "module.restart(%s) raised: %s", module_key, e
+                        )
+                    # Always clear the flag, even on restart failure, so
+                    # we don't loop indefinitely. The next health-monitor
+                    # tick will retry a failed restart if the subprocess
+                    # is still down.
+                    try:
+                        flag.unlink()
+                    except OSError:
+                        pass
+            except Exception as e:
+                logger.error("restart-flag monitor error: %s", e)
+            await asyncio.sleep(5)
 
     async def shutdown(self):
         """Gracefully shutdown all modules"""
