@@ -823,6 +823,21 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "trend chart."
         ),
     },
+    # ── Phase 4A: backtest replay ────────────────────────────────────
+    {
+        "id": "api_backtest_strategies",
+        "title": "API: /api/backtest/strategies",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "backtest/strategies",
+        "cmd_preview": "GET /api/backtest/strategies",
+        "timeout_s": 10,
+        "description": (
+            "Lists the replay strategies the engine knows about. "
+            "Must include approve_all, approve_on_confidence, "
+            "never_approve, operator_replay."
+        ),
+    },
     {
         "id": "db_orch_training_data",
         "title": "DB: orchestrator ML training-data view",

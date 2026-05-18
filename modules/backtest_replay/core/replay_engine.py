@@ -169,11 +169,15 @@ def run_replay(
         result.max_drawdown_pct = _max_drawdown_pct(cum_counter_curve)
         result.sharpe = _sharpe(per_trade_pnls)
         # Equity curve: sample 1 point per trade, cap at 200 for
-        # response size sanity. Sparse-sample if more.
-        if len(cum_counter_curve) <= 200:
+        # response size sanity. Sparse-sample if more — use ceil
+        # division on the step so length stays ≤ 200 even on prime
+        # sample counts (300/200=1 in floor math would leave the
+        # series un-sampled; ceil bumps to step=2 → 150 points).
+        N_MAX = 200
+        if len(cum_counter_curve) <= N_MAX:
             sampled = list(zip([t.ts for t in trades], cum_counter_curve))
         else:
-            step = max(1, len(cum_counter_curve) // 200)
+            step = -(-len(cum_counter_curve) // N_MAX)  # ceil division
             sampled = [
                 (trades[i].ts, cum_counter_curve[i])
                 for i in range(0, len(cum_counter_curve), step)
