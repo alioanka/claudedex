@@ -3082,11 +3082,74 @@ class DashboardEndpoints:
             except Exception as e:
                 logger.debug(f"Could not fetch solana stats for summary: {e}")
 
+            # Sniper + Arbitrage + Copy Trading — aggregate directly from
+            # their DB tables. The previous code pulled DEX from `trades`,
+            # Futures from health-port, Solana from health-port, but the
+            # three modules above were silently omitted — so the summary
+            # always showed $0 / 0 trades even when sniper had 179k closed
+            # trades and $50k+ PnL on the operator's VPS.
+            sniper_pnl = sniper_trades = sniper_positions = sniper_winning = 0
+            arb_pnl = arb_trades = arb_winning = 0
+            copy_pnl = copy_trades_n = copy_positions = copy_winning = 0
+            if self.db and getattr(self.db, 'pool', None):
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        row = await conn.fetchrow("""
+                            SELECT
+                              COALESCE(SUM(profit_loss) FILTER (WHERE status='closed'), 0) AS pnl,
+                              COUNT(*) FILTER (WHERE status='closed') AS trades,
+                              COUNT(*) FILTER (WHERE status='open') AS positions,
+                              COUNT(*) FILTER (WHERE status='closed' AND profit_loss > 0) AS wins
+                            FROM sniper_trades
+                        """)
+                        if row:
+                            sniper_pnl = float(row['pnl'] or 0)
+                            sniper_trades = int(row['trades'] or 0)
+                            sniper_positions = int(row['positions'] or 0)
+                            sniper_winning = int(row['wins'] or 0)
+                except Exception as e:
+                    logger.debug(f"Sniper summary fetch failed: {e}")
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        row = await conn.fetchrow("""
+                            SELECT
+                              COALESCE(SUM(profit_loss), 0) AS pnl,
+                              COUNT(*) AS trades,
+                              COUNT(*) FILTER (WHERE profit_loss > 0) AS wins
+                            FROM arbitrage_trades
+                        """)
+                        if row:
+                            arb_pnl = float(row['pnl'] or 0)
+                            arb_trades = int(row['trades'] or 0)
+                            arb_winning = int(row['wins'] or 0)
+                except Exception as e:
+                    logger.debug(f"Arbitrage summary fetch failed: {e}")
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        row = await conn.fetchrow("""
+                            SELECT
+                              COALESCE(SUM(profit_loss) FILTER (WHERE status='closed' AND NOT is_simulated), 0) AS pnl,
+                              COUNT(*) FILTER (WHERE status='closed' AND NOT is_simulated) AS trades,
+                              COUNT(*) FILTER (WHERE status='open' AND NOT is_simulated) AS positions,
+                              COUNT(*) FILTER (WHERE status='closed' AND NOT is_simulated AND profit_loss > 0) AS wins
+                            FROM copytrading_trades
+                        """)
+                        if row:
+                            copy_pnl = float(row['pnl'] or 0)
+                            copy_trades_n = int(row['trades'] or 0)
+                            copy_positions = int(row['positions'] or 0)
+                            copy_winning = int(row['wins'] or 0)
+                except Exception as e:
+                    logger.debug(f"Copytrading summary fetch failed: {e}")
+
             # Combine totals from ALL modules
-            total_pnl += futures_pnl + solana_pnl
-            total_trades += futures_trades + solana_trades
-            open_positions_count += futures_positions + solana_positions
-            winning_trades_count += futures_winning + solana_winning
+            total_pnl += futures_pnl + solana_pnl + sniper_pnl + arb_pnl + copy_pnl
+            total_trades += (futures_trades + solana_trades + sniper_trades
+                             + arb_trades + copy_trades_n)
+            open_positions_count += (futures_positions + solana_positions
+                                     + sniper_positions + copy_positions)
+            winning_trades_count += (futures_winning + solana_winning + sniper_winning
+                                     + arb_winning + copy_winning)
 
             # Calculate combined win rate
             win_rate = (winning_trades_count / total_trades * 100) if total_trades > 0 else 0
