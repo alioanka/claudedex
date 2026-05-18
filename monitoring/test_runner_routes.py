@@ -715,6 +715,65 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "field, the dashboard UI can't show its DRY/LIVE chip."
         ),
     },
+
+    # ── Phase 3 D: orchestrator_ai readiness probes ─────────────────
+    {
+        "id": "db_orch_table_exists",
+        "title": "DB: orchestrator_recommendations table present",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT table_name, "
+            "  (SELECT COUNT(*) FROM information_schema.columns "
+            "   WHERE table_name='orchestrator_recommendations') AS column_count "
+            "FROM information_schema.tables "
+            "WHERE table_name = 'orchestrator_recommendations'"
+        ),
+        "cmd_preview": (
+            "SELECT FROM information_schema.tables WHERE table_name='orchestrator_recommendations'"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "Confirms migration 018 has run and the orchestrator can "
+            "write recommendations. 0 rows = migration pending."
+        ),
+    },
+    {
+        "id": "db_orch_recs_summary",
+        "title": "DB: orchestrator recommendations summary",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT module, "
+            "  COUNT(*) FILTER (WHERE approved IS NULL AND superseded_at IS NULL) AS pending, "
+            "  COUNT(*) FILTER (WHERE approved IS TRUE) AS approved, "
+            "  COUNT(*) FILTER (WHERE approved IS FALSE) AS rejected, "
+            "  COUNT(*) FILTER (WHERE superseded_at IS NOT NULL) AS superseded, "
+            "  MAX(created_at) AS most_recent "
+            "FROM orchestrator_recommendations "
+            "GROUP BY module ORDER BY most_recent DESC NULLS LAST"
+        ),
+        "cmd_preview": "per-module rec counts grouped by approval state",
+        "timeout_s": 10,
+        "description": (
+            "How many recs each module has, by state. Pre-orchestrator-start "
+            "this returns 0 rows; after first tick you'll see rows here."
+        ),
+    },
+    {
+        "id": "api_orch_pending_recs",
+        "title": "API: /api/orchestrator/recommendations?status=pending",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "orchestrator/recommendations?status=pending&limit=20",
+        "cmd_preview": "GET /api/orchestrator/recommendations?status=pending",
+        "timeout_s": 15,
+        "description": (
+            "Lists currently pending operator approvals. Empty = nothing "
+            "to action (either no module crossed a threshold, or the "
+            "orchestrator subprocess isn't running yet)."
+        ),
+    },
 ]
 
 
