@@ -292,6 +292,14 @@ class SentimentEngine:
         self.stop_loss_pct = -3.0    # -3% stop loss
         self.max_hold_hours = 24     # Maximum position hold time
 
+        # Multi-provider quorum (A6 E1). When both openai+anthropic keys are
+        # configured AND quorum_required=true, _quorum_sentiment() requires
+        # both providers to agree (sign + magnitude). Saves the bot from a
+        # single-provider hallucination flipping the signal.
+        self.quorum_required = False
+        self.quorum_max_disagreement = 0.4
+        self.quorum_min_abs_score = 0.0  # 0 => skip the min-abs check; trade gate is still confidence_threshold
+
         # Trade executor
         self.executor: Optional[AITradeExecutor] = None
 
@@ -403,6 +411,16 @@ class SentimentEngine:
                         self.trade_amount_usd = float(val)
                     elif key == 'ai_provider':
                         self.ai_provider = val.lower() if val else 'openai'
+                    elif key == 'quorum_required':
+                        # A6 E1: when true, require BOTH providers to agree
+                        # before _execute_trade is allowed (only takes effect
+                        # when both API keys are loaded).
+                        self.quorum_required = (val or '').lower() in ('true', '1', 'yes')
+                    elif key == 'quorum_max_disagreement':
+                        try:
+                            self.quorum_max_disagreement = max(0.0, min(2.0, float(val)))
+                        except (ValueError, TypeError):
+                            pass
 
             logger.info(f"📋 AI Settings loaded:")
             logger.info(f"   Provider: {self.ai_provider.upper()}")
@@ -488,11 +506,9 @@ class SentimentEngine:
                     # Legacy fallback if AI Provider Manager not available or failed
                     if sentiment_score == 0.0:
                         if self.ai_provider == 'both' and has_openai and has_claude:
-                            # Use both and average the results
-                            openai_score = await self._analyze_with_llm(news_data)
-                            claude_score = await self._analyze_with_claude(news_data)
-                            sentiment_score = (openai_score + claude_score) / 2
-                            logger.info(f"🧠 Combined Sentiment: OpenAI={openai_score:.2f}, Claude={claude_score:.2f}, Avg={sentiment_score:.2f}")
+                            # A6 E1: use the quorum gate (sign + |delta|) instead
+                            # of a blind average, which can hide a flipped vote.
+                            sentiment_score = await self._quorum_sentiment(news_data)
                         elif self.ai_provider == 'claude' and has_claude:
                             sentiment_score = await self._analyze_with_claude(news_data)
                         elif has_openai:
@@ -500,6 +516,25 @@ class SentimentEngine:
                         elif has_claude:
                             # Fallback to Claude if OpenAI not available
                             sentiment_score = await self._analyze_with_claude(news_data)
+
+                    # A6 E1: if both keys are loaded and operator demands quorum,
+                    # require agreement even when the AIProviderManager
+                    # produced the primary score from a single provider. This
+                    # bolts the gate onto the live trade path in one place.
+                    if (
+                        self.quorum_required
+                        and has_openai
+                        and has_claude
+                        and abs(sentiment_score) >= self.confidence_threshold
+                    ):
+                        quorum_score = await self._quorum_sentiment(news_data)
+                        if quorum_score == 0.0 and sentiment_score != 0.0:
+                            logger.info(
+                                "⚖️ Quorum override: primary=%.2f failed multi-"
+                                "provider agreement; collapsing to 0.0 (no signal).",
+                                sentiment_score,
+                            )
+                        sentiment_score = quorum_score
 
                     logger.info(f"🧠 Market Sentiment Score: {sentiment_score:.2f}")
 
@@ -595,6 +630,71 @@ class SentimentEngine:
     async def _analyze_with_claude(self, texts: List[str]) -> float:
         """Send headlines to Anthropic Claude and get a sentiment score (-1 to 1)."""
         return await self._call_llm_provider('anthropic', texts)
+
+    async def _quorum_sentiment(self, texts: List[str]) -> float:
+        """A6 E1: call both providers in parallel and return a score only if
+        they agree on direction AND magnitude. Returns 0.0 on quorum failure.
+
+        Quorum rules:
+        - Both calls must return a non-zero result (else: single-provider failure).
+        - sign(openai) == sign(claude) (no opposite-direction blends).
+        - |openai - claude| <= quorum_max_disagreement.
+        - min(|openai|, |claude|) >= quorum_min_abs_score (if > 0).
+        On success, return the conservative-magnitude average:
+        sign(avg) * min(|openai|, |claude|).
+        """
+        try:
+            openai_t = asyncio.create_task(self._analyze_with_llm(texts))
+            claude_t = asyncio.create_task(self._analyze_with_claude(texts))
+            openai_score, claude_score = await asyncio.gather(
+                openai_t, claude_t, return_exceptions=False
+            )
+        except Exception as e:
+            logger.warning(f"⚖️ Quorum: provider call failed: {e}")
+            return 0.0
+
+        # Treat zero as "no opinion" — a clamped 0 from one provider means
+        # an error path or a literal neutral; either way, no quorum.
+        if openai_score == 0.0 or claude_score == 0.0:
+            logger.info(
+                "⚖️ Quorum FAIL (single-provider zero): OpenAI=%.2f Claude=%.2f",
+                openai_score, claude_score,
+            )
+            return 0.0
+
+        # Direction mismatch is the dangerous case the quorum exists to catch.
+        if (openai_score > 0) != (claude_score > 0):
+            logger.info(
+                "⚖️ Quorum FAIL (sign mismatch): OpenAI=%.2f Claude=%.2f",
+                openai_score, claude_score,
+            )
+            return 0.0
+
+        delta = abs(openai_score - claude_score)
+        if delta > self.quorum_max_disagreement:
+            logger.info(
+                "⚖️ Quorum FAIL (|delta|=%.2f > %.2f): OpenAI=%.2f Claude=%.2f",
+                delta, self.quorum_max_disagreement, openai_score, claude_score,
+            )
+            return 0.0
+
+        min_abs = min(abs(openai_score), abs(claude_score))
+        if self.quorum_min_abs_score > 0 and min_abs < self.quorum_min_abs_score:
+            logger.info(
+                "⚖️ Quorum FAIL (min |score|=%.2f < %.2f): OpenAI=%.2f Claude=%.2f",
+                min_abs, self.quorum_min_abs_score, openai_score, claude_score,
+            )
+            return 0.0
+
+        # Conservative aggregation: keep the agreed direction, take the smaller
+        # magnitude. Avoids amplifying a single high-confidence outlier.
+        sign = 1.0 if (openai_score + claude_score) >= 0 else -1.0
+        score = sign * min_abs
+        logger.info(
+            "⚖️ Quorum PASS: OpenAI=%.2f Claude=%.2f -> %.2f (|delta|=%.2f)",
+            openai_score, claude_score, score, delta,
+        )
+        return score
 
     async def _call_llm_provider(self, provider: str, texts: List[str]) -> float:
         """Unified LLM dispatch for OpenAI / Anthropic. Per-provider deltas (URL,
