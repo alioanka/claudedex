@@ -87,6 +87,17 @@ class DirectDEXExecutor(BaseExecutor):
         self.gas_price_strategy = config.get('gas_strategy', 'fast')
         self.max_gas_price = config.get('max_gas_price', 50)  # gwei - FIXED: Was 500
         self.gas_buffer = config.get('gas_buffer', 1.2)
+
+        # Slippage default (fraction, 0.005 = 0.5%). Sourced from either
+        # `max_slippage` (fraction) or `max_slippage_bps` (basis points)
+        # to match DexTradingModule._setup_dex_settings naming. Fallback
+        # 0.005 = 50 bps matches the module default.
+        if 'max_slippage' in config:
+            self.max_slippage = float(config['max_slippage'])
+        elif 'max_slippage_bps' in config:
+            self.max_slippage = float(config['max_slippage_bps']) / 10000.0
+        else:
+            self.max_slippage = 0.005
         
         # Sandwich protection
         self.use_commit_reveal = config.get('commit_reveal', False)
