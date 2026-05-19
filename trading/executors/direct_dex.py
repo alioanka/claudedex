@@ -227,6 +227,30 @@ class DirectDEXExecutor(BaseExecutor):
 
     # PATCH for trading/executors/direct_dex.py - Complete the try block for get_best_quote
 
+    def _score_quote(self, quote: DEXQuote, gas_price_wei: int) -> Decimal:
+        """Route-quality score = expected net output after gas.
+
+        Picking the raw max(amount_out) is wrong: a Sushi quote that is
+        0.05% higher headline but costs 1.5x the gas of a Uni V2 quote is
+        a strictly worse fill once you net out gas. Score = amount_out *
+        (1 - price_impact) - gas_cost_in_output_token. Quoted in *output-
+        token* units so we can compare apples-to-apples across DEXes for
+        the same pair. Gas-cost conversion is best-effort: we treat gas
+        cost as a Decimal of native units and let the caller's gas-budget
+        layer normalize across chains.
+        """
+        try:
+            amount_out = Decimal(str(quote.amount_out))
+            impact = Decimal(str(max(0.0, float(quote.price_impact))))
+            gas_units = Decimal(int(quote.gas_estimate))
+            gas_wei = Decimal(int(gas_price_wei))
+            # Native gas cost in wei -> ether for a comparable scale.
+            gas_cost_ether = (gas_units * gas_wei) / Decimal(10 ** 18)
+            net = amount_out * (Decimal(1) - impact) - gas_cost_ether
+            return net
+        except Exception:
+            return Decimal(str(quote.amount_out))
+
     @measure_time
     async def get_best_quote(
         self,
@@ -235,10 +259,10 @@ class DirectDEXExecutor(BaseExecutor):
         amount: Decimal,
         chain: str = 'ethereum'
         ) -> Optional[DEXQuote]:
-        """Get best quote across all DEXes"""
+        """Get best quote across all DEXes (net of gas + price impact)."""
         try:
             quotes = []
-            
+
             # Query each available DEX
             for dex_name, contract in self.dex_contracts.get(chain, {}).items():
                 quote = await self._get_dex_quote(
@@ -249,23 +273,28 @@ class DirectDEXExecutor(BaseExecutor):
                     amount,
                     chain
                 )
-                
+
                 if quote:
                     quotes.append(quote)
-                    
+
             if not quotes:
                 logger.warning(f"No quotes found for {token_in} -> {token_out}")
                 return None
-            
-            # Find the best quote based on output amount
-            best_quote = max(quotes, key=lambda q: q.amount_out)
-            
+
+            # Score by net-of-gas output, not raw headline output.
+            try:
+                gas_price_wei = await self._get_optimal_gas_price(chain)
+            except Exception:
+                gas_price_wei = 50 * 10 ** 9  # safe fallback (50 gwei)
+            best_quote = max(quotes, key=lambda q: self._score_quote(q, gas_price_wei))
+
             logger.info(
                 f"Best quote from {best_quote.dex.value}: "
                 f"{amount} {token_in} -> "
-                f"{best_quote.amount_out} {token_out}"
+                f"{best_quote.amount_out} {token_out} "
+                f"(net-of-gas scoring over {len(quotes)} dexes)"
             )
-            
+
             return best_quote
             
         except asyncio.TimeoutError:
