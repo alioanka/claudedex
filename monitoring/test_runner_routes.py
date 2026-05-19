@@ -1455,6 +1455,131 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "keys through FuturesConfigManager.get_*."
         ),
     },
+
+    # ── AI (A6 wave-2: E1 quorum / E2 calibration / E3 bandit) ───────────
+    {
+        "id": "db_ai_calibration_table",
+        "title": "DB: ai_confidence_calibration table present (mig 023)",
+        "category": "db",
+        "kind": "db_query",
+        # New table from migration 023_add_ai_confidence_calibration.sql.
+        # Verifies the table exists with the columns A6 E2 expects:
+        # trade_id, provider, predicted_score/confidence, realized_*.
+        # Empty column_count = migration not run; calibration endpoint
+        # will return success=true but empty bins.
+        "sql": (
+            "SELECT table_name, "
+            "  (SELECT COUNT(*) FROM information_schema.columns "
+            "   WHERE table_name='ai_confidence_calibration') AS column_count, "
+            "  (SELECT COUNT(*) FROM information_schema.columns "
+            "   WHERE table_name='ai_confidence_calibration' "
+            "     AND column_name IN ('trade_id','provider','predicted_score',"
+            "       'predicted_confidence','realized_pnl_pct','realized_won',"
+            "       'quorum_required','closed_at')) AS expected_cols "
+            "FROM information_schema.tables "
+            "WHERE table_name = 'ai_confidence_calibration'"
+        ),
+        "cmd_preview": "information_schema check for ai_confidence_calibration",
+        "timeout_s": 10,
+        "description": (
+            "Confirms migration 023 has been applied. expected_cols "
+            "should be 8 (the union of columns A6 E2 writes). The "
+            "calibration endpoint and sentiment_engine close-hook will "
+            "no-op gracefully when missing but no learning happens."
+        ),
+    },
+    {
+        "id": "db_ai_calibration_sample",
+        "title": "DB: ai calibration sample (last 90d)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT "
+            "  COUNT(*) AS total_rows, "
+            "  COUNT(*) FILTER (WHERE realized_won IS NOT NULL) AS closed_rows, "
+            "  COUNT(*) FILTER (WHERE quorum_required) AS quorum_rows, "
+            "  ROUND(AVG(predicted_confidence)::numeric, 4) AS avg_pred_conf, "
+            "  ROUND(AVG(CASE WHEN realized_won THEN 1.0 ELSE 0.0 END)::numeric, 4) AS avg_win_rate "
+            "FROM ai_confidence_calibration "
+            "WHERE created_at > NOW() - INTERVAL '90 days'"
+        ),
+        "cmd_preview": "COUNT + AVG predicted_confidence vs realized_won, 90d",
+        "timeout_s": 15,
+        "description": (
+            "Source of the /api/ai/calibration reliability plot. "
+            "avg_pred_conf far from avg_win_rate = miscalibrated LLM. "
+            "Closed_rows < 20 = not enough data for a reliable plot."
+        ),
+    },
+    {
+        "id": "db_ai_quorum_bandit_config",
+        "title": "DB: ai quorum + bandit settings (A6 E1/E3)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE key IN ('quorum_required','quorum_max_disagreement',"
+            "'bandit_enabled','bandit_epsilon','ai_provider') "
+            "  AND config_type='ai_config' "
+            "ORDER BY key"
+        ),
+        "cmd_preview": (
+            "SELECT … WHERE key IN ('quorum_required','bandit_enabled',…)"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "Wave-2 AI tunables: E1 multi-provider quorum + E3 prompt-"
+            "bandit ε-greedy controller. Defaults are off — set "
+            "quorum_required=true once both openai+anthropic keys are "
+            "loaded; flip bandit_enabled=true after the calibration "
+            "table has ≥30 closed trades."
+        ),
+    },
+    {
+        "id": "api_ai_calibration",
+        "title": "API: GET /api/ai/calibration (A6 E2)",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "ai/calibration",
+        "cmd_preview": "GET /api/ai/calibration | .bins[] / .brier",
+        "timeout_s": 15,
+        "description": (
+            "Reliability-diagram bins + Brier score for the LLM "
+            "sentiment predictor. Returns success=true with empty "
+            "bins + brier=null when the table is missing or has no "
+            "closed trades — UI shows a 'no data' panel either way."
+        ),
+    },
+    {
+        "id": "db_ai_bandit_state",
+        "title": "DB: prompt-bandit per-arm state (A6 E3)",
+        "category": "db",
+        "kind": "db_query",
+        # prompt_bandit persists its (count, sum_reward, last_used_at)
+        # per-template stats to ai_feature_store.feature_vector under
+        # the 'bandit_v1' key. This probe shows the arm distribution
+        # so the operator can see ε-greedy exploration vs exploit ratio.
+        "sql": (
+            "SELECT "
+            "  feature_vector->'bandit_v1'->>'template' AS template, "
+            "  COUNT(*) AS selections, "
+            "  ROUND(AVG((feature_vector->'bandit_v1'->>'reward')::numeric)::numeric, 4) AS avg_reward, "
+            "  MAX(written_at) AS last_used "
+            "FROM ai_feature_store "
+            "WHERE feature_vector->'bandit_v1'->>'template' IS NOT NULL "
+            "  AND written_at > NOW() - INTERVAL '14 days' "
+            "GROUP BY template "
+            "ORDER BY selections DESC"
+        ),
+        "cmd_preview": "GROUP BY bandit_v1.template, AVG reward, 14d window",
+        "timeout_s": 15,
+        "description": (
+            "Per-arm pull count and mean reward for the prompt-bandit. "
+            "When bandit_enabled=true the engine writes one row per "
+            "LLM call. Skewed selections (one arm ≫ others) = the "
+            "bandit has converged."
+        ),
+    },
 ]
 
 
