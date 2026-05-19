@@ -1471,12 +1471,17 @@ class EVMArbitrageEngine:
                 remaining = self._max_executions_per_pair_per_day - (current_count + 1)
 
                 # Use correct decimal divisor for logging
-                in_divisor = 10 ** token_in_decimals
+                # Path is: borrow WETH (token_out) -> swap to token (token_in) -> swap back to WETH
+                in_divisor = 10 ** token_in_decimals  # decimals of the intermediate token
                 out_decimals = TOKEN_DECIMALS.get(token_out_symbol, 18)
-                out_divisor = 10 ** out_decimals
+                out_divisor = 10 ** out_decimals  # WETH decimals (18)
 
+                # A2-01: prior refactor renamed forward_output -> tokens_bought
+                # and final_output -> weth_returned but missed this log line,
+                # which raised NameError on every real opportunity and silently
+                # killed execution via the outer except.
                 self.logger.info(f"🚨 [{self.chain_name.upper()}] ARBITRAGE OPPORTUNITY [{token_symbol}/{token_out_symbol}]: Buy on {best_buy_dex}, Sell on {best_sell_dex}. Raw: {raw_spread:.2%}, Net: {net_spread:.2%} (#{current_count + 1} today, {remaining} remaining)")
-                self.logger.info(f"   Path: {amount_in/in_divisor:.4f} {token_symbol} → {forward_output/out_divisor:.4f} {token_out_symbol} → {final_output/in_divisor:.4f} {token_symbol} (profit: {profit/in_divisor:.4f})")
+                self.logger.info(f"   Path: {borrow_amount/out_divisor:.4f} {token_out_symbol} → {tokens_bought/in_divisor:.4f} {token_symbol} → {weth_returned/out_divisor:.4f} {token_out_symbol} (profit: {profit/out_divisor:.6f} {token_out_symbol})")
                 self._stats['opportunities_executed'] += 1
 
                 # Execute arbitrage - now buy_dex and sell_dex match contract's expectations directly!
