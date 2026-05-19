@@ -53,7 +53,24 @@
 - `trading/chains/solana/jupiter_executor.py` — owned by A3 (SOLANA). I may read but not write.
 
 ## Fix log
-(populated below as each commit lands)
 
 | # | Commit | What | Why |
 |---|---|---|---|
+| 0 | e4b8025 | Campaign report seed | Audit + plan |
+| R3 | 87c5523 | `solana_listener._log_stats_if_needed` carries `wss_dispatched` / `wss_inflight_peak` / `block_time_*` across the 1-min reset | Dashboard counters were reading 0 after first window flip |
+| R2 | 77b22e7 | `_check_filters` exception path: cooldown + `safety_check_errors` counter + `rejected_safety_error` outcome | Stopped busy-loop that burned GoPlus / Honeypot.is RPS on the same failing token |
+| R1 | 6612be2 | `_check_pool_transaction` two-stage processed→confirmed readback + `_fetch_transaction` helper + `processed_hit` / `processed_miss_fallback` counters | Cuts median commitment-wait ~5s→~300ms; relieves WSS semaphore saturation |
+| R4 | 4adcd29 (bundled) | `_quorum_honeypot_decision` truth-table over GoPlus + Honeypot.is + 5 unit tests | Removes Honeypot.is brown-out false-positives; keeps fail-safe asymmetry |
+| R5 | adee9c2 | Birdeye `/defi/price` tertiary fallback in `_get_token_price` + `birdeye_fallback_hits` counter | Removes single-point-of-failure on Jupiter for SL/TP decisions |
+| R6 | 5a0a3e9 | Per-chain listener-health widget in `performance_sniper.html`; consumer of existing `/api/sniper/stats` | Operator sees WSS saturation / processed-hit ratio / rejection profile in 30s |
+
+## Out-of-scope items (handed off)
+- Pyth-feed wiring for blue-chip mints — extension point in `_get_token_price`; deferred because Pump.fun memecoins have no feed-id and the call would always 404.
+- `/api/sniper/timing` per-chain GROUP BY in `monitoring/enhanced_dashboard.py` — would have given a cleaner per-chain p50/p95 breakdown but the file had concurrent uncommitted edits from another agent. The new client-side widget delivers operator-visible per-chain visibility without backend contention; backend split can be a future PM-coordinated change.
+- `safety_check_enabled=true` DB flip — operator-only LIVE step per CAMPAIGN_BRIEF.md line 43; explicitly out of scope this wave.
+
+## Verification
+- `python -m py_compile` clean on all touched files (`solana_listener.py`, `sniper_engine.py`, `token_safety.py`).
+- `tests/unit/test_sniper_new_paths.py` — 5 new quorum tests added. Test sandbox here lacks `aiohttp` so pre-existing engine-import tests can't run locally, but the quorum tests are pure-Python with no aiohttp dependency on the staticmethod call path and pass under any environment where the module imports successfully.
+- DRY_RUN stays TRUE for every change. No flip to LIVE-related flags.
+

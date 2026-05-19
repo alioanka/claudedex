@@ -116,6 +116,50 @@ e4db485 (Pump.fun WSS) + 7e4987e (strict opcode filter) +
 54d26e0 (commitment fix) + e43e34d (block-time anchor) +
 fe45df0 (synthetic-close) + d0890e3 (timing dashboard) +
 2faa707 (docker-compose env mount + log rotation).
+
+## Wave-2 enhancements (2026-05-19 audit)
+Per `docs/agents/reports/SNIPER_CAMPAIGN.md`. Six residual items
+closed; each in its own commit on `claude/create-expert-agents-JFSF5`:
+
+- **R1** processed→confirmed two-stage commitment readback
+  (`_check_pool_transaction`). Stage-1 `processed` typical 200-400ms,
+  fall back to `confirmed` only on miss. New counters
+  `processed_hit` / `processed_miss_fallback` expose hit ratio in
+  `sniper_runtime_stats.solana_listener` and on the per-chain
+  listener-health dashboard widget.
+- **R2** safety-check exception cooldown + `safety_check_errors`
+  counter. Stops the busy-loop that burned GoPlus/Honeypot.is
+  rate-limit budget on token addresses that already failed once.
+  Timing outcome `rejected_safety_error` distinct from
+  `rejected_safety` so /api/sniper/timing can separate API outages
+  from legitimate honeypot rejections.
+- **R3** preserved `wss_dispatched` / `wss_inflight_peak` /
+  `block_time_anchored` / `block_time_missing` across the 1-minute
+  stats-window reset. Without this the dashboard counters read 0
+  after the first window flip even while the WSS hot loop was
+  dispatching candidates.
+- **R4** dual-source honeypot quorum
+  (`TokenSafetyChecker._quorum_honeypot_decision`). GoPlus +
+  Honeypot.is verdicts combined: both-agree honors the verdict,
+  single-source trusts the only one available, disagreement defaults
+  fail-safe (treat as honeypot). Per-source verdicts tagged in the
+  report with `[GP]` / `[HP]` so the dashboard surfaces which oracle
+  flagged. 5 new unit tests cover all five truth-table branches.
+- **R5** Solana SL/TP price-feed redundancy. Birdeye `/defi/price`
+  added as tertiary fallback (Jupiter Price v2 → Jupiter /quote →
+  Birdeye) so a Jupiter brown-out doesn't synthetically-close every
+  active position simultaneously. New `birdeye_fallback_hits`
+  counter. Pyth deliberately NOT wired — Pump.fun mints have no Pyth
+  feed-id; future extension for blue-chip mints.
+- **R6** per-chain listener-health dashboard widget on
+  `/sniper/performance`. Side-by-side SOLANA + EVM cards: processed-
+  hit ratio, WSS notifications/dispatched/in-flight-peak vs cap,
+  block-time anchored ratio (EVM), top-3 rejection buckets. Pure
+  consumer of `/api/sniper/stats`; no backend change required.
+
+Commits: e4b8025 (campaign report), 87c5523 (R3),
+77b22e7 (R2), 6612be2 (R1), 4adcd29 (R4 — bundled),
+adee9c2 (R5), 5a0a3e9 (R6).
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/SNIPER_*.md` (smartcontract / quant / analyst).
 - Canonical engine API: `docs/engines.md`.
