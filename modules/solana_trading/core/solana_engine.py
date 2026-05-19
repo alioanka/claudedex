@@ -1611,6 +1611,78 @@ class SolanaTradingEngine:
             logger.error(f"Error getting wallet balance: {e}")
             return 0.0
 
+    async def _ml_rug_probability(
+        self,
+        token_mint: str,
+        token_symbol: str,
+        metadata: Dict,
+    ) -> Optional[float]:
+        """Lazy-loaded ML rug-pull probability for the entry gate (P1-07).
+
+        Returns None if no trained model is present (refuse-to-predict);
+        returns ensemble probability in [0,1] otherwise. Caches the
+        classifier on the engine after the first call so subsequent
+        entries skip the load cost.
+        """
+        # Lazy import + cache: avoid taking the ml/ dependency in DRY_RUN
+        # paths that never enable the flag.
+        if not hasattr(self, '_rug_classifier_singleton'):
+            try:
+                from ml.models.rug_classifier import RugClassifier
+                clf = RugClassifier(config={})
+                # RugClassifier.load_model() may be a no-op if no artefact;
+                # is_loaded() then returns False and predict() refuses.
+                load = getattr(clf, 'load_model', None)
+                if callable(load):
+                    try:
+                        load()
+                    except Exception as exc:
+                        logger.debug(f"RugClassifier.load_model raised: {exc}")
+                self._rug_classifier_singleton = clf
+            except Exception as exc:
+                logger.debug(f"RugClassifier unavailable, ML gate idle: {exc}")
+                self._rug_classifier_singleton = None
+
+        clf = self._rug_classifier_singleton
+        if clf is None or not getattr(clf, 'is_loaded', lambda: False)():
+            return None
+
+        # Map DexScreener / pump.fun metadata onto the 33-feature dict the
+        # RugClassifier expects. Missing keys default to 0 (handled in
+        # extract_features) so EVM-only fields just contribute zero weight.
+        liq = float(metadata.get('liquidity_usd') or metadata.get('liquidity') or 0)
+        mcap = float(metadata.get('market_cap') or metadata.get('fdv') or 0)
+        vol = float(metadata.get('volume_24h') or metadata.get('volume') or 0)
+        buys_5m = float(metadata.get('buys_5m') or 0)
+        sells_5m = float(metadata.get('sells_5m') or 0)
+        bs_ratio = (buys_5m / sells_5m) if sells_5m > 0 else (1.0 if buys_5m == 0 else 5.0)
+        feats = {
+            'liquidity_usd': liq,
+            'market_cap': mcap,
+            'lp_burn_percentage': float(metadata.get('lp_burn_percentage') or 0),
+            'liquidity_locked_percentage': float(metadata.get('liquidity_locked_percentage') or 0),
+            'liquidity_locked': bool(metadata.get('liquidity_locked', False)),
+            'liquidity_lock_duration_days': float(metadata.get('liquidity_lock_duration_days') or 0),
+            'unique_holders': float(metadata.get('holder_count') or metadata.get('holders') or 0),
+            'dev_wallet_percentage': float(metadata.get('dev_holding_pct') or metadata.get('creator_holdings') or 0),
+            'whale_percentage': float(metadata.get('whale_pct') or 0),
+            'buy_sell_ratio': bs_ratio,
+            'unique_buyers_sellers_ratio': float(metadata.get('unique_buyers_sellers_ratio') or 1.0),
+            'volume_liquidity_ratio': (vol / liq) if liq > 0 else 0.0,
+            'price_volatility': abs(float(metadata.get('price_change_24h') or metadata.get('priceChange') or 0)),
+            'contract_age_hours': float(metadata.get('age_hours') or 0),
+            'contract_verified': True,  # Solana SPL — no source verification concept
+        }
+        try:
+            result = clf.predict(feats)
+        except Exception as exc:
+            logger.debug(f"RugClassifier.predict raised for {token_symbol}: {exc}")
+            return None
+        if result is None:
+            return None
+        prob, _per_model = result
+        return float(prob)
+
     async def _get_token_balance(self, token_mint: str, decimals: int = None) -> float:
         """
         Get actual SPL token balance from wallet.
@@ -3216,6 +3288,28 @@ class SolanaTradingEngine:
                 if buys_5m and sells_5m and sells_5m > buys_5m * 2:
                     logger.warning(f"🚫 BLOCKED: {token_symbol} heavy sell pressure ({sells_5m} sells vs {buys_5m} buys in 5min)")
                     return False
+
+            # 6. ML rug gate (P1-07). Off by default; flip
+            # solana_ml_enabled=True in DB config to engage. The
+            # RugClassifier is fail-soft: if no trained model is loaded
+            # it returns None and we proceed without the gate
+            # (refuse-to-predict pattern, MB-19). When loaded, refuses
+            # entry above solana_ml_max_rug_prob.
+            if self.config_manager and getattr(self.config_manager, 'solana_ml_enabled', False):
+                try:
+                    rug_prob = await self._ml_rug_probability(token_mint, token_symbol, metadata or {})
+                    if rug_prob is not None:
+                        max_rug = float(getattr(self.config_manager, 'solana_ml_max_rug_prob', 0.40))
+                        if rug_prob > max_rug:
+                            logger.warning(
+                                f"⛔ ML rug gate: {token_symbol} rug_prob={rug_prob:.3f} > cap={max_rug:.3f}"
+                            )
+                            return False
+                        logger.info(
+                            f"✅ ML rug gate passed: {token_symbol} rug_prob={rug_prob:.3f} ≤ cap={max_rug:.3f}"
+                        )
+                except Exception as exc:
+                    logger.debug(f"ML rug gate raised, continuing without it: {exc}")
 
             # ============ END PRE-BUY SAFETY CHECKS ============
 
