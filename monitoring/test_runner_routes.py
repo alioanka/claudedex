@@ -1611,6 +1611,158 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         ),
     },
 
+    # ── SNIPER (A4 wave-2: 6612be2, 77b22e7, 87c5523, 4adcd29,
+    #           adee9c2, 5a0a3e9) ─────────────────────────────────────
+    {
+        "id": "db_sniper_processed_hit_ratio",
+        "title": "DB: SNIPER processed→confirmed readback hit ratio (6612be2)",
+        "category": "db",
+        "kind": "db_query",
+        # processed_hit + processed_miss_fallback are surfaced in
+        # sniper_runtime_stats.stats by _persist_runtime_stats. The
+        # two-stage readback (R1 fix) should land processed_hit on
+        # the supermajority of getTransaction calls for fresh pools.
+        "sql": (
+            "SELECT id, "
+            "  EXTRACT(EPOCH FROM (NOW() - updated_at))::int AS age_seconds, "
+            "  (stats->>'processed_hit')::int AS processed_hit, "
+            "  (stats->>'processed_miss_fallback')::int AS processed_miss, "
+            "  CASE WHEN COALESCE((stats->>'processed_hit')::int, 0) "
+            "          + COALESCE((stats->>'processed_miss_fallback')::int, 0) > 0 "
+            "       THEN ROUND(100.0 * "
+            "            COALESCE((stats->>'processed_hit')::numeric, 0) / "
+            "            NULLIF(COALESCE((stats->>'processed_hit')::numeric, 0) "
+            "                 + COALESCE((stats->>'processed_miss_fallback')::numeric, 0), 0), "
+            "            1) "
+            "       ELSE NULL END AS pct_processed "
+            "FROM sniper_runtime_stats WHERE id = 1"
+        ),
+        "cmd_preview": (
+            "processed_hit / (hit+miss) ratio from sniper_runtime_stats"
+        ),
+        "timeout_s": 15,
+        "description": (
+            "R1 fix: two-stage `processed`→`confirmed` readback. "
+            "pct_processed > 80% means the fast path is paying off "
+            "(~300 ms vs 3-13 s commitment wait). Low ratio implies "
+            "Raydium logMessages aren't populating at `processed` for "
+            "this RPC — investigate provider commitment lag."
+        ),
+    },
+    {
+        "id": "db_sniper_safety_check_errors",
+        "title": "DB: SNIPER safety-check exception counter (77b22e7)",
+        "category": "db",
+        "kind": "db_query",
+        # safety_check_errors + jupiter_quote_fallback_hits +
+        # birdeye_fallback_hits are all preserved across the 1-min
+        # _log_stats_if_needed reset so the dashboard sees cumulative
+        # totals (87c5523 + adee9c2 carry-over rule).
+        "sql": (
+            "SELECT id, "
+            "  EXTRACT(EPOCH FROM (NOW() - updated_at))::int AS age_seconds, "
+            "  (stats->>'safety_check_errors')::int AS safety_errors, "
+            "  (stats->>'jupiter_quote_fallback_hits')::int AS jup_fallback, "
+            "  (stats->>'birdeye_fallback_hits')::int AS birdeye_fallback, "
+            "  (stats->>'tokens_analyzed')::int AS tokens_analyzed, "
+            "  (stats->>'tokens_rejected')::int AS tokens_rejected "
+            "FROM sniper_runtime_stats WHERE id = 1"
+        ),
+        "cmd_preview": (
+            "safety_check_errors + jup/birdeye fallback counters from runtime stats"
+        ),
+        "timeout_s": 15,
+        "description": (
+            "R2 fix: GoPlus/Honeypot.is exception path now records "
+            "cooldown + counter so the same failing token can't "
+            "busy-loop the safety API. Sustained non-zero growth = "
+            "external safety provider outage, not a bug."
+        ),
+    },
+    {
+        "id": "db_sniper_wss_carry_over",
+        "title": "DB: SNIPER WSS dispatched/inflight peak surface (87c5523)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT id, "
+            "  EXTRACT(EPOCH FROM (NOW() - updated_at))::int AS age_seconds, "
+            "  (stats->>'wss_dispatched')::int AS wss_dispatched, "
+            "  (stats->>'wss_inflight_peak')::int AS wss_inflight_peak, "
+            "  (stats->>'pools_detected')::int AS pools_detected "
+            "FROM sniper_runtime_stats WHERE id = 1"
+        ),
+        "cmd_preview": (
+            "wss_dispatched + wss_inflight_peak from sniper_runtime_stats"
+        ),
+        "timeout_s": 15,
+        "description": (
+            "R3 fix: WSS counters now carry across the 1-min stats "
+            "reset window. inflight_peak approaching the semaphore "
+            "ceiling (SNIPER_WSS_CONCURRENCY) means bad-RPC backup "
+            "is saturating the dispatch queue."
+        ),
+    },
+    {
+        "id": "db_sniper_quorum_outcomes_30m",
+        "title": "DB: SNIPER quorum-decision outcomes 30m (R4 quorum)",
+        "category": "db",
+        "kind": "db_query",
+        # R4 (token_safety._quorum_honeypot_decision) split honeypot
+        # rejection into agreement-based + asymmetric fail-safe paths.
+        # rejected_safety_error is the 77b22e7 outcome label for the
+        # exception cooldown branch; rejected_safety is generic R4 +
+        # other safety rejections.
+        "sql": (
+            "SELECT "
+            "  COALESCE(metadata->>'outcome', 'unknown') AS outcome, "
+            "  COUNT(*) AS n "
+            "FROM sniper_trades "
+            "WHERE entry_timestamp > NOW() - INTERVAL '30 minutes' "
+            "GROUP BY outcome ORDER BY n DESC"
+        ),
+        "cmd_preview": (
+            "GROUP-BY metadata->>'outcome' on sniper_trades, 30m"
+        ),
+        "timeout_s": 15,
+        "description": (
+            "Distribution of sniper_trades.metadata.outcome over the "
+            "last 30 min. rejected_safety_error column comes from "
+            "77b22e7 (R2); other rejected_safety rows are the R4 "
+            "quorum gate. Healthy mix = both sources up."
+        ),
+    },
+    {
+        "id": "api_sniper_timing_per_chain",
+        "title": "API: /api/sniper/timing (per-chain latency widget source) (5a0a3e9)",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "sniper/timing",
+        "cmd_preview": "GET /api/sniper/timing | per-chain p50/p95",
+        "timeout_s": 30,
+        "description": (
+            "Source for the per-chain listener-health widget added by "
+            "5a0a3e9 in performance_sniper.html. 200 + non-empty "
+            "`paths` keyed by detection_path is the contract; "
+            "front-end widget joins to chain via sniper_trades."
+        ),
+    },
+    {
+        "id": "script_sniper_listener_widget_present",
+        "title": "Script: SNIPER per-chain widget HTML presence (5a0a3e9)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/sniper_listener_widget_check.sh"],
+        "cmd_preview": "bash scripts/sniper_listener_widget_check.sh",
+        "timeout_s": 10,
+        "description": (
+            "Grep test for the per-chain listener-health widget id in "
+            "dashboard/templates/performance_sniper.html (5a0a3e9). "
+            "Confirms the operator-visible WSS-saturation / "
+            "processed-hit panel survived template refactors."
+        ),
+    },
+
     # ════════════════════════════════════════════════════════════════════
     # Wave-2 T2 catalog additions: FUTURES / AI / COPY_TRADING coverage
     # for the commits enumerated in PM_PLAN "T1 / T2 brief" section.
@@ -1843,6 +1995,171 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "When bandit_enabled=true the engine writes one row per "
             "LLM call. Skewed selections (one arm ≫ others) = the "
             "bandit has converged."
+        ),
+    },
+
+    # ── COPY_TRADING (A7 wave-2: operator-priority quant rebuild) ────────
+    # Wallet-discovery + leader-scorer + Kelly sizing is the headline
+    # feature this wave. Catalog gives the operator one-button checks
+    # of every layer: migration -> scoring -> ranking -> refresh -> sizing.
+    {
+        "id": "db_copy_leader_scores_table",
+        "title": "DB: copy_leader_scores table present (mig 024)",
+        "category": "db",
+        "kind": "db_query",
+        # Migration 024_copy_leader_scores.sql adds the persistent
+        # leader-scoring table. Verify the table exists AND has the
+        # composite-score / kelly_fraction columns the engine reads
+        # (CT-Q-02). Missing columns = wallet_discovery refresh will
+        # fail at write time.
+        "sql": (
+            "SELECT table_name, "
+            "  (SELECT COUNT(*) FROM information_schema.columns "
+            "   WHERE table_name='copy_leader_scores') AS column_count, "
+            "  (SELECT COUNT(*) FROM information_schema.columns "
+            "   WHERE table_name='copy_leader_scores' "
+            "     AND column_name IN ('chain','wallet_address','source',"
+            "       'realized_pnl_usd_30d','sharpe_30d','hit_rate',"
+            "       'max_drawdown_pct','score','kelly_fraction',"
+            "       'raw_metrics','last_scored_at')) AS expected_cols "
+            "FROM information_schema.tables "
+            "WHERE table_name = 'copy_leader_scores'"
+        ),
+        "cmd_preview": "information_schema check for copy_leader_scores",
+        "timeout_s": 10,
+        "description": (
+            "Confirms migration 024 has been applied. expected_cols "
+            "should be 11 (the canonical set wallet_discovery writes "
+            "and copy_engine reads for Kelly sizing). 0 rows = run "
+            "the migration before the next refresh."
+        ),
+    },
+    {
+        "id": "db_copy_leader_scores_top",
+        "title": "DB: copy_leader_scores top-10 by score",
+        "category": "db",
+        "kind": "db_query",
+        # Source of /copytrading/leaders dashboard page + Kelly sizing.
+        # NULL score = discovered but not yet scored (leader_scorer
+        # didn't have enough history). Empty result = either migration
+        # not applied OR no refresh has run yet.
+        "sql": (
+            "SELECT chain, "
+            "  substring(wallet_address, 1, 12) || '...' AS wallet_short, "
+            "  source, "
+            "  ROUND(score::numeric, 2) AS score, "
+            "  ROUND(sharpe_30d::numeric, 3) AS sharpe_30d, "
+            "  ROUND(hit_rate::numeric, 3) AS hit_rate, "
+            "  ROUND(kelly_fraction::numeric, 4) AS kelly, "
+            "  last_scored_at "
+            "FROM copy_leader_scores "
+            "WHERE score IS NOT NULL "
+            "ORDER BY score DESC NULLS LAST "
+            "LIMIT 10"
+        ),
+        "cmd_preview": (
+            "SELECT top-10 by score from copy_leader_scores"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "Top-10 ranked leaders fed to the /copytrading/leaders "
+            "page and copy_engine's per-leader Kelly sizing. Empty = "
+            "either migration 024 not applied or no discovery refresh "
+            "yet - run api_copytrading_leaders_refresh to populate."
+        ),
+    },
+    {
+        "id": "db_copy_leader_scores_by_source",
+        "title": "DB: copy_leader_scores discovery-source breakdown",
+        "category": "db",
+        "kind": "db_query",
+        # wallet_discovery.py pulls from 5 sources: dexscreener,
+        # birdeye, gmgn, helius, manual. Skew towards one source =
+        # likely the others are rate-limited or missing API keys.
+        "sql": (
+            "SELECT source, "
+            "  COUNT(*) AS rows, "
+            "  COUNT(*) FILTER (WHERE score IS NOT NULL) AS scored, "
+            "  ROUND(AVG(score)::numeric, 2) AS avg_score, "
+            "  MAX(last_scored_at) AS newest "
+            "FROM copy_leader_scores "
+            "GROUP BY source "
+            "ORDER BY rows DESC"
+        ),
+        "cmd_preview": "GROUP BY source on copy_leader_scores",
+        "timeout_s": 10,
+        "description": (
+            "Per-source row + scored count from wallet_discovery's "
+            "5-source sweep (dexscreener, birdeye, gmgn, helius, "
+            "manual). Heavy skew = the other sources are rate-limited "
+            "or missing API keys in secrets_manager."
+        ),
+    },
+    {
+        "id": "api_copytrading_leaders_list",
+        "title": "API: GET /api/copytrading/leaders (ranked top-N)",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "copytrading/leaders?limit=10",
+        "cmd_preview": "GET /api/copytrading/leaders?limit=10",
+        "timeout_s": 15,
+        "description": (
+            "Cached ranked-leader list. NEVER hits the network - "
+            "discovery refresh is a separate admin POST so paid quotas "
+            "aren't burned on dashboard reload. 200 + leaders[] array "
+            "= page will render; empty leaders[] is normal pre-refresh."
+        ),
+    },
+    {
+        "id": "api_copytrading_leaders_refresh",
+        "title": "API: POST /api/copytrading/leaders/refresh (admin probe)",
+        "category": "api",
+        "kind": "probe",
+        # Probe kind is GET-only in this catalog, so we use the GET form
+        # to verify the route exists. Expected response is HTTP 405
+        # (Method Not Allowed) - that proves the route was registered
+        # with add_post only. A 404 means the route was never
+        # registered (regression). A 403 means require_admin rejected
+        # the caller (also healthy).
+        "endpoint": "copytrading/leaders/refresh",
+        "cmd_preview": "GET probes POST route (expect HTTP 405 or 403)",
+        "timeout_s": 15,
+        "description": (
+            "Probes route registration for the admin-only POST "
+            "/api/copytrading/leaders/refresh. HTTP 405 = route "
+            "registered, GET correctly rejected. HTTP 404 = route "
+            "missing (regression). HTTP 403 = caller is not admin "
+            "(also fine - proves require_admin wrap). Operator runs "
+            "the actual sweep via curl with X-CSRF-Token."
+        ),
+    },
+    {
+        "id": "db_copy_leader_scores_post_refresh",
+        "title": "DB: copy_leader_scores rows post-refresh (CT freshness)",
+        "category": "db",
+        "kind": "db_query",
+        # Companion to api_copytrading_leaders_refresh - operator runs
+        # the refresh POST, then this probe to confirm rows landed.
+        # mock=true via the API yields synthetic rows; mock=false hits
+        # paid Helius/Birdeye quotas. Either way the row-count should
+        # bump and last_scored_at should be < 5 min old.
+        "sql": (
+            "SELECT chain, source, COUNT(*) AS rows, "
+            "  COUNT(*) FILTER (WHERE last_scored_at > NOW() - INTERVAL '5 minutes') AS fresh_5m, "
+            "  MAX(last_scored_at) AS most_recent "
+            "FROM copy_leader_scores "
+            "GROUP BY chain, source "
+            "ORDER BY most_recent DESC NULLS LAST"
+        ),
+        "cmd_preview": (
+            "SELECT chain,source,COUNT(*),fresh_5m FROM copy_leader_scores"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "Run AFTER POST /api/copytrading/leaders/refresh. fresh_5m > 0 "
+            "for the chains in the refresh body = sweep wrote rows. "
+            "rows but fresh_5m=0 = previous refresh, no new sweep. "
+            "Empty = refresh never ran or DiscoveryConfig errored out."
         ),
     },
 ]
