@@ -24,10 +24,9 @@
                                     <label class="form-check-label" for="enabled">Enable Copy Trading</label>
                                 </div>
 
-                                <div class="mb-3 form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="dry_run" checked>
-                                    <label class="form-check-label" for="dry_run">DRY RUN Mode</label>
-                                    <div class="form-text">Simulate trades without real execution. <strong class="text-danger">Disable for LIVE trading.</strong></div>
+                                <div class="alert alert-info py-2 mb-3" style="font-size:0.85em">
+                                    <i class="fas fa-info-circle me-1"></i>
+                                    DRY/LIVE is controlled by the banner at the top of this page.
                                 </div>
 
                                 <div class="mb-3">
@@ -318,7 +317,7 @@
             if (data.success) {
                 const settings = data.settings;
                 document.getElementById('enabled').checked = settings.enabled === true;
-                document.getElementById('dry_run').checked = settings.dry_run !== false; // Default true
+                // dry_run owned by DryRunWidget banner.
                 document.getElementById('max_copy_amount').value = settings.max_copy_amount || 100;
                 document.getElementById('copy_ratio').value = settings.copy_ratio || 10;
                 document.getElementById('slippage').value = settings.slippage || 5;
@@ -333,7 +332,7 @@
         const wallets = document.getElementById('target_wallets').value.split('\n').map(w => w.trim()).filter(w => w);
         const settings = {
             enabled: document.getElementById('enabled').checked,
-            dry_run: document.getElementById('dry_run').checked,
+            // dry_run omitted — banner-only.
             max_copy_amount: parseFloat(document.getElementById('max_copy_amount').value),
             copy_ratio: parseFloat(document.getElementById('copy_ratio').value),
             slippage: parseFloat(document.getElementById('slippage').value),

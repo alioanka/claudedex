@@ -6,159 +6,200 @@
 <div class="page-header">
     <h1>DEX Settings</h1>
     <div class="page-actions">
-        <button class="btn btn-secondary" id="dexRevertBtn" disabled>
-            <i class="fas fa-undo"></i> Revert
+        <button class="btn btn-secondary" id="revertAllSettings" disabled>
+            <i class="fas fa-undo"></i> Revert All
         </button>
-        <button class="btn btn-primary" id="dexSaveBtn" disabled>
-            <i class="fas fa-save"></i> Save Changes
+        <button class="btn btn-primary" id="saveAllSettings">
+            <i class="fas fa-save"></i> Save All Changes
         </button>
     </div>
 </div>
 
-<!-- DRY_RUN banner (auto-injected by DryRunWidget) -->
-<div id="dry-run-widget"></div>
+<!-- Settings Tabs -->
+<div class="tabs">
+    <button class="tab-btn active category-tab" data-category="account">Account</button>
+    <button class="tab-btn category-tab" data-category="modules">📦 Modules</button>
+    <button class="tab-btn category-tab" data-category="general">General</button>
+    <button class="tab-btn category-tab" data-category="portfolio">Portfolio</button>
+    <button class="tab-btn category-tab" data-category="risk_management">Risk</button>
+    <button class="tab-btn category-tab" data-category="trading">Trading</button>
+    <button class="tab-btn category-tab" data-category="strategies">Strategies</button>
+    <button class="tab-btn category-tab" data-category="chain">Chains</button>
+    <button class="tab-btn category-tab" data-category="position_management">Positions</button>
+    <button class="tab-btn category-tab" data-category="api">API</button>
+    <button class="tab-btn category-tab" data-category="monitoring">Monitoring</button>
+    <button class="tab-btn category-tab" data-category="ml_models">ML Models</button>
+    <button class="tab-btn category-tab" data-category="feature_flags">Features</button>
+    <button class="tab-btn category-tab" data-category="sensitive">Sensitive</button>
+</div>
 
-<!-- How DEX Trading Works -->
-<div class="card mb-3">
-    <div class="card-header" style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#dexExplainer" aria-expanded="false">
-        <h3 class="card-title mb-0">
-            <i class="fas fa-circle-info"></i> How DEX Trading Works
-            <small class="text-muted ms-2">(click to expand)</small>
-        </h3>
-    </div>
-    <div id="dexExplainer" class="collapse">
+<!-- Settings Sections -->
+<div id="settings-container">
+    <div id="account-settings" class="settings-section card">
+        <div class="card-header"><h3 class="card-title">Account & Security</h3></div>
         <div class="card-body">
-            <ul class="mb-0">
-                <li><strong>What it does:</strong> Spot trades on EVM DEXes (Uniswap V2/V3, SushiSwap, PancakeSwap) across Ethereum, BSC, Polygon, Arbitrum, and Base.</li>
-                <li><strong>Routing:</strong> The engine quotes across every router in <code>supported_dexs</code> and picks the best fill net of fees and slippage.</li>
-                <li><strong>MEV protection:</strong> When enabled, transactions submit through the Flashbots private relay so frontrunners and sandwichers cannot see your order in the public mempool.</li>
-                <li><strong>Gas ceiling:</strong> <code>max_gas_price</code> is a hard upper bound in gwei. If the network base fee exceeds this, the bot waits rather than overpay.</li>
-                <li><strong>Slippage:</strong> <code>max_slippage_bps</code> is the tolerance applied to the AMM quote at execution. 50 bps = 0.5%.</li>
-                <li><strong>DRY_RUN:</strong> When DRY_RUN is ON, every executor in this module simulates trades instead of broadcasting. The banner above always reflects the live source of truth from <code>/api/modules/dex/dry-run</code>.</li>
-                <li><strong>Kill switches:</strong> <code>logs/.killswitch</code> (global) and <code>logs/.pause_dex</code> (per-module) force all writes through the simulator path; the emergency-stop button writes the global file.</li>
-            </ul>
+            <div class="setting-group">
+                <h4>Change Password</h4>
+                <form id="changePasswordForm" method="post" action="#" onsubmit="return false;">
+                    <div class="form-group">
+                        <label for="currentPassword">Current Password</label>
+                        <input type="password" id="currentPassword" name="currentPassword"
+                               class="form-control" required autocomplete="current-password">
+                    </div>
+                    <div class="form-group">
+                        <label for="newPassword">New Password</label>
+                        <input type="password" id="newPassword" name="newPassword"
+                               class="form-control" required minlength="8" autocomplete="new-password">
+                        <small class="form-text">Minimum 8 characters</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="confirmPassword">Confirm New Password</label>
+                        <input type="password" id="confirmPassword" name="confirmPassword"
+                               class="form-control" required minlength="8" autocomplete="new-password">
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-key"></i> Change Password
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div id="modules-settings" class="settings-section card" style="display: none;">
+        <div class="card-header">
+            <h3 class="card-title">📦 Trading Modules</h3>
+            <p style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                Manage independent trading modules (DEX, Futures, Arbitrage). Each module operates with its own wallet, capital allocation, and strategies.
+            </p>
+        </div>
+        <div class="card-body" id="modules-container">
+            <div style="text-align: center; padding: 40px;">
+                <i class="fas fa-spinner fa-spin" style="font-size: 2em; color: #667eea;"></i>
+                <p style="margin-top: 10px;">Loading modules...</p>
+            </div>
+        </div>
+    </div>
+    <div id="general-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">General Configuration</h3></div>
+        <div class="card-body" id="general-settings-form"></div>
+    </div>
+    <div id="portfolio-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Portfolio Configuration</h3></div>
+        <div class="card-body" id="portfolio-settings-form"></div>
+    </div>
+    <div id="risk_management-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Risk Management</h3></div>
+        <div class="card-body" id="risk_management-settings-form"></div>
+    </div>
+    <div id="trading-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Trading Configuration</h3></div>
+        <div class="card-body" id="trading-settings-form"></div>
+    </div>
+    <div id="strategies-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Trading Strategies Configuration</h3></div>
+        <div class="card-body" id="strategies-settings-form"></div>
+    </div>
+    <div id="chain-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Blockchain Chains</h3></div>
+        <div class="card-body" id="chain-settings-form"></div>
+    </div>
+    <div id="position_management-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Position Management</h3></div>
+        <div class="card-body" id="position_management-settings-form"></div>
+    </div>
+    <div id="api-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">API & Connections</h3></div>
+        <div class="card-body" id="api-settings-form"></div>
+    </div>
+    <div id="monitoring-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Monitoring & Logging</h3></div>
+        <div class="card-body" id="monitoring-settings-form"></div>
+    </div>
+    <div id="ml_models-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">ML Models Configuration</h3></div>
+        <div class="card-body" id="ml_models-settings-form"></div>
+    </div>
+    <div id="feature_flags-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">Feature Flags</h3></div>
+        <div class="card-body" id="feature_flags-settings-form"></div>
+    </div>
+    <div id="sensitive-settings" class="settings-section card" style="display: none;">
+        <div class="card-header">
+            <h3 class="card-title">Sensitive Configuration (Encrypted)</h3>
+        </div>
+        <div class="card-body">
+            <div class="alert alert-warning">
+                <i class="fas fa-exclamation-triangle"></i>
+                <strong>Warning:</strong> This section contains encrypted sensitive data like API keys and private keys.
+                Only administrators can access this section.
+            </div>
+
+            <div class="form-actions" style="margin-bottom: 20px;">
+                <button class="btn btn-primary" id="addSensitiveConfigBtn">
+                    <i class="fas fa-plus"></i> Add New Sensitive Config
+                </button>
+            </div>
+
+            <div id="sensitive-configs-list">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Key</th>
+                            <th>Description</th>
+                            <th>Last Rotated</th>
+                            <th>Rotation Interval</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sensitive-configs-tbody">
+                        <tr>
+                            <td colspan="5" class="text-center">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 </div>
 
-<!-- Section 1: Account -->
-<div class="card mb-3" id="section-account">
-    <div class="card-header"><h3 class="card-title mb-0">Account</h3></div>
-    <div class="card-body">
-        <h4 class="mb-3">Change Password</h4>
-        <form id="changePasswordForm" onsubmit="return false;">
-            <div class="form-group mb-2">
-                <label for="currentPassword" class="form-label">Current Password</label>
-                <input type="password" id="currentPassword" name="currentPassword"
-                       class="form-control" required autocomplete="current-password">
-            </div>
-            <div class="form-group mb-2">
-                <label for="newPassword" class="form-label">New Password</label>
-                <input type="password" id="newPassword" name="newPassword"
-                       class="form-control" required minlength="8" autocomplete="new-password">
-                <small class="form-text text-muted">Minimum 8 characters. After changing you will be logged out.</small>
-            </div>
-            <div class="form-group mb-2">
-                <label for="confirmPassword" class="form-label">Confirm New Password</label>
-                <input type="password" id="confirmPassword" name="confirmPassword"
-                       class="form-control" required minlength="8" autocomplete="new-password">
-            </div>
-            <button type="submit" class="btn btn-primary mt-2">
-                <i class="fas fa-key"></i> Change Password
-            </button>
-        </form>
-    </div>
-</div>
-
-<!-- Section 2: DEX Engine -->
-<div class="card mb-3" id="section-engine">
-    <div class="card-header">
-        <h3 class="card-title mb-0">DEX Engine</h3>
-        <small class="text-muted">Routing, supported venues, and execution surface for the EVM DEX module.</small>
-    </div>
-    <div class="card-body">
-
-        <div class="form-group mb-3">
-            <label for="dex-supported_dexs" class="form-label fw-bold">Supported DEXes</label>
-            <input type="text" class="form-control" id="dex-supported_dexs"
-                   data-key="supported_dexs" data-value-type="json"
-                   placeholder='["uniswap_v2","uniswap_v3","sushiswap","pancakeswap"]'>
-            <small class="form-text text-muted">
-                JSON array of router names enabled for routing.
-                <strong>Recommended:</strong> <code>["uniswap_v3","uniswap_v2","sushiswap","pancakeswap"]</code>.
-                <em>Why it matters:</em> Each name added is one more router the quoter checks. More venues = better fills but slower quote latency.
-            </small>
+<!-- Add/Edit Sensitive Config Modal -->
+<div id="sensitiveConfigModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="sensitiveConfigModalTitle">Add Sensitive Configuration</h3>
+            <button class="close-modal" id="closeSensitiveConfigModal">&times;</button>
         </div>
-
-        <div class="form-group mb-3">
-            <label for="dex-jupiter_routing" class="form-label fw-bold">Jupiter Routing (cross-chain SOL leg)</label>
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" role="switch"
-                       id="dex-jupiter_routing" data-key="jupiter_routing" data-value-type="bool">
-                <label class="form-check-label" for="dex-jupiter_routing">Enable Jupiter routing</label>
-            </div>
-            <small class="form-text text-muted">
-                <strong>Recommended:</strong> OFF (EVM-only today).
-                <em>Why it matters:</em> Reserved for future cross-chain SOL legs. Enabling it now has no effect on EVM execution and adds a startup probe.
-            </small>
+        <div class="modal-body">
+            <form id="sensitiveConfigForm">
+                <div class="form-group">
+                    <label for="sensitiveConfigKey">Key *</label>
+                    <input type="text" id="sensitiveConfigKey" class="form-control"
+                           placeholder="e.g., OPENAI_API_KEY, PRIVATE_KEY_ETH" required>
+                    <small class="form-text">Unique identifier for this configuration</small>
+                </div>
+                <div class="form-group">
+                    <label for="sensitiveConfigValue">Value *</label>
+                    <textarea id="sensitiveConfigValue" class="form-control" rows="3"
+                              placeholder="Enter sensitive value (will be encrypted)" required></textarea>
+                    <small class="form-text">This value will be encrypted before storage</small>
+                </div>
+                <div class="form-group">
+                    <label for="sensitiveConfigDescription">Description</label>
+                    <input type="text" id="sensitiveConfigDescription" class="form-control"
+                           placeholder="Optional description">
+                </div>
+                <div class="form-group">
+                    <label for="sensitiveConfigRotation">Rotation Interval (days)</label>
+                    <input type="number" id="sensitiveConfigRotation" class="form-control"
+                           value="30" min="1" max="365">
+                    <small class="form-text">Recommended rotation interval for this secret</small>
+                </div>
+            </form>
         </div>
-
-    </div>
-</div>
-
-<!-- Section 3: Risk & Safety -->
-<div class="card mb-3" id="section-risk">
-    <div class="card-header">
-        <h3 class="card-title mb-0">Risk & Safety</h3>
-        <small class="text-muted">Hard caps applied to every trade before broadcast. Tighter is safer.</small>
-    </div>
-    <div class="card-body">
-
-        <div class="form-group mb-3">
-            <label for="dex-max_slippage_bps" class="form-label fw-bold">Max Slippage (basis points)</label>
-            <input type="number" class="form-control" id="dex-max_slippage_bps"
-                   data-key="max_slippage_bps" data-value-type="int" min="1" max="1000" step="1">
-            <small class="form-text text-muted">
-                <strong>Recommended:</strong> 50 (0.5%). Conservative: 30. Aggressive: 100. Hard ceiling: 1000 (10%).
-                <em>Why it matters:</em> Slippage above 100 bps invites sandwich attacks on liquid pairs; below 30 bps will silently skip fills on thin pools.
-            </small>
-        </div>
-
-        <div class="form-group mb-3">
-            <label for="dex-max_gas_price" class="form-label fw-bold">Max Gas Price (gwei)</label>
-            <input type="number" class="form-control" id="dex-max_gas_price"
-                   data-key="max_gas_price" data-value-type="int" min="1" max="500" step="1">
-            <small class="form-text text-muted">
-                <strong>Recommended:</strong> 50 gwei. Mainnet under load: 80. Polygon/Base/Arbitrum: 30 or lower.
-                <em>Why it matters:</em> This is a hard cap on tx submission. Above ~100 gwei a single tx costs $20+ on Ethereum and erodes any small-trade alpha.
-            </small>
-        </div>
-
-        <div class="form-group mb-3">
-            <label for="dex-mev_protection" class="form-label fw-bold">MEV Protection (Flashbots)</label>
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" role="switch"
-                       id="dex-mev_protection" data-key="mev_protection" data-value-type="bool">
-                <label class="form-check-label" for="dex-mev_protection">Route through Flashbots private bundles</label>
-            </div>
-            <small class="form-text text-muted">
-                <strong>Recommended:</strong> ON for Ethereum mainnet. OFF on L2s (no public relay).
-                <em>Why it matters:</em> Submits your tx privately so frontrunners and sandwichers cannot see it in the mempool. Adds ~1 block of latency.
-            </small>
-        </div>
-
-    </div>
-</div>
-
-<!-- Section 4: Advanced -->
-<div class="card mb-3" id="section-advanced">
-    <div class="card-header">
-        <h3 class="card-title mb-0">Advanced</h3>
-        <small class="text-muted">Anything in dex_config that is not surfaced above. Edit with care.</small>
-    </div>
-    <div class="card-body">
-        <div id="dex-advanced-list">
-            <p class="text-muted mb-0">Loading...</p>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" id="cancelSensitiveConfigBtn">Cancel</button>
+            <button class="btn btn-primary" id="saveSensitiveConfigBtn">Save</button>
         </div>
     </div>
 </div>
@@ -166,251 +207,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="/static/js/settings.js?v=4"></script>
 <script src="/static/js/dry_run_widget.js?v={{ asset_version or 'dev' }}"></script>
-<script>
-(function () {
-    'use strict';
-
-    // Keys explicitly rendered above. Anything else in dex_config drops into Advanced.
-    const KNOWN_KEYS = new Set([
-        'supported_dexs',
-        'jupiter_routing',
-        'max_slippage_bps',
-        'max_gas_price',
-        'mev_protection'
-    ]);
-
-    let initialState = {};   // { key: value } baseline from server
-    let metadata = {};       // { key: {value_type, requires_restart, description} }
-
-    function setDirty(dirty) {
-        document.getElementById('dexSaveBtn').disabled = !dirty;
-        document.getElementById('dexRevertBtn').disabled = !dirty;
-    }
-
-    function coerceForInput(key, value, valueType) {
-        const el = document.getElementById('dex-' + key);
-        if (!el) return;
-        if (valueType === 'bool' || el.type === 'checkbox') {
-            el.checked = value === true || value === 'true';
-        } else if (valueType === 'json') {
-            el.value = typeof value === 'string' ? value : JSON.stringify(value);
-        } else {
-            el.value = value;
-        }
-    }
-
-    function readFromInput(key) {
-        const el = document.getElementById('dex-' + key);
-        if (!el) return undefined;
-        const valueType = el.dataset.valueType || 'string';
-        if (el.type === 'checkbox') return el.checked;
-        if (valueType === 'int') return parseInt(el.value, 10);
-        if (valueType === 'float') return parseFloat(el.value);
-        if (valueType === 'json') {
-            try { return JSON.parse(el.value); } catch (e) { return el.value; }
-        }
-        return el.value;
-    }
-
-    function renderAdvanced(dexConfig) {
-        const host = document.getElementById('dex-advanced-list');
-        host.innerHTML = '';
-        const extras = Object.keys(dexConfig).filter(k => !KNOWN_KEYS.has(k)).sort();
-        if (extras.length === 0) {
-            host.innerHTML = '<p class="text-muted mb-0">No additional <code>dex_config</code> keys defined.</p>';
-            return;
-        }
-        for (const key of extras) {
-            const setting = dexConfig[key];
-            const value = setting.value !== undefined ? setting.value : setting;
-            const valueType = setting.value_type || (typeof value === 'boolean' ? 'bool' : typeof value);
-            const description = setting.description || '';
-            const requiresRestart = setting.requires_restart;
-
-            const wrap = document.createElement('div');
-            wrap.className = 'form-group mb-3';
-
-            const label = document.createElement('label');
-            label.className = 'form-label fw-bold';
-            label.setAttribute('for', 'dex-' + key);
-            label.textContent = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-            if (requiresRestart) {
-                const badge = document.createElement('span');
-                badge.className = 'badge bg-warning text-dark ms-2';
-                badge.textContent = 'Requires Restart';
-                label.appendChild(badge);
-            }
-            wrap.appendChild(label);
-
-            let input;
-            if (valueType === 'bool' || typeof value === 'boolean') {
-                const sw = document.createElement('div');
-                sw.className = 'form-check form-switch';
-                input = document.createElement('input');
-                input.type = 'checkbox';
-                input.className = 'form-check-input';
-                input.role = 'switch';
-                input.id = 'dex-' + key;
-                input.checked = !!value;
-                sw.appendChild(input);
-                wrap.appendChild(sw);
-            } else if (valueType === 'json') {
-                input = document.createElement('textarea');
-                input.className = 'form-control';
-                input.rows = 2;
-                input.id = 'dex-' + key;
-                input.value = typeof value === 'string' ? value : JSON.stringify(value);
-                wrap.appendChild(input);
-            } else if (valueType === 'int' || valueType === 'float' || typeof value === 'number') {
-                input = document.createElement('input');
-                input.type = 'number';
-                input.className = 'form-control';
-                input.step = valueType === 'float' ? '0.01' : '1';
-                input.id = 'dex-' + key;
-                input.value = value;
-                wrap.appendChild(input);
-            } else {
-                input = document.createElement('input');
-                input.type = 'text';
-                input.className = 'form-control';
-                input.id = 'dex-' + key;
-                input.value = value;
-                wrap.appendChild(input);
-            }
-            input.dataset.key = key;
-            input.dataset.valueType = valueType;
-            input.addEventListener('change', () => setDirty(true));
-            input.addEventListener('input', () => setDirty(true));
-
-            if (description) {
-                const help = document.createElement('small');
-                help.className = 'form-text text-muted';
-                help.textContent = description;
-                wrap.appendChild(help);
-            }
-            host.appendChild(wrap);
-            metadata[key] = { value_type: valueType, requires_restart: requiresRestart, description };
-            initialState[key] = value;
-        }
-    }
-
-    async function loadDexSettings() {
-        try {
-            const resp = await fetch('/api/settings/all', { headers: withCsrfHeaders('GET') });
-            const data = await resp.json();
-            if (!data.success || !data.data) {
-                showToast('error', data.error || 'Failed to load DEX settings');
-                return;
-            }
-            const dexConfig = data.data.dex_config || {};
-
-            // Hydrate known fields
-            for (const key of KNOWN_KEYS) {
-                const setting = dexConfig[key];
-                if (!setting) continue;
-                const value = setting.value !== undefined ? setting.value : setting;
-                const valueType = setting.value_type || (typeof value === 'boolean' ? 'bool' : typeof value);
-                metadata[key] = {
-                    value_type: valueType,
-                    requires_restart: setting.requires_restart,
-                    description: setting.description
-                };
-                initialState[key] = value;
-                coerceForInput(key, value, valueType);
-            }
-
-            // Render advanced
-            renderAdvanced(dexConfig);
-
-            // Wire change listeners for known fields
-            for (const key of KNOWN_KEYS) {
-                const el = document.getElementById('dex-' + key);
-                if (!el) continue;
-                el.addEventListener('change', () => setDirty(true));
-                el.addEventListener('input', () => setDirty(true));
-            }
-
-            setDirty(false);
-        } catch (err) {
-            showToast('error', 'Error loading DEX settings: ' + err.message);
-        }
-    }
-
-    async function saveDexSettings() {
-        const updates = {};
-        const allKeys = Object.keys(initialState);
-        for (const key of allKeys) {
-            const current = readFromInput(key);
-            if (current === undefined) continue;
-            // Deep compare via JSON for arrays/objects
-            const before = JSON.stringify(initialState[key]);
-            const after = JSON.stringify(current);
-            if (before !== after) updates[key] = current;
-        }
-        if (Object.keys(updates).length === 0) {
-            showToast('info', 'No changes to save');
-            return;
-        }
-        try {
-            const resp = await fetch('/api/settings/update', {
-                method: 'POST',
-                headers: withCsrfHeaders('POST'),
-                body: JSON.stringify({ config_type: 'dex_config', updates })
-            });
-            const data = await resp.json();
-            if (data.success) {
-                showToast('success', 'DEX settings saved');
-                await loadDexSettings();
-            } else {
-                showToast('error', data.error || 'Save failed');
-            }
-        } catch (err) {
-            showToast('error', 'Save error: ' + err.message);
-        }
-    }
-
-    async function changePassword(event) {
-        event.preventDefault();
-        const current = document.getElementById('currentPassword').value;
-        const next = document.getElementById('newPassword').value;
-        const confirm = document.getElementById('confirmPassword').value;
-        if (next !== confirm) {
-            showToast('error', 'New passwords do not match');
-            return false;
-        }
-        if (next.length < 8) {
-            showToast('error', 'New password must be at least 8 characters');
-            return false;
-        }
-        try {
-            showToast('info', 'Changing password...');
-            const resp = await fetch('/api/auth/change-password', {
-                method: 'POST',
-                headers: withCsrfHeaders('POST'),
-                body: JSON.stringify({ old_password: current, new_password: next })
-            });
-            const data = await resp.json();
-            if (data.success) {
-                showToast('success', 'Password changed. Logging you out...');
-                document.getElementById('changePasswordForm').reset();
-                setTimeout(() => { window.location.href = '/login'; }, 1800);
-            } else {
-                showToast('error', data.error || 'Password change failed');
-            }
-        } catch (err) {
-            showToast('error', 'Password change error: ' + err.message);
-        }
-        return false;
-    }
-
-    document.addEventListener('DOMContentLoaded', function () {
-        DryRunWidget.init('dex');
-        loadDexSettings();
-        document.getElementById('dexSaveBtn').addEventListener('click', saveDexSettings);
-        document.getElementById('dexRevertBtn').addEventListener('click', () => loadDexSettings());
-        document.getElementById('changePasswordForm').addEventListener('submit', changePassword);
-    });
-})();
-</script>
+<script>document.addEventListener('DOMContentLoaded', function () { DryRunWidget.init('dex'); });</script>
 {% endblock %}

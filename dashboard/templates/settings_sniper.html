@@ -25,10 +25,9 @@
                                     <div class="form-text">Master switch for the sniper module.</div>
                                 </div>
 
-                                <div class="mb-3 form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="dry_run" checked>
-                                    <label class="form-check-label" for="dry_run">DRY RUN Mode</label>
-                                    <div class="form-text">Simulate trades without real execution. <strong class="text-danger">Disable for LIVE trading.</strong></div>
+                                <div class="alert alert-info py-2 mb-3" style="font-size:0.85em">
+                                    <i class="fas fa-info-circle me-1"></i>
+                                    DRY/LIVE is controlled by the banner at the top of this page (canonical toggle).
                                 </div>
 
                                 <div class="mb-3">
@@ -346,7 +345,7 @@
                 const settings = data.settings;
                 // Basic settings
                 document.getElementById('enabled').checked = settings.enabled === true;
-                document.getElementById('dry_run').checked = settings.dry_run !== false; // Default true
+                // dry_run owned by DryRunWidget banner — skipped here.
                 document.getElementById('trade_amount').value = settings.trade_amount || 0.1;
                 document.getElementById('slippage').value = settings.slippage || 10;
                 document.getElementById('chain').value = settings.chain || 'solana';
@@ -373,7 +372,7 @@
         const settings = {
             // Basic settings
             enabled: document.getElementById('enabled').checked,
-            dry_run: document.getElementById('dry_run').checked,
+            // dry_run omitted — banner-only.
             trade_amount: parseFloat(document.getElementById('trade_amount').value),
             slippage: parseFloat(document.getElementById('slippage').value),
             chain: document.getElementById('chain').value,
