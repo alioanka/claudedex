@@ -490,3 +490,101 @@ async def test_verify_isolated_no_close_when_isolated():
     eng._close_position = fake_close
     await eng._verify_isolated_or_close('BTCUSDT', TradeSide.LONG)
     assert close_calls == []
+
+
+# ---------------------------------------------------------------------------
+# FUT-RM-08 (Wave 3): per-symbol leverage cap overrides
+# ---------------------------------------------------------------------------
+
+
+def test_override_resolves_above_global_cap_for_listed_symbol():
+    """Operator sets max_leverage=5 globally but 10x cap for BTC/USDT.
+    BTC entries at 10x must be ALLOWED; a non-listed symbol at 10x must
+    be REJECTED."""
+    cfg = {
+        'max_leverage': 5,
+        'max_positions': 5,
+        'max_total_exposure': 10000.0,
+        'max_leverage_overrides': {'BTC/USDT': 10},
+    }
+    rm = FuturesRiskManager(cfg)
+    assert rm.resolve_max_leverage('BTC/USDT') == 10
+    assert rm.resolve_max_leverage('PEPE/USDT') == 5
+    # case + slash variants normalize to same lookup
+    assert rm.resolve_max_leverage('btc/usdt') == 10
+    assert rm.resolve_max_leverage('BTCUSDT') == 10
+
+    ok = rm.validate_new_position(
+        symbol='BTC/USDT', side='LONG', size_usd=100.0, leverage=10,
+        current_positions=[], available_capital=1000.0,
+    )
+    assert ok['allowed'] is True, ok
+
+    blocked = rm.validate_new_position(
+        symbol='PEPE/USDT', side='LONG', size_usd=100.0, leverage=10,
+        current_positions=[], available_capital=1000.0,
+    )
+    assert blocked['allowed'] is False
+    assert blocked['effective_max_leverage'] == 5
+    assert blocked['cap_source'] == 'global'
+
+
+def test_override_below_global_cap_tightens_for_listed_symbol():
+    """The override can also tighten: max_leverage=20 global, PEPE capped at 5.
+    PEPE at 10x must be REJECTED with effective_max_leverage=5 and override."""
+    cfg = {
+        'max_leverage': 20,
+        'max_positions': 5,
+        'max_total_exposure': 10000.0,
+        'max_leverage_overrides': {'PEPE/USDT': 5},
+    }
+    rm = FuturesRiskManager(cfg)
+    blocked = rm.validate_new_position(
+        symbol='PEPE/USDT', side='LONG', size_usd=100.0, leverage=10,
+        current_positions=[], available_capital=1000.0,
+    )
+    assert blocked['allowed'] is False
+    assert blocked['effective_max_leverage'] == 5
+    assert blocked['cap_source'] == 'override'
+    assert blocked['suggested_leverage'] == 5
+
+    # And BTC, with no override, still uses the global 20x cap.
+    ok = rm.validate_new_position(
+        symbol='BTC/USDT', side='LONG', size_usd=100.0, leverage=20,
+        current_positions=[], available_capital=1000.0,
+    )
+    assert ok['allowed'] is True, ok
+
+
+def test_override_zero_or_negative_falls_back_to_global():
+    """Bad rows in the JSON map (0, negative, non-int) must not silently
+    leave a symbol uncapped or block boot — they fall back to global."""
+    cfg = {
+        'max_leverage': 10,
+        'max_positions': 5,
+        'max_total_exposure': 10000.0,
+        'max_leverage_overrides': {
+            'BTC/USDT': 0,         # invalid -> ignored
+            'ETH/USDT': -3,        # invalid -> ignored
+            'SOL/USDT': 'oops',    # invalid -> ignored
+            'PEPE/USDT': 5,        # valid
+        },
+    }
+    rm = FuturesRiskManager(cfg)
+    assert rm.resolve_max_leverage('BTC/USDT') == 10
+    assert rm.resolve_max_leverage('ETH/USDT') == 10
+    assert rm.resolve_max_leverage('SOL/USDT') == 10
+    assert rm.resolve_max_leverage('PEPE/USDT') == 5
+
+
+def test_override_empty_dict_is_identity():
+    """The default empty dict must behave exactly like no overrides
+    configured (current behavior pre-Wave-3)."""
+    cfg = {
+        'max_leverage': 10,
+        'max_positions': 5,
+        'max_total_exposure': 10000.0,
+    }  # max_leverage_overrides unset
+    rm = FuturesRiskManager(cfg)
+    assert rm.max_leverage_overrides == {}
+    assert rm.resolve_max_leverage('ANY/USDT') == 10

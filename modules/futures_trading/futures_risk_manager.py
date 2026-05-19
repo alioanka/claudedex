@@ -53,9 +53,52 @@ class FuturesRiskManager:
             config.get('skip_short_funding_bps', 0.0) or 0.0
         )
 
+        # FUT-RM-08 (Wave 3): per-symbol leverage cap overrides. Normalized to
+        # uppercased, slash-stripped form so 'btc/usdt', 'BTC/USDT', and
+        # 'BTCUSDT' all hit the same entry. An override of 0 / None / negative
+        # is treated as "no override" and we fall back to the global cap.
+        raw_overrides = config.get('max_leverage_overrides') or {}
+        self.max_leverage_overrides: Dict[str, int] = {}
+        if isinstance(raw_overrides, dict):
+            for sym, lev in raw_overrides.items():
+                try:
+                    norm = self._normalize_symbol(sym)
+                    lev_i = int(lev)
+                    if norm and lev_i > 0:
+                        self.max_leverage_overrides[norm] = lev_i
+                except (TypeError, ValueError):
+                    # Bad row in the JSON map — skip rather than block boot.
+                    continue
+
         # State tracking
         self.consecutive_losses = 0
         self.total_realized_pnl = 0.0
+
+    @staticmethod
+    def _normalize_symbol(sym: str) -> str:
+        """Canonical form for override lookup: uppercase, no slash, no spaces."""
+        if not sym:
+            return ''
+        return str(sym).strip().upper().replace('/', '').replace(' ', '')
+
+    def resolve_max_leverage(self, symbol: str) -> int:
+        """FUT-RM-08: return the effective per-symbol leverage cap.
+
+        Lookup order:
+          1. max_leverage_overrides[normalize(symbol)]
+          2. self.max_leverage (global)
+
+        Defensive: never returns < 1. Callers use the result as the cap to
+        compare requested leverage against in validate_new_position.
+        """
+        try:
+            norm = self._normalize_symbol(symbol)
+            override = self.max_leverage_overrides.get(norm)
+            if override is not None and override > 0:
+                return int(override)
+        except Exception:
+            pass
+        return max(1, int(self.max_leverage))
 
     def validate_new_position(
         self,
@@ -88,12 +131,18 @@ class FuturesRiskManager:
                     'reason': f'Max positions reached ({self.max_positions})'
                 }
 
-            # Check leverage limit
-            if leverage > self.max_leverage:
+            # Check leverage limit. FUT-RM-08: per-symbol override > global.
+            effective_max = self.resolve_max_leverage(symbol)
+            if leverage > effective_max:
+                # Make the reason explicit about which cap fired so the
+                # operator can tell an override-block from a global block.
+                src = 'override' if effective_max != self.max_leverage else 'global'
                 return {
                     'allowed': False,
-                    'reason': f'Leverage {leverage}x exceeds max {self.max_leverage}x',
-                    'suggested_leverage': self.max_leverage
+                    'reason': f'Leverage {leverage}x exceeds max {effective_max}x ({src})',
+                    'suggested_leverage': effective_max,
+                    'effective_max_leverage': effective_max,
+                    'cap_source': src,
                 }
 
             # Check capital availability

@@ -491,6 +491,30 @@
                 </select>
             </div>
         </div>
+
+        <!-- FUT-RM-08: Per-symbol leverage overrides (JSON map) -->
+        <div class="setting-grid" style="margin-top:16px;">
+            <div class="setting-item" style="grid-column: 1 / -1;">
+                <label class="setting-label">
+                    <i class="fas fa-table"></i>
+                    Per-Symbol Leverage Overrides (JSON)
+                </label>
+                <div class="setting-description">
+                    Optional per-pair cap. Wins over Maximum Leverage above.
+                    Symbols are matched case-insensitively with or without "/".
+                    Example: <code>{"BTC/USDT": 10, "PEPE/USDT": 5}</code>.
+                    Leave as <code>{}</code> to use the global cap for all pairs.
+                </div>
+                <textarea
+                    class="setting-input"
+                    id="futures_max_leverage_overrides"
+                    name="futures_max_leverage_overrides"
+                    rows="4"
+                    style="font-family: monospace; white-space: pre;"
+                    placeholder='{"BTC/USDT": 10, "PEPE/USDT": 5}'>{}</textarea>
+                <div id="futures_max_leverage_overrides_err" style="color:#dc2626;font-size:0.85rem;margin-top:6px;display:none;"></div>
+            </div>
+        </div>
     </div>
 
     <!-- Risk Management -->
@@ -962,6 +986,10 @@ function populateSettings(settings) {
         if (element) {
             if (element.type === 'checkbox') {
                 element.checked = value;
+            } else if (element.tagName === 'TEXTAREA' && value !== null && typeof value === 'object') {
+                // FUT-RM-08: JSON map fields render as pretty JSON in textarea.
+                try { element.value = JSON.stringify(value, null, 2); }
+                catch (_) { element.value = '{}'; }
             } else {
                 element.value = value;
             }
@@ -983,7 +1011,36 @@ async function saveSettings() {
     const settings = {};
     const inputs = document.querySelectorAll('.setting-input, .setting-select, input[type="checkbox"]');
 
+    // FUT-RM-08: JSON map fields. id -> err-element id.
+    const jsonFields = {
+        'futures_max_leverage_overrides': 'futures_max_leverage_overrides_err',
+    };
+    let jsonOk = true;
+    for (const [fieldId, errId] of Object.entries(jsonFields)) {
+        const el = document.getElementById(fieldId);
+        const errEl = document.getElementById(errId);
+        if (!el) continue;
+        const txt = (el.value || '').trim() || '{}';
+        try {
+            const parsed = JSON.parse(txt);
+            if (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null) {
+                throw new Error('expected a JSON object (e.g. {"BTC/USDT": 10})');
+            }
+            settings[fieldId] = parsed;
+            if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+        } catch (e) {
+            if (errEl) { errEl.style.display = 'block'; errEl.textContent = 'Invalid JSON: ' + e.message; }
+            jsonOk = false;
+        }
+    }
+    if (!jsonOk) {
+        showToast('Fix JSON errors before saving', 'error');
+        return;
+    }
+
     inputs.forEach(input => {
+        // Skip JSON-typed fields — already handled above.
+        if (input.id in jsonFields) return;
         if (input.type === 'checkbox') {
             settings[input.id] = input.checked;
         } else if (input.type === 'number') {

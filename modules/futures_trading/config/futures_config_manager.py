@@ -78,6 +78,13 @@ class FuturesLeverageConfig(BaseModel):
     # order and immediately closes if a CROSS-margin fill is detected.
     # No-op in DRY_RUN.
     enforce_isolated_margin: bool = True
+    # FUT-RM-08 (Wave 3): per-symbol leverage cap overrides. Operator may
+    # want different caps per pair (e.g. max 5x on PEPE/USDT but 10x on
+    # BTC/USDT). When the validator runs, override > global max_leverage.
+    # Keys are exchange-native symbols (e.g. "BTC/USDT" or "BTCUSDT");
+    # the resolver normalizes case + slash before lookup. Empty dict
+    # means "use global max_leverage for every pair" (current behavior).
+    max_leverage_overrides: Dict[str, int] = Field(default_factory=dict)
 
 
 class FuturesRiskConfig(BaseModel):
@@ -468,6 +475,12 @@ class FuturesConfigManager:
                     elif isinstance(value, float):
                         value_type = 'float'
                         value_str = str(value)
+                    elif isinstance(value, (dict, list)):
+                        # FUT-RM-08: store dict/list as JSON so the loader's
+                        # value_type=='json' branch round-trips correctly.
+                        import json as _json
+                        value_type = 'json'
+                        value_str = _json.dumps(value)
                     else:
                         value_type = 'string'
                         value_str = str(value)
@@ -633,6 +646,7 @@ class FuturesConfigManager:
             'max_leverage': FuturesConfigType.LEVERAGE,
             'margin_mode': FuturesConfigType.LEVERAGE,
             'enforce_isolated_margin': FuturesConfigType.LEVERAGE,  # FUT-RM-07
+            'max_leverage_overrides': FuturesConfigType.LEVERAGE,   # FUT-RM-08
             # Risk settings - SL
             'stop_loss': FuturesConfigType.RISK,  # alias
             'stop_loss_pct': FuturesConfigType.RISK,

@@ -6602,6 +6602,13 @@ class DashboardEndpoints:
                         settings[f"futures_{key}"] = float(value)
                     elif value_type == 'bool':
                         settings[f"futures_{key}"] = value.lower() in ('true', '1', 'yes')
+                    elif value_type == 'json':
+                        # FUT-RM-08: dict/list settings (e.g. max_leverage_overrides)
+                        try:
+                            import json as _json
+                            settings[f"futures_{key}"] = _json.loads(value) if value else {}
+                        except Exception:
+                            settings[f"futures_{key}"] = {}
                     else:
                         settings[f"futures_{key}"] = value
 
@@ -6675,6 +6682,12 @@ class DashboardEndpoints:
                     elif isinstance(value, float):
                         value_type = 'float'
                         value_str = str(value)
+                    elif isinstance(value, (dict, list)):
+                        # FUT-RM-08: dict/list settings persisted as JSON so the
+                        # loader's value_type=='json' branch round-trips.
+                        import json as _json
+                        value_type = 'json'
+                        value_str = _json.dumps(value)
                     else:
                         value_type = 'string'
                         value_str = str(value)
@@ -6716,6 +6729,8 @@ class DashboardEndpoints:
             'max_positions': 'futures_position', 'min_trade_size': 'futures_position',
             'default_leverage': 'futures_leverage', 'leverage': 'futures_leverage',
             'max_leverage': 'futures_leverage', 'margin_mode': 'futures_leverage',
+            'enforce_isolated_margin': 'futures_leverage',  # FUT-RM-07
+            'max_leverage_overrides': 'futures_leverage',   # FUT-RM-08
             'stop_loss_pct': 'futures_risk', 'stop_loss': 'futures_risk',
             'take_profit_pct': 'futures_risk', 'take_profit': 'futures_risk',
             'max_daily_loss_usd': 'futures_risk', 'daily_loss_limit': 'futures_risk',

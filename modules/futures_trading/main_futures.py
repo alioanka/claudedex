@@ -633,6 +633,11 @@ class FuturesTradingApplication:
                     lev_cfg = self.config_manager.get_leverage()
                     if lev_cfg and getattr(lev_cfg, 'max_leverage', None) is not None:
                         risk_cfg['max_leverage'] = int(lev_cfg.max_leverage)
+                    # FUT-RM-08: per-symbol leverage cap overrides.
+                    if lev_cfg:
+                        overrides = getattr(lev_cfg, 'max_leverage_overrides', None)
+                        if overrides:
+                            risk_cfg['max_leverage_overrides'] = dict(overrides)
                     # Merge position cap + exposure cap from FuturesPositionConfig.
                     pos_cfg = self.config_manager.get_position()
                     if pos_cfg:
