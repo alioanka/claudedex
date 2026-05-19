@@ -779,14 +779,16 @@ class SolanaListener:
             logger.debug(f"Error getting signatures: {e}")
             return []
 
-    async def _check_pool_transaction(
+    async def _fetch_transaction(
         self,
         signature: str,
-        source: PoolSource
-    ) -> Optional[DetectedPool]:
-        """Check if a transaction is a pool creation"""
-        self._stats['api_calls'] += 1
-
+        commitment: str,
+    ) -> Optional[Dict]:
+        """One getTransaction call at the given commitment level. Returns
+        the result dict on success, None on any error / missing result.
+        Used by _check_pool_transaction's two-stage processed→confirmed
+        fast-path. Does NOT bump _stats counters — the caller decides
+        which rejection bucket to charge."""
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -796,95 +798,129 @@ class SolanaListener:
                 {
                     "encoding": "jsonParsed",
                     "maxSupportedTransactionVersion": 0,
-                    "commitment": "confirmed",
-                }
-            ]
+                    "commitment": commitment,
+                },
+            ],
         }
-
         try:
             async with self._session.post(
                 self.rpc_url,
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=15)
+                timeout=aiohttp.ClientTimeout(total=15),
             ) as response:
-
                 if response.status != 200:
-                    self._stats['rejected_rpc_error'] += 1
                     return None
-
                 data = await response.json()
-                result = data.get('result')
-
-                if not result:
-                    self._stats['rejected_no_result'] += 1
-                    return None
-
-                # Skip failed transactions
-                meta = result.get('meta', {})
-                if meta.get('err') is not None:
-                    self._stats['rejected_tx_failed'] += 1
-                    return None
-
-                # Check logs for pool init
-                log_messages = meta.get('logMessages', [])
-
-                if not self._is_pool_init(log_messages, source):
-                    # Sample the first 10 'not_init' rejections so the operator
-                    # can paste an example of logMessages that the keyword
-                    # pre-filter accepted but _is_pool_init rejected. Bump the
-                    # counter AFTER reading the pre-bump value so the sample
-                    # condition fires at #50, #100, ... #500 inclusive.
-                    rej = self._stats.get('rejected_not_init', 0)
-                    next_rej = rej + 1
-                    if next_rej % 50 == 0 and next_rej <= 500:
-                        sample = (log_messages[:5] if log_messages else ['<empty>'])
-                        logger.info(
-                            f"🔍 Rejection sample (not_init #{next_rej}): "
-                            f"sig={signature[:16]}... "
-                            f"log_count={len(log_messages)} "
-                            f"logs={sample}"
-                        )
-                    self._stats['rejected_not_init'] = next_rej
-                    return None
-
-                # Extract token info
-                token_mint, pool_address, liquidity = self._parse_pool_transaction(
-                    result, source
-                )
-
-                # Filter out known mints and invalid tokens
-                if not token_mint:
-                    self._stats['rejected_no_mint'] += 1
-                    return None
-                if token_mint in FILTERED_MINTS:
-                    self._stats['rejected_filtered_mint'] += 1
-                    return None
-
-                # Validate token address format (base58, 32-44 chars)
-                if len(token_mint) < 32 or len(token_mint) > 44:
-                    self._stats['rejected_bad_mint_format'] += 1
-                    return None
-
-                return DetectedPool(
-                    token_address=token_mint,
-                    pair_address=pool_address or signature,
-                    chain='solana',
-                    source=source,
-                    timestamp=datetime.utcnow(),
-                    signature=signature,
-                    base_liquidity=liquidity,
-                    metadata={
-                        'program_id': PROGRAM_IDS.get(source),
-                        'block_time': result.get('blockTime')
-                    }
-                )
-
+                return data.get('result')
         except asyncio.TimeoutError:
-            self._stats['rejected_rpc_error'] += 1
-            logger.debug(f"Timeout fetching transaction: {signature[:16]}...")
+            logger.debug(f"Timeout fetching tx {signature[:16]}... at {commitment}")
+            return None
+        except Exception as e:
+            logger.debug(f"Error fetching tx {signature[:16]}... at {commitment}: {e}")
+            return None
+
+    async def _check_pool_transaction(
+        self,
+        signature: str,
+        source: PoolSource
+    ) -> Optional[DetectedPool]:
+        """Check if a transaction is a pool creation.
+
+        R1: Two-stage commitment readback. WSS notifications arrive at
+        `processed` level (Solana propagates them as soon as the leader
+        sees the block); the prior single-shot `confirmed` call would
+        wait 3-13s on the supermajority quorum. We now:
+          1. Try `processed` first — typical 200-400ms RPC roundtrip,
+             returns the same logMessages we need for _is_pool_init.
+          2. On miss (slot hasn't propagated to our RPC node yet),
+             fall back to `confirmed` — same path as before.
+        For polling-path callers the cost is identical because the
+        polling readback already happens long after `processed` is
+        available; the second call is the no-op fast path.
+        """
+        self._stats['api_calls'] += 1
+
+        # Stage 1: processed readback (fast).
+        result = await self._fetch_transaction(signature, 'processed')
+        if result is not None:
+            self._stats['processed_hit'] = self._stats.get('processed_hit', 0) + 1
+        else:
+            # Stage 2: confirmed fallback. Bump api_calls again because
+            # this is a second RPC roundtrip.
+            self._stats['api_calls'] += 1
+            self._stats['processed_miss_fallback'] = (
+                self._stats.get('processed_miss_fallback', 0) + 1
+            )
+            result = await self._fetch_transaction(signature, 'confirmed')
+
+        try:
+            if not result:
+                self._stats['rejected_no_result'] += 1
+                return None
+
+            # Skip failed transactions
+            meta = result.get('meta', {})
+            if meta.get('err') is not None:
+                self._stats['rejected_tx_failed'] += 1
+                return None
+
+            # Check logs for pool init
+            log_messages = meta.get('logMessages', [])
+
+            if not self._is_pool_init(log_messages, source):
+                # Sample the first 10 'not_init' rejections so the operator
+                # can paste an example of logMessages that the keyword
+                # pre-filter accepted but _is_pool_init rejected. Bump the
+                # counter AFTER reading the pre-bump value so the sample
+                # condition fires at #50, #100, ... #500 inclusive.
+                rej = self._stats.get('rejected_not_init', 0)
+                next_rej = rej + 1
+                if next_rej % 50 == 0 and next_rej <= 500:
+                    sample = (log_messages[:5] if log_messages else ['<empty>'])
+                    logger.info(
+                        f"🔍 Rejection sample (not_init #{next_rej}): "
+                        f"sig={signature[:16]}... "
+                        f"log_count={len(log_messages)} "
+                        f"logs={sample}"
+                    )
+                self._stats['rejected_not_init'] = next_rej
+                return None
+
+            # Extract token info
+            token_mint, pool_address, liquidity = self._parse_pool_transaction(
+                result, source
+            )
+
+            # Filter out known mints and invalid tokens
+            if not token_mint:
+                self._stats['rejected_no_mint'] += 1
+                return None
+            if token_mint in FILTERED_MINTS:
+                self._stats['rejected_filtered_mint'] += 1
+                return None
+
+            # Validate token address format (base58, 32-44 chars)
+            if len(token_mint) < 32 or len(token_mint) > 44:
+                self._stats['rejected_bad_mint_format'] += 1
+                return None
+
+            return DetectedPool(
+                token_address=token_mint,
+                pair_address=pool_address or signature,
+                chain='solana',
+                source=source,
+                timestamp=datetime.utcnow(),
+                signature=signature,
+                base_liquidity=liquidity,
+                metadata={
+                    'program_id': PROGRAM_IDS.get(source),
+                    'block_time': result.get('blockTime')
+                }
+            )
+
         except Exception as e:
             self._stats['rejected_rpc_error'] += 1
-            logger.debug(f"Error checking pool: {e}")
+            logger.debug(f"Error decoding pool tx {signature[:16]}...: {e}")
 
         return None
 
@@ -1071,6 +1107,11 @@ class SolanaListener:
                 # in /api/sniper/timing widget the moment a window flips.
                 'block_time_anchored': self._stats.get('block_time_anchored', 0),
                 'block_time_missing': self._stats.get('block_time_missing', 0),
+                # R1: processed→confirmed two-stage commitment readback
+                # ratio. processed_hit / (processed_hit + processed_miss_fallback)
+                # tells the operator how often the fast path succeeds.
+                'processed_hit': self._stats.get('processed_hit', 0),
+                'processed_miss_fallback': self._stats.get('processed_miss_fallback', 0),
             }
 
     async def close(self):
