@@ -298,18 +298,27 @@ class MEVProtectionLayer(BaseExecutor):
             return 0.5  # Default medium risk
             
     def _apply_gas_randomization(self, transaction: Dict) -> Dict:
-        """Apply gas price randomization"""
+        """Apply gas price randomization, clamped at the configured ceiling.
+
+        Without the clamp, the +5% upper edge of the random range could lift
+        gasPrice above max_gas_price (gwei) and silently turn a perfectly-
+        budgeted tx into one that breaches our gas-price kill-switch on the
+        next executor layer.
+        """
         try:
             # Add random variation to gas price
             variation = random.uniform(
                 1 - self.gas_randomization_range,
                 1 + self.gas_randomization_range
             )
-            
+
+            max_gas_wei = int(self.config.get('max_gas_price', 50)) * 10 ** 9
             if 'gasPrice' in transaction:
-                transaction['gasPrice'] = int(transaction['gasPrice'] * variation)
+                new_price = int(transaction['gasPrice'] * variation)
+                transaction['gasPrice'] = min(new_price, max_gas_wei)
             elif 'maxFeePerGas' in transaction:
-                transaction['maxFeePerGas'] = int(transaction['maxFeePerGas'] * variation)
+                new_fee = int(transaction['maxFeePerGas'] * variation)
+                transaction['maxFeePerGas'] = min(new_fee, max_gas_wei)
                 transaction['maxPriorityFeePerGas'] = int(
                     transaction['maxPriorityFeePerGas'] * variation
                 )

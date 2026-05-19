@@ -785,20 +785,54 @@ class DirectDEXExecutor(BaseExecutor):
             
         raise Exception(f"Transaction not confirmed after {timeout} seconds")
         
+    # Per-chain gas-price ceiling in gwei. Falls through to
+    # self.max_gas_price if no chain-specific override is present.
+    # Ethereum sits at 30+ gwei daily, Polygon often 100+, Arb/Base ~0.1
+    # so a single global cap of 50 made ETH legal but Polygon hard-fail.
+    _CHAIN_MAX_GWEI_DEFAULTS: Dict[str, int] = {
+        'ethereum': 80,
+        'bsc': 5,
+        'polygon': 200,
+        'arbitrum': 5,
+        'base': 5,
+        'optimism': 5,
+    }
+
+    def _resolve_chain_max_gwei(self, chain: str) -> int:
+        overrides = self.config.get('chain_max_gas_gwei', {}) or {}
+        chain_l = (chain or '').lower()
+        if chain_l in overrides:
+            return int(overrides[chain_l])
+        return self._CHAIN_MAX_GWEI_DEFAULTS.get(chain_l, int(self.max_gas_price))
+
     async def _get_optimal_gas_price(self, chain: str) -> int:
-        """Get optimal gas price for chain"""
+        """Get optimal gas price for chain.
+
+        Returns wei. Runs the (blocking) JSON-RPC eth_gasPrice via the
+        event-loop executor so we don't block the async loop. Honors a
+        per-chain gwei ceiling because a single 50-gwei cap is wrong on
+        every chain that isn't 2021 Ethereum.
+
+        EIP-1559 (post-London Ethereum + most modern chains) is not yet
+        encoded here — callers that need maxFeePerGas / maxPriorityFeePerGas
+        should override; we still return a legacy gasPrice as a safe
+        floor that any Type-0 router accepts.
+        """
         w3 = self.w3_connections[chain]
-        
+
+        loop = asyncio.get_event_loop()
+        base = await loop.run_in_executor(None, lambda: w3.eth.gas_price)
+
         if self.gas_price_strategy == 'fast':
-            gas_price = w3.eth.gas_price * 1.2
+            gas_price = base * 1.2
         elif self.gas_price_strategy == 'standard':
-            gas_price = w3.eth.gas_price
+            gas_price = base
         else:  # slow
-            gas_price = w3.eth.gas_price * 0.8
-            
-        # Apply max gas price limit
-        max_gas = self.max_gas_price * 10**9  # Convert to wei
-        
+            gas_price = base * 0.8
+
+        max_gwei = self._resolve_chain_max_gwei(chain)
+        max_gas = int(max_gwei) * 10 ** 9  # Convert gwei to wei
+
         return min(int(gas_price), max_gas)
         
     async def _quote_v3(
