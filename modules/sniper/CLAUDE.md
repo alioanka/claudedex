@@ -160,6 +160,36 @@ closed; each in its own commit on `claude/create-expert-agents-JFSF5`:
 Commits: e4b8025 (campaign report), 87c5523 (R3),
 77b22e7 (R2), 6612be2 (R1), 4adcd29 (R4 — bundled),
 adee9c2 (R5), 5a0a3e9 (R6).
+
+## Wave-3 enhancements (2026-05-19)
+Per `docs/agents/reports/SNIPER_WAVE3.md`. One Wave-2-deferred item
+closed; matches PM mission item "Pyth-feed wiring for blue-chip mints".
+
+- **W3-1** Pyth Hermes blue-chip price feed. New
+  `modules/sniper/core/pyth_feed.py` exposes `pyth_client` singleton
+  with per-feed TTL cache (3s), process-wide 100ms throttle, 2s HTTP
+  timeout, fail-soft on every error. New
+  `modules/sniper/core/pyth_feed_ids.py` maps 13 Solana blue-chip
+  mints (SOL, USDC, USDT, ETH, WBTC, JUP, WIF, BONK, PYTH, RAY, ORCA,
+  JTO, JLP) to their Pyth feed-ids. `_get_token_price` resolution
+  order on Solana is now:
+      Pyth (if mapped) → Jupiter Price v2 → Jupiter /quote → Birdeye
+  Feature-flag `sniper_pyth_feeds_enabled` defaults TRUE (Pyth is
+  free + independent of Jupiter). Pump.fun mints have no feed-id so
+  `get_pyth_feed_id` returns None and the chain falls through
+  unchanged — no extra HTTP on the hot path for new launches.
+
+  Profitability lever: kills the residual Jupiter single-point-of-
+  failure cascade for blue-chip SL/TP decisions. New counter
+  `pyth_fallback_hits` preserved across the 1-min stats reset.
+  10 unit tests added in `tests/unit/test_sniper_new_paths.py`
+  (feed-id map, hex format, parse_price, cache, helper integration,
+  feature-flag gating, stats shape). 7 pure-python pass in the
+  sandbox; 3 engine-import tests run on CI.
+
+Commits: d89b1c4 (helper + ids), f2e95d3 (engine wiring — bundled
+into ARB commit due to concurrent index race), 5c00192 (tests).
+
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/SNIPER_*.md` (smartcontract / quant / analyst).
 - Canonical engine API: `docs/engines.md`.
