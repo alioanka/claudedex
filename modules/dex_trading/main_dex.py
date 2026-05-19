@@ -46,9 +46,15 @@ load_dotenv()
 logger = None
 
 def setup_logger(name: str, mode: str) -> logging.Logger:
-    """Setup logger using StructuredLogger"""
+    """Setup logger using StructuredLogger.
+
+    DEX subprocess writes its main/trades/errors logs into
+    logs/dex_trading/ so they live alongside the other module logs;
+    earlier versions dropped TradingBot.log / TradingBot_trades.log /
+    TradingBot_errors.log at the repo root, polluting logs/.
+    """
     from monitoring.logger import StructuredLogger
-    structured_logger = StructuredLogger(name, {'mode': mode})
+    StructuredLogger(name, {'mode': mode, 'log_dir': 'logs/dex_trading'})
     return logging.getLogger(name)
 
 async def test_connection():

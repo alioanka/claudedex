@@ -278,13 +278,15 @@ class AuthRoutes:
         """Change own password"""
         try:
             data = await request.json()
-            old_password = data.get('old_password')
+            # Frontend sends current_password; older API contract used
+            # old_password. Accept either to avoid silent 400s.
+            old_password = data.get('old_password') or data.get('current_password')
             new_password = data.get('new_password')
 
             if not old_password or not new_password:
                 return web.json_response({
                     'success': False,
-                    'error': 'Old and new password required'
+                    'error': 'Current and new password required'
                 }, status=400)
 
             # Verify old password
