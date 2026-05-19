@@ -1102,6 +1102,18 @@ class DashboardEndpoints:
         self.app.router.add_get('/copytrading/wallets', self._copytrading_wallets)
         self.app.router.add_get('/api/copytrading/wallets', self.api_get_copytrading_wallets)
         self.app.router.add_post('/api/copytrading/reconcile', self.api_reconcile_copytrading_trades)
+        # Wave-2 quant rebuild: scored-leader ranking page.
+        # /copytrading/leaders renders the top-N rows from
+        # copy_leader_scores (migration 023). /api/copytrading/leaders
+        # serves the JSON; /api/copytrading/leaders/refresh kicks the
+        # wallet_discovery sweep on demand (admin-only — it can hit
+        # paid Helius/Birdeye quotas).
+        self.app.router.add_get('/copytrading/leaders', self._copytrading_leaders)
+        self.app.router.add_get('/api/copytrading/leaders', self.api_get_copytrading_leaders)
+        self.app.router.add_post(
+            '/api/copytrading/leaders/refresh',
+            require_auth(require_admin(self.api_refresh_copytrading_leaders)),
+        )
 
         # AI Analysis Module Pages
         self.app.router.add_get('/ai/dashboard', self._ai_dashboard)
@@ -10222,6 +10234,118 @@ class DashboardEndpoints:
     async def _copytrading_wallets(self, request):
         template = self.jinja_env.get_template('wallets_copytrading.html')
         return web.Response(text=template.render(page='copytrading_wallets'), content_type='text/html')
+
+    async def _copytrading_leaders(self, request):
+        """Render the scored-leader ranking page (migration 023)."""
+        template = self.jinja_env.get_template('leaders_copytrading.html')
+        return web.Response(
+            text=template.render(page='copytrading_leaders'),
+            content_type='text/html',
+        )
+
+    async def api_get_copytrading_leaders(self, request):
+        """Return cached top-N rows from copy_leader_scores ordered by
+        composite score DESC. Never hits the network — discovery refresh
+        is a separate POST so paid quotas aren't burned on dashboard reload.
+        """
+        try:
+            chain = request.query.get('chain') or None
+            try:
+                limit = int(request.query.get('limit', '25'))
+            except ValueError:
+                limit = 25
+            try:
+                min_score = float(request.query.get('min_score', '0'))
+            except ValueError:
+                min_score = 0.0
+
+            if not (self.db and self.db.pool):
+                return web.json_response({
+                    'success': False, 'error': 'database unavailable',
+                    'leaders': [],
+                }, status=503)
+
+            from modules.copy_trading.wallet_discovery import get_top_leaders
+            rows = await get_top_leaders(
+                self.db.pool, chain=chain, limit=limit, min_score=min_score,
+            )
+
+            # Coerce datetimes / Decimals to JSON-safe primitives. The
+            # generic JSON encoder used elsewhere in this dashboard
+            # already handles Decimal but not asyncpg.Record fields.
+            def _coerce(v):
+                from datetime import datetime as _dt, date as _date
+                from decimal import Decimal as _Dec
+                if v is None:
+                    return None
+                if isinstance(v, (_dt, _date)):
+                    return v.isoformat()
+                if isinstance(v, _Dec):
+                    return float(v)
+                return v
+
+            leaders = []
+            for r in rows:
+                leaders.append({k: _coerce(v) for k, v in r.items()})
+
+            return web.json_response({
+                'success': True,
+                'leaders': leaders,
+                'count': len(leaders),
+            })
+        except Exception as e:
+            logger.error(f"api_get_copytrading_leaders failed: {e}", exc_info=True)
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def api_refresh_copytrading_leaders(self, request):
+        """Trigger a wallet_discovery sweep on demand.
+
+        Admin-only because the sweep hits paid Helius/Birdeye quotas.
+        Body (optional): {"chains": ["solana"], "mock": false}.
+        """
+        try:
+            try:
+                payload = await request.json()
+            except Exception:
+                payload = {}
+            chains = payload.get('chains') or ['solana', 'ethereum', 'base']
+            mock = bool(payload.get('mock'))
+
+            if not (self.db and self.db.pool):
+                return web.json_response({
+                    'success': False, 'error': 'database unavailable',
+                }, status=503)
+
+            from modules.copy_trading.wallet_discovery import (
+                DiscoveryConfig, discover_and_score,
+            )
+
+            # Resolve API keys via secrets manager (already wired
+            # elsewhere in this dashboard).
+            helius_key = birdeye_key = None
+            try:
+                from security.secrets_manager import secrets
+                helius_key = secrets.get('HELIUS_API_KEY', log_access=False)
+                birdeye_key = secrets.get('BIRDEYE_API_KEY', log_access=False)
+            except Exception:
+                pass
+
+            cfg = DiscoveryConfig(
+                chains=tuple(chains),
+                helius_api_key=helius_key,
+                birdeye_api_key=birdeye_key,
+                mock=mock,
+            )
+
+            scored = await discover_and_score(self.db.pool, cfg)
+            return web.json_response({
+                'success': True,
+                'discovered': len(scored),
+                'top_score': max((m.score or 0 for m in scored), default=0),
+            })
+        except Exception as e:
+            logger.error(f"api_refresh_copytrading_leaders failed: {e}", exc_info=True)
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
 
     async def api_copytrading_wallet_remove(self, request):
         """Atomically remove a single wallet from copytrading_config.target_wallets.
