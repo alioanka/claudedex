@@ -47,6 +47,8 @@ CONFIG_KEY_MAPPING = {
     'solana_ml_enabled': ('solana_ml', 'bool'),
     'solana_ml_min_pump_prob': ('solana_ml', 'float'),
     'solana_ml_max_rug_prob': ('solana_ml', 'float'),
+    # Wave-3: independent pump-predictor gate (reads rolling price buffer)
+    'solana_pump_predictor_enabled': ('solana_ml', 'bool'),
     # Drift hardening (MB-15)
     'drift_max_leverage': ('solana_drift', 'float'),
     'drift_max_funding_pct_annual': ('solana_drift', 'float'),
@@ -130,6 +132,11 @@ class SolanaConfigManager:
         'solana_ml_enabled': False,
         'solana_ml_min_pump_prob': 0.55,
         'solana_ml_max_rug_prob': 0.40,
+        # Wave-3: pump-predictor gate (separate from solana_ml_enabled
+        # which controls the rug classifier). Both can be on or off
+        # independently. Default off until the engine has enough
+        # rolling-buffer history and a trained PumpPredictor artefact.
+        'solana_pump_predictor_enabled': False,
         # Drift hardening (MB-15) — applied even when drift_enabled=True.
         'drift_max_leverage': 3.0,
         'drift_max_funding_pct_annual': 50.0,
@@ -498,6 +505,18 @@ class SolanaConfigManager:
     @property
     def solana_ml_max_rug_prob(self) -> float:
         return float(self.get('solana_ml_max_rug_prob', 0.40))
+
+    @property
+    def solana_pump_predictor_enabled(self) -> bool:
+        """Wave-3: pump-predictor gate (off by default).
+
+        Separate from `solana_ml_enabled` (rug classifier) so operators
+        can flip them independently. The gate is also gated client-side
+        by the rolling price buffer's `has_enough(mint, sequence_length)`
+        check, so flipping this True before the buffer fills just yields
+        silent no-ops -- no incorrect refusals.
+        """
+        return bool(self.get('solana_pump_predictor_enabled', False))
 
     # --- Drift hardening accessors ----------------------------------------
     @property

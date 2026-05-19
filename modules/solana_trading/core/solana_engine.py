@@ -78,6 +78,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from core.pnl_tracker import PnLTracker, TradeRecord
 from core.units import get_spl_decimals
+from modules.solana_trading.core.price_buffer import TokenPriceBuffer
 
 # Import JupiterHelper for live swap execution
 try:
@@ -1123,6 +1124,14 @@ class SolanaTradingEngine:
         self.token_cooldowns: Dict[str, datetime] = {}
         self.cooldown_duration = timedelta(minutes=10)
 
+        # Per-token rolling price buffer feeds the pump-predictor gate
+        # (wave-3). 60 bars = 3x PumpPredictor.sequence_length=20, gives
+        # slack across cycle drift. 30-min recency eviction keeps memory
+        # bounded as memecoin candidates rotate. Off by default -- only
+        # consumed when `solana_pump_predictor_enabled=True`.
+        self.price_buffer = TokenPriceBuffer(maxlen=60, max_age_s=1800.0)
+        self._pump_predictor_singleton = None  # lazy-loaded on first use
+
         # Solana client and wallet
         self.client = None
         self.wallet = None
@@ -1682,6 +1691,68 @@ class SolanaTradingEngine:
             return None
         prob, _per_model = result
         return float(prob)
+
+    async def _pump_predict_probability(
+        self,
+        token_mint: str,
+        token_symbol: str,
+    ) -> Optional[float]:
+        """Lazy-loaded pump probability from the rolling price buffer.
+
+        Returns None if (a) PumpPredictor / pandas unavailable, (b) no
+        trained model present (refuse-to-predict, MB-19 sibling), or (c)
+        the buffer has fewer than `sequence_length` bars for this mint.
+        Caller falls back to the existing scam-pattern filter on None.
+        """
+        # Lazy import + cache. Don't pay the tensorflow import cost when
+        # the flag is off.
+        if self._pump_predictor_singleton is None:
+            try:
+                from ml.models.pump_predictor import PumpPredictor
+                self._pump_predictor_singleton = PumpPredictor(config={})
+            except Exception as exc:
+                logger.debug(f"PumpPredictor unavailable, pump gate idle: {exc}")
+                self._pump_predictor_singleton = False  # negative-cache
+
+        pp = self._pump_predictor_singleton
+        if not pp or not getattr(pp, 'is_loaded', lambda: False)():
+            return None
+
+        seq_len = int(getattr(pp, 'sequence_length', 20))
+        if not self.price_buffer.has_enough(token_mint, seq_len):
+            return None
+
+        # Build a minimal frame matching `pp.price_features`. Volume /
+        # liquidity / market_cap / change columns aren't in our buffer;
+        # fill with zeros -- LSTM input is dominated by `price` and the
+        # tree heads are not invoked on this path (we feed a 3-D LSTM
+        # tensor only). MinMaxScaler tolerates zeros without crashing.
+        try:
+            import pandas as pd  # local import: keeps engine startup cheap
+            import numpy as np
+        except Exception as exc:
+            logger.debug(f"pandas/numpy unavailable, pump gate idle: {exc}")
+            return None
+
+        prices = self.price_buffer.prices(token_mint)[-seq_len:]
+        cols = list(getattr(pp, 'price_features', ['price']))
+        df = pd.DataFrame({c: ([0.0] * len(prices)) for c in cols})
+        if 'price' in df.columns:
+            df['price'] = prices
+
+        try:
+            data = df[cols].values
+            scaler = pp.scalers.get('price')
+            if scaler is None or not hasattr(scaler, 'data_min_'):
+                return None  # scaler unfitted -- refuse to predict
+            scaled = scaler.transform(data)
+            seq = np.asarray(scaled).reshape(1, seq_len, len(cols)).astype('float32')
+            lstm_out = pp.models['lstm'].predict(seq, verbose=0)
+            prob = float(lstm_out.flatten()[0])
+            return max(0.0, min(1.0, prob))
+        except Exception as exc:
+            logger.debug(f"PumpPredictor.predict raised for {token_symbol}: {exc}")
+            return None
 
     async def _get_token_balance(self, token_mint: str, decimals: int = None) -> float:
         """
@@ -2270,6 +2341,15 @@ class SolanaTradingEngine:
 
                 old_price = position.current_price
                 position.current_price = current_price
+
+                # Feed the rolling price buffer (wave-3 P1-07 follow-up).
+                # No-op consumer side until solana_pump_predictor_enabled
+                # flips, but the deque has to start filling now so the
+                # gate has 60 bars by the time the flag is enabled.
+                try:
+                    self.price_buffer.append(token_mint, current_price)
+                except Exception as exc:
+                    logger.debug(f"price_buffer.append failed: {exc}")
 
                 # Calculate PnL
                 if position.side == TradeSide.BUY:
@@ -3111,6 +3191,17 @@ class SolanaTradingEngine:
                 if token_mint in self.active_positions:
                     continue
 
+                # Record candidate price into the rolling buffer so the
+                # pump-predictor gate has history by the time we attempt
+                # the next bar for this mint. Pump.fun metadata carries
+                # `price` (USD) for filtered candidates.
+                cand_price = token.get('price') or token.get('priceUsd') or token.get('price_usd')
+                if cand_price:
+                    try:
+                        self.price_buffer.append(token_mint, float(cand_price))
+                    except (TypeError, ValueError, Exception):
+                        pass
+
                 logger.info(f"🎯 Pump.fun: Opening position on {token.get('symbol', 'UNKNOWN')}")
 
                 # Open position - returns True if successful
@@ -3310,6 +3401,33 @@ class SolanaTradingEngine:
                         )
                 except Exception as exc:
                     logger.debug(f"ML rug gate raised, continuing without it: {exc}")
+
+            # 7. Pump-predictor gate (wave-3 P1-07 follow-up). Off by
+            # default; flip solana_pump_predictor_enabled=True in DB
+            # config to engage. Reads the rolling price buffer; if
+            # buffer has < sequence_length bars OR no trained model
+            # is present, the gate silently no-ops and the existing
+            # scam-pattern checks above stay authoritative.
+            if (
+                self.config_manager
+                and getattr(self.config_manager, 'solana_pump_predictor_enabled', False)
+            ):
+                try:
+                    pump_prob = await self._pump_predict_probability(token_mint, token_symbol)
+                    if pump_prob is not None:
+                        min_pump = float(
+                            getattr(self.config_manager, 'solana_ml_min_pump_prob', 0.55)
+                        )
+                        if pump_prob < min_pump:
+                            logger.warning(
+                                f"⛔ Pump gate: {token_symbol} pump_prob={pump_prob:.3f} < min={min_pump:.3f}"
+                            )
+                            return False
+                        logger.info(
+                            f"✅ Pump gate passed: {token_symbol} pump_prob={pump_prob:.3f} ≥ min={min_pump:.3f}"
+                        )
+                except Exception as exc:
+                    logger.debug(f"Pump gate raised, continuing without it: {exc}")
 
             # ============ END PRE-BUY SAFETY CHECKS ============
 
