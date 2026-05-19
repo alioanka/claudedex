@@ -43,6 +43,16 @@ class FuturesRiskManager:
         self.liquidation_buffer = config.get('liquidation_buffer', 0.20)  # 20% from liq price
         self.max_drawdown = config.get('max_drawdown', 0.10)  # 10%
 
+        # FUT-RM-05: funding-rate directional gate. Units = basis points
+        # of the per-interval funding rate (1 bp = 0.0001 fraction).
+        # Zero disables the gate on that side.
+        self.skip_long_funding_bps = float(
+            config.get('skip_long_funding_bps', 0.0) or 0.0
+        )
+        self.skip_short_funding_bps = float(
+            config.get('skip_short_funding_bps', 0.0) or 0.0
+        )
+
         # State tracking
         self.consecutive_losses = 0
         self.total_realized_pnl = 0.0
@@ -119,6 +129,81 @@ class FuturesRiskManager:
             return {
                 'allowed': False,
                 'reason': f'Validation error: {str(e)}'
+            }
+
+    def should_skip_for_funding(
+        self,
+        side: str,
+        funding_rate: Optional[float],
+    ) -> Dict:
+        """FUT-RM-05: directional funding-rate gate.
+
+        Args:
+            side: 'LONG' or 'SHORT' (case-insensitive)
+            funding_rate: per-interval funding rate as a FRACTION
+                (e.g. 0.0005 = 0.05% = 5 bps for one funding interval).
+                None when the rate is unavailable -> gate is bypassed
+                (we never block on missing data; the caller logs).
+
+        Returns:
+            dict with:
+              skip: bool
+              reason: human-readable string
+              rate_bps: float (funding rate converted to bps; 0 if missing)
+              threshold_bps: float (which side's threshold applied)
+        """
+        try:
+            if funding_rate is None:
+                return {
+                    'skip': False,
+                    'reason': 'funding rate unavailable',
+                    'rate_bps': 0.0,
+                    'threshold_bps': 0.0,
+                }
+            rate_bps = float(funding_rate) * 10000.0
+            side_u = (side or '').upper()
+            if side_u == 'LONG':
+                threshold = self.skip_long_funding_bps
+                if threshold > 0 and rate_bps > threshold:
+                    return {
+                        'skip': True,
+                        'reason': (
+                            f'funding {rate_bps:+.2f} bps > +{threshold:.2f} bps '
+                            f'(long would pay funding above cap)'
+                        ),
+                        'rate_bps': rate_bps,
+                        'threshold_bps': threshold,
+                    }
+            elif side_u == 'SHORT':
+                threshold = self.skip_short_funding_bps
+                # For shorts the bad direction is NEGATIVE funding (shorts pay).
+                if threshold > 0 and rate_bps < -threshold:
+                    return {
+                        'skip': True,
+                        'reason': (
+                            f'funding {rate_bps:+.2f} bps < -{threshold:.2f} bps '
+                            f'(short would pay funding above cap)'
+                        ),
+                        'rate_bps': rate_bps,
+                        'threshold_bps': threshold,
+                    }
+            return {
+                'skip': False,
+                'reason': 'funding within tolerance',
+                'rate_bps': rate_bps,
+                'threshold_bps': (
+                    self.skip_long_funding_bps if side_u == 'LONG'
+                    else self.skip_short_funding_bps
+                ),
+            }
+        except Exception as e:
+            self.logger.warning(f"should_skip_for_funding errored: {e}")
+            # Fail-open: never block trade on validator bug.
+            return {
+                'skip': False,
+                'reason': f'gate error: {e}',
+                'rate_bps': 0.0,
+                'threshold_bps': 0.0,
             }
 
     def check_reconciled_capacity(self, current_positions: List[Dict]) -> Dict:

@@ -651,6 +651,21 @@ class FuturesTradingApplication:
                     lb = risk_cfg.get('liquidation_buffer')
                     if lb is not None and float(lb) > 1.0:
                         risk_cfg['liquidation_buffer'] = float(lb) / 100.0
+                    # FUT-RM-05: pull directional funding thresholds from
+                    # FuturesFundingConfig and forward to the risk manager.
+                    if hasattr(self.config_manager, 'get_funding'):
+                        try:
+                            fund_cfg = self.config_manager.get_funding()
+                            if fund_cfg is not None:
+                                for key in (
+                                    'skip_long_funding_bps',
+                                    'skip_short_funding_bps',
+                                ):
+                                    val = getattr(fund_cfg, key, None)
+                                    if val is not None:
+                                        risk_cfg[key] = float(val)
+                        except Exception as e:
+                            self.logger.debug(f"funding config not available: {e}")
                 self.risk_manager = FuturesRiskManager(risk_cfg)
                 self.engine.set_risk_manager(self.risk_manager)
 

@@ -216,6 +216,66 @@ async def test_dry_run_smoke_bybit_engine_path_does_not_call_network():
     assert should_skip_live(True, module='futures', account='bybit') is True
 
 
+# ---------------------------------------------------------------------------
+# FUT-RM-05: funding-rate directional gate
+# ---------------------------------------------------------------------------
+
+
+def _rm_with_funding_gate(long_bps=5.0, short_bps=5.0):
+    cfg = _build_runtime_risk_cfg(
+        _make_lev_cfg(10, 20),
+        _make_pos_cfg(5, 1000.0),
+        _make_risk_cfg(),
+    )
+    cfg['skip_long_funding_bps'] = long_bps
+    cfg['skip_short_funding_bps'] = short_bps
+    return FuturesRiskManager(cfg)
+
+
+def test_funding_gate_blocks_long_when_positive_funding_above_threshold():
+    rm = _rm_with_funding_gate(long_bps=5.0)
+    # 0.0006 fraction = 6 bps; threshold 5 bps -> skip
+    res = rm.should_skip_for_funding('LONG', 0.0006)
+    assert res['skip'] is True
+    assert res['rate_bps'] == pytest.approx(6.0)
+
+
+def test_funding_gate_allows_long_at_or_below_threshold():
+    rm = _rm_with_funding_gate(long_bps=5.0)
+    # 5 bps exactly = boundary, must allow (strict >)
+    res = rm.should_skip_for_funding('LONG', 0.0005)
+    assert res['skip'] is False
+
+
+def test_funding_gate_allows_long_when_funding_negative():
+    """Negative funding pays longs — gate must never block."""
+    rm = _rm_with_funding_gate(long_bps=5.0)
+    res = rm.should_skip_for_funding('LONG', -0.0010)
+    assert res['skip'] is False
+
+
+def test_funding_gate_blocks_short_when_funding_too_negative():
+    rm = _rm_with_funding_gate(short_bps=5.0)
+    # -0.0008 fraction = -8 bps; threshold 5 bps -> skip (shorts pay)
+    res = rm.should_skip_for_funding('SHORT', -0.0008)
+    assert res['skip'] is True
+
+
+def test_funding_gate_disabled_when_threshold_zero():
+    rm = _rm_with_funding_gate(long_bps=0.0, short_bps=0.0)
+    assert rm.should_skip_for_funding('LONG', 0.01)['skip'] is False
+    assert rm.should_skip_for_funding('SHORT', -0.01)['skip'] is False
+
+
+def test_funding_gate_fail_open_on_missing_rate():
+    """When fetch_funding_rate returns None we must NOT block — better to
+    trade blind than ignore live signals because of an API hiccup."""
+    rm = _rm_with_funding_gate(long_bps=5.0)
+    res = rm.should_skip_for_funding('LONG', None)
+    assert res['skip'] is False
+    assert 'unavailable' in res['reason']
+
+
 def test_engine_skip_live_gate_is_present_at_open_position():
     """Static guard: assert the should_skip_live() gate is still in place
     around the entry-order branch. If a refactor removes it, the dry-run

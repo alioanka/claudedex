@@ -393,6 +393,14 @@ class FuturesTradingEngine:
         self._price_cache: Dict[str, Dict] = {}
         self._last_price_update: Dict[str, datetime] = {}
 
+        # FUT-RM-05: funding-rate cache for directional gate.
+        # symbol -> (fraction_rate, fetched_at). Pulled via ccxt
+        # fetch_funding_rate; gated on staleness in _get_funding_rate_cached.
+        self._funding_cache: Dict[str, tuple] = {}
+        # Configurable in seconds; ccxt funding endpoints are heavy so
+        # we re-poll every 5 minutes max (well below the 8h interval).
+        self._funding_cache_ttl_seconds: int = 300
+
         # Stats
         self.total_trades = 0
         self.winning_trades = 0
@@ -1717,6 +1725,26 @@ class FuturesTradingEngine:
             else:
                 tp_str = f"${take_profit_price:.2f}"
 
+            # FUT-RM-05: funding-rate directional gate. Cheap, runs before
+            # the heavier validator. None rate -> gate fails open.
+            if self.risk_manager is not None and hasattr(
+                self.risk_manager, 'should_skip_for_funding'
+            ):
+                try:
+                    fund_rate = await self._get_funding_rate_cached(symbol)
+                    fgate = self.risk_manager.should_skip_for_funding(
+                        side=side.value.upper() if hasattr(side, 'value') else str(side),
+                        funding_rate=fund_rate,
+                    )
+                    if fgate.get('skip'):
+                        logger.warning(
+                            f"⏭️  Funding gate refused entry for {symbol}: "
+                            f"{fgate.get('reason')}"
+                        )
+                        return
+                except Exception as e:
+                    logger.debug(f"funding gate non-fatal error for {symbol}: {e}")
+
             # MB-17: cross-module risk gate — refuse to open if validator rejects.
             if self.risk_manager is not None:
                 try:
@@ -2020,6 +2048,38 @@ class FuturesTradingEngine:
                     logger.error(f"Error fetching ticker for {symbol} from both clients: {e}, {e2}")
                     return None
             logger.error(f"Error fetching ticker for {symbol}: {e}")
+            return None
+
+    async def _get_funding_rate_cached(self, symbol: str) -> Optional[float]:
+        """FUT-RM-05: Return the latest per-interval funding rate as a
+        FRACTION (e.g. 0.0005 = 5 bps) for `symbol`, cached for
+        self._funding_cache_ttl_seconds. Returns None on any failure —
+        the gate fails open on missing data.
+
+        Uses the mainnet price_client when available so DRY_RUN/testnet
+        sessions see real funding numbers (testnet funding is fictional).
+        """
+        try:
+            now = datetime.now()
+            cached = self._funding_cache.get(symbol)
+            if cached:
+                rate, fetched_at = cached
+                age = (now - fetched_at).total_seconds()
+                if age < self._funding_cache_ttl_seconds:
+                    return rate
+            client = self.price_client if self.price_client else self.exchange_client
+            if not client or not hasattr(client, 'fetch_funding_rate'):
+                return None
+            data = await client.fetch_funding_rate(symbol)
+            # ccxt normalizes to {'fundingRate': float, ...}
+            rate = data.get('fundingRate') if isinstance(data, dict) else None
+            if rate is None:
+                return None
+            rate = float(rate)
+            self._funding_cache[symbol] = (rate, now)
+            return rate
+        except Exception as e:
+            logger.debug(f"funding rate fetch failed for {symbol}: {e}")
             return None
 
     async def close_all_positions(self):

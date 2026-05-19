@@ -162,9 +162,28 @@ class FuturesStrategyConfig(BaseModel):
 
 
 class FuturesFundingConfig(BaseModel):
-    """Funding rate settings"""
+    """Funding rate settings.
+
+    Funding economics:
+    - Perps converge to spot via funding payments. Positive funding => longs
+      pay shorts every funding interval (8h on Binance/Bybit USDT perps).
+    - Annualized: APR ~ funding_rate * 3 * 365 = funding_rate * 1095.
+    - 10 bps per 8h = ~109% APR — at that point a fresh long is paying more
+      in funding than most strategies can earn in price drift, so we gate it.
+    """
     funding_arbitrage_enabled: bool = False
     max_funding_rate: float = 0.1
+
+    # FUT-RM-05: funding-rate gate for directional entries.
+    # When current funding > skip_long_funding_bps, refuse new LONG entries
+    # (longs pay funding). When funding < -skip_short_funding_bps, refuse
+    # new SHORT entries. Units: basis points of the per-interval rate
+    # (1 bp = 0.0001). Zero disables the gate on that side.
+    skip_long_funding_bps: float = 5.0   # ~55% APR ceiling for longs
+    skip_short_funding_bps: float = 5.0  # symmetric for shorts
+    # Stale funding rate is worse than no funding rate — if the rate older
+    # than this many seconds, skip the gate rather than gate on stale data.
+    max_funding_age_seconds: int = 900   # 15 min
 
 
 class FuturesConfigManager:
@@ -645,6 +664,10 @@ class FuturesConfigManager:
             'funding_arb': FuturesConfigType.FUNDING,  # alias
             'funding_arbitrage_enabled': FuturesConfigType.FUNDING,
             'max_funding_rate': FuturesConfigType.FUNDING,
+            # FUT-RM-05 directional funding gate
+            'skip_long_funding_bps': FuturesConfigType.FUNDING,
+            'skip_short_funding_bps': FuturesConfigType.FUNDING,
+            'max_funding_age_seconds': FuturesConfigType.FUNDING,
         }
 
         # Group settings by config type
