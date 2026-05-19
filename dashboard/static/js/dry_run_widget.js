@@ -120,8 +120,11 @@
             if (!container) {
                 container = document.createElement('div');
                 container.id = containerId;
-                // Insert at top of main content area, before any page header.
+                // Try a series of likely anchors, fall back to body.
                 const anchor = document.querySelector('.page-header')
+                    || document.querySelector('.settings-container')
+                    || document.querySelector('.settings-header')
+                    || document.querySelector('.container')
                     || document.querySelector('main')
                     || document.body.firstElementChild;
                 if (anchor && anchor.parentNode) {

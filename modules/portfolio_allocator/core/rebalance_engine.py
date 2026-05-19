@@ -23,7 +23,7 @@ logger = logging.getLogger("portfolio_allocator")
 
 
 # Modules to consider for allocation. Same set as orchestrator.
-_MODULES = ["sniper", "arbitrage", "copy_trading", "futures", "solana"]
+_MODULES = ["sniper", "arbitrage", "copy_trading", "futures", "solana", "dex", "ai"]
 # Module → env flag mapping. Used to determine enabled state.
 _ENABLED_ENV = {
     "sniper": "SNIPER_MODULE_ENABLED",
@@ -31,6 +31,8 @@ _ENABLED_ENV = {
     "copy_trading": "COPY_TRADING_MODULE_ENABLED",
     "futures": "FUTURES_MODULE_ENABLED",
     "solana": "SOLANA_MODULE_ENABLED",
+    "dex": "DEX_MODULE_ENABLED",
+    "ai": "AI_MODULE_ENABLED",
 }
 
 

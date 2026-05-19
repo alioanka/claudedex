@@ -56,6 +56,20 @@ _TRADE_TABLES = {
         "pnl_col": "pnl_usd",             # was profit_loss — wrong
         "has_status": False,
     },
+    "dex": {
+        "table": "trades",
+        "time_col": "exit_timestamp",
+        "fallback_time_col": "entry_timestamp",
+        "pnl_col": "profit_loss",
+        "has_status": True,
+    },
+    "ai": {
+        "table": "ai_trades",
+        "time_col": "exit_timestamp",
+        "fallback_time_col": "entry_timestamp",
+        "pnl_col": "profit_loss",
+        "has_status": True,
+    },
 }
 
 

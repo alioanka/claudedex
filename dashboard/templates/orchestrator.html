@@ -170,14 +170,22 @@
   function formatTime(iso) {
     if (!iso) return '';
     try {
-      const d = new Date(iso);
+      // Server stores timestamps in UTC but emits them as naive ISO
+      // (e.g. "2026-05-19T19:33:52"). new Date() of a naive string
+      // interprets it as LOCAL time, which shifts the displayed delta
+      // by the operator's offset (UTC+3 -> "3h ago" on fresh rows).
+      // Force UTC by appending 'Z' when no offset is present.
+      let s = String(iso);
+      if (!/Z|[+-]\d{2}:?\d{2}$/.test(s)) s += 'Z';
+      const d = new Date(s);
       const diffMs = Date.now() - d.getTime();
       const diffMin = Math.floor(diffMs / 60000);
       if (diffMin < 1) return 'just now';
       if (diffMin < 60) return diffMin + 'm ago';
       const hr = Math.floor(diffMin / 60);
       if (hr < 24) return hr + 'h ago';
-      return d.toISOString().slice(0, 16).replace('T', ' ');
+      // For older entries, render in operator's local time zone.
+      return d.toLocaleString();
     } catch (_) { return iso; }
   }
 

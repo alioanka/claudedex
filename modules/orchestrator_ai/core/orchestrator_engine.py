@@ -152,6 +152,20 @@ _MODULE_QUERIES = {
         "has_status": False,   # every row is closed by schema
         "has_is_simulated": True,
     },
+    "dex": {
+        "table": "trades",
+        "time_col": "entry_timestamp",
+        "pnl_col": "profit_loss",
+        "has_status": True,
+        "has_is_simulated": False,
+    },
+    "ai": {
+        "table": "ai_trades",
+        "time_col": "entry_timestamp",
+        "pnl_col": "profit_loss",
+        "has_status": True,
+        "has_is_simulated": True,
+    },
 }
 
 

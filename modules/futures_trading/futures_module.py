@@ -174,10 +174,27 @@ class FuturesTradingModule(BaseModule):
                 strategy_config.get('funding_arbitrage', {})
             )
 
-            # Initialize risk manager
-            self.risk_manager = FuturesRiskManager(
-                self.config.custom_settings.get('risk', {})
-            )
+            # Initialize risk manager. The settings flat-namespace from DB
+            # exposes leverage/position keys directly on custom_settings
+            # (futures_max_leverage, futures_max_positions, ...). Fall back
+            # to the legacy nested 'risk' sub-dict if present. Without this
+            # merge the risk manager kept its hard-coded default max_leverage=3
+            # and rejected every entry from a 5x/10x-configured engine.
+            risk_cfg = dict(self.config.custom_settings.get('risk') or {})
+            cs = self.config.custom_settings
+            for src_key, dst_key in (
+                ('futures_max_leverage', 'max_leverage'),
+                ('futures_max_positions', 'max_positions'),
+                ('futures_max_daily_loss_usd', 'max_total_exposure'),
+            ):
+                if cs.get(src_key) is not None and dst_key not in risk_cfg:
+                    risk_cfg[dst_key] = cs[src_key]
+            # liquidation_buffer on the form is a percentage (20 = 20%) but
+            # the risk manager expects a fraction (0.20). Convert here.
+            lb = cs.get('futures_liquidation_buffer')
+            if lb is not None and 'liquidation_buffer' not in risk_cfg:
+                risk_cfg['liquidation_buffer'] = float(lb) / 100.0 if float(lb) > 1 else float(lb)
+            self.risk_manager = FuturesRiskManager(risk_cfg)
 
             self.logger.info("✅ Futures Trading Module initialized successfully")
             self.status = ModuleStatus.STOPPED
