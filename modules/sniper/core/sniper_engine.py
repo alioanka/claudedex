@@ -130,6 +130,12 @@ class SniperEngine:
         # back-compat with existing deployments that have no
         # max_hold_minutes row in config_settings).
         self.max_hold_minutes = 0
+        # Wave-3: Pyth Hermes blue-chip price feed. Default TRUE
+        # because Pyth is free, independent of Jupiter/Birdeye, and
+        # publishes sub-second for the mints in
+        # SOLANA_MINT_TO_PYTH_FEED_ID. Pump.fun mints have no feed-id
+        # so resolution falls through unaffected.
+        self.sniper_pyth_feeds_enabled = True
 
         # Statistics tracking for rate-limited logging
         self._stats = {
@@ -230,6 +236,10 @@ class SniperEngine:
                             self.max_active_positions = int(val) if val else 500
                         elif key == 'max_hold_minutes':
                             self.max_hold_minutes = int(val) if val else 0
+                        elif key == 'sniper_pyth_feeds_enabled':
+                            self.sniper_pyth_feeds_enabled = (
+                                val.lower() in ('true', '1', 'yes') if val else True
+                            )
 
             # Check for DRY_RUN mode
             self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
@@ -623,6 +633,7 @@ class SniperEngine:
                 'safety_check_errors': self._stats.get('safety_check_errors', 0),
                 'jupiter_quote_fallback_hits': self._stats.get('jupiter_quote_fallback_hits', 0),
                 'birdeye_fallback_hits': self._stats.get('birdeye_fallback_hits', 0),
+                'pyth_fallback_hits': self._stats.get('pyth_fallback_hits', 0),
                 'last_capped_log': now,
                 'last_stats_log': now
             }
@@ -1027,21 +1038,18 @@ class SniperEngine:
     async def _get_token_price(self, token_address: str, chain: str) -> float:
         """Get current token price (simplified).
 
-        R5: Solana price-feed redundancy. Try Jupiter Price v2 → Jupiter
-        /quote → Birdeye /defi/price. If any source returns >0, cache
-        and return; otherwise return 0 so the monitor loop hits the
-        synthetic-close path (DRY_RUN) or its existing failure handling.
+        Wave-3: Solana resolution order is now
+            Pyth Hermes (if mint has a feed-id) → Jupiter Price v2 →
+            Jupiter /quote → Birdeye /defi/price
 
-        Birdeye is rate-limited (1 req/s on free tier) but the 15s
-        per-mint cache absorbs all monitor-tick repetition for a single
-        position. The bigger profitability lever is avoiding the
-        "Jupiter brown-out → every active position synthetic-closed"
-        cascade we'd otherwise hit.
+        Pyth is preferred for blue-chips because it is independent of
+        Jupiter/Birdeye and sub-second fresh, so a Jupiter brown-out
+        cannot synthetically-close blue-chip positions. Pump.fun mints
+        have no Pyth feed-id; get_pyth_feed_id returns None and the
+        chain falls through unaffected.
 
-        Pyth is not used for fresh memecoins — most Pump.fun launches
-        have no Pyth feed-id, so the call would always 404. A future
-        enhancement can wire Pyth for the small set of blue-chip mints
-        held by the sniper (rare in practice).
+        The Pyth lookup is gated by `self.sniper_pyth_feeds_enabled`
+        (default True; DB-overridable via config_settings).
         """
         try:
             cached = self._mint_price_cache.get(token_address)
@@ -1053,6 +1061,16 @@ class SniperEngine:
             import aiohttp
 
             if chain == 'solana':
+                # 0) Pyth Hermes — blue-chip mints only. Free + independent
+                # of Jupiter/Birdeye, so this layer breaks the
+                # "Jupiter brown-out cascades through every blue-chip SL/TP"
+                # failure mode. No-op for Pump.fun (no feed-id).
+                if getattr(self, 'sniper_pyth_feeds_enabled', True):
+                    pyth_price = await self._get_token_price_via_pyth(token_address)
+                    if pyth_price > 0:
+                        self._mint_price_cache[token_address] = (pyth_price, datetime.now())
+                        return pyth_price
+
                 # 1) Jupiter Price API v2 — fast when indexed
                 url = f"https://api.jup.ag/price/v2?ids={token_address}"
                 async with aiohttp.ClientSession() as session:
@@ -1097,6 +1115,33 @@ class SniperEngine:
         except Exception as e:
             logger.debug(f"Error fetching price for {token_address}: {e}")
 
+        return 0
+
+    async def _get_token_price_via_pyth(self, token_address: str) -> float:
+        """Wave-3: Pyth Hermes blue-chip price lookup.
+
+        Returns 0 for any mint without a mapped feed-id (Pump.fun and
+        the long tail of new memecoins). Returns 0 for any HTTP or
+        parse failure — caller falls through to Jupiter.
+
+        Uses the module-level `pyth_client` singleton so cache hits +
+        rate-limit state are shared across all positions.
+        """
+        try:
+            from modules.sniper.core.pyth_feed import pyth_client
+            from modules.sniper.core.pyth_feed_ids import get_pyth_feed_id
+
+            feed_id = get_pyth_feed_id(token_address)
+            if not feed_id:
+                return 0
+            price = await pyth_client.get_price(feed_id)
+            if price and price > 0:
+                self._stats['pyth_fallback_hits'] = (
+                    self._stats.get('pyth_fallback_hits', 0) + 1
+                )
+                return float(price)
+        except Exception as e:
+            logger.debug(f"Pyth feed lookup error for {token_address}: {e}")
         return 0
 
     async def _get_token_price_via_jupiter_quote(self, token_address: str) -> float:

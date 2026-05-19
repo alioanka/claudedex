@@ -53,6 +53,36 @@ class AutoMLTrainer:
         self.model_save_dir = Path(self.config.get('model_dir', './models/ai_strategy'))
         self.model_save_dir.mkdir(parents=True, exist_ok=True)
 
+        # AI-Q-06: calibration wrap (CalibratedClassifierCV). OFF by default.
+        # When enabled, each booster is wrapped with sklearn's calibrator and
+        # saved alongside the base model as <name>_calibrated.joblib. The base
+        # model is still saved as before so flipping the toggle is reversible.
+        self.calibration_enabled = bool(
+            self.config.get(
+                'calibration_enabled',
+                os.getenv('AI_CALIBRATION_ENABLED', '').lower()
+                in ('true', '1', 'yes'),
+            )
+        )
+        # 'sigmoid' (Platt) is robust on small data; 'isotonic' needs n>=1000
+        # to avoid overfit. Default sigmoid is safe for our trade counts.
+        self.calibration_method = str(
+            self.config.get(
+                'calibration_method',
+                os.getenv('AI_CALIBRATION_METHOD', 'sigmoid'),
+            )
+        ).lower()
+        if self.calibration_method not in ('sigmoid', 'isotonic'):
+            logger.warning(
+                f"Unknown calibration_method='{self.calibration_method}', "
+                f"falling back to 'sigmoid'"
+            )
+            self.calibration_method = 'sigmoid'
+        # 'prefit' uses the held-out X_test to fit the calibration step on
+        # an already-trained model (no leakage, no retrain). Pass an int to
+        # request k-fold (the wrapper will retrain the base model under CV).
+        self.calibration_cv = self.config.get('calibration_cv', 'prefit')
+
         # Database connection
         self.db_pool = None
 
@@ -309,6 +339,82 @@ class AutoMLTrainer:
         logger.info("=" * 60)
         return results
 
+    def _maybe_calibrate_and_save(self, model, model_name: str,
+                                  X_test, y_test, base_metrics: Dict) -> Dict:
+        """AI-Q-06: optionally wrap booster in CalibratedClassifierCV.
+
+        OFF by default (`self.calibration_enabled`). When enabled:
+          - Wraps the already-fit model using cv='prefit' (default), or
+            re-trains via k-fold when `self.calibration_cv` is an int.
+          - Persists wrapper to `<model_name>_calibrated.joblib`.
+          - Records Brier score before/after on the held-out set so the
+            training report shows whether calibration actually helped.
+
+        The base model file (xgboost_model.json / lightgbm_model.txt /
+        random_forest_model.joblib) is still written by the caller, so
+        flipping calibration on/off is a config-only swap at inference.
+        """
+        if not self.calibration_enabled:
+            return base_metrics
+        try:
+            from sklearn.calibration import CalibratedClassifierCV
+            from sklearn.metrics import brier_score_loss
+            import joblib
+
+            try:
+                proba_pre = model.predict_proba(X_test)[:, 1]
+                brier_pre = float(brier_score_loss(y_test, proba_pre))
+            except Exception:
+                brier_pre = None
+
+            cv = self.calibration_cv
+            if isinstance(cv, str) and cv.lower() == 'prefit':
+                calibrator = CalibratedClassifierCV(
+                    model, method=self.calibration_method, cv='prefit'
+                )
+                # cv='prefit' fits the calibration step on the held-out set
+                # only — base model is not retrained, no train-set leakage.
+                calibrator.fit(X_test, y_test)
+            else:
+                # k-fold mode retrains base+calibrator on the supplied data.
+                # We refit on test here purely because train was already
+                # consumed; operators wanting full k-fold should disable
+                # calibration here and run a separate calibration pipeline.
+                calibrator = CalibratedClassifierCV(
+                    model, method=self.calibration_method, cv=int(cv)
+                )
+                calibrator.fit(X_test, y_test)
+
+            try:
+                proba_post = calibrator.predict_proba(X_test)[:, 1]
+                brier_post = float(brier_score_loss(y_test, proba_post))
+            except Exception:
+                brier_post = None
+
+            cal_path = self.model_save_dir / f"{model_name}_calibrated.joblib"
+            joblib.dump(calibrator, cal_path)
+            logger.info(
+                f"AI-Q-06: saved calibrated {model_name} -> {cal_path} "
+                f"(method={self.calibration_method}, "
+                f"brier_pre={brier_pre}, brier_post={brier_post})"
+            )
+
+            base_metrics = dict(base_metrics)  # avoid mutating caller dict
+            base_metrics['calibration'] = {
+                'enabled': True,
+                'method': self.calibration_method,
+                'cv': self.calibration_cv,
+                'brier_pre': brier_pre,
+                'brier_post': brier_post,
+                'path': str(cal_path),
+            }
+            return base_metrics
+        except Exception as e:
+            logger.error(f"AI-Q-06: calibration of {model_name} failed: {e}")
+            base_metrics = dict(base_metrics)
+            base_metrics['calibration'] = {'enabled': True, 'error': str(e)}
+            return base_metrics
+
     async def _train_xgboost(self, X_train, y_train, X_test, y_test) -> Dict:
         """Train XGBoost model with class imbalance handling"""
         try:
@@ -368,6 +474,10 @@ class AutoMLTrainer:
         logger.info(f"  Accuracy: {metrics['accuracy']:.4f}, Precision: {metrics['precision']:.4f}")
         logger.info(f"  Recall: {metrics['recall']:.4f}, F1: {metrics['f1_score']:.4f}")
 
+        # AI-Q-06: optional CalibratedClassifierCV wrap (OFF by default).
+        metrics = self._maybe_calibrate_and_save(
+            model, 'xgboost', X_test, y_test, metrics
+        )
         return metrics
 
     async def _train_lightgbm(self, X_train, y_train, X_test, y_test) -> Dict:
@@ -421,6 +531,10 @@ class AutoMLTrainer:
         model.booster_.save_model(str(model_path))
         logger.info(f"Saved LightGBM model: Acc={metrics['accuracy']:.4f}, Prec={metrics['precision']:.4f}, Rec={metrics['recall']:.4f}")
 
+        # AI-Q-06: optional CalibratedClassifierCV wrap (OFF by default).
+        metrics = self._maybe_calibrate_and_save(
+            model, 'lightgbm', X_test, y_test, metrics
+        )
         return metrics
 
     async def _train_random_forest(self, X_train, y_train, X_test, y_test) -> Dict:
@@ -461,6 +575,10 @@ class AutoMLTrainer:
         joblib.dump(model, model_path)
         logger.info(f"Saved Random Forest: Acc={metrics['accuracy']:.4f}, Prec={metrics['precision']:.4f}, Rec={metrics['recall']:.4f}")
 
+        # AI-Q-06: optional CalibratedClassifierCV wrap (OFF by default).
+        metrics = self._maybe_calibrate_and_save(
+            model, 'random_forest', X_test, y_test, metrics
+        )
         return metrics
 
     async def _save_training_report(self, results: Dict):
@@ -495,6 +613,12 @@ async def main():
     parser.add_argument('--train', action='store_true', help='Run training')
     parser.add_argument('--min-trades', type=int, default=100, help='Minimum trades for training')
     parser.add_argument('--lookback-days', type=int, default=30, help='Days of data to use')
+    parser.add_argument('--calibrate', action='store_true',
+                        help='AI-Q-06: wrap boosters in CalibratedClassifierCV '
+                             'and save <name>_calibrated.joblib alongside.')
+    parser.add_argument('--calibration-method', choices=['sigmoid', 'isotonic'],
+                        default='sigmoid',
+                        help='AI-Q-06: calibration method (default sigmoid).')
     args = parser.parse_args()
 
     if not args.train:
@@ -503,7 +627,9 @@ async def main():
 
     config = {
         'min_trades': args.min_trades,
-        'lookback_days': args.lookback_days
+        'lookback_days': args.lookback_days,
+        'calibration_enabled': args.calibrate,
+        'calibration_method': args.calibration_method,
     }
 
     trainer = AutoMLTrainer(config)

@@ -1113,6 +1113,159 @@ class EVMArbitrageEngine:
         """
         return self._min_profit_threshold_base * self._gas_spike_multiplier()
 
+    # -----------------------------------------------------------------
+    # Wave-3: per-(chain, dex_pair, pair_symbol) realized-slippage learning.
+    # Replaces static CHAIN_CONFIGS[*]['default_slippage_pct'] once we have
+    # >= _realized_slip_min_samples rows in the 7d window.
+    # -----------------------------------------------------------------
+    @staticmethod
+    def _slip_key(buy_dex: str, sell_dex: str, pair_symbol: str) -> str:
+        return f"{buy_dex}->{sell_dex}|{pair_symbol}"
+
+    def get_realized_slippage(
+        self,
+        buy_dex: str,
+        sell_dex: str,
+        pair_symbol: str,
+        *,
+        use_p90: bool = False,
+    ) -> Optional[float]:
+        """
+        Look up the median (default) or p90 realized slippage for this
+        (chain, dex_pair, pair_symbol). Returns None when no sample exists
+        or sample_count < _realized_slip_min_samples; caller falls back to
+        the static CHAIN_CONFIGS default.
+
+        Pair symbol normalisation: callers pass `f"{token_in}/{token_out}"`
+        (e.g. "USDC/WETH") - same order as logged into arbitrage_trades by
+        _log_arb_trade so the refresh aggregation lines up.
+        """
+        if not self._realized_slip_cache:
+            return None
+        entry = self._realized_slip_cache.get(
+            self._slip_key(buy_dex, sell_dex, pair_symbol)
+        )
+        if not entry:
+            return None
+        median_pct, p90_pct, samples = entry
+        if samples < self._realized_slip_min_samples:
+            return None
+        return p90_pct if use_p90 else median_pct
+
+    async def _refresh_realized_slippage(self) -> None:
+        """
+        Hourly refresh: scan the last 7d of arbitrage_trades on this chain,
+        compute median + p90 realized slippage per (dex_pair, pair_symbol),
+        upsert into arb_realized_slippage, repopulate in-memory cache.
+        Fail-soft: a bad refresh leaves the previous cache in place.
+
+        Realized slippage attribution: for each closed row we back out
+            realized_slippage = max(0, gross - net - flash_fee - gas_pct)
+        where gross = spread_pct/100, net = profit_loss_pct/100,
+        flash_fee = chain_config.flash_loan_fee_pct, and
+        gas_pct = metadata.gas_cost / entry_usd (live gas USD from the
+        trade row's own write, NOT a recomputed estimate).
+        """
+        if not self.db_pool:
+            return
+        now = datetime.now()
+        if (
+            self._realized_slip_refreshed_at is not None
+            and (now - self._realized_slip_refreshed_at).total_seconds() < self._realized_slip_ttl_s
+        ):
+            return
+        try:
+            flash_fee_pct = float(self.chain_config.get('flash_loan_fee_pct', 0.0005))
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT buy_dex, sell_dex, spread_pct, profit_loss_pct,
+                           entry_usd, metadata, entry_timestamp
+                    FROM arbitrage_trades
+                    WHERE chain = $1
+                      AND entry_timestamp > NOW() - INTERVAL '7 days'
+                      AND entry_usd > 0
+                      AND spread_pct IS NOT NULL
+                      AND profit_loss_pct IS NOT NULL
+                    """,
+                    self.chain_name,
+                )
+            # Bucket samples by (dex_pair, pair_symbol)
+            buckets: Dict[str, List[Tuple[float, datetime]]] = {}
+            for r in rows:
+                try:
+                    meta = r['metadata'] or {}
+                    if isinstance(meta, str):
+                        meta = json.loads(meta)
+                    pair_symbol = meta.get('pair_symbol') or meta.get('token_symbol') or ''
+                    if not pair_symbol:
+                        continue
+                    gas_cost = float(meta.get('gas_cost') or 0.0)
+                    entry_usd = float(r['entry_usd'] or 0.0)
+                    if entry_usd <= 0:
+                        continue
+                    gas_pct = gas_cost / entry_usd
+                    gross = float(r['spread_pct'] or 0.0) / 100.0
+                    net = float(r['profit_loss_pct'] or 0.0) / 100.0
+                    realized = gross - net - flash_fee_pct - gas_pct
+                    # Clamp: negative would mean costs > gross which is a
+                    # logging artifact (e.g. failed-tx gas-only row) not
+                    # slippage. Drop those rather than skew the median.
+                    if realized < 0:
+                        continue
+                    key = self._slip_key(r['buy_dex'], r['sell_dex'], pair_symbol)
+                    buckets.setdefault(key, []).append((realized, r['entry_timestamp']))
+                except Exception:
+                    continue
+            # Compute median + p90, upsert
+            new_cache: Dict[str, Tuple[float, float, int]] = {}
+            async with self.db_pool.acquire() as conn:
+                for key, samples in buckets.items():
+                    if not samples:
+                        continue
+                    vals = sorted(s[0] for s in samples)
+                    n = len(vals)
+                    median_pct = vals[n // 2]
+                    p90_idx = min(n - 1, int(0.9 * n))
+                    p90_pct = vals[p90_idx]
+                    ts_list = [s[1] for s in samples]
+                    win_start = min(ts_list)
+                    win_end = max(ts_list)
+                    new_cache[key] = (median_pct, p90_pct, n)
+                    try:
+                        dex_pair, pair_symbol = key.split('|', 1)
+                    except ValueError:
+                        continue
+                    await conn.execute(
+                        """
+                        INSERT INTO arb_realized_slippage (
+                            chain, dex_pair, pair_symbol, sample_count,
+                            median_pct, p90_pct, window_start, window_end, updated_at
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                        ON CONFLICT (chain, dex_pair, pair_symbol) DO UPDATE
+                        SET sample_count = EXCLUDED.sample_count,
+                            median_pct   = EXCLUDED.median_pct,
+                            p90_pct      = EXCLUDED.p90_pct,
+                            window_start = EXCLUDED.window_start,
+                            window_end   = EXCLUDED.window_end,
+                            updated_at   = NOW()
+                        """,
+                        self.chain_name, dex_pair, pair_symbol,
+                        n, float(median_pct), float(p90_pct),
+                        win_start, win_end,
+                    )
+            self._realized_slip_cache = new_cache
+            self._realized_slip_refreshed_at = now
+            if new_cache:
+                self.logger.info(
+                    f"[{self.chain_name.upper()}] Realized-slippage cache refreshed: "
+                    f"{len(new_cache)} (dex_pair, pair) keys, "
+                    f"trusted={sum(1 for v in new_cache.values() if v[2] >= self._realized_slip_min_samples)}"
+                )
+        except Exception as e:
+            # Pure observability - never block the trading loop.
+            self.logger.debug(f"_refresh_realized_slippage failed (non-fatal): {e}")
+
     async def _get_decrypted_key(self, key_name: str) -> Optional[str]:
         """
         Get decrypted private key from secrets manager or environment.
@@ -1383,6 +1536,11 @@ class EVMArbitrageEngine:
                        f"Opportunities: {self._stats['opportunities_found']} | "
                        f"Executed: {self._stats['opportunities_executed']}")
 
+            # Wave-3: hourly refresh of per-(chain, dex_pair, pair) realized-
+            # slippage cache. TTL-gated inside the method (no-op when fresh),
+            # so a 5-min cadence here is safe.
+            await self._refresh_realized_slippage()
+
             # Log best spread seen (even if negative)
             if self._best_spread_seen > -999.0:  # -999 is initial value, means no spreads checked
                 status = "✅ ABOVE" if self._best_spread_seen > self.min_profit_threshold else "❌ BELOW"
@@ -1601,7 +1759,18 @@ class EVMArbitrageEngine:
                     gas_frac = 0.0  # Cannot estimate USD-denominated gas; skip
             except Exception:
                 gas_frac = 0.0
-            slippage_frac = float(self.chain_config.get('default_slippage_pct', 0.005))
+            # Wave-3: prefer the per-(chain, dex_pair, pair_symbol) realized
+            # slippage when we have >= _realized_slip_min_samples in the 7d
+            # window; otherwise fall back to the chain-level static default.
+            # Use p90 here (not median) for the pre-execute gate to bias
+            # toward skipping trades that are only marginal under typical
+            # fills; median is fine for PnL accounting at log time.
+            pair_symbol_key = f"{token_symbol}/{token_out_symbol}"
+            slippage_frac = self.get_realized_slippage(
+                best_buy_dex, best_sell_dex, pair_symbol_key, use_p90=True
+            )
+            if slippage_frac is None:
+                slippage_frac = float(self.chain_config.get('default_slippage_pct', 0.005))
             estimated_costs = gas_frac + slippage_frac
             net_spread = raw_spread - estimated_costs
 
@@ -2081,7 +2250,8 @@ class EVMArbitrageEngine:
         amount: int,
         profit_pct: float,
         tx_hash: str,
-        token_symbol: str = "UNKNOWN"
+        token_symbol: str = "UNKNOWN",
+        token_out_symbol: str = "WETH",
     ):
         """Log arbitrage trade to database with REALISTIC P&L calculation"""
         if not self.db_pool:
@@ -2103,7 +2273,19 @@ class EVMArbitrageEngine:
             # and L2s (over-counted). Now driven by CHAIN_CONFIGS profile +
             # live gas oracle.
             flash_loan_fee_pct = float(self.chain_config.get('flash_loan_fee_pct', 0.0005))
-            slippage_estimate_pct = float(self.chain_config.get('default_slippage_pct', 0.005))
+            # Wave-3: prefer rolling-7d realized median for PnL accounting; the
+            # pre-execute gate already uses p90. Falls back to chain static
+            # default for cold-start (sample_count < min_samples).
+            pair_symbol = f"{token_symbol}/{token_out_symbol}"
+            realized = self.get_realized_slippage(
+                buy_dex, sell_dex, pair_symbol, use_p90=False
+            )
+            slippage_estimate_pct = (
+                realized
+                if realized is not None
+                else float(self.chain_config.get('default_slippage_pct', 0.005))
+            )
+            slippage_source = 'realized_median' if realized is not None else 'static_default'
             try:
                 gas_cost_usd = await self._gas_cost_usd_per_tx(eth_price_usd=eth_price)
             except Exception:
@@ -2174,11 +2356,14 @@ class EVMArbitrageEngine:
                         'chain': self.chain_name,
                         'chain_id': self.chain_id,
                         'token_symbol': token_symbol,
+                        'pair_symbol': pair_symbol,
                         'gross_profit_pct': gross_profit_pct * 100,
                         'flash_loan_cost': flash_loan_cost,
                         'slippage_cost': slippage_cost,
-                        'gas_cost': GAS_COST_USD,
-                        'total_costs': total_costs
+                        'slippage_pct': slippage_estimate_pct,
+                        'slippage_source': slippage_source,
+                        'gas_cost': gas_cost_usd,
+                        'total_costs': total_costs,
                     })
                 )
             self.logger.debug(f"💾 Logged to arbitrage_trades: {trade_id} [{token_symbol}]")
@@ -2208,7 +2393,7 @@ class EVMArbitrageEngine:
                         profit_usd=net_profit_usd,
                         tx_hash=tx_hash,
                         is_simulated=self.dry_run,
-                        gas_cost_usd=GAS_COST_USD,
+                        gas_cost_usd=gas_cost_usd,
                         flash_loan_fee=flash_loan_cost,
                     )
                     await self.telegram_alerts.send_trade_alert(alert)
