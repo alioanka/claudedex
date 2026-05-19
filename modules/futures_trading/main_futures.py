@@ -606,11 +606,21 @@ class FuturesTradingApplication:
 
             # Phase 2 #5: inject FuturesRiskManager so MB-17's entry validator is live.
             # FuturesTradingEngine.set_risk_manager (commit c53b73b) had no caller until now.
+            #
+            # FUT-RM-01 (b1b8df9 follow-up): commit b1b8df9 patched the dashboard
+            # wrapper (FuturesTradingModule.initialize) to merge futures_max_leverage
+            # into the risk dict, but this main_futures.py subprocess path bypassed
+            # the wrapper entirely and still constructed FuturesRiskManager from
+            # FuturesRiskConfig only — which has NO max_leverage / max_positions /
+            # max_total_exposure fields. Result: the risk manager silently
+            # defaulted to max_leverage=3, max_positions=3, max_total_exposure=500
+            # regardless of operator settings, and every entry at >3x was rejected.
+            # Now we merge leverage_config + position_config into risk_cfg so all
+            # three sources of truth land on the runtime manager.
             try:
                 from modules.futures_trading.futures_risk_manager import FuturesRiskManager
                 risk_cfg: dict = {}
                 if self.config_manager is not None:
-                    # FuturesConfigManager exposes get_risk() returning a Pydantic model.
                     if hasattr(self.config_manager, 'get_risk'):
                         risk_obj = self.config_manager.get_risk()
                         if hasattr(risk_obj, 'model_dump'):
@@ -619,9 +629,41 @@ class FuturesTradingApplication:
                             risk_cfg = risk_obj.dict()
                         elif isinstance(risk_obj, dict):
                             risk_cfg = risk_obj
+                    # Merge leverage cap from FuturesLeverageConfig.
+                    lev_cfg = self.config_manager.get_leverage()
+                    if lev_cfg and getattr(lev_cfg, 'max_leverage', None) is not None:
+                        risk_cfg['max_leverage'] = int(lev_cfg.max_leverage)
+                    # Merge position cap + exposure cap from FuturesPositionConfig.
+                    pos_cfg = self.config_manager.get_position()
+                    if pos_cfg:
+                        if getattr(pos_cfg, 'max_positions', None) is not None:
+                            risk_cfg['max_positions'] = int(pos_cfg.max_positions)
+                        # max_total_exposure: prefer explicit cap, fall back to
+                        # capital_allocation * default_leverage as a soft cap.
+                        cap_alloc = float(getattr(pos_cfg, 'capital_allocation', 0) or 0)
+                        if cap_alloc > 0:
+                            risk_cfg.setdefault(
+                                'max_total_exposure',
+                                cap_alloc * float(getattr(lev_cfg, 'default_leverage', 1) or 1)
+                            )
+                    # liquidation_buffer on settings page is a percentage
+                    # (e.g. 20 = 20%); FuturesRiskManager expects a fraction.
+                    lb = risk_cfg.get('liquidation_buffer')
+                    if lb is not None and float(lb) > 1.0:
+                        risk_cfg['liquidation_buffer'] = float(lb) / 100.0
                 self.risk_manager = FuturesRiskManager(risk_cfg)
                 self.engine.set_risk_manager(self.risk_manager)
-                self.logger.info("✅ FuturesRiskManager injected — MB-17 entry validator is active")
+
+                # FUT-RM-02: startup assertion — runtime risk manager must
+                # reflect the DB-configured caps. Surfaces silent regressions.
+                self._assert_runtime_risk_matches_config()
+
+                self.logger.info(
+                    "✅ FuturesRiskManager injected — MB-17 entry validator is active "
+                    f"(max_leverage={self.risk_manager.max_leverage}, "
+                    f"max_positions={self.risk_manager.max_positions}, "
+                    f"max_total_exposure=${self.risk_manager.max_total_exposure:.2f})"
+                )
             except Exception as e:
                 self.logger.warning(f"FuturesRiskManager wiring failed: {e}; engine will run without validator (legacy behaviour)")
 
@@ -631,6 +673,54 @@ class FuturesTradingApplication:
         except Exception as e:
             self.logger.error(f"Failed to initialize: {e}", exc_info=True)
             raise
+
+    def _assert_runtime_risk_matches_config(self) -> None:
+        """FUT-RM-02: Startup assertion that runtime FuturesRiskManager caps
+        match the DB-backed config. A mismatch means the wiring above silently
+        regressed (e.g. someone re-introduced the hard-coded default=3).
+
+        Soft-fail by default: logs a loud error + an alert if available. The
+        operator can flip FUTURES_RISK_ASSERT_HARD=1 in .env to raise instead
+        (preferred for CI / canary runs)."""
+        try:
+            if not self.config_manager or not self.risk_manager:
+                return
+            lev_cfg = self.config_manager.get_leverage()
+            pos_cfg = self.config_manager.get_position()
+            expected_max_lev = int(getattr(lev_cfg, 'max_leverage', 0) or 0)
+            expected_max_pos = int(getattr(pos_cfg, 'max_positions', 0) or 0)
+            mismatches = []
+            if expected_max_lev and int(self.risk_manager.max_leverage) != expected_max_lev:
+                mismatches.append(
+                    f"max_leverage runtime={self.risk_manager.max_leverage} "
+                    f"db={expected_max_lev}"
+                )
+            if expected_max_pos and int(self.risk_manager.max_positions) != expected_max_pos:
+                mismatches.append(
+                    f"max_positions runtime={self.risk_manager.max_positions} "
+                    f"db={expected_max_pos}"
+                )
+            if mismatches:
+                msg = (
+                    "🚨 FUTURES RISK CONFIG MISMATCH at startup: "
+                    + "; ".join(mismatches)
+                )
+                self.logger.error(msg)
+                hard = os.getenv('FUTURES_RISK_ASSERT_HARD', '').strip().lower() in (
+                    '1', 'true', 'yes'
+                )
+                if hard:
+                    raise RuntimeError(msg)
+            else:
+                self.logger.info(
+                    f"✅ Runtime risk caps match DB config: "
+                    f"max_leverage={expected_max_lev}, "
+                    f"max_positions={expected_max_pos}"
+                )
+        except RuntimeError:
+            raise
+        except Exception as e:
+            self.logger.warning(f"Risk-config assertion errored (non-fatal): {e}")
 
     async def run(self):
         """Main application loop"""
