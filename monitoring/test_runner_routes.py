@@ -1471,6 +1471,146 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         ),
     },
 
+    # ── SOLANA (A3 wave-2: 09a5c85, 661cee6, 83df4ad, b1b358f) ──────
+    {
+        "id": "db_solana_adaptive_priority_fee",
+        "title": "DB: SOLANA adaptive priority-fee + quote TTL (83df4ad)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE key IN ("
+            "  'adaptive_priority_fee_enabled',"
+            "  'adaptive_priority_fee_percentile',"
+            "  'adaptive_priority_fee_min_lamports',"
+            "  'adaptive_priority_fee_max_lamports',"
+            "  'adaptive_priority_fee_ttl_s',"
+            "  'jupiter_quote_max_age_s'"
+            ") "
+            "ORDER BY config_type, key"
+        ),
+        "cmd_preview": (
+            "SELECT … WHERE key IN adaptive_priority_fee_*/jupiter_quote_max_age_s"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "Wave-2 Solana profitability levers: adaptive priority-fee "
+            "controller (off by default) + Jupiter quote freshness TTL "
+            "(default 10s). Empty result = JupiterHelper falls back to "
+            "static priority_fee and 10s TTL."
+        ),
+    },
+    {
+        "id": "db_solana_drift_guards",
+        "title": "DB: SOLANA Drift MB-15 pre-trade guards (661cee6)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE config_type = 'solana_drift' "
+            "  AND key IN ("
+            "    'drift_enabled','drift_max_leverage',"
+            "    'drift_max_funding_pct_annual',"
+            "    'drift_oracle_deviation_max_pct',"
+            "    'drift_min_oracle_conf_bps'"
+            "  ) "
+            "ORDER BY key"
+        ),
+        "cmd_preview": (
+            "SELECT … WHERE config_type='solana_drift' AND key IN MB-15 caps"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "MB-15 fail-closed guards: leverage cap, funding sanity "
+            "cap, oracle-deviation cap, Pyth confidence cap. Drift "
+            "stays drift_enabled=false until operator flips; on flip, "
+            "missing rows fall back to conservative defaults (3x / "
+            "50%/yr / 1% / 500 bps)."
+        ),
+    },
+    {
+        "id": "db_solana_ml_rug_gate",
+        "title": "DB: SOLANA ML rug-gate config (b1b358f)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE config_type = 'solana_ml' "
+            "  AND key IN ("
+            "    'solana_ml_enabled','solana_ml_max_rug_prob',"
+            "    'solana_ml_min_pump_prob'"
+            "  ) "
+            "ORDER BY key"
+        ),
+        "cmd_preview": (
+            "SELECT … WHERE config_type='solana_ml' AND key IN ml gate knobs"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "P1-07 ML rug-gate wiring (b1b358f). Default off "
+            "(solana_ml_enabled=false). When enabled, RugClassifier "
+            "lazy-loads at first _open_position; refuses entry when "
+            "rug_prob > solana_ml_max_rug_prob."
+        ),
+    },
+    {
+        "id": "db_solana_recent_trades_decimals",
+        "title": "DB: SOLANA recent trades sanity (decimals + execution path)",
+        "category": "db",
+        "kind": "db_query",
+        # After 09a5c85 the close path resolves on-chain decimals
+        # instead of hardcoding 6. Real-world: BONK is 5 decimals,
+        # most modern memecoins are 6 or 9. A sniped position whose
+        # close-side qty looks orders-of-magnitude off would have
+        # caught fire pre-fix.
+        "sql": (
+            "SELECT status, "
+            "  COUNT(*) AS n, "
+            "  ROUND(AVG(amount_sol)::numeric, 4) AS avg_amount_sol, "
+            "  ROUND(AVG(pnl_usd)::numeric, 4) AS avg_pnl_usd, "
+            "  MIN(entry_time) AS oldest, "
+            "  MAX(entry_time) AS newest "
+            "FROM solana_trades "
+            "WHERE entry_time > NOW() - INTERVAL '24 hours' "
+            "GROUP BY status ORDER BY status"
+        ),
+        "cmd_preview": (
+            "GROUP-BY status on solana_trades, 24h, AVG amount_sol + pnl_usd"
+        ),
+        "timeout_s": 15,
+        "description": (
+            "24h solana_trades roll-up. Post-09a5c85 the close path "
+            "uses on-chain decimals (no more 10x oversell / 1000x "
+            "undersell on BONK-like tokens). avg_amount_sol grossly "
+            "different from configured position_size = misconfig."
+        ),
+    },
+    {
+        "id": "db_solana_position_size_caps",
+        "title": "DB: SOLANA position-size + capital caps",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE config_type LIKE 'solana_%' "
+            "  AND key IN ("
+            "    'capital','position_size','max_positions','min_position',"
+            "    'daily_loss_limit','stop_loss','take_profit'"
+            "  ) "
+            "ORDER BY config_type, key"
+        ),
+        "cmd_preview": (
+            "SELECT … WHERE config_type LIKE 'solana_%' AND key IN caps"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "Snapshot of Solana engine capital + risk caps. These are "
+            "read by SolanaConfigManager → SolanaEngine init. Missing "
+            "rows fall back to DEFAULTS (10 SOL capital, 1 SOL/pos, "
+            "3 positions, 5% daily loss)."
+        ),
+    },
+
     # ════════════════════════════════════════════════════════════════════
     # Wave-2 T2 catalog additions: FUTURES / AI / COPY_TRADING coverage
     # for the commits enumerated in PM_PLAN "T1 / T2 brief" section.
