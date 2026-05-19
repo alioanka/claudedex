@@ -1346,6 +1346,131 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         ),
     },
 
+    # ── ARBITRAGE (A2 wave-2: 9e6a7d1, 744ee48, 4adcd29, 8cf0143,
+    #              89175d4, 014384d) ──────────────────────────────────
+    {
+        "id": "db_arb_cost_profile_keys",
+        "title": "DB: ARBITRAGE cost-profile + min_profit_spread (744ee48)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE config_type = 'arbitrage_config' "
+            "  AND key IN ("
+            "    'min_profit_spread','min_profit_bps',"
+            "    'gas_budget_usd_per_hour','adaptive_min_profit_enabled',"
+            "    'chain_cost_profile_enabled'"
+            "  ) "
+            "ORDER BY key"
+        ),
+        "cmd_preview": (
+            "SELECT … WHERE config_type='arbitrage_config' AND key IN profit/cost knobs"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "Wave-2 ARB knobs landed by 744ee48 (UI knob honored), "
+            "4adcd29 (cost helpers), 89175d4 (hourly gas budget). "
+            "Empty result = settings_arbitrage.html saves are not "
+            "reaching the engine; engine falls back to chain defaults."
+        ),
+    },
+    {
+        "id": "db_arb_flash_loan_receiver_secrets",
+        "title": "DB: ARBITRAGE flash-loan receiver addresses (89175d4)",
+        "category": "db",
+        "kind": "db_query",
+        # The fix moved FLASH_LOAN_RECEIVER_CONTRACT_* from os.getenv to
+        # the secrets_manager DB-backed table. We don't surface the
+        # plaintext value — just whether the encrypted row exists per
+        # chain so the operator can confirm the migration ran.
+        "sql": (
+            "SELECT key_name, "
+            "  CASE WHEN encrypted_value IS NOT NULL "
+            "       AND length(encrypted_value) > 0 "
+            "       THEN 'present' ELSE 'missing' END AS status, "
+            "  updated_at "
+            "FROM config_sensitive "
+            "WHERE key_name IN ("
+            "  'FLASH_LOAN_RECEIVER_CONTRACT',"
+            "  'FLASH_LOAN_RECEIVER_CONTRACT_ETH',"
+            "  'FLASH_LOAN_RECEIVER_CONTRACT_ARB',"
+            "  'FLASH_LOAN_RECEIVER_CONTRACT_BASE'"
+            ") "
+            "ORDER BY key_name"
+        ),
+        "cmd_preview": (
+            "SELECT key_name,status FROM config_sensitive WHERE key_name LIKE 'FLASH_LOAN_RECEIVER%'"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "Confirms per-chain Aave V3 receiver-contract addresses "
+            "exist in the encrypted DB store (89175d4). Engines fall "
+            "back to os.getenv only if DB row absent; visible 'missing' "
+            "rows = `_get_decrypted_key` returns None, flash-loan path "
+            "errors at execute time."
+        ),
+    },
+    {
+        "id": "db_arb_recent_pnl_costs",
+        "title": "DB: ARBITRAGE recent PnL with real costs (8cf0143)",
+        "category": "db",
+        "kind": "db_query",
+        # The 8cf0143 fix replaces the $15 / 30%-of-spread magic numbers
+        # with chain-aware live costs. After the fix, gas_cost should
+        # vary by chain (ETH > ARB > BASE) instead of every row being
+        # exactly 15.0.
+        "sql": (
+            "SELECT chain, status, COUNT(*) AS n, "
+            "  ROUND(AVG(NULLIF(gas_cost_usd, 0))::numeric, 4) AS avg_gas_usd, "
+            "  ROUND(AVG(NULLIF(slippage_cost_usd, 0))::numeric, 4) AS avg_slip_usd, "
+            "  ROUND(SUM(profit_loss)::numeric, 4) AS sum_pnl "
+            "FROM arbitrage_trades "
+            "WHERE entry_timestamp > NOW() - INTERVAL '24 hours' "
+            "GROUP BY chain, status ORDER BY chain, status"
+        ),
+        "cmd_preview": (
+            "GROUP-BY chain,status on arbitrage_trades, 24h, AVG gas_cost"
+        ),
+        "timeout_s": 15,
+        "description": (
+            "Per-chain ARB cost roll-up. After 8cf0143 the avg_gas_usd "
+            "should differ between chains; the legacy $15 constant "
+            "would show identical 15.0 across ethereum/arbitrum/base. "
+            "Slippage cost should track entry_usd × default_slippage_pct."
+        ),
+    },
+    {
+        "id": "api_arb_settings_get",
+        "title": "API: GET /api/arbitrage/settings (min_profit_spread surface)",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "arbitrage/settings",
+        "cmd_preview": "GET /api/arbitrage/settings | grep min_profit_spread",
+        "timeout_s": 15,
+        "description": (
+            "Source for /arbitrage/settings page. After 744ee48 the "
+            "engine reads min_profit_spread (UI knob); response must "
+            "include the key. 200 + non-empty JSON confirms the GET "
+            "handler routes the wave-2 cost knobs back to the page."
+        ),
+    },
+    {
+        "id": "script_arb_nameerror_regression",
+        "title": "Script: ARBITRAGE spatial-arb NameError grep (9e6a7d1)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/arb_nameerror_check.sh"],
+        "cmd_preview": "bash scripts/arb_nameerror_check.sh",
+        "timeout_s": 10,
+        "description": (
+            "Source-grep: asserts arbitrage_engine.py no longer "
+            "references the renamed `forward_output` / `final_output` "
+            "identifiers from inside `_check_arb_opportunity`. Their "
+            "reappearance = wave-1 NameError regression that silently "
+            "dropped every spatial-arb opportunity."
+        ),
+    },
+
     # ════════════════════════════════════════════════════════════════════
     # Wave-2 T2 catalog additions: FUTURES / AI / COPY_TRADING coverage
     # for the commits enumerated in PM_PLAN "T1 / T2 brief" section.
