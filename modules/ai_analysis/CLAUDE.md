@@ -4,13 +4,17 @@ LLM-driven sentiment + news analysis pipeline. Produces directional signals from
 ## Entry point
 `modules/ai_analysis/main_ai.py` — launched as a subprocess by `main.py` when `AI_MODULE_ENABLED=true`. Engine: `modules/ai_analysis/core/sentiment_engine.py` (orchestrates `ai_provider.py` and `ai_trading_engine.py`).
 ## Key config (DB-backed via `ConfigManager`)
-- `ai_provider` — `openai` / `anthropic`; selects LLM backend
+- `ai_provider` — `openai` / `anthropic` / `both`; selects LLM backend
 - `confidence_threshold` — minimum LLM confidence to act (default 0.5)
 - `trade_amount_usd` — notional per AI-triggered trade (default 50.0)
 - `direct_trading` — master enable for live execution (default False; shadow only)
 - `take_profit_pct` / `stop_loss_pct` — AI-position bounds (defaults +5 / -3)
 - `max_hold_hours` — auto-close timer (default 24h)
 - `scaler_path` — currently hardcoded reference in `trading/strategies/ai_strategy.py` (MB-19 follow-up: persist fitted scaler instead of live `fit_transform`)
+- `quorum_required` (A6 E1) — when true AND both keys loaded, require both providers to agree on direction + |delta|; failure collapses signal to 0 (default false)
+- `quorum_max_disagreement` (A6 E1) — max |s_openai - s_claude| permitted (default 0.4)
+- `bandit_enabled` (A6 E3) — toggle prompt-template multi-armed bandit (default false)
+- `bandit_epsilon` (A6 E3) — exploration rate for bandit (default 0.1)
 ## Kill switch
 - Global: `logs/.killswitch` (written by `scripts/emergency_stop.py` or `/api/bot/emergency-exit`; polled by BaseModule subprocesses via `core.dry_run.start_killswitch_poller`).
 - Per-module: `logs/.pause_ai` (written by dashboard pause/resume; read by `core.dry_run.is_module_paused`).
@@ -20,7 +24,7 @@ LLM-driven sentiment + news analysis pipeline. Produces directional signals from
 ## Primary risk-policy gate
 `core.risk_manager.RiskManager.validate_trade(symbol, amount_usd)` called in `sentiment_engine.py` immediately before submitting to the canonical `BinanceFuturesExecutor` (search for `# Phase 2 #5 wired self.risk_manager`).
 ## Live-trade readiness
-AMBER → GREEN candidate (pending production verification). MB-19 (load-or-refuse scaler + `ai_feature_store` + training scripts for scaler/rug/pump + 27-feature canonical layout + outcome-backfill on close) end-to-end closed; MB-20 (executor delegation through canonical futures path) and MB-21 (headline sanitisation) closed; secrets_manager already wired. Latch-at-open refinement (`60a3235`) makes re-entry feature-row backfill correct.
+AMBER → GREEN candidate (pending production verification). MB-19 (load-or-refuse scaler + `ai_feature_store` + training scripts for scaler/rug/pump + 27-feature canonical layout + outcome-backfill on close) end-to-end closed; MB-20 (executor delegation through canonical futures path) and MB-21 (headline sanitisation) closed; secrets_manager already wired. Latch-at-open refinement (`60a3235`) makes re-entry feature-row backfill correct. **A6 wave-2:** multi-provider quorum gate (E1), confidence-calibration table + `/api/ai/calibration` (E2), pinned-template Q-learning bandit + `ai_feature_store` exploration logs (E3) — all disabled-by-default, see `docs/agents/reports/AI_CAMPAIGN.md`.
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/AI_*.md` (quant / analyst / backend).
 - Canonical engine API: `docs/engines.md`.

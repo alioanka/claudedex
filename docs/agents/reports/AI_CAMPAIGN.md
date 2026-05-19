@@ -122,11 +122,16 @@ agent — UI deferred).
 
 ## 3. Commits log
 
-(Updated as work progresses.)
-
 | Hash | Summary |
 |---|---|
-| _pending_ | audit doc seed |
+| `6acb48b` | campaign report: MB-19/20/21 re-verified + enhancement plan |
+| `8fe3671` | ai_strategy: pump_v1 literal 27 -> EXPECTED_PUMP_FEATURE_COUNT (AI-CAMP-01) |
+| `6c3c058` | sentiment_engine: multi-provider quorum gate (A6 E1) |
+| `9e9f0db` | calibration: ai_confidence_calibration migration + write hooks (A6 E2 1/2) |
+| `c285074` | dashboard: GET /api/ai/calibration reliability+brier (A6 E2 2/2) |
+| `b26c0eb` | new prompt_bandit.py module (A6 E3 1/2) |
+| `db452d9` | sentiment_engine: wire prompt bandit + close-hook reward (A6 E3 2/2) |
+| `_pending_` | docs: CLAUDE.md + campaign report finalisation |
 
 ---
 
