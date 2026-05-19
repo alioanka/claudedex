@@ -1236,16 +1236,19 @@ class EVMArbitrageEngine:
                 # The contract must implement executeOperation() callback
                 # EOA wallets CANNOT receive flash loan callbacks - they will always revert
                 #
-                # Chain-specific flash loan contracts:
+                # Chain-specific flash loan contracts. A2-04: resolve via
+                # secrets_manager (DB-backed + Fernet) first, then fall back
+                # to env. Lets the dashboard Credentials page manage these
+                # addresses without editing .env on disk.
                 # - FLASH_LOAN_RECEIVER_CONTRACT_ETH for Ethereum
                 # - FLASH_LOAN_RECEIVER_CONTRACT_ARB for Arbitrum
                 # - FLASH_LOAN_RECEIVER_CONTRACT_BASE for Base
                 # - FLASH_LOAN_RECEIVER_CONTRACT as fallback (for backwards compat)
                 flash_loan_env_key = self.chain_config.get('flash_loan_env_key', 'FLASH_LOAN_RECEIVER_CONTRACT')
                 flash_loan_env_fallback = self.chain_config.get('flash_loan_env_fallback')
-                flash_loan_contract = os.getenv(flash_loan_env_key)
+                flash_loan_contract = await self._get_decrypted_key(flash_loan_env_key)
                 if not flash_loan_contract and flash_loan_env_fallback:
-                    flash_loan_contract = os.getenv(flash_loan_env_fallback)
+                    flash_loan_contract = await self._get_decrypted_key(flash_loan_env_fallback)
 
                 if self.private_key and self.wallet_address and not self.dry_run:
                     if flash_loan_contract:
@@ -1780,6 +1783,19 @@ class EVMArbitrageEngine:
             if not allowed:
                 self.logger.warning(f"⛔ Risk manager rejected EVM arb {token_in[:10]}: {reason}")
                 return
+
+        # A2-07 / enhancement #3: hourly gas-budget tracker. Refuse new
+        # broadcasts when the rolling 1-hour gas spend would exceed the
+        # operator-configured USD budget. Charges optimistically; if the
+        # tx reverts we keep the charge (worst case = we wait an hour).
+        try:
+            projected_gas_usd = await self._gas_cost_usd_per_tx()
+        except Exception:
+            projected_gas_usd = 0.0
+        allowed_budget, reason = self._gas_budget_check_and_charge(projected_gas_usd)
+        if not allowed_budget:
+            self.logger.warning(f"⛔ Gas budget gate: {reason}; skipping execution")
+            return
 
         try:
             if self.use_flash_loans and self.flash_loan_executor:
