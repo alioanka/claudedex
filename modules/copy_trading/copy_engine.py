@@ -657,6 +657,25 @@ class CopyTradingEngine(BaseModule):
         # to 50; tune via config_settings.copy_trading_config.max_active_positions.
         self.max_active_positions = 50
 
+        # Wave-2: Kelly-fraction sizing per leader (CT-Q-02). When
+        # enabled, _get_leader_kelly reads copy_leader_scores
+        # (migration 023) and uses the persisted kelly_fraction as a
+        # multiplier on max_copy_amount. Default OFF so existing
+        # operator configs see no behavior change.
+        #
+        # Tunables (all reloaded by _load_settings from
+        # config_settings.copytrading_config):
+        #   kelly_sizing_enabled      — bool, default False
+        #   kelly_probation_fraction  — fraction used for unscored /
+        #                               stale-scored leaders (default 0.05
+        #                               = 5% of cap; small but non-zero
+        #                               so new leaders still trade)
+        #   kelly_staleness_days      — score age before fallback to
+        #                               probation (default 7d)
+        self.kelly_sizing_enabled = False
+        self.kelly_probation_fraction = 0.05
+        self.kelly_staleness_days = 7
+
         # Trade executor
         self.executor: Optional[CopyTradeExecutor] = None
 
@@ -831,6 +850,27 @@ class CopyTradingEngine(BaseModule):
                     elif key == 'max_copy_amount':
                         try:
                             self.max_copy_amount = float(val) if val else 100.0
+                        except (TypeError, ValueError):
+                            pass
+                    elif key == 'kelly_sizing_enabled':
+                        # Accept '1' / 'true' / 'yes' (DB values are
+                        # often stringified booleans).
+                        self.kelly_sizing_enabled = str(val).strip().lower() in (
+                            '1', 'true', 'yes', 'on',
+                        )
+                    elif key == 'kelly_probation_fraction':
+                        try:
+                            v = float(val) if val else 0.05
+                            # Clamp to a sane band so a fat-finger value
+                            # can't size beyond quarter-Kelly.
+                            self.kelly_probation_fraction = max(0.0, min(0.25, v))
+                        except (TypeError, ValueError):
+                            pass
+                    elif key == 'kelly_staleness_days':
+                        try:
+                            self.kelly_staleness_days = max(
+                                1.0, float(val) if val else 7.0,
+                            )
                         except (TypeError, ValueError):
                             pass
 
@@ -1091,6 +1131,69 @@ class CopyTradingEngine(BaseModule):
             return ring[-limit:]
         return list(ring)
 
+    async def _get_leader_kelly(self, chain: str, wallet: str) -> float:
+        """Wave-2 enhancement: fetch this leader's Kelly fraction from
+        copy_leader_scores (migration 023).
+
+        Returns 0.0 when:
+          * leader has never been scored (no row, no history)
+          * leader's score is below quarter-Kelly breakeven
+          * the kelly_fraction column is NULL
+          * the kelly_fraction is stale (last_scored_at > 7 days)
+          * the DB lookup itself fails (fail-soft)
+
+        Returns a value in (0, 0.25]. The engine uses this as a
+        *multiplier* on the operator-set max_copy_amount cap. A leader
+        that has been validated as profitable gets full size; a leader
+        with no history or a bad score gets fractional / zero size.
+
+        When the kelly-sizing feature is disabled (operator-tunable
+        config_settings.copytrading_config.kelly_sizing_enabled), this
+        returns 1.0 so the existing static cap behavior is preserved.
+        """
+        if not getattr(self, "kelly_sizing_enabled", False):
+            return 1.0
+        if not self.db_pool or not chain or not wallet:
+            return 0.0
+        try:
+            async with self.db_pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT kelly_fraction, score, last_scored_at
+                    FROM copy_leader_scores
+                    WHERE chain = $1
+                      AND lower(wallet_address) = lower($2)
+                    LIMIT 1
+                    """,
+                    chain, wallet,
+                )
+        except Exception as e:
+            logger.debug(f"_get_leader_kelly DB lookup failed: {e}")
+            return 0.0
+        if not row:
+            # Unscored leader. Operator-set policy: 0.0 means "do not
+            # size beyond a probationary fraction" — we return the
+            # configured probation size instead of 0.0 so completely
+            # new leaders still get a tiny mirror trade.
+            return float(getattr(self, "kelly_probation_fraction", 0.05))
+        kelly = row["kelly_fraction"]
+        if kelly is None:
+            return float(getattr(self, "kelly_probation_fraction", 0.05))
+        # Staleness gate: scores older than kelly_staleness_days fall back
+        # to probation. Operators tune via DB; default 7 days.
+        try:
+            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+            staleness_days = float(getattr(self, "kelly_staleness_days", 7))
+            last = row["last_scored_at"]
+            if last is not None:
+                if last.tzinfo is None:
+                    last = last.replace(tzinfo=_tz.utc)
+                if (_dt.now(_tz.utc) - last) > _td(days=staleness_days):
+                    return float(getattr(self, "kelly_probation_fraction", 0.05))
+        except Exception:
+            pass
+        return float(max(0.0, min(0.25, float(kelly))))
+
     async def _analyze_and_copy_evm(self, tx) -> bool:
         """Analyze EVM transaction and execute copy if it's a swap"""
         try:
@@ -1201,9 +1304,15 @@ class CopyTradingEngine(BaseModule):
                 logger.error("Invalid ETH price - skipping copy to avoid bad sizing")
                 return
             max_copy_wei = int((self.max_copy_amount / eth_price) * 1e18)
+            # Wave-2 enhancement: per-leader Kelly multiplier on the
+            # operator-set cap. When kelly_sizing_enabled is False
+            # this returns 1.0 and behavior is unchanged.
+            kelly_mult = await self._get_leader_kelly(
+                chain_name, source_tx.get('from', '')
+            )
             copy_amount = min(
                 original_value * self.copy_ratio // 100,
-                max_copy_wei,
+                int(max_copy_wei * kelly_mult),
             )
 
             if copy_amount <= 0:
@@ -1510,7 +1619,13 @@ class CopyTradingEngine(BaseModule):
 
             # Calculate copy amount
             sol_price = await self.executor.price_fetcher.get_price('sol') if self.executor else 200
-            copy_lamports = int(min(self.max_copy_amount / sol_price, 0.1) * 1e9)
+            # Wave-2 enhancement: per-leader Kelly multiplier on the
+            # operator-set cap (Solana path). The hard 0.1-SOL ceiling
+            # is preserved as a final fuse so a mis-scored leader can
+            # never blow past the operator-visible per-trade limit.
+            kelly_mult = await self._get_leader_kelly('solana', wallet)
+            usd_cap = self.max_copy_amount * kelly_mult
+            copy_lamports = int(min(usd_cap / sol_price, 0.1) * 1e9)
 
             if is_buy:
                 # Global open-position cap — only gates BUYs because
