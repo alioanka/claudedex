@@ -1055,6 +1055,11 @@ class SolanaListener:
                 'wss_connects': self._stats.get('wss_connects', 0),
                 'wss_notifications': self._stats.get('wss_notifications', 0),
                 'wss_pools_queued': self._stats.get('wss_pools_queued', 0),
+                # Concurrency observability — without these the dashboard
+                # widget showed 0 after the first window flip even though
+                # the WSS hot loop was actively dispatching candidates.
+                'wss_dispatched': self._stats.get('wss_dispatched', 0),
+                'wss_inflight_peak': self._stats.get('wss_inflight_peak', 0),
                 'rejected_rpc_error': self._stats.get('rejected_rpc_error', 0),
                 'rejected_no_result': self._stats.get('rejected_no_result', 0),
                 'rejected_tx_failed': self._stats.get('rejected_tx_failed', 0),
@@ -1062,6 +1067,10 @@ class SolanaListener:
                 'rejected_no_mint': self._stats.get('rejected_no_mint', 0),
                 'rejected_filtered_mint': self._stats.get('rejected_filtered_mint', 0),
                 'rejected_bad_mint_format': self._stats.get('rejected_bad_mint_format', 0),
+                # Block-time anchoring counters reset to 0 would mis-report
+                # in /api/sniper/timing widget the moment a window flips.
+                'block_time_anchored': self._stats.get('block_time_anchored', 0),
+                'block_time_missing': self._stats.get('block_time_missing', 0),
             }
 
     async def close(self):
