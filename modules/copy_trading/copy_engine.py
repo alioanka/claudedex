@@ -1029,17 +1029,90 @@ class CopyTradingEngine(BaseModule):
 
         return trades_copied
 
+    def _log_replay_decision(
+        self,
+        *,
+        chain: str,
+        wallet: str,
+        tx_hash: str,
+        decision: str,
+        reason: str,
+        extra: Optional[Dict] = None,
+    ) -> None:
+        """Wave-2 replay diagnostics. Records WHY each detected leader
+        tx was or was not mirrored. Operators previously had no way to
+        tell the difference between a leader being silently skipped
+        (cooldown / cap / risk-gate / unsupported chain) and the
+        leader simply not trading.
+
+        Stored in an in-memory ring buffer (capped at 500 entries) AND
+        emitted at INFO level with a structured prefix so logs/<module>/
+        is greppable. The dashboard surfaces the ring via the future
+        GET /api/copytrading/replay endpoint (T1/T2 wave).
+
+        decision in {'copied', 'skipped', 'rejected', 'simulated', 'error'}
+        reason is a short tag like 'cooldown' / 'position_cap' /
+            'unsupported_chain' / 'risk_gate' / 'no_token_extracted' /
+            'amount_too_small' / 'no_executor' / 'not_a_swap' /
+            'tx_failed'.
+        """
+        try:
+            if not hasattr(self, "_replay_decisions"):
+                self._replay_decisions = []
+            entry = {
+                "ts": datetime.now().isoformat(),
+                "chain": chain,
+                "wallet": (wallet or "")[:64],
+                "tx_hash": (tx_hash or "")[:80],
+                "decision": decision,
+                "reason": reason,
+            }
+            if extra:
+                entry["extra"] = extra
+            self._replay_decisions.append(entry)
+            # Bounded ring — 500 is enough for a few hours of dashboard
+            # backscroll without eating memory across week-long runs.
+            if len(self._replay_decisions) > 500:
+                self._replay_decisions.pop(0)
+            logger.info(
+                f"[replay] {chain} wallet={wallet[:10]} "
+                f"tx={(tx_hash or '')[:14]} decision={decision} reason={reason}"
+                + (f" extra={extra}" if extra else "")
+            )
+        except Exception as e:
+            logger.debug(f"_log_replay_decision failed (non-fatal): {e}")
+
+    def get_replay_decisions(self, limit: int = 100) -> List[Dict]:
+        """Return the most-recent replay-decision entries for the
+        dashboard / Test Runner. Read-only — safe to call from any
+        async or sync context."""
+        ring = getattr(self, "_replay_decisions", [])
+        if limit and limit > 0:
+            return ring[-limit:]
+        return list(ring)
+
     async def _analyze_and_copy_evm(self, tx) -> bool:
         """Analyze EVM transaction and execute copy if it's a swap"""
         try:
             wallet = tx.get('from', '')
+            tx_hash = tx.get('hash', '')
+            chain = tx.get('_chain', 'ethereum')
 
             # Check wallet cooldown first
             if self._check_wallet_cooldown(wallet):
+                self._log_replay_decision(
+                    chain=chain, wallet=wallet, tx_hash=tx_hash,
+                    decision='skipped', reason='cooldown',
+                )
                 return False  # Skip silently - wallet in cooldown
 
             input_data = tx.get('input', '')
             if len(input_data) < 10:
+                self._log_replay_decision(
+                    chain=chain, wallet=wallet, tx_hash=tx_hash,
+                    decision='skipped', reason='not_a_swap',
+                    extra={'input_len': len(input_data)},
+                )
                 return False
 
             method_id = input_data[:10]
@@ -1062,6 +1135,11 @@ class CopyTradingEngine(BaseModule):
                 await self._execute_evm_copy_trade(tx, method_name)
                 return True
 
+            self._log_replay_decision(
+                chain=chain, wallet=wallet, tx_hash=tx_hash,
+                decision='skipped', reason='not_a_swap',
+                extra={'method_id': method_id},
+            )
             return False
         except Exception as e:
             logger.error(f"Error analyzing EVM tx: {e}")
@@ -1083,9 +1161,20 @@ class CopyTradingEngine(BaseModule):
                 break
         if not chain_name:
             logger.warning(f"Unknown chain_id {chain_id} on source tx {tx_hash} - skipping")
+            self._log_replay_decision(
+                chain=str(chain_id), wallet=source_tx.get('from', ''),
+                tx_hash=tx_hash, decision='skipped',
+                reason='unknown_chain_id', extra={'chain_id': chain_id},
+            )
             return
         if chain_name not in EVM_DEX_ROUTING:
             logger.info(f"Skip copy on {chain_name}: no V2-API router configured (tx {tx_hash})")
+            self._log_replay_decision(
+                chain=chain_name, wallet=source_tx.get('from', ''),
+                tx_hash=tx_hash, decision='skipped',
+                reason='unsupported_chain',
+                extra={'note': 'no V2-API router configured'},
+            )
             return
 
         try:
@@ -1119,6 +1208,15 @@ class CopyTradingEngine(BaseModule):
 
             if copy_amount <= 0:
                 logger.warning("Copy amount too small, skipping")
+                self._log_replay_decision(
+                    chain=chain_name, wallet=source_tx.get('from', ''),
+                    tx_hash=tx_hash, decision='skipped',
+                    reason='amount_too_small',
+                    extra={
+                        'copy_amount_wei': int(copy_amount),
+                        'leader_value_wei': int(original_value),
+                    },
+                )
                 return
 
             # Extract token address from input data (simplified)
@@ -1134,6 +1232,11 @@ class CopyTradingEngine(BaseModule):
 
             if not token_address:
                 logger.warning("Could not extract token address from tx")
+                self._log_replay_decision(
+                    chain=chain_name, wallet=source_tx.get('from', ''),
+                    tx_hash=tx_hash, decision='skipped',
+                    reason='no_token_extracted',
+                )
                 return
 
             logger.info(f"👯 Detected {side.upper()} trade for token {token_address[:20]}...")
@@ -1141,6 +1244,12 @@ class CopyTradingEngine(BaseModule):
             # Global open-position cap; bounded SQL count so a fanout
             # of leaders can't blow past the operator's exposure budget.
             if await self._at_position_cap():
+                self._log_replay_decision(
+                    chain=chain_name, wallet=source_tx.get('from', ''),
+                    tx_hash=tx_hash, decision='skipped',
+                    reason='position_cap',
+                    extra={'cap': self.max_active_positions},
+                )
                 return
 
             # Execute copy trade
@@ -1156,9 +1265,21 @@ class CopyTradingEngine(BaseModule):
 
                 # Log to database with source wallet and proper side
                 source_wallet = source_tx.get('from', '')
+                self._log_replay_decision(
+                    chain=chain_name, wallet=source_wallet,
+                    tx_hash=tx_hash,
+                    decision='simulated' if self.dry_run else 'copied',
+                    reason='success',
+                    extra={'side': side, 'copy_wei': int(copy_amount)},
+                )
                 await self._log_copy_trade(chain_name, tx_hash, result, source_wallet, side=side, token_address=token_address)
             else:
                 logger.error(f"❌ EVM Copy Trade Failed: {result.get('error')}")
+                self._log_replay_decision(
+                    chain=chain_name, wallet=source_tx.get('from', ''),
+                    tx_hash=tx_hash, decision='error',
+                    reason=str(result.get('error', 'unknown'))[:120],
+                )
 
         except Exception as e:
             logger.error(f"Error executing EVM copy trade: {e}")
@@ -1232,6 +1353,10 @@ class CopyTradingEngine(BaseModule):
         try:
             # Check wallet cooldown first
             if self._check_wallet_cooldown(wallet):
+                self._log_replay_decision(
+                    chain='solana', wallet=wallet, tx_hash=signature,
+                    decision='skipped', reason='cooldown',
+                )
                 return False  # Skip silently - wallet in cooldown
 
             # Get transaction details
@@ -1374,6 +1499,10 @@ class CopyTradingEngine(BaseModule):
 
             if not token_mint:
                 logger.warning("Could not extract token from tx - skipping")
+                self._log_replay_decision(
+                    chain='solana', wallet=wallet, tx_hash=signature,
+                    decision='skipped', reason='no_token_extracted',
+                )
                 return
 
             side = 'buy' if is_buy else 'sell'
@@ -1388,6 +1517,11 @@ class CopyTradingEngine(BaseModule):
                 # SELLs close existing exposure and should never be
                 # blocked by the cap.
                 if await self._at_position_cap():
+                    self._log_replay_decision(
+                        chain='solana', wallet=wallet, tx_hash=signature,
+                        decision='skipped', reason='position_cap',
+                        extra={'cap': self.max_active_positions},
+                    )
                     return
                 # Execute BUY copy trade
                 result = await self.executor.copy_solana_swap(
@@ -1404,6 +1538,11 @@ class CopyTradingEngine(BaseModule):
                         f"⚠️ Leader SELL detected for {token_mint[:8]}... "
                         f"but we hold no position to close (skipping)"
                     )
+                    self._log_replay_decision(
+                        chain='solana', wallet=wallet, tx_hash=signature,
+                        decision='skipped', reason='no_position_to_close',
+                        extra={'token': token_mint[:16]},
+                    )
                     return
                 result = await self.executor.copy_solana_swap(
                     input_mint=token_mint,
@@ -1415,11 +1554,25 @@ class CopyTradingEngine(BaseModule):
             if result.get('success'):
                 action = 'Tracked' if result.get('is_sell_tracking') else ('Executed' if not self.dry_run else 'Simulated')
                 logger.info(f"✅ Solana Copy Trade {action}: {result.get('tx_hash')}")
+                self._log_replay_decision(
+                    chain='solana', wallet=wallet, tx_hash=signature,
+                    decision='simulated' if self.dry_run else 'copied',
+                    reason='success',
+                    extra={'side': side, 'token': token_mint[:16]},
+                )
 
                 # Log to database with proper side (BUY or SELL)
                 await self._log_copy_trade('solana', signature, result, wallet, side=side, token_address=token_mint)
             else:
                 logger.error(f"❌ Solana Copy Trade Failed: {result.get('error')}")
+                err = result.get('error', 'unknown')
+                # risk-gate rejections come back as 'risk gate rejected: ...'
+                reason = 'risk_gate' if 'risk gate' in str(err) else str(err)[:120]
+                self._log_replay_decision(
+                    chain='solana', wallet=wallet, tx_hash=signature,
+                    decision='rejected' if 'risk' in str(err) else 'error',
+                    reason=reason,
+                )
 
         except Exception as e:
             logger.error(f"Error executing Solana copy trade: {e}")
