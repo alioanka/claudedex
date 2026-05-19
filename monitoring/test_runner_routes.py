@@ -303,10 +303,18 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         "sql": (
             "SELECT 'sniper' AS src, COUNT(*) AS n "
             "FROM sniper_trades WHERE status='open' "
+            "UNION ALL SELECT 'arbitrage', COUNT(*) "
+            "FROM arbitrage_trades WHERE status='open' "
             "UNION ALL SELECT 'copy', COUNT(*) "
             "FROM copytrading_trades WHERE status='open' "
             "UNION ALL SELECT 'futures', COUNT(*) "
-            "FROM futures_positions"
+            "FROM futures_positions "
+            "UNION ALL SELECT 'solana', COUNT(*) "
+            "FROM solana_positions "
+            "UNION ALL SELECT 'dex', COUNT(*) "
+            "FROM trades WHERE status='open' "
+            "UNION ALL SELECT 'ai', COUNT(*) "
+            "FROM ai_trades WHERE status='open'"
         ),
         "cmd_preview": (
             "Counts: sniper_trades + copytrading_trades WHERE status='open', "
@@ -668,8 +676,8 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         # for sniper/copy/arb; opened_at for futures).
         "sql": (
             # Per-table time columns are NOT uniform across modules:
-            #   sniper / arbitrage / copy_trading → entry_timestamp
-            #   futures / solana                  → entry_time
+            #   sniper / arbitrage / copy_trading / ai / dex → entry_timestamp
+            #   futures / solana                             → entry_time
             "SELECT 'sniper' AS module, COUNT(*) AS trades_24h "
             "FROM sniper_trades WHERE entry_timestamp > NOW() - INTERVAL '24 hours' "
             "UNION ALL SELECT 'arbitrage', COUNT(*) "
@@ -680,6 +688,10 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "FROM futures_trades WHERE entry_time > NOW() - INTERVAL '24 hours' "
             "UNION ALL SELECT 'solana', COUNT(*) "
             "FROM solana_trades WHERE entry_time > NOW() - INTERVAL '24 hours' "
+            "UNION ALL SELECT 'dex', COUNT(*) "
+            "FROM trades WHERE entry_timestamp > NOW() - INTERVAL '24 hours' "
+            "UNION ALL SELECT 'ai', COUNT(*) "
+            "FROM ai_trades WHERE entry_timestamp > NOW() - INTERVAL '24 hours' "
             "ORDER BY 1"
         ),
         "cmd_preview": "COUNT(*) per *_trades table, last 24h",
@@ -698,9 +710,9 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         "kind": "db_query",
         "sql": (
             # Per-table conventions:
-            #   sniper/arbitrage/copy → status='open' filter
-            #   futures               → futures_positions table (every row open)
-            #   solana                → solana_positions table (no status col)
+            #   sniper/arbitrage/copy/dex/ai → status='open' filter
+            #   futures                      → futures_positions table (every row open)
+            #   solana                       → solana_positions table (no status col)
             "SELECT 'sniper' AS module, COUNT(*) AS open_positions "
             "FROM sniper_trades WHERE status='open' "
             "UNION ALL SELECT 'arbitrage', COUNT(*) "
@@ -711,6 +723,10 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "FROM futures_positions "
             "UNION ALL SELECT 'solana', COUNT(*) "
             "FROM solana_positions "
+            "UNION ALL SELECT 'dex', COUNT(*) "
+            "FROM trades WHERE status='open' "
+            "UNION ALL SELECT 'ai', COUNT(*) "
+            "FROM ai_trades WHERE status='open' "
             "ORDER BY 1"
         ),
         "cmd_preview": "COUNT(*) open positions per module (status / position tables)",
