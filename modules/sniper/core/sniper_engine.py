@@ -568,7 +568,17 @@ class SniperEngine:
                 return True
 
         except Exception as e:
-            logger.error(f"Error during safety check: {e}")
+            # R2: log + cooldown the token + bump a counter so the
+            # dashboard can surface persistent API outages. Without
+            # the cooldown the same token would retry every poll tick
+            # against GoPlus/Honeypot.is and burn rate-limit budget.
+            logger.error(f"Error during safety check for {token_address}: {e}")
+            self._stats['safety_check_errors'] = (
+                self._stats.get('safety_check_errors', 0) + 1
+            )
+            self._rejected_cache[token_address] = datetime.now()
+            if timing:
+                timing.outcome = 'rejected_safety_error'
             # Fail safe - don't snipe if safety check errors
             return False
 
@@ -597,7 +607,10 @@ class SniperEngine:
             # resetting the rolling window. Fail-soft.
             await self._persist_runtime_stats()
 
-            # Reset stats
+            # Reset stats. safety_check_errors + jupiter_quote_fallback_hits
+            # are cumulative-by-design counters surfaced to the dashboard
+            # via _persist_runtime_stats; preserving them across the window
+            # flip prevents the "always 0" trap that hid R3-class issues.
             self._stats = {
                 'tokens_analyzed': 0,
                 'honeypots_detected': 0,
@@ -607,6 +620,8 @@ class SniperEngine:
                 'passed_safety': 0,
                 'positions_synthetic_closed': 0,
                 'capped_rejections': 0,
+                'safety_check_errors': self._stats.get('safety_check_errors', 0),
+                'jupiter_quote_fallback_hits': self._stats.get('jupiter_quote_fallback_hits', 0),
                 'last_capped_log': now,
                 'last_stats_log': now
             }
