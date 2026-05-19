@@ -18,7 +18,19 @@ Spot trading on EVM DEXes (Uniswap V2/V3, SushiSwap, PancakeSwap) across Ethereu
 ## Primary risk-policy gate
 `core.risk_manager.RiskManager.validate_trade(token, amount)` — wired through the shared `trading/trading_engine.py` order-execution path. Per-executor caps (`max_slippage_bps`, `max_gas_price`) enforced inline at `trading/executors/direct_dex.py:88,567`.
 ## Live-trade readiness
-AMBER → GREEN candidate (pending production verification). MB-01 (decimals), MB-02 (Flashbots EIP-191) and P1-04 (`pool_engine` RPC unification via the cross-module sweep in `a21ec41`) all closed.
+AMBER → GREEN candidate (pending production verification). MB-01 (decimals — both legs now via `core.units.to_raw_evm`), MB-02 (Flashbots EIP-191) and P1-04 (`pool_engine` RPC unification) all closed.
+## Wave-2 hardening (campaign `claude/create-expert-agents-JFSF5`)
+- P0: `DirectDEXExecutor.max_slippage` initialized (was AttributeError when `order.slippage` unset).
+- P0: `MEVProtectionLayer.protect_transaction` `bundle_id` defaulted to `None` (was `UnboundLocalError` on ADVANCED+low-risk path).
+- P0: MB-01 input-side — `amount_in_raw` now uses `to_raw_evm(chain, token_in, amount)` instead of `ether_to_wei` (USDC/USDT/WBTC fix).
+- P1: web3 v6 API drift — `toChecksumAddress` → `to_checksum_address`, `isAddress` → `is_address`, `isConnected` → `is_connected`, PoA middleware import made version-safe.
+- P1: per-chain gas-price ceiling (`_CHAIN_MAX_GWEI_DEFAULTS` + `chain_max_gas_gwei` config override). Single 50-gwei cap was wrong on Polygon/L2s.
+- P1: `_get_optimal_gas_price` runs `eth_gasPrice` via `loop.run_in_executor` (was blocking the async loop).
+- P1: `mev_protection._apply_gas_randomization` clamps post-randomization gasPrice to `max_gas_price` ceiling.
+- P1: Flashbots ADVANCED-tier gate now requires `chain ∈ {ethereum, eth, mainnet}` — silently falls through to private-mempool routing on BSC/Polygon/Arb/Base (Flashbots relay does not service those chains).
+- Enhancement: `get_best_quote` ranks by `_score_quote = amount_out * (1 - impact) - gas_cost_native`, not raw headline output. Routes to the DEX with the best NET fill.
+- Enhancement: `tests/unit/test_dex_decimals.py` — 5 regression tests for MB-01 (USDC 6 dec, WBTC 8 dec, WETH 18 dec sanity) + scoring (prefers lower gas, prefers lower impact).
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/DEX_*.md` (smartcontract / quant / analyst).
+- Wave-2 campaign report: `docs/agents/reports/DEX_CAMPAIGN.md`.
 - Canonical engine API: `docs/engines.md`.

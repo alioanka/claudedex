@@ -41,12 +41,44 @@
 
 ## 3. Fixes shipped (this campaign)
 
-(filled in as commits land — see Section 5)
+| # | Issue | Fix | Commit |
+|---|---|---|---|
+| 1 | `self.max_slippage` AttributeError in `_build_swap_transaction` | Init from `max_slippage` / `max_slippage_bps` / default 0.005 | `f7d7941` |
+| 2 | `bundle_id` UnboundLocalError in MEV `protect_transaction` | Default `bundle_id = None` at function top + per-chain Flashbots gate | `e872121` |
+| 3 | MB-01 input leg: `ether_to_wei(order.amount)` for V2/V3 swaps | Route through `core.units.to_raw_evm(chain, token_in, amount)` | `23d860d` |
+| 4 | web3 v6 API drift (`toChecksumAddress`, `isAddress`, `isConnected`, PoA middleware) | Migrate to snake_case + try/except import fallback for PoA | `48d5f20` |
+| 5 | Single 50-gwei gas cap broken on Polygon/L2s; sync RPC in async path | `_CHAIN_MAX_GWEI_DEFAULTS` + `loop.run_in_executor(eth_gasPrice)` | `162f711` |
+| 6 | MEV gas randomization could lift `gasPrice` above ceiling | Clamp post-randomization to `max_gas_price` | `162f711` |
 
 ## 4. Enhancements shipped
 
-(filled in as commits land — see Section 5)
+| # | Enhancement | Commit |
+|---|---|---|
+| 1 | Per-chain MEV-protection toggle (Flashbots only on Ethereum mainnet, silent downgrade to private mempool on other chains) | `e872121` |
+| 2 | Multi-DEX route quality scoring — `_score_quote(q, gas_price_wei) = amount_out * (1 - impact) - gas_cost_native`. `get_best_quote` now ranks by net fill, not raw headline. | `a40f69a` |
+| 3 | Decimals-correct test coverage: `tests/unit/test_dex_decimals.py` — USDC 6 dec, WBTC 8 dec, WETH 18 dec sanity + scoring regressions (prefers lower gas / prefers lower impact). | `869eed3` |
 
-## 5. Commit log
+## 5. Commit log (oldest → newest)
 
-(rolling, newest at bottom)
+| Hash | Message |
+|---|---|
+| `28c484e` | `[dex] audit report: residual P0/P1 issues + enhancement backlog` |
+| `f7d7941` | `[dex] direct_dex: init self.max_slippage to fix AttributeError in build_swap` |
+| `e872121` | `[dex] mev_protection: fix UnboundLocalError + per-chain Flashbots gate` |
+| `23d860d` | `[dex] direct_dex: decimals-correct amount_in in _build_swap_transaction` |
+| `48d5f20` | `[dex] direct_dex+mev: web3 v6 API drift — toChecksumAddress, isAddress, PoA, isConnected` |
+| `162f711` | `[dex] gas: per-chain max-gwei + async eth_gasPrice + randomization clamp` |
+| `a40f69a` | `[dex] direct_dex: multi-DEX route quality scoring (net of gas + impact)` |
+| `869eed3` | `[dex] tests: MB-01 decimals regression + route-quality scoring coverage` |
+
+## 6. Issues deferred (next wave)
+
+These were called out in Section 2 but deferred to keep commits ≤200 LoC and avoid touching wider executor refactors:
+
+- `_quote_v3` placeholder (line 783) — needs a real Uniswap V3 QuoterV2 binding. Today it returns `amount * 0.997`, so V3 routing is fundamentally broken; route-quality scoring (#2) still ranks correctly within whatever data we have, but the V3 input data is wrong.
+- EIP-1559 (`maxFeePerGas` / `maxPriorityFeePerGas`) on Ethereum mainnet — `_get_optimal_gas_price` still returns legacy `gasPrice`. Works (Type-0 still accepted) but suboptimal inclusion.
+- `_estimate_price_impact` linearity assumption breaks for V3 concentrated liquidity at tick boundaries.
+- `_apply_time_delays` nonce read bypasses `nonce_lock` — race with concurrent DEX txs from the same wallet.
+- `_path_has_liquidity` returns hardcoded `True`.
+- Dashboard pages (`dashboard_dex.html`, `performance_dex.html`, `trades_dex.html`, `positions_dex.html`) listed under P1-48 are still absent; out of A1 scope per PM_PLAN (worktree restricted to `dashboard/templates/dex/*.html` which doesn't exist yet).
+
